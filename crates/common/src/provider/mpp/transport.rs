@@ -364,6 +364,48 @@ where
                 }
             }
 
+            // Retry with key_authorization when verification failed and key appears
+            // provisioned — handles first-time provisioning where key_auth was stripped
+            // but the key was not yet provisioned on-chain.
+            let needs_verification_retry =
+                retry_text.contains("verification-failed") && self.provider.is_key_provisioned();
+
+            if needs_verification_retry {
+                self.provider.set_key_provisioned(false);
+                let resolved = self.provider.resolve()?;
+
+                if resolved.supports(challenge.method.as_str(), challenge.intent.as_str()) {
+                    debug!(
+                        "MPP 402 verification-failed with key provisioned, retrying with key_authorization"
+                    );
+
+                    let credential = resolved.pay(challenge).await.map_err(|e| {
+                        TransportErrorKind::custom(std::io::Error::other(format!(
+                            "MPP payment failed: {e}"
+                        )))
+                    })?;
+                    let auth_header = format_authorization(&credential).map_err(|e| {
+                        TransportErrorKind::custom(std::io::Error::other(format!(
+                            "failed to format MPP credential: {e}"
+                        )))
+                    })?;
+
+                    let final_resp = self
+                        .client
+                        .post(self.url.clone())
+                        .headers(headers)
+                        .header("content-type", "application/json")
+                        .header(AUTHORIZATION_HEADER, auth_header)
+                        .body(body)
+                        .send()
+                        .await
+                        .map_err(TransportErrorKind::custom)?;
+
+                    self.provider.set_key_provisioned(true);
+                    return Self::handle_response(final_resp).await;
+                }
+            }
+
             return Err(TransportErrorKind::http_error(
                 StatusCode::PAYMENT_REQUIRED.as_u16(),
                 retry_text.into_owned(),
@@ -420,6 +462,9 @@ pub(crate) trait ResolveProvider {
     }
     fn resolve_for(&self, opts: DiscoverOptions) -> TransportResult<Self::Provider>;
     fn set_key_provisioned(&self, _provisioned: bool) {}
+    fn is_key_provisioned(&self) -> bool {
+        true
+    }
     fn clear_channels(&self) {}
 }
 
@@ -437,6 +482,9 @@ impl ResolveProvider for LazySessionProvider {
     }
     fn set_key_provisioned(&self, provisioned: bool) {
         Self::set_key_provisioned(self, provisioned)
+    }
+    fn is_key_provisioned(&self) -> bool {
+        self.inner.lock().unwrap().as_ref().is_none_or(|p| p.is_key_provisioned())
     }
     fn clear_channels(&self) {
         Self::clear_channels(self)
@@ -706,13 +754,13 @@ mod tests {
     }
 
     #[test]
-    fn test_session_provider_supports_session() {
+    fn test_session_provider_supports_charge_and_session() {
         let signer = mpp::PrivateKeySigner::random();
         let provider =
             super::super::session::SessionProvider::new(signer, "https://rpc.example.com".into());
 
         assert!(provider.supports("tempo", "session"));
-        assert!(!provider.supports("tempo", "charge"));
+        assert!(provider.supports("tempo", "charge"));
         assert!(!provider.supports("stripe", "charge"));
         assert!(!provider.supports("tempo", "subscribe"));
     }

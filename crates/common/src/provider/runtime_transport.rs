@@ -219,6 +219,20 @@ impl RuntimeTransport {
             );
         }
 
+        // If MPP_API_KEY is set, attach it as x-api-key for gated MPP proxies.
+        // Does not override an explicit x-api-key header from the user.
+        if !headers.contains_key(HeaderName::from_static("x-api-key"))
+            && let Ok(api_key) = std::env::var("MPP_API_KEY")
+        {
+            let api_key = api_key.trim();
+            if !api_key.is_empty() {
+                let mut value = HeaderValue::from_str(api_key)
+                    .map_err(|_| RuntimeTransportError::BadHeader("MPP_API_KEY".to_string()))?;
+                value.set_sensitive(true);
+                headers.insert(HeaderName::from_static("x-api-key"), value);
+            }
+        }
+
         client_builder = client_builder.default_headers(headers);
 
         Ok(client_builder.build()?)

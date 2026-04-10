@@ -152,6 +152,11 @@ impl SessionProvider {
         *self.key_provisioned.lock().unwrap() = provisioned;
     }
 
+    /// Check whether the access key has been provisioned on-chain.
+    pub fn is_key_provisioned(&self) -> bool {
+        *self.key_provisioned.lock().unwrap()
+    }
+
     fn channel_key(payee: &Address, currency: &Address, escrow: &Address) -> String {
         format!("{payee}:{currency}:{escrow}").to_lowercase()
     }
@@ -268,7 +273,7 @@ impl SessionProvider {
             cumulative_amount: options.initial_amount,
             escrow_contract: options.escrow_contract,
             chain_id: options.chain_id,
-            opened: false,
+            opened: true,
         };
 
         let signed_tx_hex = alloy_primitives::hex::encode_prefixed(&signed_tx);
@@ -280,7 +285,7 @@ impl SessionProvider {
                 payload_type: "transaction".to_string(),
                 channel_id: channel_id.to_string(),
                 transaction: signed_tx_hex,
-                authorized_signer: self.authorized_signer.map(|a| a.to_string()),
+                authorized_signer: Some(format!("{authorized_signer}")),
                 cumulative_amount: options.initial_amount.to_string(),
                 signature: voucher_sig_hex,
             },
@@ -290,9 +295,9 @@ impl SessionProvider {
     async fn create_topup_tx(
         &self,
         entry: &ChannelEntry,
-        additional: u128,
+        additional_deposit: u128,
         currency: Address,
-        fee_payer: Option<Address>,
+        fee_payer: bool,
     ) -> Result<SessionCredentialPayload, MppError> {
         use alloy_sol_types::SolCall as _;
 
@@ -301,13 +306,16 @@ impl SessionProvider {
                 function approve(address spender, uint256 amount) external returns (bool);
             }
             interface IEscrow {
-                function topUp(bytes32 channelId, uint128 amount) external;
+                function topUp(bytes32 channelId, uint256 additionalDeposit) external;
             }
         }
 
         let approve_data =
-            ITIP20::approveCall::new((entry.escrow_contract, U256::from(additional))).abi_encode();
-        let topup_data = IEscrow::topUpCall::new((entry.channel_id, additional)).abi_encode();
+            ITIP20::approveCall::new((entry.escrow_contract, U256::from(additional_deposit)))
+                .abi_encode();
+        let topup_data =
+            IEscrow::topUpCall::new((entry.channel_id, U256::from(additional_deposit)))
+                .abi_encode();
 
         let calls = vec![
             Call {
@@ -340,7 +348,7 @@ impl SessionProvider {
                 gas_limit: SESSION_OPEN_GAS_LIMIT,
                 max_fee_per_gas: MAX_FEE_PER_GAS,
                 max_priority_fee_per_gas: MAX_PRIORITY_FEE_PER_GAS,
-                fee_payer: fee_payer.is_some(),
+                fee_payer,
                 valid_before,
                 key_authorization: None,
             },
@@ -352,21 +360,53 @@ impl SessionProvider {
             payload_type: "transaction".to_string(),
             channel_id: entry.channel_id.to_string(),
             transaction: alloy_primitives::hex::encode_prefixed(&signed_tx),
-            additional_deposit: additional.to_string(),
+            additional_deposit: additional_deposit.to_string(),
         })
+    }
+}
+
+impl SessionProvider {
+    /// Handle a charge intent by building and signing a TIP-20 transfer transaction.
+    async fn pay_charge(
+        &self,
+        challenge: &PaymentChallenge,
+    ) -> Result<PaymentCredential, MppError> {
+        use mpp::client::tempo::charge::{SignOptions, TempoCharge};
+
+        let charge = TempoCharge::from_challenge(challenge)?;
+
+        // Strip key_authorization from the signing mode when the key is already
+        // provisioned on-chain. Otherwise the payment tx includes a redundant
+        // key provisioning call that fails with "access key already exists".
+        let signing_mode = if *self.key_provisioned.lock().unwrap() {
+            match &self.signing_mode {
+                TempoSigningMode::Keychain { wallet, version, .. } => TempoSigningMode::Keychain {
+                    wallet: *wallet,
+                    key_authorization: None,
+                    version: *version,
+                },
+                other => other.clone(),
+            }
+        } else {
+            self.signing_mode.clone()
+        };
+
+        let options = SignOptions { signing_mode: Some(signing_mode), ..Default::default() };
+        let signed = charge.sign_with_options(&self.signer, options).await?;
+        Ok(signed.into_credential())
     }
 }
 
 impl PaymentProvider for SessionProvider {
     fn supports(&self, method: &str, intent: &str) -> bool {
-        method == "tempo" && intent == "session"
+        method == "tempo" && (intent == "session" || intent == "charge")
     }
 
-    fn pay(
-        &self,
-        challenge: &PaymentChallenge,
-    ) -> impl std::future::Future<Output = Result<PaymentCredential, MppError>> + Send {
-        self.pay_session(challenge)
+    async fn pay(&self, challenge: &PaymentChallenge) -> Result<PaymentCredential, MppError> {
+        if challenge.intent.as_str() == "charge" {
+            return self.pay_charge(challenge).await;
+        }
+        self.pay_session(challenge).await
     }
 }
 
@@ -376,7 +416,7 @@ impl SessionProvider {
         challenge: &PaymentChallenge,
     ) -> Result<PaymentCredential, MppError> {
         let session_req: SessionRequest = challenge.request.decode().map_err(|e| {
-            MppError::invalid_challenge_reason(format!("failed to decode session request: {e}"))
+            MppError::InvalidConfig(format!("failed to decode session request: {e}"))
         })?;
 
         let chain_id = resolve_chain_id(challenge);
@@ -384,26 +424,26 @@ impl SessionProvider {
         let payee: Address = session_req
             .recipient
             .as_deref()
-            .ok_or_else(|| MppError::invalid_challenge_reason("missing recipient"))?
+            .ok_or_else(|| {
+                MppError::InvalidConfig("session challenge missing recipient".to_string())
+            })?
             .parse()
-            .map_err(|e| {
-                MppError::invalid_challenge_reason(format!("invalid recipient address: {e}"))
-            })?;
-        let currency: Address = session_req.currency.parse().map_err(|e| {
-            MppError::invalid_challenge_reason(format!("invalid currency address: {e}"))
-        })?;
+            .map_err(|_e| MppError::InvalidConfig("invalid recipient address".to_string()))?;
+        let currency: Address = session_req
+            .currency
+            .parse()
+            .map_err(|_e| MppError::InvalidConfig("invalid currency address".to_string()))?;
         let amount: u128 = session_req.parse_amount()?;
 
-        let payer = match &self.signing_mode {
-            TempoSigningMode::Keychain { wallet, .. } => *wallet,
-            TempoSigningMode::Direct => self.signer.address(),
-        };
+        let payer = self.signing_mode.from_address(self.signer.address());
 
         let key = Self::channel_key(&payee, &currency, &escrow_contract);
 
         let voucher_info = {
             let mut channels = self.channels.lock().unwrap();
-            if let Some(entry) = channels.get_mut(&key) {
+            if let Some(entry) = channels.get_mut(&key)
+                && entry.opened
+            {
                 let deposit = self
                     .persisted
                     .lock()
@@ -436,10 +476,9 @@ impl SessionProvider {
                         "channel deposit exhausted, topping up"
                     );
 
-                    let fee_payer_opt: Option<Address> =
-                        if session_req.fee_payer() { Some(payee) } else { None };
-                    let payload =
-                        self.create_topup_tx(&entry, additional, currency, fee_payer_opt).await?;
+                    let payload = self
+                        .create_topup_tx(&entry, additional, currency, session_req.fee_payer())
+                        .await?;
 
                     if let Some(p) = self.persisted.lock().unwrap().get_mut(&key) {
                         let old_deposit: u128 = p.deposit.parse().unwrap_or(0);
