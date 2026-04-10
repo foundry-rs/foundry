@@ -15,7 +15,7 @@ pub extern crate foundry_cheatcodes_spec as spec;
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use foundry_evm_core::{
     backend::DatabaseExt,
     evm::{FoundryContextFor, FoundryEvmNetwork},
@@ -173,7 +173,7 @@ pub enum ExternalCheatcodeOutcome {
     Revert(Error),
 }
 
-/// Read-only host interface for external cheatcode handlers.
+/// Host interface for external cheatcode handlers.
 ///
 /// Provides object-safe, non-generic access to EVM state without exposing
 /// Foundry internals or the `FoundryEvmNetwork` type parameter.
@@ -182,10 +182,22 @@ pub trait CheatcodeHost {
     fn caller(&self) -> Address;
     /// Returns the gas limit of the current cheatcode call.
     fn gas_limit(&self) -> u64;
+
+    // -- reads --
+
     /// Loads a storage slot value for the given account.
     fn load(&mut self, account: Address, slot: U256) -> Result<U256>;
     /// Returns the balance of the given account.
     fn balance(&mut self, account: Address) -> Result<U256>;
+
+    // -- writes --
+
+    /// Stores a value into a storage slot. Equivalent to `vm.store`.
+    fn store(&mut self, account: Address, slot: U256, value: U256) -> Result<()>;
+    /// Sets the balance of an account. Equivalent to `vm.deal`.
+    fn set_balance(&mut self, account: Address, value: U256) -> Result<()>;
+    /// Sets the runtime bytecode of an account. Equivalent to `vm.etch`.
+    fn set_code(&mut self, account: Address, code: Bytes) -> Result<()>;
 }
 
 /// Trait for defining custom cheatcodes that extend Foundry's built-in set.

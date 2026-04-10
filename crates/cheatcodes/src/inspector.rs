@@ -621,6 +621,34 @@ impl<FEN: FoundryEvmNetwork> crate::CheatcodeHost for CheatcodeHostImpl<'_, '_, 
         let acc = self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
         Ok(acc.data.info.balance)
     }
+
+    fn store(&mut self, account: Address, slot: U256, value: U256) -> crate::Result<()> {
+        // Match the same write path as the built-in vm.store cheatcode.
+        self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
+        self.ecx.journal_mut().touch_account(account);
+        self.ecx.journal_mut().sstore(account, slot, value).map_err(|e| fmt_err!("{e}"))?;
+        Ok(())
+    }
+
+    fn set_balance(&mut self, account: Address, value: U256) -> crate::Result<()> {
+        // Match the same write path as the built-in vm.deal cheatcode.
+        self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
+        self.ecx.journal_mut().touch_account(account);
+        let acc =
+            self.ecx.journal_mut().evm_state_mut().get_mut(&account).expect("account is loaded");
+        acc.info.balance = value;
+        Ok(())
+    }
+
+    fn set_code(&mut self, account: Address, code: Bytes) -> crate::Result<()> {
+        // Match the same write path as the built-in vm.etch cheatcode.
+        use revm::bytecode::Bytecode;
+        self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
+        let bytecode = Bytecode::new_raw_checked(code)
+            .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
+        self.ecx.journal_mut().set_code(account, bytecode);
+        Ok(())
+    }
 }
 
 impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
