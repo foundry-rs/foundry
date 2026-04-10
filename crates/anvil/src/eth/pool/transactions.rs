@@ -515,11 +515,7 @@ impl<T> ReadyTransactions<T> {
                         if let Some(idx) = tx2.unlocks.iter().position(|i| i == &hash) {
                             tx2.unlocks.swap_remove(idx);
                         }
-                        if tx2.unlocks.is_empty() {
-                            Some(tx2.transaction.transaction.provides.clone())
-                        } else {
-                            None
-                        }
+                        tx2.unlocks.is_empty().then(|| tx2.transaction.transaction.provides.clone())
                     };
 
                     // find previous transactions

@@ -504,7 +504,7 @@ impl CreateArgs {
         sh_println!("Starting contract verification...")?;
 
         let num_of_optimizations = if let Some(optimizer) = self.build.compiler.optimize {
-            if optimizer { Some(self.build.compiler.optimizer_runs.unwrap_or(200)) } else { None }
+            optimizer.then(|| self.build.compiler.optimizer_runs.unwrap_or(200))
         } else {
             self.build.compiler.optimizer_runs
         };

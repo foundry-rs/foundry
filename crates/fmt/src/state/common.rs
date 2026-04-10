@@ -601,9 +601,10 @@ impl<'ast> State<'_, 'ast> {
                 let enabled =
                     !self.inline_config.is_disabled(Span::new(block_lo, block_lo + BytePos(1)))
                         && !self.handle_span(self.cursor.span(block_lo), true);
-                match self.peek_comment().and_then(|cmnt| {
-                    if cmnt.span.hi() < block_lo { Some((cmnt.span, cmnt.style)) } else { None }
-                }) {
+                match self
+                    .peek_comment()
+                    .and_then(|cmnt| (cmnt.span.hi() < block_lo).then_some((cmnt.span, cmnt.style)))
+                {
                     Some((span, style)) => {
                         if enabled {
                             // Inline config is not disabled and span not handled

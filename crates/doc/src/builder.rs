@@ -393,7 +393,7 @@ impl DocBuilder {
                 Some(self.config.book.clone())
             } else {
                 let book_path = self.config.book.join("book.toml");
-                if book_path.is_file() { Some(book_path) } else { None }
+                book_path.is_file().then_some(book_path)
             }
         };
 

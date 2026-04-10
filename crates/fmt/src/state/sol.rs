@@ -93,7 +93,7 @@ impl<'ast> State<'_, 'ast> {
         let cmnts = self
             .comments
             .iter()
-            .filter_map(|c| if c.pos() < span.lo() { Some(c.style) } else { None })
+            .filter_map(|c| (c.pos() < span.lo()).then_some(c.style))
             .collect::<Vec<_>>();
 
         if let Some(first) = cmnts.first()

@@ -120,7 +120,7 @@ impl FeeManager {
     }
 
     pub fn excess_blob_gas_and_price(&self) -> Option<BlobExcessGasAndPrice> {
-        if self.is_eip4844() { Some(*self.blob_excess_gas_and_price.read()) } else { None }
+        self.is_eip4844().then(|| *self.blob_excess_gas_and_price.read())
     }
 
     pub fn base_fee_per_blob_gas(&self) -> u128 {

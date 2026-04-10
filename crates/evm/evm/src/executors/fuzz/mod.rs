@@ -437,7 +437,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             self.config.corpus.clone(),
             strategy.boxed(),
             // Master worker replays the persisted corpus using the executor
-            if worker_id == 0 { Some(&self.executor_f) } else { None },
+            (worker_id == 0).then_some(&self.executor_f),
             Some(func),
             None, // fuzzed_contracts for invariant tests
         )?;

@@ -201,11 +201,7 @@ impl<'sess> State<'sess, '_> {
         Self {
             s: pp::Printer::new(
                 config.line_length,
-                if matches!(config.style, IndentStyle::Tab) {
-                    Some(config.tab_width)
-                } else {
-                    None
-                },
+                matches!(config.style, IndentStyle::Tab).then(|| config.tab_width),
             ),
             ind: config.tab_width as isize,
             sm,

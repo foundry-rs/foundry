@@ -598,20 +598,12 @@ impl CallTraceDecoder {
             "broadcast" | "startBroadcast" => {
                 // Redact private key if defined
                 // broadcast(uint256) / startBroadcast(uint256)
-                if !func.inputs.is_empty() && func.inputs[0].ty == "uint256" {
-                    Some(vec!["<pk>".to_string()])
-                } else {
-                    None
-                }
+                (!func.inputs.is_empty() && func.inputs[0].ty == "uint256").then(|| vec!["<pk>".to_string()])
             }
             "getNonce" => {
                 // Redact private key if defined
                 // getNonce(Wallet)
-                if !func.inputs.is_empty() && func.inputs[0].ty == "tuple" {
-                    Some(vec!["<pk>".to_string()])
-                } else {
-                    None
-                }
+                (!func.inputs.is_empty() && func.inputs[0].ty == "tuple").then(|| vec!["<pk>".to_string()])
             }
             "sign" | "signP256" => {
                 let mut decoded = func.abi_decode_input(&data[SELECTOR_LEN..]).ok()?;
