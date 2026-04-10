@@ -683,3 +683,87 @@ pub(crate) fn matches_contract(
     (filter.matches_path(path) && filter.matches_contract(contract_name))
         && functions.into_iter().any(|func| filter.matches_test_function(func.borrow()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_json_abi::StateMutability;
+    use alloy_primitives::hex;
+    use foundry_common::EmptyTestFilter;
+    use foundry_evm::core::evm::EthEvmNetwork;
+    use revm::context::{BlockEnv, TxEnv};
+    use semver::Version;
+    use std::path::PathBuf;
+
+    /// Creates an ArtifactId for testing.
+    fn test_artifact_id(name: &str) -> ArtifactId {
+        ArtifactId {
+            path: PathBuf::from(format!("out/{name}.json")),
+            name: name.to_string(),
+            source: PathBuf::from(format!("src/{name}.raw")),
+            version: Version::new(0, 0, 1),
+            build_id: "test".to_string(),
+            profile: "default".to_string(),
+        }
+    }
+
+    /// Creates a minimal test contract from raw EVM bytecode.
+    ///
+    /// The runtime code is a single STOP opcode (0x00) — any function call succeeds
+    /// because it doesn't revert. The constructor deploys this 1-byte runtime.
+    fn minimal_test_contract() -> (ArtifactId, TestContract) {
+        // Constructor: PUSH1 1, PUSH1 0x0c, PUSH1 0, CODECOPY, PUSH1 1, PUSH1 0, RETURN
+        // Runtime: STOP
+        let bytecode = hex!("6001600c60003960016000f300");
+
+        let mut abi = JsonAbi::new();
+        abi.functions.entry("testAlwaysPass".to_string()).or_default().push(Function {
+            name: "testAlwaysPass".to_string(),
+            inputs: vec![],
+            outputs: vec![],
+            state_mutability: StateMutability::NonPayable,
+        });
+
+        let id = test_artifact_id("MinimalTest");
+        let contract = TestContract { abi, bytecode: bytecode.into() };
+        (id, contract)
+    }
+
+    /// End-to-end integration test proving a non-Solidity compiler can use Foundry's test
+    /// runner via `build_from_artifacts()`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_build_from_artifacts_e2e() {
+        let (id, contract) = minimal_test_contract();
+
+        let mut deployable = DeployableContracts::default();
+        deployable.insert(id, contract);
+
+        let config = Arc::new(Config::default());
+        let evm_opts: EvmOpts = Config::figment().extract().unwrap();
+        let (evm_env, tx_env, _) = evm_opts.env::<_, BlockEnv, TxEnv>().await.unwrap();
+
+        let artifacts = PreLinkedArtifacts {
+            deployable_contracts: deployable,
+            known_contracts: ContractsByArtifact::default(),
+            libs_to_deploy: vec![],
+            libraries: Default::default(),
+            fuzz_literals: LiteralsDictionary::default(),
+            inline_config: InlineConfig::default(),
+        };
+
+        let mut runner = MultiContractRunnerBuilder::new(config)
+            .build_from_artifacts::<EthEvmNetwork>(artifacts, evm_env, tx_env, evm_opts)
+            .expect("build_from_artifacts should succeed");
+
+        assert_eq!(runner.contracts.len(), 1, "should have exactly 1 deployable contract");
+
+        let filter = EmptyTestFilter::default();
+        let results = runner.test_collect(&filter).expect("test execution should succeed");
+
+        assert!(!results.is_empty(), "should have test results");
+        for (name, suite) in &results {
+            assert_eq!(suite.failed(), 0, "suite {name} should have no failures");
+            assert!(suite.passed() > 0, "suite {name} should have at least one passing test");
+        }
+    }
+}
