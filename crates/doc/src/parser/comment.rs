@@ -96,7 +96,7 @@ impl Comment {
 }
 
 /// The collection of natspec [Comment] items.
-#[derive(Clone, Debug, Default, PartialEq, Deref, DerefMut)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deref, DerefMut)]
 pub struct Comments(Vec<Comment>);
 
 /// Forward the [Comments] function implementation to the [CommentsRef]
@@ -152,7 +152,7 @@ impl From<Vec<DocCommentTag>> for Comments {
 }
 
 /// The collection of references to natspec [Comment] items.
-#[derive(Debug, Default, PartialEq, Deref)]
+#[derive(Debug, Default, PartialEq, Eq, Deref)]
 pub struct CommentsRef<'a>(Vec<&'a Comment>);
 
 impl<'a> CommentsRef<'a> {
