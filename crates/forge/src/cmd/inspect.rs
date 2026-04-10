@@ -679,8 +679,7 @@ impl PartialEq<ContractOutputSelection> for ContractArtifactField {
         type Eos = EvmOutputSelection;
         matches!(
             (self, other),
-            (Self::Abi | Self::Events, Cos::Abi)
-                | (Self::Errors, Cos::Abi)
+            (Self::Abi | Self::Events | Self::Errors, Cos::Abi)
                 | (Self::Bytecode, Cos::Evm(Eos::ByteCode(_)))
                 | (Self::DeployedBytecode, Cos::Evm(Eos::DeployedByteCode(_)))
                 | (Self::Assembly | Self::AssemblyOptimized, Cos::Evm(Eos::Assembly))

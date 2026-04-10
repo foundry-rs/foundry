@@ -436,8 +436,8 @@ impl State<'_, '_> {
                 // - ends with ',' a line break or a space are required.
                 // - ends with ';' a line break is required.
                 prev_needs_space = match line.chars().next_back() {
-                    Some('[') | Some('(') | Some('{') => self.config.bracket_spacing,
-                    Some(',') | Some(';') => true,
+                    Some('[' | '(' | '{') => self.config.bracket_spacing,
+                    Some(',' | ';') => true,
                     _ => false,
                 };
             }
