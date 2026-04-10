@@ -183,14 +183,10 @@ pub trait CheatcodeHost {
     /// Returns the gas limit of the current cheatcode call.
     fn gas_limit(&self) -> u64;
 
-    // -- reads --
-
     /// Loads a storage slot value for the given account.
     fn load(&mut self, account: Address, slot: U256) -> Result<U256>;
     /// Returns the balance of the given account.
     fn balance(&mut self, account: Address) -> Result<U256>;
-
-    // -- writes --
 
     /// Stores a value into a storage slot. Equivalent to `vm.store`.
     fn store(&mut self, account: Address, slot: U256, value: U256) -> Result<()>;
@@ -234,6 +230,6 @@ pub trait ExternalCheatcode: Send + Sync + std::fmt::Debug + 'static {
     /// Called when an unknown cheatcode selector is encountered.
     ///
     /// `calldata` contains the full ABI-encoded call data (including the 4-byte selector).
-    /// Use `host` to read EVM state (storage, balances).
+    /// Use `host` to read and write EVM state (storage, balances, bytecode).
     fn call(&self, host: &mut dyn CheatcodeHost, calldata: &[u8]) -> ExternalCheatcodeOutcome;
 }

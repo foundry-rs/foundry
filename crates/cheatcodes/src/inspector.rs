@@ -2804,83 +2804,156 @@ fn will_exit(action: &InterpreterAction) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ExternalCheatcodeOutcome;
 
-    /// A test external cheatcode handler that responds to selector `0xdeadbeef`.
-    /// Returns ABI-encoded uint256(42).
+    /// Handles selector `0xdeadbeef`, returns ABI-encoded uint256(42).
     #[derive(Debug)]
-    struct TestExternalCheatcode;
+    struct ReturnHandler;
 
-    impl crate::ExternalCheatcode for TestExternalCheatcode {
+    impl crate::ExternalCheatcode for ReturnHandler {
         fn call(
             &self,
             _host: &mut dyn crate::CheatcodeHost,
             calldata: &[u8],
-        ) -> crate::ExternalCheatcodeOutcome {
+        ) -> ExternalCheatcodeOutcome {
             if calldata.len() >= 4 && calldata[..4] == [0xde, 0xad, 0xbe, 0xef] {
                 let mut ret = vec![0u8; 32];
                 ret[31] = 42;
-                crate::ExternalCheatcodeOutcome::Return(ret)
+                ExternalCheatcodeOutcome::Return(ret)
             } else {
-                crate::ExternalCheatcodeOutcome::Unhandled
+                ExternalCheatcodeOutcome::Unhandled
             }
         }
     }
 
-    /// A handler that reverts for selector `0xcafebabe`.
+    /// Handles selector `0xcafebabe`, reverts with a custom error.
     #[derive(Debug)]
-    struct RevertingExternalCheatcode;
+    struct RevertHandler;
 
-    impl crate::ExternalCheatcode for RevertingExternalCheatcode {
+    impl crate::ExternalCheatcode for RevertHandler {
         fn call(
             &self,
             _host: &mut dyn crate::CheatcodeHost,
             calldata: &[u8],
-        ) -> crate::ExternalCheatcodeOutcome {
+        ) -> ExternalCheatcodeOutcome {
             if calldata.len() >= 4 && calldata[..4] == [0xca, 0xfe, 0xba, 0xbe] {
-                crate::ExternalCheatcodeOutcome::Revert(fmt_err!(
-                    "custom revert from external cheatcode"
-                ))
+                ExternalCheatcodeOutcome::Revert(fmt_err!("custom revert"))
             } else {
-                crate::ExternalCheatcodeOutcome::Unhandled
+                ExternalCheatcodeOutcome::Unhandled
             }
         }
     }
 
     #[test]
-    fn register_external_cheatcode() {
+    fn register_and_count() {
         let mut cheats = Cheatcodes::default();
         assert!(cheats.external_cheatcodes.is_empty());
 
-        cheats.register_external_cheatcode(Arc::new(TestExternalCheatcode));
-        assert_eq!(cheats.external_cheatcodes.len(), 1);
-
-        cheats.register_external_cheatcode(Arc::new(RevertingExternalCheatcode));
+        cheats.register_external_cheatcode(Arc::new(ReturnHandler));
+        cheats.register_external_cheatcode(Arc::new(RevertHandler));
         assert_eq!(cheats.external_cheatcodes.len(), 2);
     }
 
     #[test]
-    fn external_cheatcodes_are_cloneable() {
+    fn clone_shares_handlers() {
         let mut cheats = Cheatcodes::default();
-        cheats.register_external_cheatcode(Arc::new(TestExternalCheatcode));
+        cheats.register_external_cheatcode(Arc::new(ReturnHandler));
 
         let cloned = cheats.clone();
         assert_eq!(cloned.external_cheatcodes.len(), 1);
         assert!(Arc::ptr_eq(&cheats.external_cheatcodes[0], &cloned.external_cheatcodes[0]));
     }
 
+    /// Simulates the dispatch loop from `apply_cheatcode` without a full EVM.
+    fn dispatch(
+        handlers: &[Arc<dyn crate::ExternalCheatcode>],
+        calldata: &[u8],
+    ) -> ExternalCheatcodeOutcome {
+        for handler in handlers {
+            match handler.call(&mut StubHost, calldata) {
+                ExternalCheatcodeOutcome::Unhandled => continue,
+                outcome => return outcome,
+            }
+        }
+        ExternalCheatcodeOutcome::Unhandled
+    }
+
+    /// Minimal stub host for unit tests. Handlers under test don't access EVM state.
+    struct StubHost;
+
+    impl crate::CheatcodeHost for StubHost {
+        fn caller(&self) -> Address {
+            Address::ZERO
+        }
+        fn gas_limit(&self) -> u64 {
+            0
+        }
+        fn load(&mut self, _: Address, _: U256) -> crate::Result<U256> {
+            Ok(U256::ZERO)
+        }
+        fn balance(&mut self, _: Address) -> crate::Result<U256> {
+            Ok(U256::ZERO)
+        }
+        fn store(&mut self, _: Address, _: U256, _: U256) -> crate::Result<()> {
+            Ok(())
+        }
+        fn set_balance(&mut self, _: Address, _: U256) -> crate::Result<()> {
+            Ok(())
+        }
+        fn set_code(&mut self, _: Address, _: Bytes) -> crate::Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
-    fn multiple_handlers_can_coexist() {
-        let mut cheats = Cheatcodes::default();
-        cheats.register_external_cheatcode(Arc::new(TestExternalCheatcode));
-        cheats.register_external_cheatcode(Arc::new(RevertingExternalCheatcode));
+    fn dispatch_first_skips_second_handles() {
+        let handlers: Vec<Arc<dyn crate::ExternalCheatcode>> =
+            vec![Arc::new(RevertHandler), Arc::new(ReturnHandler)];
 
-        let handlers = cheats.external_cheatcodes.clone();
-        assert_eq!(handlers.len(), 2);
+        match dispatch(&handlers, &[0xde, 0xad, 0xbe, 0xef]) {
+            ExternalCheatcodeOutcome::Return(ret) => {
+                assert_eq!(ret.len(), 32);
+                assert_eq!(ret[31], 42);
+            }
+            other => panic!("expected Return, got {other:?}"),
+        }
+    }
 
-        // Verify Debug impls work (required by trait bound)
-        let dbg0 = format!("{:?}", handlers[0]);
-        let dbg1 = format!("{:?}", handlers[1]);
-        assert!(dbg0.contains("TestExternal"));
-        assert!(dbg1.contains("Reverting"));
+    #[test]
+    fn dispatch_revert_short_circuits() {
+        let handlers: Vec<Arc<dyn crate::ExternalCheatcode>> =
+            vec![Arc::new(RevertHandler), Arc::new(ReturnHandler)];
+
+        match dispatch(&handlers, &[0xca, 0xfe, 0xba, 0xbe]) {
+            ExternalCheatcodeOutcome::Revert(e) => {
+                assert!(e.to_string().contains("custom revert"), "got: {e}");
+            }
+            other => panic!("expected Revert, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dispatch_no_match_returns_unhandled() {
+        let handlers: Vec<Arc<dyn crate::ExternalCheatcode>> =
+            vec![Arc::new(ReturnHandler), Arc::new(RevertHandler)];
+
+        assert!(matches!(
+            dispatch(&handlers, &[0x11, 0x22, 0x33, 0x44]),
+            ExternalCheatcodeOutcome::Unhandled
+        ));
+    }
+
+    #[test]
+    fn dispatch_empty_handlers() {
+        assert!(matches!(
+            dispatch(&[], &[0xde, 0xad, 0xbe, 0xef]),
+            ExternalCheatcodeOutcome::Unhandled
+        ));
+    }
+
+    #[test]
+    fn dispatch_short_calldata_is_unhandled() {
+        let handlers: Vec<Arc<dyn crate::ExternalCheatcode>> = vec![Arc::new(ReturnHandler)];
+        assert!(matches!(dispatch(&handlers, &[0xde, 0xad]), ExternalCheatcodeOutcome::Unhandled));
     }
 }
