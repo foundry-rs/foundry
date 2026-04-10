@@ -15,7 +15,7 @@ pub extern crate foundry_cheatcodes_spec as spec;
 #[macro_use]
 extern crate tracing;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use foundry_evm_core::{
     backend::DatabaseExt,
     evm::{FoundryContextFor, FoundryEvmNetwork},
@@ -161,36 +161,59 @@ fn precompile_error(address: &Address) -> Error {
     fmt_err!("cannot use precompile {address} as an argument")
 }
 
+/// The outcome of an external cheatcode call.
+#[derive(Debug)]
+pub enum ExternalCheatcodeOutcome {
+    /// This handler does not recognize the selector; try the next handler.
+    Unhandled,
+    /// The handler recognized the selector and succeeded. Contains ABI-encoded return data.
+    Return(Vec<u8>),
+    /// The handler recognized the selector but wants to revert with this error.
+    Revert(Error),
+}
+
+/// Read-only host interface for external cheatcode handlers.
+///
+/// Provides object-safe, non-generic access to EVM state without exposing
+/// Foundry internals or the `FoundryEvmNetwork` type parameter.
+pub trait CheatcodeHost {
+    /// Returns the original `msg.sender` of the cheatcode call.
+    fn caller(&self) -> Address;
+    /// Returns the gas limit of the current cheatcode call.
+    fn gas_limit(&self) -> u64;
+    /// Loads a storage slot value for the given account.
+    fn load(&mut self, account: Address, slot: U256) -> Result<U256>;
+    /// Returns the balance of the given account.
+    fn balance(&mut self, account: Address) -> Result<U256>;
+}
+
 /// Trait for defining custom cheatcodes that extend Foundry's built-in set.
 ///
 /// Implement this trait to add new cheatcodes without forking Foundry. External cheatcodes
 /// are dispatched when a call to the cheatcode address (`0x7109...`) does not match any
 /// built-in cheatcode selector.
 ///
-/// # Return value
-///
-/// The return type uses a tri-state convention:
-/// - `Ok(Some(bytes))` — this handler recognized the selector and succeeded; `bytes` is ABI-encoded
-///   return data.
-/// - `Ok(None)` — this handler does not recognize the selector; try the next handler.
-/// - `Err(e)` — this handler recognized the selector but wants to revert with error `e`.
-///
 /// # Example
 ///
 /// ```ignore
-/// use alloy_primitives::Bytes;
-/// use foundry_cheatcodes::ExternalCheatcode;
+/// use alloy_primitives::Address;
+/// use foundry_cheatcodes::{CheatcodeHost, ExternalCheatcode, ExternalCheatcodeOutcome};
 ///
+/// #[derive(Debug)]
 /// struct MyCheatcodes;
 ///
 /// impl ExternalCheatcode for MyCheatcodes {
-///     fn call(&self, calldata: &[u8]) -> foundry_cheatcodes::Result<Option<Vec<u8>>> {
-///         // Return Ok(None) for selectors you don't handle
+///     fn call(
+///         &self,
+///         host: &mut dyn CheatcodeHost,
+///         calldata: &[u8],
+///     ) -> ExternalCheatcodeOutcome {
 ///         if calldata.len() < 4 {
-///             return Ok(None);
+///             return ExternalCheatcodeOutcome::Unhandled;
 ///         }
 ///         // Decode calldata and implement custom logic
-///         Ok(Some(Bytes::new().to_vec()))
+///         let balance = host.balance(Address::ZERO);
+///         ExternalCheatcodeOutcome::Return(Vec::new())
 ///     }
 /// }
 /// ```
@@ -198,7 +221,6 @@ pub trait ExternalCheatcode: Send + Sync + std::fmt::Debug + 'static {
     /// Called when an unknown cheatcode selector is encountered.
     ///
     /// `calldata` contains the full ABI-encoded call data (including the 4-byte selector).
-    ///
-    /// Return `Ok(Some(ret))` on success, `Ok(None)` if unhandled, or `Err(e)` to revert.
-    fn call(&self, calldata: &[u8]) -> Result<Option<Vec<u8>>>;
+    /// Use `host` to read EVM state (storage, balances).
+    fn call(&self, host: &mut dyn CheatcodeHost, calldata: &[u8]) -> ExternalCheatcodeOutcome;
 }

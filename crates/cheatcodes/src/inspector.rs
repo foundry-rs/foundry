@@ -592,6 +592,34 @@ impl Default for Cheatcodes {
     }
 }
 
+/// Internal implementation of [`CheatcodeHost`] that bridges the generic EVM context
+/// to the object-safe host trait.
+struct CheatcodeHostImpl<'a, 'db, FEN: FoundryEvmNetwork + 'db> {
+    ecx: &'a mut FoundryContextFor<'db, FEN>,
+    caller: Address,
+    gas_limit: u64,
+}
+
+impl<FEN: FoundryEvmNetwork> crate::CheatcodeHost for CheatcodeHostImpl<'_, '_, FEN> {
+    fn caller(&self) -> Address {
+        self.caller
+    }
+
+    fn gas_limit(&self) -> u64 {
+        self.gas_limit
+    }
+
+    fn load(&mut self, account: Address, slot: U256) -> crate::Result<U256> {
+        let val = self.ecx.journal_mut().sload(account, slot).map_err(|e| fmt_err!("{e}"))?;
+        Ok(val.data)
+    }
+
+    fn balance(&mut self, account: Address) -> crate::Result<U256> {
+        let acc = self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
+        Ok(acc.data.info.balance)
+    }
+}
+
 impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Creates a new `Cheatcodes` with the given settings.
     pub fn new(config: Arc<CheatsConfig>) -> Self {
@@ -706,10 +734,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 let calldata = call.input.bytes(ecx);
 
                 for handler in &handlers {
-                    match handler.call(&calldata) {
-                        Ok(Some(retdata)) => return Ok(retdata),
-                        Ok(None) => continue,
-                        Err(e) => return Err(e),
+                    let mut host: CheatcodeHostImpl<'_, '_, FEN> =
+                        CheatcodeHostImpl { ecx: &mut *ecx, caller, gas_limit: call.gas_limit };
+                    match handler.call(&mut host, &calldata) {
+                        crate::ExternalCheatcodeOutcome::Return(retdata) => {
+                            return Ok(retdata);
+                        }
+                        crate::ExternalCheatcodeOutcome::Revert(e) => {
+                            return Err(e);
+                        }
+                        crate::ExternalCheatcodeOutcome::Unhandled => continue,
                     }
                 }
 
@@ -2722,13 +2756,17 @@ mod tests {
     struct TestExternalCheatcode;
 
     impl crate::ExternalCheatcode for TestExternalCheatcode {
-        fn call(&self, calldata: &[u8]) -> Result<Option<Vec<u8>>> {
+        fn call(
+            &self,
+            _host: &mut dyn crate::CheatcodeHost,
+            calldata: &[u8],
+        ) -> crate::ExternalCheatcodeOutcome {
             if calldata.len() >= 4 && calldata[..4] == [0xde, 0xad, 0xbe, 0xef] {
                 let mut ret = vec![0u8; 32];
                 ret[31] = 42;
-                Ok(Some(ret))
+                crate::ExternalCheatcodeOutcome::Return(ret)
             } else {
-                Ok(None)
+                crate::ExternalCheatcodeOutcome::Unhandled
             }
         }
     }
@@ -2738,11 +2776,17 @@ mod tests {
     struct RevertingExternalCheatcode;
 
     impl crate::ExternalCheatcode for RevertingExternalCheatcode {
-        fn call(&self, calldata: &[u8]) -> Result<Option<Vec<u8>>> {
+        fn call(
+            &self,
+            _host: &mut dyn crate::CheatcodeHost,
+            calldata: &[u8],
+        ) -> crate::ExternalCheatcodeOutcome {
             if calldata.len() >= 4 && calldata[..4] == [0xca, 0xfe, 0xba, 0xbe] {
-                Err(fmt_err!("custom revert from external cheatcode"))
+                crate::ExternalCheatcodeOutcome::Revert(fmt_err!(
+                    "custom revert from external cheatcode"
+                ))
             } else {
-                Ok(None)
+                crate::ExternalCheatcodeOutcome::Unhandled
             }
         }
     }
