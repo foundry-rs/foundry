@@ -579,7 +579,17 @@ async fn run_authorize(
 ) -> Result<()> {
     let enforce = enforce_limits || !limits.is_empty();
 
-    let calldata = if !allowed_calls.is_empty() {
+    let calldata = if allowed_calls.is_empty() {
+        // Use the legacy authorizeKey when no scopes are needed.
+        IAccountKeychain::authorizeKeyCall {
+            keyId: key_address,
+            signatureType: key_type,
+            expiry,
+            enforceLimits: enforce,
+            limits,
+        }
+        .abi_encode()
+    } else {
         // Use the T3+ authorizeKey overload with KeyRestrictions when scopes are provided.
         let sig_type_u8 = match key_type {
             SignatureType::Secp256k1 => 0u8,
@@ -601,16 +611,6 @@ async fn run_authorize(
             keyId: key_address,
             signatureType: sig_type_u8,
             config: restrictions,
-        }
-        .abi_encode()
-    } else {
-        // Use the legacy authorizeKey when no scopes are needed.
-        IAccountKeychain::authorizeKeyCall {
-            keyId: key_address,
-            signatureType: key_type,
-            expiry,
-            enforceLimits: enforce,
-            limits,
         }
         .abi_encode()
     };
