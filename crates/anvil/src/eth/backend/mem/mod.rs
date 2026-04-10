@@ -1431,21 +1431,23 @@ impl<N: Network> Backend<N> {
 
         // Extract Tempo-specific fields before `build_call_env` consumes `other`.
         let tempo_overrides = self.is_tempo().then(|| {
-            // Parse the raw strings with FromStr instead.
-            fn parse_hex<T: std::str::FromStr>(
-                other: &OtherFields,
-                key: &str,
-            ) -> Option<T> {
-                other.get(key).and_then(|v| v.as_str()).and_then(|s| s.parse().ok())
-            }
-
             let fee_token =
                 request.other.get_deserialized::<Address>("feeToken").and_then(|r| r.ok());
-            let nonce_key = parse_hex::<U256>(&request.other, "nonceKey").unwrap_or_default();
-            let valid_before =
-                parse_hex::<U256>(&request.other, "validBefore").map(|v| v.saturating_to::<u64>());
-            let valid_after =
-                parse_hex::<U256>(&request.other, "validAfter").map(|v| v.saturating_to::<u64>());
+            let nonce_key = request
+                .other
+                .get_deserialized::<U256>("nonceKey")
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            let valid_before = request
+                .other
+                .get_deserialized::<U256>("validBefore")
+                .and_then(|r| r.ok())
+                .map(|v| v.saturating_to::<u64>());
+            let valid_after = request
+                .other
+                .get_deserialized::<U256>("validAfter")
+                .and_then(|r| r.ok())
+                .map(|v| v.saturating_to::<u64>());
             (fee_token, nonce_key, valid_before, valid_after)
         });
 
