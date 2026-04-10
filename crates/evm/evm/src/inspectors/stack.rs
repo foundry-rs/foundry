@@ -459,13 +459,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
 
     fn set_in_inner_context(&mut self, enabled: bool, original_origin: Option<Address>) {
         self.in_inner_context = enabled;
-        self.inner_context_data = if enabled {
-            Some(InnerContextData {
-                original_origin: original_origin.expect("origin required when enabling inner ctx"),
-            })
-        } else {
-            None
-        };
+        self.inner_context_data = enabled.then(|| InnerContextData {
+            original_origin: original_origin.expect("origin required when enabling inner ctx"),
+        });
     }
 }
 

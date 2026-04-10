@@ -78,7 +78,7 @@ impl VerifyBundle {
             cache_path: Some(project.paths.cache.clone()),
             lib_paths: project.paths.libraries.clone(),
             hardhat: config.profile == Config::HARDHAT_PROFILE,
-            config_path: if config_path.exists() { Some(config_path) } else { None },
+            config_path: config_path.exists().then_some(config_path),
         };
 
         let via_ir = config.via_ir;

@@ -628,7 +628,7 @@ pub fn find_matching_contract_artifact(
         // same but `id.path` is different.
         let artifact = possible_targets
             .iter()
-            .find_map(|(id, artifact)| if id.profile == "default" { Some(*artifact) } else { None })
+            .find_map(|(id, artifact)| (id.profile == "default").then_some(*artifact))
             .unwrap_or(target_artifact);
 
         Ok(artifact.clone())

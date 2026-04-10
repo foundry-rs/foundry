@@ -202,7 +202,7 @@ impl BindArgs {
             .get_json_files(artifacts)?
             .filter_map(|(name, path)| {
                 trace!(?path, "parsing SolMacroGen from file");
-                if dup.insert(name.clone()) { Some(SolMacroGen::new(path, name)) } else { None }
+                dup.insert(name.clone()).then(|| SolMacroGen::new(path, name))
             })
             .collect::<Vec<_>>();
 
