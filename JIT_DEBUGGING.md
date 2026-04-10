@@ -27,6 +27,7 @@ wrong return data), you have a JIT correctness bug.
 | `--jit-dump-dir DIR` | Dump IR, assembly, and bytecode analysis per contract |
 | `--jit-opt-level N` | LLVM opt level: 0=None, 1=Less, 2=Default, 3=Aggressive |
 | `--jit-no-dedup` | Disable block deduplication pass |
+| `--jit-no-dse` | Disable dead store elimination pass |
 | `--jit-debug-assertions` | Insert runtime stack bounds checks |
 
 ## Step-by-step debugging workflow
@@ -67,10 +68,18 @@ cast run <TX_HASH> --rpc-url <RPC> --jit --quick --jit-opt-level 0
 
 # Disable dedup (to check if it's a dedup-related bug).
 cast run <TX_HASH> --rpc-url <RPC> --jit --quick --jit-no-dedup
+
+# Disable DSE (to check if it's a dead store elimination bug).
+cast run <TX_HASH> --rpc-url <RPC> --jit --quick --jit-no-dse
+
+# Disable both dedup and DSE.
+cast run <TX_HASH> --rpc-url <RPC> --jit --quick --jit-no-dedup --jit-no-dse
 ```
 
-If `--jit-no-dedup` fixes the issue, the bug is in the dedup pass or in how
-rebuild_cfg / DSE interact with deduped dead code.
+**Binary search by pass:**
+- `--jit-no-dedup` fixes it → bug is in dedup or rebuild_cfg's interaction with dead code
+- `--jit-no-dse` fixes it → DSE is killing a live stack value
+- Both needed → dedup creates a scenario that DSE mishandles (the most common pattern)
 
 ### 4. Read the bytecode dump
 

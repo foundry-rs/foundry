@@ -151,6 +151,12 @@ pub struct RunArgs {
     #[arg(long)]
     pub jit_no_dedup: bool,
 
+    /// Disable the dead store elimination pass in the JIT compiler.
+    ///
+    /// Useful for isolating DSE-related JIT correctness bugs.
+    #[arg(long)]
+    pub jit_no_dse: bool,
+
     /// Enable debug assertions in JIT-compiled code.
     ///
     /// Inserts runtime stack bounds checks that panic on violation.
@@ -191,6 +197,7 @@ impl RunArgs {
                     dump_dir: self.jit_dump_dir.clone(),
                     debug_assertions: self.jit_debug_assertions,
                     no_dedup: self.jit_no_dedup,
+                    no_dse: self.jit_no_dse,
                     tuning: revmc::runtime::RuntimeTuning {
                         jit_opt_level: opt_level,
                         ..Default::default()
