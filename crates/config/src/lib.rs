@@ -111,7 +111,7 @@ mod invariant;
 pub use invariant::InvariantConfig;
 
 mod inline;
-pub use inline::{InlineConfig, InlineConfigError, NatSpec};
+pub use inline::{InlineConfig, InlineConfigEntry, InlineConfigError, NatSpec};
 
 pub mod soldeer;
 use soldeer::{SoldeerConfig, SoldeerDependencyConfig};

@@ -27,8 +27,8 @@ pub struct InlineConfigEntry {
     pub function: Option<String>,
     /// The location in source for error reporting, e.g. `"10:5"`.
     pub line: String,
-    /// Raw configuration lines. Each string must include the `forge-config:` prefix,
-    /// e.g. `"forge-config: default.fuzz.runs = 1024"`.
+    /// Raw configuration lines in the same key format as `foundry.toml`,
+    /// e.g. `"default.fuzz.runs = 1024"`.
     pub config_values: Vec<String>,
 }
 
@@ -114,7 +114,12 @@ impl InlineConfig {
                 contract: entry.contract,
                 function: entry.function,
                 line: entry.line,
-                docs: entry.config_values.join("\n"),
+                docs: entry
+                    .config_values
+                    .iter()
+                    .map(|v| format!("{INLINE_CONFIG_PREFIX} {v}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
             })
             .collect();
         Self::from_natspecs(&natspecs, profiles)
@@ -253,7 +258,7 @@ mod tests {
             contract: "src/Test.sol:TestContract".to_string(),
             function: Some("testFoo".to_string()),
             line: "10:5".to_string(),
-            config_values: vec!["forge-config: default.fuzz.runs = 512".to_string()],
+            config_values: vec!["default.fuzz.runs = 512".to_string()],
         };
         let config = InlineConfig::from_entries(vec![entry], &[Profile::Default]).unwrap();
         assert!(config.contains_function("src/Test.sol:TestContract", "testFoo"));
@@ -265,7 +270,7 @@ mod tests {
             contract: "src/Test.sol:TestContract".to_string(),
             function: None,
             line: "5:1".to_string(),
-            config_values: vec!["forge-config: default.fuzz.runs = 256".to_string()],
+            config_values: vec!["default.fuzz.runs = 256".to_string()],
         };
         let config = InlineConfig::from_entries(vec![entry], &[Profile::Default]).unwrap();
         assert!(config.contains_contract("src/Test.sol:TestContract"));
@@ -277,7 +282,7 @@ mod tests {
             contract: "src/Test.sol:TestContract".to_string(),
             function: Some("testBar".to_string()),
             line: "10:5".to_string(),
-            config_values: vec!["forge-config: nonexistent.fuzz.runs = 100".to_string()],
+            config_values: vec!["nonexistent.fuzz.runs = 100".to_string()],
         };
         let result = InlineConfig::from_entries(vec![entry], &[Profile::Default]);
         assert!(result.is_err(), "Expected error for invalid profile");
