@@ -592,7 +592,7 @@ impl Default for Cheatcodes {
     }
 }
 
-/// Internal implementation of [`CheatcodeHost`] that bridges the generic EVM context
+/// Internal implementation of [`crate::CheatcodeHost`] that bridges the generic EVM context
 /// to the object-safe host trait.
 struct CheatcodeHostImpl<'a, 'db, FEN: FoundryEvmNetwork + 'db> {
     ecx: &'a mut FoundryContextFor<'db, FEN>,
