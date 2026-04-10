@@ -226,7 +226,7 @@ pub trait Db:
 
     /// Deserialize and add all chain data to the backend storage
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
-        for (addr, account) in state.accounts.into_iter() {
+        for (addr, account) in state.accounts {
             let old_account_nonce = DatabaseRef::basic_ref(self, addr)
                 .ok()
                 .and_then(|acc| acc.map(|acc| acc.nonce))
@@ -250,7 +250,7 @@ pub trait Db:
                 },
             );
 
-            for (k, v) in account.storage.into_iter() {
+            for (k, v) in account.storage {
                 self.set_storage_at(addr, k, v)?;
             }
         }

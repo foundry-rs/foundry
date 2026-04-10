@@ -1607,7 +1607,7 @@ mod tests {
         T: AsRef<str> + std::fmt::Display + 'a,
         I: IntoIterator<Item = &'a (T, DynSolType)> + 'a,
     {
-        for (input, expected) in input.into_iter() {
+        for (input, expected) in input {
             let input = input.as_ref();
             let ty = get_type_ethabi(s, input, true);
             assert_eq!(ty.as_ref(), Some(expected), "\n{input}");

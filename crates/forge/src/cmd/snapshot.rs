@@ -418,7 +418,7 @@ fn diff(
     let mut diffs = Vec::with_capacity(tests.len());
     let mut new_tests = Vec::new();
 
-    for test in tests.into_iter() {
+    for test in tests {
         if let Some(target_gas_used) =
             snaps.get(&(test.contract_name().to_string(), test.signature.clone())).cloned()
         {
