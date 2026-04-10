@@ -20,7 +20,7 @@ use std::borrow::Cow;
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 pub struct RpcCommonOpts {
     /// The RPC endpoint.
-    #[arg(short, visible_alias = "fork-url", env = "ETH_RPC_URL")]
+    #[arg(short, long, visible_alias = "fork-url", env = "ETH_RPC_URL")]
     #[serde(rename = "eth_rpc_url", skip_serializing_if = "Option::is_none")]
     pub rpc_url: Option<String>,
 
