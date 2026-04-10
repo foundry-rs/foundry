@@ -14,6 +14,23 @@ const INLINE_CONFIG_PREFIX: &str = "forge-config:";
 
 type DataMap = Map<Profile, Dict>;
 
+/// A compiler-agnostic inline configuration entry.
+///
+/// This type mirrors `foundry_compilers::InlineConfigEntry` and serves as the
+/// bridge between compiler-provided config overrides and Foundry's internal
+/// NatSpec-based `InlineConfig`.
+#[derive(Clone, Debug)]
+pub struct InlineConfigEntry {
+    /// The contract identifier, in the form `path:ContractName`.
+    pub contract: String,
+    /// The function name, if this is a function-level override.
+    pub function: Option<String>,
+    /// The location in source for error reporting, e.g. `"10:5"`.
+    pub line: String,
+    /// Raw configuration lines, e.g. `"default.fuzz.runs = 1024"`.
+    pub config_values: Vec<String>,
+}
+
 /// Errors returned when parsing inline config.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum InlineConfigErrorKind {
@@ -79,6 +96,27 @@ impl InlineConfig {
             natspec.validate_profiles(profiles)?;
         }
         Ok(inline)
+    }
+
+    /// Creates a new [`InlineConfig`] from [`InlineConfigEntry`] items.
+    ///
+    /// This bridges the compiler-agnostic [`InlineConfigEntry`] type to
+    /// Foundry's internal [`NatSpec`]-based inline config, enabling non-Solidity
+    /// compilers to provide per-test configuration overrides.
+    pub fn from_entries(
+        entries: impl IntoIterator<Item = InlineConfigEntry>,
+        profiles: &[Profile],
+    ) -> eyre::Result<Self> {
+        let natspecs: Vec<NatSpec> = entries
+            .into_iter()
+            .map(|entry| NatSpec {
+                contract: entry.contract,
+                function: entry.function,
+                line: entry.line,
+                docs: entry.config_values.join("\n"),
+            })
+            .collect();
+        Self::from_natspecs(&natspecs, profiles)
     }
 
     /// Inserts a new [`NatSpec`] into the [`InlineConfig`].

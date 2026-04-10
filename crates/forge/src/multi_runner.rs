@@ -47,6 +47,24 @@ pub struct TestContract {
 
 pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
 
+/// Pre-linked artifacts ready for the test runner.
+///
+/// This is the compiler-agnostic input to [`MultiContractRunnerBuilder::build_from_artifacts`].
+/// A compiler produces these artifacts after compilation and linking, enabling non-Solidity
+/// compilers to use Foundry's test runner without going through `ProjectCompileOutput`.
+pub struct PreLinkedArtifacts {
+    /// Contracts that have test functions and can be deployed.
+    pub deployable_contracts: DeployableContracts,
+    /// All compiled contracts for trace decoding and cheatcode support.
+    pub known_contracts: ContractsByArtifact,
+    /// Libraries that need deploying, in topological order.
+    pub libs_to_deploy: Vec<Bytes>,
+    /// Fuzz dictionary literals extracted from source.
+    pub fuzz_literals: LiteralsDictionary,
+    /// Per-test configuration overrides.
+    pub inline_config: InlineConfig,
+}
+
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
 #[derive(Clone, Debug)]
@@ -596,6 +614,49 @@ impl MultiContractRunnerBuilder {
                 debug: self.debug,
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
+                isolation: self.isolation,
+                early_exit: EarlyExit::new(self.fail_fast),
+                config: self.config,
+            },
+
+            fork: self.fork,
+        })
+    }
+
+    /// Builds a test runner from pre-linked artifacts.
+    ///
+    /// This is the compiler-agnostic entry point. Unlike [`build`](Self::build), this method
+    /// does not require a `ProjectCompileOutput` and accepts pre-linked artifacts directly,
+    /// enabling non-Solidity compilers to use Foundry's test runner.
+    pub fn build_from_artifacts<FEN: FoundryEvmNetwork>(
+        self,
+        artifacts: PreLinkedArtifacts,
+        evm_env: EvmEnvFor<FEN>,
+        tx_env: TxEnvFor<FEN>,
+        evm_opts: EvmOpts,
+    ) -> Result<MultiContractRunner<FEN>> {
+        let revert_decoder =
+            RevertDecoder::new().with_abis(artifacts.known_contracts.values().map(|c| &c.abi));
+
+        Ok(MultiContractRunner {
+            contracts: artifacts.deployable_contracts,
+            revert_decoder,
+            known_contracts: artifacts.known_contracts,
+            libs_to_deploy: artifacts.libs_to_deploy,
+            libraries: Default::default(),
+            analysis: None,
+            fuzz_literals: artifacts.fuzz_literals,
+
+            tcfg: TestRunnerConfig {
+                evm_opts,
+                evm_env,
+                tx_env,
+                spec_id: self.config.evm_spec_id(),
+                sender: self.sender.unwrap_or(self.config.sender),
+                line_coverage: self.line_coverage,
+                debug: self.debug,
+                decode_internal: self.decode_internal,
+                inline_config: Arc::new(artifacts.inline_config),
                 isolation: self.isolation,
                 early_exit: EarlyExit::new(self.fail_fast),
                 config: self.config,

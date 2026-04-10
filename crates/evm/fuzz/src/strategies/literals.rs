@@ -1,6 +1,6 @@
 use alloy_dyn_abi::DynSolType;
 use alloy_primitives::{
-    B256, Bytes, I256, U256, keccak256,
+    Address, B256, Bytes, I256, U256, keccak256,
     map::{B256IndexSet, HashMap, IndexSet},
 };
 use foundry_common::Analysis;
@@ -13,6 +13,26 @@ use std::{
     ops::ControlFlow,
     sync::{Arc, OnceLock},
 };
+
+/// A compiler-agnostic literal value for fuzzer dictionary seeding.
+///
+/// This type mirrors `foundry_compilers::FuzzLiteral` and serves as the bridge
+/// between compiler-provided literals and Foundry's internal `LiteralMaps`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FuzzLiteral {
+    /// An Ethereum address literal.
+    Address(Address),
+    /// An unsigned integer literal.
+    Uint(U256),
+    /// A signed integer literal.
+    Int(I256),
+    /// A fixed-size byte array literal with explicit width.
+    FixedBytes { value: Bytes, size: u8 },
+    /// A dynamic byte array literal.
+    DynBytes(Bytes),
+    /// A string literal.
+    String(String),
+}
 
 #[derive(Clone, Debug)]
 pub struct LiteralsDictionary {
@@ -65,6 +85,111 @@ impl LiteralsDictionary {
         let lock = Arc::new(OnceLock::new());
         lock.set(maps).unwrap();
         Self { maps: lock }
+    }
+
+    /// Creates a new `LiteralsDictionary` from compiler-provided fuzz literals.
+    ///
+    /// This bridges the compiler-agnostic `FuzzLiteral` type to Foundry's
+    /// internal `LiteralMaps`, enabling non-Solidity compilers to seed the
+    /// fuzz dictionary. Respects `max_values` to cap the dictionary size.
+    pub fn from_fuzz_literals(
+        literals: impl IntoIterator<Item = FuzzLiteral>,
+        max_values: usize,
+    ) -> Self {
+        let mut maps = LiteralMaps::default();
+        let mut total = 0usize;
+
+        for lit in literals {
+            if total >= max_values {
+                break;
+            }
+            match lit {
+                FuzzLiteral::Address(addr) => {
+                    if maps
+                        .words
+                        .entry(DynSolType::Address)
+                        .or_default()
+                        .insert(addr.into_word())
+                    {
+                        total += 1;
+                    }
+                }
+                FuzzLiteral::Uint(val) => {
+                    let b = B256::from(val);
+                    for bits in [8, 16, 32, 64, 128, 256] {
+                        if can_fit_uint(val, bits)
+                            && maps
+                                .words
+                                .entry(DynSolType::Uint(bits))
+                                .or_default()
+                                .insert(b)
+                        {
+                            total += 1;
+                        }
+                    }
+                }
+                FuzzLiteral::Int(val) => {
+                    let b = B256::from(val.into_raw());
+                    for bits in [16, 32, 64, 128, 256] {
+                        if can_fit_int(val, bits)
+                            && maps
+                                .words
+                                .entry(DynSolType::Int(bits))
+                                .or_default()
+                                .insert(b)
+                        {
+                            total += 1;
+                        }
+                    }
+                }
+                FuzzLiteral::FixedBytes { value, size } => {
+                    if (1..=32).contains(&size) && value.len() == size as usize {
+                        let padded = B256::right_padding_from(&value);
+                        if maps
+                            .words
+                            .entry(DynSolType::FixedBytes(size as usize))
+                            .or_default()
+                            .insert(padded)
+                        {
+                            total += 1;
+                        }
+                    }
+                }
+                FuzzLiteral::DynBytes(val) => {
+                    if maps.bytes.insert(val) {
+                        total += 1;
+                    }
+                }
+                FuzzLiteral::String(s) => {
+                    // For strings, also store keccak hash and right-padded version
+                    let hash = keccak256(s.as_bytes());
+                    if maps
+                        .words
+                        .entry(DynSolType::FixedBytes(32))
+                        .or_default()
+                        .insert(hash)
+                    {
+                        total += 1;
+                    }
+                    if s.len() <= 32 {
+                        let padded = B256::right_padding_from(s.as_bytes());
+                        if maps
+                            .words
+                            .entry(DynSolType::FixedBytes(32))
+                            .or_default()
+                            .insert(padded)
+                        {
+                            total += 1;
+                        }
+                    }
+                    if maps.strings.insert(s) {
+                        total += 1;
+                    }
+                }
+            }
+        }
+
+        Self::from_maps(maps)
     }
 
     /// Returns a reference to the `LiteralMaps`.

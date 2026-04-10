@@ -23,4 +23,4 @@ mod mutators;
 pub use mutators::BoundMutator;
 
 mod literals;
-pub use literals::{LiteralMaps, LiteralsCollector, LiteralsDictionary};
+pub use literals::{FuzzLiteral, LiteralMaps, LiteralsCollector, LiteralsDictionary};
