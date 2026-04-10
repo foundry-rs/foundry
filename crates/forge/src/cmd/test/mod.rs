@@ -1046,7 +1046,7 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
             if test_name.is_any_test()
-                && let Some(test_match) = test_name.split("(").next()
+                && let Some(test_match) = test_name.split('(').next()
             {
                 filter.push_str(test_match);
                 if failures.peek().is_some() {

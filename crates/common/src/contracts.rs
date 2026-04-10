@@ -616,7 +616,7 @@ pub fn find_matching_contract_artifact(
         // If all artifact_ids in `possible_targets` have the same name (without ".", indicates
         // additional compiler profiles), it means that there are multiple contracts in the
         // same file.
-        if !target_id.name.contains(".")
+        if !target_id.name.contains('.')
             && possible_targets.iter().any(|(id, _)| id.name != target_id.name)
         {
             eyre::bail!(
