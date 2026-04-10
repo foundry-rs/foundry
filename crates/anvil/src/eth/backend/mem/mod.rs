@@ -1434,7 +1434,7 @@ impl<N: Network> Backend<N> {
         let mut inspector = self.build_inspector();
 
         // Extract Tempo-specific fields before `build_call_env` consumes `other`.
-        let tempo_overrides = if self.is_tempo() {
+        let tempo_overrides = self.is_tempo().then(|| {
             let fee_token =
                 request.other.get_deserialized::<Address>("feeToken").and_then(|r| r.ok());
             let nonce_key = request
@@ -1444,10 +1444,8 @@ impl<N: Network> Backend<N> {
                 .unwrap_or_default();
             let valid_before =
                 request.other.get_deserialized::<u64>("validBefore").and_then(|r| r.ok());
-            Some((fee_token, nonce_key, valid_before))
-        } else {
-            None
-        };
+            (fee_token, nonce_key, valid_before)
+        });
 
         let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
 
@@ -2173,7 +2171,7 @@ impl<N: Network> Backend<N> {
         }
 
         // Clear all storage and reinitialize with genesis
-        let base_fee = if self.fees.is_eip1559() { Some(self.fees.base_fee()) } else { None };
+        let base_fee = self.fees.is_eip1559().then(|| self.fees.base_fee());
         *self.blockchain.storage.write() = BlockchainStorage::new(
             &self.evm_env.read(),
             base_fee,
@@ -2503,8 +2501,7 @@ where
                 let mix_hash = evm_env.block_env.prevrandao;
                 let beneficiary = evm_env.block_env.beneficiary;
                 let timestamp = evm_env.block_env.timestamp;
-                let base_fee =
-                    if spec_id >= SpecId::LONDON { Some(evm_env.block_env.basefee) } else { None };
+                let base_fee = (spec_id >= SpecId::LONDON).then_some(evm_env.block_env.basefee);
                 let excess_blob_gas =
                     if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
@@ -2746,8 +2743,7 @@ where
         let mix_hash = evm_env.block_env.prevrandao;
         let beneficiary = evm_env.block_env.beneficiary;
         let timestamp = evm_env.block_env.timestamp;
-        let base_fee =
-            if spec_id >= SpecId::LONDON { Some(evm_env.block_env.basefee) } else { None };
+        let base_fee = (spec_id >= SpecId::LONDON).then_some(evm_env.block_env.basefee);
         let excess_blob_gas = if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
         let inspector_tx_config = self.inspector_tx_config();
@@ -3718,11 +3714,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         let best_number = self.blockchain.storage.read().best_number;
         let blocks = self.blockchain.storage.read().serialized_blocks();
         let transactions = self.blockchain.storage.read().serialized_transactions();
-        let historical_states = if preserve_historical_states {
-            Some(self.states.write().serialized_states())
-        } else {
-            None
-        };
+        let historical_states =
+            preserve_historical_states.then(|| self.states.write().serialized_states());
 
         let state = self.db.read().await.dump_state(
             at,

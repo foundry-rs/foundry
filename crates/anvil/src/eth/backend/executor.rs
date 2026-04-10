@@ -436,13 +436,11 @@ where
                 trace!(target: "backend", ?exit_reason, ?gas_used, "[{:?}] executed with out={:?}", pool_tx.hash(), out);
                 trace!(target: "backend::executor", "transacted [{:?}], result: {:?} gas {}", pool_tx.hash(), exit_reason, gas_used);
 
-                let contract_address = if pending.transaction.to().is_none() {
+                let contract_address = pending.transaction.to().is_none().then(|| {
                     let addr = sender.create(nonce);
                     trace!(target: "backend", "Contract creation tx: computed address {:?}", addr);
-                    Some(addr)
-                } else {
-                    None
-                };
+                    addr
+                });
 
                 // TODO: replace `TransactionInfo` with alloy receipt/transaction types
                 let transaction_index = tx_info.len() as u64;

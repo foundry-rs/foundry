@@ -234,7 +234,7 @@ pub fn format_ast<'ast>(
         gcx.sess.source_map(),
         true,
         config.wrap_comments,
-        if matches!(config.style, IndentStyle::Tab) { Some(config.tab_width) } else { None },
+        matches!(config.style, IndentStyle::Tab).then(|| config.tab_width),
     );
     let ast = source.ast.as_ref()?;
     let inline_config = parse_inline_config(gcx.sess, &comments, ast);
