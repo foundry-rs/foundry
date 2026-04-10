@@ -87,11 +87,9 @@ forge create ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} src/Mail.sol:Mail \
   --from "$WALLET_ADDR" --rpc-url "$ETH_RPC_URL" --broadcast \
   --constructor-args "$FEE_TOKEN"
 
-# TODO(upstream): re-enable once forge script fee token validation is fixed
-# Currently fails with "invalid fee token: 0x0000000000000000000000000000000000000000"
-# echo -e "\n=== FORGE SCRIPT WITH --sender (keys.toml fallback) ==="
-# forge script ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} script/Mail.s.sol \
-#   --sig "run(string)" "$(date +%s%N)" \
-#   --sender "$WALLET_ADDR" --rpc-url "$ETH_RPC_URL" --broadcast
+echo -e "\n=== FORGE SCRIPT WITH --sender (keys.toml fallback) ==="
+forge script ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} script/Mail.s.sol \
+  --sig "run(string)" "$(date +%s%N)" \
+  --sender "$WALLET_ADDR" --rpc-url "$ETH_RPC_URL" --broadcast
 
 echo -e "\n=== TEMPO WALLET TESTS COMPLETE ==="
