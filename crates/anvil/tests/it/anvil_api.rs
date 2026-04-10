@@ -956,8 +956,7 @@ async fn test_arb_get_block() {
     assert_eq!(block.header.number, 1);
 }
 
-// Set next_block_timestamp same as previous block
-// api.evm_set_next_block_timestamp(0).unwrap();
+// setNextBlockTimestamp must be strictly after the last block (see TimeManager docs).
 #[tokio::test(flavor = "multi_thread")]
 async fn test_mine_blk_with_prev_timestamp() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -968,8 +967,13 @@ async fn test_mine_blk_with_prev_timestamp() {
     let init_number = init_blk.header.number;
     let init_timestamp = init_blk.header.timestamp;
 
-    // mock timestamp
-    api.evm_set_next_block_timestamp(init_timestamp).unwrap();
+    assert!(
+        api.evm_set_next_block_timestamp(init_timestamp).is_err(),
+        "setNextBlockTimestamp should fail when equal to the previous block's timestamp"
+    );
+
+    let next_ts = init_timestamp + 1;
+    api.evm_set_next_block_timestamp(next_ts).unwrap();
 
     api.mine_one().await;
 
@@ -979,7 +983,7 @@ async fn test_mine_blk_with_prev_timestamp() {
     let next_blk_timestamp = block.header.timestamp;
 
     assert_eq!(next_blk_num, init_number + 1);
-    assert_eq!(next_blk_timestamp, init_timestamp);
+    assert_eq!(next_blk_timestamp, next_ts);
 
     // Sleep for 1 second
     tokio::time::sleep(Duration::from_secs(1)).await;
