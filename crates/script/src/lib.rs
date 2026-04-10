@@ -29,7 +29,7 @@ use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs},
-    utils::LoadConfig,
+    utils::{LoadConfig, parse_fee_token_address},
 };
 use foundry_common::{
     CONTRACT_MAX_SIZE, ContractsByArtifact, SELECTOR_LEN,
@@ -47,8 +47,9 @@ use foundry_config::{
 use foundry_evm::{
     backend::Backend,
     core::{
-        Breakpoints,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+        Breakpoints, FoundryTransaction,
+        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        tempo::PATH_USD_ADDRESS,
     },
     executors::ExecutorBuilder,
     inspectors::{
@@ -138,7 +139,7 @@ pub struct ScriptArgs {
     pub batch_size: usize,
 
     /// Tempo fee token address for paying transaction fees.
-    #[arg(long = "tempo.fee-token", value_name = "ADDRESS")]
+    #[arg(long = "tempo.fee-token", value_parser = parse_fee_token_address)]
     pub fee_token: Option<Address>,
 
     /// Skips on-chain simulation.
@@ -244,11 +245,23 @@ pub struct ScriptArgs {
 }
 
 impl ScriptArgs {
-    pub async fn preprocess<FEN: FoundryEvmNetwork>(self) -> Result<PreprocessedState<FEN>> {
+    /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
+    async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
+        let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
+
+        // Auto-detect network from fork chain ID when not explicitly configured.
+        evm_opts.infer_network_from_fork().await;
+
+        Ok((config, evm_opts))
+    }
+
+    async fn preprocess<FEN: FoundryEvmNetwork>(
+        self,
+        config: Config,
+        mut evm_opts: EvmOpts,
+    ) -> Result<PreprocessedState<FEN>> {
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
         let browser_wallet = self.wallets.browser_signer::<FEN::Network>().await?;
-
-        let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
         if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
@@ -265,8 +278,13 @@ impl ScriptArgs {
             }
         }
 
-        let script_config = ScriptConfig::new(config, evm_opts, self.batch, self.fee_token).await?;
+        let fee_token = if evm_opts.networks.is_tempo() && self.fee_token.is_none() {
+            Some(PATH_USD_ADDRESS)
+        } else {
+            self.fee_token
+        };
 
+        let script_config = ScriptConfig::new(config, evm_opts, self.batch, fee_token).await?;
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
 
@@ -274,10 +292,7 @@ impl ScriptArgs {
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
-        let (_, mut evm_opts) = self.load_config_and_evm_opts()?;
-
-        // Auto-detect network from fork chain ID when not explicitly configured.
-        evm_opts.infer_network_from_fork().await;
+        let (config, evm_opts) = self.resolved_evm_opts().await?;
 
         let is_tempo = evm_opts.networks.is_tempo();
 
@@ -287,7 +302,7 @@ impl ScriptArgs {
 
         if is_tempo {
             let batch = self.batch;
-            let bundled = match self.prepare_bundled::<TempoEvmNetwork>().await? {
+            let bundled = match self.prepare_bundled::<TempoEvmNetwork>(config, evm_opts).await? {
                 Some(bundled) => bundled,
                 None => return Ok(()),
             };
@@ -298,16 +313,22 @@ impl ScriptArgs {
                 broadcasted.verify().await?;
             }
             Ok(())
+        } else if evm_opts.networks.is_optimism() {
+            self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await
         } else {
-            self.run_generic_script::<EthEvmNetwork>().await
+            self.run_generic_script::<EthEvmNetwork>(config, evm_opts).await
         }
     }
 
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
     /// for broadcasting, or returns `None` if there's nothing to broadcast
     /// (e.g., debug mode, no transactions, missing RPCs).
-    async fn prepare_bundled<FEN: FoundryEvmNetwork>(self) -> Result<Option<BundledState<FEN>>> {
-        let state = self.preprocess::<FEN>().await?;
+    async fn prepare_bundled<FEN: FoundryEvmNetwork>(
+        self,
+        config: Config,
+        evm_opts: EvmOpts,
+    ) -> Result<Option<BundledState<FEN>>> {
+        let state = self.preprocess::<FEN>(config, evm_opts).await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
         let compiled = state.compile()?;
 
@@ -396,8 +417,12 @@ impl ScriptArgs {
         Ok(Some(bundled))
     }
 
-    async fn run_generic_script<FEN: FoundryEvmNetwork>(self) -> Result<()> {
-        let bundled = match self.prepare_bundled::<FEN>().await? {
+    async fn run_generic_script<FEN: FoundryEvmNetwork>(
+        self,
+        config: Config,
+        evm_opts: EvmOpts,
+    ) -> Result<()> {
+        let bundled = match self.prepare_bundled::<FEN>(config, evm_opts).await? {
             Some(bundled) => bundled,
             None => return Ok(()),
         };
@@ -724,7 +749,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         debug: bool,
     ) -> Result<ScriptRunner<FEN>> {
         trace!("preparing script runner");
-        let (evm_env, tx_env, fork_block) = self.evm_opts.env().await?;
+        let (evm_env, mut tx_env, fork_block) = self.evm_opts.env::<_, _, TxEnvFor<FEN>>().await?;
 
         let db = if let Some(fork_url) = self.evm_opts.fork_url.as_ref() {
             match self.backends.get(fork_url) {
@@ -766,6 +791,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                             self.evm_opts.clone(),
                             Some(known_contracts),
                             Some(target),
+                            self.fee_token,
                         )
                         .into(),
                     )
@@ -773,6 +799,10 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                     .enable_isolation(self.evm_opts.isolate)
             });
         }
+
+        // Propagate fee token to the transaction environment so that internal EVM calls
+        // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
+        tx_env.set_fee_token(self.fee_token);
 
         Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
     }

@@ -141,7 +141,8 @@ use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tempo_revm::{
-    TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext, gas_params::tempo_gas_params,
+    TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext,
+    gas_params::tempo_gas_params,
 };
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -1222,7 +1223,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let hardfork = TempoHardfork::from(evm_env.cfg_env.spec);
+        let hardfork = TempoHardfork::from(self.hardfork);
         let tempo_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
             TempoBlockEnv { inner: evm_env.block_env.clone(), timestamp_millis_part: 0 },
@@ -1292,7 +1293,7 @@ impl<N: Network> Backend<N> {
             let mut evm = OpEvmFactory::default().create_evm_with_inspector(db, op_env, inspector);
             run!(evm)
         } else if self.is_tempo() {
-            let hardfork = TempoHardfork::from(evm_env.cfg_env.spec);
+            let hardfork = TempoHardfork::from(self.hardfork);
             let tempo_env = EvmEnv::new(
                 evm_env
                     .cfg_env
@@ -1428,9 +1429,46 @@ impl<N: Network> Backend<N> {
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         let mut inspector = self.build_inspector();
 
+        // Extract Tempo-specific fields before `build_call_env` consumes `other`.
+        let tempo_overrides = if self.is_tempo() {
+            let fee_token =
+                request.other.get_deserialized::<Address>("feeToken").and_then(|r| r.ok());
+            let nonce_key = request
+                .other
+                .get_deserialized::<U256>("nonceKey")
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            let valid_before =
+                request.other.get_deserialized::<u64>("validBefore").and_then(|r| r.ok());
+            Some((fee_token, nonce_key, valid_before))
+        } else {
+            None
+        };
+
         let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
+
         let ResultAndState { result, state } =
-            self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
+            if let Some((fee_token, nonce_key, valid_before)) = tempo_overrides {
+                use tempo_primitives::transaction::Call;
+
+                let base = tx_env.base;
+                let mut tempo_tx = TempoTxEnv::from(base.clone());
+                tempo_tx.fee_token = fee_token;
+
+                if !nonce_key.is_zero() {
+                    tempo_tx.tempo_tx_env = Some(Box::new(TempoBatchCallEnv {
+                        nonce_key,
+                        valid_before,
+                        aa_calls: vec![Call { to: base.kind, value: base.value, input: base.data }],
+                        ..Default::default()
+                    }));
+                }
+
+                self.transact_tempo_with_inspector_ref(state, &evm_env, &mut inspector, tempo_tx)?
+            } else {
+                self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?
+            };
+
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         inspector.print_logs();
 
