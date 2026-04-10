@@ -10,6 +10,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
     },
 };
+use foundry_evm_networks::NetworkConfigs;
 use serde::Serialize;
 
 use crate::opts::RpcCommonOpts;
@@ -118,6 +119,11 @@ pub struct EvmArgs {
     #[arg(long)]
     #[serde(skip)]
     pub isolate: bool,
+
+    /// Network selection.
+    #[command(flatten)]
+    #[serde(flatten)]
+    pub networks: NetworkConfigs,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
