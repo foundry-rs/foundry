@@ -52,6 +52,7 @@ pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
 /// This is the compiler-agnostic input to [`MultiContractRunnerBuilder::build_from_artifacts`].
 /// A compiler produces these artifacts after compilation and linking, enabling non-Solidity
 /// compilers to use Foundry's test runner without going through `ProjectCompileOutput`.
+#[derive(Debug)]
 pub struct PreLinkedArtifacts {
     /// Contracts that have test functions and can be deployed.
     pub deployable_contracts: DeployableContracts,
@@ -59,6 +60,8 @@ pub struct PreLinkedArtifacts {
     pub known_contracts: ContractsByArtifact,
     /// Libraries that need deploying, in topological order.
     pub libs_to_deploy: Vec<Bytes>,
+    /// Library addresses used to link contracts.
+    pub libraries: Libraries,
     /// Fuzz dictionary literals extracted from source.
     pub fuzz_literals: LiteralsDictionary,
     /// Per-test configuration overrides.
@@ -643,7 +646,7 @@ impl MultiContractRunnerBuilder {
             revert_decoder,
             known_contracts: artifacts.known_contracts,
             libs_to_deploy: artifacts.libs_to_deploy,
-            libraries: Default::default(),
+            libraries: artifacts.libraries,
             analysis: None,
             fuzz_literals: artifacts.fuzz_literals,
 
