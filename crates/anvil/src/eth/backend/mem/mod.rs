@@ -1431,37 +1431,50 @@ impl<N: Network> Backend<N> {
 
         // Extract Tempo-specific fields before `build_call_env` consumes `other`.
         let tempo_overrides = self.is_tempo().then(|| {
+            // Parse the raw strings with FromStr instead.
+            fn parse_hex<T: std::str::FromStr>(
+                other: &OtherFields,
+                key: &str,
+            ) -> Option<T> {
+                other.get(key).and_then(|v| v.as_str()).and_then(|s| s.parse().ok())
+            }
+
             let fee_token =
                 request.other.get_deserialized::<Address>("feeToken").and_then(|r| r.ok());
-            let nonce_key = request
-                .other
-                .get_deserialized::<U256>("nonceKey")
-                .and_then(|r| r.ok())
-                .unwrap_or_default();
+            let nonce_key = parse_hex::<U256>(&request.other, "nonceKey").unwrap_or_default();
             let valid_before =
-                request.other.get_deserialized::<u64>("validBefore").and_then(|r| r.ok());
-            (fee_token, nonce_key, valid_before)
+                parse_hex::<U256>(&request.other, "validBefore").map(|v| v.saturating_to::<u64>());
+            let valid_after =
+                parse_hex::<U256>(&request.other, "validAfter").map(|v| v.saturating_to::<u64>());
+            (fee_token, nonce_key, valid_before, valid_after)
         });
 
         let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
 
         let ResultAndState { result, state } =
-            if let Some((fee_token, nonce_key, valid_before)) = tempo_overrides {
+            if let Some((fee_token, nonce_key, valid_before, valid_after)) = tempo_overrides {
                 use tempo_primitives::transaction::Call;
 
                 let base = tx_env.base;
                 let mut tempo_tx = TempoTxEnv::from(base.clone());
                 tempo_tx.fee_token = fee_token;
 
-                if !nonce_key.is_zero() {
+                if !nonce_key.is_zero() || valid_before.is_some() || valid_after.is_some() {
+                    // For gas estimation we don't have a signed tx, so generate a
+                    // unique hash for expiring-nonce replay protection.  The nonce
+                    // manager needs a non-zero hash; the actual value doesn't matter
+                    // because the state is discarded after estimation.
+                    let estimation_hash = keccak256(base.data.as_ref());
                     tempo_tx.tempo_tx_env = Some(Box::new(TempoBatchCallEnv {
                         nonce_key,
                         valid_before,
+                        valid_after,
                         aa_calls: vec![Call { to: base.kind, value: base.value, input: base.data }],
+                        tx_hash: estimation_hash,
+                        expiring_nonce_hash: Some(estimation_hash),
                         ..Default::default()
                     }));
                 }
-
                 self.transact_tempo_with_inspector_ref(state, &evm_env, &mut inspector, tempo_tx)?
             } else {
                 self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?
