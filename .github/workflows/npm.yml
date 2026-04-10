@@ -151,9 +151,6 @@ jobs:
         id: release-version
         working-directory: ./npm
         env:
-          PROVENANCE: true
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_REGISTRY_URL: ${{ env.NPM_REGISTRY_URL }}
           ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
         run: |
@@ -224,8 +221,6 @@ jobs:
           PROVENANCE: true
           VERSION_NAME: ${{ steps.release-version.outputs.RELEASE_VERSION }}
           RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -249,8 +244,6 @@ jobs:
     name: Publish Meta Package
     runs-on: ubuntu-latest
     env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       RELEASE_VERSION: ${{ needs.publish-arch.outputs.RELEASE_VERSION }}
     steps:
       - name: Checkout
@@ -286,6 +279,4 @@ jobs:
           PROVENANCE: true
           VERSION_NAME: ${{ env.RELEASE_VERSION }}
           RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
-          NPM_TOKEN: ${{ env.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ env.NODE_AUTH_TOKEN }}
           NPM_REGISTRY_URL: ${{ env.NPM_REGISTRY_URL }}
