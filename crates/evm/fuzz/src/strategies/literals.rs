@@ -57,6 +57,16 @@ impl LiteralsDictionary {
         Self { maps }
     }
 
+    /// Creates a new `LiteralsDictionary` from pre-collected literal maps.
+    ///
+    /// This allows alternative compilers to provide fuzz dictionary literals
+    /// without going through solar's AST.
+    pub fn from_maps(maps: LiteralMaps) -> Self {
+        let lock = Arc::new(OnceLock::new());
+        lock.set(maps).unwrap();
+        Self { maps: lock }
+    }
+
     /// Returns a reference to the `LiteralMaps`.
     pub fn get(&self) -> &LiteralMaps {
         self.maps.wait()

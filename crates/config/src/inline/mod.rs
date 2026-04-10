@@ -68,6 +68,19 @@ impl InlineConfig {
         Ok(inline)
     }
 
+    /// Creates a new [`InlineConfig`] from pre-parsed [`NatSpec`] entries.
+    ///
+    /// This allows alternative compilers to provide inline config without going
+    /// through solc/solar AST parsing.
+    pub fn from_natspecs(natspecs: &[NatSpec], profiles: &[Profile]) -> eyre::Result<Self> {
+        let mut inline = Self::new();
+        for natspec in natspecs {
+            inline.insert(natspec)?;
+            natspec.validate_profiles(profiles)?;
+        }
+        Ok(inline)
+    }
+
     /// Inserts a new [`NatSpec`] into the [`InlineConfig`].
     pub fn insert(&mut self, natspec: &NatSpec) -> Result<(), InlineConfigError> {
         let map = if let Some(function) = &natspec.function {

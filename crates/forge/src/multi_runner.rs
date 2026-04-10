@@ -63,7 +63,7 @@ pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     /// Library addresses used to link contracts.
     pub libraries: Libraries,
     /// Solar compiler instance, to grant syntactic and semantic analysis capabilities
-    pub analysis: Arc<solar::sema::Compiler>,
+    pub analysis: Option<Arc<solar::sema::Compiler>>,
     /// Literals dictionary for fuzzing.
     pub fuzz_literals: LiteralsDictionary,
 
@@ -363,7 +363,7 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
     pub fn executor(
         &self,
         known_contracts: ContractsByArtifact,
-        analysis: Arc<solar::sema::Compiler>,
+        analysis: Option<Arc<solar::sema::Compiler>>,
         artifact_id: &ArtifactId,
         db: Backend<FEN>,
     ) -> Executor<FEN> {
@@ -376,15 +376,19 @@ impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
         ));
         ExecutorBuilder::default()
             .inspectors(|stack| {
-                stack
+                let stack = stack
                     .logs(self.config.live_logs)
                     .cheatcodes(cheats_config)
                     .trace_mode(self.trace_mode())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
                     .networks(self.evm_opts.networks)
-                    .create2_deployer(self.evm_opts.create2_deployer)
-                    .set_analysis(analysis)
+                    .create2_deployer(self.evm_opts.create2_deployer);
+                if let Some(analysis) = analysis {
+                    stack.set_analysis(analysis)
+                } else {
+                    stack
+                }
             })
             .spec_id(self.spec_id)
             .gas_limit(self.evm_opts.gas_limit())
@@ -579,7 +583,7 @@ impl MultiContractRunnerBuilder {
             known_contracts,
             libs_to_deploy,
             libraries,
-            analysis,
+            analysis: Some(analysis),
             fuzz_literals,
 
             tcfg: TestRunnerConfig {
