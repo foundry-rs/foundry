@@ -41,7 +41,6 @@ jobs:
       - name: Test flaky tests
         env:
           SVM_TARGET_PLATFORM: linux-amd64
-          HTTP_ARCHIVE_URLS: ${{ secrets.HTTP_ARCHIVE_URLS }}
           ETHERSCAN_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
         run: cargo nextest run --profile flaky --no-fail-fast
 
