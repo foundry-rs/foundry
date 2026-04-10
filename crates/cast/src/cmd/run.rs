@@ -130,6 +130,32 @@ pub struct RunArgs {
     /// which can significantly speed up replay of compute-heavy transactions.
     #[arg(long)]
     pub jit: bool,
+
+    /// Dump JIT compiler intermediate outputs to this directory.
+    ///
+    /// When set, each compiled contract's IR, assembly, and bytecode analysis are
+    /// written to `{dir}/{spec_id}/{code_hash}/`. Useful for debugging JIT issues.
+    #[arg(long, value_name = "DIR")]
+    pub jit_dump_dir: Option<std::path::PathBuf>,
+
+    /// LLVM optimization level for JIT compilation.
+    ///
+    /// 0 = None, 1 = Less, 2 = Default, 3 = Aggressive.
+    /// Using 0 makes the generated code easier to debug.
+    #[arg(long, value_name = "LEVEL")]
+    pub jit_opt_level: Option<u8>,
+
+    /// Disable the block deduplication pass in the JIT compiler.
+    ///
+    /// Useful for isolating dedup-related JIT correctness bugs.
+    #[arg(long)]
+    pub jit_no_dedup: bool,
+
+    /// Enable debug assertions in JIT-compiled code.
+    ///
+    /// Inserts runtime stack bounds checks that panic on violation.
+    #[arg(long)]
+    pub jit_debug_assertions: bool,
 }
 
 impl RunArgs {
@@ -152,7 +178,25 @@ impl RunArgs {
             self.run_with_evm::<TempoEvmNetwork>(revmc::runtime::JitBackend::disabled()).await
         } else {
             let jit_backend = if self.jit {
-                let config = revmc::runtime::RuntimeConfig { blocking: true, ..Default::default() };
+                let opt_level = match self.jit_opt_level {
+                    Some(0) => revmc::OptimizationLevel::None,
+                    Some(1) => revmc::OptimizationLevel::Less,
+                    Some(2) => revmc::OptimizationLevel::Default,
+                    Some(3) => revmc::OptimizationLevel::Aggressive,
+                    Some(n) => return Err(eyre::eyre!("invalid --jit-opt-level {n} (0-3)")),
+                    None => revmc::OptimizationLevel::Default,
+                };
+                let config = revmc::runtime::RuntimeConfig {
+                    blocking: true,
+                    dump_dir: self.jit_dump_dir.clone(),
+                    debug_assertions: self.jit_debug_assertions,
+                    no_dedup: self.jit_no_dedup,
+                    tuning: revmc::runtime::RuntimeTuning {
+                        jit_opt_level: opt_level,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
                 revmc::runtime::JitBackend::new(config)
                     .map_err(|e| eyre::eyre!("failed to start JIT backend: {e}"))?
             } else {
