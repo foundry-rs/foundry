@@ -92,8 +92,6 @@ significant_drop_tightening = "allow"
 too_long_first_doc_paragraph = "allow"
 
 # Specific allows.
-# until <https://github.com/rust-lang/rust-clippy/issues/13885> is fixed
-literal_string_with_formatting_args = "allow"
 result_large_err = "allow"
 
 [workspace.lints.rust]
