@@ -249,6 +249,14 @@ pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
     /// No-op for non-Tempo networks.
     fn convert_create_to_call(&mut self) {}
 
+    /// Clears the `to` and `value` fields for batch transactions that use `calls`.
+    ///
+    /// In Tempo AA batch transactions, targets are specified in the `calls` field, not in `to`.
+    /// If `to` is set, `build_aa()` would add a spurious extra call. Must be called after
+    /// `prepare()` sets `kind`/`to` but before gas estimation.
+    /// No-op for non-Tempo networks.
+    fn clear_batch_to(&mut self) {}
+
     /// Signs the transaction using an access key (keychain mode).
     ///
     /// If `key_authorization` is provided and the key is not yet provisioned on-chain,
@@ -437,6 +445,13 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
             self.inner.input = Default::default();
             self.inner.value = None;
             self.inner.to = None;
+        }
+    }
+
+    fn clear_batch_to(&mut self) {
+        if !self.calls.is_empty() {
+            self.inner.to = None;
+            self.inner.value = None;
         }
     }
 
