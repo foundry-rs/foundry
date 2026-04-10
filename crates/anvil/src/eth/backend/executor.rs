@@ -378,7 +378,7 @@ where
         }
 
         // Osaka EIP-7825 tx gas limit cap check
-        if gas_config.tx_gas_limit_cap.is_none()
+        if gas_config.tx_gas_limit_cap.is_some()
             && pending.transaction.gas_limit() > gas_config.tx_gas_limit_cap_resolved
         {
             trace!(target: "backend", tx_gas_limit = %pending.transaction.gas_limit(), ?pool_tx, "transaction gas limit exhausting, skipping transaction");
