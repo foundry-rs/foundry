@@ -695,7 +695,6 @@ mod tests {
     use semver::Version;
     use std::path::PathBuf;
 
-    /// Creates an ArtifactId for testing.
     fn test_artifact_id(name: &str) -> ArtifactId {
         ArtifactId {
             path: PathBuf::from(format!("out/{name}.json")),
@@ -707,37 +706,19 @@ mod tests {
         }
     }
 
-    /// Creates a minimal test contract from raw EVM bytecode.
-    ///
-    /// The runtime code is a single STOP opcode (0x00) — any function call succeeds
-    /// because it doesn't revert. The constructor deploys this 1-byte runtime.
-    fn minimal_test_contract() -> (ArtifactId, TestContract) {
-        // Constructor: PUSH1 1, PUSH1 0x0c, PUSH1 0, CODECOPY, PUSH1 1, PUSH1 0, RETURN
-        // Runtime: STOP
-        let bytecode = hex!("6001600c60003960016000f300");
-
-        let mut abi = JsonAbi::new();
-        abi.functions.entry("testAlwaysPass".to_string()).or_default().push(Function {
-            name: "testAlwaysPass".to_string(),
+    fn add_fn(abi: &mut JsonAbi, name: &str) {
+        abi.functions.entry(name.to_string()).or_default().push(Function {
+            name: name.to_string(),
             inputs: vec![],
             outputs: vec![],
             state_mutability: StateMutability::NonPayable,
         });
-
-        let id = test_artifact_id("MinimalTest");
-        let contract = TestContract { abi, bytecode: bytecode.into() };
-        (id, contract)
     }
 
-    /// End-to-end integration test proving a non-Solidity compiler can use Foundry's test
-    /// runner via `build_from_artifacts()`.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_build_from_artifacts_e2e() {
-        let (id, contract) = minimal_test_contract();
-
-        let mut deployable = DeployableContracts::default();
-        deployable.insert(id, contract);
-
+    /// Builds a `MultiContractRunner` from raw artifacts via `build_from_artifacts`.
+    async fn build_runner(
+        deployable: DeployableContracts,
+    ) -> MultiContractRunner<EthEvmNetwork> {
         let config = Arc::new(Config::default());
         let evm_opts: EvmOpts = Config::figment().extract().unwrap();
         let (evm_env, tx_env, _) = evm_opts.env::<_, BlockEnv, TxEnv>().await.unwrap();
@@ -751,19 +732,91 @@ mod tests {
             inline_config: InlineConfig::default(),
         };
 
-        let mut runner = MultiContractRunnerBuilder::new(config)
-            .build_from_artifacts::<EthEvmNetwork>(artifacts, evm_env, tx_env, evm_opts)
-            .expect("build_from_artifacts should succeed");
+        MultiContractRunnerBuilder::new(config)
+            .build_from_artifacts(artifacts, evm_env, tx_env, evm_opts)
+            .expect("build_from_artifacts should succeed")
+    }
 
-        assert_eq!(runner.contracts.len(), 1, "should have exactly 1 deployable contract");
+    /// Contract with setUp + passing/failing/storage tests.
+    ///
+    /// Runtime dispatches on function selectors:
+    ///   setUp()             (0x0a9254e4) → stores 0x42 at slot 0
+    ///   testAlwaysPass()    (0xacded0fd) → STOP (pass)
+    ///   testAlwaysFail()    (0xb0c7a037) → REVERT (fail)
+    ///   testStorageWasSet() (0xbff50641) → loads slot 0, checks == 0x42, reverts if not
+    fn multi_function_contract() -> (ArtifactId, TestContract) {
+        // Built by a Python assembler — 12-byte constructor + 48-byte runtime
+        // See the runtime layout in the PR description for full disassembly.
+        let bytecode = hex!(
+            // Constructor: copies runtime and returns it
+            "6048600c60003960486000f3"
+            // Runtime: selector dispatch
+            "5f3560e01c"                     // PUSH0 CALLDATALOAD PUSH1_0xe0 SHR
+            "80630a9254e414602e57"           // setUp → jump 0x2e
+            "8063acded0fd14603457"           // testAlwaysPass → jump 0x34
+            "8063b0c7a03714603657"           // testAlwaysFail → jump 0x36
+            "8063bff5064114603a57"           // testStorageWasSet → jump 0x3a
+            "00"                             // default: STOP
+            // 0x2e: setUp
+            "5b60425f5500"                   // JUMPDEST PUSH1_0x42 PUSH0 SSTORE STOP
+            // 0x34: testAlwaysPass
+            "5b00"                           // JUMPDEST STOP
+            // 0x36: testAlwaysFail
+            "5b5f5ffd"                       // JUMPDEST PUSH0 PUSH0 REVERT
+            // 0x3a: testStorageWasSet
+            "5b5f546042146046575f5ffd5b00"   // JUMPDEST PUSH0 SLOAD PUSH1_0x42 EQ
+                                             // PUSH1_0x46 JUMPI PUSH0 PUSH0 REVERT
+                                             // JUMPDEST STOP
+        );
+
+        let mut abi = JsonAbi::new();
+        add_fn(&mut abi, "setUp");
+        add_fn(&mut abi, "testAlwaysPass");
+        add_fn(&mut abi, "testAlwaysFail");
+        add_fn(&mut abi, "testStorageWasSet");
+
+        (test_artifact_id("MultiTest"), TestContract { abi, bytecode: bytecode.into() })
+    }
+
+    /// Full E2E: multi-function contract with setUp, passing tests, failing tests,
+    /// and storage verification — all from raw EVM bytecode, no Solidity.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_build_from_artifacts_e2e() {
+        let (id, contract) = multi_function_contract();
+        let mut deployable = DeployableContracts::default();
+        deployable.insert(id, contract);
+
+        let mut runner = build_runner(deployable).await;
+        assert_eq!(runner.contracts.len(), 1);
 
         let filter = EmptyTestFilter::default();
         let results = runner.test_collect(&filter).expect("test execution should succeed");
 
-        assert!(!results.is_empty(), "should have test results");
-        for (name, suite) in &results {
-            assert_eq!(suite.failed(), 0, "suite {name} should have no failures");
-            assert!(suite.passed() > 0, "suite {name} should have at least one passing test");
+        assert_eq!(results.len(), 1, "expected 1 test suite");
+        let (name, suite) = results.iter().next().unwrap();
+
+        // testAlwaysPass + testStorageWasSet should pass
+        assert_eq!(suite.passed(), 2, "suite {name}: expected 2 passing tests");
+        // testAlwaysFail should fail
+        assert_eq!(suite.failed(), 1, "suite {name}: expected 1 failing test");
+
+        // Verify specific test results
+        for (test_name, result) in suite.test_results.iter() {
+            match test_name.as_str() {
+                s if s.contains("testAlwaysPass") => {
+                    assert!(result.status.is_success(), "testAlwaysPass should pass");
+                }
+                s if s.contains("testAlwaysFail") => {
+                    assert!(result.status.is_failure(), "testAlwaysFail should fail");
+                }
+                s if s.contains("testStorageWasSet") => {
+                    assert!(
+                        result.status.is_success(),
+                        "testStorageWasSet should pass (setUp stored 0x42)"
+                    );
+                }
+                _ => {}
+            }
         }
     }
 }
