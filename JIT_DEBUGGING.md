@@ -6,14 +6,18 @@ using `cast run --jit`.
 ## Quick start
 
 ```bash
-# Build with profiling symbols (optimized + debug info).
-cargo build --profile profiling --bin cast
+# <RPC> if mainnet: https://ethereum.reth.rs/rpc
 
-# Replay a transaction with JIT.
-./target/profiling/cast run <TX_HASH> --rpc-url <RPC> --jit --quick
+# Replay a transaction with the interpreter.
+# This replays all of the transactions leading up to it.
+cargo run --bin cast -- run <TX_HASH> --rpc-url <RPC>
 
-# Compare against the interpreter (no --jit).
-./target/profiling/cast run <TX_HASH> --rpc-url <RPC> --quick
+# Try also with --quick. If the output is the same, keep using --quick for all commands going forward.
+# This means that the transaction is independent of previous transactions in the block, so it's faster to just pass --quick:
+cargo run --bin cast -- run <TX_HASH> --rpc-url <RPC> --quick
+
+# Replay a transaction with JIT. Compare outputs.
+cargo run --bin cast -- run <TX_HASH> --rpc-url <RPC> --jit [--quick]
 ```
 
 If the JIT result differs from the interpreter (different gas, revert vs success,
