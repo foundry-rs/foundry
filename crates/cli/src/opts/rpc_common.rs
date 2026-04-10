@@ -20,9 +20,9 @@ use std::borrow::Cow;
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 pub struct RpcCommonOpts {
     /// The RPC endpoint.
-    #[arg(long = "rpc-url", visible_alias = "fork-url", env = "ETH_RPC_URL")]
+    #[arg(short, long, visible_alias = "fork-url", env = "ETH_RPC_URL")]
     #[serde(rename = "eth_rpc_url", skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
+    pub rpc_url: Option<String>,
 
     /// Allow insecure RPC connections (accept invalid HTTPS certificates).
     ///
@@ -80,7 +80,7 @@ impl figment::Provider for RpcCommonOpts {
 impl RpcCommonOpts {
     /// Returns the RPC endpoint URL, resolving from CLI args or config.
     pub fn url<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
-        let url = match (self.url.as_deref(), config) {
+        let url = match (self.rpc_url.as_deref(), config) {
             (Some(url), _) => Some(Cow::Borrowed(url)),
             (None, Some(config)) => config.get_rpc_url().transpose()?,
             (None, None) => None,

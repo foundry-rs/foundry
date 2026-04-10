@@ -157,13 +157,13 @@ impl BindJsonArgs {
 
             let mut target_files = HashSet::new();
             for (path, source) in &input.input.sources {
-                if !include.is_empty() {
-                    if !include.iter().any(|matcher| matcher.is_match(path)) {
+                if include.is_empty() {
+                    // Exclude library files by default
+                    if project.paths.has_library_ancestor(path) {
                         continue;
                     }
                 } else {
-                    // Exclude library files by default
-                    if project.paths.has_library_ancestor(path) {
+                    if !include.iter().any(|matcher| matcher.is_match(path)) {
                         continue;
                     }
                 }

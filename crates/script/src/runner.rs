@@ -177,10 +177,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
 
         // Optionally call the `setUp` function
-        let (success, gas_used, labeled_addresses, transactions) = if !setup {
-            self.executor.backend_mut().set_test_contract(address);
-            (true, 0, Default::default(), Some(library_transactions))
-        } else {
+        let (success, gas_used, labeled_addresses, transactions) = if setup {
             match self.executor.setup(Some(self.evm_opts.sender), address, None) {
                 Ok(RawCallResult {
                     reverted,
@@ -221,6 +218,9 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 }
                 Err(e) => return Err(e.into()),
             }
+        } else {
+            self.executor.backend_mut().set_test_contract(address);
+            (true, 0, Default::default(), Some(library_transactions))
         };
 
         Ok((
@@ -395,9 +395,11 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 self.executor.tx_env_mut().set_gas_limit(mid_gas_limit);
                 let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
                 match res.exit_reason {
-                    Some(InstructionResult::Revert)
-                    | Some(InstructionResult::OutOfGas)
-                    | Some(InstructionResult::OutOfFunds) => {
+                    Some(
+                        InstructionResult::Revert
+                        | InstructionResult::OutOfGas
+                        | InstructionResult::OutOfFunds,
+                    ) => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     _ => {

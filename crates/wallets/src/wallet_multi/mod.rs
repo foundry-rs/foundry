@@ -292,14 +292,14 @@ impl MultiWalletOpts {
                 pks.push(pk);
             }
         }
-        if !pks.is_empty() {
+        if pks.is_empty() {
+            Ok(None)
+        } else {
             let wallets = pks
                 .into_iter()
                 .map(|pk| utils::create_private_key_signer(pk))
                 .collect::<Result<Vec<_>>>()?;
             Ok(Some(wallets))
-        } else {
-            Ok(None)
         }
     }
 

@@ -359,10 +359,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
-            let fail_msg = if !setup.deployment_failure {
-                "setUp()".to_string()
-            } else {
+            let fail_msg = if setup.deployment_failure {
                 "constructor()".to_string()
+            } else {
+                "setUp()".to_string()
             };
             return SuiteResult::new(
                 start.elapsed(),

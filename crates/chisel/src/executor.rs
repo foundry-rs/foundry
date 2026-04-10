@@ -549,9 +549,8 @@ impl Type {
             pt::Expression::Multiply(_, lhs, rhs) |
             pt::Expression::Divide(_, lhs, rhs) => {
                 match (Self::ethabi(lhs, None), Self::ethabi(rhs, None)) {
-                    (Some(DynSolType::Int(_)), Some(DynSolType::Int(_))) |
-                    (Some(DynSolType::Int(_)), Some(DynSolType::Uint(_))) |
-                    (Some(DynSolType::Uint(_)), Some(DynSolType::Int(_))) => {
+                    (Some(DynSolType::Int(_) | DynSolType::Uint(_)), Some(DynSolType::Int(_))) |
+(Some(DynSolType::Int(_)), Some(DynSolType::Uint(_))) => {
                         Some(Self::Builtin(DynSolType::Int(256)))
                     }
                     _ => {
@@ -822,7 +821,7 @@ impl Type {
         custom_type: &mut Vec<String>,
         contract_name: Option<String>,
     ) -> Result<Option<DynSolType>> {
-        if let Some("this") | Some("super") = custom_type.last().map(String::as_str) {
+        if let Some("this" | "super") = custom_type.last().map(String::as_str) {
             custom_type.pop();
         }
         if custom_type.is_empty() {
@@ -1081,12 +1080,12 @@ impl Type {
         match self {
             Self::Array(inner) | Self::FixedArray(inner, _) | Self::ArrayIndex(inner, _) => {
                 match inner.try_as_ethabi(intermediate) {
-                    Some(DynSolType::Array(inner)) | Some(DynSolType::FixedArray(inner, _)) => {
+                    Some(DynSolType::Array(inner) | DynSolType::FixedArray(inner, _)) => {
                         Some(*inner)
                     }
-                    Some(DynSolType::Bytes)
-                    | Some(DynSolType::String)
-                    | Some(DynSolType::FixedBytes(_)) => Some(DynSolType::FixedBytes(1)),
+                    Some(DynSolType::Bytes | DynSolType::String | DynSolType::FixedBytes(_)) => {
+                        Some(DynSolType::FixedBytes(1))
+                    }
                     ty => ty,
                 }
             }
@@ -1113,8 +1112,7 @@ impl Type {
             self,
             Self::Array(_)
                 | Self::FixedArray(_, _)
-                | Self::Builtin(DynSolType::Array(_))
-                | Self::Builtin(DynSolType::FixedArray(_, _))
+                | Self::Builtin(DynSolType::Array(_) | DynSolType::FixedArray(_, _))
         )
     }
 
@@ -1143,7 +1141,7 @@ fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option
         _ => None,
     });
     match vis {
-        Some(pt::Visibility::External(_)) | Some(pt::Visibility::Public(_)) => {
+        Some(pt::Visibility::External(_) | pt::Visibility::Public(_)) => {
             match custom_type.first().unwrap().as_str() {
                 "address" => Some(DynSolType::Address),
                 "selector" => Some(DynSolType::FixedBytes(4)),

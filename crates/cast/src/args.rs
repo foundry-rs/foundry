@@ -195,10 +195,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_tokens(&tokens);
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
-            if !packed {
-                sh_println!("{}", SimpleCast::abi_encode(&sig, &args)?)?
-            } else {
+            if packed {
                 sh_println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?)?
+            } else {
+                sh_println!("{}", SimpleCast::abi_encode(&sig, &args)?)?
             }
         }
         CastSubcommand::AbiEncodeEvent { sig, args } => {

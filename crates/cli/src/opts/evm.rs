@@ -48,21 +48,21 @@ pub struct EvmArgs {
     /// Fetch state from a specific block number over a remote endpoint.
     ///
     /// See --rpc-url.
-    #[arg(long, requires = "url", value_name = "BLOCK")]
+    #[arg(long, requires = "rpc_url", value_name = "BLOCK")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_block_number: Option<u64>,
 
     /// Number of retries.
     ///
     /// See --rpc-url.
-    #[arg(long, requires = "url", value_name = "RETRIES")]
+    #[arg(long, requires = "rpc_url", value_name = "RETRIES")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retries: Option<u32>,
 
     /// Initial retry backoff on encountering errors.
     ///
     /// See --rpc-url.
-    #[arg(long, requires = "url", value_name = "BACKOFF")]
+    #[arg(long, requires = "rpc_url", value_name = "BACKOFF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fork_retry_backoff: Option<u64>,
 

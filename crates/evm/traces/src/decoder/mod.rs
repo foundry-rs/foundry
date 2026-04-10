@@ -482,7 +482,9 @@ impl CallTraceDecoder {
                 && !contract_selectors.contains(&selector)
                 && (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
             {
-                let return_data = if !trace.success {
+                let return_data = if trace.success {
+                    None
+                } else {
                     let revert_msg = self.revert_decoder.decode(&trace.output, trace.status);
 
                     if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
@@ -493,8 +495,6 @@ impl CallTraceDecoder {
                     } else {
                         Some(revert_msg)
                     }
-                } else {
-                    None
                 };
 
                 return if let Some(func) = functions.first() {

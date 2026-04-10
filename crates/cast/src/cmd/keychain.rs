@@ -546,7 +546,9 @@ async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) 
 
     // Expiry: show human-readable date and whether it's expired.
     let expiry_str = format_expiry(info.expiry);
-    if info.expiry != u64::MAX {
+    if info.expiry == u64::MAX {
+        sh_println!("Expiry:         {}", expiry_str)?;
+    } else {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -556,8 +558,6 @@ async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) 
         } else {
             sh_println!("Expiry:         {}", expiry_str)?;
         }
-    } else {
-        sh_println!("Expiry:         {}", expiry_str)?;
     }
 
     sh_println!("Spending Limits: {}", if info.enforceLimits { "enforced" } else { "none" })?;
@@ -579,7 +579,17 @@ async fn run_authorize(
 ) -> Result<()> {
     let enforce = enforce_limits || !limits.is_empty();
 
-    let calldata = if !allowed_calls.is_empty() {
+    let calldata = if allowed_calls.is_empty() {
+        // Use the legacy authorizeKey when no scopes are needed.
+        IAccountKeychain::authorizeKeyCall {
+            keyId: key_address,
+            signatureType: key_type,
+            expiry,
+            enforceLimits: enforce,
+            limits,
+        }
+        .abi_encode()
+    } else {
         // Use the T3+ authorizeKey overload with KeyRestrictions when scopes are provided.
         let sig_type_u8 = match key_type {
             SignatureType::Secp256k1 => 0u8,
@@ -601,16 +611,6 @@ async fn run_authorize(
             keyId: key_address,
             signatureType: sig_type_u8,
             config: restrictions,
-        }
-        .abi_encode()
-    } else {
-        // Use the legacy authorizeKey when no scopes are needed.
-        IAccountKeychain::authorizeKeyCall {
-            keyId: key_address,
-            signatureType: key_type,
-            expiry,
-            enforceLimits: enforce,
-            limits,
         }
         .abi_encode()
     };
@@ -783,10 +783,10 @@ fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
     if let Some(key_address) = entry.key_address {
         sh_println!("Key Address:  {key_address}")?;
 
-        if key_address != entry.wallet_address {
-            sh_println!("Mode:         keychain (access key)")?;
-        } else {
+        if key_address == entry.wallet_address {
             sh_println!("Mode:         direct (EOA)")?;
+        } else {
+            sh_println!("Mode:         keychain (access key)")?;
         }
     } else {
         sh_println!("Key Address:  (not set)")?;

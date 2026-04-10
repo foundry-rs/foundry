@@ -1384,11 +1384,7 @@ impl<N: Network> Backend<N> {
             gas_priority_fee: max_priority_fee_per_gas,
             max_fee_per_blob_gas: max_fee_per_blob_gas
                 .or_else(|| {
-                    if !blob_hashes.is_empty() {
-                        evm_env.block_env.blob_gasprice()
-                    } else {
-                        Some(0)
-                    }
+                    if blob_hashes.is_empty() { Some(0) } else { evm_env.block_env.blob_gasprice() }
                 })
                 .unwrap_or_default(),
             kind: match to {
