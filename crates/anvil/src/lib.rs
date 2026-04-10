@@ -465,15 +465,15 @@ pub fn init_tracing() -> LoggingManager {
     let manager = LoggingManager::default();
 
     let _ = if let Ok(rust_log_val) = std::env::var("RUST_LOG")
-        && !rust_log_val.contains("=")
+        && !rust_log_val.contains('=')
     {
         // Mutate the given filter to include `node` logs if it is not already present.
         // This prevents the unexpected behaviour of not seeing any node logs if a RUST_LOG
         // is already present that doesn't set it.
-        let rust_log_val = if !rust_log_val.contains("node") {
-            format!("{rust_log_val},node=info")
-        } else {
+        let rust_log_val = if rust_log_val.contains("node") {
             rust_log_val
+        } else {
+            format!("{rust_log_val},node=info")
         };
 
         let env_filter: EnvFilter =

@@ -1155,7 +1155,7 @@ async fn ensure_lint_rule_docs() {
     let mut missing_lints = Vec::new();
     for lint in REGISTERED_LINTS {
         let selector = lint.id().to_lowercase();
-        let selector_with_space = selector.replace("-", " ");
+        let selector_with_space = selector.replace('-', " ");
         if !content.to_lowercase().contains(&selector)
             && !content.to_lowercase().contains(&selector_with_space)
         {

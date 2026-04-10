@@ -93,7 +93,7 @@ impl<'ast> State<'_, 'ast> {
         let cmnts = self
             .comments
             .iter()
-            .filter_map(|c| if c.pos() < span.lo() { Some(c.style) } else { None })
+            .filter_map(|c| (c.pos() < span.lo()).then_some(c.style))
             .collect::<Vec<_>>();
 
         if let Some(first) = cmnts.first()
@@ -364,7 +364,16 @@ impl<'ast> State<'_, 'ast> {
 
         self.print_word("{");
         self.end();
-        if !body.is_empty() {
+        if body.is_empty() {
+            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
+                // Adjust the offset of the trailing break from comment printing
+                // so the closing brace is not indented
+                self.s.offset(-self.ind);
+            } else if self.config.bracket_spacing {
+                self.nbsp();
+            };
+            self.end();
+        } else {
             // update block depth
             self.block_depth += 1;
 
@@ -405,15 +414,6 @@ impl<'ast> State<'_, 'ast> {
 
             // restore block depth
             self.block_depth -= 1;
-        } else {
-            if self.print_comments(span.hi(), CommentConfig::skip_ws()).is_some() {
-                // Adjust the offset of the trailing break from comment printing
-                // so the closing brace is not indented
-                self.s.offset(-self.ind);
-            } else if self.config.bracket_spacing {
-                self.nbsp();
-            };
-            self.end();
         }
         self.print_word("}");
 
@@ -1714,11 +1714,11 @@ impl<'ast> State<'_, 'ast> {
                 self.call_stack.push(CallContext::chained(callee_size, chain_has_indent));
             }
 
-            if !chain_has_indent {
+            if chain_has_indent {
+                self.s.ibox(self.ind);
+            } else {
                 self.skip_index_break = true;
                 self.cbox(0);
-            } else {
-                self.s.ibox(self.ind);
             }
         }
 
@@ -2190,7 +2190,9 @@ impl<'ast> State<'_, 'ast> {
                 self.nbsp();
             }
 
-            if !args.is_empty() {
+            if args.is_empty() {
+                self.end();
+            } else {
                 self.print_word("returns ");
                 self.print_word("(");
                 self.zerobreak();
@@ -2206,8 +2208,6 @@ impl<'ast> State<'_, 'ast> {
                 );
                 self.print_word(")");
                 self.nbsp();
-            } else {
-                self.end();
             }
             if block.is_empty() {
                 self.print_block(block, *try_span);
@@ -2750,7 +2750,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
             let before_limit = self.attributes[a].span.lo();
             let inner_limit = self.attributes[a].span.hi();
             let after_limit =
-                if !is_last { self.attributes[a + 1].span.lo() } else { self.limit_pos };
+                if is_last { self.limit_pos } else { self.attributes[a + 1].span.lo() };
 
             let mut c = 0;
             while c < self.comments.len() {

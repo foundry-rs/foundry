@@ -56,6 +56,12 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
         self
     }
 
+    /// Optionally sets the EVM spec. When `None`, the spec from `EvmEnv::cfg_env` is preserved.
+    #[inline]
+    pub fn spec_id_opt(self, spec: Option<SpecFor<FEN>>) -> Self {
+        if let Some(spec) = spec { self.spec_id(spec) } else { self }
+    }
+
     /// Sets the executor gas limit.
     #[inline]
     pub fn gas_limit(mut self, gas_limit: u64) -> Self {

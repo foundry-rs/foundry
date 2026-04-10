@@ -32,7 +32,7 @@ use foundry_config::{
 use foundry_evm::{
     core::{
         FoundryBlock as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
@@ -95,22 +95,6 @@ pub struct RunArgs {
     /// Overrides the version specified in the config.
     #[arg(long)]
     evm_version: Option<EvmVersion>,
-
-    /// Sets the number of assumed available compute units per second for this provider
-    ///
-    /// default value: 330
-    ///
-    /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
-    #[arg(long, alias = "cups", value_name = "CUPS")]
-    pub compute_units_per_second: Option<u64>,
-
-    /// Disables rate limiting for this node's provider.
-    ///
-    /// default value: false
-    ///
-    /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
-    #[arg(long, value_name = "NO_RATE_LIMITS", visible_alias = "no-rpc-rate-limit")]
-    pub no_rate_limit: bool,
 
     /// Use current project artifacts for trace decoding.
     #[arg(long, visible_alias = "la")]
@@ -182,6 +166,11 @@ impl RunArgs {
                 return Err(eyre::eyre!("--jit is not supported for Tempo networks"));
             }
             self.run_with_evm::<TempoEvmNetwork>(revmc::runtime::JitBackend::disabled()).await
+        } else if evm_opts.networks.is_optimism() {
+            if self.jit {
+                return Err(eyre::eyre!("--jit is not supported for OP networks"));
+            }
+            self.run_with_evm::<OpEvmNetwork>(revmc::runtime::JitBackend::disabled()).await
         } else {
             let jit_backend = if self.jit {
                 let opt_level = match self.jit_opt_level {
@@ -226,8 +215,11 @@ impl RunArgs {
         let debug = self.debug;
         let decode_internal = self.decode_internal;
         let disable_labels = self.disable_labels;
-        let compute_units_per_second =
-            if self.no_rate_limit { Some(u64::MAX) } else { self.compute_units_per_second };
+        let compute_units_per_second = if self.rpc.common.no_rpc_rate_limit {
+            Some(u64::MAX)
+        } else {
+            self.rpc.common.compute_units_per_second
+        };
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?
             .compute_units_per_second_opt(compute_units_per_second)
@@ -291,6 +283,7 @@ impl RunArgs {
                 ) {
                     evm_env.cfg_env.set_spec_and_mainnet_gas_params(hardfork.into());
                 } else if block.header().excess_blob_gas().is_some() {
+                    // TODO: add glamsterdam header field checks in the future
                     evm_version = Some(EvmVersion::Cancun);
                 }
             }

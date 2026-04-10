@@ -59,7 +59,9 @@ impl<T: UIfmt> UIfmt for Option<T> {
 
 impl<T: UIfmt> UIfmt for [T] {
     fn pretty(&self) -> String {
-        if !self.is_empty() {
+        if self.is_empty() {
+            "[]".to_string()
+        } else {
             let mut s = String::with_capacity(self.len() * 64);
             s.push_str("[\n");
             for item in self {
@@ -71,8 +73,6 @@ impl<T: UIfmt> UIfmt for [T] {
             }
             s.push(']');
             s
-        } else {
-            "[]".to_string()
         }
     }
 }

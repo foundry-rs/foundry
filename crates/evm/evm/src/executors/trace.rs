@@ -33,15 +33,12 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
         let db = Backend::spawn(Some(fork))?;
         // configures a bare version of the evm executor: no cheatcode and log_collector inspector
         // is enabled, tracing will be enabled only for the targeted transaction
-        let builder = ExecutorBuilder::default().inspectors(|stack| {
-            stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)
-        });
-        let builder = if let Some(v) = version {
-            builder.spec_id(evm_spec_id::<SpecFor<FEN>>(v))
-        } else {
-            builder
-        };
-        let mut executor = builder.build(env.0, env.1, db);
+        let mut executor = ExecutorBuilder::default()
+            .inspectors(|stack| {
+                stack.trace_mode(trace_mode).networks(networks).create2_deployer(create2_deployer)
+            })
+            .spec_id_opt(version.map(evm_spec_id::<SpecFor<FEN>>))
+            .build(env.0, env.1, db);
 
         // Apply the state overrides.
         if let Some(state_overrides) = state_overrides {

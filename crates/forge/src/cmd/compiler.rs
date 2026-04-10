@@ -92,15 +92,9 @@ impl ResolveArgs {
                         })
                         .collect();
 
-                    let evm_version = if shell::verbosity() > 1 {
-                        let evm = EvmVersion::default()
-                            .normalize_version_solc(version)
-                            .unwrap_or_default();
-
-                        Some(evm)
-                    } else {
-                        None
-                    };
+                    let evm_version = (shell::verbosity() > 1).then(|| {
+                        EvmVersion::default().normalize_version_solc(version).unwrap_or_default()
+                    });
 
                     ResolvedCompiler { version: version.clone(), evm_version, paths }
                 })

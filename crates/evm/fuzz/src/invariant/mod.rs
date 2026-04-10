@@ -225,15 +225,15 @@ impl TargetedContract {
     /// Returns specified targeted functions if any, else mutable abi functions that are not
     /// marked as excluded.
     pub fn abi_fuzzed_functions(&self) -> impl Iterator<Item = &Function> {
-        if !self.targeted_functions.is_empty() {
-            Either::Left(self.targeted_functions.iter())
-        } else {
+        if self.targeted_functions.is_empty() {
             Either::Right(self.abi.functions().filter(|&func| {
                 !matches!(
                     func.state_mutability,
                     alloy_json_abi::StateMutability::Pure | alloy_json_abi::StateMutability::View
                 ) && !self.excluded_functions.contains(func)
             }))
+        } else {
+            Either::Left(self.targeted_functions.iter())
         }
     }
 

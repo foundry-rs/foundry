@@ -707,15 +707,15 @@ impl WorkerCorpus {
 
         self.evict_oldest_corpus()?;
 
-        let tx = if !self.in_memory_corpus.is_empty() {
+        let tx = if self.in_memory_corpus.is_empty() {
+            self.new_tx(test_runner)?
+        } else {
             let corpus = &self.in_memory_corpus
                 [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
             self.current_mutated = Some(corpus.uuid);
             let mut tx = corpus.tx_seq.first().unwrap().clone();
             self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
             tx
-        } else {
-            self.new_tx(test_runner)?
         };
 
         Ok(tx.call_details.calldata)

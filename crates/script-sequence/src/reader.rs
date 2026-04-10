@@ -62,7 +62,7 @@ impl BroadcastReader {
     {
         // 1. Recursively read all .json files in the broadcast directory
         let mut broadcasts = vec![];
-        for entry in walkdir::WalkDir::new(&self.broadcast_path).into_iter() {
+        for entry in walkdir::WalkDir::new(&self.broadcast_path) {
             let entry = entry?;
             let path = entry.path();
 

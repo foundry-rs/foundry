@@ -41,7 +41,8 @@ use foundry_config::{
 use foundry_debugger::Debugger;
 use foundry_evm::{
     core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, SpecFor, TempoEvmNetwork,
+        TxEnvFor,
     },
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
@@ -353,6 +354,17 @@ impl TestArgs {
                 decode_internal,
             )
             .await?
+        } else if evm_opts.networks.is_optimism() {
+            self.build_and_run_tests::<OpEvmNetwork>(
+                config,
+                evm_opts,
+                output,
+                filter,
+                coverage,
+                should_debug,
+                decode_internal,
+            )
+            .await?
         } else {
             self.build_and_run_tests::<EthEvmNetwork>(
                 config,
@@ -596,7 +608,8 @@ impl TestArgs {
         let mut builder = CallTraceDecoderBuilder::new()
             .with_known_contracts(&known_contracts)
             .with_label_disabled(self.disable_labels)
-            .with_verbosity(verbosity);
+            .with_verbosity(verbosity)
+            .with_chain_id(remote_chain.map(|c| c.id()));
         // Signatures are of no value for gas reports.
         if !self.gas_report {
             builder =
@@ -814,14 +827,9 @@ impl TestArgs {
                                 .iter()
                                 .filter_map(|(k, v)| {
                                     previous_snapshots.get(k).and_then(|previous_snapshot| {
-                                        if previous_snapshot != v {
-                                            Some((
-                                                k.clone(),
-                                                (previous_snapshot.clone(), v.clone()),
-                                            ))
-                                        } else {
-                                            None
-                                        }
+                                        (previous_snapshot != v).then(|| {
+                                            (k.clone(), (previous_snapshot.clone(), v.clone()))
+                                        })
                                     })
                                 })
                                 .collect();
@@ -1038,7 +1046,7 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
             if test_name.is_any_test()
-                && let Some(test_match) = test_name.split("(").next()
+                && let Some(test_match) = test_name.split('(').next()
             {
                 filter.push_str(test_match);
                 if failures.peek().is_some() {

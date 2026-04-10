@@ -138,11 +138,11 @@ impl FileFilter for SkipBuildFilters {
     /// Only returns a match if _no_  exclusion filter matches
     fn is_match(&self, file: &Path) -> bool {
         self.matchers.iter().all(|matcher| {
-            if !matcher.is_match_exclude(file) {
-                false
-            } else {
+            if matcher.is_match_exclude(file) {
                 file.strip_prefix(&self.project_root)
                     .map_or(true, |stripped| matcher.is_match_exclude(stripped))
+            } else {
+                false
             }
         })
     }

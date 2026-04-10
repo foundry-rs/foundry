@@ -101,6 +101,7 @@ pub fn rpc_endpoints() -> RpcEndpoints {
         ("mainnet2", RpcEndpointUrl::Url(next_http_archive_rpc_url())),
         ("sepolia", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Sepolia))),
         ("optimism", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Optimism))),
+        ("base", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Base))),
         ("arbitrum", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Arbitrum))),
         ("polygon", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::Polygon))),
         ("bsc", RpcEndpointUrl::Url(next_rpc_endpoint(NamedChain::BinanceSmartChain))),

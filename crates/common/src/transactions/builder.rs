@@ -7,6 +7,8 @@ use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use eyre::Result;
+use op_alloy_network::Optimism;
+use op_alloy_rpc_types::OpTransactionRequest;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_primitives::{
     TempoSignature,
@@ -247,6 +249,14 @@ pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
     /// No-op for non-Tempo networks.
     fn convert_create_to_call(&mut self) {}
 
+    /// Clears the `to` and `value` fields for batch transactions that use `calls`.
+    ///
+    /// In Tempo AA batch transactions, targets are specified in the `calls` field, not in `to`.
+    /// If `to` is set, `build_aa()` would add a spurious extra call. Must be called after
+    /// `prepare()` sets `kind`/`to` but before gas estimation.
+    /// No-op for non-Tempo networks.
+    fn clear_batch_to(&mut self) {}
+
     /// Signs the transaction using an access key (keychain mode).
     ///
     /// If `key_authorization` is provided and the key is not yet provisioned on-chain,
@@ -343,6 +353,20 @@ impl FoundryTransactionBuilder<AnyNetwork> for <AnyNetwork as Network>::Transact
     }
 }
 
+impl FoundryTransactionBuilder<Optimism> for OpTransactionRequest {
+    fn reset_gas_limit(&mut self) {
+        self.as_mut().gas = None;
+    }
+
+    fn authorization_list(&self) -> Option<&Vec<SignedAuthorization>> {
+        self.as_ref().authorization_list.as_ref()
+    }
+
+    fn set_authorization_list(&mut self, authorization_list: Vec<SignedAuthorization>) {
+        self.as_mut().authorization_list = Some(authorization_list);
+    }
+}
+
 impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::TransactionRequest {
     fn reset_gas_limit(&mut self) {
         self.gas = None;
@@ -421,6 +445,13 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
             self.inner.input = Default::default();
             self.inner.value = None;
             self.inner.to = None;
+        }
+    }
+
+    fn clear_batch_to(&mut self) {
+        if !self.calls.is_empty() {
+            self.inner.to = None;
+            self.inner.value = None;
         }
     }
 

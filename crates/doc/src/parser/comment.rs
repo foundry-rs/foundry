@@ -86,11 +86,7 @@ impl Comment {
     /// Returns [None] if the word doesn't match.
     /// Useful for [CommentTag::Param] and [CommentTag::Return] comments.
     pub fn match_first_word(&self, expected: &str) -> Option<&str> {
-        self.split_first_word().and_then(
-            |(word, rest)| {
-                if word == expected { Some(rest) } else { None }
-            },
-        )
+        self.split_first_word().and_then(|(word, rest)| (word == expected).then_some(rest))
     }
 
     /// Check if this comment is a custom tag.

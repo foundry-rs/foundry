@@ -181,7 +181,7 @@ impl SignaturesIdentifier {
     /// - `cache_dir` is the cache directory to store the signatures.
     /// - `offline` disables the OpenChain client.
     pub fn new_with(cache_dir: Option<&Path>, offline: bool) -> Result<Self> {
-        let client = if !offline { Some(OpenChainClient::new()?) } else { None };
+        let client = if offline { None } else { Some(OpenChainClient::new()?) };
         let (cache, cache_path) = if let Some(cache_dir) = cache_dir {
             let path = cache_dir.join("signatures");
             let cache = SignaturesCache::load(&path);
