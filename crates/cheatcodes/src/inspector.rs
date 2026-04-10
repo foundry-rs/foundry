@@ -610,6 +610,9 @@ impl<FEN: FoundryEvmNetwork> crate::CheatcodeHost for CheatcodeHostImpl<'_, '_, 
     }
 
     fn load(&mut self, account: Address, slot: U256) -> crate::Result<U256> {
+        // Match the same read path as the built-in vm.load cheatcode:
+        // load_account first to ensure it's warm, then sload.
+        self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
         let val = self.ecx.journal_mut().sload(account, slot).map_err(|e| fmt_err!("{e}"))?;
         Ok(val.data)
     }

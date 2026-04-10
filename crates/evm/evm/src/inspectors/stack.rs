@@ -254,6 +254,9 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         let mut stack = InspectorStack::new();
 
         // inspectors
+        // Auto-enable cheatcodes if external handlers are registered but no config was set.
+        let cheatcodes = cheatcodes
+            .or_else(|| if external_cheatcodes.is_empty() { None } else { Some(Arc::default()) });
         if let Some(config) = cheatcodes {
             let mut cheatcodes = Cheatcodes::new(config);
             // Set analysis capabilities if they are provided

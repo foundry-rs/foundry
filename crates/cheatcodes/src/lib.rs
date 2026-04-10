@@ -163,6 +163,7 @@ fn precompile_error(address: &Address) -> Error {
 
 /// The outcome of an external cheatcode call.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ExternalCheatcodeOutcome {
     /// This handler does not recognize the selector; try the next handler.
     Unhandled,
