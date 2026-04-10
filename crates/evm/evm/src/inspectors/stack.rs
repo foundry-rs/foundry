@@ -83,6 +83,8 @@ pub struct InspectorStackBuilder<BLOCK: Clone> {
     pub wallets: Option<Wallets>,
     /// The CREATE2 deployer address.
     pub create2_deployer: Address,
+    /// External cheatcode handlers to register.
+    pub external_cheatcodes: Vec<Arc<dyn foundry_cheatcodes::ExternalCheatcode>>,
 }
 
 impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
@@ -102,6 +104,7 @@ impl<BLOCK: Clone> Default for InspectorStackBuilder<BLOCK> {
             networks: NetworkConfigs::default(),
             wallets: None,
             create2_deployer: Default::default(),
+            external_cheatcodes: Vec::new(),
         }
     }
 }
@@ -214,6 +217,19 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
         self
     }
 
+    /// Register an external cheatcode handler.
+    ///
+    /// External handlers are tried in order when a call to the cheatcode address does not
+    /// match any built-in cheatcode selector.
+    #[inline]
+    pub fn external_cheatcode(
+        mut self,
+        handler: Arc<dyn foundry_cheatcodes::ExternalCheatcode>,
+    ) -> Self {
+        self.external_cheatcodes.push(handler);
+        self
+    }
+
     /// Builds the stack of inspectors to use when transacting/committing on the EVM.
     pub fn build<FEN: FoundryEvmNetwork<EvmFactory: FoundryEvmFactory<BlockEnv = BLOCK>>>(
         self,
@@ -233,6 +249,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             networks,
             wallets,
             create2_deployer,
+            external_cheatcodes,
         } = self;
         let mut stack = InspectorStack::new();
 
@@ -247,6 +264,10 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
             // Set wallets if they are provided
             if let Some(wallets) = wallets {
                 cheatcodes.set_wallets(wallets);
+            }
+            // Register external cheatcode handlers
+            for handler in external_cheatcodes {
+                cheatcodes.register_external_cheatcode(handler);
             }
             stack.set_cheatcodes(cheatcodes);
         }
