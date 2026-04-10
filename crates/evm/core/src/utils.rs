@@ -49,7 +49,7 @@ pub fn apply_chain_and_block_specific_env_changes<
     block: &N::BlockResponse,
     configs: NetworkConfigs,
 ) {
-    use NamedChain::*;
+    use NamedChain::{BinanceSmartChain, BinanceSmartChainTestnet, Mainnet};
 
     if let Ok(chain) = NamedChain::try_from(evm_env.cfg_env.chain_id) {
         let block_number = block.header().number();
