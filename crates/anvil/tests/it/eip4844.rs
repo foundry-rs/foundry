@@ -50,7 +50,7 @@ async fn can_send_eip4844_transaction() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip4844_transaction_fork() {
     let node_config = NodeConfig::test()
-        .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
+        .with_eth_rpc_url(Some(vec![rpc::next_http_archive_rpc_url()]))
         .with_fork_block_number(Some(23432306u64))
         .with_hardfork(Some(EthereumHardfork::Cancun.into()));
     let (api, handle) = spawn(node_config).await;
@@ -77,7 +77,7 @@ async fn can_send_eip4844_transaction_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_send_eip4844_transaction_eth_send_transaction() {
     let node_config = NodeConfig::test()
-        .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
+        .with_eth_rpc_url(Some(vec![rpc::next_http_archive_rpc_url()]))
         .with_fork_block_number(Some(23552208u64))
         .with_hardfork(Some(EthereumHardfork::Cancun.into()));
     let (api, handle) = spawn(node_config).await;

@@ -105,7 +105,7 @@ impl<N: Network> ClientFork<N> {
         self.config.read().chain_id
     }
 
-    fn provider(&self) -> Arc<RetryProvider<N>> {
+    pub fn provider(&self) -> Arc<RetryProvider<N>> {
         self.config.read().provider.clone()
     }
 
@@ -634,6 +634,8 @@ impl ClientFork {
 #[derive(Clone, Debug)]
 pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub eth_rpc_url: String,
+    /// Additional RPC URLs for load balancing
+    pub additional_rpc_urls: Vec<String>,
     /// The block number of the forked block
     pub block_number: u64,
     /// The hash of the forked block
@@ -672,16 +674,24 @@ impl<N: Network> ClientForkConfig<N> {
     ///
     /// This will fail if no new provider could be established (erroneous URL)
     fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
-        // let interval = self.provider.get_interval();
+        let mut builder = ProviderBuilder::<N>::new(url.as_str())
+            .timeout(self.timeout)
+            .max_retry(self.retries)
+            .initial_backoff(self.backoff.as_millis() as u64)
+            .compute_units_per_second(self.compute_units_per_second);
+
+        if !self.additional_rpc_urls.is_empty() {
+            let additional: Vec<url::Url> = self.additional_rpc_urls.iter()
+                .map(|u| url::Url::parse(u).map_err(|e| {
+                    BlockchainError::InvalidUrl(format!("invalid fork URL: {u}: {e}"))
+                }))
+                .collect::<Result<Vec<_>, _>>()?;
+            builder = builder.additional_urls(additional);
+        }
+
         self.provider = Arc::new(
-            ProviderBuilder::<N>::new(url.as_str())
-                .timeout(self.timeout)
-                // .timeout_retry(self.retries)
-                .max_retry(self.retries)
-                .initial_backoff(self.backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
-                .build()
-                .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?, /* .interval(interval), */
+            builder.build()
+                .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?,
         );
         trace!(target: "fork", "Updated rpc url  {}", url);
         self.eth_rpc_url = url;

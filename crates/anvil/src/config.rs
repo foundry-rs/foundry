@@ -134,8 +134,8 @@ pub struct NodeConfig {
     pub port: u16,
     /// maximum number of transactions in a block
     pub max_transactions: usize,
-    /// url of the rpc server that should be used for any rpc calls
-    pub eth_rpc_url: Option<String>,
+    /// urls of the rpc server that should be used for any rpc calls
+    pub eth_rpc_url: Option<Vec<String>>,
     /// pins the block number or transaction hash for the state fork
     pub fork_choice: Option<ForkChoice>,
     /// headers to use with `eth_rpc_url`
@@ -857,8 +857,8 @@ impl NodeConfig {
 
     /// Sets the `eth_rpc_url` to use when forking
     #[must_use]
-    pub fn with_eth_rpc_url<U: Into<String>>(mut self, eth_rpc_url: Option<U>) -> Self {
-        self.eth_rpc_url = eth_rpc_url.map(Into::into);
+    pub fn with_eth_rpc_url(mut self, eth_rpc_url: Option<Vec<String>>) -> Self {
+        self.eth_rpc_url = eth_rpc_url;
         self
     }
 
@@ -1142,8 +1142,8 @@ impl NodeConfig {
         );
 
         let (db, fork): (Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>) =
-            if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
-                self.setup_fork_db(eth_rpc_url, &mut evm_env, &fees).await?
+            if let Some(eth_rpc_urls) = self.eth_rpc_url.clone() {
+                self.setup_fork_db(eth_rpc_urls, &mut evm_env, &fees).await?
             } else {
                 (Arc::new(TokioRwLock::new(Box::<MemDb>::default())), None)
             };
@@ -1223,11 +1223,11 @@ impl NodeConfig {
     ///  - mutating some members of `self`
     pub async fn setup_fork_db(
         &mut self,
-        eth_rpc_url: String,
+        eth_rpc_urls: Vec<String>,
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>)> {
-        let (db, config) = self.setup_fork_db_config(eth_rpc_url, evm_env, fees).await?;
+        let (db, config) = self.setup_fork_db_config(eth_rpc_urls, evm_env, fees).await?;
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
         let fork = ClientFork::new(config, Arc::clone(&db));
         Ok((db, Some(fork)))
@@ -1240,18 +1240,25 @@ impl NodeConfig {
     ///  - mutating some members of `self`
     pub async fn setup_fork_db_config(
         &mut self,
-        eth_rpc_url: String,
+        eth_rpc_urls: Vec<String>,
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
-        debug!(target: "node", ?eth_rpc_url, "setting up fork db");
+        let primary_url = eth_rpc_urls.first().expect("at least one fork URL required").clone();
+        let additional_urls: Vec<url::Url> = eth_rpc_urls[1..]
+            .iter()
+            .map(|u| url::Url::parse(u).wrap_err_with(|| format!("invalid fork URL: {u}")))
+            .collect::<Result<Vec<_>>>()?;
+
+        debug!(target: "node", ?primary_url, additional_count = additional_urls.len(), "setting up fork db");
         let provider = Arc::new(
-            ProviderBuilder::new(&eth_rpc_url)
+            ProviderBuilder::new(&primary_url)
                 .timeout(self.fork_request_timeout)
                 .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .max_retry(self.fork_request_retries)
                 .headers(self.fork_headers.clone())
+                .additional_urls(additional_urls)
                 .build()
                 .wrap_err("failed to establish provider to fork url")?,
         );
@@ -1399,7 +1406,7 @@ latest block number: {latest_block}"
             self.networks,
         );
 
-        let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), eth_rpc_url.clone());
+        let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), primary_url.clone());
         let block_chain_db = if self.fork_chain_id.is_some() {
             BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
         } else {
@@ -1415,8 +1422,10 @@ latest block number: {latest_block}"
         )
         .await;
 
+        let additional_rpc_urls: Vec<String> = eth_rpc_urls[1..].to_vec();
         let config = ClientForkConfig {
-            eth_rpc_url,
+            eth_rpc_url: primary_url,
+            additional_rpc_urls,
             block_number: fork_block_number,
             block_hash,
             transaction_hash: self.fork_choice.and_then(|fc| fc.transaction_hash()),

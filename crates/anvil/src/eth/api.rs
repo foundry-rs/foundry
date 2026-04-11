@@ -5,6 +5,7 @@ use super::{
 use crate::{
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
     eth::{
+        multicall_prefetch,
         backend::{
             self,
             db::SerializableState,
@@ -2303,6 +2304,17 @@ impl EthApi<FoundryNetwork> {
                 ));
             }
             return Ok(fork.call(&request, Some(number.into())).await?);
+        }
+
+        // Prefetch storage for Multicall3 calls in fork mode
+        if let Some(fork) = self.get_fork() {
+            if multicall_prefetch::is_multicall3_aggregate(&request) {
+                let block_id = match &block_request {
+                    BlockRequest::Number(n) => BlockId::Number(BlockNumber::Number(*n)),
+                    _ => BlockId::default(),
+                };
+                multicall_prefetch::prefetch_multicall(&fork, &request, block_id).await;
+            }
         }
 
         let fees = FeeDetails::new(

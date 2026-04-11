@@ -407,7 +407,7 @@ async fn test_timestamp_interval() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_can_set_storage_bsc_fork() {
     let (api, handle) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(vec!["https://bsc-dataseed.binance.org/".to_string()]))).await;
     let provider = handle.http_provider();
 
     let busd_addr = address!("0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56");
@@ -492,7 +492,7 @@ async fn can_get_metadata() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_get_metadata_on_fork() {
     let (api, handle) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(vec!["https://bsc-dataseed.binance.org/".to_string()]))).await;
     let provider = handle.http_provider();
 
     let metadata = api.anvil_metadata().await.unwrap();
@@ -521,7 +521,7 @@ async fn can_get_metadata_on_fork() {
 #[tokio::test(flavor = "multi_thread")]
 async fn metadata_changes_on_reset() {
     let (api, _) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some("https://bsc-dataseed.binance.org/"))).await;
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(vec!["https://bsc-dataseed.binance.org/".to_string()]))).await;
 
     let metadata = api.anvil_metadata().await.unwrap();
     let instance_id = metadata.instance_id;

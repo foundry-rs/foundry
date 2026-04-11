@@ -2055,7 +2055,7 @@ impl<N: Network> Backend<N> {
                     // `setup_fork_db_config`
                     node_config.base_fee.take();
 
-                    node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?
+                    node_config.setup_fork_db_config(vec![eth_rpc_url], &mut evm_env, &self.fees).await?
                 };
 
                 *self.db.write().await = Box::new(db);
@@ -2085,14 +2085,14 @@ impl<N: Network> Backend<N> {
             // update all settings related to the forked block
             {
                 if let Some(fork_url) = forking.json_rpc_url {
-                    self.reset_block_number(fork_url, fork_block_number).await?;
+                    self.reset_block_number(vec![fork_url], fork_block_number).await?;
                 } else {
                     // If rpc url is unspecified, then update the fork with the new block number and
                     // existing rpc url, this updates the cache path
                     {
-                        let maybe_fork_url = { self.node_config.read().await.eth_rpc_url.clone() };
-                        if let Some(fork_url) = maybe_fork_url {
-                            self.reset_block_number(fork_url, fork_block_number).await?;
+                        let maybe_fork_urls = { self.node_config.read().await.eth_rpc_url.clone() };
+                        if let Some(fork_urls) = maybe_fork_urls {
+                            self.reset_block_number(fork_urls, fork_block_number).await?;
                         }
                     }
 
@@ -2199,7 +2199,7 @@ impl<N: Network> Backend<N> {
 
     async fn reset_block_number(
         &self,
-        fork_url: String,
+        fork_urls: Vec<String>,
         fork_block_number: u64,
     ) -> Result<(), BlockchainError> {
         let mut node_config = self.node_config.write().await;
@@ -2207,7 +2207,7 @@ impl<N: Network> Backend<N> {
 
         let mut evm_env = self.evm_env.read().clone();
         let (forked_db, client_fork_config) =
-            node_config.setup_fork_db_config(fork_url, &mut evm_env, &self.fees).await?;
+            node_config.setup_fork_db_config(fork_urls, &mut evm_env, &self.fees).await?;
 
         *self.db.write().await = Box::new(forked_db);
         let fork = ClientFork::new(client_fork_config, Arc::clone(&self.db));
