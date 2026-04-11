@@ -144,11 +144,21 @@ impl InvariantThroughputMetrics {
     }
 }
 
+/// Converts a cumulative campaign total into an average per-second rate.
+///
+/// Returns `0.0` during the initial zero-elapsed startup window to avoid
+/// dividing by zero while progress reporting is warming up.
 fn rate_per_sec(total: f64, elapsed: Duration) -> f64 {
     let elapsed_secs = elapsed.as_secs_f64();
     if elapsed_secs > 0.0 { total / elapsed_secs } else { 0.0 }
 }
 
+/// Builds the machine-readable invariant progress payload emitted during a
+/// campaign.
+///
+/// This keeps the existing corpus progress metrics together with cumulative and
+/// derived throughput fields so downstream benchmark tooling can consume a
+/// single JSON event shape.
 fn build_invariant_progress_json<M: Serialize>(
     timestamp_secs: u64,
     invariant_name: &str,
