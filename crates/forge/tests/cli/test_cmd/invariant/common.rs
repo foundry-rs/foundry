@@ -2131,7 +2131,7 @@ contract InvariantWarp is Test {
 [FAIL: number is not zero]
 	[Sequence] (original: 3, shrunk: 1)
 		vm.roll(block.number + 52068);
-		vm.prank(0x000000000000000000000000000000000000133a);
+		vm.prank([..]);
 		Roll(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
  invariant_roll() (runs: 0, calls: 0, reverts: 2)
 ...
