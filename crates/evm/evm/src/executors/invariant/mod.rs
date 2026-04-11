@@ -1154,56 +1154,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn invariant_progress_json_includes_throughput_fields() {
-        let mut throughput = InvariantThroughputMetrics::default();
-        throughput.record_call(20);
-        throughput.record_call(30);
-
-        let payload = build_invariant_progress_json(
-            123,
-            "invariant_balance",
-            &json!({ "corpus_count": 7 }),
-            Some(I256::try_from(42).unwrap()),
-            throughput,
-            Duration::from_secs(10),
-        );
-
-        assert_eq!(payload["timestamp"], json!(123));
-        assert_eq!(payload["invariant"], json!("invariant_balance"));
-        assert_eq!(payload["metrics"]["corpus_count"], json!(7));
-        assert_eq!(payload["total_txs"], json!(2));
-        assert_eq!(payload["total_gas"], json!(50));
-        assert!((payload["tx_per_sec"].as_f64().unwrap() - 0.2).abs() < 1e-12);
-        assert!((payload["gas_per_sec"].as_f64().unwrap() - 5.0).abs() < 1e-12);
-        assert_eq!(payload["optimization_best"], json!("42"));
-    }
-
-    #[test]
-    fn invariant_progress_json_zero_elapsed_reports_zero_rates() {
-        let mut throughput = InvariantThroughputMetrics::default();
-        throughput.record_call(21_000);
-
-        let payload = build_invariant_progress_json(
-            456,
-            "invariant_zero_elapsed",
-            &json!({ "corpus_count": 1 }),
-            None,
-            throughput,
-            Duration::ZERO,
-        );
-
-        assert_eq!(payload["tx_per_sec"], json!(0.0));
-        assert_eq!(payload["gas_per_sec"], json!(0.0));
-        assert!(payload.get("optimization_best").is_none());
-    }
-}
-
 /// Collects data from call for fuzzing. However, it first verifies that the sender is not an EOA
 /// before inserting it into the dictionary. Otherwise, we flood the dictionary with
 /// randomly generated addresses.
@@ -1303,4 +1253,54 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
     executor
         .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), U256::ZERO)
         .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn invariant_progress_json_includes_throughput_fields() {
+        let mut throughput = InvariantThroughputMetrics::default();
+        throughput.record_call(20);
+        throughput.record_call(30);
+
+        let payload = build_invariant_progress_json(
+            123,
+            "invariant_balance",
+            &json!({ "corpus_count": 7 }),
+            Some(I256::try_from(42).unwrap()),
+            throughput,
+            Duration::from_secs(10),
+        );
+
+        assert_eq!(payload["timestamp"], json!(123));
+        assert_eq!(payload["invariant"], json!("invariant_balance"));
+        assert_eq!(payload["metrics"]["corpus_count"], json!(7));
+        assert_eq!(payload["total_txs"], json!(2));
+        assert_eq!(payload["total_gas"], json!(50));
+        assert!((payload["tx_per_sec"].as_f64().unwrap() - 0.2).abs() < 1e-12);
+        assert!((payload["gas_per_sec"].as_f64().unwrap() - 5.0).abs() < 1e-12);
+        assert_eq!(payload["optimization_best"], json!("42"));
+    }
+
+    #[test]
+    fn invariant_progress_json_zero_elapsed_reports_zero_rates() {
+        let mut throughput = InvariantThroughputMetrics::default();
+        throughput.record_call(21_000);
+
+        let payload = build_invariant_progress_json(
+            456,
+            "invariant_zero_elapsed",
+            &json!({ "corpus_count": 1 }),
+            None,
+            throughput,
+            Duration::ZERO,
+        );
+
+        assert_eq!(payload["tx_per_sec"], json!(0.0));
+        assert_eq!(payload["gas_per_sec"], json!(0.0));
+        assert!(payload.get("optimization_best").is_none());
+    }
 }
