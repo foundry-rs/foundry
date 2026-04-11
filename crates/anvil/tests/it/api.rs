@@ -476,7 +476,7 @@ async fn can_send_tx_sync() {
 #[ignore = "no debug_"]
 async fn can_get_code_by_hash() {
     let (api, _) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(vec![rpc::next_http_archive_rpc_url()]))).await;
 
     // The code hash for DEFAULT_CREATE2_DEPLOYER_RUNTIME_CODE
     let code_hash = b256!("2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989");

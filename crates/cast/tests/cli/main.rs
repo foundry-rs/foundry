@@ -3757,7 +3757,7 @@ forgetest_async!(flaky_cast_run_impersonated_tx, |_prj, cmd| {
     let (_api, handle) = anvil::spawn(
         NodeConfig::test()
             .with_auto_impersonate(true)
-            .with_eth_rpc_url(Some("https://sepolia.base.org")),
+            .with_eth_rpc_url(Some(vec!["https://sepolia.base.org".to_string()])),
     )
     .await;
 

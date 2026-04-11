@@ -60,14 +60,14 @@ impl LocalFork {
         let (origin_api, origin_handle) = spawn(origin).await;
 
         let (fork_api, fork_handle) =
-            spawn(fork.with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+            spawn(fork.with_eth_rpc_url(Some(vec![origin_handle.http_endpoint()]))).await;
         Self { origin_api, origin_handle, fork_api, fork_handle }
     }
 }
 
 pub fn fork_config() -> NodeConfig {
     NodeConfig::test()
-        .with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))
+        .with_eth_rpc_url(Some(vec![rpc::next_http_archive_rpc_url()]))
         .with_fork_block_number(Some(BLOCK_NUMBER))
 }
 
@@ -218,7 +218,7 @@ async fn test_fork_optimism_with_transaction_hash() {
             .unwrap();
     let (api, _handle) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(rpc::next_rpc_endpoint(NamedChain::Optimism)))
+            .with_eth_rpc_url(Some(vec![rpc::next_rpc_endpoint(NamedChain::Optimism)]))
             .with_fork_transaction_hash(Some(fork_tx_hash)),
     )
     .await;
@@ -509,7 +509,7 @@ async fn can_reset_properly() {
     assert_eq!(origin_nonce, origin_provider.get_transaction_count(account).await.unwrap());
 
     let (fork_api, fork_handle) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(vec![origin_handle.http_endpoint()]))).await;
 
     let fork_provider = fork_handle.http_provider();
     let fork_tx_provider = http_provider(&fork_handle.http_endpoint());
@@ -541,7 +541,7 @@ async fn can_reset_properly() {
 #[tokio::test(flavor = "multi_thread")]
 async fn can_reset_fork_to_new_fork() {
     let eth_rpc_url = next_rpc_endpoint(NamedChain::Mainnet);
-    let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(eth_rpc_url))).await;
+    let (api, handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(vec![eth_rpc_url]))).await;
     let provider = handle.http_provider();
 
     let op = address!("0xC0d3c0d3c0D3c0D3C0d3C0D3C0D3c0d3c0d30007"); // L2CrossDomainMessenger - Dead on mainnet.
@@ -836,7 +836,7 @@ async fn test_fork_init_blob_base_fee_with_explicit_base_fee() {
     let fork_block_number = 24_127_158u64;
     let (default_api, _) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(fork_rpc_url.clone()))
+            .with_eth_rpc_url(Some(vec![fork_rpc_url.clone()]))
             .with_fork_block_number(Some(fork_block_number)),
     )
     .await;
@@ -850,7 +850,7 @@ async fn test_fork_init_blob_base_fee_with_explicit_base_fee() {
         .unwrap();
     let (explicit_api, _) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(fork_rpc_url))
+            .with_eth_rpc_url(Some(vec![fork_rpc_url]))
             .with_fork_block_number(Some(fork_block_number))
             .with_base_fee(Some(explicit_base_fee)),
     )
@@ -866,7 +866,7 @@ async fn test_fork_init_blob_base_fee_with_explicit_base_fee() {
 #[tokio::test(flavor = "multi_thread")]
 async fn flaky_test_reset_fork_on_new_blocks() {
     let (api, handle) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(vec![rpc::next_http_archive_rpc_url()]))).await;
 
     let anvil_provider = handle.http_provider();
     let endpoint = next_http_rpc_endpoint();
@@ -1179,7 +1179,7 @@ async fn test_fork_reset_moonbeam() {
     crate::init_tracing();
     let (api, handle) = spawn(
         fork_config()
-            .with_eth_rpc_url(Some("https://rpc.api.moonbeam.network".to_string()))
+            .with_eth_rpc_url(Some(vec!["https://rpc.api.moonbeam.network".to_string()]))
             .with_fork_block_number(None::<u64>),
     )
     .await;
@@ -1242,7 +1242,7 @@ async fn flaky_test_arbitrum_fork_dev_balance() {
     let (api, handle) = spawn(
         fork_config()
             .with_fork_block_number(None::<u64>)
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
+            .with_eth_rpc_url(Some(vec![next_rpc_endpoint(NamedChain::Arbitrum)])),
     )
     .await;
 
@@ -1261,7 +1261,7 @@ async fn flaky_test_arb_fork_mining() {
     let (api, _handle) = spawn(
         fork_config()
             .with_fork_block_number(Some(fork_block_number))
-            .with_eth_rpc_url(Some(fork_rpc)),
+            .with_eth_rpc_url(Some(vec![fork_rpc])),
     )
     .await;
 
@@ -1281,7 +1281,7 @@ async fn flaky_test_arbitrum_fork_block_number() {
     let (_, handle) = spawn(
         fork_config()
             .with_fork_block_number(None::<u64>)
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
+            .with_eth_rpc_url(Some(vec![next_rpc_endpoint(NamedChain::Arbitrum)])),
     )
     .await;
     let provider = handle.http_provider();
@@ -1293,7 +1293,7 @@ async fn flaky_test_arbitrum_fork_block_number() {
     let (api, _) = spawn(
         fork_config()
             .with_fork_block_number(Some(initial_block_number))
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Arbitrum))),
+            .with_eth_rpc_url(Some(vec![next_rpc_endpoint(NamedChain::Arbitrum)])),
     )
     .await;
     let block_number = api.block_number().unwrap().to::<u64>();
@@ -1334,7 +1334,7 @@ async fn test_base_fork_gas_limit() {
     let (api, handle) = spawn(
         fork_config()
             .with_fork_block_number(None::<u64>)
-            .with_eth_rpc_url(Some(next_rpc_endpoint(NamedChain::Base))),
+            .with_eth_rpc_url(Some(vec![next_rpc_endpoint(NamedChain::Base)])),
     )
     .await;
 
@@ -1384,7 +1384,7 @@ async fn test_immutable_fork_transaction_hash() {
         fork_config()
             .with_blocktime(Some(Duration::from_millis(500)))
             .with_fork_transaction_hash(Some(fork_tx_hash))
-            .with_eth_rpc_url(Some("https://immutable-zkevm.drpc.org".to_string())),
+            .with_eth_rpc_url(Some(vec!["https://immutable-zkevm.drpc.org".to_string()])),
     )
     .await;
 
@@ -1983,4 +1983,37 @@ async fn test_config_with_osaka_hardfork_with_precompile_factory() {
         &expected_precompiles,
         &expected_system_contracts,
     );
+}
+
+// Test that anvil can fork using multiple RPC URLs for load balancing.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fork_multi_rpc_load_balance() {
+    // Spawn two independent origin nodes with the same initial state
+    let (origin_api_1, origin_handle_1) = spawn(NodeConfig::test()).await;
+    let (origin_api_2, origin_handle_2) = spawn(NodeConfig::test()).await;
+
+    // Mine a block on both so they have state at block 1
+    origin_api_1.mine_one().await;
+    origin_api_2.mine_one().await;
+
+    // Get a dev wallet address from the first origin
+    let accounts_1 = origin_handle_1.dev_wallets().collect::<Vec<_>>();
+    let signer_addr = accounts_1[0].address();
+
+    // Fork from both origin nodes using multi-URL
+    let (fork_api, _fork_handle) = spawn(
+        NodeConfig::test().with_eth_rpc_url(Some(vec![
+            origin_handle_1.http_endpoint(),
+            origin_handle_2.http_endpoint(),
+        ]))
+    )
+    .await;
+
+    // Verify the fork works — can read balance
+    let balance = fork_api.balance(signer_addr, None).await.unwrap();
+    assert!(balance > U256::ZERO, "should read balance through load-balanced fork");
+
+    // Verify block number is correct
+    let block_num = fork_api.block_number().unwrap();
+    assert_eq!(block_num, U256::from(1), "fork should be at block 1");
 }

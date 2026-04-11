@@ -14,7 +14,7 @@ use foundry_test_utils::rpc;
 async fn test_fork_simulate_v1() {
     crate::init_tracing();
     let (api, _) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(rpc::next_http_archive_rpc_url()))).await;
+        spawn(NodeConfig::test().with_eth_rpc_url(Some(vec![rpc::next_http_archive_rpc_url()]))).await;
     let block_overrides =
         Some(BlockOverrides { base_fee: Some(U256::from(9)), ..Default::default() });
     let account_override =

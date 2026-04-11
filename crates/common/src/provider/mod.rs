@@ -1,11 +1,16 @@
 //! Provider-related instantiation and usage utilities.
 
 pub mod curl_transport;
+pub mod load_balanced_transport;
 pub mod runtime_transport;
 
 use crate::{
     ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT,
-    provider::{curl_transport::CurlTransport, runtime_transport::RuntimeTransportBuilder},
+    provider::{
+        curl_transport::CurlTransport,
+        load_balanced_transport::LoadBalancedTransport,
+        runtime_transport::RuntimeTransportBuilder,
+    },
 };
 use alloy_chains::NamedChain;
 use alloy_network::{Network, NetworkWallet};
@@ -90,6 +95,8 @@ pub struct ProviderBuilder<N: Network = AnyNetwork> {
     /// JWT Secret
     jwt: Option<String>,
     headers: Vec<String>,
+    /// Additional URLs for load balancing.
+    additional_urls: Vec<Url>,
     is_local: bool,
     /// Whether to accept invalid certificates.
     accept_invalid_certs: bool,
@@ -147,6 +154,7 @@ impl<N: Network> ProviderBuilder<N> {
             compute_units_per_second: ALCHEMY_FREE_TIER_CUPS,
             jwt: None,
             headers: vec![],
+            additional_urls: vec![],
             is_local,
             accept_invalid_certs: false,
             no_proxy: false,
@@ -278,6 +286,12 @@ impl<N: Network> ProviderBuilder<N> {
         self
     }
 
+    /// Sets additional URLs for load balancing.
+    pub fn additional_urls(mut self, urls: Vec<Url>) -> Self {
+        self.additional_urls = urls;
+        self
+    }
+
     /// Sets whether to accept invalid certificates.
     pub fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
         self.accept_invalid_certs = accept_invalid_certs;
@@ -313,6 +327,7 @@ impl<N: Network> ProviderBuilder<N> {
             compute_units_per_second,
             jwt,
             headers,
+            additional_urls,
             is_local,
             accept_invalid_certs,
             no_proxy,
@@ -335,14 +350,28 @@ impl<N: Network> ProviderBuilder<N> {
             return Ok(provider);
         }
 
-        let transport = RuntimeTransportBuilder::new(url)
-            .with_timeout(timeout)
-            .with_headers(headers)
-            .with_jwt(jwt)
-            .accept_invalid_certs(accept_invalid_certs)
-            .no_proxy(no_proxy)
-            .build();
-        let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
+        let make_runtime_transport = |u: Url| {
+            RuntimeTransportBuilder::new(u)
+                .with_timeout(timeout)
+                .with_headers(headers.clone())
+                .with_jwt(jwt.clone())
+                .accept_invalid_certs(accept_invalid_certs)
+                .no_proxy(no_proxy)
+                .build()
+        };
+
+        let client = if additional_urls.is_empty() {
+            let transport = make_runtime_transport(url);
+            ClientBuilder::default().layer(retry_layer).transport(transport, is_local)
+        } else {
+            let mut backends = Vec::with_capacity(1 + additional_urls.len());
+            backends.push(make_runtime_transport(url));
+            for u in additional_urls {
+                backends.push(make_runtime_transport(u));
+            }
+            let transport = LoadBalancedTransport::new(backends);
+            ClientBuilder::default().layer(retry_layer).transport(transport, is_local)
+        };
 
         if !is_local {
             client.set_poll_interval(
@@ -381,6 +410,7 @@ impl<N: Network> ProviderBuilder<N> {
             compute_units_per_second,
             jwt,
             headers,
+            additional_urls,
             is_local,
             accept_invalid_certs,
             no_proxy,
@@ -405,15 +435,28 @@ impl<N: Network> ProviderBuilder<N> {
             return Ok(provider);
         }
 
-        let transport = RuntimeTransportBuilder::new(url)
-            .with_timeout(timeout)
-            .with_headers(headers)
-            .with_jwt(jwt)
-            .accept_invalid_certs(accept_invalid_certs)
-            .no_proxy(no_proxy)
-            .build();
+        let make_runtime_transport = |u: Url| {
+            RuntimeTransportBuilder::new(u)
+                .with_timeout(timeout)
+                .with_headers(headers.clone())
+                .with_jwt(jwt.clone())
+                .accept_invalid_certs(accept_invalid_certs)
+                .no_proxy(no_proxy)
+                .build()
+        };
 
-        let client = ClientBuilder::default().layer(retry_layer).transport(transport, is_local);
+        let client = if additional_urls.is_empty() {
+            let transport = make_runtime_transport(url);
+            ClientBuilder::default().layer(retry_layer).transport(transport, is_local)
+        } else {
+            let mut backends = Vec::with_capacity(1 + additional_urls.len());
+            backends.push(make_runtime_transport(url));
+            for u in additional_urls {
+                backends.push(make_runtime_transport(u));
+            }
+            let transport = LoadBalancedTransport::new(backends);
+            ClientBuilder::default().layer(retry_layer).transport(transport, is_local)
+        };
 
         if !is_local {
             client.set_poll_interval(

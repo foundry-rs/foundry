@@ -229,7 +229,7 @@ async fn can_preserve_historical_states_between_dump_and_load() {
 async fn test_fork_load_state() {
     let (api, handle) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(next_http_archive_rpc_url()))
+            .with_eth_rpc_url(Some(vec![next_http_archive_rpc_url()]))
             .with_fork_block_number(Some(21070682u64)),
     )
     .await;
@@ -257,7 +257,7 @@ async fn test_fork_load_state() {
 
     let (api, handle) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(next_http_archive_rpc_url()))
+            .with_eth_rpc_url(Some(vec![next_http_archive_rpc_url()]))
             .with_fork_block_number(Some(21070686u64)) // Forked chain has moved forward
             .with_init_state(Some(serialized_state)),
     )
@@ -316,7 +316,7 @@ async fn test_fork_load_state() {
 async fn test_fork_load_state_with_greater_state_block() {
     let (api, _handle) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(next_http_archive_rpc_url()))
+            .with_eth_rpc_url(Some(vec![next_http_archive_rpc_url()]))
             .with_fork_block_number(Some(21070682u64)),
     )
     .await;
@@ -331,7 +331,7 @@ async fn test_fork_load_state_with_greater_state_block() {
 
     let (api, _handle) = spawn(
         NodeConfig::test()
-            .with_eth_rpc_url(Some(next_http_archive_rpc_url()))
+            .with_eth_rpc_url(Some(vec![next_http_archive_rpc_url()]))
             .with_fork_block_number(Some(21070682u64)) // Forked chain has moved forward
             .with_init_state(Some(serialized_state)),
     )
