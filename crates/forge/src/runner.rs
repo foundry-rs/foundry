@@ -32,6 +32,7 @@ use foundry_evm::{
         invariant::{InvariantContract, InvariantSettings},
         strategies::EvmFuzzState,
     },
+    revm::primitives::hardfork::SpecId,
     traces::{TraceKind, TraceMode, load_contracts},
 };
 use itertools::Itertools;
@@ -358,10 +359,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
-            let fail_msg = if !setup.deployment_failure {
-                "setUp()".to_string()
-            } else {
+            let fail_msg = if setup.deployment_failure {
                 "constructor()".to_string()
+            } else {
+                "setUp()".to_string()
             };
             return SuiteResult::new(
                 start.elapsed(),
@@ -1097,7 +1098,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 address,
                 &ITest::beforeTestSetupCall { testSelector: func.selector() },
             ) {
-                debug!(?calldata, spec=%self.executor.spec_id(), "applying before_test_setup");
+                let spec_id: SpecId = self.executor.spec_id().into();
+                debug!(?calldata, spec=%spec_id, "applying before_test_setup");
                 // Apply before test configured calldata.
                 match self.executor.to_mut().transact_raw(
                     self.tcfg.sender,

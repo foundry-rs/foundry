@@ -214,7 +214,7 @@ impl SelectorsSubcommands {
                     .filter_map(|(k1, v1)| {
                         second_method_map
                             .iter()
-                            .find_map(|(k2, v2)| if **v2 == *v1 { Some((k2, v2)) } else { None })
+                            .find_map(|(k2, v2)| (**v2 == *v1).then_some((k2, v2)))
                             .map(|(k2, v2)| (v2, k1, k2))
                     })
                     .collect();

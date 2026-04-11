@@ -379,10 +379,10 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
                             ty: "unknown".to_string(),
                         });
 
-                    let label = if !output.name.is_empty() {
-                        output.name.clone()
-                    } else {
+                    let label = if output.name.is_empty() {
                         index.to_string()
+                    } else {
+                        output.name.clone()
                     };
 
                     returns.insert(
@@ -477,10 +477,10 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                                 ty: "unknown".to_string(),
                             });
 
-                        let label = if !output.name.is_empty() {
-                            output.name.clone()
-                        } else {
+                        let label = if output.name.is_empty() {
                             index.to_string()
+                        } else {
+                            output.name.clone()
                         };
                         sh_println!(
                             "{label}: {internal_type} {value}",

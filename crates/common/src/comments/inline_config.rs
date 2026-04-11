@@ -46,7 +46,7 @@ impl InlineConfigItem<Vec<String>> {
             vec!["all".to_string()]
         } else {
             match relevant.split_once(')') {
-                Some((id_str, _)) => id_str.split(",").map(|s| s.trim().to_string()).collect(),
+                Some((id_str, _)) => id_str.split(',').map(|s| s.trim().to_string()).collect(),
                 None => return Err(InvalidInlineConfigItem::Syntax(s.into())),
             }
         };

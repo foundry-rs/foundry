@@ -418,7 +418,7 @@ impl<N: Network> EthApi<N> {
                     }
                 })
                 .unwrap_or_default(),
-            network: if self.backend.is_tempo() { Some("tempo".to_string()) } else { None },
+            network: self.backend.is_tempo().then(|| "tempo".to_string()),
         })
     }
 

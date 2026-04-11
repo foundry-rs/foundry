@@ -313,7 +313,7 @@ impl WalletSubcommands {
             Self::New { path, account_name, unsafe_password, number, password, force } => {
                 let mut rng = thread_rng();
 
-                let mut json_values = if shell::is_json() { Some(vec![]) } else { None };
+                let mut json_values = shell::is_json().then(std::vec::Vec::new);
 
                 let path = if let Some(path) = path {
                     match dunce::canonicalize(&path) {

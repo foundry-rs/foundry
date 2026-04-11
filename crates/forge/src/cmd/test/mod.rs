@@ -827,14 +827,9 @@ impl TestArgs {
                                 .iter()
                                 .filter_map(|(k, v)| {
                                     previous_snapshots.get(k).and_then(|previous_snapshot| {
-                                        if previous_snapshot != v {
-                                            Some((
-                                                k.clone(),
-                                                (previous_snapshot.clone(), v.clone()),
-                                            ))
-                                        } else {
-                                            None
-                                        }
+                                        (previous_snapshot != v).then(|| {
+                                            (k.clone(), (previous_snapshot.clone(), v.clone()))
+                                        })
                                     })
                                 })
                                 .collect();
@@ -1051,7 +1046,7 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
             if test_name.is_any_test()
-                && let Some(test_match) = test_name.split("(").next()
+                && let Some(test_match) = test_name.split('(').next()
             {
                 filter.push_str(test_match);
                 if failures.peek().is_some() {

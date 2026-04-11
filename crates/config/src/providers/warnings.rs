@@ -89,14 +89,10 @@ impl<P: Provider> WarningsProvider<P> {
         // Add warning for deprecated keys.
         let deprecated_key_warning = |key| {
             DEPRECATIONS.iter().find_map(|(deprecated_key, new_value)| {
-                if key == *deprecated_key {
-                    Some(Warning::DeprecatedKey {
-                        old: deprecated_key.to_string(),
-                        new: new_value.to_string(),
-                    })
-                } else {
-                    None
-                }
+                (key == *deprecated_key).then(|| Warning::DeprecatedKey {
+                    old: deprecated_key.to_string(),
+                    new: new_value.to_string(),
+                })
             })
         };
         let profiles = data

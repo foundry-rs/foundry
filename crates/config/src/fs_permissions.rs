@@ -90,7 +90,7 @@ impl FsPermissions {
             }
         }
 
-        if max_path_len > 0 { Some(highest_permission) } else { None }
+        (max_path_len > 0).then_some(highest_permission)
     }
 
     /// Updates all `allowed_paths` and joins ([`Path::join`]) the `root` with all entries

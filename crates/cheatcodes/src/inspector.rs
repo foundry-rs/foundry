@@ -1025,7 +1025,9 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         }
                         tx_req.set_authorization_list(active_delegations);
                     }
-
+                    if let Some(fee_token) = self.config.fee_token {
+                        tx_req.set_fee_token(fee_token);
+                    }
                     self.broadcastable_transactions.push_back(BroadcastableTransaction {
                         rpc,
                         transaction: TransactionMaybeSigned::new(tx_req),
@@ -1546,7 +1548,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         },
                     };
 
-                    if count != expected.count { Some((expected, count)) } else { None }
+                    (count != expected.count).then_some((expected, count))
                 })
                 .collect::<Vec<_>>();
 
@@ -1792,16 +1794,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
                 let rpc = ecx.db().active_fork_url();
                 let account = &ecx.journal().evm_state()[&broadcast.new_origin];
+                let mut tx_req = TransactionRequestFor::<FEN>::default()
+                    .with_from(broadcast.new_origin)
+                    .with_kind(TxKind::Create)
+                    .with_value(input.value())
+                    .with_input(input.init_code())
+                    .with_nonce(account.info.nonce);
+                if let Some(fee_token) = self.config.fee_token {
+                    tx_req.set_fee_token(fee_token);
+                }
                 self.broadcastable_transactions.push_back(BroadcastableTransaction {
                     rpc,
-                    transaction: TransactionMaybeSigned::new(
-                        TransactionRequestFor::<FEN>::default()
-                            .with_from(broadcast.new_origin)
-                            .with_kind(TxKind::Create)
-                            .with_value(input.value())
-                            .with_input(input.init_code())
-                            .with_nonce(account.info.nonce),
-                    ),
+                    transaction: TransactionMaybeSigned::new(tx_req),
                 });
 
                 input.log_debug(self, &input.scheme().unwrap_or(CreateScheme::Create));

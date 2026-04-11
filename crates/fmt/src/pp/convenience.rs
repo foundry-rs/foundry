@@ -76,7 +76,7 @@ impl Printer {
             return true;
         }
 
-        self.out.ends_with(" ")
+        self.out.ends_with(' ')
     }
 
     pub fn is_beginning_of_line(&self) -> bool {

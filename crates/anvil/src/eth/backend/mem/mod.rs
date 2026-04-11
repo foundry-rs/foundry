@@ -141,7 +141,8 @@ use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tempo_revm::{
-    TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext, gas_params::tempo_gas_params,
+    TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext,
+    gas_params::tempo_gas_params,
 };
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -1222,7 +1223,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let hardfork = TempoHardfork::from(evm_env.cfg_env.spec);
+        let hardfork = TempoHardfork::from(self.hardfork);
         let tempo_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
             TempoBlockEnv { inner: evm_env.block_env.clone(), timestamp_millis_part: 0 },
@@ -1292,7 +1293,7 @@ impl<N: Network> Backend<N> {
             let mut evm = OpEvmFactory::default().create_evm_with_inspector(db, op_env, inspector);
             run!(evm)
         } else if self.is_tempo() {
-            let hardfork = TempoHardfork::from(evm_env.cfg_env.spec);
+            let hardfork = TempoHardfork::from(self.hardfork);
             let tempo_env = EvmEnv::new(
                 evm_env
                     .cfg_env
@@ -1383,11 +1384,7 @@ impl<N: Network> Backend<N> {
             gas_priority_fee: max_priority_fee_per_gas,
             max_fee_per_blob_gas: max_fee_per_blob_gas
                 .or_else(|| {
-                    if !blob_hashes.is_empty() {
-                        evm_env.block_env.blob_gasprice()
-                    } else {
-                        Some(0)
-                    }
+                    if blob_hashes.is_empty() { Some(0) } else { evm_env.block_env.blob_gasprice() }
                 })
                 .unwrap_or_default(),
             kind: match to {
@@ -1432,9 +1429,44 @@ impl<N: Network> Backend<N> {
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         let mut inspector = self.build_inspector();
 
+        // Extract Tempo-specific fields before `build_call_env` consumes `other`.
+        let tempo_overrides = self.is_tempo().then(|| {
+            let fee_token =
+                request.other.get_deserialized::<Address>("feeToken").and_then(|r| r.ok());
+            let nonce_key = request
+                .other
+                .get_deserialized::<U256>("nonceKey")
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            let valid_before =
+                request.other.get_deserialized::<u64>("validBefore").and_then(|r| r.ok());
+            (fee_token, nonce_key, valid_before)
+        });
+
         let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
+
         let ResultAndState { result, state } =
-            self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
+            if let Some((fee_token, nonce_key, valid_before)) = tempo_overrides {
+                use tempo_primitives::transaction::Call;
+
+                let base = tx_env.base;
+                let mut tempo_tx = TempoTxEnv::from(base.clone());
+                tempo_tx.fee_token = fee_token;
+
+                if !nonce_key.is_zero() {
+                    tempo_tx.tempo_tx_env = Some(Box::new(TempoBatchCallEnv {
+                        nonce_key,
+                        valid_before,
+                        aa_calls: vec![Call { to: base.kind, value: base.value, input: base.data }],
+                        ..Default::default()
+                    }));
+                }
+
+                self.transact_tempo_with_inspector_ref(state, &evm_env, &mut inspector, tempo_tx)?
+            } else {
+                self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?
+            };
+
         let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         inspector.print_logs();
 
@@ -2135,7 +2167,7 @@ impl<N: Network> Backend<N> {
         }
 
         // Clear all storage and reinitialize with genesis
-        let base_fee = if self.fees.is_eip1559() { Some(self.fees.base_fee()) } else { None };
+        let base_fee = self.fees.is_eip1559().then(|| self.fees.base_fee());
         *self.blockchain.storage.write() = BlockchainStorage::new(
             &self.evm_env.read(),
             base_fee,
@@ -2465,8 +2497,7 @@ where
                 let mix_hash = evm_env.block_env.prevrandao;
                 let beneficiary = evm_env.block_env.beneficiary;
                 let timestamp = evm_env.block_env.timestamp;
-                let base_fee =
-                    if spec_id >= SpecId::LONDON { Some(evm_env.block_env.basefee) } else { None };
+                let base_fee = (spec_id >= SpecId::LONDON).then_some(evm_env.block_env.basefee);
                 let excess_blob_gas =
                     if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
@@ -2708,8 +2739,7 @@ where
         let mix_hash = evm_env.block_env.prevrandao;
         let beneficiary = evm_env.block_env.beneficiary;
         let timestamp = evm_env.block_env.timestamp;
-        let base_fee =
-            if spec_id >= SpecId::LONDON { Some(evm_env.block_env.basefee) } else { None };
+        let base_fee = (spec_id >= SpecId::LONDON).then_some(evm_env.block_env.basefee);
         let excess_blob_gas = if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
         let inspector_tx_config = self.inspector_tx_config();
@@ -3680,11 +3710,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         let best_number = self.blockchain.storage.read().best_number;
         let blocks = self.blockchain.storage.read().serialized_blocks();
         let transactions = self.blockchain.storage.read().serialized_transactions();
-        let historical_states = if preserve_historical_states {
-            Some(self.states.write().serialized_states())
-        } else {
-            None
-        };
+        let historical_states =
+            preserve_historical_states.then(|| self.states.write().serialized_states());
 
         let state = self.db.read().await.dump_state(
             at,

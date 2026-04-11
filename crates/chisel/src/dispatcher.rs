@@ -512,7 +512,7 @@ fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
     let mut only_trivia = true;
     let mut new_input = Cow::Borrowed(input);
     for (pos, token) in solar::parse::Cursor::new(input).with_position() {
-        use RawTokenKind::*;
+        use RawTokenKind::{BlockComment, LineComment, Literal, Whitespace};
 
         if matches!(token.kind, Whitespace | LineComment { .. } | BlockComment { .. }) {
             continue;

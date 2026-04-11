@@ -467,10 +467,10 @@ fn assert_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a
 }
 
 fn assert_not_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
-    if left != right {
-        Ok(())
-    } else {
+    if left == right {
         Err(ComparisonAssertionError { kind: AssertionKind::Ne, left, right })
+    } else {
+        Ok(())
     }
 }
 

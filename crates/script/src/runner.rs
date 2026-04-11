@@ -6,7 +6,7 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
-use foundry_common::TransactionMaybeSigned;
+use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
 use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
@@ -77,10 +77,14 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     traces.push((TraceKind::Deployment, deploy_traces));
                 }
 
-                let mut tx_req = TransactionRequestFor::<FEN>::default();
-                tx_req.set_from(self.evm_opts.sender);
-                tx_req.set_input(code.clone());
-                tx_req.set_nonce(sender_nonce + library_transactions.len() as u64);
+                let mut tx_req = TransactionRequestFor::<FEN>::default()
+                    .with_from(self.evm_opts.sender)
+                    .with_input(code.clone())
+                    .with_nonce(sender_nonce + library_transactions.len() as u64);
+
+                if let Some(fee_token) = script_config.fee_token {
+                    tx_req.set_fee_token(fee_token);
+                }
 
                 library_transactions.push_back(BroadcastableTransaction {
                     rpc: self.evm_opts.fork_url.clone(),
@@ -110,11 +114,16 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                         traces.push((TraceKind::Deployment, deploy_traces));
                     }
 
-                    let mut tx_req = TransactionRequestFor::<FEN>::default();
-                    tx_req.set_from(self.evm_opts.sender);
-                    tx_req.set_input(calldata);
-                    tx_req.set_nonce(sender_nonce + library_transactions.len() as u64);
-                    tx_req.set_to(create2_deployer);
+                    let mut tx_req = TransactionRequestFor::<FEN>::default()
+                        .with_from(self.evm_opts.sender)
+                        .with_input(calldata)
+                        .with_nonce(sender_nonce + library_transactions.len() as u64)
+                        .with_to(create2_deployer);
+
+                    if let Some(fee_token) = script_config.fee_token {
+                        tx_req.set_fee_token(fee_token);
+                    }
+
                     library_transactions.push_back(BroadcastableTransaction {
                         rpc: self.evm_opts.fork_url.clone(),
                         transaction: TransactionMaybeSigned::new(tx_req),
@@ -168,10 +177,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
         traces.extend(constructor_traces.map(|traces| (TraceKind::Deployment, traces)));
 
         // Optionally call the `setUp` function
-        let (success, gas_used, labeled_addresses, transactions) = if !setup {
-            self.executor.backend_mut().set_test_contract(address);
-            (true, 0, Default::default(), Some(library_transactions))
-        } else {
+        let (success, gas_used, labeled_addresses, transactions) = if setup {
             match self.executor.setup(Some(self.evm_opts.sender), address, None) {
                 Ok(RawCallResult {
                     reverted,
@@ -212,6 +218,9 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 }
                 Err(e) => return Err(e.into()),
             }
+        } else {
+            self.executor.backend_mut().set_test_contract(address);
+            (true, 0, Default::default(), Some(library_transactions))
         };
 
         Ok((
@@ -386,9 +395,11 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 self.executor.tx_env_mut().set_gas_limit(mid_gas_limit);
                 let res = self.executor.call_raw(from, to, calldata.0.clone().into(), value)?;
                 match res.exit_reason {
-                    Some(InstructionResult::Revert)
-                    | Some(InstructionResult::OutOfGas)
-                    | Some(InstructionResult::OutOfFunds) => {
+                    Some(
+                        InstructionResult::Revert
+                        | InstructionResult::OutOfGas
+                        | InstructionResult::OutOfFunds,
+                    ) => {
                         lowest_gas_limit = mid_gas_limit;
                     }
                     _ => {
