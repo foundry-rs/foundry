@@ -3,17 +3,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
+import {NonCheatcodeReader} from "./auxiliary/NonCheatcodeReader.sol";
 import {Test} from "./auxiliary/Test.sol";
-
-contract NonCheatcodeReader {
-    function readFile(string calldata) external pure returns (string memory) {
-        return "safe";
-    }
-
-    function ffi(string[] calldata) external pure returns (bytes memory) {
-        return bytes("safe");
-    }
-}
 
 contract UnsafeCheatcodes is Test {
     function testSafeCheatcodes() public {
