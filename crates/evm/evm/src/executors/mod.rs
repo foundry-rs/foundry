@@ -957,7 +957,9 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
 
     /// Converts the result of the call into an `EvmError`.
     pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError<FEN> {
-        if let Some(reason) = SkipReason::decode(&self.result) {
+        if self.reverter == Some(CHEATCODE_ADDRESS)
+            && let Some(reason) = SkipReason::decode(&self.result)
+        {
             return EvmError::Skip(reason);
         }
         let reason = rd.unwrap_or_default().decode(&self.result, self.exit_reason);
@@ -1190,5 +1192,47 @@ impl EarlyExit {
     /// Whether tests should stop and exit early.
     pub fn should_stop(&self) -> bool {
         self.inner.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_evm_core::constants::MAGIC_SKIP;
+
+    #[test]
+    fn cheatcode_skip_payload_is_classified_as_skip() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            result: Bytes::from_static(b"FOUNDRY::SKIPwith reason"),
+            reverter: Some(CHEATCODE_ADDRESS),
+            ..Default::default()
+        };
+
+        let err = raw.into_evm_error(None);
+        assert!(matches!(err, EvmError::Skip(_)));
+    }
+
+    #[test]
+    fn forged_skip_payload_from_non_cheatcode_is_execution_error() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            result: Bytes::from_static(MAGIC_SKIP),
+            reverter: Some(CALLER),
+            ..Default::default()
+        };
+
+        let err = raw.into_evm_error(None);
+        assert!(matches!(err, EvmError::Execution(_)));
+    }
+
+    #[test]
+    fn skip_payload_without_reverter_is_execution_error() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            result: Bytes::from_static(MAGIC_SKIP),
+            reverter: None,
+            ..Default::default()
+        };
+
+        let err = raw.into_evm_error(None);
+        assert!(matches!(err, EvmError::Execution(_)));
     }
 }
