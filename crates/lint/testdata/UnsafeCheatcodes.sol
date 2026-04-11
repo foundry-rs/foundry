@@ -5,6 +5,16 @@ pragma solidity ^0.8.18;
 
 import {Test} from "./auxiliary/Test.sol";
 
+contract NonCheatcodeReader {
+    function readFile(string calldata) external pure returns (string memory) {
+        return "safe";
+    }
+
+    function ffi(string[] calldata) external pure returns (bytes memory) {
+        return bytes("safe");
+    }
+}
+
 contract UnsafeCheatcodes is Test {
     function testSafeCheatcodes() public {
         vm.prank(address(0x1));
@@ -63,4 +73,11 @@ contract UnsafeCheatcodes is Test {
         vm.readFile("test.txt"); //~NOTE: usage of unsafe cheatcodes that can perform dangerous operations
     }
 
+    function testNonVmMethodNames() public {
+        NonCheatcodeReader reader = new NonCheatcodeReader();
+        string[] memory inputs = new string[](1);
+
+        reader.readFile("test.txt");
+        reader.ffi(inputs);
+    }
 }

@@ -31,7 +31,7 @@ register_lints!(
     (ScreamingSnakeCase, early, (SCREAMING_SNAKE_CASE_CONSTANT, SCREAMING_SNAKE_CASE_IMMUTABLE)),
     (Imports, early, (UNALIASED_PLAIN_IMPORT, UNUSED_IMPORT)),
     (NamedStructFields, late, (NAMED_STRUCT_FIELDS)),
-    (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE)),
+    (UnsafeCheatcodes, late, (UNSAFE_CHEATCODE_USAGE)),
     (MultiContractFile, early, (MULTI_CONTRACT_FILE)),
     (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING))
 );
