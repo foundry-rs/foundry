@@ -31,7 +31,7 @@ use self::serde_helpers::*;
 
 /// Wrapper type that ensures the type is named `params`
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
-pub struct Params<T: Default> {
+pub struct Params<T> {
     #[serde(default)]
     pub params: T,
 }
