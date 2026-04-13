@@ -101,7 +101,7 @@ pub async fn run_mutation_testing(
         // Get build ID for caching
         let build_id = output
             .artifact_ids()
-            .find_map(|(id, _)| if id.source == path { Some(id.build_id) } else { None })
+            .find_map(|(id, _)| (id.source == path).then(|| id.build_id))
             .unwrap_or_default();
 
         // Check for cached results
@@ -141,12 +141,7 @@ pub async fn run_mutation_testing(
 
         // Sort mutations by span for optimal adaptive testing
         mutants.sort_by(|a, b| {
-            let lo_cmp = a.span.lo().0.cmp(&b.span.lo().0);
-            if lo_cmp != std::cmp::Ordering::Equal {
-                lo_cmp
-            } else {
-                b.span.hi().0.cmp(&a.span.hi().0)
-            }
+            a.span.lo().0.cmp(&b.span.lo().0).then_with(|| b.span.hi().0.cmp(&a.span.hi().0))
         });
 
         // Create progress display if enabled (not in JSON mode)

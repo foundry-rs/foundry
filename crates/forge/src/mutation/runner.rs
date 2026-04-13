@@ -179,9 +179,9 @@ pub fn run_mutations_parallel_with_progress(
 
     // Set up Ctrl+C handler using a background thread with tokio signal
     // This replaces ctrlc crate with tokio's built-in signal handling
-    let ctrlc_handle = if shared_state.progress.is_some() {
+    let ctrlc_handle = shared_state.progress.is_some().then(|| {
         let state_for_ctrlc = Arc::clone(&shared_state);
-        Some(std::thread::spawn(move || {
+        std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -191,10 +191,8 @@ pub fn run_mutations_parallel_with_progress(
                     state_for_ctrlc.cancel();
                 }
             });
-        }))
-    } else {
-        None
-    };
+        })
+    });
 
     // Configure rayon thread pool
     let pool = rayon::ThreadPoolBuilder::new()

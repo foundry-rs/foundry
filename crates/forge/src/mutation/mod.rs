@@ -336,7 +336,7 @@ impl MutationHandler {
             let arena = solar::ast::Arena::new();
             let mut parser =
                 Parser::from_lazy_source_code(&sess, &arena, FileName::from(path.clone()), || {
-                    Ok((*target_content).to_string())
+                    Ok((*target_content).clone())
                 })?;
 
             let ast = parser.parse_file().map_err(|e| e.emit())?;
