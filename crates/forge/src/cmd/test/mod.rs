@@ -505,10 +505,11 @@ impl TestArgs {
         let num_filtered = runner.matching_test_functions(filter).count();
 
         if num_filtered == 0 {
-            let mut total_tests = num_filtered;
-            if !filter.is_empty() {
-                total_tests = runner.matching_test_functions(&EmptyTestFilter::default()).count();
-            }
+            let total_tests = if filter.is_empty() {
+                num_filtered
+            } else {
+                runner.matching_test_functions(&EmptyTestFilter::default()).count()
+            };
             if total_tests == 0 {
                 sh_println!(
                     "No tests found in project! Forge looks for functions that start with `test`"

@@ -699,16 +699,17 @@ impl<'ast> State<'_, 'ast> {
                 for cmnt in inner_cmnts.into_iter().rev() {
                     self.comments.push_front(cmnt);
                 }
-                let mut enabled = false;
-                if !self.handle_span(span, false) {
+                let enabled = if self.handle_span(span, false) {
+                    false
+                } else {
                     if !self.is_bol_or_only_ind() {
                         self.space();
                     }
                     self.ibox(0);
                     print_fn(self);
                     self.cursor.advance_to(span.hi(), true);
-                    enabled = true;
-                }
+                    true
+                };
                 // Print subsequent comments.
                 for cmnt in post_cmnts {
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
@@ -1566,14 +1567,15 @@ impl<'ast> State<'_, 'ast> {
                 }
 
                 // Trailing comment handling.
-                let mut is_trailing = false;
-                if let Some(style) = self.print_comments(
+                let is_trailing = if let Some(style) = self.print_comments(
                     span.hi(),
                     CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                 ) {
                     skip_break = true;
-                    is_trailing = style.is_trailing();
-                }
+                    style.is_trailing()
+                } else {
+                    false
+                };
 
                 // Adjust indentation and line breaks.
                 match (skip_break, end.is_some()) {

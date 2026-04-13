@@ -1165,18 +1165,16 @@ fn collect_data<FEN: FoundryEvmNetwork>(
     run_depth: u32,
 ) {
     // Verify it has no code.
-    let mut has_code = false;
-    if let Some(Some(code)) =
+    let has_code = if let Some(Some(code)) =
         state_changeset.get(&tx.sender).map(|account| account.info.code.as_ref())
     {
-        has_code = !code.is_empty();
-    }
+        !code.is_empty()
+    } else {
+        false
+    };
 
     // We keep the nonce changes to apply later.
-    let mut sender_changeset = None;
-    if !has_code {
-        sender_changeset = state_changeset.remove(&tx.sender);
-    }
+    let sender_changeset = if has_code { None } else { state_changeset.remove(&tx.sender) };
 
     // Collect values from fuzzed call result and add them to fuzz dictionary.
     invariant_test.fuzz_state.collect_values_from_call(

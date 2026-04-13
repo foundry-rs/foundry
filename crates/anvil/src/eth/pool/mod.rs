@@ -124,11 +124,11 @@ impl<T> Pool<T> {
         };
         trace!(target: "txpool", "Dropped transactions: {:?}", removed.iter().map(|tx| tx.hash()).collect::<Vec<_>>());
 
-        let mut dropped = None;
-        if !removed.is_empty() {
-            dropped = removed.into_iter().find(|t| *t.pending_transaction.hash() == tx);
+        if removed.is_empty() {
+            None
+        } else {
+            removed.into_iter().find(|t| *t.pending_transaction.hash() == tx)
         }
-        dropped
     }
 
     /// Notifies listeners if the transaction was added to the ready queue.
