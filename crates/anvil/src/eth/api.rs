@@ -477,15 +477,18 @@ impl<N: Network> EthApi<N> {
     /// Sets the specific timestamp and returns the number of seconds between the given timestamp
     /// and the current time.
     ///
+    /// The `timestamp` is a JavaScript-style millisecond timestamp for Ganache compatibility.
+    ///
     /// Handler for RPC call: `evm_setTime`
     pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
         node_info!("evm_setTime");
+        let timestamp_secs = Duration::from_millis(timestamp).as_secs();
         let now = self.backend.time().current_call_timestamp();
-        self.backend.time().reset(timestamp);
+        self.backend.time().reset(timestamp_secs);
 
         // number of seconds between the given timestamp and the current time.
-        let offset = timestamp.saturating_sub(now);
-        Ok(Duration::from_millis(offset).as_secs())
+        let offset = timestamp_secs.saturating_sub(now);
+        Ok(offset)
     }
 
     /// Set the next block gas limit
