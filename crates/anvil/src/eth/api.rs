@@ -1763,8 +1763,11 @@ impl EthApi<FoundryNetwork> {
                 // Timestamps above 1e12 are interpreted as milliseconds and converted to
                 // seconds; below that threshold they are treated as seconds directly.
                 let raw = timestamp.to::<u64>();
-                let time =
-                    if raw > 1_000_000_000_000 { Duration::from_millis(raw).as_secs() } else { raw };
+                let time = if raw > 1_000_000_000_000 {
+                    Duration::from_millis(raw).as_secs()
+                } else {
+                    raw
+                };
                 self.evm_set_time(time).to_rpc_result()
             }
             EthRequest::EvmSetBlockGasLimit(gas_limit) => {
