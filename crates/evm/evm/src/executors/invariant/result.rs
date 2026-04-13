@@ -7,12 +7,16 @@ use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::I256;
 use eyre::Result;
 use foundry_config::InvariantConfig;
-use foundry_evm_core::{evm::FoundryEvmNetwork, utils::StateChangeset};
+use foundry_evm_core::{
+    constants::CHEATCODE_ADDRESS, decode::decode_console_log, evm::FoundryEvmNetwork,
+    utils::StateChangeset,
+};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     BasicTxDetails, FuzzedCases,
     invariant::{FuzzRunIdentifiedContracts, InvariantContract},
 };
+use revm::interpreter::InstructionResult;
 use revm_inspectors::tracing::CallTraceArena;
 use std::{borrow::Cow, collections::HashMap};
 
@@ -54,6 +58,80 @@ impl<FEN: FoundryEvmNetwork> RichInvariantResults<FEN> {
     pub(crate) fn new(can_continue: bool, call_result: Option<RawCallResult<FEN>>) -> Self {
         Self { can_continue, call_result }
     }
+}
+
+/// Returns true if this call failed due to a Solidity assertion:
+/// - `Panic(0x01)`, or
+/// - legacy invalid opcode assert behavior.
+pub(crate) fn is_assertion_failure<FEN: FoundryEvmNetwork>(
+    call_result: &RawCallResult<FEN>,
+) -> bool {
+    if !call_result.reverted {
+        return false;
+    }
+
+    is_assert_panic(call_result.result.as_ref())
+        || matches!(call_result.exit_reason, Some(InstructionResult::InvalidFEOpcode))
+        || is_vm_assert_revert(call_result.result.as_ref())
+        || is_cheatcode_assert_revert(call_result)
+}
+
+fn is_assert_panic(data: &[u8]) -> bool {
+    const PANIC_SELECTOR: [u8; 4] = [0x4e, 0x48, 0x7b, 0x71];
+    if data.len() < 36 || data[..4] != PANIC_SELECTOR {
+        return false;
+    }
+
+    let panic_code = &data[4..36];
+    panic_code[..31].iter().all(|byte| *byte == 0) && panic_code[31] == 0x01
+}
+
+fn is_vm_assert_revert(data: &[u8]) -> bool {
+    const ERROR_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
+    data.starts_with(&ERROR_SELECTOR) && String::from_utf8_lossy(data).contains("assertion failed")
+}
+
+fn is_cheatcode_assert_revert<FEN: FoundryEvmNetwork>(call_result: &RawCallResult<FEN>) -> bool {
+    const ASSERTION_CHEATCODE_SELECTOR: [u8; 4] = [0xee, 0xaa, 0x9e, 0x6f];
+
+    call_result.reverter == Some(CHEATCODE_ADDRESS)
+        && (call_result.result.starts_with(&ASSERTION_CHEATCODE_SELECTOR)
+            || call_result.result.is_empty()
+            || is_vm_assert_revert(call_result.result.as_ref()))
+}
+
+fn logged_assertion_failure<FEN: FoundryEvmNetwork>(call_result: &RawCallResult<FEN>) -> bool {
+    call_result
+        .logs
+        .iter()
+        .filter_map(decode_console_log)
+        .any(|msg| msg.starts_with("assertion failed"))
+}
+
+/// Returns whether the current fuzz call should be treated as an assertion failure.
+///
+/// This covers Solidity `assert`, legacy invalid-opcode assertions, `vm.assert*` reverts, and the
+/// non-reverting `GLOBAL_FAIL_SLOT` path used when `assertions_revert = false`.
+pub(crate) fn did_fail_on_assert<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+    call_result: &RawCallResult<FEN>,
+    state_changeset: &StateChangeset,
+) -> bool {
+    is_assertion_failure(call_result)
+        || call_result.has_state_snapshot_failure
+        || executor.has_global_failure(state_changeset)
+        || logged_assertion_failure(call_result)
+}
+
+/// Clears the global assertion failure flag when `fail_on_assert` is disabled.
+pub(crate) fn ignore_global_failure<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    state_changeset: &mut StateChangeset,
+) -> Result<()> {
+    if executor.has_global_failure(state_changeset) {
+        executor.clear_global_failure(Some(state_changeset))?;
+    }
+    Ok(())
 }
 
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
@@ -166,11 +244,15 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
             }
         }
     } else {
-        // Increase the amount of reverts.
         let invariant_data = &mut invariant_test.test_data;
-        invariant_data.failures.reverts += 1;
-        // If fail on revert is set, we must return immediately.
-        if invariant_config.fail_on_revert {
+        let is_assert_failure = invariant_config.fail_on_assert
+            && did_fail_on_assert(&invariant_run.executor, &call_result, state_changeset);
+
+        if call_result.reverted {
+            invariant_data.failures.reverts += 1;
+        }
+
+        if is_assert_failure || (call_result.reverted && invariant_config.fail_on_revert) {
             let case_data = FailedInvariantCaseData::new(
                 invariant_contract,
                 invariant_config,
@@ -178,9 +260,14 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
                 &invariant_run.inputs,
                 call_result,
                 &[],
-            );
+            )
+            .with_assertion_failure(is_assert_failure);
             invariant_data.failures.revert_reason = Some(case_data.revert_reason.clone());
-            invariant_data.failures.error = Some(InvariantFuzzError::Revert(case_data));
+            invariant_data.failures.error = Some(if is_assert_failure {
+                InvariantFuzzError::BrokenInvariant(case_data)
+            } else {
+                InvariantFuzzError::Revert(case_data)
+            });
 
             return Ok(RichInvariantResults::new(false, None));
         } else if call_result.reverted && !is_optimization && !invariant_config.has_delay() {
@@ -216,4 +303,59 @@ pub(crate) fn assert_after_invariant<FEN: FoundryEvmNetwork>(
         invariant_test.set_error(InvariantFuzzError::BrokenInvariant(case_data));
     }
     Ok(success)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::Bytes;
+    use foundry_evm_core::evm::EthEvmNetwork;
+
+    fn panic_payload(code: u8) -> Bytes {
+        let mut payload = vec![0_u8; 36];
+        payload[..4].copy_from_slice(&[0x4e, 0x48, 0x7b, 0x71]);
+        payload[35] = code;
+        payload.into()
+    }
+
+    #[test]
+    fn detects_assert_panic_code() {
+        let call_result = RawCallResult::<EthEvmNetwork> {
+            reverted: true,
+            result: panic_payload(0x01),
+            ..Default::default()
+        };
+        assert!(is_assertion_failure(&call_result));
+    }
+
+    #[test]
+    fn ignores_non_assert_panic_code() {
+        let call_result = RawCallResult::<EthEvmNetwork> {
+            reverted: true,
+            result: panic_payload(0x11),
+            ..Default::default()
+        };
+        assert!(!is_assertion_failure(&call_result));
+    }
+
+    #[test]
+    fn detects_legacy_invalid_opcode_assert() {
+        let call_result = RawCallResult::<EthEvmNetwork> {
+            reverted: true,
+            exit_reason: Some(InstructionResult::InvalidFEOpcode),
+            ..Default::default()
+        };
+        assert!(is_assertion_failure(&call_result));
+    }
+
+    #[test]
+    fn detects_vm_assert_revert() {
+        let call_result = RawCallResult::<EthEvmNetwork> {
+            reverted: true,
+            result: vec![0xee, 0xaa, 0x9e, 0x6f, 0, 0, 0, 0].into(),
+            reverter: Some(CHEATCODE_ADDRESS),
+            ..Default::default()
+        };
+        assert!(is_assertion_failure(&call_result));
+    }
 }

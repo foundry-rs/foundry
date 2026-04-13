@@ -1,6 +1,9 @@
 use crate::executors::{
     EarlyExit, EvmError, Executor, RawCallResult,
-    invariant::{call_after_invariant_function, call_invariant_function, execute_tx},
+    invariant::{
+        call_after_invariant_function, call_invariant_function, execute_tx,
+        result::{did_fail_on_assert, ignore_global_failure},
+    },
 };
 use alloy_primitives::{Address, Bytes, I256, U256};
 use foundry_config::InvariantConfig;
@@ -122,6 +125,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     config: &InvariantConfig,
     invariant_contract: &InvariantContract<'_>,
     calls: &[BasicTxDetails],
+    expect_assertion_failure: bool,
     executor: &Executor<FEN>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
@@ -159,6 +163,8 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
             CheckSequenceOptions {
                 accumulate_warp_roll,
                 fail_on_revert: config.fail_on_revert,
+                fail_on_assert: config.fail_on_assert,
+                expect_assertion_failure,
                 call_after_invariant: invariant_contract.call_after_invariant,
                 rd: None,
             },
@@ -216,17 +222,29 @@ fn check_sequence_simple<FEN: FoundryEvmNetwork>(
     for call_index in sequence {
         let tx = &calls[call_index];
         let mut call_result = execute_tx(&mut executor, tx)?;
-        executor.commit(&mut call_result);
+        let should_fail_on_assert = options.fail_on_assert
+            && did_fail_on_assert(&executor, &call_result, &call_result.state_changeset);
+        if !options.fail_on_assert {
+            ignore_global_failure(&mut executor, &mut call_result.state_changeset)?;
+        }
         // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios that
         // are replayed with a modified version of test driver (that use new `vm.assume`
         // cheatcodes).
-        if call_result.reverted
-            && options.fail_on_revert
-            && call_result.result.as_ref() != MAGIC_ASSUME
-        {
-            // Candidate sequence fails test.
-            // We don't have to apply remaining calls to check sequence.
-            return Ok((false, false, call_failure_reason(call_result, options.rd)));
+        if call_result.result.as_ref() != MAGIC_ASSUME {
+            if should_fail_on_assert {
+                return Ok((false, false, assertion_failure_reason(call_result, options.rd)));
+            }
+
+            if call_result.reverted && options.fail_on_revert {
+                if options.expect_assertion_failure {
+                    return Ok((true, false, None));
+                }
+                return Ok((false, false, call_failure_reason(call_result, options.rd)));
+            }
+        }
+
+        if !call_result.reverted {
+            executor.commit(&mut call_result);
         }
     }
 
@@ -257,12 +275,26 @@ fn check_sequence_with_accumulation<FEN: FoundryEvmNetwork>(
 
         let tx_with_accumulated = apply_warp_roll(tx, accumulated_warp, accumulated_roll);
         let mut call_result = execute_tx(&mut executor, &tx_with_accumulated)?;
+        let should_fail_on_assert = options.fail_on_assert
+            && did_fail_on_assert(&executor, &call_result, &call_result.state_changeset);
+        if !options.fail_on_assert {
+            ignore_global_failure(&mut executor, &mut call_result.state_changeset)?;
+        }
 
-        if call_result.reverted {
-            if options.fail_on_revert && call_result.result.as_ref() != MAGIC_ASSUME {
+        if call_result.result.as_ref() != MAGIC_ASSUME {
+            if should_fail_on_assert {
+                return Ok((false, false, assertion_failure_reason(call_result, options.rd)));
+            }
+
+            if call_result.reverted && options.fail_on_revert {
+                if options.expect_assertion_failure {
+                    return Ok((true, false, None));
+                }
                 return Ok((false, false, call_failure_reason(call_result, options.rd)));
             }
-        } else {
+        }
+
+        if !call_result.reverted {
             executor.commit(&mut call_result);
         }
 
@@ -284,6 +316,9 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
     let (invariant_result, mut success) =
         call_invariant_function(executor, test_address, calldata)?;
     if !success {
+        if options.expect_assertion_failure {
+            return Ok((true, true, None));
+        }
         return Ok((false, true, call_failure_reason(invariant_result, options.rd)));
     }
 
@@ -294,6 +329,9 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
             call_after_invariant_function(executor, test_address)?;
         success = after_invariant_success;
         if !success {
+            if options.expect_assertion_failure {
+                return Ok((true, true, None));
+            }
             return Ok((false, true, call_failure_reason(after_invariant_result, options.rd)));
         }
     }
@@ -304,6 +342,8 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
 pub struct CheckSequenceOptions<'a> {
     pub accumulate_warp_roll: bool,
     pub fail_on_revert: bool,
+    pub fail_on_assert: bool,
+    pub expect_assertion_failure: bool,
     pub call_after_invariant: bool,
     pub rd: Option<&'a RevertDecoder>,
 }
@@ -316,6 +356,13 @@ fn call_failure_reason<FEN: FoundryEvmNetwork>(
         EvmError::Execution(err) => Some(err.reason),
         _ => None,
     }
+}
+
+fn assertion_failure_reason<FEN: FoundryEvmNetwork>(
+    call_result: RawCallResult<FEN>,
+    rd: Option<&RevertDecoder>,
+) -> Option<String> {
+    call_failure_reason(call_result, rd).or_else(|| Some("assertion failed".to_string()))
 }
 
 /// Shrinks a call sequence to the shortest sequence that still produces the target optimization

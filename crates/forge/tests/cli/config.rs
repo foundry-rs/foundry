@@ -202,6 +202,7 @@ show_logs = false
 runs = 256
 depth = 500
 fail_on_revert = false
+fail_on_assert = false
 call_override = false
 dictionary_weight = 80
 include_storage = true
@@ -1284,6 +1285,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "runs": 256,
     "depth": 500,
     "fail_on_revert": false,
+    "fail_on_assert": false,
     "call_override": false,
     "dictionary_weight": 80,
     "include_storage": true,

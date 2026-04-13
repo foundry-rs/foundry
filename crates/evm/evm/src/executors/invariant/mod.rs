@@ -34,7 +34,10 @@ use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
-use result::{assert_after_invariant, assert_invariants, can_continue};
+use result::{
+    assert_after_invariant, assert_invariants, can_continue, did_fail_on_assert,
+    ignore_global_failure,
+};
 use revm::{context::Block, state::Account};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -441,6 +444,20 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         break 'stop;
                     }
                 } else {
+                    let should_fail_on_assert = self.config.fail_on_assert
+                        && did_fail_on_assert(
+                            &current_run.executor,
+                            &call_result,
+                            &call_result.state_changeset,
+                        );
+                    if !self.config.fail_on_assert {
+                        ignore_global_failure(
+                            &mut current_run.executor,
+                            &mut call_result.state_changeset,
+                        )
+                        .map_err(|e| eyre!(e.to_string()))?;
+                    }
+
                     // Commit executed call result.
                     current_run.executor.commit(&mut call_result);
 
@@ -513,31 +530,37 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         // Skip invariant check but still track reverts
                         if call_result.reverted {
                             invariant_test.test_data.failures.reverts += 1;
-                            if self.config.fail_on_revert {
-                                let case_data = error::FailedInvariantCaseData::new(
-                                    &invariant_contract,
-                                    &self.config,
-                                    &invariant_test.targeted_contracts,
-                                    &current_run.inputs,
-                                    call_result,
-                                    &[],
-                                );
-                                invariant_test.test_data.failures.revert_reason =
-                                    Some(case_data.revert_reason.clone());
-                                invariant_test.test_data.failures.error =
-                                    Some(InvariantFuzzError::Revert(case_data));
-                                result::RichInvariantResults::new(false, None)
-                            } else if !invariant_contract.is_optimization()
-                                && !self.config.has_delay()
-                            {
-                                // Delay-enabled campaigns keep reverted calls so shrinking can
-                                // preserve their warp/roll contribution when building the final
-                                // counterexample.
-                                current_run.inputs.pop();
-                                result::RichInvariantResults::new(true, None)
-                            } else {
-                                result::RichInvariantResults::new(true, None)
-                            }
+                        }
+                        if should_fail_on_assert
+                            || (call_result.reverted && self.config.fail_on_revert)
+                        {
+                            let case_data = error::FailedInvariantCaseData::new(
+                                &invariant_contract,
+                                &self.config,
+                                &invariant_test.targeted_contracts,
+                                &current_run.inputs,
+                                call_result,
+                                &[],
+                            )
+                            .with_assertion_failure(should_fail_on_assert);
+                            invariant_test.test_data.failures.revert_reason =
+                                Some(case_data.revert_reason.clone());
+                            invariant_test.test_data.failures.error =
+                                Some(if should_fail_on_assert {
+                                    InvariantFuzzError::BrokenInvariant(case_data)
+                                } else {
+                                    InvariantFuzzError::Revert(case_data)
+                                });
+                            result::RichInvariantResults::new(false, None)
+                        } else if call_result.reverted
+                            && !invariant_contract.is_optimization()
+                            && !self.config.has_delay()
+                        {
+                            // Delay-enabled campaigns keep reverted calls so shrinking can
+                            // preserve their warp/roll contribution when building the final
+                            // counterexample.
+                            current_run.inputs.pop();
+                            result::RichInvariantResults::new(true, None)
                         } else {
                             result::RichInvariantResults::new(true, None)
                         }
@@ -1080,14 +1103,19 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
     /// Computes the current invariant settings for the given invariant contract address.
     ///
-    /// This extracts the target contracts, selectors, senders, and fail_on_revert setting
+    /// This extracts the target contracts, selectors, senders, and failure settings
     /// that are used to determine if a persisted counterexample is still valid.
     pub fn compute_settings(&mut self, invariant_address: Address) -> Result<InvariantSettings> {
         self.select_contract_artifacts(invariant_address)?;
         let (sender_filters, targeted_contracts) =
             self.select_contracts_and_senders(invariant_address)?;
         let targets = targeted_contracts.targets.lock();
-        Ok(InvariantSettings::new(&targets, &sender_filters, self.config.fail_on_revert))
+        Ok(InvariantSettings::new(
+            &targets,
+            &sender_filters,
+            self.config.fail_on_revert,
+            self.config.fail_on_assert,
+        ))
     }
 }
 
