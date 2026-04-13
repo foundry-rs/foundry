@@ -196,10 +196,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         config: FuzzConfig,
         persisted_failure: Option<BaseCounterExample>,
     ) -> Self {
-        let mut max_workers = Ord::max(1, config.runs / MIN_RUNS_PER_WORKER);
-        if config.runs == 0 {
-            max_workers = 0;
-        }
+        let max_workers =
+            if config.runs == 0 { 0 } else { Ord::max(1, config.runs / MIN_RUNS_PER_WORKER) };
         let num_workers = Ord::min(rayon::current_num_threads(), max_workers as usize);
         Self { executor_f: executor, runner, sender, config, persisted_failure, num_workers }
     }

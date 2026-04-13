@@ -97,6 +97,7 @@ unnested_or_patterns = "warn"
 unused_peekable = "warn"
 unused_rounding = "warn"
 use_self = "warn"
+useless_let_if_seq = "warn"
 while_float = "warn"
 zero_sized_map_values = "warn"
 

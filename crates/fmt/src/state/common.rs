@@ -243,11 +243,12 @@ impl<'ast> State<'_, 'ast> {
         self.print_inside_parens(|state| {
             let span = get_span(&values[0]);
             state.s.cbox(state.ind);
-            let mut skip_break = true;
-            if state.peek_comment_before(span.hi()).is_some() {
+            let skip_break = if state.peek_comment_before(span.hi()).is_some() {
                 state.hardbreak();
-                skip_break = false;
-            }
+                false
+            } else {
+                true
+            };
 
             state.print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             print(state, &values[0]);
@@ -657,14 +658,15 @@ impl<'ast> State<'_, 'ast> {
             print(self, stmt);
 
             let is_disabled = self.inline_config.is_disabled(get_block_span(stmt));
-            let mut next_enabled = false;
-            let mut next_lo = None;
-            if !is_last {
+            let (next_enabled, next_lo) = if is_last {
+                (false, None)
+            } else {
                 let next_span = get_block_span(&block[i + 1]);
-                next_enabled = !self.inline_config.is_disabled(next_span);
-                next_lo =
-                    self.peek_comment_before(next_span.lo()).is_none().then_some(next_span.lo());
-            }
+                (
+                    !self.inline_config.is_disabled(next_span),
+                    self.peek_comment_before(next_span.lo()).is_none().then_some(next_span.lo()),
+                )
+            };
 
             // when this stmt and the next one are enabled, break normally (except if last stmt)
             if !is_disabled
@@ -760,10 +762,7 @@ impl<'ast> State<'_, 'ast> {
         if has_braces {
             self.word("{");
         }
-        let mut offset = 0;
-        if let BlockFormat::NoBraces(Some(off)) = block_format {
-            offset = off;
-        }
+        let offset = if let BlockFormat::NoBraces(Some(off)) = block_format { off } else { 0 };
         self.print_comments(
             pos_hi,
             self.cmnt_config().offset(offset).mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
