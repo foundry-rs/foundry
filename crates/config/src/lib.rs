@@ -162,7 +162,7 @@ pub use semver;
 ///     the "default" meta-profile.
 ///
 /// Note that these behaviors differ from those of [`Config::figment()`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     /// The selected profile. **(default: _default_ `default`)**
     ///
