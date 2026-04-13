@@ -471,7 +471,7 @@ impl MultiWalletOpts {
         Ok(None)
     }
 
-    pub const fn turnkey_signers(&self) -> Result<Option<Vec<WalletSigner>>> {
+    pub fn turnkey_signers(&self) -> Result<Option<Vec<WalletSigner>>> {
         #[cfg(feature = "turnkey")]
         if self.turnkey {
             let api_private_key = std::env::var("TURNKEY_API_PRIVATE_KEY")?;
@@ -486,7 +486,7 @@ impl MultiWalletOpts {
     }
 
     /// Returns the Turnkey address if `--turnkey` flag is set and `TURNKEY_ADDRESS` is available.
-    pub const fn turnkey_address(&self) -> Option<alloy_primitives::Address> {
+    pub fn turnkey_address(&self) -> Option<alloy_primitives::Address> {
         #[cfg(feature = "turnkey")]
         if self.turnkey {
             return std::env::var("TURNKEY_ADDRESS").ok().and_then(|addr| addr.parse().ok());
