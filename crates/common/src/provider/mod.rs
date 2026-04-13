@@ -413,8 +413,8 @@ impl<N: Network> ProviderBuilder<N> {
 
         // Wrap in FallbackService: use active_transport_count=1 for sequential failover
         // (only the best-scored endpoint is tried per request, closest to round-robin)
-        let fallback_layer = FallbackLayer::default()
-            .with_active_transport_count(NonZeroUsize::new(1).unwrap());
+        let fallback_layer =
+            FallbackLayer::default().with_active_transport_count(NonZeroUsize::new(1).unwrap());
         let fallback_service = fallback_layer.layer(transports);
 
         // Apply retry layer on top of the fallback service
