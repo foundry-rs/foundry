@@ -370,7 +370,7 @@ fn print_method_identifiers(
         headers,
         |table| {
             for (method, identifier) in method_identifiers {
-                table.add_row([method, identifier]);
+                table.add_row([method.as_str(), identifier.as_str()]);
             }
         },
         should_wrap,

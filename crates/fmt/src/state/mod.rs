@@ -478,7 +478,7 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn cmnt_config(&self) -> CommentConfig {
-        CommentConfig { ..Default::default() }
+        Default::default()
     }
 
     fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
