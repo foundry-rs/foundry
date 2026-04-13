@@ -647,14 +647,35 @@ pub struct AnvilEvmArgs {
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
 /// of the project configuration file.
 /// Does nothing if the fork-url is not a configured alias.
+///
+/// When an alias maps to an `RpcEndpoint` with multiple `endpoints`, all URLs are expanded
+/// into additional `--fork-url` entries for multi-endpoint load balancing.
 impl AnvilEvmArgs {
     pub fn resolve_rpc_alias(&mut self) {
         if let Ok(config) = Config::load_with_providers(FigmentProviders::Anvil) {
-            for fork_url in &mut self.fork_url {
-                if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
-                    fork_url.url = url.to_string();
+            let mut resolved_urls = Vec::new();
+            for fork_url in &self.fork_url {
+                let mut endpoints = config.rpc_endpoints.clone().resolved();
+                if let Some(endpoint) = endpoints.remove(&fork_url.url) {
+                    // Alias matched — expand all URLs from the endpoint config
+                    if let Ok(urls) = endpoint.all_urls() {
+                        for (i, url) in urls.into_iter().enumerate() {
+                            resolved_urls.push(ForkUrl {
+                                url,
+                                // Only the first URL inherits the block suffix
+                                block: if i == 0 { fork_url.block } else { None },
+                            });
+                        }
+                    }
+                } else if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
+                    // Try mesc or other resolution
+                    resolved_urls.push(ForkUrl { url: url.to_string(), block: fork_url.block });
+                } else {
+                    // Not an alias — keep as-is
+                    resolved_urls.push(fork_url.clone());
                 }
             }
+            self.fork_url = resolved_urls;
         }
     }
 }

@@ -3566,6 +3566,7 @@ mod tests {
                         "mainnet",
                         RpcEndpointType::Config(RpcEndpoint {
                             endpoint: RpcEndpointUrl::Env("${_CONFIG_MAINNET}".to_string()),
+                            extra_endpoints: vec![],
                             config: RpcEndpointConfig {
                                 retries: Some(3),
                                 retry_backoff: Some(1000),
@@ -3591,6 +3592,7 @@ mod tests {
                         "mainnet",
                         RpcEndpointType::Config(RpcEndpoint {
                             endpoint: RpcEndpointUrl::Env("${_CONFIG_MAINNET}".to_string()),
+                            extra_endpoints: vec![],
                             config: RpcEndpointConfig {
                                 retries: Some(3),
                                 retry_backoff: Some(1000),
@@ -3638,6 +3640,7 @@ mod tests {
                         "mainnet",
                         RpcEndpointType::Config(RpcEndpoint {
                             endpoint: RpcEndpointUrl::Env("${_CONFIG_MAINNET}".to_string()),
+                            extra_endpoints: vec![],
                             config: RpcEndpointConfig {
                                 retries: Some(3),
                                 retry_backoff: Some(1000),
@@ -3664,6 +3667,7 @@ mod tests {
                             endpoint: RpcEndpointUrl::Url(
                                 "https://eth-mainnet.alchemyapi.io/v2/123455".to_string()
                             ),
+                            extra_endpoints: vec![],
                             config: RpcEndpointConfig {
                                 retries: Some(3),
                                 retry_backoff: Some(1000),
