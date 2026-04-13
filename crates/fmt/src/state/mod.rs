@@ -201,11 +201,7 @@ impl<'sess> State<'sess, '_> {
         Self {
             s: pp::Printer::new(
                 config.line_length,
-                if matches!(config.style, IndentStyle::Tab) {
-                    Some(config.tab_width)
-                } else {
-                    None
-                },
+                matches!(config.style, IndentStyle::Tab).then(|| config.tab_width),
             ),
             ind: config.tab_width as isize,
             sm,
@@ -440,8 +436,8 @@ impl State<'_, '_> {
                 // - ends with ',' a line break or a space are required.
                 // - ends with ';' a line break is required.
                 prev_needs_space = match line.chars().next_back() {
-                    Some('[') | Some('(') | Some('{') => self.config.bracket_spacing,
-                    Some(',') | Some(';') => true,
+                    Some('[' | '(' | '{') => self.config.bracket_spacing,
+                    Some(',' | ';') => true,
                     _ => false,
                 };
             }
@@ -482,7 +478,7 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn cmnt_config(&self) -> CommentConfig {
-        CommentConfig { ..Default::default() }
+        Default::default()
     }
 
     fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {

@@ -60,6 +60,7 @@ optimizer_runs = 200
 verbosity = 0
 eth_rpc_accept_invalid_certs = false
 eth_rpc_no_proxy = false
+eth_rpc_curl = false
 ignored_error_codes = [
     "license",
     "code-size",
@@ -74,6 +75,7 @@ test_failures_file = "cache/test-failures"
 mutation_dir = "cache/mutation"
 show_progress = false
 ffi = false
+live_logs = false
 allow_internal_expect_revert = false
 always_use_create_2_factory = false
 prompt_timeout = 120
@@ -110,6 +112,7 @@ create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
 legacy_assertions = false
 celo = false
+tempo = false
 bypass_prevrandao = false
 transaction_timeout = 120
 additional_compiler_profiles = []
@@ -155,6 +158,8 @@ severity = [
 exclude_lints = []
 ignore = []
 lint_on_build = true
+
+[lint.lint_specific]
 mixed_case_exceptions = [
     "ERC",
     "URI",
@@ -167,6 +172,7 @@ mixed_case_exceptions = [
     "HTTP",
     "HTTPS",
 ]
+multi_contract_file_exceptions = []
 
 [doc]
 out = "docs"
@@ -303,6 +309,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         },
         mutation: Default::default(),
         ffi: true,
+        live_logs: true,
         allow_internal_expect_revert: false,
         always_use_create_2_factory: false,
         prompt_timeout: 0,
@@ -330,6 +337,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_jwt: None,
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
+        eth_rpc_curl: false,
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,
@@ -1236,6 +1244,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "eth_rpc_jwt": null,
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
+  "eth_rpc_curl": false,
   "etherscan_api_key": null,
   "ignored_error_codes": [
     "license",
@@ -1311,6 +1320,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "exclude_operators": []
   },
   "ffi": false,
+  "live_logs": false,
   "allow_internal_expect_revert": false,
   "always_use_create_2_factory": false,
   "prompt_timeout": 120,
@@ -1380,18 +1390,21 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "exclude_lints": [],
     "ignore": [],
     "lint_on_build": true,
-    "mixed_case_exceptions": [
-      "ERC",
-      "URI",
-      "ID",
-      "URL",
-      "API",
-      "JSON",
-      "XML",
-      "HTML",
-      "HTTP",
-      "HTTPS"
-    ]
+    "lint_specific": {
+      "mixed_case_exceptions": [
+        "ERC",
+        "URI",
+        "ID",
+        "URL",
+        "API",
+        "JSON",
+        "XML",
+        "HTML",
+        "HTTP",
+        "HTTPS"
+      ],
+      "multi_contract_file_exceptions": []
+    }
   },
   "doc": {
     "out": "docs",
@@ -1424,6 +1437,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "assertions_revert": true,
   "legacy_assertions": false,
   "celo": false,
+  "tempo": false,
   "bypass_prevrandao": false,
   "transaction_timeout": 120,
   "additional_compiler_profiles": [],

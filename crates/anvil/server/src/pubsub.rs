@@ -221,6 +221,7 @@ where
             let mut progress = false;
             for n in (0..pin.processing.len()).rev() {
                 let mut req = pin.processing.swap_remove(n);
+                #[allow(clippy::collapsible_match)]
                 match req.poll_unpin(cx) {
                     Poll::Ready(resp) => {
                         if let Ok(text) = serde_json::to_string(&resp) {
@@ -238,6 +239,7 @@ where
                 'outer: for n in (0..subscriptions.len()).rev() {
                     let (id, mut sub) = subscriptions.swap_remove(n);
                     'inner: loop {
+                        #[allow(clippy::collapsible_match)]
                         match sub.poll_next_unpin(cx) {
                             Poll::Ready(Some(res)) => {
                                 if let Ok(text) = serde_json::to_string(&res) {

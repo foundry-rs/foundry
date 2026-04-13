@@ -1,4 +1,4 @@
-use alloy_consensus::{BlobTransactionSidecar, EthereumTypedTransaction};
+use alloy_consensus::{BlobTransactionSidecarVariant, EthereumTypedTransaction};
 use alloy_network::{
     BuildResult, NetworkWallet, TransactionBuilder, TransactionBuilder4844, TransactionBuilderError,
 };
@@ -152,10 +152,7 @@ impl FoundryTransactionRequest {
             Ok(FoundryTypedTx::Tempo(
                 tx_req.build_aa().map_err(|e| Self::Tempo(Box::new(e.into_value())))?,
             ))
-        } else if self.as_ref().has_eip4844_fields()
-            && self.blob_sidecar().is_none()
-            && alloy_network::TransactionBuilder7594::blob_sidecar_7594(self.as_ref()).is_none()
-        {
+        } else if self.as_ref().has_eip4844_fields() && self.blob_sidecar().is_none() {
             // if request has eip4844 fields but no blob sidecar (neither eip4844 nor eip7594
             // format), try to build to eip4844 without sidecar
             self.into_inner()
@@ -210,7 +207,7 @@ impl AsRef<TransactionRequest> for FoundryTransactionRequest {
         match self {
             Self::Ethereum(tx) => tx,
             Self::Op(tx) => tx,
-            Self::Tempo(tx) => tx,
+            Self::Tempo(tx) => tx.as_ref(),
         }
     }
 }
@@ -220,7 +217,7 @@ impl AsMut<TransactionRequest> for FoundryTransactionRequest {
         match self {
             Self::Ethereum(tx) => tx,
             Self::Op(tx) => tx,
-            Self::Tempo(tx) => tx,
+            Self::Tempo(tx) => tx.as_mut(),
         }
     }
 }
@@ -231,7 +228,7 @@ impl From<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest {
             || tx.other.contains_key("feeToken")
             || tx.other.contains_key("nonceKey")
         {
-            let mut tempo_tx_req = TempoTransactionRequest::default();
+            let mut tempo_tx_req: TempoTransactionRequest = tx.inner.into();
             if let Some(fee_token) =
                 tx.other.get_deserialized::<Address>("feeToken").transpose().ok().flatten()
             {
@@ -296,6 +293,12 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
 impl From<FoundryTxEnvelope> for FoundryTransactionRequest {
     fn from(tx: FoundryTxEnvelope) -> Self {
         FoundryTypedTx::from(tx).into()
+    }
+}
+
+impl From<op_alloy_rpc_types::Transaction<FoundryTxEnvelope>> for FoundryTransactionRequest {
+    fn from(tx: op_alloy_rpc_types::Transaction<FoundryTxEnvelope>) -> Self {
+        tx.inner.into_inner().into()
     }
 }
 
@@ -521,11 +524,11 @@ impl TransactionBuilder4844 for FoundryTransactionRequest {
         self.as_mut().set_max_fee_per_blob_gas(max_fee_per_blob_gas);
     }
 
-    fn blob_sidecar(&self) -> Option<&BlobTransactionSidecar> {
+    fn blob_sidecar(&self) -> Option<&BlobTransactionSidecarVariant> {
         self.as_ref().blob_sidecar()
     }
 
-    fn set_blob_sidecar(&mut self, sidecar: BlobTransactionSidecar) {
+    fn set_blob_sidecar(&mut self, sidecar: BlobTransactionSidecarVariant) {
         self.as_mut().set_blob_sidecar(sidecar);
     }
 }
@@ -561,5 +564,123 @@ pub fn get_deposit_tx_parts(
         Ok(DepositTransactionParts { source_hash, mint, is_system_transaction })
     } else {
         Err(missing)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn default_tx_req() -> TransactionRequest {
+        TransactionRequest::default()
+            .with_to(Address::random())
+            .with_nonce(1)
+            .with_value(U256::from(1000000))
+            .with_gas_limit(1000000)
+            .with_max_fee_per_gas(1000000)
+            .with_max_priority_fee_per_gas(1000000)
+    }
+
+    #[test]
+    fn test_routing_ethereum_default() {
+        let tx = default_tx_req();
+        let req: FoundryTransactionRequest = WithOtherFields::new(tx).into();
+
+        assert!(matches!(req, FoundryTransactionRequest::Ethereum(_)));
+        assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Eip1559(_))));
+    }
+
+    #[test]
+    fn test_routing_tempo_by_fee_token() {
+        let tx = default_tx_req();
+        let mut other = OtherFields::default();
+        other.insert("feeToken".to_string(), serde_json::to_value(Address::random()).unwrap());
+
+        let req: FoundryTransactionRequest = WithOtherFields { inner: tx, other }.into();
+
+        assert!(matches!(req, FoundryTransactionRequest::Tempo(_)));
+        assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Tempo(_))));
+    }
+
+    #[test]
+    fn test_routing_op_by_deposit_fields() {
+        let tx = default_tx_req();
+        let mut other = OtherFields::default();
+        other.insert("sourceHash".to_string(), serde_json::to_value(B256::ZERO).unwrap());
+        other.insert("mint".to_string(), serde_json::to_value(U256::from(1000)).unwrap());
+        other.insert("isSystemTx".to_string(), serde_json::to_value(false).unwrap());
+
+        let req: FoundryTransactionRequest = WithOtherFields { inner: tx, other }.into();
+
+        assert!(matches!(req, FoundryTransactionRequest::Op(_)));
+        assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Deposit(_))));
+    }
+
+    #[test]
+    fn test_op_incomplete_routes_to_ethereum() {
+        let tx = default_tx_req();
+        let mut other = OtherFields::default();
+        // Only provide 2 of 3 required Op fields
+        other.insert("sourceHash".to_string(), serde_json::to_value(B256::ZERO).unwrap());
+        other.insert("mint".to_string(), serde_json::to_value(U256::from(1000)).unwrap());
+
+        let req: FoundryTransactionRequest = WithOtherFields { inner: tx, other }.into();
+
+        assert!(matches!(req, FoundryTransactionRequest::Ethereum(_)));
+        assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Eip1559(_))));
+    }
+
+    #[test]
+    fn test_ethereum_with_unrelated_other_fields() {
+        let tx = default_tx_req();
+        let mut other = OtherFields::default();
+        other.insert("anotherField".to_string(), serde_json::to_value(123).unwrap());
+
+        let req: FoundryTransactionRequest = WithOtherFields { inner: tx, other }.into();
+
+        assert!(matches!(req, FoundryTransactionRequest::Ethereum(_)));
+        assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Eip1559(_))));
+    }
+
+    #[test]
+    fn test_serialization_ethereum() {
+        let tx = default_tx_req();
+        let original: FoundryTransactionRequest = WithOtherFields::new(tx).into();
+
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: FoundryTransactionRequest = serde_json::from_str(&serialized).unwrap();
+
+        assert!(matches!(deserialized, FoundryTransactionRequest::Ethereum(_)));
+    }
+
+    #[test]
+    fn test_serialization_op() {
+        let tx = default_tx_req();
+        let mut other = OtherFields::default();
+        other.insert("sourceHash".to_string(), serde_json::to_value(B256::ZERO).unwrap());
+        other.insert("mint".to_string(), serde_json::to_value(U256::from(1000)).unwrap());
+        other.insert("isSystemTx".to_string(), serde_json::to_value(false).unwrap());
+
+        let original: FoundryTransactionRequest = WithOtherFields { inner: tx, other }.into();
+
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: FoundryTransactionRequest = serde_json::from_str(&serialized).unwrap();
+
+        assert!(matches!(deserialized, FoundryTransactionRequest::Op(_)));
+    }
+
+    #[test]
+    fn test_serialization_tempo() {
+        let tx = default_tx_req();
+        let mut other = OtherFields::default();
+        other.insert("feeToken".to_string(), serde_json::to_value(Address::ZERO).unwrap());
+        other.insert("nonceKey".to_string(), serde_json::to_value(U256::from(42)).unwrap());
+
+        let original: FoundryTransactionRequest = WithOtherFields { inner: tx, other }.into();
+
+        let serialized = serde_json::to_string(&original).unwrap();
+        let deserialized: FoundryTransactionRequest = serde_json::from_str(&serialized).unwrap();
+
+        assert!(matches!(deserialized, FoundryTransactionRequest::Tempo(_)));
     }
 }

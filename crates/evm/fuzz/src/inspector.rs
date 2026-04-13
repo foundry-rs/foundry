@@ -4,7 +4,6 @@ use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use revm::{
     Inspector,
     context::{ContextTr, JournalTr, Transaction},
-    inspector::JournalExt,
     interpreter::{CallInput, CallInputs, CallOutcome, CallScheme, CallValue, Interpreter},
 };
 
@@ -19,10 +18,7 @@ pub struct Fuzzer {
     pub fuzz_state: EvmFuzzState,
 }
 
-impl<CTX> Inspector<CTX> for Fuzzer
-where
-    CTX: ContextTr<Journal: JournalExt>,
-{
+impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
     #[inline]
     fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         // We only collect `stack` and `memory` data before and after calls.
@@ -91,10 +87,7 @@ impl Fuzzer {
     /// - Replaces the call entirely with a reentrant callback
     ///
     /// This simulates malicious contracts that immediately reenter when called.
-    fn override_call<CTX>(&mut self, ecx: &mut CTX, call: &mut CallInputs)
-    where
-        CTX: ContextTr<Journal: JournalExt>,
-    {
+    fn override_call<CTX: ContextTr>(&mut self, ecx: &mut CTX, call: &mut CallInputs) {
         let Some(ref mut call_generator) = self.call_generator else {
             return;
         };

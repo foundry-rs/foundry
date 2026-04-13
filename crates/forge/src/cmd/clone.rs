@@ -256,7 +256,7 @@ impl CloneArgs {
         let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
         let main_file = main_file.strip_prefix(root)?.to_path_buf();
         let storage_layout =
-            main_artifact.storage_layout.to_owned().expect("storage layout not found");
+            main_artifact.storage_layout.clone().expect("storage layout not found");
 
         // dump the metadata to the root directory
         let creation_tx = client.contract_creation_data(address).await?;
@@ -832,7 +832,12 @@ impl ExplorerClient for SourcifyClient {
     ) -> std::result::Result<ContractMetadata, EtherscanError> {
         // Request all fields including creation data to cache them
         let url = self.get_contract_url(address, "sources,abi,compilation,deployment");
-        let response = self.client.get(&url).send().await?;
+        let response = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| EtherscanError::Unknown(e.to_string()))?;
 
         let status = response.status();
         trace!("Sourcify API response: status={:?}, url={}", status, url);
@@ -844,7 +849,8 @@ impl ExplorerClient for SourcifyClient {
         }
 
         // Read response body once
-        let response_text = response.text().await?;
+        let response_text =
+            response.text().await.map_err(|e| EtherscanError::Unknown(e.to_string()))?;
         trace!("Sourcify API response body: {}", response_text);
 
         if !status.is_success() {
@@ -1090,7 +1096,8 @@ mod tests {
 
     /// Run the clone command with the specified contract address and assert the compilation.
     async fn one_test_case(address: Address, check_compilation_result: bool) {
-        let mut project_root = tempfile::tempdir().unwrap().path().to_path_buf();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut project_root = temp_dir.path().to_path_buf();
         let client = mock_etherscan(address);
         let meta = CloneArgs::collect_metadata_from_client(address, &client).await.unwrap();
         CloneArgs::init_an_empty_project(&project_root, DependencyInstallOpts::default())
@@ -1115,7 +1122,6 @@ mod tests {
                 pick_creation_info(&address.to_string()).expect("creation code not found");
             assert_compilation_result(rv, contract_name, stripped_creation_code);
         }
-        std::fs::remove_dir_all(project_root).unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1143,7 +1149,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_clone_contract_with_relative_import() {
+    async fn flaky_test_clone_contract_with_relative_import() {
         let address = "0x3a23F943181408EAC424116Af7b7790c94Cb97a5".parse().unwrap();
         one_test_case(address, false).await
     }

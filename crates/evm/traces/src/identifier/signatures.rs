@@ -59,11 +59,15 @@ impl From<&SignaturesCache> for SignaturesDiskCache {
         let (functions, errors, events) = value.signatures.iter().fold(
             (BTreeMap::new(), BTreeMap::new(), BTreeMap::new()),
             |mut acc, (kind, signature)| {
-                let value = signature.clone().unwrap_or_default();
-                match *kind {
-                    SelectorKind::Function(selector) => _ = acc.0.insert(selector, value),
-                    SelectorKind::Error(selector) => _ = acc.1.insert(selector, value),
-                    SelectorKind::Event(selector) => _ = acc.2.insert(selector, value),
+                // Only persist resolved signatures. Unknown selectors (None) are kept
+                // in-memory for session dedup but not written to disk, so they can be
+                // re-queried in future sessions once the signature database is updated.
+                if let Some(value) = signature.clone() {
+                    match *kind {
+                        SelectorKind::Function(selector) => _ = acc.0.insert(selector, value),
+                        SelectorKind::Error(selector) => _ = acc.1.insert(selector, value),
+                        SelectorKind::Event(selector) => _ = acc.2.insert(selector, value),
+                    }
                 }
                 acc
             },
@@ -177,7 +181,7 @@ impl SignaturesIdentifier {
     /// - `cache_dir` is the cache directory to store the signatures.
     /// - `offline` disables the OpenChain client.
     pub fn new_with(cache_dir: Option<&Path>, offline: bool) -> Result<Self> {
-        let client = if !offline { Some(OpenChainClient::new()?) } else { None };
+        let client = if offline { None } else { Some(OpenChainClient::new()?) };
         let (cache, cache_path) = if let Some(cache_dir) = cache_dir {
             let path = cache_dir.join("signatures");
             let cache = SignaturesCache::load(&path);
@@ -289,5 +293,34 @@ impl SignaturesIdentifierInner {
 impl Drop for SignaturesIdentifierInner {
     fn drop(&mut self) {
         self.save();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_signatures_not_persisted_to_disk() {
+        let known_selector = SelectorKind::Function(Selector::from([0xaa, 0xbb, 0xcc, 0xdd]));
+        let unknown_selector = SelectorKind::Error(Selector::from([0x11, 0x22, 0x33, 0x44]));
+
+        let mut cache = SignaturesCache::default();
+        cache.signatures.insert(known_selector, Some("transfer(address,uint256)".into()));
+        cache.signatures.insert(unknown_selector, None);
+
+        // Verify both are in memory.
+        assert!(cache.contains_key(&known_selector));
+        assert!(cache.contains_key(&unknown_selector));
+
+        // Round-trip through the disk format.
+        let disk: SignaturesDiskCache = (&cache).into();
+        let reloaded = SignaturesCache::from(disk);
+
+        // Known signature survives the round-trip.
+        assert_eq!(reloaded.get(&known_selector), Some(Some("transfer(address,uint256)".into())));
+        // Unknown signature is gone — it will be re-queried next session.
+        assert_eq!(reloaded.get(&unknown_selector), None);
+        assert!(!reloaded.contains_key(&unknown_selector));
     }
 }

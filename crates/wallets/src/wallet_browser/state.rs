@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use alloy_network::Network;
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
@@ -12,11 +13,12 @@ use crate::wallet_browser::{
 };
 
 #[derive(Debug, Clone)]
-pub(crate) struct BrowserWalletState {
+pub(crate) struct BrowserWalletState<N: Network> {
     /// Current information about the wallet connection.
     connection: Arc<RwLock<Option<Connection>>>,
     /// Request/response queue for transactions.
-    transactions: Arc<Mutex<RequestQueue<BrowserTransactionRequest, BrowserTransactionResponse>>>,
+    transactions:
+        Arc<Mutex<RequestQueue<BrowserTransactionRequest<N>, BrowserTransactionResponse>>>,
     /// Request/response queue for signings.
     signings: Arc<Mutex<RequestQueue<BrowserSignRequest, BrowserSignResponse>>>,
     /// Unique session token for the wallet browser instance.
@@ -29,7 +31,7 @@ pub(crate) struct BrowserWalletState {
     development: bool,
 }
 
-impl BrowserWalletState {
+impl<N: Network> BrowserWalletState<N> {
     /// Create a new browser wallet state.
     pub fn new(session_token: String, development: bool) -> Self {
         Self {
@@ -70,7 +72,7 @@ impl BrowserWalletState {
     }
 
     /// Add a transaction request.
-    pub async fn add_transaction_request(&self, request: BrowserTransactionRequest) {
+    pub async fn add_transaction_request(&self, request: BrowserTransactionRequest<N>) {
         self.transactions.lock().await.add_request(request);
     }
 
@@ -80,7 +82,7 @@ impl BrowserWalletState {
     }
 
     /// Read the next transaction request.
-    pub async fn read_next_transaction_request(&self) -> Option<BrowserTransactionRequest> {
+    pub async fn read_next_transaction_request(&self) -> Option<BrowserTransactionRequest<N>> {
         self.transactions.lock().await.read_request().cloned()
     }
 

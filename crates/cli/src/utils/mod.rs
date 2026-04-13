@@ -1,11 +1,8 @@
 use alloy_json_abi::JsonAbi;
 use alloy_primitives::{Address, U256, map::HashMap};
-use alloy_provider::{Provider, network::AnyNetwork};
+use alloy_provider::{Network, Provider, RootProvider, network::AnyNetwork};
 use eyre::{ContextCompat, Result};
-use foundry_common::{
-    provider::{ProviderBuilder, RetryProvider},
-    shell,
-};
+use foundry_common::{provider::ProviderBuilder, shell};
 use foundry_config::{Chain, Config};
 use itertools::Itertools;
 use path_slash::PathExt;
@@ -32,6 +29,9 @@ pub use abi::*;
 
 mod allocator;
 pub use allocator::*;
+
+mod tempo;
+pub use tempo::*;
 
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
@@ -99,29 +99,22 @@ fn env_filter() -> tracing_subscriber::EnvFilter {
     filter
 }
 
-/// Returns a [RetryProvider] instantiated using [Config]'s RPC settings.
-pub fn get_provider(config: &Config) -> Result<RetryProvider> {
-    get_provider_builder(config, false)?.build()
-}
-
-/// Returns a [RetryProvider] with curl mode option.
-///
-/// When `curl_mode` is true, the provider will print equivalent curl commands
-/// to stdout instead of executing RPC requests.
-pub fn get_provider_with_curl(config: &Config, curl_mode: bool) -> Result<RetryProvider> {
-    get_provider_builder(config, curl_mode)?.build()
+/// Returns a [`RootProvider`] instantiated using [Config]'s RPC settings.
+pub fn get_provider(config: &Config) -> Result<RootProvider<AnyNetwork>> {
+    get_provider_builder(config)?.build()
 }
 
 /// Returns a [ProviderBuilder] instantiated using [Config] values.
 ///
 /// Defaults to `http://localhost:8545` and `Mainnet`.
-pub fn get_provider_builder(config: &Config, curl_mode: bool) -> Result<ProviderBuilder> {
-    ProviderBuilder::from_config(config).map(|builder| builder.curl_mode(curl_mode))
+pub fn get_provider_builder(config: &Config) -> Result<ProviderBuilder> {
+    ProviderBuilder::from_config(config)
 }
 
-pub async fn get_chain<P>(chain: Option<Chain>, provider: P) -> Result<Chain>
+pub async fn get_chain<N, P>(chain: Option<Chain>, provider: P) -> Result<Chain>
 where
-    P: Provider<AnyNetwork>,
+    N: Network,
+    P: Provider<N>,
 {
     match chain {
         Some(chain) => Ok(chain),
@@ -289,7 +282,7 @@ impl CommandUtils for Command {
             };
             if !msg.is_empty() {
                 err.push(':');
-                err.push(if msg.lines().count() == 0 { ' ' } else { '\n' });
+                err.push(if msg.lines().count() == 1 { ' ' } else { '\n' });
                 err.push_str(&msg);
             }
             Err(eyre::eyre!(err))
@@ -484,7 +477,7 @@ impl<'a> Git<'a> {
     }
 
     pub fn is_repo_root(self) -> Result<bool> {
-        self.cmd().args(["rev-parse", "--show-cdup"]).exec().map(|out| out.stdout.is_empty())
+        self.cmd().args(["rev-parse", "--show-cdup"]).get_stdout_lossy().map(|s| s.is_empty())
     }
 
     pub fn is_clean(self) -> Result<bool> {

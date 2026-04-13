@@ -4,9 +4,10 @@ use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
     constants::CHEATCODE_ADDRESS,
+    evm::FoundryEvmNetwork,
 };
 use itertools::Itertools;
-use revm::context::JournalTr;
+use revm::context::{ContextTr, JournalTr};
 use std::{borrow::Cow, fmt};
 
 const EQ_REL_DELTA_RESOLUTION: U256 = U256::from_limbs([18, 0, 0, 0]);
@@ -187,9 +188,9 @@ impl EqRelAssertionError<I256> {
 type ComparisonResult<'a, T> = Result<(), ComparisonAssertionError<'a, T>>;
 
 #[cold]
-fn handle_assertion_result<E>(
-    ccx: &mut CheatsCtxt,
-    executor: &mut dyn CheatcodesExecutor,
+fn handle_assertion_result<FEN: FoundryEvmNetwork, E>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    executor: &mut dyn CheatcodesExecutor<FEN>,
     err: E,
     error_formatter: Option<&dyn Fn(&E) -> String>,
     error_msg: Option<&str>,
@@ -203,16 +204,16 @@ fn handle_assertion_result<E>(
     handle_assertion_result_mono(ccx, executor, msg)
 }
 
-fn handle_assertion_result_mono(
-    ccx: &mut CheatsCtxt,
-    executor: &mut dyn CheatcodesExecutor,
+fn handle_assertion_result_mono<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
+    executor: &mut dyn CheatcodesExecutor<FEN>,
     msg: Cow<'_, str>,
 ) -> Result {
     if ccx.state.config.assertions_revert {
         Err(msg.into_owned().into())
     } else {
-        executor.console_log(ccx, &msg);
-        ccx.ecx.journaled_state.sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
+        executor.console_log(&msg);
+        ccx.ecx.journal_mut().sstore(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::from(1))?;
         Ok(Default::default())
     }
 }
@@ -246,10 +247,10 @@ macro_rules! impl_assertions {
 
     (@impl $no_error:ident, $with_error:ident, ($($arg:ident),*), $body:expr, $error_formatter:expr) => {
         impl crate::Cheatcode for $no_error {
-            fn apply_full(
+            fn apply_full<FEN: FoundryEvmNetwork>(
                 &self,
-                ccx: &mut CheatsCtxt,
-                executor: &mut dyn CheatcodesExecutor,
+                ccx: &mut CheatsCtxt<'_, '_, FEN>,
+                executor: &mut dyn CheatcodesExecutor<FEN>,
             ) -> Result {
                 let Self { $($arg),* } = self;
                 match $body {
@@ -260,10 +261,10 @@ macro_rules! impl_assertions {
         }
 
         impl crate::Cheatcode for $with_error {
-            fn apply_full(
+            fn apply_full<FEN: FoundryEvmNetwork>(
                 &self,
-                ccx: &mut CheatsCtxt,
-                executor: &mut dyn CheatcodesExecutor,
+                ccx: &mut CheatsCtxt<'_, '_, FEN>,
+                executor: &mut dyn CheatcodesExecutor<FEN>,
             ) -> Result {
                 let Self { $($arg,)* error } = self;
                 match $body {
@@ -466,10 +467,10 @@ fn assert_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a
 }
 
 fn assert_not_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
-    if left != right {
-        Ok(())
-    } else {
+    if left == right {
         Err(ComparisonAssertionError { kind: AssertionKind::Ne, left, right })
+    } else {
+        Ok(())
     }
 }
 
@@ -561,14 +562,13 @@ fn uint_assert_approx_eq_rel(
     if right.is_zero() {
         if left.is_zero() {
             return Ok(());
-        } else {
-            return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
-                left,
-                right,
-                max_delta,
-                real_delta: EqRelDelta::Undefined,
-            })));
-        };
+        }
+        return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
+            left,
+            right,
+            max_delta,
+            real_delta: EqRelDelta::Undefined,
+        })));
     }
 
     let delta = calc_delta_full::<U256>(left.abs_diff(right), right)?;
@@ -593,14 +593,13 @@ fn int_assert_approx_eq_rel(
     if right.is_zero() {
         if left.is_zero() {
             return Ok(());
-        } else {
-            return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
-                left,
-                right,
-                max_delta,
-                real_delta: EqRelDelta::Undefined,
-            })));
         }
+        return Err(EqRelAssertionError::Failure(Box::new(EqRelAssertionFailure {
+            left,
+            right,
+            max_delta,
+            real_delta: EqRelDelta::Undefined,
+        })));
     }
 
     let delta = calc_delta_full::<I256>(get_delta_int(left, right), right.unsigned_abs())?;

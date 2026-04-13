@@ -535,6 +535,7 @@ pub fn parse_signatures(tokens: Vec<String>) -> ParsedSignatures {
         RawSelectorImportData::default(),
         |mut data, signature| {
             let mut split = signature.split(' ');
+            #[allow(clippy::collapsible_match)]
             match split.next() {
                 Some("function") => {
                     if let Some(sig) = split.next() {

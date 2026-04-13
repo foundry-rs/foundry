@@ -80,7 +80,7 @@ impl InterfaceArgs {
         };
 
         // Build config for to_sol conversion.
-        let config = if flatten { Some(ToSolConfig::new().one_contract(true)) } else { None };
+        let config = flatten.then(|| ToSolConfig::new().one_contract(true));
 
         // Retrieve interfaces from the array of ABIs.
         let interfaces = get_interfaces(abis, config)?;

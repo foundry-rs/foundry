@@ -146,13 +146,12 @@ impl DocBuilder {
                                 if from_library {
                                     // Ignore failures for library files
                                     return Ok(files);
-                                } else {
-                                    return Err(eyre::eyre!(
-                                        "Failed to parse Solidity code for {}\nDebug info: {:?}",
-                                        path.display(),
-                                        err
-                                    ));
                                 }
+                                return Err(eyre::eyre!(
+                                    "Failed to parse Solidity code for {}\nDebug info: {:?}",
+                                    path.display(),
+                                    err
+                                ));
                             }
                         };
 
@@ -183,7 +182,7 @@ impl DocBuilder {
                             HashMap<String, Vec<ParseItem>>,
                             HashMap<String, Vec<ParseItem>>,
                         ) = funcs.into_iter().partition(|(_, v)| v.len() == 1);
-                        remaining.extend(items.into_iter().flat_map(|(_, v)| v));
+                        remaining.extend(items.into_values().flatten());
 
                         // Each regular item will be written into its own file.
                         files = remaining
@@ -394,7 +393,7 @@ impl DocBuilder {
                 Some(self.config.book.clone())
             } else {
                 let book_path = self.config.book.join("book.toml");
-                if book_path.is_file() { Some(book_path) } else { None }
+                book_path.is_file().then_some(book_path)
             }
         };
 

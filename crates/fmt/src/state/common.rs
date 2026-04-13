@@ -37,12 +37,12 @@ impl<'ast> State<'_, 'ast> {
                         let quote_pos = span.lo() + kind.prefix().len() as u32;
                         self.print_str_lit(kind, quote_pos, symbol.as_str());
                     }
-                    if !pos.is_last {
+                    if pos.is_last {
+                        self.neverbreak();
+                    } else {
                         if !self.print_trailing_comment(span.hi(), None) {
                             self.space_if_not_bol();
                         }
-                    } else {
-                        self.neverbreak();
                     }
                 }
                 self.end();
@@ -93,10 +93,10 @@ impl<'ast> State<'_, 'ast> {
         let config = self.config.number_underscore;
         let is_dec = !["0x", "0b", "0o"].iter().any(|prefix| source.starts_with(prefix));
 
-        let (val, exp) = if !is_dec {
-            (source, "")
-        } else {
+        let (val, exp) = if is_dec {
             source.split_once(['e', 'E']).unwrap_or((source, ""))
+        } else {
+            (source, "")
         };
         let (val, fract) = val.split_once('.').unwrap_or((val, ""));
 
@@ -601,9 +601,10 @@ impl<'ast> State<'_, 'ast> {
                 let enabled =
                     !self.inline_config.is_disabled(Span::new(block_lo, block_lo + BytePos(1)))
                         && !self.handle_span(self.cursor.span(block_lo), true);
-                match self.peek_comment().and_then(|cmnt| {
-                    if cmnt.span.hi() < block_lo { Some((cmnt.span, cmnt.style)) } else { None }
-                }) {
+                match self
+                    .peek_comment()
+                    .and_then(|cmnt| (cmnt.span.hi() < block_lo).then_some((cmnt.span, cmnt.style)))
+                {
                     Some((span, style)) => {
                         if enabled {
                             // Inline config is not disabled and span not handled

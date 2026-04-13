@@ -17,7 +17,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{Config, filter::GlobMatcher};
-use foundry_evm::{Env, opts::EvmOpts};
+use foundry_evm::opts::EvmOpts;
 
 use crate::mutation::{
     MutationHandler, MutationProgress, MutationReporter, MutationsSummary, mutant::MutationResult,
@@ -73,7 +73,6 @@ pub async fn run_mutation_testing(
     config: Arc<Config>,
     output: &ProjectCompileOutput<MultiCompiler>,
     evm_opts: EvmOpts,
-    env: Env,
     mutation_config: MutationRunConfig,
 ) -> Result<MutationRunResult> {
     let num_workers = mutation_config.effective_workers();
@@ -172,7 +171,6 @@ pub async fn run_mutation_testing(
             handler.src.clone(),
             config.clone(),
             evm_opts.clone(),
-            env.clone(),
             num_workers,
             progress.clone(),
             json_output,

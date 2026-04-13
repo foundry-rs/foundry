@@ -86,11 +86,7 @@ impl Comment {
     /// Returns [None] if the word doesn't match.
     /// Useful for [CommentTag::Param] and [CommentTag::Return] comments.
     pub fn match_first_word(&self, expected: &str) -> Option<&str> {
-        self.split_first_word().and_then(
-            |(word, rest)| {
-                if word == expected { Some(rest) } else { None }
-            },
-        )
+        self.split_first_word().and_then(|(word, rest)| (word == expected).then_some(rest))
     }
 
     /// Check if this comment is a custom tag.
@@ -100,7 +96,7 @@ impl Comment {
 }
 
 /// The collection of natspec [Comment] items.
-#[derive(Clone, Debug, Default, PartialEq, Deref, DerefMut)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deref, DerefMut)]
 pub struct Comments(Vec<Comment>);
 
 /// Forward the [Comments] function implementation to the [CommentsRef]
@@ -151,12 +147,12 @@ impl Comments {
 
 impl From<Vec<DocCommentTag>> for Comments {
     fn from(value: Vec<DocCommentTag>) -> Self {
-        Self(value.into_iter().flat_map(Comment::from_doc_comment).collect())
+        Self(value.into_iter().filter_map(Comment::from_doc_comment).collect())
     }
 }
 
 /// The collection of references to natspec [Comment] items.
-#[derive(Debug, Default, PartialEq, Deref)]
+#[derive(Debug, Default, PartialEq, Eq, Deref)]
 pub struct CommentsRef<'a>(Vec<&'a Comment>);
 
 impl<'a> CommentsRef<'a> {

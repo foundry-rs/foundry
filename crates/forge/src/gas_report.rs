@@ -87,7 +87,7 @@ impl GasReport {
         if !self.should_report(contract_name) {
             return;
         }
-        let contract_info = self.contracts.entry(name.to_string()).or_default();
+        let contract_info = self.contracts.entry(name.clone()).or_default();
         let is_create_call = trace.kind.is_any_create();
 
         // Record contract deployment size.
@@ -177,8 +177,8 @@ impl GasReport {
 
                     let functions = contract
                         .functions
-                        .iter()
-                        .flat_map(|(_, sigs)| {
+                        .values()
+                        .flat_map(|sigs| {
                             sigs.iter().map(|(sig, gas_info)| {
                                 let display_name = sig.replace(':', "");
                                 (display_name, gas_info)
@@ -235,7 +235,7 @@ impl GasReport {
             sigs.iter().for_each(|(sig, gas_info)| {
                 // Show function signature if overloaded else display function name.
                 let display_name =
-                    if sigs.len() == 1 { fname.to_string() } else { sig.replace(':', "") };
+                    if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
 
                 table.add_row(vec![
                     Cell::new(display_name),

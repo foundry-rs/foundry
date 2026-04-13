@@ -4,6 +4,7 @@ use crate::{
     eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
 };
 use alloy_genesis::Genesis;
+use alloy_network::Network;
 use alloy_primitives::{B256, U256, utils::Unit};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
@@ -13,6 +14,7 @@ use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
 use foundry_evm::hardfork::{EthereumHardfork, OpHardfork};
 use foundry_evm_networks::NetworkConfigs;
+use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
 use rand_08::{SeedableRng, rngs::StdRng};
 use std::{
@@ -27,6 +29,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
+use tempo_chainspec::hardfork::TempoHardfork;
 use tokio::time::{Instant, Interval};
 
 #[derive(Clone, Debug, Parser)]
@@ -188,6 +191,10 @@ pub struct NodeArgs {
     #[arg(long)]
     pub transaction_block_keeper: Option<usize>,
 
+    /// Maximum number of transactions in a block.
+    #[arg(long)]
+    pub max_transactions: Option<usize>,
+
     #[command(flatten)]
     pub evm: AnvilEvmArgs,
 
@@ -224,6 +231,8 @@ impl NodeArgs {
             Some(hf) => {
                 if self.evm.networks.is_optimism() {
                     Some(OpHardfork::from_str(hf)?.into())
+                } else if self.evm.networks.is_tempo() {
+                    Some(TempoHardfork::from_str(hf)?.into())
                 } else {
                     Some(EthereumHardfork::from_str(hf)?.into())
                 }
@@ -264,7 +273,7 @@ impl NodeArgs {
             .with_eth_rpc_url(self.evm.fork_url.map(|fork| fork.url))
             .with_base_fee(self.evm.block_base_fee_per_gas)
             .disable_min_priority_fee(self.evm.disable_min_priority_fee)
-            .with_storage_caching(self.evm.no_storage_caching)
+            .with_no_storage_caching(self.evm.no_storage_caching)
             .with_server_config(self.server_config)
             .with_host(self.host)
             .set_silent(shell::is_quiet())
@@ -282,6 +291,7 @@ impl NodeArgs {
             .set_pruned_history(self.prune_history)
             .with_init_state(self.load_state.or_else(|| self.state.and_then(|s| s.state)))
             .with_transaction_block_keeper(self.transaction_block_keeper)
+            .with_max_transactions(self.max_transactions)
             .with_max_persisted_states(self.max_persisted_states)
             .with_networks(self.evm.networks)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
@@ -632,17 +642,17 @@ impl AnvilEvmArgs {
 }
 
 /// Helper type to periodically dump the state of the chain to disk
-struct PeriodicStateDumper {
+struct PeriodicStateDumper<N: Network> {
     in_progress_dump: Option<Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>>,
-    api: EthApi,
+    api: EthApi<N>,
     dump_state: Option<PathBuf>,
     preserve_historical_states: bool,
     interval: Interval,
 }
 
-impl PeriodicStateDumper {
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> PeriodicStateDumper<N> {
     fn new(
-        api: EthApi,
+        api: EthApi<N>,
         dump_state: Option<PathBuf>,
         interval: Duration,
         preserve_historical_states: bool,
@@ -666,7 +676,7 @@ impl PeriodicStateDumper {
     }
 
     /// Infallible state dump
-    async fn dump_state(api: EthApi, dump_state: PathBuf, preserve_historical_states: bool) {
+    async fn dump_state(api: EthApi<N>, dump_state: PathBuf, preserve_historical_states: bool) {
         trace!(path=?dump_state, "Dumping state on shutdown");
         match api.serialized_state(preserve_historical_states).await {
             Ok(state) => {
@@ -684,7 +694,7 @@ impl PeriodicStateDumper {
 }
 
 // An endless future that periodically dumps the state to disk if configured.
-impl Future for PeriodicStateDumper {
+impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Future for PeriodicStateDumper<N> {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

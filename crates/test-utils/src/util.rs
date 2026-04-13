@@ -3,7 +3,7 @@ use foundry_config::Config;
 use std::{
     env,
     fs::{self, File},
-    io::{IsTerminal, Read, Seek, Write},
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::LazyLock,
@@ -18,9 +18,6 @@ pub use crate::{ext::*, prj::*};
 
 /// The commit of forge-std to use.
 pub const FORGE_STD_REVISION: &str = include_str!("../../../testdata/forge-std-rev");
-
-/// Stores whether `stdout` is a tty / terminal.
-pub static IS_TTY: LazyLock<bool> = LazyLock::new(|| std::io::stdout().is_terminal());
 
 /// Global default template path. Contains the global template project from which all other
 /// temp projects are initialized. See [`initialize()`] for more info.
@@ -149,9 +146,7 @@ pub fn get_compiled(project: &mut Project) -> ProjectCompileOutput {
     out = project.compile().unwrap();
     test_debug!("compiled {}", lock_file_path.display());
 
-    if out.has_compiler_errors() {
-        panic!("Compiled with errors:\n{out}");
-    }
+    assert!(!out.has_compiler_errors(), "Compiled with errors:\n{out}");
 
     if let Some(write) = &mut write {
         write.write_all(crate::fd_lock::LOCK_TOKEN).unwrap();
@@ -179,7 +174,7 @@ pub fn get_vyper() -> Vyper {
         let path = VYPER.as_path();
         let mut file = File::create(path).unwrap();
         if let Err(e) = file.try_lock() {
-            if let fs::TryLockError::WouldBlock = e {
+            if matches!(e, fs::TryLockError::WouldBlock) {
                 file.lock().unwrap();
                 assert!(path.exists());
                 return Vyper::new(path).unwrap();

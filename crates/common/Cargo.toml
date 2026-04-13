@@ -30,10 +30,10 @@ alloy-primitives = { workspace = true, features = [
     "rlp",
 ] }
 alloy-provider.workspace = true
+alloy-signer.workspace = true
 alloy-pubsub.workspace = true
 alloy-rpc-client.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
-alloy-serde.workspace = true
 alloy-sol-types.workspace = true
 alloy-transport-http = { workspace = true, features = [
     "reqwest",
@@ -45,6 +45,9 @@ alloy-transport.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-network.workspace = true
 
+op-alloy-network.workspace = true
+op-alloy-rpc-types.workspace = true
+
 revm.workspace = true
 
 solar.workspace = true
@@ -52,7 +55,9 @@ solar.workspace = true
 tower.workspace = true
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
+alloy-rlp.workspace = true
 comfy-table.workspace = true
+dirs.workspace = true
 dunce.workspace = true
 eyre.workspace = true
 itertools.workspace = true
@@ -66,6 +71,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+toml.workspace = true
 tracing.workspace = true
 url.workspace = true
 walkdir.workspace = true
@@ -76,6 +82,8 @@ anstyle.workspace = true
 ciborium.workspace = true
 
 flate2.workspace = true
+tempo-alloy.workspace = true
+tempo-primitives.workspace = true
 
 [build-dependencies]
 chrono.workspace = true

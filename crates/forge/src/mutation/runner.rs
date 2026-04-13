@@ -18,7 +18,10 @@ use eyre::Result;
 use foundry_common::{EmptyTestFilter, compile::ProjectCompiler, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::Config;
-use foundry_evm::{Env, opts::EvmOpts};
+use foundry_evm::{
+    core::evm::{BlockEnvFor, EthEvmNetwork, SpecFor, TxEnvFor},
+    opts::EvmOpts,
+};
 use rayon::prelude::*;
 use tempfile::TempDir;
 
@@ -126,7 +129,6 @@ pub fn run_mutations_parallel_with_progress(
     original_source: Arc<String>,
     config: Arc<Config>,
     evm_opts: EvmOpts,
-    env: Env,
     num_workers: usize,
     progress: Option<MutationProgress>,
     silent: bool,
@@ -221,7 +223,6 @@ pub fn run_mutations_parallel_with_progress(
                     &original_source,
                     &config,
                     &evm_opts,
-                    &env,
                     &shared_state,
                 )
             }));
@@ -273,7 +274,6 @@ fn test_single_mutant_isolated(
     original_source: &Arc<String>,
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
-    env: &Env,
     shared_state: &Arc<SharedMutationState>,
 ) -> MutantTestResult {
     // Check if we should skip this mutant based on adaptive span tracking
@@ -356,7 +356,7 @@ fn test_single_mutant_isolated(
     let temp_config = Arc::new(temp_config);
 
     // Compile and test
-    let result = match compile_and_test(&temp_config, evm_opts, env) {
+    let result = match compile_and_test(&temp_config, evm_opts) {
         Ok(killed) => {
             if killed {
                 MutationResult::Dead
@@ -417,22 +417,12 @@ fn apply_mutation(mutant: &Mutant, original_source: &str, dest_path: &Path) -> R
 }
 
 /// Compile the project and run tests, returning true if any test failed (mutant killed).
-fn compile_and_test(config: &Arc<Config>, evm_opts: &EvmOpts, env: &Env) -> Result<bool> {
+fn compile_and_test(config: &Arc<Config>, evm_opts: &EvmOpts) -> Result<bool> {
     // Compile
     let compiler =
         ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking).quiet(true);
 
     let compile_output = compiler.compile(&config.project()?)?;
-
-    // Build test runner with fail-fast enabled
-    let mut runner = MultiContractRunnerBuilder::new(config.clone())
-        .set_debug(false)
-        .initial_balance(evm_opts.initial_balance)
-        .evm_spec(config.evm_spec_id())
-        .sender(evm_opts.sender)
-        .with_fork(evm_opts.clone().get_fork(config, env.clone()))
-        .fail_fast(true)
-        .build::<MultiCompiler>(&compile_output, env.clone(), evm_opts.clone())?;
 
     // Run tests - need a multi-threaded Tokio runtime since test() uses rayon internally
     // with par_iter, and rayon workers need tokio handle access
@@ -443,8 +433,28 @@ fn compile_and_test(config: &Arc<Config>, evm_opts: &EvmOpts, env: &Env) -> Resu
         .map_err(|e| eyre::eyre!("Failed to create tokio runtime: {}", e))?;
 
     // Use block_on to run within the runtime context
-    let results: BTreeMap<String, SuiteResult> =
-        rt.block_on(async { runner.test_collect(&EmptyTestFilter::default()) })?;
+    let results: BTreeMap<String, SuiteResult> = rt.block_on(async {
+        // Construct EVM env using the EthEvmNetwork type (mutation testing always uses Eth)
+        let (evm_env, tx_env, fork_block) = evm_opts
+            .env::<SpecFor<EthEvmNetwork>, BlockEnvFor<EthEvmNetwork>, TxEnvFor<EthEvmNetwork>>()
+            .await?;
+
+        // Build test runner with fail-fast enabled
+        let mut runner = MultiContractRunnerBuilder::new(config.clone())
+            .set_debug(false)
+            .initial_balance(evm_opts.initial_balance)
+            .sender(evm_opts.sender)
+            .with_fork(evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block))
+            .fail_fast(true)
+            .build::<EthEvmNetwork, MultiCompiler>(
+                &compile_output,
+                evm_env,
+                tx_env,
+                evm_opts.clone(),
+            )?;
+
+        runner.test_collect(&EmptyTestFilter::default())
+    })?;
 
     // Check if any test failed (mutant killed)
     let killed = results.values().any(|suite| suite.failed() > 0);

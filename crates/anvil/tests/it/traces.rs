@@ -777,7 +777,7 @@ async fn test_trace_address_fork2() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn flaky_test_trace_filter() {
+async fn test_trace_filter() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.ws_provider();
 
@@ -802,11 +802,11 @@ async fn flaky_test_trace_filter() {
     for i in 0..=5 {
         let tx = TransactionRequest::default().to(to).value(U256::from(i)).from(from);
         let tx = WithOtherFields::new(tx);
-        api.send_transaction(tx).await.unwrap();
+        provider.send_transaction(tx).await.unwrap().get_receipt().await.unwrap();
     }
 
     let traces = api.trace_filter(tracer).await.unwrap();
-    assert_eq!(traces.len(), 5);
+    assert_eq!(traces.len(), 6);
 
     // Test filtering by address
     let tracer = TraceFilter {
@@ -1243,7 +1243,7 @@ async fn test_debug_trace_transaction_pre_state_tracer() {
     "nonce": 1
   },
   "0x70997970c51812dc3a010c7d01b50e0d17dc79c8": {
-    "balance": "0x56bc75e2d630fffff"
+    "balance": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
   },
   "0xe7f1725e7734ce288f8367e1bb143e90bb3f0512": {
     "balance": "0x0",

@@ -63,22 +63,6 @@ pub enum RpcEndpointType {
 }
 
 impl RpcEndpointType {
-    /// Returns the string variant
-    pub fn as_endpoint_string(&self) -> Option<&RpcEndpointUrl> {
-        match self {
-            Self::String(url) => Some(url),
-            Self::Config(_) => None,
-        }
-    }
-
-    /// Returns the config variant
-    pub fn as_endpoint_config(&self) -> Option<&RpcEndpoint> {
-        match self {
-            Self::Config(config) => Some(config),
-            Self::String(_) => None,
-        }
-    }
-
     /// Returns the url or config this type holds
     ///
     /// # Error
@@ -134,14 +118,6 @@ impl RpcEndpointUrl {
         match self {
             Self::Url(url) => Some(url),
             Self::Env(_) => None,
-        }
-    }
-
-    /// Returns the env variant
-    pub fn as_env(&self) -> Option<&str> {
-        match self {
-            Self::Env(val) => Some(val),
-            Self::Url(_) => None,
         }
     }
 

@@ -209,6 +209,7 @@ impl Create2Args {
             let found = Arc::clone(&found);
             handles.push(std::thread::spawn(move || {
                 // Read the first bytes of the salt as a usize to be able to increment it.
+                #[repr(C)]
                 struct B256Aligned(B256, [usize; 0]);
                 let mut salt = B256Aligned(salt, []);
                 // SAFETY: B256 is aligned to `usize`.

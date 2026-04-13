@@ -1,10 +1,14 @@
 use crate::{CallTrace, DecodedCallData};
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_sol_types::{SolCall, abi, sol};
-use foundry_evm_core::precompiles::{
-    BLAKE_2F, BLS12_G1ADD, BLS12_G1MSM, BLS12_G2ADD, BLS12_G2MSM, BLS12_MAP_FP_TO_G1,
-    BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY,
-    MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
+use foundry_config::{Chain, NamedChain};
+use foundry_evm_core::{
+    precompiles::{
+        BLAKE_2F, BLS12_G1ADD, BLS12_G1MSM, BLS12_G2ADD, BLS12_G2MSM, BLS12_MAP_FP_TO_G1,
+        BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, CELO_TRANSFER, EC_ADD, EC_MUL, EC_PAIRING,
+        EC_RECOVER, IDENTITY, MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
+    },
+    tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS},
 };
 use itertools::Itertools;
 use revm_inspectors::tracing::types::DecodedCallTrace;
@@ -50,8 +54,9 @@ interface Precompiles {
 }
 use Precompiles::*;
 
-pub(super) fn is_known_precompile(address: Address, _chain_id: u64) -> bool {
-    address[..19].iter().all(|&x| x == 0)
+pub(super) fn is_known_precompile(address: Address, chain_id: Option<u64>) -> bool {
+    // Standard EVM precompiles (all chains).
+    let is_standard = address[..19].iter().all(|&x| x == 0)
         && matches!(
             address,
             EC_RECOVER
@@ -72,12 +77,29 @@ pub(super) fn is_known_precompile(address: Address, _chain_id: u64) -> bool {
                 | BLS12_MAP_FP_TO_G1
                 | BLS12_MAP_FP2_TO_G2
                 | P256_VERIFY
-        )
+        );
+    if is_standard {
+        return true;
+    }
+    // Tempo precompiles and TIP20 fee tokens (only on Tempo chains).
+    if chain_id.is_some_and(|id| Chain::from_id(id).is_tempo())
+        && (TEMPO_PRECOMPILE_ADDRESSES.contains(&address) || TEMPO_TIP20_TOKENS.contains(&address))
+    {
+        return true;
+    }
+    // Celo transfer precompile (only on Celo chains).
+    if chain_id.is_some_and(|id| {
+        matches!(Chain::from_id(id).named(), Some(NamedChain::Celo | NamedChain::CeloSepolia))
+    }) && address == CELO_TRANSFER
+    {
+        return true;
+    }
+    false
 }
 
 /// Tries to decode a precompile call. Returns `Some` if successful.
-pub(super) fn decode(trace: &CallTrace, _chain_id: u64) -> Option<DecodedCallTrace> {
-    if !is_known_precompile(trace.address, _chain_id) {
+pub(super) fn decode(trace: &CallTrace, chain_id: Option<u64>) -> Option<DecodedCallTrace> {
+    if !is_known_precompile(trace.address, chain_id) {
         return None;
     }
 

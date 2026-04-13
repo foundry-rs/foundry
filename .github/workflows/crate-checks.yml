@@ -1,0 +1,58 @@
+# Nightly job to verify each crate compiles independently (catches missing deps/features
+# masked by Cargo's workspace feature unification).
+
+name: crate-checks
+
+permissions: {}
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # Run daily at 2 AM UTC (offset from test-flaky and test-isolate)
+  workflow_dispatch: # Needed so we can run it manually
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  crate-checks:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        with:
+          toolchain: stable
+      - uses: rui314/setup-mold@725a8794d15fc7563f59595bd9556495c0564878 # v1
+      - uses: taiki-e/install-action@cf39a74df4a72510be4e5b63348d61067f11e64a # v2
+        with:
+          tool: cargo-hack
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+      - run: cargo hack check
+
+  issue:
+    name: Open an issue
+    runs-on: ubuntu-latest
+    needs: [crate-checks]
+    if: failure()
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_URL: |
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          update_existing: true
+          filename: .github/CRATE_CHECKS_FAILURE_TEMPLATE.md

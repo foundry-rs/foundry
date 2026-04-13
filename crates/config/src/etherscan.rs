@@ -18,9 +18,6 @@ use std::{
     time::Duration,
 };
 
-/// The user agent to use when querying the etherscan API.
-pub const ETHERSCAN_USER_AGENT: &str = concat!("foundry/", env!("CARGO_PKG_VERSION"));
-
 /// A [Provider] that provides Etherscan API key from the environment if it's not empty.
 ///
 /// This prevents `ETHERSCAN_API_KEY=""` if it's set but empty
@@ -138,11 +135,11 @@ impl ResolvedEtherscanConfigs {
         self,
         chain: Chain,
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
-        for (_, config) in self.configs.into_iter() {
+        for (_, config) in self.configs {
             match config {
                 Ok(c) if c.chain == Some(chain) => return Some(Ok(c)),
                 Err(e) => return Some(Err(e)),
-                _ => continue,
+                _ => {}
             }
         }
         None
@@ -310,13 +307,7 @@ impl ResolvedEtherscanConfig {
             }
         }
 
-        let api_url = into_url(&api_url)?;
-        let client = reqwest::Client::builder()
-            .user_agent(ETHERSCAN_USER_AGENT)
-            .tls_built_in_root_certs(api_url.scheme() == "https")
-            .build()?;
         let mut client_builder = foundry_block_explorers::Client::builder()
-            .with_client(client)
             .with_api_key(api_key)
             .with_cache(cache, Duration::from_secs(24 * 60 * 60));
         if let Some(ref browser_url) = browser_url {
@@ -324,10 +315,10 @@ impl ResolvedEtherscanConfig {
         }
 
         // Use the provided URL (either custom from foundry.toml or chain's default from resolve())
-        client_builder = client_builder.with_api_url(api_url.clone())?;
+        client_builder = client_builder.with_api_url(&api_url)?;
         // Fallback: Use api_url as browser URL if browser_url is not set
         if browser_url.is_none() {
-            client_builder = client_builder.with_url(api_url)?;
+            client_builder = client_builder.with_url(&api_url)?;
         }
         client_builder.build()
     }
@@ -350,22 +341,6 @@ pub enum EtherscanApiKey {
 }
 
 impl EtherscanApiKey {
-    /// Returns the key variant
-    pub fn as_key(&self) -> Option<&str> {
-        match self {
-            Self::Key(url) => Some(url),
-            Self::Env(_) => None,
-        }
-    }
-
-    /// Returns the env variant
-    pub fn as_env(&self) -> Option<&str> {
-        match self {
-            Self::Env(val) => Some(val),
-            Self::Key(_) => None,
-        }
-    }
-
     /// Returns the key this type holds
     ///
     /// # Error
@@ -407,13 +382,6 @@ impl fmt::Display for EtherscanApiKey {
             Self::Env(var) => var.fmt(f),
         }
     }
-}
-
-/// This is a hack to work around `IntoUrl`'s sealed private functions, which can't be called
-/// normally.
-#[inline]
-fn into_url(url: impl reqwest::IntoUrl) -> std::result::Result<reqwest::Url, reqwest::Error> {
-    url.into_url()
 }
 
 #[cfg(test)]

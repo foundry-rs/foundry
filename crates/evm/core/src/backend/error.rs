@@ -24,8 +24,6 @@ pub enum BackendError {
          For a test environment, you can use `etch` to place the required bytecode at that address."
     )]
     MissingCreate2Deployer,
-    #[error("{0}")]
-    Other(String),
 }
 
 impl BackendError {

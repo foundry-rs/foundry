@@ -40,7 +40,6 @@ use foundry_compilers::{
     solc::{CliSettings, SolcLanguage, SolcSettings},
 };
 use regex::Regex;
-use revm::primitives::hardfork::SpecId;
 use semver::Version;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
@@ -54,6 +53,7 @@ use std::{
 mod macros;
 
 pub mod utils;
+pub use foundry_evm_hardforks::{FromEvmVersion, evm_spec_id};
 pub use utils::*;
 
 mod endpoints;
@@ -165,7 +165,7 @@ pub use semver;
 ///     the "default" meta-profile.
 ///
 /// Note that these behaviors differ from those of [`Config::figment()`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     /// The selected profile. **(default: _default_ `default`)**
     ///
@@ -307,6 +307,8 @@ pub struct Config {
     /// You can also the ETH_RPC_HEADERS env variable like so:
     /// `ETH_RPC_HEADERS="x-custom-header:value x-another-header:another-value"`
     pub eth_rpc_headers: Option<Vec<String>>,
+    /// Print the equivalent curl command instead of making the RPC request.
+    pub eth_rpc_curl: bool,
     /// etherscan API key, or alias for an `EtherscanConfig` in `etherscan` table
     pub etherscan_api_key: Option<String>,
     /// Multiple etherscan api configs and their aliases
@@ -359,6 +361,8 @@ pub struct Config {
     pub mutation: MutationConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
+    /// Whether to show `console.log` outputs in realtime during script/test execution
+    pub live_logs: bool,
     /// Whether to allow `expectRevert` for internal functions.
     pub allow_internal_expect_revert: bool,
     /// Use the create 2 factory in all cases including tests and non-broadcasting scripts.
@@ -1154,7 +1158,8 @@ impl Config {
         paths: &ProjectPathsConfig,
     ) -> Result<BTreeMap<PathBuf, RestrictionsWithVersion<MultiCompilerRestrictions>>, SolcError>
     {
-        let mut map = BTreeMap::new();
+        let mut map: BTreeMap<PathBuf, RestrictionsWithVersion<MultiCompilerRestrictions>> =
+            BTreeMap::new();
         if self.compilation_restrictions.is_empty() {
             return Ok(BTreeMap::new());
         }
@@ -1174,9 +1179,7 @@ impl Config {
             }) {
                 let res: RestrictionsWithVersion<_> =
                     res.clone().try_into().map_err(SolcError::msg)?;
-                if !map.contains_key(source) {
-                    map.insert(source.clone(), res);
-                } else {
+                if map.contains_key(source) {
                     let value = map.remove(source.as_path()).unwrap();
                     if let Some(merged) = value.clone().merge(res) {
                         map.insert(source.clone(), merged);
@@ -1191,6 +1194,8 @@ impl Config {
                         );
                         map.insert(source.clone(), value);
                     }
+                } else {
+                    map.insert(source.clone(), res);
                 }
             }
         }
@@ -1333,8 +1338,8 @@ impl Config {
         Ok(None)
     }
 
-    /// Returns the [SpecId] derived from the configured [EvmVersion]
-    pub fn evm_spec_id(&self) -> SpecId {
+    /// Returns the Spec derived from the configured [EvmVersion]
+    pub fn evm_spec_id<SPEC: FromEvmVersion>(&self) -> SPEC {
         evm_spec_id(self.evm_version)
     }
 
@@ -1874,11 +1879,6 @@ impl Config {
             src: paths.sources.file_name().unwrap().into(),
             out: artifacts.clone(),
             libs: paths.libraries.into_iter().map(|lib| lib.file_name().unwrap().into()).collect(),
-            remappings: paths
-                .remappings
-                .into_iter()
-                .map(|r| RelativeRemapping::new(r, root))
-                .collect(),
             fs_permissions: FsPermissions::new([PathPermission::read(artifacts)]),
             ..Self::default()
         }
@@ -2194,9 +2194,8 @@ impl Config {
             }
             if let Ok(entries) = cache_dir.as_path().read_dir() {
                 for entry in entries.flatten().filter(|x| x.path().is_dir()) {
-                    match Chain::from_str(&entry.file_name().to_string_lossy()) {
-                        Ok(chain) => cache.chains.push(Self::list_foundry_chain_cache(chain)?),
-                        Err(_) => continue,
+                    if let Ok(chain) = Chain::from_str(&entry.file_name().to_string_lossy()) {
+                        cache.chains.push(Self::list_foundry_chain_cache(chain)?);
                     }
                 }
                 Ok(cache)
@@ -2339,9 +2338,9 @@ impl Config {
             figment = figment.merge(("evm_version", version));
         }
 
-        // Normalize `deny` based on the provided `deny_warnings` version.
-        if self.deny_warnings
-            && let Ok(DenyLevel::Never) = figment.extract_inner("deny")
+        // Normalize `deny` based on the provided `deny_warnings` value.
+        if figment.extract_inner::<bool>("deny_warnings").unwrap_or(false)
+            && figment.extract_inner("deny") == Ok(DenyLevel::Never)
         {
             figment = figment.merge(("deny", DenyLevel::Warnings));
         }
@@ -2583,6 +2582,7 @@ impl Default for Config {
             mutation: MutationConfig::default(),
             always_use_create_2_factory: false,
             ffi: false,
+            live_logs: false,
             allow_internal_expect_revert: false,
             prompt_timeout: 120,
             sender: Self::DEFAULT_SENDER,
@@ -2609,6 +2609,7 @@ impl Default for Config {
             eth_rpc_jwt: None,
             eth_rpc_timeout: None,
             eth_rpc_headers: None,
+            eth_rpc_curl: false,
             etherscan_api_key: None,
             verbosity: 0,
             remappings: vec![],

@@ -224,12 +224,11 @@ impl ScriptTester {
 
         trace!(target: "tests", "STDOUT\n{stdout}\n\nSTDERR\n{stderr}");
 
-        if !stdout.contains(expected.as_str()) && !stderr.contains(expected.as_str()) {
-            panic!(
-                "--STDOUT--\n{stdout}\n\n--STDERR--\n{stderr}\n\n--EXPECTED--\n{:?} not found in stdout or stderr",
-                expected.as_str()
-            );
-        }
+        assert!(
+            !(!stdout.contains(expected.as_str()) && !stderr.contains(expected.as_str())),
+            "--STDOUT--\n{stdout}\n\n--STDERR--\n{stderr}\n\n--EXPECTED--\n{:?} not found in stdout or stderr",
+            expected.as_str()
+        );
 
         self
     }

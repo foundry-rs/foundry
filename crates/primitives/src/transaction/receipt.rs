@@ -391,10 +391,10 @@ impl Typed2718 for FoundryReceiptEnvelope {
 impl Encodable2718 for FoundryReceiptEnvelope {
     fn encode_2718_len(&self) -> usize {
         match self {
-            Self::Legacy(r) => ReceiptEnvelope::Legacy(r.clone()).encode_2718_len(),
-            Self::Eip2930(r) => ReceiptEnvelope::Eip2930(r.clone()).encode_2718_len(),
-            Self::Eip1559(r) => ReceiptEnvelope::Eip1559(r.clone()).encode_2718_len(),
-            Self::Eip4844(r) => ReceiptEnvelope::Eip4844(r.clone()).encode_2718_len(),
+            Self::Legacy(r) => r.length(),
+            Self::Eip2930(r) => 1 + r.length(),
+            Self::Eip1559(r) => 1 + r.length(),
+            Self::Eip4844(r) => 1 + r.length(),
             Self::Eip7702(r) => 1 + r.length(),
             Self::Deposit(r) => 1 + r.length(),
             Self::Tempo(r) => 1 + r.length(),

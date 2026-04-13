@@ -1,7 +1,6 @@
 use alloy_network::Network;
 
 mod receipt;
-mod wallet;
 
 use alloy_provider::fillers::{
     BlobGasFiller, ChainIdFiller, GasFiller, JoinFill, NonceFiller, RecommendedFillers,

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use alloy_network::Network;
 use axum::{
     Json,
     extract::State,
@@ -46,8 +47,8 @@ pub(crate) async fn serve_css() -> impl axum::response::IntoResponse {
 }
 
 /// Serve main.js with injected session token.
-pub(crate) async fn serve_js(
-    State(state): State<Arc<BrowserWalletState>>,
+pub(crate) async fn serve_js<N: Network>(
+    State(state): State<Arc<BrowserWalletState<N>>>,
 ) -> impl axum::response::IntoResponse {
     let token = state.session_token();
     let js = format!("window.__SESSION_TOKEN__ = \"{}\";\n{}", token, contents::MAIN_JS);
@@ -81,9 +82,9 @@ pub(crate) async fn serve_logo_png() -> impl axum::response::IntoResponse {
 
 /// Get the next pending transaction request.
 /// Route: GET /api/transaction/request
-pub(crate) async fn get_next_transaction_request(
-    State(state): State<Arc<BrowserWalletState>>,
-) -> Json<BrowserApiResponse<BrowserTransactionRequest>> {
+pub(crate) async fn get_next_transaction_request<N: Network>(
+    State(state): State<Arc<BrowserWalletState<N>>>,
+) -> Json<BrowserApiResponse<BrowserTransactionRequest<N>>> {
     match state.read_next_transaction_request().await {
         Some(tx) => Json(BrowserApiResponse::with_data(tx)),
         None => Json(BrowserApiResponse::error("No pending transaction request")),
@@ -92,8 +93,8 @@ pub(crate) async fn get_next_transaction_request(
 
 /// Post a transaction response (signed or error).
 /// Route: POST /api/transaction/response
-pub(crate) async fn post_transaction_response(
-    State(state): State<Arc<BrowserWalletState>>,
+pub(crate) async fn post_transaction_response<N: Network>(
+    State(state): State<Arc<BrowserWalletState<N>>>,
     Json(body): Json<BrowserTransactionResponse>,
 ) -> Json<BrowserApiResponse> {
     // Ensure that the transaction request exists.
@@ -134,8 +135,8 @@ pub(crate) async fn post_transaction_response(
 
 /// Get the next pending signing request.
 /// Route: GET /api/signing/request
-pub(crate) async fn get_next_signing_request(
-    State(state): State<Arc<BrowserWalletState>>,
+pub(crate) async fn get_next_signing_request<N: Network>(
+    State(state): State<Arc<BrowserWalletState<N>>>,
 ) -> Json<BrowserApiResponse<BrowserSignRequest>> {
     match state.read_next_signing_request().await {
         Some(req) => Json(BrowserApiResponse::with_data(req)),
@@ -145,8 +146,8 @@ pub(crate) async fn get_next_signing_request(
 
 /// Post a signing response (signature or error).
 /// Route: POST /api/signing/response
-pub(crate) async fn post_signing_response(
-    State(state): State<Arc<BrowserWalletState>>,
+pub(crate) async fn post_signing_response<N: Network>(
+    State(state): State<Arc<BrowserWalletState<N>>>,
     Json(body): Json<BrowserSignResponse>,
 ) -> Json<BrowserApiResponse> {
     // Ensure that the signing request exists.
@@ -174,8 +175,8 @@ pub(crate) async fn post_signing_response(
 
 /// Get current connection information.
 /// Route: GET /api/connection
-pub(crate) async fn get_connection_info(
-    State(state): State<Arc<BrowserWalletState>>,
+pub(crate) async fn get_connection_info<N: Network>(
+    State(state): State<Arc<BrowserWalletState<N>>>,
 ) -> Json<BrowserApiResponse<Option<Connection>>> {
     let connection = state.get_connection().await;
 
@@ -184,8 +185,8 @@ pub(crate) async fn get_connection_info(
 
 /// Post connection update (connect or disconnect).
 /// Route: POST /api/connection
-pub(crate) async fn post_connection_update(
-    State(state): State<Arc<BrowserWalletState>>,
+pub(crate) async fn post_connection_update<N: Network>(
+    State(state): State<Arc<BrowserWalletState<N>>>,
     Json(body): Json<Option<Connection>>,
 ) -> Json<BrowserApiResponse> {
     state.set_connection(body).await;
