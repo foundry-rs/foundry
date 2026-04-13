@@ -276,7 +276,7 @@ impl<T: Transaction> PendingTransactions<T> {
             .and_then(|hash| self.waiting_queue.get(hash))
         {
             // check if underpriced
-            if tx.transaction.max_fee_per_gas() < replace.transaction.max_fee_per_gas() {
+            if tx.transaction.max_fee_per_gas() <= replace.transaction.max_fee_per_gas() {
                 warn!(target: "txpool", "pending replacement transaction underpriced [{:?}]", tx.transaction.hash());
                 return Err(PoolError::ReplacementUnderpriced(tx.transaction.hash()));
             }

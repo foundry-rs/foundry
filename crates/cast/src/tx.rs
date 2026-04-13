@@ -484,6 +484,11 @@ where
         let sender = sender.into();
         self.prepare(&sender);
 
+        // For batch transactions with calls, clear `to` and `value` so the node correctly
+        // identifies this as an AA batch transaction. The `calls` field determines the actual
+        // targets. If `to` is set, `build_aa()` would add a spurious extra call.
+        self.tx.clear_batch_to();
+
         // resolve
         let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
         self.resolve_auth(&sender, tx_nonce).await?;

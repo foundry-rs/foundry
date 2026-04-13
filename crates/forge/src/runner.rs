@@ -800,6 +800,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 invariant_contract.address,
                 invariant_contract.invariant_function.selector().to_vec().into(),
                 CheckSequenceOptions {
+                    accumulate_warp_roll: invariant_config.has_delay(),
                     fail_on_revert: invariant_config.fail_on_revert,
                     call_after_invariant: invariant_contract.call_after_invariant,
                     rd: Some(self.revert_decoder()),

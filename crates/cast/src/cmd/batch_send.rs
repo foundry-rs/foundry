@@ -9,8 +9,8 @@ use crate::{
     cmd::send::cast_send,
     tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
 };
-use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Bytes, U256};
+use alloy_network::EthereumWallet;
+use alloy_primitives::Bytes;
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::Signer;
 use clap::Parser;
@@ -119,9 +119,7 @@ impl BatchSendArgs {
         let builder = builder.with_to(first_call_to.map(Into::into)).await?;
 
         // Use empty sig/args since we're using calls directly
-        let mut builder = builder.with_code_sig_and_args(None, None, vec![]).await?;
-        builder.tx.clear_kind();
-        builder.tx.set_value(U256::ZERO);
+        let builder = builder.with_code_sig_and_args(None, None, vec![]).await?;
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
 
