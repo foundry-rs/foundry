@@ -19,7 +19,10 @@ use foundry_common::{EmptyTestFilter, compile::ProjectCompiler, sh_eprintln, sh_
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::Config;
 use foundry_evm::{
-    core::evm::{BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
+    core::evm::{
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, SpecFor, TempoEvmNetwork,
+        TxEnvFor,
+    },
     opts::EvmOpts,
 };
 use rayon::prelude::*;
@@ -447,9 +450,8 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
 
     // Use block_on to run within the runtime context
     let results: BTreeMap<String, SuiteResult> = rt.block_on(async {
-        let (evm_env, tx_env, fork_block) = evm_opts
-            .env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
-            .await?;
+        let (evm_env, tx_env, fork_block) =
+            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
 
         // Build test runner with fail-fast enabled
         let mut runner = MultiContractRunnerBuilder::new(config.clone())
@@ -458,12 +460,7 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block))
             .fail_fast(true)
-            .build::<FEN, MultiCompiler>(
-                &compile_output,
-                evm_env,
-                tx_env,
-                evm_opts.clone(),
-            )?;
+            .build::<FEN, MultiCompiler>(&compile_output, evm_env, tx_env, evm_opts.clone())?;
 
         runner.test_collect(&EmptyTestFilter::default())
     })?;

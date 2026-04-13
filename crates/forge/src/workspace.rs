@@ -251,7 +251,7 @@ mod tests {
         let lib_dst = temp.path().join("lib_dst");
         fs::create_dir(&lib_dst).unwrap();
 
-        symlink_nested_libs(&lib_src, &lib_dst).unwrap();
+        symlink_nested_libs(&lib_src, &lib_dst, 0).unwrap();
 
         assert!(lib_dst.join("lib/openzeppelin").exists());
         assert!(lib_dst.join("lib/solmate").exists());
@@ -280,7 +280,7 @@ mod tests {
         let lib_dst = temp.path().join("lib_dst");
         fs::create_dir(&lib_dst).unwrap();
 
-        symlink_nested_libs(&lib_src, &lib_dst).unwrap();
+        symlink_nested_libs(&lib_src, &lib_dst, 0).unwrap();
 
         assert!(lib_dst.join("lib/dep-a").exists());
         assert!(lib_dst.join("lib/dep-a/lib/dep-b").exists());
@@ -298,7 +298,7 @@ mod tests {
         let lib_dst = temp.path().join("lib_dst");
         fs::create_dir(&lib_dst).unwrap();
 
-        symlink_nested_libs(&lib_src, &lib_dst).unwrap();
+        symlink_nested_libs(&lib_src, &lib_dst, 0).unwrap();
 
         assert!(!lib_dst.join("lib").exists());
     }
@@ -314,7 +314,7 @@ mod tests {
         fs::create_dir_all(lib_dst.join("lib/existing")).unwrap();
         fs::write(lib_dst.join("lib/existing/marker.txt"), "pre-existing").unwrap();
 
-        symlink_nested_libs(&lib_src, &lib_dst).unwrap();
+        symlink_nested_libs(&lib_src, &lib_dst, 0).unwrap();
 
         assert!(lib_dst.join("lib/existing/marker.txt").exists());
     }
