@@ -374,11 +374,11 @@ fn print_storage(layout: StorageLayout, values: Vec<StorageValue>) -> Result<()>
 fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(project: &mut Project<C>) {
     project.artifacts.additional_values.storage_layout = true;
     project.update_output_selection(|selection| {
-        selection.0.values_mut().for_each(|contract_selection| {
-            contract_selection
-                .values_mut()
-                .for_each(|selection| selection.push("storageLayout".to_string()))
-        });
+        for contract_selection in selection.0.values_mut() {
+            for selection in contract_selection.values_mut() {
+                selection.push("storageLayout".to_string());
+            }
+        }
     })
 }
 
