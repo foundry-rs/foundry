@@ -79,15 +79,15 @@ impl FromStr for FoundryHardfork {
 }
 
 impl FoundryHardfork {
-    pub fn ethereum(h: EthereumHardfork) -> Self {
+    pub const fn ethereum(h: EthereumHardfork) -> Self {
         Self::Ethereum(h)
     }
 
-    pub fn optimism(h: OpHardfork) -> Self {
+    pub const fn optimism(h: OpHardfork) -> Self {
         Self::Optimism(h)
     }
 
-    pub fn tempo(h: TempoHardfork) -> Self {
+    pub const fn tempo(h: TempoHardfork) -> Self {
         Self::Tempo(h)
     }
 

@@ -171,42 +171,42 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     }
 
     /// Returns a reference to the EVM environment (block and cfg).
-    pub fn evm_env(&self) -> &EvmEnvFor<FEN> {
+    pub const fn evm_env(&self) -> &EvmEnvFor<FEN> {
         &self.evm_env
     }
 
     /// Returns a mutable reference to the EVM environment (block and cfg).
-    pub fn evm_env_mut(&mut self) -> &mut EvmEnvFor<FEN> {
+    pub const fn evm_env_mut(&mut self) -> &mut EvmEnvFor<FEN> {
         &mut self.evm_env
     }
 
     /// Returns a reference to the transaction environment.
-    pub fn tx_env(&self) -> &TxEnvFor<FEN> {
+    pub const fn tx_env(&self) -> &TxEnvFor<FEN> {
         &self.tx_env
     }
 
     /// Returns a mutable reference to the transaction environment.
-    pub fn tx_env_mut(&mut self) -> &mut TxEnvFor<FEN> {
+    pub const fn tx_env_mut(&mut self) -> &mut TxEnvFor<FEN> {
         &mut self.tx_env
     }
 
     /// Returns a reference to the EVM inspector.
-    pub fn inspector(&self) -> &InspectorStack<FEN> {
+    pub const fn inspector(&self) -> &InspectorStack<FEN> {
         &self.inspector
     }
 
     /// Returns a mutable reference to the EVM inspector.
-    pub fn inspector_mut(&mut self) -> &mut InspectorStack<FEN> {
+    pub const fn inspector_mut(&mut self) -> &mut InspectorStack<FEN> {
         &mut self.inspector
     }
 
     /// Returns the EVM spec.
-    pub fn spec_id(&self) -> SpecFor<FEN> {
+    pub const fn spec_id(&self) -> SpecFor<FEN> {
         self.evm_env.cfg_env.spec
     }
 
     /// Sets the EVM spec.
-    pub fn set_spec_id(&mut self, spec_id: SpecFor<FEN>) {
+    pub const fn set_spec_id(&mut self, spec_id: SpecFor<FEN>) {
         self.evm_env.cfg_env.spec = spec_id;
     }
 
@@ -214,24 +214,24 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
     ///
     /// This is different from the gas limit imposed by the passed in environment, as those limits
     /// are used by the EVM for certain opcodes like `gaslimit`.
-    pub fn gas_limit(&self) -> u64 {
+    pub const fn gas_limit(&self) -> u64 {
         self.gas_limit
     }
 
     /// Sets the gas limit for calls and deployments.
-    pub fn set_gas_limit(&mut self, gas_limit: u64) {
+    pub const fn set_gas_limit(&mut self, gas_limit: u64) {
         self.gas_limit = gas_limit;
     }
 
     /// Returns whether `failed()` should be called on the test contract to determine if the test
     /// failed.
-    pub fn legacy_assertions(&self) -> bool {
+    pub const fn legacy_assertions(&self) -> bool {
         self.legacy_assertions
     }
 
     /// Sets whether `failed()` should be called on the test contract to determine if the test
     /// failed.
-    pub fn set_legacy_assertions(&mut self, legacy_assertions: bool) {
+    pub const fn set_legacy_assertions(&mut self, legacy_assertions: bool) {
         self.legacy_assertions = legacy_assertions;
     }
 
@@ -957,7 +957,9 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
 
     /// Converts the result of the call into an `EvmError`.
     pub fn into_evm_error(self, rd: Option<&RevertDecoder>) -> EvmError<FEN> {
-        if let Some(reason) = SkipReason::decode(&self.result) {
+        if self.reverter == Some(CHEATCODE_ADDRESS)
+            && let Some(reason) = SkipReason::decode(&self.result)
+        {
             return EvmError::Skip(reason);
         }
         let reason = rd.unwrap_or_default().decode(&self.result, self.exit_reason);
@@ -965,7 +967,7 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
     }
 
     /// Converts the result of the call into an `ExecutionErr`.
-    pub fn into_execution_error(self, reason: String) -> ExecutionErr<FEN> {
+    pub const fn into_execution_error(self, reason: String) -> ExecutionErr<FEN> {
         ExecutionErr { raw: self, reason }
     }
 
@@ -1150,7 +1152,7 @@ impl FuzzTestTimer {
     }
 
     /// Whether the fuzz test timer is enabled.
-    pub fn is_enabled(&self) -> bool {
+    pub const fn is_enabled(&self) -> bool {
         self.inner.is_some()
     }
 
@@ -1190,5 +1192,47 @@ impl EarlyExit {
     /// Whether tests should stop and exit early.
     pub fn should_stop(&self) -> bool {
         self.inner.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_evm_core::constants::MAGIC_SKIP;
+
+    #[test]
+    fn cheatcode_skip_payload_is_classified_as_skip() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            result: Bytes::from_static(b"FOUNDRY::SKIPwith reason"),
+            reverter: Some(CHEATCODE_ADDRESS),
+            ..Default::default()
+        };
+
+        let err = raw.into_evm_error(None);
+        assert!(matches!(err, EvmError::Skip(_)));
+    }
+
+    #[test]
+    fn forged_skip_payload_from_non_cheatcode_is_execution_error() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            result: Bytes::from_static(MAGIC_SKIP),
+            reverter: Some(CALLER),
+            ..Default::default()
+        };
+
+        let err = raw.into_evm_error(None);
+        assert!(matches!(err, EvmError::Execution(_)));
+    }
+
+    #[test]
+    fn skip_payload_without_reverter_is_execution_error() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            result: Bytes::from_static(MAGIC_SKIP),
+            reverter: None,
+            ..Default::default()
+        };
+
+        let err = raw.into_evm_error(None);
+        assert!(matches!(err, EvmError::Execution(_)));
     }
 }

@@ -440,12 +440,12 @@ impl MultiContractRunnerBuilder {
         }
     }
 
-    pub fn sender(mut self, sender: Address) -> Self {
+    pub const fn sender(mut self, sender: Address) -> Self {
         self.sender = Some(sender);
         self
     }
 
-    pub fn initial_balance(mut self, initial_balance: U256) -> Self {
+    pub const fn initial_balance(mut self, initial_balance: U256) -> Self {
         self.initial_balance = initial_balance;
         self
     }
@@ -455,27 +455,27 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn set_coverage(mut self, enable: bool) -> Self {
+    pub const fn set_coverage(mut self, enable: bool) -> Self {
         self.line_coverage = enable;
         self
     }
 
-    pub fn set_debug(mut self, enable: bool) -> Self {
+    pub const fn set_debug(mut self, enable: bool) -> Self {
         self.debug = enable;
         self
     }
 
-    pub fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
+    pub const fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
         self.decode_internal = mode;
         self
     }
 
-    pub fn fail_fast(mut self, fail_fast: bool) -> Self {
+    pub const fn fail_fast(mut self, fail_fast: bool) -> Self {
         self.fail_fast = fail_fast;
         self
     }
 
-    pub fn enable_isolation(mut self, enable: bool) -> Self {
+    pub const fn enable_isolation(mut self, enable: bool) -> Self {
         self.isolation = enable;
         self
     }

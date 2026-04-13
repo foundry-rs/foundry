@@ -22,7 +22,7 @@ pub struct DebugNode {
 
 impl DebugNode {
     /// Creates a new debug node.
-    pub fn new(
+    pub const fn new(
         address: Address,
         kind: CallKind,
         steps: Vec<CallTraceStep>,

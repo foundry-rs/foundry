@@ -304,12 +304,12 @@ pub struct GasMetering {
 
 impl GasMetering {
     /// Start the gas recording.
-    pub fn start(&mut self) {
+    pub const fn start(&mut self) {
         self.recording = true;
     }
 
     /// Stop the gas recording.
-    pub fn stop(&mut self) {
+    pub const fn stop(&mut self) {
         self.recording = false;
     }
 
@@ -902,7 +902,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
             if prank.delegate_call
                 && curr_depth == prank.depth
-                && let CallScheme::DelegateCall = call.scheme
+                && call.scheme == CallScheme::DelegateCall
             {
                 call.target_address = prank.new_caller;
                 call.caller = prank.new_caller;
@@ -2532,7 +2532,7 @@ fn disallowed_mem_write(
 }
 
 /// Returns true if the kind of account access is a call.
-fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
+const fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
         kind,
         crate::Vm::AccountAccessKind::Call
@@ -2602,7 +2602,7 @@ fn append_storage_access(
 }
 
 /// Returns the [`spec::Cheatcode`] definition for a given [`spec::CheatcodeDef`] implementor.
-fn cheatcode_of<T: spec::CheatcodeDef>(_: &T) -> &'static spec::Cheatcode<'static> {
+const fn cheatcode_of<T: spec::CheatcodeDef>(_: &T) -> &'static spec::Cheatcode<'static> {
     T::CHEATCODE
 }
 
@@ -2610,11 +2610,11 @@ fn cheatcode_name(cheat: &spec::Cheatcode<'static>) -> &'static str {
     cheat.func.signature.split('(').next().unwrap()
 }
 
-fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {
+const fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {
     cheat.func.id
 }
 
-fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
+const fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
     cheat.func.signature
 }
 
@@ -2676,7 +2676,7 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
 }
 
 /// Helper function to check if frame execution will exit.
-fn will_exit(action: &InterpreterAction) -> bool {
+const fn will_exit(action: &InterpreterAction) -> bool {
     match action {
         InterpreterAction::Return(result) => {
             result.result.is_ok_or_revert() || result.result.is_error()

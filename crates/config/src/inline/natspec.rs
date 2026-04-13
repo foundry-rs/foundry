@@ -129,7 +129,7 @@ struct SolcParser {
 }
 
 impl SolcParser {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self { _private: () }
     }
 
@@ -222,7 +222,7 @@ struct SolarParser<'a> {
 }
 
 impl<'a> SolarParser<'a> {
-    fn new(sess: &'a Session) -> Self {
+    const fn new(sess: &'a Session) -> Self {
         Self { sess }
     }
 

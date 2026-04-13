@@ -145,7 +145,7 @@ impl Tip20TxOpts {
 }
 
 impl Tip20Subcommand {
-    fn rpc_opts(&self) -> &RpcOpts {
+    const fn rpc_opts(&self) -> &RpcOpts {
         match self {
             Self::Create { send_tx, .. } => &send_tx.eth.rpc,
         }

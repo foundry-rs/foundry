@@ -18,7 +18,7 @@ pub struct StorageInfo<N: Network> {
 }
 
 impl<N: Network> StorageInfo<N> {
-    pub(crate) fn new(backend: Arc<Backend<N>>) -> Self {
+    pub(crate) const fn new(backend: Arc<Backend<N>>) -> Self {
         Self { backend }
     }
 

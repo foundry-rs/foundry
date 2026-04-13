@@ -138,11 +138,11 @@ impl FileFilter for SkipBuildFilters {
     /// Only returns a match if _no_  exclusion filter matches
     fn is_match(&self, file: &Path) -> bool {
         self.matchers.iter().all(|matcher| {
-            if !matcher.is_match_exclude(file) {
-                false
-            } else {
+            if matcher.is_match_exclude(file) {
                 file.strip_prefix(&self.project_root)
                     .map_or(true, |stripped| matcher.is_match_exclude(stripped))
+            } else {
+                false
             }
         })
     }
@@ -180,7 +180,7 @@ impl SkipBuildFilter {
     }
 
     /// Returns the pattern to match against a file
-    pub fn file_pattern(&self) -> &str {
+    pub const fn file_pattern(&self) -> &str {
         match self {
             Self::Tests => ".t.sol",
             Self::Scripts => ".s.sol",

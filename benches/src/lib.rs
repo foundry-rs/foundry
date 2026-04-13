@@ -175,13 +175,13 @@ impl BenchmarkProject {
                 .status()
                 .wrap_err("Failed to run npm install")?;
 
-            if !status.success() {
+            if status.success() {
+                sh_println!("  ✅ npm install completed successfully");
+            } else {
                 sh_println!(
                     "  ⚠️  Warning: npm install failed with exit code: {:?}",
                     status.code()
                 );
-            } else {
-                sh_println!("  ✅ npm install completed successfully");
             }
         }
         Ok(())

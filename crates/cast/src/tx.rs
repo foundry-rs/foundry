@@ -171,7 +171,7 @@ where
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     /// Creates a new Cast instance responsible for sending transactions.
-    pub fn new(provider: P) -> Self {
+    pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
     }
 
@@ -484,6 +484,11 @@ where
         let sender = sender.into();
         self.prepare(&sender);
 
+        // For batch transactions with calls, clear `to` and `value` so the node correctly
+        // identifies this as an AA batch transaction. The `calls` field determines the actual
+        // targets. If `to` is set, `build_aa()` would add a spurious extra call.
+        self.tx.clear_batch_to();
+
         // resolve
         let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
         self.resolve_auth(&sender, tx_nonce).await?;
@@ -663,7 +668,7 @@ where
 
     /// Skips gas, fee and nonce filling. Use for read-only calls
     /// (eth_call, eth_estimateGas, eth_createAccessList).
-    pub fn raw(mut self) -> Self {
+    pub const fn raw(mut self) -> Self {
         self.fill = false;
         self
     }

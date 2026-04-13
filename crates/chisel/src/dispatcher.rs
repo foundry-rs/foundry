@@ -72,12 +72,12 @@ impl ChiselDispatcher {
     }
 
     /// Returns the [`SessionSource`].
-    pub fn source(&self) -> &SessionSource {
+    pub const fn source(&self) -> &SessionSource {
         &self.session.source
     }
 
     /// Returns the [`SessionSource`].
-    pub fn source_mut(&mut self) -> &mut SessionSource {
+    pub const fn source_mut(&mut self) -> &mut SessionSource {
         &mut self.session.source
     }
 
@@ -512,7 +512,7 @@ fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
     let mut only_trivia = true;
     let mut new_input = Cow::Borrowed(input);
     for (pos, token) in solar::parse::Cursor::new(input).with_position() {
-        use RawTokenKind::*;
+        use RawTokenKind::{BlockComment, LineComment, Literal, Whitespace};
 
         if matches!(token.kind, Whitespace | LineComment { .. } | BlockComment { .. }) {
             continue;

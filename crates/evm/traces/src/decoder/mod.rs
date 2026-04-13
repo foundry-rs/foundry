@@ -84,7 +84,7 @@ impl CallTraceDecoderBuilder {
 
     /// Sets the verbosity level of the decoder.
     #[inline]
-    pub fn with_verbosity(mut self, level: u8) -> Self {
+    pub const fn with_verbosity(mut self, level: u8) -> Self {
         self.decoder.verbosity = level;
         self
     }
@@ -98,14 +98,14 @@ impl CallTraceDecoderBuilder {
 
     /// Sets the signature identifier for events and functions.
     #[inline]
-    pub fn with_label_disabled(mut self, disable_alias: bool) -> Self {
+    pub const fn with_label_disabled(mut self, disable_alias: bool) -> Self {
         self.decoder.disable_labels = disable_alias;
         self
     }
 
     /// Sets the chain ID for network-specific precompile detection.
     #[inline]
-    pub fn with_chain_id(mut self, chain_id: Option<u64>) -> Self {
+    pub const fn with_chain_id(mut self, chain_id: Option<u64>) -> Self {
         self.decoder.chain_id = chain_id;
         self
     }
@@ -362,7 +362,7 @@ impl CallTraceDecoder {
         self.revert_decoder.push_error(error);
     }
 
-    pub fn without_label(&mut self, disable: bool) {
+    pub const fn without_label(&mut self, disable: bool) {
         self.disable_labels = disable;
     }
 
@@ -482,7 +482,9 @@ impl CallTraceDecoder {
                 && !contract_selectors.contains(&selector)
                 && (!cdata.is_empty() || !self.receive_contracts.contains(&trace.address))
             {
-                let return_data = if !trace.success {
+                let return_data = if trace.success {
+                    None
+                } else {
                     let revert_msg = self.revert_decoder.decode(&trace.output, trace.status);
 
                     if trace.output.is_empty() || revert_msg.contains("EvmError: Revert") {
@@ -493,8 +495,6 @@ impl CallTraceDecoder {
                     } else {
                         Some(revert_msg)
                     }
-                } else {
-                    None
                 };
 
                 return if let Some(func) = functions.first() {

@@ -81,4 +81,5 @@ alloy-op-evm.workspace = true
 alloy-serde.workspace = true
 op-alloy-consensus.workspace = true
 op-alloy-rpc-types.workspace = true
+anvil.workspace = true
 foundry-test-utils.workspace = true

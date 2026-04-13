@@ -232,8 +232,7 @@ impl RpcData {
     /// Iterates over script transactions and collects RPC urls.
     fn from_transactions<N: Network>(txs: &BroadcastableTransactions<N>) -> Self {
         let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
-        let total_rpcs =
-            txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>();
+        let total_rpcs = txs.iter().filter_map(|tx| tx.rpc.clone()).collect::<HashSet<_>>();
 
         Self { total_rpcs, missing_rpc }
     }
@@ -379,10 +378,10 @@ impl<FEN: FoundryEvmNetwork> ExecutedState<FEN> {
                             ty: "unknown".to_string(),
                         });
 
-                    let label = if !output.name.is_empty() {
-                        output.name.clone()
-                    } else {
+                    let label = if output.name.is_empty() {
                         index.to_string()
+                    } else {
+                        output.name.clone()
                     };
 
                     returns.insert(
@@ -477,10 +476,10 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                                 ty: "unknown".to_string(),
                             });
 
-                        let label = if !output.name.is_empty() {
-                            output.name.clone()
-                        } else {
+                        let label = if output.name.is_empty() {
                             index.to_string()
+                        } else {
+                            output.name.clone()
                         };
                         sh_println!(
                             "{label}: {internal_type} {value}",

@@ -127,10 +127,6 @@ impl RevertDecoder {
     ///
     /// See [`decode`](Self::decode) for more information.
     pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
-        if let Some(reason) = SkipReason::decode(err) {
-            return Some(reason.to_string());
-        }
-
         // Solidity's `Error(string)` (handled separately in order to strip revert: prefix)
         if let Some(ContractError(Revert(revert))) = RevertReason::decode(err) {
             return Some(revert.reason);
@@ -273,5 +269,14 @@ mod tests {
             "756688fe00000000000000000000000000000000000000000000000000000000"
         );
         assert_eq!(decoder.decode(data, None), "ValidationFailed(0x756688fe)");
+    }
+
+    #[test]
+    fn maybe_decode_magic_skip_is_not_skip_marker() {
+        let decoder = RevertDecoder::new();
+        let reason = decoder.maybe_decode(crate::constants::MAGIC_SKIP, None).unwrap();
+
+        assert_eq!(reason, "FOUNDRY::SKIP");
+        assert!(SkipReason::decode_self(&reason).is_none());
     }
 }

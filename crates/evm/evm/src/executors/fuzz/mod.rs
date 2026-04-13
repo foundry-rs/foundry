@@ -598,7 +598,15 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     }) => {
                         inc_runs();
 
-                        let reason = rd.maybe_decode(&outcome.1.result, status);
+                        // Only classify magic skip payloads when the revert originates from the
+                        // cheatcode address.
+                        let reason = if outcome.1.reverter == Some(CHEATCODE_ADDRESS) {
+                            SkipReason::decode(&outcome.1.result)
+                                .map(|reason| reason.to_string())
+                                .or_else(|| rd.maybe_decode(&outcome.1.result, status))
+                        } else {
+                            rd.maybe_decode(&outcome.1.result, status)
+                        };
                         worker.logs.extend(outcome.1.logs.clone());
                         worker.counterexample = outcome;
                         worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
@@ -648,7 +656,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
     }
 
     /// Determines the number of runs per worker.
-    fn runs_per_worker(&self, worker_id: usize) -> u32 {
+    const fn runs_per_worker(&self, worker_id: usize) -> u32 {
         let worker_id = worker_id as u32;
         let total_runs = self.config.runs;
         let n = self.num_workers as u32;

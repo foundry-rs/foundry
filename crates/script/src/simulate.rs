@@ -240,7 +240,7 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
 
         if !shell::is_json() {
             let n = rpcs.len();
-            let s = if n != 1 { "s" } else { "" };
+            let s = if n == 1 { "" } else { "s" };
             sh_println!("\n## Setting up {n} EVM{s}.")?;
         }
 
@@ -384,15 +384,7 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                     .unwrap_or_else(|_| "[Could not calculate]".to_string());
                 let estimated_amount = estimated_amount_raw.trim_end_matches('0');
 
-                if !shell::is_json() {
-                    sh_println!("\n==========================")?;
-                    sh_println!("\nChain {}", provider_info.chain)?;
-
-                    sh_println!("\nEstimated gas price: {} gwei", estimated_gas_price)?;
-                    sh_println!("\nEstimated total gas used for script: {total_gas}")?;
-                    sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
-                    sh_println!("\n==========================")?;
-                } else {
+                if shell::is_json() {
                     sh_println!(
                         "{}",
                         serde_json::json!({
@@ -403,6 +395,14 @@ impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
                             "token_symbol": token_symbol,
                         })
                     )?;
+                } else {
+                    sh_println!("\n==========================")?;
+                    sh_println!("\nChain {}", provider_info.chain)?;
+
+                    sh_println!("\nEstimated gas price: {} gwei", estimated_gas_price)?;
+                    sh_println!("\nEstimated total gas used for script: {total_gas}")?;
+                    sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
+                    sh_println!("\n==========================")?;
                 }
             }
         }

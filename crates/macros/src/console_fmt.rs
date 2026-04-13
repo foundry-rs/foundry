@@ -81,9 +81,7 @@ fn derive_enum(e: &DataEnum) -> TokenStream {
 
         let fields: Punctuated<Ident, Token![,]> = fields
             .enumerate()
-            .map(|(i, field)| {
-                field.ident.as_ref().cloned().unwrap_or_else(|| format_ident!("__var_{i}"))
-            })
+            .map(|(i, field)| field.ident.clone().unwrap_or_else(|| format_ident!("__var_{i}")))
             .collect();
 
         if fields.len() != 1 {

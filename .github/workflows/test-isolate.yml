@@ -40,6 +40,12 @@ jobs:
       - uses: taiki-e/install-action@cf39a74df4a72510be4e5b63348d61067f11e64a # v2
         with:
           tool: nextest
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install Vyper
+        # Also update vyper version in .devcontainer/Dockerfile.dev
+        run: pip --version && pip install vyper==0.4.3
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
       - name: Test flaky tests with isolation

@@ -88,7 +88,7 @@ impl<'a, FEN: FoundryEvmNetwork> Deref for ContractRunner<'a, FEN> {
 }
 
 impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
-    pub fn new(
+    pub const fn new(
         name: &'a str,
         contract: &'a TestContract,
         executor: Executor<FEN>,
@@ -359,10 +359,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         if setup.reason.is_some() {
             // The setup failed, so we return a single test result for `setUp`
-            let fail_msg = if !setup.deployment_failure {
-                "setUp()".to_string()
-            } else {
+            let fail_msg = if setup.deployment_failure {
                 "constructor()".to_string()
+            } else {
+                "setUp()".to_string()
             };
             return SuiteResult::new(
                 start.elapsed(),
@@ -501,7 +501,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
     }
 
-    fn revert_decoder(&self) -> &'a RevertDecoder {
+    const fn revert_decoder(&self) -> &'a RevertDecoder {
         &self.cr.mcr.revert_decoder
     }
 
@@ -800,6 +800,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 invariant_contract.address,
                 invariant_contract.invariant_function.selector().to_vec().into(),
                 CheckSequenceOptions {
+                    accumulate_warp_roll: invariant_config.has_delay(),
                     fail_on_revert: invariant_config.fail_on_revert,
                     call_after_invariant: invariant_contract.call_after_invariant,
                     rd: Some(self.revert_decoder()),

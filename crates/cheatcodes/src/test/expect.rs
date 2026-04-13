@@ -155,7 +155,7 @@ impl From<revm::context_interface::CreateScheme> for CreateScheme {
 }
 
 impl CreateScheme {
-    pub fn eq(&self, create_scheme: Self) -> bool {
+    pub const fn eq(&self, create_scheme: Self) -> bool {
         matches!(
             (self, create_scheme),
             (Self::Create, Self::Create) | (Self::Create2, Self::Create2 { .. })
@@ -1244,10 +1244,10 @@ pub(crate) fn get_emit_mismatch_message(
                     {
                         let (expected_name, expected_value) = &expected_params[param_idx];
                         let (_actual_name, actual_value) = &actual_params[param_idx];
-                        let param_name = if !expected_name.is_empty() {
-                            expected_name
-                        } else {
+                        let param_name = if expected_name.is_empty() {
                             &format!("param{param_idx}")
+                        } else {
+                            expected_name
                         };
                         return format!(
                             "{param_name}: expected={expected_value}, got={actual_value}",

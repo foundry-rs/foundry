@@ -953,7 +953,7 @@ impl TestArgs {
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.watch.watch.is_some()
     }
 

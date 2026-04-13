@@ -3,7 +3,7 @@ use crate::{
     sol::{Severity, SolLint, info::MultiContractFile},
 };
 
-use solar::ast::{self as ast};
+use solar::ast;
 
 declare_forge_lint!(
     MULTI_CONTRACT_FILE,

@@ -97,22 +97,22 @@ impl<'a> SolidityLinter<'a> {
         self
     }
 
-    pub fn with_description(mut self, with: bool) -> Self {
+    pub const fn with_description(mut self, with: bool) -> Self {
         self.with_description = with;
         self
     }
 
-    pub fn with_json_emitter(mut self, with: bool) -> Self {
+    pub const fn with_json_emitter(mut self, with: bool) -> Self {
         self.with_json_emitter = with;
         self
     }
 
-    pub fn with_lint_specific(mut self, lint_specific: &'a LintSpecificConfig) -> Self {
+    pub const fn with_lint_specific(mut self, lint_specific: &'a LintSpecificConfig) -> Self {
         self.lint_specific = lint_specific;
         self
     }
 
-    fn config(&'a self, inline: &'a InlineConfig<Vec<String>>) -> LinterConfig<'a> {
+    const fn config(&'a self, inline: &'a InlineConfig<Vec<String>>) -> LinterConfig<'a> {
         LinterConfig { inline, lint_specific: self.lint_specific }
     }
 

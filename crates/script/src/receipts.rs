@@ -27,7 +27,7 @@ pub enum TxStatus<R: ReceiptResponse> {
 
 impl<R: ReceiptResponse> From<R> for TxStatus<R> {
     fn from(receipt: R) -> Self {
-        if !receipt.status() { Self::Revert(receipt) } else { Self::Success(receipt) }
+        if receipt.status() { Self::Success(receipt) } else { Self::Revert(receipt) }
     }
 }
 

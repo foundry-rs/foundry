@@ -360,7 +360,7 @@ struct EtherscanFetcher {
 }
 
 impl EtherscanFetcher {
-    fn new(client: foundry_block_explorers::Client) -> Self {
+    const fn new(client: foundry_block_explorers::Client) -> Self {
         Self { client, invalid_api_key: AtomicBool::new(false) }
     }
 }

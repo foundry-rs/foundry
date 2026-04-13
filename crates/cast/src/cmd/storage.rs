@@ -382,7 +382,7 @@ fn add_storage_layout_output<C: Compiler<CompilerContract = Contract>>(project: 
     })
 }
 
-fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {
+const fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool {
     if let Some(s) = storage_layout { s.storage.is_empty() } else { true }
 }
 

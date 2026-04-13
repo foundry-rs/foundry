@@ -55,7 +55,6 @@ pub struct CoverageArgs {
     /// If not specified, the report will be stored in the root of the project.
     #[arg(
         long,
-        short,
         value_hint = ValueHint::FilePath,
         value_name = "PATH"
     )]
@@ -316,11 +315,11 @@ impl CoverageArgs {
         Ok(())
     }
 
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.test.is_watch()
     }
 
-    pub fn watch(&self) -> &WatchArgs {
+    pub const fn watch(&self) -> &WatchArgs {
         &self.test.watch
     }
 }

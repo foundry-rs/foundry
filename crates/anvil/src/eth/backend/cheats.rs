@@ -97,7 +97,7 @@ pub struct CheatsState {
 }
 
 impl CheatEcrecover {
-    pub fn new(cheats: Arc<CheatsManager>) -> Self {
+    pub const fn new(cheats: Arc<CheatsManager>) -> Self {
         Self { cheats }
     }
 }
