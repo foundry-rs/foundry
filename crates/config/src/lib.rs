@@ -162,7 +162,7 @@ pub use semver;
 ///     the "default" meta-profile.
 ///
 /// Note that these behaviors differ from those of [`Config::figment()`].
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     /// The selected profile. **(default: _default_ `default`)**
     ///
@@ -2183,9 +2183,8 @@ impl Config {
             }
             if let Ok(entries) = cache_dir.as_path().read_dir() {
                 for entry in entries.flatten().filter(|x| x.path().is_dir()) {
-                    match Chain::from_str(&entry.file_name().to_string_lossy()) {
-                        Ok(chain) => cache.chains.push(Self::list_foundry_chain_cache(chain)?),
-                        Err(_) => continue,
+                    if let Ok(chain) = Chain::from_str(&entry.file_name().to_string_lossy()) {
+                        cache.chains.push(Self::list_foundry_chain_cache(chain)?);
                     }
                 }
                 Ok(cache)
@@ -2330,7 +2329,7 @@ impl Config {
 
         // Normalize `deny` based on the provided `deny_warnings` value.
         if figment.extract_inner::<bool>("deny_warnings").unwrap_or(false)
-            && let Ok(DenyLevel::Never) = figment.extract_inner("deny")
+            && figment.extract_inner("deny") == Ok(DenyLevel::Never)
         {
             figment = figment.merge(("deny", DenyLevel::Warnings));
         }
