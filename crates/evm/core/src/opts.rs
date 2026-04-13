@@ -4,11 +4,12 @@ use crate::{
     fork::CreateFork,
     utils::{apply_chain_and_block_specific_env_changes, block_env_from_header},
 };
+use alloy_chains::NamedChain;
 use alloy_consensus::BlockHeader;
 use alloy_network::{AnyNetwork, BlockResponse, Network};
 use alloy_primitives::{Address, B256, BlockNumber, ChainId, U256};
 use alloy_provider::{Provider, RootProvider};
-use alloy_rpc_types::BlockNumberOrTag;
+use alloy_rpc_types::{BlockNumberOrTag, anvil::NodeInfo};
 use eyre::WrapErr;
 use foundry_common::{ALCHEMY_FREE_TIER_CUPS, NON_ARCHIVE_NODE_WARNING, provider::ProviderBuilder};
 use foundry_config::{Chain, Config, GasLimit};
@@ -142,7 +143,17 @@ impl EvmOpts {
             && let Ok(provider) = self.fork_provider_with_url::<AnyNetwork>(fork_url)
             && let Ok(chain_id) = provider.get_chain_id().await
         {
-            self.networks = self.networks.with_chain_id(chain_id);
+            // If Anvil's chain, request anvil_nodeInfo to determine if the network is Tempo.
+            if chain_id == NamedChain::AnvilHardhat as u64 {
+                if let Ok(node_info) =
+                    provider.raw_request::<_, NodeInfo>("anvil_nodeInfo".into(), ()).await
+                    && node_info.network.is_some_and(|network| network == "tempo")
+                {
+                    self.networks = NetworkConfigs::with_tempo();
+                }
+            } else {
+                self.networks = self.networks.with_chain_id(chain_id);
+            }
         }
     }
 
