@@ -44,19 +44,19 @@ pub(super) struct CallContext {
 }
 
 impl CallContext {
-    pub(super) fn nested(size: usize) -> Self {
+    pub(super) const fn nested(size: usize) -> Self {
         Self { kind: CallContextKind::Nested, size, has_indent: false }
     }
 
-    pub(super) fn chained(size: usize, has_indent: bool) -> Self {
+    pub(super) const fn chained(size: usize, has_indent: bool) -> Self {
         Self { kind: CallContextKind::Chained, size, has_indent }
     }
 
-    pub(super) fn is_nested(&self) -> bool {
+    pub(super) const fn is_nested(&self) -> bool {
         matches!(self.kind, CallContextKind::Nested)
     }
 
-    pub(super) fn is_chained(&self) -> bool {
+    pub(super) const fn is_chained(&self) -> bool {
         matches!(self.kind, CallContextKind::Chained)
     }
 }
@@ -481,7 +481,7 @@ impl<'sess> State<'sess, '_> {
         Default::default()
     }
 
-    fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
+    const fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
         // Intetionally no-op. Handled with `self.comments`.
         let _ = docs;
     }
@@ -1061,12 +1061,12 @@ impl CommentConfig {
         Self { skip_blanks: Some(Skip::Trailing), ..Default::default() }
     }
 
-    pub(crate) fn offset(mut self, off: isize) -> Self {
+    pub(crate) const fn offset(mut self, off: isize) -> Self {
         self.offset = off;
         self
     }
 
-    pub(crate) fn no_breaks(mut self) -> Self {
+    pub(crate) const fn no_breaks(mut self) -> Self {
         self.iso_no_break = true;
         self.trailing_no_break = true;
         self.mixed_no_break_prev = true;
@@ -1074,28 +1074,28 @@ impl CommentConfig {
         self
     }
 
-    pub(crate) fn trailing_no_break(mut self) -> Self {
+    pub(crate) const fn trailing_no_break(mut self) -> Self {
         self.trailing_no_break = true;
         self
     }
 
-    pub(crate) fn mixed_no_break(mut self) -> Self {
+    pub(crate) const fn mixed_no_break(mut self) -> Self {
         self.mixed_no_break_prev = true;
         self.mixed_no_break_post = true;
         self
     }
 
-    pub(crate) fn mixed_no_break_post(mut self) -> Self {
+    pub(crate) const fn mixed_no_break_post(mut self) -> Self {
         self.mixed_no_break_post = true;
         self
     }
 
-    pub(crate) fn mixed_prev_space(mut self) -> Self {
+    pub(crate) const fn mixed_prev_space(mut self) -> Self {
         self.mixed_prev_space = true;
         self
     }
 
-    pub(crate) fn mixed_post_nbsp(mut self) -> Self {
+    pub(crate) const fn mixed_post_nbsp(mut self) -> Self {
         self.mixed_post_nbsp = true;
         self
     }

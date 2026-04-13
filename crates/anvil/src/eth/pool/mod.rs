@@ -510,7 +510,7 @@ pub enum AddedTransaction<T> {
 }
 
 impl<T> AddedTransaction<T> {
-    pub fn hash(&self) -> &TxHash {
+    pub const fn hash(&self) -> &TxHash {
         match self {
             Self::Ready(tx) => &tx.hash,
             Self::Pending { hash } => hash,

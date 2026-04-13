@@ -656,7 +656,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
     }
 
     /// Determines the number of runs per worker.
-    fn runs_per_worker(&self, worker_id: usize) -> u32 {
+    const fn runs_per_worker(&self, worker_id: usize) -> u32 {
         let worker_id = worker_id as u32;
         let total_runs = self.config.runs;
         let n = self.num_workers as u32;

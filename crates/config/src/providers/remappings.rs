@@ -24,12 +24,12 @@ pub struct Remappings {
 
 impl Remappings {
     /// Create a new `Remappings` wrapper with an empty vector.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { remappings: Vec::new(), project_paths: Vec::new() }
     }
 
     /// Create a new `Remappings` wrapper with a vector of remappings.
-    pub fn new_with_remappings(remappings: Vec<Remapping>) -> Self {
+    pub const fn new_with_remappings(remappings: Vec<Remapping>) -> Self {
         Self { remappings, project_paths: Vec::new() }
     }
 

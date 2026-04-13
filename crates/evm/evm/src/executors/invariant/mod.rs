@@ -130,7 +130,7 @@ struct InvariantThroughputMetrics {
 }
 
 impl InvariantThroughputMetrics {
-    fn record_call(&mut self, gas_used: u64) {
+    const fn record_call(&mut self, gas_used: u64) {
         self.total_txs += 1;
         self.total_gas += gas_used;
     }
@@ -252,12 +252,12 @@ impl<FEN: FoundryEvmNetwork> InvariantTest<FEN> {
     }
 
     /// Returns number of invariant test reverts.
-    fn reverts(&self) -> usize {
+    const fn reverts(&self) -> usize {
         self.test_data.failures.reverts
     }
 
     /// Whether invariant test has errors or not.
-    fn has_errors(&self) -> bool {
+    const fn has_errors(&self) -> bool {
         self.test_data.failures.error.is_some()
     }
 

@@ -53,11 +53,11 @@ impl NetworkConfigs {
         Self { tempo: true, ..Default::default() }
     }
 
-    pub fn is_optimism(&self) -> bool {
+    pub const fn is_optimism(&self) -> bool {
         self.optimism
     }
 
-    pub fn is_tempo(&self) -> bool {
+    pub const fn is_tempo(&self) -> bool {
         self.tempo
     }
 
@@ -88,7 +88,7 @@ impl NetworkConfigs {
         self.bypass_prevrandao
     }
 
-    pub fn is_celo(&self) -> bool {
+    pub const fn is_celo(&self) -> bool {
         self.celo
     }
 

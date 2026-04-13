@@ -263,7 +263,7 @@ enum StructKind {
 }
 
 impl StructKind {
-    fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::Struct => "struct",
             Self::Error => "error",

@@ -610,7 +610,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
 
     /// Returns all snapshots created in this backend
     #[allow(clippy::type_complexity)]
-    pub fn state_snapshots(
+    pub const fn state_snapshots(
         &self,
     ) -> &StateSnapshots<
         BackendStateSnapshot<
@@ -650,7 +650,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Returns the set caller address
-    pub fn caller_address(&self) -> Option<Address> {
+    pub const fn caller_address(&self) -> Option<Address> {
         self.inner.caller
     }
 
@@ -659,12 +659,12 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     /// If an error occurs in a restored state snapshot, the test is considered failed.
     ///
     /// This returns whether there was a reverted state snapshot that recorded an error.
-    pub fn has_state_snapshot_failure(&self) -> bool {
+    pub const fn has_state_snapshot_failure(&self) -> bool {
         self.inner.has_state_snapshot_failure
     }
 
     /// Sets the state snapshot failure flag.
-    pub fn set_state_snapshot_failure(&mut self, has_state_snapshot_failure: bool) {
+    pub const fn set_state_snapshot_failure(&mut self, has_state_snapshot_failure: bool) {
         self.inner.has_state_snapshot_failure = has_state_snapshot_failure
     }
 
@@ -696,7 +696,7 @@ impl<FEN: FoundryEvmNetwork> Backend<FEN> {
     }
 
     /// Returns the memory db used if not in forking mode
-    pub fn mem_db(&self) -> &FoundryEvmInMemoryDB {
+    pub const fn mem_db(&self) -> &FoundryEvmInMemoryDB {
         &self.mem_db
     }
 
@@ -1669,7 +1669,7 @@ pub struct Fork<N: Network, B: ForkBlockEnv = BlockEnv> {
 
 impl<N: Network, B: ForkBlockEnv> Fork<N, B> {
     /// Returns a reference to the underlying [`SharedBackend`].
-    pub fn backend(&self) -> &SharedBackend<N, B> {
+    pub const fn backend(&self) -> &SharedBackend<N, B> {
         &self.db.db
     }
 

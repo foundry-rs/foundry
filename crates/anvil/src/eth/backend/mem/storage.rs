@@ -85,7 +85,7 @@ impl InMemoryBlockStates {
     }
 
     /// Configures no disk caching
-    pub fn memory_only(mut self) -> Self {
+    pub const fn memory_only(mut self) -> Self {
         self.max_on_disk_limit = 0;
         self
     }
@@ -112,7 +112,7 @@ impl InMemoryBlockStates {
     }
 
     /// Returns true if only memory caching is supported.
-    fn is_memory_only(&self) -> bool {
+    const fn is_memory_only(&self) -> bool {
         self.max_on_disk_limit == 0
     }
 
@@ -197,7 +197,7 @@ impl InMemoryBlockStates {
     }
 
     /// Sets the maximum number of stats we keep in memory
-    pub fn set_cache_limit(&mut self, limit: usize) {
+    pub const fn set_cache_limit(&mut self, limit: usize) {
         self.in_memory_limit = limit;
     }
 

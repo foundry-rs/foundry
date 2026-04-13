@@ -27,7 +27,7 @@ pub struct BackendStateSnapshot<T, SPEC, BLOCK> {
 
 impl<T, SPEC, BLOCK> BackendStateSnapshot<T, SPEC, BLOCK> {
     /// Takes a new state snapshot.
-    pub fn new(db: T, journaled_state: JournaledState, evm_env: EvmEnv<SPEC, BLOCK>) -> Self {
+    pub const fn new(db: T, journaled_state: JournaledState, evm_env: EvmEnv<SPEC, BLOCK>) -> Self {
         Self { db, journaled_state, snap_evm_env: evm_env }
     }
 
@@ -57,7 +57,7 @@ pub enum RevertStateSnapshotAction {
 
 impl RevertStateSnapshotAction {
     /// Returns `true` if the action is to keep the state snapshot.
-    pub fn is_keep(&self) -> bool {
+    pub const fn is_keep(&self) -> bool {
         matches!(self, Self::RevertKeep)
     }
 }

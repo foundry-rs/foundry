@@ -231,7 +231,7 @@ fn parse_signature_type(s: &str) -> Result<SignatureType, String> {
     }
 }
 
-fn signature_type_name(t: &SignatureType) -> &'static str {
+const fn signature_type_name(t: &SignatureType) -> &'static str {
     match t {
         SignatureType::Secp256k1 => "secp256k1",
         SignatureType::P256 => "p256",
@@ -240,7 +240,7 @@ fn signature_type_name(t: &SignatureType) -> &'static str {
     }
 }
 
-fn key_type_name(t: &KeyType) -> &'static str {
+const fn key_type_name(t: &KeyType) -> &'static str {
     match t {
         KeyType::Secp256k1 => "secp256k1",
         KeyType::P256 => "p256",
@@ -248,7 +248,7 @@ fn key_type_name(t: &KeyType) -> &'static str {
     }
 }
 
-fn wallet_type_name(t: &WalletType) -> &'static str {
+const fn wallet_type_name(t: &WalletType) -> &'static str {
     match t {
         WalletType::Local => "local",
         WalletType::Passkey => "passkey",

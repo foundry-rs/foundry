@@ -39,7 +39,7 @@ impl<'a> Lockfile<'a> {
     }
 
     /// Set the git instance to be used for submodule operations.
-    pub fn with_git(mut self, git: &'a Git<'_>) -> Self {
+    pub const fn with_git(mut self, git: &'a Git<'_>) -> Self {
         self.git = Some(git);
         self
     }
@@ -302,7 +302,7 @@ impl DepIdentifier {
     }
 
     /// Marks as dependency as overridden.
-    pub fn mark_override(&mut self) {
+    pub const fn mark_override(&mut self) {
         match self {
             Self::Branch { r#override, .. } => *r#override = true,
             Self::Tag { r#override, .. } => *r#override = true,
@@ -311,7 +311,7 @@ impl DepIdentifier {
     }
 
     /// Returns whether the dependency has been overridden.
-    pub fn overridden(&self) -> bool {
+    pub const fn overridden(&self) -> bool {
         match self {
             Self::Branch { r#override, .. } => *r#override,
             Self::Tag { r#override, .. } => *r#override,
@@ -320,7 +320,7 @@ impl DepIdentifier {
     }
 
     /// Returns whether the dependency is a branch.
-    pub fn is_branch(&self) -> bool {
+    pub const fn is_branch(&self) -> bool {
         matches!(self, Self::Branch { .. })
     }
 }

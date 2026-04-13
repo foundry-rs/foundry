@@ -18,16 +18,16 @@ pub enum CommentStyle {
 }
 
 impl CommentStyle {
-    pub fn is_mixed(&self) -> bool {
+    pub const fn is_mixed(&self) -> bool {
         matches!(self, Self::Mixed)
     }
-    pub fn is_trailing(&self) -> bool {
+    pub const fn is_trailing(&self) -> bool {
         matches!(self, Self::Trailing)
     }
-    pub fn is_isolated(&self) -> bool {
+    pub const fn is_isolated(&self) -> bool {
         matches!(self, Self::Isolated)
     }
-    pub fn is_blank(&self) -> bool {
+    pub const fn is_blank(&self) -> bool {
         matches!(self, Self::BlankLine)
     }
 }
@@ -46,7 +46,7 @@ impl Comment {
         self.span.lo()
     }
 
-    pub fn prefix(&self) -> Option<&'static str> {
+    pub const fn prefix(&self) -> Option<&'static str> {
         if self.lines.is_empty() {
             return None;
         }
@@ -58,7 +58,7 @@ impl Comment {
         })
     }
 
-    pub fn suffix(&self) -> Option<&'static str> {
+    pub const fn suffix(&self) -> Option<&'static str> {
         if self.lines.is_empty() {
             return None;
         }

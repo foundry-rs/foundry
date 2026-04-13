@@ -825,27 +825,27 @@ impl Default for ListFormat {
 
 impl ListFormat {
     // -- GETTER METHODS -------------------------------------------------------
-    pub(crate) fn prev_symbol(&self) -> Option<&'static str> {
+    pub(crate) const fn prev_symbol(&self) -> Option<&'static str> {
         if let ListFormatKind::Yul { sym_prev, .. } = self.kind { sym_prev } else { None }
     }
 
-    pub(crate) fn post_symbol(&self) -> Option<&'static str> {
+    pub(crate) const fn post_symbol(&self) -> Option<&'static str> {
         if let ListFormatKind::Yul { sym_post, .. } = self.kind { sym_post } else { None }
     }
 
-    pub(crate) fn is_consistent(&self) -> bool {
+    pub(crate) const fn is_consistent(&self) -> bool {
         matches!(self.kind, ListFormatKind::Consistent)
     }
 
-    pub(crate) fn is_compact(&self) -> bool {
+    pub(crate) const fn is_compact(&self) -> bool {
         matches!(self.kind, ListFormatKind::Compact)
     }
 
-    pub(crate) fn is_inline(&self) -> bool {
+    pub(crate) const fn is_inline(&self) -> bool {
         matches!(self.kind, ListFormatKind::Inline)
     }
 
-    pub(crate) fn breaks_with_comments(&self) -> bool {
+    pub(crate) const fn breaks_with_comments(&self) -> bool {
         self.breaks_cmnts
     }
 
@@ -881,35 +881,35 @@ impl ListFormat {
         }
     }
 
-    pub(crate) fn without_ind(mut self, without: bool) -> Self {
+    pub(crate) const fn without_ind(mut self, without: bool) -> Self {
         if !matches!(self.kind, ListFormatKind::Inline) {
             self.no_ind = without;
         }
         self
     }
 
-    pub(crate) fn break_single(mut self, value: bool) -> Self {
+    pub(crate) const fn break_single(mut self, value: bool) -> Self {
         if !matches!(self.kind, ListFormatKind::Inline) {
             self.break_single = value;
         }
         self
     }
 
-    pub(crate) fn break_cmnts(mut self) -> Self {
+    pub(crate) const fn break_cmnts(mut self) -> Self {
         if !matches!(self.kind, ListFormatKind::Inline) {
             self.breaks_cmnts = true;
         }
         self
     }
 
-    pub(crate) fn with_space(mut self) -> Self {
+    pub(crate) const fn with_space(mut self) -> Self {
         if !matches!(self.kind, ListFormatKind::Inline) {
             self.with_space = true;
         }
         self
     }
 
-    pub(crate) fn with_delimiters(mut self, with: bool) -> Self {
+    pub(crate) const fn with_delimiters(mut self, with: bool) -> Self {
         if matches!(self.kind, ListFormatKind::Compact | ListFormatKind::Consistent) {
             self.with_delimiters = with;
         }
@@ -948,14 +948,14 @@ pub(crate) enum BlockFormat {
 }
 
 impl BlockFormat {
-    pub(crate) fn with_braces(&self) -> bool {
+    pub(crate) const fn with_braces(&self) -> bool {
         !matches!(self, Self::NoBraces(_))
     }
-    pub(crate) fn breaks(&self) -> bool {
+    pub(crate) const fn breaks(&self) -> bool {
         matches!(self, Self::NoBraces(None))
     }
 
-    pub(crate) fn attempt_single_line(&self) -> bool {
+    pub(crate) const fn attempt_single_line(&self) -> bool {
         matches!(self, Self::Compact(_))
     }
 }

@@ -18,7 +18,7 @@ pub struct DebugTraceIdentifier {
 }
 
 impl DebugTraceIdentifier {
-    pub fn new(contracts_sources: ContractSources) -> Self {
+    pub const fn new(contracts_sources: ContractSources) -> Self {
         Self { contracts_sources }
     }
 
@@ -65,7 +65,7 @@ struct DebugStepsWalker<'a> {
 }
 
 impl<'a> DebugStepsWalker<'a> {
-    pub fn new(
+    pub const fn new(
         node: &'a mut CallTraceNode,
         sources: &'a ContractSources,
         contract_name: &'a str,

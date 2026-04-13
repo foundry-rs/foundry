@@ -183,7 +183,7 @@ impl<T> fmt::Debug for BlockRequest<T> {
 }
 
 impl<T> BlockRequest<T> {
-    pub fn block_number(&self) -> BlockNumber {
+    pub const fn block_number(&self) -> BlockNumber {
         match *self {
             Self::Pending(_) => BlockNumber::Pending,
             Self::Number(n) => BlockNumber::Number(n),
@@ -352,12 +352,12 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the `TimeManager` responsible for timestamps
-    pub fn time(&self) -> &TimeManager {
+    pub const fn time(&self) -> &TimeManager {
         &self.time
     }
 
     /// Returns the `CheatsManager` responsible for executing cheatcodes
-    pub fn cheats(&self) -> &CheatsManager {
+    pub const fn cheats(&self) -> &CheatsManager {
         &self.cheats
     }
 
@@ -369,12 +369,12 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the `FeeManager` that manages fee/pricings
-    pub fn fees(&self) -> &FeeManager {
+    pub const fn fees(&self) -> &FeeManager {
         &self.fees
     }
 
     /// The EVM environment data of the blockchain
-    pub fn evm_env(&self) -> &Arc<RwLock<EvmEnv>> {
+    pub const fn evm_env(&self) -> &Arc<RwLock<EvmEnv>> {
         &self.evm_env
     }
 
@@ -408,7 +408,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the genesis data for the Beacon API.
-    pub fn genesis_time(&self) -> u64 {
+    pub const fn genesis_time(&self) -> u64 {
         self.genesis.timestamp
     }
 
@@ -483,17 +483,17 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns true if op-stack deposits are active
-    pub fn is_optimism(&self) -> bool {
+    pub const fn is_optimism(&self) -> bool {
         self.networks.is_optimism()
     }
 
     /// Returns true if Tempo network mode is active
-    pub fn is_tempo(&self) -> bool {
+    pub const fn is_tempo(&self) -> bool {
         self.networks.is_tempo()
     }
 
     /// Returns the active hardfork.
-    pub fn hardfork(&self) -> FoundryHardfork {
+    pub const fn hardfork(&self) -> FoundryHardfork {
         self.hardfork
     }
 
@@ -582,7 +582,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if op-stack deposits are not active
-    pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
+    pub const fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
             return Ok(());
         }
@@ -590,7 +590,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if Tempo transactions are not active
-    pub fn ensure_tempo_active(&self) -> Result<(), BlockchainError> {
+    pub const fn ensure_tempo_active(&self) -> Result<(), BlockchainError> {
         if self.is_tempo() {
             return Ok(());
         }
@@ -637,7 +637,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns whether the minimum suggested priority fee is enforced
-    pub fn is_min_priority_fee_enforced(&self) -> bool {
+    pub const fn is_min_priority_fee_enforced(&self) -> bool {
         self.fees.is_min_priority_fee_enforced()
     }
 

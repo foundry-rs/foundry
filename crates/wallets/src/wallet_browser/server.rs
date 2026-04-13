@@ -87,17 +87,17 @@ impl<N: Network> BrowserWalletServer<N> {
     }
 
     /// Get the server port.
-    pub fn port(&self) -> u16 {
+    pub const fn port(&self) -> u16 {
         self.port
     }
 
     /// Check if the browser should be opened.
-    pub fn open_browser(&self) -> bool {
+    pub const fn open_browser(&self) -> bool {
         self.open_browser
     }
 
     /// Get the timeout duration.
-    pub fn timeout(&self) -> Duration {
+    pub const fn timeout(&self) -> Duration {
         self.timeout
     }
 

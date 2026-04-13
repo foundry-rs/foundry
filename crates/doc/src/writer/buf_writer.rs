@@ -40,7 +40,7 @@ impl BufWriter {
     }
 
     /// Returns true if the buffer is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.buf.is_empty()
     }
 

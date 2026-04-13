@@ -93,7 +93,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(provider: P) -> Self {
+    pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
     }
 

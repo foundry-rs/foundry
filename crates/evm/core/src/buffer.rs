@@ -11,7 +11,7 @@ pub enum BufferKind {
 
 impl BufferKind {
     /// Helper to cycle through the active buffers.
-    pub fn next(&self) -> Self {
+    pub const fn next(&self) -> Self {
         match self {
             Self::Memory => Self::Calldata,
             Self::Calldata => Self::Returndata,
