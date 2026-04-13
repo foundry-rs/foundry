@@ -36,8 +36,8 @@ impl MutatorType {
     }
 
     /// Returns the operators that are excluded by default.
-    pub fn default_excluded() -> Vec<Self> {
-        vec![]
+    pub const fn default_excluded() -> Vec<Self> {
+        Vec::new()
     }
 }
 
