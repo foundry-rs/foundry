@@ -598,7 +598,15 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     }) => {
                         inc_runs();
 
-                        let reason = rd.maybe_decode(&outcome.1.result, status);
+                        // Only classify magic skip payloads when the revert originates from the
+                        // cheatcode address.
+                        let reason = if outcome.1.reverter == Some(CHEATCODE_ADDRESS) {
+                            SkipReason::decode(&outcome.1.result)
+                                .map(|reason| reason.to_string())
+                                .or_else(|| rd.maybe_decode(&outcome.1.result, status))
+                        } else {
+                            rd.maybe_decode(&outcome.1.result, status)
+                        };
                         worker.logs.extend(outcome.1.logs.clone());
                         worker.counterexample = outcome;
                         worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
