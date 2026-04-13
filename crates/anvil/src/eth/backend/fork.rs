@@ -370,23 +370,8 @@ impl<N: Network> ClientFork<N> {
         number: u64,
         index: usize,
     ) -> Result<Option<N::TransactionResponse>, TransportError> {
-        if let Some(block) = self.block_by_number(number).await? {
-            #[allow(clippy::collapsible_match)]
-            match block.transactions() {
-                BlockTransactions::Full(txs) => {
-                    if let Some(tx) = txs.get(index) {
-                        return Ok(Some(tx.clone()));
-                    }
-                }
-                BlockTransactions::Hashes(hashes) => {
-                    if let Some(tx_hash) = hashes.get(index) {
-                        return self.transaction_by_hash(*tx_hash).await;
-                    }
-                }
-                BlockTransactions::Uncle => {}
-            }
-        }
-        Ok(None)
+        let block = self.block_by_number(number).await?;
+        self.transaction_at_block_index(block, index).await
     }
 
     pub async fn transaction_by_block_hash_and_index(
@@ -394,8 +379,16 @@ impl<N: Network> ClientFork<N> {
         hash: B256,
         index: usize,
     ) -> Result<Option<N::TransactionResponse>, TransportError> {
-        if let Some(block) = self.block_by_hash(hash).await? {
-            #[allow(clippy::collapsible_match)]
+        let block = self.block_by_hash(hash).await?;
+        self.transaction_at_block_index(block, index).await
+    }
+
+    async fn transaction_at_block_index(
+        &self,
+        block: Option<N::BlockResponse>,
+        index: usize,
+    ) -> Result<Option<N::TransactionResponse>, TransportError> {
+        if let Some(block) = block {
             match block.transactions() {
                 BlockTransactions::Full(txs) => {
                     if let Some(tx) = txs.get(index) {
