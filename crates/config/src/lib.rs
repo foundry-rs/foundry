@@ -2330,7 +2330,7 @@ impl Config {
 
         // Normalize `deny` based on the provided `deny_warnings` value.
         if figment.extract_inner::<bool>("deny_warnings").unwrap_or(false)
-            && let Ok(DenyLevel::Never) = figment.extract_inner("deny")
+            && figment.extract_inner("deny") == Ok(DenyLevel::Never)
         {
             figment = figment.merge(("deny", DenyLevel::Warnings));
         }

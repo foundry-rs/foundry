@@ -295,6 +295,7 @@ impl ScriptArgs {
     }
 
     /// Executes the script
+    #[allow(clippy::large_stack_frames)]
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
@@ -329,6 +330,7 @@ impl ScriptArgs {
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
     /// for broadcasting, or returns `None` if there's nothing to broadcast
     /// (e.g., debug mode, no transactions, missing RPCs).
+    #[allow(clippy::large_stack_frames)]
     async fn prepare_bundled<FEN: FoundryEvmNetwork>(
         self,
         config: Config,

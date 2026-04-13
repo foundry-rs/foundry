@@ -452,7 +452,7 @@ impl<'ast> Visit<'ast> for PreprocessorVisitor {
         var: &'ast ast::VariableDefinition<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         // Remove `immutable` attributes.
-        if let Some(VarMut::Immutable) = var.mutability {
+        if var.mutability == Some(VarMut::Immutable) {
             self.updates.push((var.span, ""));
         }
 

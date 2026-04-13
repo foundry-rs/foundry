@@ -1844,6 +1844,7 @@ impl<N: Network> Backend<N> {
         }))
     }
 
+    #[allow(clippy::large_stack_frames)]
     pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Blob>> {
         let storage = self.blockchain.storage.read();
         for block in storage.blocks.values() {
