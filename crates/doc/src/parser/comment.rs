@@ -147,7 +147,7 @@ impl Comments {
 
 impl From<Vec<DocCommentTag>> for Comments {
     fn from(value: Vec<DocCommentTag>) -> Self {
-        Self(value.into_iter().flat_map(Comment::from_doc_comment).collect())
+        Self(value.into_iter().filter_map(Comment::from_doc_comment).collect())
     }
 }
 
