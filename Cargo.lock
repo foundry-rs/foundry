@@ -5248,6 +5248,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-serde 2.0.0-rc.0",
  "alloy-sol-types",
+ "anvil",
  "auto_impl",
  "eyre",
  "foundry-cheatcodes-spec",

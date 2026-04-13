@@ -462,6 +462,68 @@ mod tests {
     use super::*;
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn infer_network_default_anvil_selects_ethereum() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(handle.http_endpoint());
+        assert_eq!(evm_opts.networks, NetworkConfigs::default());
+
+        evm_opts.infer_network_from_fork().await;
+
+        // Plain anvil (chain id 31337) without tempo flag -> Ethereum (no network flags set).
+        assert!(!evm_opts.networks.is_tempo());
+        assert!(!evm_opts.networks.is_optimism());
+        assert!(!evm_opts.networks.is_celo());
+        assert_eq!(evm_opts.networks, NetworkConfigs::default());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn infer_network_tempo_anvil_via_node_info() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test_tempo()).await;
+
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some(handle.http_endpoint());
+        // Networks not set -> should query anvil_nodeInfo to discover tempo.
+        assert_eq!(evm_opts.networks, NetworkConfigs::default());
+
+        evm_opts.infer_network_from_fork().await;
+
+        assert!(evm_opts.networks.is_tempo(), "should detect tempo via anvil_nodeInfo");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn infer_network_tempo_anvil_skips_rpc_when_already_set() {
+        // Use a URL that would fail if any RPC call were attempted (connection refused).
+        // This proves the early-return guard prevents all network requests.
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some("http://127.0.0.1:1".to_string());
+        // Explicitly set tempo before calling infer (simulates --tempo CLI flag).
+        evm_opts.networks = NetworkConfigs::with_tempo();
+
+        evm_opts.infer_network_from_fork().await;
+
+        // Should still be tempo, the early-return guard skips the RPC call.
+        assert!(evm_opts.networks.is_tempo());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn flaky_infer_network_tempo_moderato_rpc() {
+        let config = Config::figment();
+        let mut evm_opts = config.extract::<EvmOpts>().unwrap();
+        evm_opts.fork_url = Some("https://rpc.moderato.tempo.xyz".to_string());
+        assert_eq!(evm_opts.networks, NetworkConfigs::default());
+
+        evm_opts.infer_network_from_fork().await;
+
+        // Tempo Moderato has a known Tempo chain ID -> should be inferred via with_chain_id.
+        assert!(evm_opts.networks.is_tempo(), "should detect tempo from Moderato chain ID");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn get_fork_pins_block_number_from_env() {
         let endpoint = foundry_test_utils::rpc::next_http_rpc_endpoint();
 
