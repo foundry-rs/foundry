@@ -47,10 +47,10 @@ where
     filter_eviction_interval: Interval,
 }
 
-impl<N: Network> NodeService<N>
+impl<N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>>
+    NodeService<N>
 where
     Backend<N>: TransactionValidator<N::TxEnvelope>,
-    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
     pub fn new(
         pool: Arc<Pool<N::TxEnvelope>>,
@@ -72,10 +72,10 @@ where
     }
 }
 
-impl<N: Network> Future for NodeService<N>
+impl<N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>> Future
+    for NodeService<N>
 where
     Backend<N>: TransactionValidator<N::TxEnvelope>,
-    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
     type Output = NodeResult<()>;
 
@@ -128,20 +128,20 @@ struct BlockProducer<N: Network> {
     queued: VecDeque<Vec<Arc<PoolTransaction<N::TxEnvelope>>>>,
 }
 
-impl<N: Network> BlockProducer<N>
+impl<N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>>
+    BlockProducer<N>
 where
     Backend<N>: TransactionValidator<N::TxEnvelope>,
-    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
     fn new(backend: Arc<Backend<N>>) -> Self {
         Self { idle_backend: Some(backend), block_mining: None, queued: Default::default() }
     }
 }
 
-impl<N: Network> Stream for BlockProducer<N>
+impl<N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope> + 'static>
+    Stream for BlockProducer<N>
 where
     Backend<N>: TransactionValidator<N::TxEnvelope> + Send + Sync + 'static,
-    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope> + 'static,
 {
     type Item = MinedBlockOutcome<N::TxEnvelope>;
 

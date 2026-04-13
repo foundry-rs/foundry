@@ -2435,10 +2435,10 @@ where
 }
 
 // Mining methods — generic over N: Network, with Foundry-associated-type bounds for now.
-impl<N: Network> Backend<N>
+impl<N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>>
+    Backend<N>
 where
     Self: TransactionValidator<FoundryTxEnvelope>,
-    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
 {
     /// Mines a new block and stores it.
     ///
@@ -3341,9 +3341,8 @@ where
     }
 }
 
-impl<N: Network> Backend<N>
-where
-    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+impl<N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>>
+    Backend<N>
 {
     /// Rollback the chain to a common height.
     ///
@@ -4064,9 +4063,8 @@ fn get_pool_transactions_nonce(
 }
 
 #[async_trait::async_trait]
-impl<N: Network> TransactionValidator<FoundryTxEnvelope> for Backend<N>
-where
-    N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>,
+impl<N: Network<TxEnvelope = FoundryTxEnvelope, ReceiptEnvelope = FoundryReceiptEnvelope>>
+    TransactionValidator<FoundryTxEnvelope> for Backend<N>
 {
     async fn validate_pool_transaction(
         &self,
