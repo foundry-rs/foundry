@@ -101,7 +101,7 @@ pub async fn run_mutation_testing(
         // Get build ID for caching
         let build_id = output
             .artifact_ids()
-            .find_map(|(id, _)| (id.source == path).then(|| id.build_id))
+            .find_map(|(id, _)| (id.source == path).then_some(id.build_id))
             .unwrap_or_default();
 
         // Check for cached results
