@@ -857,10 +857,10 @@ mod tests {
         let mut cwd_file = File::create(cwd_env).unwrap();
         let mut prj_file = File::create(nested.join(".env")).unwrap();
 
-        cwd_file.write_all("TESTCWDKEY=cwd_val".as_bytes()).unwrap();
+        cwd_file.write_all(b"TESTCWDKEY=cwd_val").unwrap();
         cwd_file.sync_all().unwrap();
 
-        prj_file.write_all("TESTPRJKEY=prj_val".as_bytes()).unwrap();
+        prj_file.write_all(b"TESTPRJKEY=prj_val").unwrap();
         prj_file.sync_all().unwrap();
 
         let cwd = env::current_dir().unwrap();
