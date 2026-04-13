@@ -627,6 +627,8 @@ impl ClientFork {
 #[derive(Clone, Debug)]
 pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub eth_rpc_url: String,
+    /// All fork URLs when using multi-endpoint load balancing.
+    pub fork_urls: Vec<String>,
     /// The block number of the forked block
     pub block_number: u64,
     /// The hash of the forked block
@@ -665,17 +667,28 @@ impl<N: Network> ClientForkConfig<N> {
     ///
     /// This will fail if no new provider could be established (erroneous URL)
     fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
-        // let interval = self.provider.get_interval();
-        self.provider = Arc::new(
+        // Update fork_urls to reflect the new primary URL
+        if self.fork_urls.len() > 1 {
+            self.fork_urls[0] = url.clone();
+        }
+
+        self.provider = Arc::new(if self.fork_urls.len() > 1 {
             ProviderBuilder::<N>::new(url.as_str())
                 .timeout(self.timeout)
-                // .timeout_retry(self.retries)
+                .max_retry(self.retries)
+                .initial_backoff(self.backoff.as_millis() as u64)
+                .compute_units_per_second(self.compute_units_per_second)
+                .build_fallback(self.fork_urls.clone())
+                .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?
+        } else {
+            ProviderBuilder::<N>::new(url.as_str())
+                .timeout(self.timeout)
                 .max_retry(self.retries)
                 .initial_backoff(self.backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .build()
-                .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?, /* .interval(interval), */
-        );
+                .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?
+        });
         trace!(target: "fork", "Updated rpc url  {}", url);
         self.eth_rpc_url = url;
         Ok(())

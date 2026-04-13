@@ -15,17 +15,22 @@ use alloy_provider::{
     network::{AnyNetwork, EthereumWallet},
 };
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport::{layers::RetryBackoffLayer, utils::guess_local_url};
+use alloy_transport::{
+    layers::{FallbackLayer, RetryBackoffLayer},
+    utils::guess_local_url,
+};
 use eyre::{Result, WrapErr};
 use foundry_config::Config;
 use reqwest::Url;
 use std::{
     marker::PhantomData,
     net::SocketAddr,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
 };
+use tower::Layer;
 use url::ParseError;
 
 /// The assumed block time for unknown chains.
@@ -364,6 +369,77 @@ impl<N: Network> ProviderBuilder<N> {
 }
 
 impl<N: Network> ProviderBuilder<N> {
+    /// Constructs a `RetryProvider` backed by multiple URLs using Alloy's `FallbackService`.
+    ///
+    /// Requests are distributed across all provided endpoints using a scored strategy:
+    /// the top `active_transport_count` endpoints (by latency + success rate) are queried,
+    /// and the first successful response wins. Endpoints that return errors or time out
+    /// are automatically deprioritized.
+    ///
+    /// Set `active_transport_count` to 1 for sequential (round-robin-like) behavior where
+    /// only the best-scored endpoint handles each request.
+    pub fn build_fallback(self, urls: Vec<String>) -> Result<RetryProvider<N>> {
+        let Self {
+            chain,
+            max_retry,
+            initial_backoff,
+            timeout,
+            compute_units_per_second,
+            jwt,
+            headers,
+            accept_invalid_certs,
+            no_proxy,
+            ..
+        } = self;
+
+        eyre::ensure!(!urls.is_empty(), "at least one fork URL is required");
+
+        // Build a RuntimeTransport for each URL, using the same URL normalization
+        // as ProviderBuilder::new() (handles localhost:port, raw socket addrs, IPC paths)
+        let transports: Vec<_> = urls
+            .iter()
+            .map(|url_str| {
+                let builder = Self::new(url_str);
+                let url = builder.url?;
+                Ok(RuntimeTransportBuilder::new(url)
+                    .with_timeout(timeout)
+                    .with_headers(headers.clone())
+                    .with_jwt(jwt.clone())
+                    .accept_invalid_certs(accept_invalid_certs)
+                    .no_proxy(no_proxy)
+                    .build())
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Wrap in FallbackService: use active_transport_count=1 for sequential failover
+        // (only the best-scored endpoint is tried per request, closest to round-robin)
+        let fallback_layer = FallbackLayer::default()
+            .with_active_transport_count(NonZeroUsize::new(1).unwrap());
+        let fallback_service = fallback_layer.layer(transports);
+
+        // Apply retry layer on top of the fallback service
+        let retry_layer =
+            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
+        let is_local = urls.iter().all(guess_local_url);
+        let client =
+            ClientBuilder::default().layer(retry_layer).transport(fallback_service, is_local);
+
+        if !is_local {
+            client.set_poll_interval(
+                chain
+                    .average_blocktime_hint()
+                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
+                    .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
+                    .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
+            );
+        }
+
+        let provider =
+            AlloyProviderBuilder::<_, _, N>::default().connect_provider(RootProvider::new(client));
+
+        Ok(provider)
+    }
+
     /// Constructs the `RetryProvider` with a wallet.
     pub fn build_with_wallet<W: NetworkWallet<N> + Clone>(
         self,

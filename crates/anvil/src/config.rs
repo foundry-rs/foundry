@@ -136,6 +136,10 @@ pub struct NodeConfig {
     pub max_transactions: usize,
     /// url of the rpc server that should be used for any rpc calls
     pub eth_rpc_url: Option<String>,
+    /// Additional fork URLs for load balancing across multiple RPC endpoints.
+    /// When multiple URLs are provided, requests are distributed using Alloy's
+    /// `FallbackService` with automatic failover based on endpoint health.
+    pub fork_urls: Vec<String>,
     /// pins the block number or transaction hash for the state fork
     pub fork_choice: Option<ForkChoice>,
     /// headers to use with `eth_rpc_url`
@@ -273,6 +277,13 @@ Chain ID:       {}
                 fork.block_hash(),
                 fork.chain_id()
             );
+
+            if self.fork_urls.len() > 1 {
+                let _ = writeln!(s, "Endpoints:      {}", self.fork_urls.len());
+                for (i, url) in self.fork_urls.iter().enumerate() {
+                    let _ = writeln!(s, "  ({i}) {url}");
+                }
+            }
 
             if let Some(tx_hash) = fork.transaction_hash() {
                 let _ = writeln!(s, "Transaction hash: {tx_hash}");
@@ -467,6 +478,7 @@ impl Default for NodeConfig {
             port: NODE_PORT,
             max_transactions: 1_000,
             eth_rpc_url: None,
+            fork_urls: vec![],
             fork_choice: None,
             account_generator: None,
             base_fee: None,
@@ -862,6 +874,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets the fork URLs for load-balanced multi-endpoint forking
+    #[must_use]
+    pub fn with_fork_urls(mut self, fork_urls: Vec<String>) -> Self {
+        self.fork_urls = fork_urls;
+        self
+    }
+
     /// Sets the `fork_choice` to use to fork off from based on a block number
     #[must_use]
     pub fn with_fork_block_number<U: Into<u64>>(self, fork_block_number: Option<U>) -> Self {
@@ -1245,7 +1264,17 @@ impl NodeConfig {
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
-        let provider = Arc::new(
+        let provider = Arc::new(if self.fork_urls.len() > 1 {
+            debug!(target: "node", urls=?self.fork_urls, "using multi-endpoint fallback provider");
+            ProviderBuilder::new(&eth_rpc_url)
+                .timeout(self.fork_request_timeout)
+                .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+                .compute_units_per_second(self.compute_units_per_second)
+                .max_retry(self.fork_request_retries)
+                .headers(self.fork_headers.clone())
+                .build_fallback(self.fork_urls.clone())
+                .wrap_err("failed to establish fallback provider to fork urls")?
+        } else {
             ProviderBuilder::new(&eth_rpc_url)
                 .timeout(self.fork_request_timeout)
                 .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
@@ -1253,8 +1282,8 @@ impl NodeConfig {
                 .max_retry(self.fork_request_retries)
                 .headers(self.fork_headers.clone())
                 .build()
-                .wrap_err("failed to establish provider to fork url")?,
-        );
+                .wrap_err("failed to establish provider to fork url")?
+        });
 
         let (fork_block_number, fork_chain_id, force_transactions) = if let Some(fork_choice) =
             &self.fork_choice
@@ -1417,6 +1446,7 @@ latest block number: {latest_block}"
 
         let config = ClientForkConfig {
             eth_rpc_url,
+            fork_urls: self.fork_urls.clone(),
             block_number: fork_block_number,
             block_hash,
             transaction_hash: self.fork_choice.and_then(|fc| fc.transaction_hash()),
