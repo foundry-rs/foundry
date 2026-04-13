@@ -75,7 +75,7 @@ impl<'src> MutantVisitor<'src> {
     }
 
     /// Set the source code for extracting original text
-    pub fn with_source(mut self, source: &'src str) -> Self {
+    pub const fn with_source(mut self, source: &'src str) -> Self {
         self.source = Some(source);
         self
     }

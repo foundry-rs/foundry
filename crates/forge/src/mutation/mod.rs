@@ -46,8 +46,8 @@ impl Default for MutationsSummary {
 }
 
 impl MutationsSummary {
-    pub fn new() -> Self {
-        Self { dead: vec![], survived: vec![], invalid: vec![], skipped: vec![] }
+    pub const fn new() -> Self {
+        Self { dead: Vec::new(), survived: Vec::new(), invalid: Vec::new(), skipped: Vec::new() }
     }
 
     pub fn update_invalid_mutant(&mut self, mutant: Mutant) {
@@ -66,35 +66,35 @@ impl MutationsSummary {
         self.skipped.push(mutant);
     }
 
-    pub fn total_mutants(&self) -> usize {
+    pub const fn total_mutants(&self) -> usize {
         self.dead.len() + self.survived.len() + self.invalid.len() + self.skipped.len()
     }
 
-    pub fn total_dead(&self) -> usize {
+    pub const fn total_dead(&self) -> usize {
         self.dead.len()
     }
 
-    pub fn total_survived(&self) -> usize {
+    pub const fn total_survived(&self) -> usize {
         self.survived.len()
     }
 
-    pub fn total_invalid(&self) -> usize {
+    pub const fn total_invalid(&self) -> usize {
         self.invalid.len()
     }
 
-    pub fn total_skipped(&self) -> usize {
+    pub const fn total_skipped(&self) -> usize {
         self.skipped.len()
     }
 
-    pub fn get_dead(&self) -> &Vec<Mutant> {
+    pub const fn get_dead(&self) -> &Vec<Mutant> {
         &self.dead
     }
 
-    pub fn get_survived(&self) -> &Vec<Mutant> {
+    pub const fn get_survived(&self) -> &Vec<Mutant> {
         &self.survived
     }
 
-    pub fn get_invalid(&self) -> &Vec<Mutant> {
+    pub const fn get_invalid(&self) -> &Vec<Mutant> {
         &self.invalid
     }
 
@@ -272,7 +272,7 @@ impl MutationHandler {
     }
 
     /// Get a reference to the current report
-    pub fn get_report(&self) -> &MutationsSummary {
+    pub const fn get_report(&self) -> &MutationsSummary {
         &self.report
     }
 

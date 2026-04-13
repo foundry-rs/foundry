@@ -47,7 +47,7 @@ where
 }
 
 impl UnaryOpMutated {
-    pub fn new(new_expression: String, resulting_op_kind: UnOpKind) -> Self {
+    pub const fn new(new_expression: String, resulting_op_kind: UnOpKind) -> Self {
         Self { new_expression, resulting_op_kind }
     }
 }
