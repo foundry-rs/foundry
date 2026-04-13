@@ -94,7 +94,7 @@ impl Comments {
 
             // Stop when we find a trailing or a non-mixed comment
             match cmnt.style {
-                CommentStyle::Mixed => continue,
+                CommentStyle::Mixed => {}
                 CommentStyle::Trailing => return Some((cmnt, i)),
                 _ => break,
             }
