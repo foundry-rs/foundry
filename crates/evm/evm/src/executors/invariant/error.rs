@@ -110,6 +110,8 @@ impl FailedInvariantCaseData {
         }
     }
 
+    /// Marks this case as assertion-originated and normalizes empty decoded revert data from
+    /// non-reverting assertion paths into a stable user-facing message.
     pub fn with_assertion_failure(mut self, assertion_failure: bool) -> Self {
         self.assertion_failure = assertion_failure;
         if assertion_failure && self.revert_reason == "<empty revert data>" {
