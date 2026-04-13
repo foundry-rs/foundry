@@ -1049,4 +1049,20 @@ mod tests {
             "should reject block suffix on secondary fork URL"
         );
     }
+
+    #[test]
+    fn fork_dependent_args_require_fork_url() {
+        // All these args have `requires = "fork_url"` — they should fail without --fork-url
+        let cases = [
+            vec!["anvil", "--fork-header", "X-Api-Key: test"],
+            vec!["anvil", "--timeout", "5000"],
+            vec!["anvil", "--retries", "3"],
+            vec!["anvil", "--fork-block-number", "100"],
+            vec!["anvil", "--fork-retry-backoff", "500"],
+        ];
+        for args in &cases {
+            let result = NodeArgs::try_parse_from(args);
+            assert!(result.is_err(), "expected error when using {:?} without --fork-url", args[1]);
+        }
+    }
 }

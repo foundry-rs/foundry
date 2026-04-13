@@ -180,7 +180,7 @@ impl From<RpcEndpointUrl> for RpcEndpointType {
 
 impl From<RpcEndpointUrl> for RpcEndpoint {
     fn from(endpoint: RpcEndpointUrl) -> Self {
-        Self { endpoint, extra_endpoints: vec![], ..Default::default() }
+        Self { endpoint, ..Default::default() }
     }
 }
 

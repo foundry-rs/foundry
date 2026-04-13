@@ -389,10 +389,12 @@ impl<N: Network> ProviderBuilder<N> {
             headers,
             accept_invalid_certs,
             no_proxy,
+            curl_mode,
             ..
         } = self;
 
         eyre::ensure!(!urls.is_empty(), "at least one fork URL is required");
+        eyre::ensure!(!curl_mode, "curl mode is not supported with multiple fork URLs");
 
         // Build a RuntimeTransport for each URL, using the same URL normalization
         // as ProviderBuilder::new() (handles localhost:port, raw socket addrs, IPC paths)
