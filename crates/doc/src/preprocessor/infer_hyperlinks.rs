@@ -169,9 +169,9 @@ impl InferInlineHyperlinks {
                         Self::find_match(
                             &link,
                             doc.relative_output_path(),
-                            doc.content.iter_items().flat_map(|item| {
-                                Some(item).into_iter().chain(item.children.iter())
-                            }),
+                            doc.content
+                                .iter_items()
+                                .flat_map(|item| std::iter::once(item).chain(item.children.iter())),
                         )
                     })
                 } else {
@@ -182,7 +182,7 @@ impl InferInlineHyperlinks {
                         parent
                             .content
                             .iter_items()
-                            .flat_map(|item| Some(item).into_iter().chain(item.children.iter())),
+                            .flat_map(|item| std::iter::once(item).chain(item.children.iter())),
                     )
                 };
                 if let Some(target) = target {

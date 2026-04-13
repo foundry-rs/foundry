@@ -1982,11 +1982,10 @@ impl Config {
             })
             .collect::<Vec<_>>();
         // wrap inner table in [profile.<profile>]
-        let mut wrapping_table = [(
+        let mut wrapping_table = std::iter::once((
             Self::PROFILE_SECTION.into(),
-            toml::Value::Table([(self.profile.to_string(), value)].into_iter().collect()),
-        )]
-        .into_iter()
+            toml::Value::Table(std::iter::once((self.profile.to_string(), value)).collect()),
+        ))
         .collect::<toml::map::Map<_, _>>();
         // insert standalone sections
         for (section, value) in standalone_sections {

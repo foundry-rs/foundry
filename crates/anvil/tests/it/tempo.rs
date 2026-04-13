@@ -2189,8 +2189,7 @@ async fn test_gas_estimation_tempo_aa_transaction() {
 
     let tx: WithOtherFields<TransactionRequest> = WithOtherFields {
         inner: TransactionRequest::default().from(accounts[0]).to(PATH_USD).with_input(calldata),
-        other: [("feeToken".to_string(), serde_json::json!(PATH_USD.to_string()))]
-            .into_iter()
+        other: std::iter::once(("feeToken".to_string(), serde_json::json!(PATH_USD.to_string())))
             .collect(),
     };
 
@@ -2224,8 +2223,7 @@ async fn test_gas_estimation_tempo_aa_with_2d_nonce() {
             .from(accounts[0])
             .to(PATH_USD)
             .with_input(calldata.clone()),
-        other: [("feeToken".to_string(), serde_json::json!(PATH_USD.to_string()))]
-            .into_iter()
+        other: std::iter::once(("feeToken".to_string(), serde_json::json!(PATH_USD.to_string())))
             .collect(),
     };
     let baseline_gas = provider.estimate_gas(baseline_tx).await.unwrap();
@@ -2278,8 +2276,7 @@ async fn test_gas_estimation_tempo_aa_expiring_nonce() {
             .from(accounts[0])
             .to(PATH_USD)
             .with_input(calldata.clone()),
-        other: [("feeToken".to_string(), serde_json::json!(PATH_USD.to_string()))]
-            .into_iter()
+        other: std::iter::once(("feeToken".to_string(), serde_json::json!(PATH_USD.to_string())))
             .collect(),
     };
     let baseline_gas = provider.estimate_gas(baseline_tx).await.unwrap();
@@ -2337,8 +2334,7 @@ async fn test_gas_estimation_t1_nonce_costs() {
             .from(accounts[0])
             .to(PATH_USD)
             .with_input(calldata.clone()),
-        other: [("feeToken".to_string(), serde_json::json!(PATH_USD.to_string()))]
-            .into_iter()
+        other: std::iter::once(("feeToken".to_string(), serde_json::json!(PATH_USD.to_string())))
             .collect(),
     };
     let baseline_gas = provider.estimate_gas(baseline_tx).await.unwrap();
@@ -2371,8 +2367,7 @@ async fn test_gas_estimation_t1_nonce_costs() {
             .to(PATH_USD)
             .with_input(calldata.clone())
             .with_nonce(1),
-        other: [("feeToken".to_string(), serde_json::json!(PATH_USD.to_string()))]
-            .into_iter()
+        other: std::iter::once(("feeToken".to_string(), serde_json::json!(PATH_USD.to_string())))
             .collect(),
     };
     let baseline_nonce1_gas = provider.estimate_gas(baseline_nonce1_tx).await.unwrap();
@@ -2521,8 +2516,7 @@ async fn test_gas_estimation_converges_for_tempo_intrinsic_gas() {
             .from(accounts[0])
             .to(PATH_USD)
             .with_input(calldata.clone()),
-        other: [("feeToken".to_string(), serde_json::json!(PATH_USD.to_string()))]
-            .into_iter()
+        other: std::iter::once(("feeToken".to_string(), serde_json::json!(PATH_USD.to_string())))
             .collect(),
     };
 

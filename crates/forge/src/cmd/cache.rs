@@ -173,7 +173,7 @@ impl TypedValueParser for ChainOrAllValueParser {
 }
 
 fn possible_chains() -> PossibleValuesParser {
-    Some(&"all").into_iter().chain(NamedChain::VARIANTS).into()
+    std::iter::once(&"all").chain(NamedChain::VARIANTS).into()
 }
 
 #[cfg(test)]
