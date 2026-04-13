@@ -347,7 +347,7 @@ pub struct Config {
     pub coverage_pattern_inverse: Option<RegexWrapper>,
     /// Path where last test run failures are recorded.
     pub test_failures_file: PathBuf,
-    /// Pathe where mutation tests are cached, to resume running them
+    /// Path where mutation tests are cached, to resume running them
     pub mutation_dir: PathBuf,
     /// Max concurrent threads to use.
     pub threads: Option<usize>,

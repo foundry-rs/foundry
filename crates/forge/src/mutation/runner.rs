@@ -19,7 +19,7 @@ use foundry_common::{EmptyTestFilter, compile::ProjectCompiler, sh_eprintln, sh_
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::Config;
 use foundry_evm::{
-    core::evm::{BlockEnvFor, EthEvmNetwork, SpecFor, TxEnvFor},
+    core::evm::{BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor},
     opts::EvmOpts,
 };
 use rayon::prelude::*;
@@ -415,7 +415,22 @@ fn apply_mutation(mutant: &Mutant, original_source: &str, dest_path: &Path) -> R
 }
 
 /// Compile the project and run tests, returning true if any test failed (mutant killed).
+///
+/// Dispatches to the correct network type based on `evm_opts.networks`.
 fn compile_and_test(config: &Arc<Config>, evm_opts: &EvmOpts) -> Result<bool> {
+    if evm_opts.networks.is_tempo() {
+        compile_and_test_inner::<TempoEvmNetwork>(config, evm_opts)
+    } else if evm_opts.networks.is_optimism() {
+        compile_and_test_inner::<OpEvmNetwork>(config, evm_opts)
+    } else {
+        compile_and_test_inner::<EthEvmNetwork>(config, evm_opts)
+    }
+}
+
+fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
+    config: &Arc<Config>,
+    evm_opts: &EvmOpts,
+) -> Result<bool> {
     // Compile
     let compiler =
         ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking).quiet(true);
@@ -432,9 +447,8 @@ fn compile_and_test(config: &Arc<Config>, evm_opts: &EvmOpts) -> Result<bool> {
 
     // Use block_on to run within the runtime context
     let results: BTreeMap<String, SuiteResult> = rt.block_on(async {
-        // Construct EVM env using the EthEvmNetwork type (mutation testing always uses Eth)
         let (evm_env, tx_env, fork_block) = evm_opts
-            .env::<SpecFor<EthEvmNetwork>, BlockEnvFor<EthEvmNetwork>, TxEnvFor<EthEvmNetwork>>()
+            .env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>()
             .await?;
 
         // Build test runner with fail-fast enabled
@@ -444,7 +458,7 @@ fn compile_and_test(config: &Arc<Config>, evm_opts: &EvmOpts) -> Result<bool> {
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block))
             .fail_fast(true)
-            .build::<EthEvmNetwork, MultiCompiler>(
+            .build::<FEN, MultiCompiler>(
                 &compile_output,
                 evm_env,
                 tx_env,

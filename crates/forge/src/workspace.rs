@@ -64,7 +64,7 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
                 }
             }
 
-            symlink_nested_libs(lib_path, &target)?;
+            symlink_nested_libs(lib_path, &target, 0)?;
         }
     }
 
@@ -104,8 +104,15 @@ pub fn symlink_dir(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Maximum recursion depth for nested lib symlinks to prevent infinite loops.
+const MAX_SYMLINK_DEPTH: usize = 10;
+
 /// Recursively symlink nested lib directories within a library.
-fn symlink_nested_libs(lib_src: &Path, lib_dst: &Path) -> Result<()> {
+fn symlink_nested_libs(lib_src: &Path, lib_dst: &Path, depth: usize) -> Result<()> {
+    if depth >= MAX_SYMLINK_DEPTH {
+        return Ok(());
+    }
+
     let nested_lib_dirs: Vec<PathBuf> =
         if let Ok(config) = Config::load_with_root_and_fallback(lib_src) {
             config.libs
@@ -118,13 +125,18 @@ fn symlink_nested_libs(lib_src: &Path, lib_dst: &Path) -> Result<()> {
         if !nested_lib.exists() || !nested_lib.is_dir() {
             continue;
         }
-        process_nested_lib_dir(&nested_lib, lib_dst, &nested_lib_dir)?;
+        process_nested_lib_dir(&nested_lib, lib_dst, &nested_lib_dir, depth)?;
     }
 
     Ok(())
 }
 
-fn process_nested_lib_dir(nested_lib: &Path, lib_dst: &Path, lib_rel: &Path) -> Result<()> {
+fn process_nested_lib_dir(
+    nested_lib: &Path,
+    lib_dst: &Path,
+    lib_rel: &Path,
+    depth: usize,
+) -> Result<()> {
     if !nested_lib.exists() || !nested_lib.is_dir() {
         return Ok(());
     }
@@ -150,7 +162,7 @@ fn process_nested_lib_dir(nested_lib: &Path, lib_dst: &Path, lib_rel: &Path) -> 
             let _ = symlink_dir(&entry_path, &nested_dst);
         }
 
-        symlink_nested_libs(&entry_path, &nested_dst)?;
+        symlink_nested_libs(&entry_path, &nested_dst, depth + 1)?;
     }
 
     Ok(())
