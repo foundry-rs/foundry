@@ -55,6 +55,7 @@ pub fn setup() -> Result<()> {
 }
 
 /// Run the subcommand.
+#[allow(clippy::large_stack_frames)]
 pub async fn run_command(args: CastArgs) -> Result<()> {
     match args.cmd {
         // Constants

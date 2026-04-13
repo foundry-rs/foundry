@@ -5,7 +5,7 @@ use solar::parse::{
     interface::BytePos,
 };
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CommentStyle {
     /// No code on either side of each line of the comment
     Isolated,

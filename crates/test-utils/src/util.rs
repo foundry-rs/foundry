@@ -174,7 +174,7 @@ pub fn get_vyper() -> Vyper {
         let path = VYPER.as_path();
         let mut file = File::create(path).unwrap();
         if let Err(e) = file.try_lock() {
-            if let fs::TryLockError::WouldBlock = e {
+            if matches!(e, fs::TryLockError::WouldBlock) {
                 file.lock().unwrap();
                 assert!(path.exists());
                 return Vyper::new(path).unwrap();

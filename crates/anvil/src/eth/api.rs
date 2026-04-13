@@ -625,6 +625,7 @@ impl<N: Network> EthApi<N> {
     }
 
     /// Handler for RPC call: `anvil_getBlobByHash`
+    #[allow(clippy::large_stack_frames)]
     pub fn anvil_get_blob_by_versioned_hash(
         &self,
         hash: B256,
@@ -1480,6 +1481,7 @@ impl EthApi<FoundryNetwork> {
     }
 
     /// Executes the [EthRequest] and returns an RPC [ResponseResult].
+    #[allow(clippy::large_stack_frames)]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
         let response = match request.clone() {

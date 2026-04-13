@@ -59,6 +59,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{TraceMode, Traces},
 };
+use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -249,8 +250,13 @@ impl ScriptArgs {
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
-        // Auto-detect network from fork chain ID when not explicitly configured.
-        evm_opts.infer_network_from_fork().await;
+        if self.fee_token.is_some() {
+            // If fee token is set directly select tempo
+            evm_opts.networks = NetworkConfigs::with_tempo();
+        } else {
+            // Auto-detect network from fork chain ID when not explicitly configured.
+            evm_opts.infer_network_from_fork().await;
+        }
 
         Ok((config, evm_opts))
     }
@@ -289,6 +295,7 @@ impl ScriptArgs {
     }
 
     /// Executes the script
+    #[allow(clippy::large_stack_frames)]
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
@@ -323,6 +330,7 @@ impl ScriptArgs {
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
     /// for broadcasting, or returns `None` if there's nothing to broadcast
     /// (e.g., debug mode, no transactions, missing RPCs).
+    #[allow(clippy::large_stack_frames)]
     async fn prepare_bundled<FEN: FoundryEvmNetwork>(
         self,
         config: Config,
@@ -532,7 +540,6 @@ impl ScriptArgs {
                 bytecodes.push((format!("Unknown{unknown_c}"), init_code, deployed_code));
                 unknown_c += 1;
             }
-            continue;
         }
 
         let mut prompt_user = false;

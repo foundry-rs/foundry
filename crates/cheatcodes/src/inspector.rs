@@ -902,7 +902,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
             if prank.delegate_call
                 && curr_depth == prank.depth
-                && let CallScheme::DelegateCall = call.scheme
+                && call.scheme == CallScheme::DelegateCall
             {
                 call.target_address = prank.new_caller;
                 call.caller = prank.new_caller;
