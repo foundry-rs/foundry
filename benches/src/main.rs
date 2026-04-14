@@ -1,60 +1,70 @@
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_bench::{
-    BENCHMARK_REPOS, BenchmarkProject, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_version,
-    get_forge_version_details,
-    results::{BenchmarkResults, HyperfineResult},
-    switch_foundry_version,
+    ALL_BENCHMARKS, BENCHMARK_REPOS, BenchmarkProject, RUNS, RepoConfig, get_forge_version_details,
+    install_foundry_version, results::BenchmarkResults, switch_foundry_version,
 };
 use foundry_common::sh_println;
 use rayon::prelude::*;
 use std::{fs, path::PathBuf, process::Command, sync::Mutex};
 
-const ALL_BENCHMARKS: [&str; 6] = [
-    "forge_test",
-    "forge_build_no_cache",
-    "forge_build_with_cache",
-    "forge_fuzz_test",
-    "forge_coverage",
-    "forge_isolate_test",
-];
-
 /// Foundry Benchmark Runner
+///
+/// Compare two Foundry versions (baseline vs feature) across test repositories. Produces
+/// structured JSON output suitable for automated regression detection and CI integration.
 #[derive(Parser, Debug)]
-#[clap(name = "foundry-bench", about = "Run Foundry benchmarks across multiple versions")]
+#[clap(name = "foundry-bench")]
 struct Cli {
-    /// Comma-separated list of Foundry versions to test (e.g., stable,nightly,v1.2.0)
-    #[clap(long, value_delimiter = ',')]
-    versions: Option<Vec<String>>,
+    /// Baseline Foundry version (e.g., stable, nightly, v1.2.0, or a commit hash)
+    #[clap(long, default_value = "stable")]
+    baseline: String,
 
-    /// Force install Foundry versions
+    /// Feature Foundry version to compare against the baseline
+    #[clap(long, default_value = "nightly")]
+    feature: String,
+
+    /// Force install Foundry versions before benchmarking
     #[clap(long)]
     force_install: bool,
 
-    /// Show verbose output
+    /// Show verbose output (hyperfine --show-output)
     #[clap(long)]
     verbose: bool,
 
-    /// Directory where the aggregated benchmark results will be written.
+    /// Directory where benchmark results will be written
     #[clap(long, default_value = ".")]
     output_dir: PathBuf,
 
-    /// Name of the output file (default: LATEST.md)
+    /// Name of the markdown output file
     #[clap(long, default_value = "LATEST.md")]
     output_file: String,
 
-    /// Run only specific benchmarks (comma-separated:
-    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage)
+    /// Number of runs per benchmark (default: 5)
+    #[clap(long, default_value_t = RUNS)]
+    runs: u32,
+
+    /// Comma-separated list of benchmarks to run
     #[clap(long, value_delimiter = ',')]
     benchmarks: Option<Vec<String>>,
 
-    /// Run only on specific repositories (comma-separated in org/repo[:rev] format:
-    /// ithacaxyz/account,Vectorized/solady:main,foundry-rs/foundry:v1.0.0)
+    /// Comma-separated list of repos in org/repo[:rev] format
     #[clap(long, value_delimiter = ',')]
     repos: Option<Vec<String>>,
+
+    /// Output structured JSON bundle instead of markdown
+    #[clap(long)]
+    json: bool,
+
+    /// Noise threshold percentage for verdict classification (default: 3.0%)
+    #[clap(long, default_value_t = 3.0)]
+    noise_threshold: f64,
+
+    /// RPC URL for fork-mode benchmarks (required when forge_fork_test is selected)
+    #[clap(long)]
+    fork_url: Option<String>,
 }
 
-/// Mutex to prevent concurrent foundryup calls
+/// Mutex to prevent concurrent foundryup calls.
 static FOUNDRY_LOCK: Mutex<()> = Mutex::new(());
 fn switch_version_safe(version: &str) -> Result<()> {
     let _lock = FOUNDRY_LOCK.lock().unwrap();
@@ -66,65 +76,64 @@ fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
 
-    // Check if hyperfine is installed
+    // Preflight: check hyperfine.
     let hyperfine_check = Command::new("hyperfine").arg("--version").output();
     if hyperfine_check.is_err() || !hyperfine_check.unwrap().status.success() {
         eyre::bail!(
-            "hyperfine is not installed. Please install it first: https://github.com/sharkdp/hyperfine"
+            "hyperfine is not installed. Please install it first: \
+             https://github.com/sharkdp/hyperfine"
         );
     }
 
-    // Determine versions to test
-    let versions = if let Some(v) = cli.versions {
-        v
-    } else {
-        FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
-    };
-
-    // Get repo configurations
     let repos = if let Some(repo_specs) = cli.repos.clone() {
         repo_specs.iter().map(|spec| spec.parse::<RepoConfig>()).collect::<Result<Vec<_>>>()?
     } else {
         BENCHMARK_REPOS.clone()
     };
 
-    sh_println!("🚀 Foundry Benchmark Runner");
-    sh_println!("Running with versions: {}", versions.join(", "));
+    sh_println!("🚀 Foundry Benchmark Runner (baseline vs feature)");
+    sh_println!("  Baseline: {}", cli.baseline);
+    sh_println!("  Feature:  {}", cli.feature);
     sh_println!(
-        "Running on repos: {}",
+        "  Repos:    {}",
         repos.iter().map(|r| format!("{}/{}", r.org, r.repo)).collect::<Vec<_>>().join(", ")
     );
 
-    // Install versions if requested
     if cli.force_install {
-        install_foundry_versions(&versions)?;
+        sh_println!("📦 Installing Foundry versions...");
+        install_foundry_version(&cli.baseline)?;
+        install_foundry_version(&cli.feature)?;
+        sh_println!("✅ Versions installed");
     }
 
-    // Determine benchmarks to run
-    let benchmarks = if let Some(b) = cli.benchmarks {
+    let benchmarks: Vec<String> = if let Some(b) = cli.benchmarks {
         b.into_iter().filter(|b| ALL_BENCHMARKS.contains(&b.as_str())).collect()
     } else {
-        // Default: run all benchmarks except fuzz tests and coverage (which can be slow)
-        vec!["forge_test", "forge_build_no_cache", "forge_build_with_cache"]
+        vec!["forge_test", "forge_fuzz_test", "forge_invariant_test"]
             .into_iter()
             .map(String::from)
-            .collect::<Vec<_>>()
+            .collect()
     };
+
+    // Validate fork URL requirement.
+    if benchmarks.iter().any(|b| b == "forge_fork_test") && cli.fork_url.is_none() {
+        eyre::bail!(
+            "forge_fork_test requires --fork-url to be set. \
+             Example: --fork-url https://eth.merkle.io"
+        );
+    }
 
     sh_println!("Running benchmarks: {}", benchmarks.join(", "));
 
-    let mut results = BenchmarkResults::new();
-    // Set the first version as baseline
-    if let Some(first_version) = versions.first() {
-        results.set_baseline_version(first_version.clone());
-    }
+    // Ensure output directory exists.
+    fs::create_dir_all(&cli.output_dir)?;
 
-    // Setup all projects upfront before version loop
-    sh_println!("📦 Setting up projects to benchmark");
+    // Setup all projects upfront.
+    sh_println!("📦 Setting up test projects...");
     let projects: Vec<(RepoConfig, BenchmarkProject)> = repos
         .par_iter()
         .map(|repo_config| -> Result<(RepoConfig, BenchmarkProject)> {
-            sh_println!("Setting up {}/{}", repo_config.org, repo_config.repo);
+            sh_println!("  Setting up {}/{}", repo_config.org, repo_config.repo);
             let project = BenchmarkProject::setup(repo_config).wrap_err(format!(
                 "Failed to setup project for {}/{}",
                 repo_config.org, repo_config.repo
@@ -132,109 +141,122 @@ fn main() -> Result<()> {
             Ok((repo_config.clone(), project))
         })
         .collect::<Result<Vec<_>>>()?;
+    sh_println!("✅ All projects ready\n");
 
-    sh_println!("✅ All projects setup complete");
+    let mut results = BenchmarkResults::new();
 
-    // Create a list of all benchmark tasks (same for all versions)
-    let benchmark_tasks: Vec<_> = projects
-        .iter()
-        .flat_map(|(repo_config, project)| {
-            benchmarks
-                .iter()
-                .map(move |benchmark| (repo_config.clone(), project, benchmark.clone()))
-        })
-        .collect();
+    // Run baseline.
+    sh_println!("═══════════════════════════════════════════");
+    sh_println!("  BASELINE: {}", cli.baseline);
+    sh_println!("═══════════════════════════════════════════");
+    switch_version_safe(&cli.baseline)?;
+    let baseline_version = get_forge_version_details()?;
+    sh_println!("  Version: {baseline_version}");
 
-    sh_println!("Will run {} benchmark tasks per version", benchmark_tasks.len());
+    run_benchmarks(
+        &projects,
+        &benchmarks,
+        "baseline",
+        &mut results,
+        cli.runs,
+        cli.verbose,
+        cli.fork_url.as_deref(),
+    )?;
 
-    // Run benchmarks for each version
-    for version in &versions {
-        sh_println!("🔧 Switching to Foundry version: {version}");
-        switch_version_safe(version)?;
+    // Run feature.
+    sh_println!("\n═══════════════════════════════════════════");
+    sh_println!("  FEATURE: {}", cli.feature);
+    sh_println!("═══════════════════════════════════════════");
+    switch_version_safe(&cli.feature)?;
+    let feature_version = get_forge_version_details()?;
+    sh_println!("  Version: {feature_version}");
 
-        // Verify the switch and capture full version details
-        let current = get_forge_version()?;
-        sh_println!("Current version: {}", current.trim());
+    run_benchmarks(
+        &projects,
+        &benchmarks,
+        "feature",
+        &mut results,
+        cli.runs,
+        cli.verbose,
+        cli.fork_url.as_deref(),
+    )?;
 
-        // Get and store the full version details with commit hash and date
-        let version_details = get_forge_version_details()?;
-        results.add_version_details(version, version_details);
+    // Generate output.
+    sh_println!("\n📝 Generating report...");
 
-        sh_println!("Running benchmark tasks for version {version}...");
+    if cli.json {
+        let bundle = results.to_bundle(
+            &cli.baseline,
+            &cli.feature,
+            &baseline_version,
+            &feature_version,
+            cli.noise_threshold,
+        );
+        let json = serde_json::to_string_pretty(&bundle)?;
 
-        // Run all benchmarks sequentially
-        let version_results = benchmark_tasks
-            .iter()
-            .map(|(repo_config, project, benchmark)| -> Result<(String, String, HyperfineResult)> {
-                sh_println!("Running {} on {}/{}", benchmark, repo_config.org, repo_config.repo);
+        let json_path = cli.output_dir.join("bundle.json");
+        fs::write(&json_path, &json).wrap_err("Failed to write bundle JSON")?;
+        sh_println!("✅ Bundle written to: {}", json_path.display());
 
-                // Determine runs based on benchmark type
-                let runs = match benchmark.as_str() {
-                    "forge_coverage" => 1, // Coverage runs only once as an exception
-                    _ => RUNS,             // Use default RUNS constant for all other benchmarks
-                };
-
-                // Run the appropriate benchmark
-                let result = project.run(benchmark, version, runs, cli.verbose);
-
-                match result {
-                    Ok(hyperfine_result) => {
-                        sh_println!(
-                            "  {} on {}/{}: {:.3}s ± {:.3}s",
-                            benchmark,
-                            repo_config.org,
-                            repo_config.repo,
-                            hyperfine_result.mean,
-                            hyperfine_result.stddev.unwrap_or(0.0)
-                        );
-                        Ok((repo_config.name.clone(), benchmark.clone(), hyperfine_result))
-                    }
-                    Err(e) => {
-                        eyre::bail!(
-                            "Benchmark {} failed for {}/{}: {}",
-                            benchmark,
-                            repo_config.org,
-                            repo_config.repo,
-                            e
-                        );
-                    }
-                }
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        // Add all collected results to the main results structure
-        for (repo_name, benchmark, hyperfine_result) in version_results {
-            results.add_result(&benchmark, version, &repo_name, hyperfine_result);
-        }
+        // Also print to stdout for piping.
+        sh_println!("{json}");
+    } else {
+        let markdown = results.generate_markdown(
+            &cli.baseline,
+            &cli.feature,
+            &baseline_version,
+            &feature_version,
+            &repos,
+            cli.noise_threshold,
+        );
+        let output_path = cli.output_dir.join(&cli.output_file);
+        fs::write(&output_path, &markdown).wrap_err("Failed to write markdown")?;
+        sh_println!("✅ Report written to: {}", output_path.display());
     }
 
-    // Generate markdown report
-    sh_println!("📝 Generating report...");
-    let markdown = results.generate_markdown(&versions, &repos);
-    let output_path = cli.output_dir.join(cli.output_file);
-    fs::write(&output_path, markdown).wrap_err("Failed to write output file")?;
-    sh_println!("✅ Report written to: {}", output_path.display());
+    // Print summary verdict.
+    let comparisons = results.compare(cli.noise_threshold);
+    let overall = foundry_bench::results::BenchmarkResults::overall_verdict(&comparisons);
+    sh_println!("\n{} Overall verdict: {}", overall.emoji(), overall);
+
+    // Exit with non-zero if regression detected.
+    if overall == foundry_bench::results::Verdict::Regressed {
+        std::process::exit(1);
+    }
 
     Ok(())
 }
 
+/// Run all benchmarks for a given side (baseline or feature).
 #[allow(unused_must_use)]
-fn install_foundry_versions(versions: &[String]) -> Result<()> {
-    sh_println!("Installing Foundry versions...");
+fn run_benchmarks(
+    projects: &[(RepoConfig, BenchmarkProject)],
+    benchmarks: &[String],
+    side: &str,
+    results: &mut BenchmarkResults,
+    runs: u32,
+    verbose: bool,
+    fork_url: Option<&str>,
+) -> Result<()> {
+    for (repo_config, project) in projects {
+        for benchmark in benchmarks {
+            sh_println!("  ▶ {benchmark} on {}/{}...", repo_config.org, repo_config.repo);
 
-    for version in versions {
-        sh_println!("Installing {version}...");
+            let bench_runs = match benchmark.as_str() {
+                "forge_coverage" => 1,
+                _ => runs,
+            };
 
-        let status = Command::new("foundryup")
-            .args(["--install", version, "--force"])
-            .status()
-            .wrap_err("Failed to run foundryup")?;
+            let result =
+                project.run(benchmark, side, bench_runs, verbose, fork_url).wrap_err(format!(
+                    "{benchmark} failed for {}/{} on {side}",
+                    repo_config.org, repo_config.repo
+                ))?;
 
-        if !status.success() {
-            eyre::bail!("Failed to install Foundry version: {}", version);
+            sh_println!("    {:.3}s ± {:.3}s", result.mean, result.stddev.unwrap_or(0.0));
+            results.add_result(benchmark, side, &repo_config.name, result);
         }
     }
 
-    sh_println!("✅ All versions installed successfully");
     Ok(())
 }

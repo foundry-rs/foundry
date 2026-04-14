@@ -1,4 +1,8 @@
-//! Foundry benchmark runner.
+//! Foundry benchmark runner with branch-vs-branch comparison.
+//!
+//! Supports benchmarking forge commands (test, fuzz, invariant, fork, build) across two Foundry
+//! builds (baseline vs feature), producing structured JSON output with automated regression
+//! detection.
 
 use crate::results::{HyperfineOutput, HyperfineResult};
 use eyre::{Result, WrapErr};
@@ -14,10 +18,22 @@ use std::{
 
 pub mod results;
 
-/// Default number of runs for benchmarks
+/// Default number of runs per benchmark.
 pub const RUNS: u32 = 5;
 
-/// Configuration for repositories to benchmark
+/// All available benchmark types.
+pub const ALL_BENCHMARKS: &[&str] = &[
+    "forge_test",
+    "forge_fuzz_test",
+    "forge_invariant_test",
+    "forge_fork_test",
+    "forge_isolate_test",
+    "forge_build_no_cache",
+    "forge_build_with_cache",
+    "forge_coverage",
+];
+
+/// Configuration for a repository to benchmark.
 #[derive(Debug, Clone)]
 pub struct RepoConfig {
     pub name: String,
@@ -30,12 +46,10 @@ impl FromStr for RepoConfig {
     type Err = eyre::Error;
 
     fn from_str(spec: &str) -> Result<Self> {
-        // Split by ':' first to separate repo path from optional rev
         let parts: Vec<&str> = spec.splitn(2, ':').collect();
         let repo_path = parts[0];
         let custom_rev = parts.get(1).copied();
 
-        // Now split the repo path by '/'
         let path_parts: Vec<&str> = repo_path.split('/').collect();
         if path_parts.len() != 2 {
             eyre::bail!("Invalid repo format '{}'. Expected 'org/repo' or 'org/repo:rev'", spec);
@@ -44,19 +58,15 @@ impl FromStr for RepoConfig {
         let org = path_parts[0];
         let repo = path_parts[1];
 
-        // Try to find this repo in BENCHMARK_REPOS to get the full config
         let existing_config = BENCHMARK_REPOS.iter().find(|r| r.org == org && r.repo == repo);
 
         let config = if let Some(existing) = existing_config {
-            // Use existing config but allow custom rev to override
             let mut config = existing.clone();
             if let Some(rev) = custom_rev {
                 config.rev = rev.to_string();
             }
             config
         } else {
-            // Create new config with custom rev or default
-            // Name should follow the format: org-repo (with hyphen)
             Self {
                 name: format!("{org}-{repo}"),
                 org: org.to_string(),
@@ -70,63 +80,45 @@ impl FromStr for RepoConfig {
     }
 }
 
-/// Available repositories for benchmarking
+/// Default repositories for benchmarking.
 pub fn default_benchmark_repos() -> Vec<RepoConfig> {
     vec![
         RepoConfig {
             name: "ithacaxyz-account".to_string(),
             org: "ithacaxyz".to_string(),
             repo: "account".to_string(),
-            rev: "main".to_string(),
+            rev: "v0.3.2".to_string(),
         },
         RepoConfig {
             name: "solady".to_string(),
             org: "Vectorized".to_string(),
             repo: "solady".to_string(),
-            rev: "main".to_string(),
+            rev: "v0.1.22".to_string(),
         },
     ]
 }
 
-// Keep a lazy static for compatibility
 pub static BENCHMARK_REPOS: Lazy<Vec<RepoConfig>> = Lazy::new(default_benchmark_repos);
 
-/// Foundry versions to benchmark
-///
-/// To add more versions for comparison, install them first:
-/// ```bash
-/// foundryup --install stable
-/// foundryup --install nightly
-/// foundryup --install v0.2.0  # Example specific version
-/// ```
-///
-/// Then add the version strings to this array. Supported formats:
-/// - "stable" - Latest stable release
-/// - "nightly" - Latest nightly build
-/// - "v0.2.0" - Specific version tag
-/// - "commit-hash" - Specific commit hash
-/// - "nightly-rev" - Nightly build with specific revision
-pub static FOUNDRY_VERSIONS: &[&str] = &["stable", "nightly"];
-
-/// A benchmark project that represents a cloned repository ready for testing
+/// A benchmark project that represents a cloned repository ready for testing.
 pub struct BenchmarkProject {
     pub name: String,
-    pub temp_project: TempProject,
     pub root_path: PathBuf,
+    #[expect(dead_code)]
+    temp_project: TempProject,
 }
 
 impl BenchmarkProject {
-    /// Set up a benchmark project by cloning the repository
+    /// Set up a benchmark project by cloning the repository.
     #[allow(unused_must_use)]
     pub fn setup(config: &RepoConfig) -> Result<Self> {
         let temp_project =
             TempProject::dapptools().wrap_err("Failed to create temporary project")?;
 
-        // Get root path before clearing
         let root_path = temp_project.root().to_path_buf();
         let root = root_path.to_str().unwrap();
 
-        // Remove all files in the directory
+        // Clear temp directory.
         for entry in std::fs::read_dir(&root_path)? {
             let entry = entry?;
             let path = entry.path();
@@ -137,11 +129,9 @@ impl BenchmarkProject {
             }
         }
 
-        // Clone the repository
         let repo_url = format!("https://github.com/{}/{}.git", config.org, config.repo);
         clone_remote(&repo_url, root, true);
 
-        // Checkout specific revision if provided
         if !config.rev.is_empty() && config.rev != "main" && config.rev != "master" {
             let status = Command::new("git")
                 .current_dir(root)
@@ -154,15 +144,12 @@ impl BenchmarkProject {
             }
         }
 
-        // Git submodules are already cloned via --recursive flag
-        // But npm dependencies still need to be installed
         Self::install_npm_dependencies(&root_path)?;
 
         sh_println!("  ✅ Project {} setup complete at {}", config.name, root);
         Ok(Self { name: config.name.clone(), root_path, temp_project })
     }
 
-    /// Install npm dependencies if package.json exists
     #[allow(unused_must_use)]
     fn install_npm_dependencies(root: &Path) -> Result<()> {
         if root.join("package.json").exists() {
@@ -187,48 +174,27 @@ impl BenchmarkProject {
         Ok(())
     }
 
-    /// Run a command with hyperfine and return the results
-    ///
-    /// # Arguments
-    /// * `benchmark_name` - Name of the benchmark for organizing output
-    /// * `version` - Foundry version being benchmarked
-    /// * `command` - The command to benchmark
-    /// * `runs` - Number of runs to perform
-    /// * `setup` - Optional setup command to run before the benchmark series (e.g., "forge build")
-    /// * `prepare` - Optional prepare command to run before each timing run (e.g., "forge clean")
-    /// * `conclude` - Optional conclude command to run after each timing run (e.g., cleanup)
-    /// * `verbose` - Whether to show command output
-    ///
-    /// # Hyperfine flags used:
-    /// * `--runs` - Number of timing runs
-    /// * `--setup` - Execute before the benchmark series (not before each run)
-    /// * `--prepare` - Execute before each timing run
-    /// * `--conclude` - Execute after each timing run
-    /// * `--export-json` - Export results to JSON for parsing
-    /// * `--shell=bash` - Use bash for shell command execution
-    /// * `--show-output` - Show command output (when verbose)
+    /// Run a command with hyperfine and return the results.
     #[allow(clippy::too_many_arguments)]
     fn hyperfine(
         &self,
         benchmark_name: &str,
-        version: &str,
+        label: &str,
         command: &str,
         runs: u32,
         setup: Option<&str>,
         prepare: Option<&str>,
         conclude: Option<&str>,
         verbose: bool,
+        env_vars: &[(&str, &str)],
     ) -> Result<HyperfineResult> {
-        // Create structured temp directory for JSON output
-        // Format: <temp_dir>/<benchmark_name>/<version>/<repo_name>/<benchmark_name>.json
         let temp_dir = std::env::temp_dir();
         let json_dir =
-            temp_dir.join("foundry-bench").join(benchmark_name).join(version).join(&self.name);
+            temp_dir.join("foundry-bench").join(benchmark_name).join(label).join(&self.name);
         std::fs::create_dir_all(&json_dir)?;
 
         let json_path = json_dir.join(format!("{benchmark_name}.json"));
 
-        // Build hyperfine command
         let mut hyperfine_cmd = Command::new("hyperfine");
         hyperfine_cmd
             .current_dir(&self.root_path)
@@ -238,17 +204,16 @@ impl BenchmarkProject {
             .arg(&json_path)
             .arg("--shell=bash");
 
-        // Add optional setup command
+        for &(key, value) in env_vars {
+            hyperfine_cmd.env(key, value);
+        }
+
         if let Some(setup_cmd) = setup {
             hyperfine_cmd.arg("--setup").arg(setup_cmd);
         }
-
-        // Add optional prepare command
         if let Some(prepare_cmd) = prepare {
             hyperfine_cmd.arg("--prepare").arg(prepare_cmd);
         }
-
-        // Add optional conclude command
         if let Some(conclude_cmd) = conclude {
             hyperfine_cmd.arg("--conclude").arg(conclude_cmd);
         }
@@ -259,7 +224,6 @@ impl BenchmarkProject {
             hyperfine_cmd.stdout(std::process::Stdio::inherit());
         }
 
-        // Add the benchmark command last
         hyperfine_cmd.arg(command);
 
         let status = hyperfine_cmd.status().wrap_err("Failed to run hyperfine")?;
@@ -267,160 +231,190 @@ impl BenchmarkProject {
             eyre::bail!("Hyperfine failed for command: {}", command);
         }
 
-        // Read and parse the JSON output
         let json_content = std::fs::read_to_string(json_path)?;
         let output: HyperfineOutput = serde_json::from_str(&json_content)?;
 
-        // Extract the first result (we only run one command at a time)
         output.results.into_iter().next().ok_or_else(|| eyre::eyre!("No results from hyperfine"))
     }
 
-    /// Benchmark forge test
-    pub fn bench_forge_test(
+    /// Run a specific benchmark by name.
+    pub fn run(
         &self,
-        version: &str,
+        benchmark: &str,
+        label: &str,
         runs: u32,
         verbose: bool,
+        fork_url: Option<&str>,
     ) -> Result<HyperfineResult> {
-        // Build before running tests
+        match benchmark {
+            "forge_test" => self.bench_forge_test(label, runs, verbose),
+            "forge_build_no_cache" => self.bench_forge_build_no_cache(label, runs, verbose),
+            "forge_build_with_cache" => self.bench_forge_build_with_cache(label, runs, verbose),
+            "forge_fuzz_test" => self.bench_forge_fuzz_test(label, runs, verbose),
+            "forge_invariant_test" => self.bench_forge_invariant_test(label, runs, verbose),
+            "forge_fork_test" => self.bench_forge_fork_test(label, runs, verbose, fork_url),
+            "forge_coverage" => self.bench_forge_coverage(label, runs, verbose),
+            "forge_isolate_test" => self.bench_forge_isolate_test(label, runs, verbose),
+            _ => eyre::bail!("Unknown benchmark: {}", benchmark),
+        }
+    }
+
+    fn bench_forge_test(&self, label: &str, runs: u32, verbose: bool) -> Result<HyperfineResult> {
         self.hyperfine(
             "forge_test",
-            version,
+            label,
             "forge test",
             runs,
             Some("forge build"),
             None,
             None,
             verbose,
+            &[],
         )
     }
 
-    /// Benchmark forge build with cache
-    pub fn bench_forge_build_with_cache(
+    fn bench_forge_fuzz_test(
         &self,
-        version: &str,
+        label: &str,
         runs: u32,
         verbose: bool,
     ) -> Result<HyperfineResult> {
-        self.hyperfine(
-            "forge_build_with_cache",
-            version,
-            "FOUNDRY_LINT_LINT_ON_BUILD=false forge build",
-            runs,
-            None,
-            Some("forge build"),
-            None,
-            verbose,
-        )
-    }
-
-    /// Benchmark forge build without cache
-    pub fn bench_forge_build_no_cache(
-        &self,
-        version: &str,
-        runs: u32,
-        verbose: bool,
-    ) -> Result<HyperfineResult> {
-        // Clean before each timing run
-        self.hyperfine(
-            "forge_build_no_cache",
-            version,
-            "FOUNDRY_LINT_LINT_ON_BUILD=false forge build",
-            runs,
-            Some("forge clean"),
-            None,
-            Some("forge clean"),
-            verbose,
-        )
-    }
-
-    /// Benchmark forge fuzz tests
-    pub fn bench_forge_fuzz_test(
-        &self,
-        version: &str,
-        runs: u32,
-        verbose: bool,
-    ) -> Result<HyperfineResult> {
-        // Build before running fuzz tests
         self.hyperfine(
             "forge_fuzz_test",
-            version,
+            label,
             r#"forge test --match-test "test[^(]*\([^)]+\)""#,
             runs,
             Some("forge build"),
             None,
             None,
             verbose,
+            &[],
         )
     }
 
-    /// Benchmark forge coverage
-    pub fn bench_forge_coverage(
+    fn bench_forge_invariant_test(
         &self,
-        version: &str,
+        label: &str,
         runs: u32,
         verbose: bool,
     ) -> Result<HyperfineResult> {
-        // No setup needed, forge coverage builds internally
-        // Use --ir-minimum to avoid "Stack too deep" errors
+        self.hyperfine(
+            "forge_invariant_test",
+            label,
+            r#"forge test --match-test "invariant""#,
+            runs,
+            Some("forge build"),
+            None,
+            None,
+            verbose,
+            &[],
+        )
+    }
+
+    fn bench_forge_fork_test(
+        &self,
+        label: &str,
+        runs: u32,
+        verbose: bool,
+        fork_url: Option<&str>,
+    ) -> Result<HyperfineResult> {
+        let url = fork_url.ok_or_else(|| eyre::eyre!("forge_fork_test requires --fork-url"))?;
+        self.hyperfine(
+            "forge_fork_test",
+            label,
+            r#"forge test --fork-url "$FOUNDRY_BENCH_FORK_URL""#,
+            runs,
+            Some("forge build"),
+            None,
+            None,
+            verbose,
+            &[("FOUNDRY_BENCH_FORK_URL", url)],
+        )
+    }
+
+    fn bench_forge_build_with_cache(
+        &self,
+        label: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
+        self.hyperfine(
+            "forge_build_with_cache",
+            label,
+            "FOUNDRY_LINT_LINT_ON_BUILD=false forge build",
+            runs,
+            None,
+            Some("forge build"),
+            None,
+            verbose,
+            &[],
+        )
+    }
+
+    fn bench_forge_build_no_cache(
+        &self,
+        label: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
+        self.hyperfine(
+            "forge_build_no_cache",
+            label,
+            "FOUNDRY_LINT_LINT_ON_BUILD=false forge build",
+            runs,
+            Some("forge clean"),
+            None,
+            Some("forge clean"),
+            verbose,
+            &[],
+        )
+    }
+
+    fn bench_forge_coverage(
+        &self,
+        label: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
         self.hyperfine(
             "forge_coverage",
-            version,
+            label,
             "forge coverage --ir-minimum",
             runs,
             None,
             None,
             None,
             verbose,
+            &[],
         )
     }
 
-    /// Benchmark forge test with --isolate flag
-    pub fn bench_forge_isolate_test(
+    fn bench_forge_isolate_test(
         &self,
-        version: &str,
+        label: &str,
         runs: u32,
         verbose: bool,
     ) -> Result<HyperfineResult> {
-        // Build before running tests
         self.hyperfine(
             "forge_isolate_test",
-            version,
+            label,
             "forge test --isolate",
             runs,
             Some("forge build"),
             None,
             None,
             verbose,
+            &[],
         )
     }
 
-    /// Get the root path of the project
+    /// Get the root path of the project.
     pub fn root(&self) -> &Path {
         &self.root_path
     }
-
-    /// Run a specific benchmark by name
-    pub fn run(
-        &self,
-        benchmark: &str,
-        version: &str,
-        runs: u32,
-        verbose: bool,
-    ) -> Result<HyperfineResult> {
-        match benchmark {
-            "forge_test" => self.bench_forge_test(version, runs, verbose),
-            "forge_build_no_cache" => self.bench_forge_build_no_cache(version, runs, verbose),
-            "forge_build_with_cache" => self.bench_forge_build_with_cache(version, runs, verbose),
-            "forge_fuzz_test" => self.bench_forge_fuzz_test(version, runs, verbose),
-            "forge_coverage" => self.bench_forge_coverage(version, runs, verbose),
-            "forge_isolate_test" => self.bench_forge_isolate_test(version, runs, verbose),
-            _ => eyre::bail!("Unknown benchmark: {}", benchmark),
-        }
-    }
 }
 
-/// Switch to a specific foundry version
+/// Switch to a specific Foundry version using foundryup.
 #[allow(unused_must_use)]
 pub fn switch_foundry_version(version: &str) -> Result<()> {
     let output = Command::new("foundryup")
@@ -428,11 +422,11 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
         .output()
         .wrap_err("Failed to run foundryup")?;
 
-    // Check if the error is about forge --version failing
     let stderr = String::from_utf8_lossy(&output.stderr);
     if stderr.contains("command failed") && stderr.contains("forge --version") {
         eyre::bail!(
-            "Foundry binaries maybe corrupted. Please reinstall by running `foundryup --install <version>`"
+            "Foundry binaries maybe corrupted. Please reinstall by running \
+             `foundryup --install <version>`"
         );
     }
 
@@ -445,7 +439,20 @@ pub fn switch_foundry_version(version: &str) -> Result<()> {
     Ok(())
 }
 
-/// Get the current forge version
+/// Install a specific Foundry version.
+pub fn install_foundry_version(version: &str) -> Result<()> {
+    let status = Command::new("foundryup")
+        .args(["--install", version, "--force"])
+        .status()
+        .wrap_err("Failed to run foundryup")?;
+
+    if !status.success() {
+        eyre::bail!("Failed to install Foundry version: {}", version);
+    }
+    Ok(())
+}
+
+/// Get the current forge version string.
 pub fn get_forge_version() -> Result<String> {
     let output = Command::new("forge")
         .args(["--version"])
@@ -462,7 +469,7 @@ pub fn get_forge_version() -> Result<String> {
     Ok(version.lines().next().unwrap_or("unknown").to_string())
 }
 
-/// Get the full forge version details including commit hash and date
+/// Get full forge version details including commit hash and date.
 pub fn get_forge_version_details() -> Result<String> {
     let output = Command::new("forge")
         .args(["--version"])
@@ -476,21 +483,17 @@ pub fn get_forge_version_details() -> Result<String> {
     let full_output =
         String::from_utf8(output.stdout).wrap_err("Invalid UTF-8 in forge version output")?;
 
-    // Extract relevant lines and format them
     let lines: Vec<&str> = full_output.lines().collect();
     if lines.len() >= 3 {
-        // Extract version, commit, and timestamp
         let version = lines[0].trim();
         let commit = lines[1].trim().replace("Commit SHA: ", "");
         let timestamp = lines[2].trim().replace("Build Timestamp: ", "");
 
-        // Format as: "forge 1.2.3-nightly (51650ea 2025-06-27)"
-        let short_commit = &commit[..7]; // First 7 chars of commit hash
+        let short_commit = &commit[..commit.len().min(7)];
         let date = timestamp.split('T').next().unwrap_or(&timestamp);
 
         Ok(format!("{version} ({short_commit} {date})"))
     } else {
-        // Fallback to just the first line if format is unexpected
         Ok(lines.first().unwrap_or(&"unknown").to_string())
     }
 }

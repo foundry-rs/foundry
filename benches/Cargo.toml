@@ -1,6 +1,6 @@
 [package]
 name = "foundry-bench"
-description = "Foundry benchmark runner"
+description = "Foundry benchmark runner with branch-vs-branch comparison and structured output"
 
 version.workspace = true
 edition.workspace = true

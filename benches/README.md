@@ -1,132 +1,154 @@
 # Foundry Benchmarks
 
-This directory contains performance benchmarks for Foundry commands across multiple repositories and Foundry versions.
+Performance benchmarks for Foundry, comparing a **baseline** version against a **feature** version
+across real-world Solidity repositories. Produces structured JSON output with automated regression
+detection.
 
 ## Prerequisites
 
-Before running the benchmarks, ensure you have the following installed:
+1. **Rust and Cargo** — for building the benchmark binary
+2. **Foundryup** — `curl -L https://foundry.paradigm.xyz | bash && foundryup`
+3. **[Hyperfine](https://github.com/sharkdp/hyperfine)** — the benchmarking harness
+4. **Git** — for cloning test repositories
+5. **Node.js and npm** — some test repos have npm dependencies
 
-1. **Rust and Cargo** - Required for building the benchmark binary
-
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   ```
-
-2. **Foundryup** - The Foundry toolchain installer
-
-   ```bash
-   curl -L https://foundry.paradigm.xyz | bash
-   foundryup
-   ```
-
-3. **Git** - For cloning benchmark repositories
-
-4. [**Hyperfine**](https://github.com/sharkdp/hyperfine/blob/master/README.md) - The benchmarking tool used by foundry-bench
-
-5. **Node.js and npm** - Some repositories require npm dependencies
-
-## Running Benchmarks
-
-Build and install the benchmark runner:
+## Quick Start
 
 ```bash
+# Build the benchmark runner
 cargo build --release --bin foundry-bench
+
+# Compare stable vs nightly (default benchmarks: test, fuzz, invariant)
+./target/release/foundry-bench --baseline stable --feature nightly --force-install
+
+# Output structured JSON for automation
+./target/release/foundry-bench --baseline stable --feature nightly --json
+
+# Compare specific branches/commits
+./target/release/foundry-bench --baseline v1.3.6 --feature v1.4.0 --force-install
+
+# Run specific benchmarks
+./target/release/foundry-bench \
+  --baseline stable --feature nightly \
+  --benchmarks forge_test,forge_fuzz_test,forge_invariant_test,forge_fork_test
+
+# Run on specific repositories
+./target/release/foundry-bench \
+  --baseline stable --feature nightly \
+  --repos ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22
 ```
 
-To install `foundry-bench` to your PATH:
+## Benchmark Types
 
-```bash
-cd benches && cargo install --path . --bin foundry-bench
+| Benchmark | Command | What It Measures |
+|-----------|---------|-----------------|
+| `forge_test` | `forge test` | Overall test execution speed |
+| `forge_fuzz_test` | `forge test --match-test "test[^(]*\([^)]+\)"` | Fuzz test performance |
+| `forge_invariant_test` | `forge test --match-test "invariant"` | Invariant test performance |
+| `forge_fork_test` | `forge test --fork-url <url>` | Fork-mode test performance |
+| `forge_isolate_test` | `forge test --isolate` | Isolated test execution |
+| `forge_build_no_cache` | `forge build` (cold) | Compilation speed without cache |
+| `forge_build_with_cache` | `forge build` (warm) | Cache hit performance |
+| `forge_coverage` | `forge coverage --ir-minimum` | Coverage analysis speed |
+
+Default benchmarks (when `--benchmarks` is not specified): `forge_test`, `forge_fuzz_test`,
+`forge_invariant_test`.
+
+## CLI Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--baseline <VERSION>` | Baseline Foundry version | `stable` |
+| `--feature <VERSION>` | Feature Foundry version | `nightly` |
+| `--benchmarks <LIST>` | Comma-separated benchmark names | test, fuzz, invariant |
+| `--repos <LIST>` | Comma-separated repos (`org/repo[:rev]`) | ithacaxyz/account, solady |
+| `--runs <N>` | Number of runs per benchmark | `5` |
+| `--json` | Output structured JSON bundle | `false` |
+| `--noise-threshold <PCT>` | Noise threshold for verdict (%) | `3.0` |
+| `--fork-url <URL>` | RPC URL for fork-mode benchmarks (required for forge_fork_test) | — |
+| `--force-install` | Force install versions before benchmarking | `false` |
+| `--verbose` | Show hyperfine output | `false` |
+| `--output-dir <DIR>` | Directory for output files | `.` |
+| `--output-file <FILE>` | Markdown output filename | `LATEST.md` |
+
+## Output Formats
+
+### Markdown (default)
+
+A comparison table showing baseline vs feature with delta percentages and verdicts:
+
+```
+## Forge Test
+
+| Repository | Baseline | Feature | Delta | Verdict |
+|------------|----------|---------|-------|---------|
+| solady     | 2.28s    | 2.10s   | -7.9% | 🟢 improved |
 ```
 
-#### Run with default settings
+### JSON (`--json`)
 
-```bash
-# Run all benchmarks on default repos with stable and nightly versions
-foundry-bench --versions stable,nightly
+A structured bundle written to `bundle.json`:
+
+```json
+{
+  "baseline_ref": "stable",
+  "feature_ref": "nightly",
+  "baseline_version": "forge 1.3.6 (d241588 2025-09-16)",
+  "feature_version": "forge 1.4.0 (bd0e4a7 2025-10-01)",
+  "timestamp": "2025-10-02T12:14:23Z",
+  "system": { "os": "linux", "cpu_cores": 32, "rustc": "rustc 1.90.0" },
+  "comparisons": [
+    {
+      "benchmark": "forge_test",
+      "repo": "solady",
+      "baseline_mean": 2.28,
+      "feature_mean": 2.10,
+      "delta_pct": -7.89,
+      "verdict": "improved"
+    }
+  ],
+  "overall_verdict": "improved"
+}
 ```
 
-#### Run with custom configurations
+## Verdict Logic
+
+Each comparison is classified based on the delta percentage and `--noise-threshold`:
+
+| Delta | Verdict |
+|-------|---------|
+| `< -threshold` | 🟢 improved |
+| `> +threshold` | 🔴 regressed |
+| within ±threshold | ⚪ neutral |
+
+The overall verdict is **regressed** if any individual comparison regressed, **improved** if at
+least one improved and none regressed, otherwise **neutral**.
+
+The process exits with code 1 if the overall verdict is **regressed**.
+
+## CI Integration
+
+The GitHub Actions workflow (`.github/workflows/benchmarks.yml`) runs benchmarks on
+`workflow_dispatch` and can post results as PR comments.
 
 ```bash
-# Bench specific versions
-foundry-bench --versions stable,nightly,v1.0.0
-
-# Run on specific repositories. Default rev for the repo is "main"
-foundry-bench --repos ithacaxyz/account,Vectorized/solady
-
-# Test specific repository with custom revision
-foundry-bench --repos ithacaxyz/account:main,Vectorized/solady:v0.0.123
-
-# Run only specific benchmarks
-foundry-bench --benchmarks forge_build_with_cache,forge_test
-
-# Run only fuzz tests
-foundry-bench --benchmarks forge_fuzz_test
-
-# Run coverage benchmark
-foundry-bench --benchmarks forge_coverage
-
-# Combine options
+# CI usage: exit non-zero on regression
 foundry-bench \
-  --versions stable,nightly \
-  --repos ithacaxyz/account \
-  --benchmarks forge_build_with_cache
-
-# Force install Foundry versions
-foundry-bench --force-install
-
-# Verbose output to see hyperfine logs
-foundry-bench --verbose
-
-# Output to specific directory
-foundry-bench --output-dir ./results --output-file LATEST_RESULTS.md
+  --baseline stable --feature nightly \
+  --json --noise-threshold 5.0
 ```
 
-#### Command-line Options
+## Profiling
 
-- `--versions <VERSIONS>` - Comma-separated list of Foundry versions (default: stable,nightly)
-- `--repos <REPOS>` - Comma-separated list of repos in org/repo[:rev] format (default: ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22)
-- `--benchmarks <BENCHMARKS>` - Comma-separated list of benchmarks to run
-- `--force-install` - Force installation of Foundry versions
-- `--verbose` - Show detailed benchmark output
-- `--output-dir <DIR>` - Directory for output files (default: benches)
-- `--output-file <FILE_NAME.md>` - Name of the output file (default: LATEST.md)
+Build Foundry with the `profiling` profile for CPU profiling with samply:
 
-## Benchmark Structure
+```bash
+# In the foundry repo
+cargo build --profile profiling --bin forge
 
-- `forge_test` - Benchmarks `forge test` command across repos
-- `forge_build_no_cache` - Benchmarks `forge build` with clean cache
-- `forge_build_with_cache` - Benchmarks `forge build` with existing cache
-- `forge_fuzz_test` - Benchmarks `forge test` with only fuzz tests (tests with parameters)
-- `forge_coverage` - Benchmarks `forge coverage --ir-minimum` command across repos
+# Run under samply
+samply record -- ./target/profiling/forge test
 
-## Configuration
-
-The benchmark binary uses command-line arguments to configure which repositories and versions to test. The default repositories are:
-
-- `ithacaxyz/account:v0.3.2`
-- `Vectorized/solady:v0.1.22`
-
-You can override these using the `--repos` flag with the format `org/repo[:rev]`.
-
-## Results
-
-Benchmark results are saved to `benches/LATEST.md` (or custom output file specified with `--output-file`). The report includes:
-
-- Summary of versions and repositories tested
-- Performance comparison tables for each benchmark type showing:
-  - Mean execution time
-  - Min/Max times
-  - Standard deviation
-  - Relative performance comparison between versions
-- System information (OS, CPU cores)
-- Detailed hyperfine benchmark results in JSON format
-
-## Troubleshooting
-
-1. **Foundry version not found**: Use `--force-install` flag or manually install with `foundryup --install <version>`
-2. **Repository clone fails**: Check network connectivity and repository access
-3. **Build failures**: Some repositories may have specific dependencies - check their README files
-4. **Hyperfine not found**: Install hyperfine using the instructions in Prerequisites
-5. **npm/Node.js errors**: Ensure Node.js and npm are installed for repositories that require them
+# Or use hyperfine with the profiling build
+foundry-bench --baseline stable --feature nightly --verbose
+```
