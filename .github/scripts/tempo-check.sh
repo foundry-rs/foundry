@@ -54,13 +54,11 @@ cd "$tmp_dir"
 forge init -n tempo tempo-check
 cd tempo-check
 
-# TODO(upstream): re-enable once local (non-RPC) Tempo precompiles are supported
-# Currently fails with OpcodeNotFound on fee manager precompile
-# echo -e "\n=== FORGE TEST (LOCAL) ==="
-# TEMPO_FEE_TOKEN='' forge test
+echo -e "\n=== FORGE TEST (LOCAL) ==="
+TEMPO_FEE_TOKEN='' forge test
 
-# echo -e "\n=== FORGE SCRIPT (LOCAL) ==="
-# TEMPO_FEE_TOKEN='' forge script script/Mail.s.sol --sig "run(string)" "$(date +%s%N)"
+echo -e "\n=== FORGE SCRIPT (LOCAL) ==="
+TEMPO_FEE_TOKEN='' forge script script/Mail.s.sol --sig "run(string)" "$(date +%s%N)"
 
 echo -e "\n=== START TEMPO DEVNET TESTS ==="
 
@@ -70,13 +68,11 @@ export TEMPO_FEE_TOKEN="$FEE_TOKEN"
 echo -e "\n=== TEMPO VERSION ==="
 cast client --rpc-url "$ETH_RPC_URL"
 
-# TODO(upstream): re-enable once fee token validation is fixed for devnet forge test/script
-# Currently fails with "invalid fee token: 0x0000000000000000000000000000000000000000"
-# echo -e "\n=== FORGE TEST (DEVNET) ==="
-# forge test --rpc-url "$ETH_RPC_URL"
+echo -e "\n=== FORGE TEST (DEVNET) ==="
+forge test --rpc-url "$ETH_RPC_URL"
 
-# echo -e "\n=== FORGE SCRIPT (DEVNET) ==="
-# forge script ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url "$ETH_RPC_URL"
+echo -e "\n=== FORGE SCRIPT (DEVNET) ==="
+forge script ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url "$ETH_RPC_URL"
 
 echo -e "\n=== CREATE AND FUND ADDRESS ==="
 wallet_json="$(cast wallet new --json)"
@@ -159,279 +155,281 @@ sleep 6  # Wait for valid_after to pass
 BLOCK_TS=$(cast block latest --rpc-url "$ETH_RPC_URL" -f timestamp)
 cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$PK" --tempo.expiring-nonce --tempo.valid-before "$((BLOCK_TS + 25))" --tempo.valid-after "$((BLOCK_TS - 1))"
 
-# TODO(upstream): re-enable access key + keychain tests once T3 authorizeKey is supported on devnet
-# Currently fails with UnknownFunctionSelector on T3 authorizeKey signature
-# echo -e "\n=== SETUP ACCESS KEY ==="
+echo -e "\n=== SETUP ACCESS KEY ==="
 # Create an access key for testing
-# access_wallet_json="$(cast wallet new --json)"
-# ACCESS_KEY="$(jq -r '.[0].private_key' <<<"$access_wallet_json")"
-# ACCESS_KEY_ADDR="$(jq -r '.[0].address' <<<"$access_wallet_json")"
-# printf "Access key address: %s\n" "$ACCESS_KEY_ADDR"
+access_wallet_json="$(cast wallet new --json)"
+ACCESS_KEY="$(jq -r '.[0].private_key' <<<"$access_wallet_json")"
+ACCESS_KEY_ADDR="$(jq -r '.[0].address' <<<"$access_wallet_json")"
+printf "Access key address: %s\n" "$ACCESS_KEY_ADDR"
 
 # Authorize the access key on-chain first (required for gas estimation)
 # Account Keychain precompile: 0xAAAAAAAA00000000000000000000000000000000
 # SignatureType: 0 = Secp256k1, Expiry: 1893456000 (year 2030), enforceLimits: false, limits: [], allowAnyCalls: true
-# if [[ "$HARDFORK" == "T2" ]]; then
-#   # Legacy: authorizeKey with flat params (pre-T3)
-#   cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
-#     'authorizeKey(address,uint8,uint64,bool,(address,uint256)[])' \
-#     "$ACCESS_KEY_ADDR" 0 1893456000 false "[]" \
-#     --private-key "$PK"
-# else
-#   # TIP-1011 (T3+): authorizeKey takes a KeyRestrictions struct
-#   # KeyRestrictions = (uint64 expiry, bool enforceLimits, TokenLimit[] limits, bool allowAnyCalls, CallScope[] allowedCalls)
-#   # TokenLimit = (address token, uint256 amount, uint64 period)
-#   # CallScope = (address target, SelectorRule[] selectorRules)
-#   # SelectorRule = (bytes4 selector, address[] recipients)
-#   cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
-#     'authorizeKey(address,uint8,(uint64,bool,(address,uint256,uint64)[],bool,(address,(bytes4,address[])[])[])) ' \
-#     "$ACCESS_KEY_ADDR" 0 "(1893456000,false,[],true,[])" \
-#     --private-key "$PK"
-# fi
+if [[ "$HARDFORK" == "T2" ]]; then
+  # Legacy: authorizeKey with flat params (pre-T3)
+  cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
+    'authorizeKey(address,uint8,uint64,bool,(address,uint256)[])' \
+    "$ACCESS_KEY_ADDR" 0 1893456000 false "[]" \
+    --private-key "$PK"
+else
+  # TIP-1011 (T3+): authorizeKey takes a KeyRestrictions struct
+  # KeyRestrictions = (uint64 expiry, bool enforceLimits, TokenLimit[] limits, bool allowAnyCalls, CallScope[] allowedCalls)
+  # TokenLimit = (address token, uint256 amount, uint64 period)
+  # CallScope = (address target, SelectorRule[] selectorRules)
+  # SelectorRule = (bytes4 selector, address[] recipients)
+  cast send --rpc-url "$ETH_RPC_URL" 0xAAAAAAAA00000000000000000000000000000000 \
+    'authorizeKey(address,uint8,(uint64,bool,(address,uint256,uint64)[],bool,(address,(bytes4,address[])[])[])) ' \
+    "$ACCESS_KEY_ADDR" 0 "(1893456000,false,[],true,[])" \
+    --private-key "$PK"
+fi
 
 # Fund the access key address (needed for gas)
-# fund_and_wait "$ACCESS_KEY_ADDR"
+fund_and_wait "$ACCESS_KEY_ADDR"
 
-# echo -e "\n=== CAST MKTX WITH ACCESS-KEY ==="
+echo -e "\n=== CAST MKTX WITH ACCESS-KEY ==="
 # Use original address as root account (access key signs on behalf of root)
-# cast mktx ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --tempo.access-key "$ACCESS_KEY" --tempo.root-account "$ADDR"
+cast mktx ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --tempo.access-key "$ACCESS_KEY" --tempo.root-account "$ADDR"
 
-# echo -e "\n=== CAST SEND WITH ACCESS-KEY ==="
+echo -e "\n=== CAST SEND WITH ACCESS-KEY ==="
 # Send transaction using the access key (Keychain signature wrapped in AA transaction)
-# cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --tempo.access-key "$ACCESS_KEY" --tempo.root-account "$ADDR"
+cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --tempo.access-key "$ACCESS_KEY" --tempo.root-account "$ADDR"
 
-# TODO(upstream): re-enable once cast keychain is fixed
 # --- cast keychain subcommand tests ---
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE ==="
-# kc_wallet_json="$(cast wallet new --json)"
-# KC_KEY_PK="$(jq -r '.[0].private_key' <<<"$kc_wallet_json")"
-# KC_KEY_ADDR="$(jq -r '.[0].address' <<<"$kc_wallet_json")"
-# printf "Keychain key address: %s\n" "$KC_KEY_ADDR"
+echo -e "\n=== CAST KEYCHAIN: AUTHORIZE ==="
+kc_wallet_json="$(cast wallet new --json)"
+KC_KEY_PK="$(jq -r '.[0].private_key' <<<"$kc_wallet_json")"
+KC_KEY_ADDR="$(jq -r '.[0].address' <<<"$kc_wallet_json")"
+printf "Keychain key address: %s\n" "$KC_KEY_ADDR"
 
-# cast keychain auth "$KC_KEY_ADDR" secp256k1 1893456000 \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+cast keychain auth "$KC_KEY_ADDR" secp256k1 1893456000 \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
-# echo -e "\n=== CAST KEYCHAIN: KEY-INFO ==="
-# KC_INFO=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL")
-# echo "$KC_INFO"
-# echo "$KC_INFO" | grep -q "secp256k1"
+echo -e "\n=== CAST KEYCHAIN: KEY-INFO ==="
+KC_INFO=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL")
+echo "$KC_INFO"
+echo "$KC_INFO" | grep -q "secp256k1"
 
-# echo -e "\n=== CAST KEYCHAIN: KEY-INFO --json ==="
-# KC_INFO_JSON=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL" --json)
-# echo "$KC_INFO_JSON" | jq -e '.signatureType == "secp256k1"'
+echo -e "\n=== CAST KEYCHAIN: KEY-INFO --json ==="
+KC_INFO_JSON=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL" --json)
+echo "$KC_INFO_JSON" | jq -e '.signatureType == "secp256k1"'
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH LIMIT ==="
-# kc_limited_json="$(cast wallet new --json)"
-# KC_LIMITED_ADDR="$(jq -r '.[0].address' <<<"$kc_limited_json")"
-# cast keychain auth "$KC_LIMITED_ADDR" secp256k1 1893456000 \
-#   --limit "$FEE_TOKEN:1000000000" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH LIMIT ==="
+kc_limited_json="$(cast wallet new --json)"
+KC_LIMITED_ADDR="$(jq -r '.[0].address' <<<"$kc_limited_json")"
+cast keychain auth "$KC_LIMITED_ADDR" secp256k1 1893456000 \
+  --limit "$FEE_TOKEN:1000000000" \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
-# echo -e "\n=== CAST KEYCHAIN: REMAINING-LIMIT ==="
-# KC_REMAINING=$(cast keychain rl "$ADDR" "$KC_LIMITED_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL")
-# echo "Remaining: $KC_REMAINING"
-# [[ "$KC_REMAINING" != "0" ]] || { echo "ERROR: expected non-zero limit"; exit 1; }
+echo -e "\n=== CAST KEYCHAIN: REMAINING-LIMIT ==="
+KC_REMAINING=$(cast keychain rl "$ADDR" "$KC_LIMITED_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL")
+echo "Remaining: $KC_REMAINING"
+[[ "$KC_REMAINING" != "0" ]] || { echo "ERROR: expected non-zero limit"; exit 1; }
 
-# echo -e "\n=== CAST KEYCHAIN: REMAINING-LIMIT --json ==="
-# KC_REMAINING_JSON=$(cast keychain rl "$ADDR" "$KC_LIMITED_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL" --json)
-# echo "$KC_REMAINING_JSON" | jq -e '. != "0"'
+echo -e "\n=== CAST KEYCHAIN: REMAINING-LIMIT --json ==="
+KC_REMAINING_JSON=$(cast keychain rl "$ADDR" "$KC_LIMITED_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL" --json)
+echo "$KC_REMAINING_JSON" | jq -e '. != "0"'
 
-# echo -e "\n=== CAST KEYCHAIN: UPDATE-LIMIT ==="
-# cast keychain ul "$KC_LIMITED_ADDR" "$FEE_TOKEN" 500000000 \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo -e "\n=== CAST KEYCHAIN: UPDATE-LIMIT ==="
+cast keychain ul "$KC_LIMITED_ADDR" "$FEE_TOKEN" 500000000 \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
-# echo -e "\n=== CAST KEYCHAIN: VERIFY UPDATE-LIMIT ==="
-# KC_UPDATED=$(cast keychain rl "$ADDR" "$KC_LIMITED_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL")
-# echo "Remaining after update: $KC_UPDATED"
-# [[ "$KC_UPDATED" == "500000000" ]] || { echo "ERROR: expected 500000000 after update-limit, got $KC_UPDATED"; exit 1; }
+echo -e "\n=== CAST KEYCHAIN: VERIFY UPDATE-LIMIT ==="
+KC_UPDATED=$(cast keychain rl "$ADDR" "$KC_LIMITED_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL")
+echo "Remaining after update: $KC_UPDATED"
+[[ "$KC_UPDATED" == "500000000" ]] || { echo "ERROR: expected 500000000 after update-limit, got $KC_UPDATED"; exit 1; }
 
-# echo -e "\n=== CAST KEYCHAIN: REVOKE ==="
-# cast keychain rev "$KC_KEY_ADDR" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+echo -e "\n=== CAST KEYCHAIN: REVOKE ==="
+cast keychain rev "$KC_KEY_ADDR" \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
 # Verify revocation
-# KC_INFO_REV=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL")
-# echo "$KC_INFO_REV"
-# echo "$KC_INFO_REV" | grep -q "true"
+KC_INFO_REV=$(cast keychain info "$ADDR" "$KC_KEY_ADDR" --rpc-url "$ETH_RPC_URL")
+echo "$KC_INFO_REV"
+echo "$KC_INFO_REV" | grep -q "revoked"
 
-# echo -e "\n=== CAST KEYCHAIN: REVOKED KEY REJECTION ==="
+echo -e "\n=== CAST KEYCHAIN: REVOKED KEY REJECTION ==="
 # Fund the revoked key so failure is due to revocation, not gas
-# fund_and_wait "$KC_KEY_ADDR"
-# if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-#   --tempo.access-key "$KC_KEY_PK" --tempo.root-account "$ADDR" 2>&1; then
-#   echo "ERROR: revoked key should have been rejected"
-#   exit 1
-# fi
-# echo "OK: revoked key correctly rejected"
+fund_and_wait "$KC_KEY_ADDR"
+if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+  --tempo.access-key "$KC_KEY_PK" --tempo.root-account "$ADDR" 2>&1; then
+  echo "ERROR: revoked key should have been rejected"
+  exit 1
+fi
+echo "OK: revoked key correctly rejected"
 
-# echo -e "\n=== CAST KEYCHAIN: DUPLICATE AUTHORIZE REJECTION ==="
+echo -e "\n=== CAST KEYCHAIN: DUPLICATE AUTHORIZE REJECTION ==="
 # Try to authorize KC_LIMITED_ADDR again — should fail with KeyAlreadyExists
-# if cast keychain auth "$KC_LIMITED_ADDR" secp256k1 1893456000 \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} 2>&1; then
-#   echo "ERROR: duplicate authorize should have been rejected"
-#   exit 1
-# fi
-# echo "OK: duplicate authorize correctly rejected"
+if cast keychain auth "$KC_LIMITED_ADDR" secp256k1 1893456000 \
+  --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} 2>&1; then
+  echo "ERROR: duplicate authorize should have been rejected"
+  exit 1
+fi
+echo "OK: duplicate authorize correctly rejected"
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scope (ADDRESS ONLY, UNRESTRICTED) ==="
-# kc_scoped_json="$(cast wallet new --json)"
-# KC_SCOPED_PK="$(jq -r '.[0].private_key' <<<"$kc_scoped_json")"
-# KC_SCOPED_ADDR="$(jq -r '.[0].address' <<<"$kc_scoped_json")"
-# cast keychain auth "$KC_SCOPED_ADDR" secp256k1 1893456000 \
-#   --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+# --- T3-only scope / call-restriction tests ---
+if [[ "$HARDFORK" == "T3" ]]; then
+  echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scope (ADDRESS ONLY, UNRESTRICTED) ==="
+  kc_scoped_json="$(cast wallet new --json)"
+  KC_SCOPED_PK="$(jq -r '.[0].private_key' <<<"$kc_scoped_json")"
+  KC_SCOPED_ADDR="$(jq -r '.[0].address' <<<"$kc_scoped_json")"
+  cast keychain auth "$KC_SCOPED_ADDR" secp256k1 1893456000 \
+    --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
-# echo -e "\n=== CAST KEYCHAIN: SCOPE ALLOWED TARGET ==="
-# fund_and_wait "$KC_SCOPED_ADDR"
-# cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-#   --tempo.access-key "$KC_SCOPED_PK" --tempo.root-account "$ADDR"
-# echo "OK: scoped key allowed to call permitted target"
+  echo -e "\n=== CAST KEYCHAIN: SCOPE ALLOWED TARGET ==="
+  fund_and_wait "$KC_SCOPED_ADDR"
+  cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+    --tempo.access-key "$KC_SCOPED_PK" --tempo.root-account "$ADDR"
+  echo "OK: scoped key allowed to call permitted target"
 
-# echo -e "\n=== CAST KEYCHAIN: SCOPE BLOCKED TARGET ==="
-# if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 'doesNotExist()' \
-#   --tempo.access-key "$KC_SCOPED_PK" --tempo.root-account "$ADDR" 2>&1; then
-#   echo "ERROR: scoped key should have been blocked for disallowed target"
-#   exit 1
-# fi
-# echo "OK: scoped key correctly blocked for disallowed target"
+  echo -e "\n=== CAST KEYCHAIN: SCOPE BLOCKED TARGET ==="
+  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 'doesNotExist()' \
+    --tempo.access-key "$KC_SCOPED_PK" --tempo.root-account "$ADDR" 2>&1; then
+    echo "ERROR: scoped key should have been blocked for disallowed target"
+    exit 1
+  fi
+  echo "OK: scoped key correctly blocked for disallowed target"
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scope + SELECTORS ==="
-# kc_sel_json="$(cast wallet new --json)"
-# KC_SEL_PK="$(jq -r '.[0].private_key' <<<"$kc_sel_json")"
-# KC_SEL_ADDR="$(jq -r '.[0].address' <<<"$kc_sel_json")"
-# cast keychain auth "$KC_SEL_ADDR" secp256k1 1893456000 \
-#   --scope "$FEE_TOKEN:transfer,approve" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: authorized key with selector-scoped restrictions"
+  echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scope + SELECTORS ==="
+  kc_sel_json="$(cast wallet new --json)"
+  KC_SEL_PK="$(jq -r '.[0].private_key' <<<"$kc_sel_json")"
+  KC_SEL_ADDR="$(jq -r '.[0].address' <<<"$kc_sel_json")"
+  cast keychain auth "$KC_SEL_ADDR" secp256k1 1893456000 \
+    --scope "$FEE_TOKEN:transfer,approve" \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  echo "OK: authorized key with selector-scoped restrictions"
 
-# echo -e "\n=== CAST KEYCHAIN: SELECTOR-SCOPED TRANSFER ALLOWED ==="
-# fund_and_wait "$KC_SEL_ADDR"
-# cast erc20 transfer ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} "$FEE_TOKEN" \
-#   0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 100 \
-#   --rpc-url "$ETH_RPC_URL" \
-#   --tempo.access-key "$KC_SEL_PK" --tempo.root-account "$ADDR"
-# echo "OK: selector-scoped key allowed transfer on permitted TIP-20"
+  echo -e "\n=== CAST KEYCHAIN: SELECTOR-SCOPED TRANSFER ALLOWED ==="
+  fund_and_wait "$KC_SEL_ADDR"
+  cast erc20 transfer ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} "$FEE_TOKEN" \
+    0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 100 \
+    --rpc-url "$ETH_RPC_URL" \
+    --tempo.access-key "$KC_SEL_PK" --tempo.root-account "$ADDR"
+  echo "OK: selector-scoped key allowed transfer on permitted TIP-20"
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scopes JSON ==="
-# kc_json_json="$(cast wallet new --json)"
-# KC_JSON_ADDR="$(jq -r '.[0].address' <<<"$kc_json_json")"
-# cast keychain auth "$KC_JSON_ADDR" secp256k1 1893456000 \
-#   --scopes "[{\"target\":\"$FEE_TOKEN\",\"selectors\":[\"transfer\"]},{\"target\":\"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D\"}]" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: authorized key with --scopes JSON"
+  echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH --scopes JSON ==="
+  kc_json_json="$(cast wallet new --json)"
+  KC_JSON_ADDR="$(jq -r '.[0].address' <<<"$kc_json_json")"
+  cast keychain auth "$KC_JSON_ADDR" secp256k1 1893456000 \
+    --scopes "[{\"target\":\"$FEE_TOKEN\",\"selectors\":[\"transfer\"]},{\"target\":\"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D\"}]" \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  echo "OK: authorized key with --scopes JSON"
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH MULTIPLE LIMITS ==="
-# kc_multi_json="$(cast wallet new --json)"
-# KC_MULTI_ADDR="$(jq -r '.[0].address' <<<"$kc_multi_json")"
-# cast keychain auth "$KC_MULTI_ADDR" secp256k1 1893456000 \
-#   --limit "$FEE_TOKEN:1000000" \
-#   --limit "0x20C0000000000000000000000000000000000001:2000000" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH MULTIPLE LIMITS ==="
+  kc_multi_json="$(cast wallet new --json)"
+  KC_MULTI_ADDR="$(jq -r '.[0].address' <<<"$kc_multi_json")"
+  cast keychain auth "$KC_MULTI_ADDR" secp256k1 1893456000 \
+    --limit "$FEE_TOKEN:1000000" \
+    --limit "0x20C0000000000000000000000000000000000001:2000000" \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
-# Verify both limits
-# KC_MULTI_RL1=$(cast keychain rl "$ADDR" "$KC_MULTI_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL")
-# KC_MULTI_RL2=$(cast keychain rl "$ADDR" "$KC_MULTI_ADDR" 0x20C0000000000000000000000000000000000001 --rpc-url "$ETH_RPC_URL")
-# echo "Limit 1: $KC_MULTI_RL1 (expected 1000000), Limit 2: $KC_MULTI_RL2 (expected 2000000)"
-# [[ "$KC_MULTI_RL1" == "1000000" ]] || { echo "ERROR: limit 1 mismatch"; exit 1; }
-# [[ "$KC_MULTI_RL2" == "2000000" ]] || { echo "ERROR: limit 2 mismatch"; exit 1; }
+  # Verify both limits
+  KC_MULTI_RL1=$(cast keychain rl "$ADDR" "$KC_MULTI_ADDR" "$FEE_TOKEN" --rpc-url "$ETH_RPC_URL")
+  KC_MULTI_RL2=$(cast keychain rl "$ADDR" "$KC_MULTI_ADDR" 0x20C0000000000000000000000000000000000001 --rpc-url "$ETH_RPC_URL")
+  echo "Limit 1: $KC_MULTI_RL1 (expected 1000000), Limit 2: $KC_MULTI_RL2 (expected 2000000)"
+  [[ "$KC_MULTI_RL1" == "1000000" ]] || { echo "ERROR: limit 1 mismatch"; exit 1; }
+  [[ "$KC_MULTI_RL2" == "2000000" ]] || { echo "ERROR: limit 2 mismatch"; exit 1; }
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH RAW HEX SELECTOR ==="
-# kc_hex_json="$(cast wallet new --json)"
-# KC_HEX_PK="$(jq -r '.[0].private_key' <<<"$kc_hex_json")"
-# KC_HEX_ADDR="$(jq -r '.[0].address' <<<"$kc_hex_json")"
-# increment() selector = 0xd09de08a
-# cast keychain auth "$KC_HEX_ADDR" secp256k1 1893456000 \
-#   --scope "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xd09de08a" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: authorized key with raw hex selector"
+  echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH RAW HEX SELECTOR ==="
+  kc_hex_json="$(cast wallet new --json)"
+  KC_HEX_PK="$(jq -r '.[0].private_key' <<<"$kc_hex_json")"
+  KC_HEX_ADDR="$(jq -r '.[0].address' <<<"$kc_hex_json")"
+  # increment() selector = 0xd09de08a
+  cast keychain auth "$KC_HEX_ADDR" secp256k1 1893456000 \
+    --scope "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xd09de08a" \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  echo "OK: authorized key with raw hex selector"
 
-# echo -e "\n=== CAST KEYCHAIN: RAW HEX SELECTOR ALLOWED ==="
-# fund_and_wait "$KC_HEX_ADDR"
-# cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-#   --tempo.access-key "$KC_HEX_PK" --tempo.root-account "$ADDR"
-# echo "OK: raw hex selector key allowed to call increment()"
+  echo -e "\n=== CAST KEYCHAIN: RAW HEX SELECTOR ALLOWED ==="
+  fund_and_wait "$KC_HEX_ADDR"
+  cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+    --tempo.access-key "$KC_HEX_PK" --tempo.root-account "$ADDR"
+  echo "OK: raw hex selector key allowed to call increment()"
 
-# echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ==="
-# Create a new unrestricted key, then add scope restrictions via set-scope
-# kc_ss_json="$(cast wallet new --json)"
-# KC_SS_PK="$(jq -r '.[0].private_key' <<<"$kc_ss_json")"
-# KC_SS_ADDR="$(jq -r '.[0].address' <<<"$kc_ss_json")"
-# cast keychain auth "$KC_SS_ADDR" secp256k1 1893456000 \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ==="
+  # Create a new unrestricted key, then add scope restrictions via set-scope
+  kc_ss_json="$(cast wallet new --json)"
+  KC_SS_PK="$(jq -r '.[0].private_key' <<<"$kc_ss_json")"
+  KC_SS_ADDR="$(jq -r '.[0].address' <<<"$kc_ss_json")"
+  cast keychain auth "$KC_SS_ADDR" secp256k1 1893456000 \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
 
-# Now restrict it to only the counter contract
-# cast keychain ss "$KC_SS_ADDR" \
-#   --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: set-scope applied"
+  # Now restrict it to only the counter contract
+  cast keychain ss "$KC_SS_ADDR" \
+    --scope 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  echo "OK: set-scope applied"
 
-# echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ALLOWED ==="
-# fund_and_wait "$KC_SS_ADDR"
-# cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-#   --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
-# echo "OK: set-scope key allowed to call permitted target"
+  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE ALLOWED ==="
+  fund_and_wait "$KC_SS_ADDR"
+  cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
+  echo "OK: set-scope key allowed to call permitted target"
 
-# echo -e "\n=== CAST KEYCHAIN: SET-SCOPE BLOCKED ==="
-# if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 'doesNotExist()' \
-#   --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
-#   echo "ERROR: set-scope key should have been blocked for disallowed target"
-#   exit 1
-# fi
-# echo "OK: set-scope key correctly blocked for disallowed target"
+  echo -e "\n=== CAST KEYCHAIN: SET-SCOPE BLOCKED ==="
+  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 'doesNotExist()' \
+    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
+    echo "ERROR: set-scope key should have been blocked for disallowed target"
+    exit 1
+  fi
+  echo "OK: set-scope key correctly blocked for disallowed target"
 
-# echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE (BEFORE — CALL SUCCEEDS) ==="
-# cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-#   --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
-# echo "OK: call to scoped target succeeds before remove-scope"
+  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE (BEFORE — CALL SUCCEEDS) ==="
+  cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR"
+  echo "OK: call to scoped target succeeds before remove-scope"
 
-# echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE ==="
-# cast keychain rs "$KC_SS_ADDR" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: remove-scope applied"
+  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE ==="
+  cast keychain rs "$KC_SS_ADDR" 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  echo "OK: remove-scope applied"
 
-# echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE (AFTER — CALL FAILS) ==="
-# if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
-#   --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
-#   echo "ERROR: call should have been blocked after remove-scope"
-#   exit 1
-# fi
-# echo "OK: call correctly blocked after remove-scope"
+  echo -e "\n=== CAST KEYCHAIN: REMOVE-SCOPE (AFTER — CALL FAILS) ==="
+  if cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+    0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' \
+    --tempo.access-key "$KC_SS_PK" --tempo.root-account "$ADDR" 2>&1; then
+    echo "ERROR: call should have been blocked after remove-scope"
+    exit 1
+  fi
+  echo "OK: call correctly blocked after remove-scope"
 
-# echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH RECIPIENT RESTRICTION ==="
-# kc_recip_json="$(cast wallet new --json)"
-# KC_RECIP_PK="$(jq -r '.[0].private_key' <<<"$kc_recip_json")"
-# KC_RECIP_ADDR="$(jq -r '.[0].address' <<<"$kc_recip_json")"
-# Only allow transfer to a specific recipient
-# ALLOWED_RECIPIENT="0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F"
-# cast keychain auth "$KC_RECIP_ADDR" secp256k1 1893456000 \
-#   --scope "$FEE_TOKEN:transfer@$ALLOWED_RECIPIENT" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: authorized key with recipient-restricted transfer"
+  echo -e "\n=== CAST KEYCHAIN: AUTHORIZE WITH RECIPIENT RESTRICTION ==="
+  kc_recip_json="$(cast wallet new --json)"
+  KC_RECIP_PK="$(jq -r '.[0].private_key' <<<"$kc_recip_json")"
+  KC_RECIP_ADDR="$(jq -r '.[0].address' <<<"$kc_recip_json")"
+  # Only allow transfer to a specific recipient
+  ALLOWED_RECIPIENT="0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F"
+  cast keychain auth "$KC_RECIP_ADDR" secp256k1 1893456000 \
+    --scope "$FEE_TOKEN:transfer@$ALLOWED_RECIPIENT" \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  echo "OK: authorized key with recipient-restricted transfer"
 
-# echo -e "\n=== CAST KEYCHAIN: RECIPIENT-SCOPED TRANSFER ALLOWED ==="
-# fund_and_wait "$KC_RECIP_ADDR"
-# cast erc20 transfer ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} "$FEE_TOKEN" \
-#   "$ALLOWED_RECIPIENT" 100 \
-#   --rpc-url "$ETH_RPC_URL" \
-#   --tempo.access-key "$KC_RECIP_PK" --tempo.root-account "$ADDR"
-# echo "OK: recipient-scoped transfer allowed to permitted recipient"
+  echo -e "\n=== CAST KEYCHAIN: RECIPIENT-SCOPED TRANSFER ALLOWED ==="
+  fund_and_wait "$KC_RECIP_ADDR"
+  cast erc20 transfer ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} "$FEE_TOKEN" \
+    "$ALLOWED_RECIPIENT" 100 \
+    --rpc-url "$ETH_RPC_URL" \
+    --tempo.access-key "$KC_RECIP_PK" --tempo.root-account "$ADDR"
+  echo "OK: recipient-scoped transfer allowed to permitted recipient"
 
-# echo -e "\n=== CAST KEYCHAIN: --scopes JSON WITH RECIPIENTS ==="
-# kc_jsonr_json="$(cast wallet new --json)"
-# KC_JSONR_ADDR="$(jq -r '.[0].address' <<<"$kc_jsonr_json")"
-# cast keychain auth "$KC_JSONR_ADDR" secp256k1 1893456000 \
-#   --scopes "[{\"target\":\"$FEE_TOKEN\",\"selectors\":[{\"selector\":\"transfer\",\"recipients\":[\"$ALLOWED_RECIPIENT\"]}]},{\"target\":\"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D\"}]" \
-#   --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
-# echo "OK: authorized key with --scopes JSON including recipients"
+  echo -e "\n=== CAST KEYCHAIN: --scopes JSON WITH RECIPIENTS ==="
+  kc_jsonr_json="$(cast wallet new --json)"
+  KC_JSONR_ADDR="$(jq -r '.[0].address' <<<"$kc_jsonr_json")"
+  cast keychain auth "$KC_JSONR_ADDR" secp256k1 1893456000 \
+    --scopes "[{\"target\":\"$FEE_TOKEN\",\"selectors\":[{\"selector\":\"transfer\",\"recipients\":[\"$ALLOWED_RECIPIENT\"]}]},{\"target\":\"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D\"}]" \
+    --rpc-url "$ETH_RPC_URL" --private-key "$PK" ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"}
+  echo "OK: authorized key with --scopes JSON including recipients"
+else
+  echo -e "\n=== SKIPPING T3-only scope/call-restriction tests (HARDFORK=$HARDFORK) ==="
+fi # end T3-only scope tests
 
 echo -e "\n=== SETUP SPONSOR ==="
 # Create a sponsor wallet for testing sponsored (gasless) transactions
@@ -531,87 +529,83 @@ if cast batch-send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC
 fi
 echo "OK: Batch correctly reverted (setNumber(1) failed require > 100)"
 
-# TODO(upstream): re-enable once cast batch-send supports pre-encoded calldata
-# Currently fails with gas estimation revert
-# echo -e "\n=== CAST BATCH-SEND WITH ARGS AND ENCODED CALLDATA ==="
+echo -e "\n=== CAST BATCH-SEND WITH ARGS AND ENCODED CALLDATA ==="
 # Test batch with both function arguments and pre-encoded calldata
 # First call: pre-encoded calldata for setNumber(200)
 # Second call: function signature with args setNumber(101)
 # Final number should be 101 (second call executes last)
-# ENCODED_CALLDATA=$(cast calldata "setNumber(uint256)" 200)
-# echo "Encoded calldata for setNumber(200): $ENCODED_CALLDATA"
-# cast batch-send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
-#   --call "$REQUIRE_COUNTER::$ENCODED_CALLDATA" \
-#   --call "$REQUIRE_COUNTER::setNumber(uint256):101" \
-#   --private-key "$PK"
+ENCODED_CALLDATA=$(cast calldata "setNumber(uint256)" 200)
+echo "Encoded calldata for setNumber(200): $ENCODED_CALLDATA"
+cast batch-send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
+  --call "$REQUIRE_COUNTER::$ENCODED_CALLDATA" \
+  --call "$REQUIRE_COUNTER::setNumber(uint256):101" \
+  --private-key "$PK"
 
-# NUMBER=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
-# echo "Counter number after batch: $NUMBER (expected: 101)"
+NUMBER=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
+echo "Counter number after batch: $NUMBER (expected: 101)"
 
-# TODO(upstream): re-enable forge script --batch tests once fee token validation is fixed
-# Currently fails with "invalid fee token: 0x0000000000000000000000000000000000000000"
-# echo -e "\n=== FORGE SCRIPT --BATCH (NATIVE BATCHING) ==="
+echo -e "\n=== FORGE SCRIPT --BATCH (NATIVE BATCHING) ==="
 # Create a script that calls multiple contracts and batch them into a single tx
 # Use template file and substitute REQUIRE_COUNTER address
-# sed "s/\${REQUIRE_COUNTER}/${REQUIRE_COUNTER}/" "$SCRIPT_DIR/contracts/BatchTest.s.sol.template" > script/BatchTest.s.sol
+sed "s/\${REQUIRE_COUNTER}/${REQUIRE_COUNTER}/" "$SCRIPT_DIR/contracts/BatchTest.s.sol.template" > script/BatchTest.s.sol
 
 # Get number before batch
-# NUMBER_BEFORE=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
-# echo "Counter number before forge script --batch: $NUMBER_BEFORE"
+NUMBER_BEFORE=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
+echo "Counter number before forge script --batch: $NUMBER_BEFORE"
 
 # Run forge script with --batch flag
-# forge script script/BatchTest.s.sol --broadcast --batch ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" --private-key "$PK"
+forge script script/BatchTest.s.sol --broadcast --batch ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" --private-key "$PK"
 
 # Verify all calls executed atomically
-# NUMBER_AFTER=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
-# echo "Counter number after forge script --batch: $NUMBER_AFTER (expected: 503)"
-# if [[ "$NUMBER_AFTER" != "503" ]]; then
-#   echo "ERROR: Expected number to be 503 (500 + 3 increments), got $NUMBER_AFTER"
-#   exit 1
-# fi
-# echo "OK: forge script --batch executed all calls atomically"
+NUMBER_AFTER=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
+echo "Counter number after forge script --batch: $NUMBER_AFTER (expected: 503)"
+if [[ "$NUMBER_AFTER" != "503" ]]; then
+  echo "ERROR: Expected number to be 503 (500 + 3 increments), got $NUMBER_AFTER"
+  exit 1
+fi
+echo "OK: forge script --batch executed all calls atomically"
 
-# echo -e "\n=== FORGE SCRIPT --BATCH WITH DEPLOY + CALLS ==="
+echo -e "\n=== FORGE SCRIPT --BATCH WITH DEPLOY + CALLS ==="
 # Test deploying a contract and calling it in the same batch transaction
 # This tests the CREATE + CALL pattern (CREATE must be first)
-# cp "$SCRIPT_DIR/contracts/BatchCounter.sol" src/BatchCounter.sol
-# cp "$SCRIPT_DIR/contracts/DeployAndCall.s.sol" script/DeployAndCall.s.sol
+cp "$SCRIPT_DIR/contracts/BatchCounter.sol" src/BatchCounter.sol
+cp "$SCRIPT_DIR/contracts/DeployAndCall.s.sol" script/DeployAndCall.s.sol
 
-# forge build
+forge build
 
 # Build verification args if VERIFIER_URL is set (same pattern as tempo-deploy.sh)
-# VERIFY_ARG=()
-# if [[ -n "${VERIFIER_URL:-}" ]]; then
-#   VERIFY_ARG=(--verify --retries 10 --delay 10)
-#   echo "Will verify deployed contract via $VERIFIER_URL"
-# fi
+VERIFY_ARG=()
+if [[ -n "${VERIFIER_URL:-}" ]]; then
+  VERIFY_ARG=(--verify --retries 10 --delay 10)
+  echo "Will verify deployed contract via $VERIFIER_URL"
+fi
 
 # Run forge script with --batch flag - deploys and calls atomically
-# forge script script/DeployAndCall.s.sol --broadcast --batch ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} ${VERIFY_ARG[@]+"${VERIFY_ARG[@]}"} --rpc-url "$ETH_RPC_URL" --private-key "$PK"
+forge script script/DeployAndCall.s.sol --broadcast --batch ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} ${VERIFY_ARG[@]+"${VERIFY_ARG[@]}"} --rpc-url "$ETH_RPC_URL" --private-key "$PK"
 
-# echo "OK: forge script --batch with deploy + calls executed atomically"
+echo "OK: forge script --batch with deploy + calls executed atomically"
 
-# echo -e "\n=== FORGE SCRIPT --BATCH REVERT TEST ==="
+echo -e "\n=== FORGE SCRIPT --BATCH REVERT TEST ==="
 # Test that batch reverts atomically when one call in the script fails
 # Use template file and substitute REQUIRE_COUNTER address
-# sed "s/\${REQUIRE_COUNTER}/${REQUIRE_COUNTER}/" "$SCRIPT_DIR/contracts/BatchRevertTest.s.sol.template" > script/BatchRevertTest.s.sol
+sed "s/\${REQUIRE_COUNTER}/${REQUIRE_COUNTER}/" "$SCRIPT_DIR/contracts/BatchRevertTest.s.sol.template" > script/BatchRevertTest.s.sol
 
-# NUMBER_BEFORE_REVERT=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
-# echo "Counter number before batch revert test: $NUMBER_BEFORE_REVERT"
+NUMBER_BEFORE_REVERT=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
+echo "Counter number before batch revert test: $NUMBER_BEFORE_REVERT"
 
-# if forge script script/BatchRevertTest.s.sol --broadcast --batch ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" --private-key "$PK" 2>&1; then
-#   echo "ERROR: Batch script should have reverted but succeeded"
-#   exit 1
-# fi
+if forge script script/BatchRevertTest.s.sol --broadcast --batch ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" --private-key "$PK" 2>&1; then
+  echo "ERROR: Batch script should have reverted but succeeded"
+  exit 1
+fi
 
 # Verify number unchanged (atomic revert)
-# NUMBER_AFTER_REVERT=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
-# echo "Counter number after batch revert: $NUMBER_AFTER_REVERT (expected: $NUMBER_BEFORE_REVERT - unchanged)"
-# if [[ "$NUMBER_AFTER_REVERT" != "$NUMBER_BEFORE_REVERT" ]]; then
-#   echo "ERROR: Expected number to remain $NUMBER_BEFORE_REVERT after atomic revert, got $NUMBER_AFTER_REVERT"
-#   exit 1
-# fi
-# echo "OK: forge script --batch correctly reverted atomically"
+NUMBER_AFTER_REVERT=$(cast call --rpc-url "$ETH_RPC_URL" "$REQUIRE_COUNTER" "number()(uint256)")
+echo "Counter number after batch revert: $NUMBER_AFTER_REVERT (expected: $NUMBER_BEFORE_REVERT - unchanged)"
+if [[ "$NUMBER_AFTER_REVERT" != "$NUMBER_BEFORE_REVERT" ]]; then
+  echo "ERROR: Expected number to remain $NUMBER_BEFORE_REVERT after atomic revert, got $NUMBER_AFTER_REVERT"
+  exit 1
+fi
+echo "OK: forge script --batch correctly reverted atomically"
 
 echo -e "\n=== DEPLOY HIGH GAS CONTRACT ==="
 # Deploy a contract that can burn ~15M gas via cold storage writes (mapping)
@@ -702,21 +696,19 @@ if [[ ${#FEE_TOKEN_ARG[@]} -eq 0 ]]; then
   cast erc20 approve 0x20c0000000000000000000000000000000000000 0xdec0000000000000000000000000000000000000 10000000000 --rpc-url "$ETH_RPC_URL" --private-key "$PK"
 
   echo -e "\n=== ADD LIQUIDITY: PLACE BID ==="
-  cast send 0xdec0000000000000000000000000000000000000 "place(address,uint128,bool,int16)" 0x20c0000000000000000000000000000000000002 100000000 true 10 --private-key "$PK" --rpc-url "$ETH_RPC_URL"
+  cast send 0xdec0000000000000000000000000000000000000 "place(address,uint128,bool,int16)" 0x20c0000000000000000000000000000000000002 100000000 true 10 --private-key "$PK" -r "$ETH_RPC_URL"
 
   echo -e "\n=== ADD LIQUIDITY: PLACE ASK ==="
-  cast send 0xdec0000000000000000000000000000000000000 "place(address,uint128,bool,int16)" 0x20c0000000000000000000000000000000000002 100000000 false 10 --private-key "$PK" --rpc-url "$ETH_RPC_URL"
+  cast send 0xdec0000000000000000000000000000000000000 "place(address,uint128,bool,int16)" 0x20c0000000000000000000000000000000000002 100000000 false 10 --private-key "$PK" -r "$ETH_RPC_URL"
 
   echo -e "\n=== ADD LIQUIDITY: PLACE FLIP ==="
-  cast send 0xdec0000000000000000000000000000000000000 "placeFlip(address,uint128,bool,int16,int16)" 0x20c0000000000000000000000000000000000002 100000000 true -10 10 --private-key "$PK" --rpc-url "$ETH_RPC_URL"
+  cast send 0xdec0000000000000000000000000000000000000 "placeFlip(address,uint128,bool,int16,int16)" 0x20c0000000000000000000000000000000000002 100000000 true -10 10 --private-key "$PK" -r "$ETH_RPC_URL"
 
   echo -e "\n=== ADD LIQUIDITY: SWAP EXACT AMOUNT IN ==="
-  cast send 0xdec0000000000000000000000000000000000000 "swapExactAmountIn(address,address,uint128,uint128)" 0x20c0000000000000000000000000000000000000 0x20c0000000000000000000000000000000000002 100000000 9000000 --private-key "$PK" --rpc-url "$ETH_RPC_URL"
+  cast send 0xdec0000000000000000000000000000000000000 "swapExactAmountIn(address,address,uint128,uint128)" 0x20c0000000000000000000000000000000000000 0x20c0000000000000000000000000000000000002 100000000 9000000 --private-key "$PK" -r "$ETH_RPC_URL"
 
-# TODO(upstream): re-enable once the following error is fixed:
-# Error: server returned an error response: error code -32000: replacement transaction underpriced
-  # echo -e "\n=== ADD LIQUIDITY: SWAP EXACT AMOUNT OUT ==="
-  # cast send 0xdec0000000000000000000000000000000000000 "swapExactAmountOut(address,address,uint128,uint128)" 0x20c0000000000000000000000000000000000002 0x20c0000000000000000000000000000000000000 9000000 100000000 --private-key "$PK" --rpc-url "$ETH_RPC_URL"
+  echo -e "\n=== ADD LIQUIDITY: SWAP EXACT AMOUNT OUT ==="
+  cast send 0xdec0000000000000000000000000000000000000 "swapExactAmountOut(address,address,uint128,uint128)" 0x20c0000000000000000000000000000000000002 0x20c0000000000000000000000000000000000000 9000000 100000000 --private-key "$PK" -r "$ETH_RPC_URL"
 else
   echo -e "\n=== CHANGE USER DEFAULT FEE TOKEN ==="
   echo "skipped (custom fee token set)"
@@ -740,170 +732,168 @@ else
   echo "skipped (custom fee token set)"
 fi
 
-# TODO(upstream): re-enable anvil local/fork tests once T3 hardfork is supported by anvil
-# Currently fails with "Unknown hardfork: t3"
-# echo -e "\n=== ANVIL LOCAL TESTS ==="
+echo -e "\n=== ANVIL LOCAL TESTS ==="
 
-# ANVIL_PORT=8546
-# echo "Starting local anvil..."
+ANVIL_PORT=8546
+echo "Starting local anvil..."
 # Pass hardfork to anvil (lowercase for CLI compatibility)
-# ANVIL_HARDFORK=$(echo "$HARDFORK" | tr '[:upper:]' '[:lower:]')
-# anvil --tempo --hardfork "$ANVIL_HARDFORK" --port $ANVIL_PORT &
-# ANVIL_PID=$!
+ANVIL_HARDFORK=$(echo "$HARDFORK" | tr '[:upper:]' '[:lower:]')
+anvil --tempo --hardfork "$ANVIL_HARDFORK" --port $ANVIL_PORT &
+ANVIL_PID=$!
 
 # Ensure anvil is stopped on script exit
-# trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
+trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
 
 # Wait for anvil to be ready (max 10 seconds)
-# for i in {1..10}; do
-#   if cast client --rpc-url "http://127.0.0.1:$ANVIL_PORT" 2>/dev/null; then
-#     echo "Anvil fork started successfully"
-#     break
-#   fi
-#   if [[ $i -eq 10 ]]; then
-#     echo "ERROR: Anvil fork failed to start"
-#     exit 1
-#   fi
-#   sleep 1
-# done
+for i in {1..10}; do
+  if cast client --rpc-url "http://127.0.0.1:$ANVIL_PORT" 2>/dev/null; then
+    echo "Anvil fork started successfully"
+    break
+  fi
+  if [[ $i -eq 10 ]]; then
+    echo "ERROR: Anvil fork failed to start"
+    exit 1
+  fi
+  sleep 1
+done
 
-# ALICE_PK="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+ALICE_PK="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
-# echo -e "\n=== ANVIL LOCAL: CHECK CLIENT VERSION ==="
-# cast client --rpc-url http://127.0.0.1:$ANVIL_PORT
+echo -e "\n=== ANVIL LOCAL: CHECK CLIENT VERSION ==="
+cast client --rpc-url http://127.0.0.1:$ANVIL_PORT
 
-# echo -e "\n=== ANVIL LOCAL: CHECK CHAIN ID ==="
-# cast chain-id --rpc-url http://127.0.0.1:$ANVIL_PORT
+echo -e "\n=== ANVIL LOCAL: CHECK CHAIN ID ==="
+cast chain-id --rpc-url http://127.0.0.1:$ANVIL_PORT
 
-# echo -e "\n=== ANVIL LOCAL: FORGE TEST ==="
-# TEMPO_FEE_TOKEN="$FEE_TOKEN" forge test --rpc-url http://127.0.0.1:$ANVIL_PORT
+echo -e "\n=== ANVIL LOCAL: FORGE TEST ==="
+TEMPO_FEE_TOKEN="$FEE_TOKEN" forge test --rpc-url http://127.0.0.1:$ANVIL_PORT
 
-# echo -e "\n=== ANVIL LOCAL: FORGE SCRIPT SIMULATE ==="
-# TEMPO_FEE_TOKEN="$FEE_TOKEN" forge script ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url http://127.0.0.1:$ANVIL_PORT --private-key "$ALICE_PK"
+echo -e "\n=== ANVIL LOCAL: FORGE SCRIPT SIMULATE ==="
+TEMPO_FEE_TOKEN="$FEE_TOKEN" forge script ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url http://127.0.0.1:$ANVIL_PORT --private-key "$ALICE_PK"
 
-# echo -e "\n=== ANVIL LOCAL: FORGE SCRIPT BROADCAST ==="
-# TEMPO_FEE_TOKEN="$FEE_TOKEN" forge script ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url http://127.0.0.1:$ANVIL_PORT --private-key "$ALICE_PK" --broadcast
+echo -e "\n=== ANVIL LOCAL: FORGE SCRIPT BROADCAST ==="
+TEMPO_FEE_TOKEN="$FEE_TOKEN" forge script ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url http://127.0.0.1:$ANVIL_PORT --private-key "$ALICE_PK" --broadcast
 
-# echo -e "\n=== ANVIL LOCAL: CAST SEND ==="
-# cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$ALICE_PK"
+echo -e "\n=== ANVIL LOCAL: CAST SEND ==="
+cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$ALICE_PK"
 
-# echo -e "\n=== ANVIL LOCAL: ERC20 TRANSFER ==="
-# cast erc20 transfer --tempo.fee-token "$FEE_TOKEN" 0x20c0000000000000000000000000000000000000 0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 123456 --rpc-url http://127.0.0.1:$ANVIL_PORT --private-key "$ALICE_PK"
+echo -e "\n=== ANVIL LOCAL: ERC20 TRANSFER ==="
+cast erc20 transfer --tempo.fee-token "$FEE_TOKEN" 0x20c0000000000000000000000000000000000000 0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 123456 --rpc-url http://127.0.0.1:$ANVIL_PORT --private-key "$ALICE_PK"
 
-# echo -e "\n=== ANVIL LOCAL: CAST SEND WITH NONCE-KEY (2D Nonce) ==="
-# cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$ALICE_PK" --nonce 0 --tempo.nonce-key 100
+echo -e "\n=== ANVIL LOCAL: CAST SEND WITH NONCE-KEY (2D Nonce) ==="
+cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$ALICE_PK" --nonce 0 --tempo.nonce-key 100
 
-# echo -e "\n=== ANVIL LOCAL: CAST SEND WITH EXPIRING NONCE ==="
-# cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$ALICE_PK" --tempo.expiring-nonce --tempo.valid-before "$(($(date +%s) + 25))"
+echo -e "\n=== ANVIL LOCAL: CAST SEND WITH EXPIRING NONCE ==="
+cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$ALICE_PK" --tempo.expiring-nonce --tempo.valid-before "$(($(date +%s) + 25))"
 
-# echo -e "\n=== ANVIL LOCAL: BATCH SEND ==="
-# cast batch-send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT \
-#   --call "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D::increment()" \
-#   --call "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D::increment()" \
-#   --private-key "$ALICE_PK"
+echo -e "\n=== ANVIL LOCAL: BATCH SEND ==="
+cast batch-send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT \
+  --call "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D::increment()" \
+  --call "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D::increment()" \
+  --private-key "$ALICE_PK"
 
 # Stop anvil
-# kill "$ANVIL_PID" 2>/dev/null || true
-# trap - EXIT
+kill "$ANVIL_PID" 2>/dev/null || true
+trap - EXIT
 
-# echo -e "\n=== ANVIL LOCAL TESTS COMPLETE ==="
+echo -e "\n=== ANVIL LOCAL TESTS COMPLETE ==="
 
-# echo -e "\n=== ANVIL FORK TESTS ==="
+echo -e "\n=== ANVIL FORK TESTS ==="
 # Use a fresh wallet for fork tests to avoid fee token exhaustion from prior devnet tests
-# echo -e "\n=== ANVIL FORK: CREATE AND FUND FRESH WALLET ==="
-# fork_wallet_json="$(cast wallet new --json)"
-# FORK_ADDR="$(jq -r '.[0].address' <<<"$fork_wallet_json")"
-# FORK_PK="$(jq -r '.[0].private_key' <<<"$fork_wallet_json")"
-# printf "Fork test address: %s\n" "$FORK_ADDR"
-# fund_and_wait "$FORK_ADDR"
+echo -e "\n=== ANVIL FORK: CREATE AND FUND FRESH WALLET ==="
+fork_wallet_json="$(cast wallet new --json)"
+FORK_ADDR="$(jq -r '.[0].address' <<<"$fork_wallet_json")"
+FORK_PK="$(jq -r '.[0].private_key' <<<"$fork_wallet_json")"
+printf "Fork test address: %s\n" "$FORK_ADDR"
+fund_and_wait "$FORK_ADDR"
 
 # Set the fee token on devnet before forking so the fork snapshot includes it
-# cast send --rpc-url "$ETH_RPC_URL" 0xfeec000000000000000000000000000000000000 \
-#   'setUserToken(address)' "$FEE_TOKEN" --private-key "$FORK_PK"
+cast send --rpc-url "$ETH_RPC_URL" 0xfeec000000000000000000000000000000000000 \
+  'setUserToken(address)' "$FEE_TOKEN" --private-key "$FORK_PK"
 
-# ANVIL_PORT=8547
-# echo "Starting forked anvil..."
+ANVIL_PORT=8547
+echo "Starting forked anvil..."
 # Pass hardfork to anvil (lowercase for CLI compatibility)
-# ANVIL_HARDFORK=$(echo "$HARDFORK" | tr '[:upper:]' '[:lower:]')
-# anvil --tempo --hardfork "$ANVIL_HARDFORK" --fork-url "$ETH_RPC_URL" --port $ANVIL_PORT --retries 10 --timeout 60000 &
-# ANVIL_PID=$!
+ANVIL_HARDFORK=$(echo "$HARDFORK" | tr '[:upper:]' '[:lower:]')
+anvil --tempo --hardfork "$ANVIL_HARDFORK" --fork-url "$ETH_RPC_URL" --port $ANVIL_PORT --retries 10 --timeout 60000 &
+ANVIL_PID=$!
 
-# # Ensure anvil is stopped on script exit
-# trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
+# Ensure anvil is stopped on script exit
+trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
 
-# # Wait for anvil to be ready (max 10 seconds)
-# for i in {1..10}; do
-#   if cast client --rpc-url "http://127.0.0.1:$ANVIL_PORT" 2>/dev/null; then
-#     echo "Anvil fork started successfully"
-#     break
-#   fi
-#   if [[ $i -eq 10 ]]; then
-#     echo "ERROR: Anvil fork failed to start"
-#     exit 1
-#   fi
-#   sleep 1
-# done
+# Wait for anvil to be ready (max 10 seconds)
+for i in {1..10}; do
+  if cast client --rpc-url "http://127.0.0.1:$ANVIL_PORT" 2>/dev/null; then
+    echo "Anvil fork started successfully"
+    break
+  fi
+  if [[ $i -eq 10 ]]; then
+    echo "ERROR: Anvil fork failed to start"
+    exit 1
+  fi
+  sleep 1
+done
 
-# echo -e "\n=== ANVIL FORK: CHECK CLIENT VERSION ==="
-# cast client --rpc-url http://127.0.0.1:$ANVIL_PORT
+echo -e "\n=== ANVIL FORK: CHECK CLIENT VERSION ==="
+cast client --rpc-url http://127.0.0.1:$ANVIL_PORT
 
-# echo -e "\n=== ANVIL FORK: CHECK CHAIN ID ==="
-# cast chain-id --rpc-url http://127.0.0.1:$ANVIL_PORT
+echo -e "\n=== ANVIL FORK: CHECK CHAIN ID ==="
+cast chain-id --rpc-url http://127.0.0.1:$ANVIL_PORT
 
-# echo -e "\n=== ANVIL FORK: CHECK BLOCK NUMBER ==="
-# cast block-number --rpc-url http://127.0.0.1:$ANVIL_PORT
+echo -e "\n=== ANVIL FORK: CHECK BLOCK NUMBER ==="
+cast block-number --rpc-url http://127.0.0.1:$ANVIL_PORT
 
-# echo -e "\n=== ANVIL FORK: FORGE TEST ==="
-# TEMPO_FEE_TOKEN="$FEE_TOKEN" forge test --rpc-url http://127.0.0.1:$ANVIL_PORT
+echo -e "\n=== ANVIL FORK: FORGE TEST ==="
+TEMPO_FEE_TOKEN="$FEE_TOKEN" forge test --rpc-url http://127.0.0.1:$ANVIL_PORT
 
-# echo -e "\n=== ANVIL FORK: FORGE SCRIPT SIMULATE ==="
-# TEMPO_FEE_TOKEN="$FEE_TOKEN" forge script --tempo.fee-token "$FEE_TOKEN" script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url http://127.0.0.1:$ANVIL_PORT --private-key "$FORK_PK"
+echo -e "\n=== ANVIL FORK: FORGE SCRIPT SIMULATE ==="
+TEMPO_FEE_TOKEN="$FEE_TOKEN" forge script --tempo.fee-token "$FEE_TOKEN" script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url http://127.0.0.1:$ANVIL_PORT --private-key "$FORK_PK"
 
-# echo -e "\n=== ANVIL FORK: FORGE SCRIPT BROADCAST ==="
-# TEMPO_FEE_TOKEN="$FEE_TOKEN" forge script --tempo.fee-token "$FEE_TOKEN" script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url http://127.0.0.1:$ANVIL_PORT --private-key "$FORK_PK" --broadcast
+echo -e "\n=== ANVIL FORK: FORGE SCRIPT BROADCAST ==="
+TEMPO_FEE_TOKEN="$FEE_TOKEN" forge script --tempo.fee-token "$FEE_TOKEN" script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url http://127.0.0.1:$ANVIL_PORT --private-key "$FORK_PK" --broadcast
 
-# echo -e "\n=== ANVIL FORK: CAST SEND ==="
-# cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$FORK_PK"
+echo -e "\n=== ANVIL FORK: CAST SEND ==="
+cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$FORK_PK"
 
-# echo -e "\n=== ANVIL FORK: ERC20 TRANSFER ==="
-# cast erc20 transfer --tempo.fee-token "$FEE_TOKEN" 0x20c0000000000000000000000000000000000000 0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 123456 --rpc-url http://127.0.0.1:$ANVIL_PORT --private-key "$FORK_PK"
+echo -e "\n=== ANVIL FORK: ERC20 TRANSFER ==="
+cast erc20 transfer --tempo.fee-token "$FEE_TOKEN" 0x20c0000000000000000000000000000000000000 0x4ef5DFf69C1514f4Dbf85aA4F9D95F804F64275F 123456 --rpc-url http://127.0.0.1:$ANVIL_PORT --private-key "$FORK_PK"
 
-# echo -e "\n=== ANVIL FORK: CAST SEND WITH NONCE-KEY (2D Nonce) ==="
-# cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$FORK_PK" --nonce 0 --tempo.nonce-key 100
+echo -e "\n=== ANVIL FORK: CAST SEND WITH NONCE-KEY (2D Nonce) ==="
+cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$FORK_PK" --nonce 0 --tempo.nonce-key 100
 
-# echo -e "\n=== ANVIL FORK: CAST SEND WITH EXPIRING NONCE ==="
-# cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$FORK_PK" --tempo.expiring-nonce --tempo.valid-before "$(($(date +%s) + 25))"
+echo -e "\n=== ANVIL FORK: CAST SEND WITH EXPIRING NONCE ==="
+cast send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT 0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$FORK_PK" --tempo.expiring-nonce --tempo.valid-before "$(($(date +%s) + 25))"
 
-# echo -e "\n=== ANVIL FORK: BATCH SEND ==="
-# cast batch-send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT \
-#   --call "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D::increment()" \
-#   --call "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D::increment()" \
-#   --private-key "$FORK_PK"
+echo -e "\n=== ANVIL FORK: BATCH SEND ==="
+cast batch-send --tempo.fee-token "$FEE_TOKEN" --rpc-url http://127.0.0.1:$ANVIL_PORT \
+  --call "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D::increment()" \
+  --call "0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D::increment()" \
+  --private-key "$FORK_PK"
 
 # Stop anvil
-# kill "$ANVIL_PID" 2>/dev/null || true
-# trap - EXIT
+kill "$ANVIL_PID" 2>/dev/null || true
+trap - EXIT
 
-# echo -e "\n=== ANVIL FORK TESTS COMPLETE ==="
+echo -e "\n=== ANVIL FORK TESTS COMPLETE ==="
 
-# echo -e "\n=== CHISEL FORK TESTS ==="
+echo -e "\n=== CHISEL FORK TESTS ==="
 # Test chisel forking the Tempo network - precompiles should be accessible from fork
 
 # Helper to check address has code via chisel fork
-# check_has_code() {
-#   local name="$1" addr="$2"
-#   local result
-#   result=$(chisel --fork-url "$ETH_RPC_URL" eval "address($addr).code.length > 0" 2>&1 | sed -n 's/.*Value: \(true\|false\).*/\1/p' || echo "")
-#   if [[ "$result" != "true" ]]; then
-#     echo "ERROR: $name ($addr) should have code when forking Tempo"
-#     exit 1
-#   fi
-#   echo "OK: $name has code"
-# }
+check_has_code() {
+  local name="$1" addr="$2"
+  local result
+  result=$(chisel --fork-url "$ETH_RPC_URL" eval "address($addr).code.length > 0" 2>&1 | grep "Value:" | awk '{print $NF}')
+  if [[ "$result" != "true" ]]; then
+    echo "ERROR: $name ($addr) should have code when forking Tempo"
+    exit 1
+  fi
+  echo "OK: $name has code"
+}
 
-# check_has_code "PathUSD" "0x20C0000000000000000000000000000000000000"
-# check_has_code "AlphaUSD" "0x20C0000000000000000000000000000000000001"
-# check_has_code "Nonce" "0x4e4F4E4345000000000000000000000000000000"
-# check_has_code "AccountKeychain" "0xaAAAaaAA00000000000000000000000000000000"
+check_has_code "PathUSD" "0x20C0000000000000000000000000000000000000"
+check_has_code "AlphaUSD" "0x20C0000000000000000000000000000000000001"
+check_has_code "Nonce" "0x4e4F4E4345000000000000000000000000000000"
+check_has_code "AccountKeychain" "0xaAAAaaAA00000000000000000000000000000000"
 
-# echo -e "\n=== CHISEL FORK TESTS COMPLETE ==="
+echo -e "\n=== CHISEL FORK TESTS COMPLETE ==="
