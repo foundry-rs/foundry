@@ -63,7 +63,12 @@ contract InvariantRegistryTest {
     function setUp() public {
         registry = new Registry();
         handler = new RegistryHandler(registry);
-        vm.targetContract(address(handler));
+    }
+
+    function targetContracts() public view returns (address[] memory) {
+        address[] memory targets = new address[](1);
+        targets[0] = address(handler);
+        return targets;
     }
 
     function invariant_totalEntriesMatchesRegisterCount() public view {

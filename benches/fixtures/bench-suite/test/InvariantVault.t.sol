@@ -95,7 +95,12 @@ contract InvariantVaultTest {
         tokenB = new ERC20("TokenB", "TKB", 18);
         vault = new Vault(tokenA, tokenB);
         handler = new VaultHandler(tokenA, tokenB, vault);
-        vm.targetContract(address(handler));
+    }
+
+    function targetContracts() public view returns (address[] memory) {
+        address[] memory targets = new address[](1);
+        targets[0] = address(handler);
+        return targets;
     }
 
     function invariant_reservesMatchBalances() public view {

@@ -12,7 +12,7 @@ interface Vm {
     function deal(address, uint256) external;
     function store(address, bytes32, bytes32) external;
     function load(address, bytes32) external view returns (bytes32);
-    function etch(address, bytes) external;
+    function etch(address, bytes calldata) external;
 
     // --- Environment ---
     function warp(uint256) external;
@@ -56,9 +56,6 @@ interface Vm {
     // --- Environment variables ---
     function envString(string calldata) external view returns (string memory);
     function envOr(string calldata, string calldata) external view returns (string memory);
-
-    // --- Targeting ---
-    function targetContract(address) external;
 
     // --- Misc ---
     function addr(uint256) external pure returns (address);
