@@ -288,7 +288,7 @@ contract InvariantCalldataDictionary is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary
-[FAIL: <empty revert data>]
+[FAIL: assertion failed]
 	[SEQUENCE]
  invariant_owner_never_changes() ([RUNS])
 
@@ -300,7 +300,7 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary
-[FAIL: <empty revert data>]
+[FAIL: assertion failed]
 	[SEQUENCE]
  invariant_owner_never_changes() ([RUNS])
 

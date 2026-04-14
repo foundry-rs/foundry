@@ -608,14 +608,14 @@ contract InvariantReplayFailReason is Test {
 
     cmd.args(["test", "--mt", "invariant_fail_reason"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: failed to set up invariant testing environment: <empty revert data>][..]
+[FAIL: failed to set up invariant testing environment: assertion failed][..]
 ...
 "#]]);
 
     // Replay should preserve failure reason instead of generic replay message.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: failed to set up invariant testing environment: <empty revert data>][..]
+[FAIL: failed to set up invariant testing environment: assertion failed][..]
 ...
 "#]]);
 });
