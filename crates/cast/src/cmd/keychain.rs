@@ -17,13 +17,15 @@ use foundry_common::{
     shell,
     tempo::{self, KeyType, KeysFile, WalletType, read_tempo_keys_file, tempo_keys_path},
 };
+use foundry_evm::hardfork::TempoHardfork;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, IAccountKeychain,
     IAccountKeychain::{
-        CallScope, KeyInfo, KeyRestrictions, SelectorRule, SignatureType, TokenLimit,
+        CallScope, KeyInfo, KeyRestrictions, LegacyTokenLimit, SelectorRule, SignatureType,
+        TokenLimit,
     },
-    account_keychain::authorizeKeyCall,
+    account_keychain::{authorizeKeyCall, legacyAuthorizeKeyCall},
 };
 use yansi::Paint;
 
@@ -571,18 +573,35 @@ async fn run_authorize(
 ) -> Result<()> {
     let enforce = enforce_limits || !limits.is_empty();
 
-    // Always use the T3 authorizeKey(address,SignatureType,KeyRestrictions) format.
-    // The legacy authorizeKey selector is rejected after T3 activation.
-    let restrictions = KeyRestrictions {
-        expiry,
-        enforceLimits: enforce,
-        limits,
-        allowAnyCalls: allowed_calls.is_empty(),
-        allowedCalls: allowed_calls,
-    };
-    let calldata =
+    let config = send_tx.eth.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+
+    let calldata = if is_hardfork_active(&provider, TempoHardfork::T3).await {
+        // T3+ authorizeKey(address,SignatureType,KeyRestrictions)
+        let restrictions = KeyRestrictions {
+            expiry,
+            enforceLimits: enforce,
+            limits,
+            allowAnyCalls: allowed_calls.is_empty(),
+            allowedCalls: allowed_calls,
+        };
         authorizeKeyCall { keyId: key_address, signatureType: key_type, config: restrictions }
-            .abi_encode();
+            .abi_encode()
+    } else {
+        // Legacy (pre-T3) authorizeKey(address,SignatureType,uint64,bool,LegacyTokenLimit[])
+        let legacy_limits: Vec<LegacyTokenLimit> = limits
+            .into_iter()
+            .map(|l| LegacyTokenLimit { token: l.token, amount: l.amount })
+            .collect();
+        legacyAuthorizeKeyCall {
+            keyId: key_address,
+            signatureType: key_type,
+            expiry,
+            enforceLimits: enforce,
+            limits: legacy_limits,
+        }
+        .abi_encode()
+    };
 
     send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
@@ -607,8 +626,16 @@ async fn run_remaining_limit(
     let config = rpc.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
-    let remaining: U256 =
-        provider.get_keychain_remaining_limit(wallet_address, key_address, token).await?;
+    let remaining: U256 = if is_hardfork_active(&provider, TempoHardfork::T3).await {
+        provider.get_keychain_remaining_limit(wallet_address, key_address, token).await?
+    } else {
+        // Pre-T3: use the legacy getRemainingLimit(address,address,address)
+        provider
+            .account_keychain()
+            .getRemainingLimit(wallet_address, key_address, token)
+            .call()
+            .await?
+    };
 
     if shell::is_json() {
         sh_println!("{}", serde_json::to_string(&remaining.to_string())?)?;
@@ -658,6 +685,22 @@ async fn run_remove_scope(
     let calldata =
         IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
     send_keychain_tx(calldata, tx_opts, &send_tx).await
+}
+
+/// Returns `true` when the connected Tempo chain has the given hardfork active.
+async fn is_hardfork_active<P: Provider<TempoNetwork>>(
+    provider: &P,
+    hardfork: TempoHardfork,
+) -> bool {
+    let Ok(chain_id) = provider.get_chain_id().await else { return true };
+    let block_ts = provider
+        .get_block(Default::default())
+        .await
+        .ok()
+        .flatten()
+        .map(|b| b.header.inner.inner.inner.timestamp)
+        .unwrap_or(0);
+    TempoHardfork::from_chain_and_timestamp(chain_id, block_ts).is_none_or(|h| h >= hardfork)
 }
 
 /// Shared helper to send a keychain precompile transaction.
