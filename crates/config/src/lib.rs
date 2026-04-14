@@ -1067,6 +1067,7 @@ impl Config {
     /// Cleans up any duplicate `Remapping` and sorts them
     ///
     /// On windows this will convert any `\` in the remapping path into a `/`
+    #[allow(clippy::missing_const_for_fn)]
     pub fn sanitize_remappings(&mut self) {
         #[cfg(target_os = "windows")]
         {
