@@ -24,12 +24,12 @@ pub struct Remappings {
 
 impl Remappings {
     /// Create a new `Remappings` wrapper with an empty vector.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { remappings: Vec::new(), project_paths: Vec::new() }
     }
 
     /// Create a new `Remappings` wrapper with a vector of remappings.
-    pub fn new_with_remappings(remappings: Vec<Remapping>) -> Self {
+    pub const fn new_with_remappings(remappings: Vec<Remapping>) -> Self {
         Self { remappings, project_paths: Vec::new() }
     }
 
@@ -267,8 +267,7 @@ impl RemappingsProvider<'_> {
         // if the configured _src_ directory is set to something that
         // `Remapping::find_many` doesn't classify as a src directory (src, contracts,
         // lib), then we need to manually add a remapping here
-        let mut src_remapping = None;
-        if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
+        let src_remapping = if ![Path::new("src"), Path::new("contracts"), Path::new("lib")]
             .contains(&config.src.as_path())
             && let Some(name) = lib.file_name().and_then(|s| s.to_str())
         {
@@ -280,8 +279,10 @@ impl RemappingsProvider<'_> {
             if !r.path.ends_with('/') {
                 r.path.push('/')
             }
-            src_remapping = Some(r);
-        }
+            Some(r)
+        } else {
+            None
+        };
 
         // Eventually, we could set context for remappings at this location,
         // taking into account the OS platform. We'll need to be able to handle nested

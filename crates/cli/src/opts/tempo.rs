@@ -3,7 +3,7 @@ use alloy_primitives::{Address, ruint::aliases::U256};
 use alloy_signer::Signature;
 use clap::Parser;
 use foundry_common::FoundryTransactionBuilder;
-use std::str::FromStr;
+use std::{num::NonZeroU64, str::FromStr};
 
 use crate::utils::parse_fee_token_address;
 
@@ -76,7 +76,7 @@ pub struct TempoOpts {
 
 impl TempoOpts {
     /// Returns `true` if any Tempo-specific option is set.
-    pub fn is_tempo(&self) -> bool {
+    pub const fn is_tempo(&self) -> bool {
         self.fee_token.is_some()
             || self.nonce_key.is_some()
             || self.sponsor_signature.is_some()
@@ -111,11 +111,15 @@ impl TempoOpts {
             tx.set_fee_token(fee_token);
         }
 
-        if let Some(valid_before) = self.valid_before {
-            tx.set_valid_before(valid_before);
+        if let Some(valid_before) = self.valid_before
+            && let Some(v) = NonZeroU64::new(valid_before)
+        {
+            tx.set_valid_before(v);
         }
-        if let Some(valid_after) = self.valid_after {
-            tx.set_valid_after(valid_after);
+        if let Some(valid_after) = self.valid_after
+            && let Some(v) = NonZeroU64::new(valid_after)
+        {
+            tx.set_valid_after(v);
         }
 
         if let Some(key_id) = self.key_id {
@@ -141,7 +145,7 @@ fn parse_signature(s: &str) -> Result<Signature, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, BETA_USD_ADDRESS};
+    use alloy_primitives::address;
 
     #[test]
     fn parse_fee_token_id() {
@@ -151,10 +155,13 @@ mod tests {
             "0x20C0000000000000000000000000000000000002",
         ])
         .unwrap();
-        assert_eq!(opts.fee_token, Some(BETA_USD_ADDRESS),);
+        assert_eq!(opts.fee_token, Some(address!("0x20C0000000000000000000000000000000000002")),);
 
         // AlphaUSD token ID is 1u64
         let opts_with_id = TempoOpts::try_parse_from(["", "--tempo.fee-token", "1"]).unwrap();
-        assert_eq!(opts_with_id.fee_token, Some(ALPHA_USD_ADDRESS),);
+        assert_eq!(
+            opts_with_id.fee_token,
+            Some(address!("0x20C0000000000000000000000000000000000001")),
+        );
     }
 }

@@ -373,16 +373,16 @@ impl<'a> Git<'a> {
             .map(drop)
     }
 
-    pub fn root(self, root: &Path) -> Git<'_> {
+    pub const fn root(self, root: &Path) -> Git<'_> {
         Git { root, ..self }
     }
 
-    pub fn quiet(self, quiet: bool) -> Self {
+    pub const fn quiet(self, quiet: bool) -> Self {
         Self { quiet, ..self }
     }
 
     /// True to perform shallow clones
-    pub fn shallow(self, shallow: bool) -> Self {
+    pub const fn shallow(self, shallow: bool) -> Self {
         Self { shallow, ..self }
     }
 
@@ -738,7 +738,7 @@ pub struct Submodule {
 }
 
 impl Submodule {
-    pub fn new(rev: String, path: PathBuf) -> Self {
+    pub const fn new(rev: String, path: PathBuf) -> Self {
         Self { rev, path }
     }
 
@@ -746,7 +746,7 @@ impl Submodule {
         &self.rev
     }
 
-    pub fn path(&self) -> &PathBuf {
+    pub const fn path(&self) -> &PathBuf {
         &self.path
     }
 }
@@ -771,11 +771,11 @@ impl FromStr for Submodule {
 pub struct Submodules(pub Vec<Submodule>);
 
 impl Submodules {
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.0.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
@@ -857,10 +857,10 @@ mod tests {
         let mut cwd_file = File::create(cwd_env).unwrap();
         let mut prj_file = File::create(nested.join(".env")).unwrap();
 
-        cwd_file.write_all("TESTCWDKEY=cwd_val".as_bytes()).unwrap();
+        cwd_file.write_all(b"TESTCWDKEY=cwd_val").unwrap();
         cwd_file.sync_all().unwrap();
 
-        prj_file.write_all("TESTPRJKEY=prj_val".as_bytes()).unwrap();
+        prj_file.write_all(b"TESTPRJKEY=prj_val").unwrap();
         prj_file.sync_all().unwrap();
 
         let cwd = env::current_dir().unwrap();

@@ -129,7 +129,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
     /// Set the gas price.
     #[inline]
-    pub fn gas_price(mut self, gas_price: u128) -> Self {
+    pub const fn gas_price(mut self, gas_price: u128) -> Self {
         self.gas_price = Some(gas_price);
         self
     }
@@ -157,28 +157,28 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
     /// Set the Chisel inspector.
     #[inline]
-    pub fn chisel_state(mut self, final_pc: usize) -> Self {
+    pub const fn chisel_state(mut self, final_pc: usize) -> Self {
         self.chisel_state = Some(final_pc);
         self
     }
 
     /// Set the log collector, and whether to print the logs directly to stdout.
     #[inline]
-    pub fn logs(mut self, live_logs: bool) -> Self {
+    pub const fn logs(mut self, live_logs: bool) -> Self {
         self.logs = Some(live_logs);
         self
     }
 
     /// Set whether to collect line coverage information.
     #[inline]
-    pub fn line_coverage(mut self, yes: bool) -> Self {
+    pub const fn line_coverage(mut self, yes: bool) -> Self {
         self.line_coverage = Some(yes);
         self
     }
 
     /// Set whether to enable the trace printer.
     #[inline]
-    pub fn print(mut self, yes: bool) -> Self {
+    pub const fn print(mut self, yes: bool) -> Self {
         self.print = Some(yes);
         self
     }
@@ -196,20 +196,20 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
     /// Set whether to enable the call isolation.
     /// For description of call isolation, see [`InspectorStack::enable_isolation`].
     #[inline]
-    pub fn enable_isolation(mut self, yes: bool) -> Self {
+    pub const fn enable_isolation(mut self, yes: bool) -> Self {
         self.enable_isolation = yes;
         self
     }
 
     /// Set networks with enabled features.
     #[inline]
-    pub fn networks(mut self, networks: NetworkConfigs) -> Self {
+    pub const fn networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
         self
     }
 
     #[inline]
-    pub fn create2_deployer(mut self, create2_deployer: Address) -> Self {
+    pub const fn create2_deployer(mut self, create2_deployer: Address) -> Self {
         self.create2_deployer = create2_deployer;
         self
     }
@@ -537,13 +537,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
 
     /// Set whether to enable call isolation.
     #[inline]
-    pub fn enable_isolation(&mut self, yes: bool) {
+    pub const fn enable_isolation(&mut self, yes: bool) {
         self.inner.enable_isolation = yes;
     }
 
     /// Set networks with enabled features.
     #[inline]
-    pub fn networks(&mut self, networks: NetworkConfigs) {
+    pub const fn networks(&mut self, networks: NetworkConfigs) {
         self.inner.networks = networks;
     }
 

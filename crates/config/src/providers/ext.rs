@@ -56,7 +56,7 @@ pub(crate) struct TomlFileProvider {
 }
 
 impl TomlFileProvider {
-    pub(crate) fn new(env_var: Option<&'static str>, default: PathBuf) -> Self {
+    pub(crate) const fn new(env_var: Option<&'static str>, default: PathBuf) -> Self {
         Self { env_var, env_val: OnceCell::new(), default, cache: OnceCell::new() }
     }
 

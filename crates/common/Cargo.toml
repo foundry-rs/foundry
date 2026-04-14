@@ -34,6 +34,7 @@ alloy-signer.workspace = true
 alloy-pubsub.workspace = true
 alloy-rpc-client.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
+alloy-rpc-types-engine = { workspace = true, features = ["jwt"] }
 alloy-sol-types.workspace = true
 alloy-transport-http = { workspace = true, features = [
     "reqwest",

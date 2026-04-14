@@ -133,7 +133,7 @@ impl DocArgs {
     }
 
     /// Returns whether watch mode is enabled
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.watch.watch.is_some()
     }
 

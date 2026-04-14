@@ -484,7 +484,7 @@ pub fn bytecode_diff_score<'a>(mut a: &'a [u8], mut b: &'a [u8]) -> f64 {
 /// # Safety
 ///
 /// `a` must be at least as long as `b`.
-unsafe fn count_different_bytes(a: &[u8], b: &[u8]) -> usize {
+const unsafe fn count_different_bytes(a: &[u8], b: &[u8]) -> usize {
     // This could've been written as `std::iter::zip(a, b).filter(|(x, y)| x != y).count()`,
     // however this function is very hot, and has been written to be as primitive as
     // possible for lower optimization levels.

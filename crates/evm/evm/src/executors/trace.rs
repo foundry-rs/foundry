@@ -73,7 +73,7 @@ impl<FEN: FoundryEvmNetwork> TracingExecutor<FEN> {
     }
 
     /// Returns the spec id of the executor
-    pub fn spec_id(&self) -> SpecFor<FEN> {
+    pub const fn spec_id(&self) -> SpecFor<FEN> {
         self.executor.spec_id()
     }
 

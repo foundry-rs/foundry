@@ -66,7 +66,7 @@ pub struct Comment {
 
 impl Comment {
     /// Create new instance of [Comment].
-    pub fn new(tag: CommentTag, value: String) -> Self {
+    pub const fn new(tag: CommentTag, value: String) -> Self {
         Self { tag, value }
     }
 
@@ -90,13 +90,13 @@ impl Comment {
     }
 
     /// Check if this comment is a custom tag.
-    pub fn is_custom(&self) -> bool {
+    pub const fn is_custom(&self) -> bool {
         matches!(self.tag, CommentTag::Custom(_))
     }
 }
 
 /// The collection of natspec [Comment] items.
-#[derive(Clone, Debug, Default, PartialEq, Deref, DerefMut)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deref, DerefMut)]
 pub struct Comments(Vec<Comment>);
 
 /// Forward the [Comments] function implementation to the [CommentsRef]
@@ -147,12 +147,12 @@ impl Comments {
 
 impl From<Vec<DocCommentTag>> for Comments {
     fn from(value: Vec<DocCommentTag>) -> Self {
-        Self(value.into_iter().flat_map(Comment::from_doc_comment).collect())
+        Self(value.into_iter().filter_map(Comment::from_doc_comment).collect())
     }
 }
 
 /// The collection of references to natspec [Comment] items.
-#[derive(Debug, Default, PartialEq, Deref)]
+#[derive(Debug, Default, PartialEq, Eq, Deref)]
 pub struct CommentsRef<'a>(Vec<&'a Comment>);
 
 impl<'a> CommentsRef<'a> {

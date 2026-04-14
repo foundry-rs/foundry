@@ -93,7 +93,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(provider: P) -> Self {
+    pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
     }
 
@@ -155,11 +155,9 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         }
 
         let res = call.await?;
-        let mut decoded = vec![];
-
-        if let Some(func) = func {
+        let decoded = if let Some(func) = func {
             // decode args into tokens
-            decoded = match func.abi_decode_output(res.as_ref()) {
+            match func.abi_decode_output(res.as_ref()) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     // ensure the address is a contract
@@ -185,8 +183,10 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                         "could not decode output; did you specify the wrong function return data type?"
                     );
                 }
-            };
-        }
+            }
+        } else {
+            vec![]
+        };
 
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {

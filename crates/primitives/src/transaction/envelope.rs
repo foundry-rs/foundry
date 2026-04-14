@@ -9,6 +9,7 @@ use alloy_consensus::{
 };
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
+use alloy_op_evm::OpTx;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use alloy_rpc_types::ConversionError;
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait, TxDeposit};
@@ -78,7 +79,7 @@ impl FoundryTxEnvelope {
         }
     }
 
-    pub fn sidecar(&self) -> Option<&TxEip4844WithSidecar> {
+    pub const fn sidecar(&self) -> Option<&TxEip4844WithSidecar> {
         match self {
             Self::Eip4844(signed_variant) => match signed_variant.tx() {
                 TxEip4844Variant::TxEip4844WithSidecar(with_sidecar) => Some(with_sidecar),
@@ -107,7 +108,7 @@ impl FoundryTxEnvelope {
     }
 
     /// Returns `true` if this is a Tempo transaction.
-    pub fn is_tempo(&self) -> bool {
+    pub const fn is_tempo(&self) -> bool {
         matches!(self, Self::Tempo(_))
     }
 
@@ -170,6 +171,42 @@ impl TryFrom<FoundryTxEnvelope> for TxEnvelope {
     }
 }
 
+impl From<TxEnvelope> for FoundryTxEnvelope {
+    fn from(tx: TxEnvelope) -> Self {
+        match tx {
+            TxEnvelope::Legacy(tx) => Self::Legacy(tx),
+            TxEnvelope::Eip2930(tx) => Self::Eip2930(tx),
+            TxEnvelope::Eip1559(tx) => Self::Eip1559(tx),
+            TxEnvelope::Eip4844(tx) => Self::Eip4844(tx),
+            TxEnvelope::Eip7702(tx) => Self::Eip7702(tx),
+        }
+    }
+}
+
+impl From<op_alloy_consensus::OpTxEnvelope> for FoundryTxEnvelope {
+    fn from(tx: op_alloy_consensus::OpTxEnvelope) -> Self {
+        match tx {
+            op_alloy_consensus::OpTxEnvelope::Legacy(tx) => Self::Legacy(tx),
+            op_alloy_consensus::OpTxEnvelope::Eip2930(tx) => Self::Eip2930(tx),
+            op_alloy_consensus::OpTxEnvelope::Eip1559(tx) => Self::Eip1559(tx),
+            op_alloy_consensus::OpTxEnvelope::Eip7702(tx) => Self::Eip7702(tx),
+            op_alloy_consensus::OpTxEnvelope::Deposit(tx) => Self::Deposit(tx),
+        }
+    }
+}
+
+impl From<tempo_primitives::TempoTxEnvelope> for FoundryTxEnvelope {
+    fn from(tx: tempo_primitives::TempoTxEnvelope) -> Self {
+        match tx {
+            tempo_primitives::TempoTxEnvelope::Legacy(tx) => Self::Legacy(tx),
+            tempo_primitives::TempoTxEnvelope::Eip2930(tx) => Self::Eip2930(tx),
+            tempo_primitives::TempoTxEnvelope::Eip1559(tx) => Self::Eip1559(tx),
+            tempo_primitives::TempoTxEnvelope::Eip7702(tx) => Self::Eip7702(tx),
+            tempo_primitives::TempoTxEnvelope::AA(tx) => Self::Tempo(tx),
+        }
+    }
+}
+
 impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
     type Error = ConversionError;
 
@@ -214,7 +251,16 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
             FoundryTxEnvelope::Eip4844(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
             FoundryTxEnvelope::Eip7702(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
             FoundryTxEnvelope::Deposit(sealed_tx) => {
-                Self::from_recovered_tx(sealed_tx.inner(), caller)
+                let tx = sealed_tx.inner();
+                Self {
+                    tx_type: tx.ty(),
+                    caller,
+                    gas_limit: tx.gas_limit,
+                    kind: tx.to,
+                    value: tx.value,
+                    data: tx.input.clone(),
+                    ..Default::default()
+                }
             }
             FoundryTxEnvelope::Tempo(_) => unreachable!("Tempo tx in Ethereum context"),
         }
@@ -224,13 +270,43 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
 impl FromRecoveredTx<FoundryTxEnvelope> for OpTransaction<TxEnv> {
     fn from_recovered_tx(tx: &FoundryTxEnvelope, caller: Address) -> Self {
         match tx {
-            FoundryTxEnvelope::Legacy(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            FoundryTxEnvelope::Eip2930(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            FoundryTxEnvelope::Eip1559(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            FoundryTxEnvelope::Eip4844(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
-            FoundryTxEnvelope::Eip7702(signed_tx) => Self::from_recovered_tx(signed_tx, caller),
+            FoundryTxEnvelope::Legacy(signed_tx) => {
+                let base = TxEnv::from_recovered_tx(signed_tx, caller);
+                Self { base, enveloped_tx: None, deposit: Default::default() }
+            }
+            FoundryTxEnvelope::Eip2930(signed_tx) => {
+                let base = TxEnv::from_recovered_tx(signed_tx, caller);
+                Self { base, enveloped_tx: None, deposit: Default::default() }
+            }
+            FoundryTxEnvelope::Eip1559(signed_tx) => {
+                let base = TxEnv::from_recovered_tx(signed_tx, caller);
+                Self { base, enveloped_tx: None, deposit: Default::default() }
+            }
+            FoundryTxEnvelope::Eip4844(signed_tx) => {
+                let base = TxEnv::from_recovered_tx(signed_tx, caller);
+                Self { base, enveloped_tx: None, deposit: Default::default() }
+            }
+            FoundryTxEnvelope::Eip7702(signed_tx) => {
+                let base = TxEnv::from_recovered_tx(signed_tx, caller);
+                Self { base, enveloped_tx: None, deposit: Default::default() }
+            }
             FoundryTxEnvelope::Deposit(sealed_tx) => {
-                Self::from_recovered_tx(sealed_tx.inner(), caller)
+                let deposit_tx = sealed_tx.inner();
+                let base = TxEnv {
+                    tx_type: deposit_tx.ty(),
+                    caller,
+                    gas_limit: deposit_tx.gas_limit,
+                    kind: deposit_tx.to,
+                    value: deposit_tx.value,
+                    data: deposit_tx.input.clone(),
+                    ..Default::default()
+                };
+                let deposit = DepositTransactionParts {
+                    source_hash: deposit_tx.source_hash,
+                    mint: Some(deposit_tx.mint),
+                    is_system_transaction: deposit_tx.is_system_transaction,
+                };
+                Self { base, enveloped_tx: None, deposit }
             }
             FoundryTxEnvelope::Tempo(_) => unreachable!("Tempo tx in Optimism context"),
         }
@@ -273,6 +349,18 @@ impl FromTxWithEncoded<FoundryTxEnvelope> for TempoTxEnv {
     }
 }
 
+impl FromRecoveredTx<FoundryTxEnvelope> for OpTx {
+    fn from_recovered_tx(tx: &FoundryTxEnvelope, caller: Address) -> Self {
+        Self(OpTransaction::<TxEnv>::from_recovered_tx(tx, caller))
+    }
+}
+
+impl FromTxWithEncoded<FoundryTxEnvelope> for OpTx {
+    fn from_encoded_tx(tx: &FoundryTxEnvelope, caller: Address, encoded: Bytes) -> Self {
+        Self(OpTransaction::<TxEnv>::from_encoded_tx(tx, caller, encoded))
+    }
+}
+
 impl FromTxWithEncoded<FoundryTxEnvelope> for OpTransaction<TxEnv> {
     fn from_encoded_tx(tx: &FoundryTxEnvelope, caller: Address, encoded: Bytes) -> Self {
         match tx {
@@ -298,7 +386,15 @@ impl FromTxWithEncoded<FoundryTxEnvelope> for OpTransaction<TxEnv> {
             }
             FoundryTxEnvelope::Deposit(sealed_tx) => {
                 let deposit_tx = sealed_tx.inner();
-                let base = TxEnv::from_recovered_tx(deposit_tx, caller);
+                let base = TxEnv {
+                    tx_type: deposit_tx.ty(),
+                    caller,
+                    gas_limit: deposit_tx.gas_limit,
+                    kind: deposit_tx.to,
+                    value: deposit_tx.value,
+                    data: deposit_tx.input.clone(),
+                    ..Default::default()
+                };
                 let deposit = DepositTransactionParts {
                     source_hash: deposit_tx.source_hash,
                     mint: Some(deposit_tx.mint),

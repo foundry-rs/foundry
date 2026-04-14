@@ -232,11 +232,11 @@ impl VerificationProviderType {
         )
     }
 
-    pub fn is_sourcify(&self) -> bool {
+    pub const fn is_sourcify(&self) -> bool {
         matches!(self, Self::Sourcify)
     }
 
-    pub fn is_etherscan(&self) -> bool {
+    pub const fn is_etherscan(&self) -> bool {
         matches!(self, Self::Etherscan)
     }
 }

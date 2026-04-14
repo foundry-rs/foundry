@@ -14,7 +14,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::NetworkVariant,
     utils::{self, LoadConfig},
@@ -55,6 +55,7 @@ pub fn setup() -> Result<()> {
 }
 
 /// Run the subcommand.
+#[allow(clippy::large_stack_frames)]
 pub async fn run_command(args: CastArgs) -> Result<()> {
     match args.cmd {
         // Constants
@@ -685,7 +686,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let provider = utils::get_provider(&config)?;
 
             let who = stdin::unwrap_line(who)?;
-            let address = provider.resolve_name(&who).await?;
+            let address = provider
+                .resolve_name(&who)
+                .await
+                .wrap_err(format!("Failed to resolve ENS name: {who}"))?;
             if verify {
                 let name = provider.lookup_address(&address).await?;
                 eyre::ensure!(

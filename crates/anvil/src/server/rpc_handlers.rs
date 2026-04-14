@@ -22,7 +22,7 @@ pub struct HttpEthRpcHandler {
 
 impl HttpEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
-    pub fn new(api: EthApi<FoundryNetwork>) -> Self {
+    pub const fn new(api: EthApi<FoundryNetwork>) -> Self {
         Self { api }
     }
 }
@@ -45,7 +45,7 @@ pub struct PubSubEthRpcHandler {
 
 impl PubSubEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
-    pub fn new(api: EthApi<FoundryNetwork>) -> Self {
+    pub const fn new(api: EthApi<FoundryNetwork>) -> Self {
         Self { api }
     }
 
@@ -64,6 +64,7 @@ impl PubSubEthRpcHandler {
                     Params::None => None,
                     Params::Logs(filter) => Some(filter.clone()),
                     Params::Bool(_) => None,
+                    Params::TransactionReceipts(_) => None,
                 };
                 let params = FilteredParams::new(filter.map(|b| *b));
 
@@ -111,6 +112,9 @@ impl PubSubEthRpcHandler {
                                 ));
                             }
                         }
+                    }
+                    SubscriptionKind::TransactionReceipts => {
+                        return RpcError::internal_error_with("Not implemented").into();
                     }
                     SubscriptionKind::Syncing => {
                         return RpcError::internal_error_with("Not implemented").into();

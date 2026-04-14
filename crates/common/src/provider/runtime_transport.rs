@@ -5,7 +5,7 @@
 use crate::{DEFAULT_USER_AGENT, REQUEST_TIMEOUT};
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
-use alloy_rpc_types::engine::{Claims, JwtSecret};
+use alloy_rpc_types_engine::{Claims, JwtSecret};
 use alloy_transport::{
     Authorization, BoxTransport, TransportError, TransportErrorKind, TransportFut,
 };
@@ -97,7 +97,7 @@ pub struct RuntimeTransportBuilder {
 
 impl RuntimeTransportBuilder {
     /// Create a new builder with the given URL.
-    pub fn new(url: Url) -> Self {
+    pub const fn new(url: Url) -> Self {
         Self {
             url,
             headers: vec![],
@@ -121,13 +121,13 @@ impl RuntimeTransportBuilder {
     }
 
     /// Set the timeout for the transport.
-    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+    pub const fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
     /// Set whether to accept invalid certificates.
-    pub fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
+    pub const fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
         self.accept_invalid_certs = accept_invalid_certs;
         self
     }
@@ -136,7 +136,7 @@ impl RuntimeTransportBuilder {
     ///
     /// This can help in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox)
     /// where system proxy detection via SCDynamicStore causes crashes.
-    pub fn no_proxy(mut self, no_proxy: bool) -> Self {
+    pub const fn no_proxy(mut self, no_proxy: bool) -> Self {
         self.no_proxy = no_proxy;
         self
     }

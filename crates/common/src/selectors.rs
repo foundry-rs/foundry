@@ -371,7 +371,7 @@ pub enum SelectorKind {
 
 impl SelectorKind {
     /// Returns the function selector if it is a function OR custom error.
-    pub fn as_function(&self) -> Option<Selector> {
+    pub const fn as_function(&self) -> Option<Selector> {
         match *self {
             Self::Function(selector) | Self::Error(selector) => Some(selector),
             _ => None,
@@ -379,7 +379,7 @@ impl SelectorKind {
     }
 
     /// Returns the event selector if it is an event.
-    pub fn as_event(&self) -> Option<B256> {
+    pub const fn as_event(&self) -> Option<B256> {
         match *self {
             Self::Event(hash) => Some(hash),
             _ => None,
@@ -444,7 +444,7 @@ pub struct RawSelectorImportData {
 }
 
 impl RawSelectorImportData {
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.function.is_empty() && self.event.is_empty() && self.error.is_empty()
     }
 }

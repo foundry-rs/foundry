@@ -26,7 +26,7 @@ pub struct Prank {
 
 impl Prank {
     /// Create a new prank.
-    pub fn new(
+    pub const fn new(
         prank_caller: Address,
         prank_origin: Address,
         new_caller: Address,
@@ -49,7 +49,7 @@ impl Prank {
 
     /// Apply the prank by setting `used` to true if it is false
     /// Only returns self in the case it is updated (first application)
-    pub fn first_time_applied(&self) -> Option<Self> {
+    pub const fn first_time_applied(&self) -> Option<Self> {
         if self.used { None } else { Some(Self { used: true, ..*self }) }
     }
 }

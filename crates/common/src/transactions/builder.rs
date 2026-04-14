@@ -1,8 +1,10 @@
+use std::num::NonZeroU64;
+
 use alloy_consensus::{
     BlobTransactionSidecar, BlobTransactionSidecarEip7594, BlobTransactionSidecarVariant,
 };
 use alloy_eips::{Encodable2718, eip7702::SignedAuthorization};
-use alloy_network::{AnyNetwork, Ethereum, Network, TransactionBuilder};
+use alloy_network::{AnyNetwork, Ethereum, Network, NetworkTransactionBuilder};
 use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
@@ -42,7 +44,7 @@ use tempo_primitives::{
 /// - [`FoundryTransactionBuilder::set_valid_before`]
 /// - [`FoundryTransactionBuilder::set_valid_after`]
 /// - [`FoundryTransactionBuilder::set_fee_payer_signature`]
-pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
+pub trait FoundryTransactionBuilder<N: Network>: NetworkTransactionBuilder<N> {
     /// Reset gas limit
     fn reset_gas_limit(&mut self);
 
@@ -186,29 +188,29 @@ pub trait FoundryTransactionBuilder<N: Network>: TransactionBuilder<N> {
     }
 
     /// Get the valid_before timestamp for a Tempo expiring nonce transaction.
-    fn valid_before(&self) -> Option<u64> {
+    fn valid_before(&self) -> Option<NonZeroU64> {
         None
     }
 
     /// Set the valid_before timestamp for a Tempo expiring nonce transaction.
-    fn set_valid_before(&mut self, _valid_before: u64) {}
+    fn set_valid_before(&mut self, _valid_before: NonZeroU64) {}
 
     /// Builder-pattern method for setting the valid_before timestamp.
-    fn with_valid_before(mut self, valid_before: u64) -> Self {
+    fn with_valid_before(mut self, valid_before: NonZeroU64) -> Self {
         self.set_valid_before(valid_before);
         self
     }
 
     /// Get the valid_after timestamp for a Tempo expiring nonce transaction.
-    fn valid_after(&self) -> Option<u64> {
+    fn valid_after(&self) -> Option<NonZeroU64> {
         None
     }
 
     /// Set the valid_after timestamp for a Tempo expiring nonce transaction.
-    fn set_valid_after(&mut self, _valid_after: u64) {}
+    fn set_valid_after(&mut self, _valid_after: NonZeroU64) {}
 
     /// Builder-pattern method for setting the valid_after timestamp.
-    fn with_valid_after(mut self, valid_after: u64) -> Self {
+    fn with_valid_after(mut self, valid_after: NonZeroU64) -> Self {
         self.set_valid_after(valid_after);
         self
     }
@@ -404,19 +406,19 @@ impl FoundryTransactionBuilder<TempoNetwork> for <TempoNetwork as Network>::Tran
         self.key_id = Some(key_id);
     }
 
-    fn valid_before(&self) -> Option<u64> {
+    fn valid_before(&self) -> Option<NonZeroU64> {
         self.valid_before
     }
 
-    fn set_valid_before(&mut self, valid_before: u64) {
+    fn set_valid_before(&mut self, valid_before: NonZeroU64) {
         self.valid_before = Some(valid_before);
     }
 
-    fn valid_after(&self) -> Option<u64> {
+    fn valid_after(&self) -> Option<NonZeroU64> {
         self.valid_after
     }
 
-    fn set_valid_after(&mut self, valid_after: u64) {
+    fn set_valid_after(&mut self, valid_after: NonZeroU64) {
         self.valid_after = Some(valid_after);
     }
 

@@ -511,7 +511,7 @@ impl Default for NodeConfig {
 impl NodeConfig {
     /// Returns the memory limit of the node
     #[must_use]
-    pub fn with_memory_limit(mut self, mems_value: Option<u64>) -> Self {
+    pub const fn with_memory_limit(mut self, mems_value: Option<u64>) -> Self {
         self.memory_limit = mems_value;
         self
     }
@@ -579,13 +579,13 @@ impl NodeConfig {
 
     /// Sets a custom code size limit
     #[must_use]
-    pub fn with_code_size_limit(mut self, code_size_limit: Option<usize>) -> Self {
+    pub const fn with_code_size_limit(mut self, code_size_limit: Option<usize>) -> Self {
         self.code_size_limit = code_size_limit;
         self
     }
     /// Disables  code size limit
     #[must_use]
-    pub fn disable_code_size_limit(mut self, disable_code_size_limit: bool) -> Self {
+    pub const fn disable_code_size_limit(mut self, disable_code_size_limit: bool) -> Self {
         if disable_code_size_limit {
             self.code_size_limit = Some(usize::MAX);
         }
@@ -636,7 +636,7 @@ impl NodeConfig {
 
     /// Sets the gas limit
     #[must_use]
-    pub fn with_gas_limit(mut self, gas_limit: Option<u64>) -> Self {
+    pub const fn with_gas_limit(mut self, gas_limit: Option<u64>) -> Self {
         self.gas_limit = gas_limit;
         self
     }
@@ -645,7 +645,7 @@ impl NodeConfig {
     ///
     /// If set to `true` block gas limit will not be enforced
     #[must_use]
-    pub fn disable_block_gas_limit(mut self, disable_block_gas_limit: bool) -> Self {
+    pub const fn disable_block_gas_limit(mut self, disable_block_gas_limit: bool) -> Self {
         self.disable_block_gas_limit = disable_block_gas_limit;
         self
     }
@@ -654,14 +654,14 @@ impl NodeConfig {
     ///
     /// If set to `true`, enables the tx gas limit as imposed by Osaka (EIP-7825)
     #[must_use]
-    pub fn enable_tx_gas_limit(mut self, enable_tx_gas_limit: bool) -> Self {
+    pub const fn enable_tx_gas_limit(mut self, enable_tx_gas_limit: bool) -> Self {
         self.enable_tx_gas_limit = enable_tx_gas_limit;
         self
     }
 
     /// Sets the gas price
     #[must_use]
-    pub fn with_gas_price(mut self, gas_price: Option<u128>) -> Self {
+    pub const fn with_gas_price(mut self, gas_price: Option<u128>) -> Self {
         self.gas_price = gas_price;
         self
     }
@@ -685,7 +685,7 @@ impl NodeConfig {
 
     /// Sets the max number of transactions in a block
     #[must_use]
-    pub fn with_max_transactions(mut self, max_transactions: Option<usize>) -> Self {
+    pub const fn with_max_transactions(mut self, max_transactions: Option<usize>) -> Self {
         if let Some(max_transactions) = max_transactions {
             self.max_transactions = max_transactions;
         }
@@ -704,14 +704,14 @@ impl NodeConfig {
 
     /// Sets the base fee
     #[must_use]
-    pub fn with_base_fee(mut self, base_fee: Option<u64>) -> Self {
+    pub const fn with_base_fee(mut self, base_fee: Option<u64>) -> Self {
         self.base_fee = base_fee;
         self
     }
 
     /// Disable the enforcement of a minimum suggested priority fee
     #[must_use]
-    pub fn disable_min_priority_fee(mut self, disable_min_priority_fee: bool) -> Self {
+    pub const fn disable_min_priority_fee(mut self, disable_min_priority_fee: bool) -> Self {
         self.disable_min_priority_fee = disable_min_priority_fee;
         self
     }
@@ -757,7 +757,7 @@ impl NodeConfig {
 
     /// Sets the hardfork
     #[must_use]
-    pub fn with_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
+    pub const fn with_hardfork(mut self, hardfork: Option<FoundryHardfork>) -> Self {
         self.hardfork = hardfork;
         self
     }
@@ -811,21 +811,21 @@ impl NodeConfig {
 
     /// If set to `true` auto mining will be disabled
     #[must_use]
-    pub fn with_no_mining(mut self, no_mining: bool) -> Self {
+    pub const fn with_no_mining(mut self, no_mining: bool) -> Self {
         self.no_mining = no_mining;
         self
     }
 
     /// Sets the slots in an epoch
     #[must_use]
-    pub fn with_slots_in_an_epoch(mut self, slots_in_an_epoch: u64) -> Self {
+    pub const fn with_slots_in_an_epoch(mut self, slots_in_an_epoch: u64) -> Self {
         self.slots_in_an_epoch = slots_in_an_epoch;
         self
     }
 
     /// Sets the port to use
     #[must_use]
-    pub fn with_port(mut self, port: u16) -> Self {
+    pub const fn with_port(mut self, port: u16) -> Self {
         self.port = port;
         self
     }
@@ -850,7 +850,7 @@ impl NodeConfig {
     }
 
     #[must_use]
-    pub fn with_no_storage_caching(mut self, no_storage_caching: bool) -> Self {
+    pub const fn with_no_storage_caching(mut self, no_storage_caching: bool) -> Self {
         self.no_storage_caching = no_storage_caching;
         self
     }
@@ -886,7 +886,7 @@ impl NodeConfig {
 
     /// Sets the `fork_chain_id` to use to fork off local cache from
     #[must_use]
-    pub fn with_fork_chain_id(mut self, fork_chain_id: Option<U256>) -> Self {
+    pub const fn with_fork_chain_id(mut self, fork_chain_id: Option<U256>) -> Self {
         self.fork_chain_id = fork_chain_id;
         self
     }
@@ -900,7 +900,7 @@ impl NodeConfig {
 
     /// Sets the `fork_request_timeout` to use for requests
     #[must_use]
-    pub fn fork_request_timeout(mut self, fork_request_timeout: Option<Duration>) -> Self {
+    pub const fn fork_request_timeout(mut self, fork_request_timeout: Option<Duration>) -> Self {
         if let Some(fork_request_timeout) = fork_request_timeout {
             self.fork_request_timeout = fork_request_timeout;
         }
@@ -909,7 +909,7 @@ impl NodeConfig {
 
     /// Sets the `fork_request_retries` to use for spurious networks
     #[must_use]
-    pub fn fork_request_retries(mut self, fork_request_retries: Option<u32>) -> Self {
+    pub const fn fork_request_retries(mut self, fork_request_retries: Option<u32>) -> Self {
         if let Some(fork_request_retries) = fork_request_retries {
             self.fork_request_retries = fork_request_retries;
         }
@@ -918,7 +918,7 @@ impl NodeConfig {
 
     /// Sets the initial `fork_retry_backoff` for rate limits
     #[must_use]
-    pub fn fork_retry_backoff(mut self, fork_retry_backoff: Option<Duration>) -> Self {
+    pub const fn fork_retry_backoff(mut self, fork_retry_backoff: Option<Duration>) -> Self {
         if let Some(fork_retry_backoff) = fork_retry_backoff {
             self.fork_retry_backoff = fork_retry_backoff;
         }
@@ -929,7 +929,10 @@ impl NodeConfig {
     ///
     /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
     #[must_use]
-    pub fn fork_compute_units_per_second(mut self, compute_units_per_second: Option<u64>) -> Self {
+    pub const fn fork_compute_units_per_second(
+        mut self,
+        compute_units_per_second: Option<u64>,
+    ) -> Self {
         if let Some(compute_units_per_second) = compute_units_per_second {
             self.compute_units_per_second = compute_units_per_second;
         }
@@ -938,35 +941,35 @@ impl NodeConfig {
 
     /// Sets whether to enable tracing
     #[must_use]
-    pub fn with_tracing(mut self, enable_tracing: bool) -> Self {
+    pub const fn with_tracing(mut self, enable_tracing: bool) -> Self {
         self.enable_tracing = enable_tracing;
         self
     }
 
     /// Sets whether to enable steps tracing
     #[must_use]
-    pub fn with_steps_tracing(mut self, enable_steps_tracing: bool) -> Self {
+    pub const fn with_steps_tracing(mut self, enable_steps_tracing: bool) -> Self {
         self.enable_steps_tracing = enable_steps_tracing;
         self
     }
 
     /// Sets whether to print `console.log` invocations to stdout.
     #[must_use]
-    pub fn with_print_logs(mut self, print_logs: bool) -> Self {
+    pub const fn with_print_logs(mut self, print_logs: bool) -> Self {
         self.print_logs = print_logs;
         self
     }
 
     /// Sets whether to print traces to stdout.
     #[must_use]
-    pub fn with_print_traces(mut self, print_traces: bool) -> Self {
+    pub const fn with_print_traces(mut self, print_traces: bool) -> Self {
         self.print_traces = print_traces;
         self
     }
 
     /// Sets whether to enable autoImpersonate
     #[must_use]
-    pub fn with_auto_impersonate(mut self, enable_auto_impersonate: bool) -> Self {
+    pub const fn with_auto_impersonate(mut self, enable_auto_impersonate: bool) -> Self {
         self.enable_auto_impersonate = enable_auto_impersonate;
         self
     }
@@ -985,7 +988,7 @@ impl NodeConfig {
     }
 
     #[must_use]
-    pub fn with_transaction_order(mut self, transaction_order: TransactionOrder) -> Self {
+    pub const fn with_transaction_order(mut self, transaction_order: TransactionOrder) -> Self {
         self.transaction_order = transaction_order;
         self
     }
@@ -1024,14 +1027,14 @@ impl NodeConfig {
 
     /// Sets whether to disable the default create2 deployer
     #[must_use]
-    pub fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
+    pub const fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
         self.disable_default_create2_deployer = yes;
         self
     }
 
     /// Sets whether to disable pool balance checks
     #[must_use]
-    pub fn with_disable_pool_balance_checks(mut self, yes: bool) -> Self {
+    pub const fn with_disable_pool_balance_checks(mut self, yes: bool) -> Self {
         self.disable_pool_balance_checks = yes;
         self
     }
@@ -1045,7 +1048,7 @@ impl NodeConfig {
 
     /// Enable features for provided networks.
     #[must_use]
-    pub fn with_networks(mut self, networks: NetworkConfigs) -> Self {
+    pub const fn with_networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
         self
     }
@@ -1066,12 +1069,12 @@ impl NodeConfig {
 
     /// Makes the node silent to not emit anything on stdout
     #[must_use]
-    pub fn silent(self) -> Self {
+    pub const fn silent(self) -> Self {
         self.set_silent(true)
     }
 
     #[must_use]
-    pub fn set_silent(mut self, silent: bool) -> Self {
+    pub const fn set_silent(mut self, silent: bool) -> Self {
         self.silent = silent;
         self
     }
@@ -1541,7 +1544,7 @@ pub enum ForkChoice {
 
 impl ForkChoice {
     /// Returns the block number to fork from
-    pub fn block_number(&self) -> Option<i128> {
+    pub const fn block_number(&self) -> Option<i128> {
         match self {
             Self::Block(block_number) => Some(*block_number),
             Self::Transaction(_) => None,
@@ -1549,7 +1552,7 @@ impl ForkChoice {
     }
 
     /// Returns the transaction hash to fork from
-    pub fn transaction_hash(&self) -> Option<TxHash> {
+    pub const fn transaction_hash(&self) -> Option<TxHash> {
         match self {
             Self::Block(_) => None,
             Self::Transaction(transaction_hash) => Some(*transaction_hash),
@@ -1579,12 +1582,12 @@ pub struct PruneStateHistoryConfig {
 
 impl PruneStateHistoryConfig {
     /// Returns `true` if writing state history is supported
-    pub fn is_state_history_supported(&self) -> bool {
+    pub const fn is_state_history_supported(&self) -> bool {
         !self.enabled || self.max_memory_history.is_some()
     }
 
     /// Returns true if this setting was enabled.
-    pub fn is_config_enabled(&self) -> bool {
+    pub const fn is_config_enabled(&self) -> bool {
         self.enabled
     }
 

@@ -286,7 +286,7 @@ impl SelectorsSubcommands {
                         .collect()
                 };
 
-                let mut artifacts = artifacts.into_iter().peekable();
+                let mut artifacts = artifacts.into_iter();
 
                 #[derive(PartialEq, PartialOrd, Eq, Ord)]
                 enum SelectorType {

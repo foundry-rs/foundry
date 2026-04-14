@@ -39,8 +39,9 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, ReceiptResponse, TransactionBuilder,
-    TransactionBuilder4844, TransactionResponse, eip2718::Decodable2718,
+    AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, NetworkTransactionBuilder,
+    ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TransactionResponse,
+    eip2718::Decodable2718,
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
@@ -75,7 +76,10 @@ use anvil_core::{
     types::{ReorgOptions, TransactionData},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use foundry_common::provider::ProviderBuilder;
+use foundry_common::{
+    provider::ProviderBuilder,
+    version::{COMMIT_SHA, SEMVER_VERSION},
+};
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
@@ -431,6 +435,8 @@ impl<N: Network> EthApi<N> {
 
         Ok(Metadata {
             client_version: CLIENT_VERSION.to_string(),
+            client_semver: Some(SEMVER_VERSION.to_string()),
+            client_commit_sha: Some(COMMIT_SHA.to_string()),
             chain_id: self.backend.chain_id().to::<u64>(),
             latest_block_hash: self.backend.best_hash(),
             latest_block_number: self.backend.best_number(),
@@ -477,6 +483,10 @@ impl<N: Network> EthApi<N> {
     /// Sets the specific timestamp and returns the number of seconds between the given timestamp
     /// and the current time.
     ///
+    /// The `timestamp` is in seconds. The `evm_setTime` JSON-RPC method accepts both seconds and
+    /// milliseconds (values above 1e12 are treated as milliseconds); the RPC handler normalises
+    /// the input to seconds before calling this function.
+    ///
     /// Handler for RPC call: `evm_setTime`
     pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
         node_info!("evm_setTime");
@@ -485,7 +495,7 @@ impl<N: Network> EthApi<N> {
 
         // number of seconds between the given timestamp and the current time.
         let offset = timestamp.saturating_sub(now);
-        Ok(Duration::from_millis(offset).as_secs())
+        Ok(offset)
     }
 
     /// Set the next block gas limit
@@ -625,6 +635,7 @@ impl<N: Network> EthApi<N> {
     }
 
     /// Handler for RPC call: `anvil_getBlobByHash`
+    #[allow(clippy::large_stack_frames)]
     pub fn anvil_get_blob_by_versioned_hash(
         &self,
         hash: B256,
@@ -1480,6 +1491,7 @@ impl EthApi<FoundryNetwork> {
     }
 
     /// Executes the [EthRequest] and returns an RPC [ResponseResult].
+    #[allow(clippy::large_stack_frames)]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
         let response = match request.clone() {
@@ -1753,7 +1765,15 @@ impl EthApi<FoundryNetwork> {
                         "The timestamp is too big",
                     ));
                 }
-                let time = timestamp.to::<u64>();
+                // evm_setTime accepts either seconds or milliseconds for Ganache compatibility.
+                // Timestamps above 1e12 are interpreted as milliseconds and converted to
+                // seconds; below that threshold they are treated as seconds directly.
+                let raw = timestamp.to::<u64>();
+                let time = if raw > 1_000_000_000_000 {
+                    Duration::from_millis(raw).as_secs()
+                } else {
+                    raw
+                };
                 self.evm_set_time(time).to_rpc_result()
             }
             EthRequest::EvmSetBlockGasLimit(gas_limit) => {

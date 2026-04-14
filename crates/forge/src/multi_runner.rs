@@ -222,9 +222,9 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
 
             tests_progress.inner.lock().clear();
 
-            results.iter().for_each(|result| {
+            for result in &results {
                 let _ = tx.send(result.to_owned());
-            });
+            }
         } else {
             contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = tokio_handle.enter();
@@ -246,11 +246,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         progress: Option<&TestsProgress>,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
-        let mut span_name = identifier.as_str();
-
-        if !enabled!(tracing::Level::TRACE) {
-            span_name = get_contract_name(&identifier);
-        }
+        let span_name = if enabled!(tracing::Level::TRACE) {
+            identifier.as_str()
+        } else {
+            get_contract_name(&identifier)
+        };
         let span = debug_span!("suite", name = %span_name);
         let span_local = span.clone();
         let _guard = span_local.enter();
@@ -440,12 +440,12 @@ impl MultiContractRunnerBuilder {
         }
     }
 
-    pub fn sender(mut self, sender: Address) -> Self {
+    pub const fn sender(mut self, sender: Address) -> Self {
         self.sender = Some(sender);
         self
     }
 
-    pub fn initial_balance(mut self, initial_balance: U256) -> Self {
+    pub const fn initial_balance(mut self, initial_balance: U256) -> Self {
         self.initial_balance = initial_balance;
         self
     }
@@ -455,27 +455,27 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn set_coverage(mut self, enable: bool) -> Self {
+    pub const fn set_coverage(mut self, enable: bool) -> Self {
         self.line_coverage = enable;
         self
     }
 
-    pub fn set_debug(mut self, enable: bool) -> Self {
+    pub const fn set_debug(mut self, enable: bool) -> Self {
         self.debug = enable;
         self
     }
 
-    pub fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
+    pub const fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
         self.decode_internal = mode;
         self
     }
 
-    pub fn fail_fast(mut self, fail_fast: bool) -> Self {
+    pub const fn fail_fast(mut self, fail_fast: bool) -> Self {
         self.fail_fast = fail_fast;
         self
     }
 
-    pub fn enable_isolation(mut self, enable: bool) -> Self {
+    pub const fn enable_isolation(mut self, enable: bool) -> Self {
         self.isolation = enable;
         self
     }
