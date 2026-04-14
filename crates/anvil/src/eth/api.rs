@@ -39,8 +39,9 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, ReceiptResponse, TransactionBuilder,
-    TransactionBuilder4844, TransactionResponse, eip2718::Decodable2718,
+    AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, NetworkTransactionBuilder,
+    ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TransactionResponse,
+    eip2718::Decodable2718,
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
@@ -431,6 +432,8 @@ impl<N: Network> EthApi<N> {
 
         Ok(Metadata {
             client_version: CLIENT_VERSION.to_string(),
+            client_semver: option_env!("CARGO_PKG_VERSION").map(|s| s.to_string()),
+            client_commit_sha: option_env!("VERGEN_GIT_SHA").map(|s| s.to_string()),
             chain_id: self.backend.chain_id().to::<u64>(),
             latest_block_hash: self.backend.best_hash(),
             latest_block_number: self.backend.best_number(),

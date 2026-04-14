@@ -23,9 +23,7 @@ use tempo_precompiles::{
     validator_config,
 };
 
-pub use tempo_contracts::precompiles::{
-    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
-};
+pub use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
 // TODO: remove once we can re-export from tempo_precompiles instead.
 pub const SIGNATURE_VERIFIER_ADDRESS: Address =
@@ -48,8 +46,7 @@ pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
 ];
 
 /// All well-known TIP20 fee token addresses on Tempo networks.
-pub const TEMPO_TIP20_TOKENS: &[Address] =
-    &[PATH_USD_ADDRESS, ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS];
+pub const TEMPO_TIP20_TOKENS: &[Address] = &[PATH_USD_ADDRESS];
 
 /// Initialize Tempo precompiles and contracts using a storage provider.
 ///

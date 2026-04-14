@@ -3,7 +3,7 @@ use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, U256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::Signer;
-use alloy_sol_types::{SolCall, sol};
+use alloy_sol_types::SolCall;
 use chrono::DateTime;
 use clap::Parser;
 use eyre::Result;
@@ -20,55 +20,14 @@ use foundry_common::{
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, IAccountKeychain,
-    IAccountKeychain::{KeyInfo, SignatureType, TokenLimit},
+    IAccountKeychain::{
+        CallScope, KeyInfo, KeyRestrictions, SelectorRule, SignatureType, TokenLimit,
+    },
+    account_keychain::authorizeKeyCall,
 };
 use yansi::Paint;
 
 use crate::tx::{CastTxBuilder, CastTxSender, SendTxOpts};
-
-// Extended AccountKeychain ABI for functions not yet in the pinned tempo-contracts.
-// These types mirror the T3+ precompile interface.
-sol! {
-    #[derive(Debug)]
-    struct SelectorRule {
-        bytes4 selector;
-        address[] recipients;
-    }
-
-    #[derive(Debug)]
-    struct CallScope {
-        address target;
-        SelectorRule[] selectorRules;
-    }
-
-    #[derive(Debug)]
-    struct ExtTokenLimit {
-        address token;
-        uint256 amount;
-    }
-
-    #[derive(Debug)]
-    struct KeyRestrictions {
-        uint64 expiry;
-        bool enforceLimits;
-        ExtTokenLimit[] limits;
-        bool allowAnyCalls;
-        CallScope[] allowedCalls;
-    }
-
-    function authorizeKeyWithRestrictions(
-        address keyId,
-        uint8 signatureType,
-        KeyRestrictions calldata config
-    ) external;
-
-    function setAllowedCalls(
-        address keyId,
-        CallScope[] calldata scopes
-    ) external;
-
-    function removeAllowedCalls(address keyId, address target) external;
-}
 
 /// Tempo keychain management commands.
 ///
@@ -128,10 +87,10 @@ pub enum KeychainSubcommand {
         scope: Vec<CallScope>,
 
         /// Call scope restrictions as a JSON array.
-        /// Format: [{"target":"0x...","selectors":["transfer"]}] or
-        /// [{"target":"0x...","selectors":[{"selector":"transfer","recipients":["0x..."]}]}]
-        #[arg(long = "scopes", value_parser = parse_scopes_json, conflicts_with = "scope")]
-        scopes_json: Option<Vec<CallScope>>,
+        /// Format: `[{"target":"0x...","selectors":["transfer"]}]` or
+        /// `[{"target":"0x...","selectors":[{"selector":"transfer","recipients":["0x..."]}]}]`
+        #[arg(long = "scopes", value_parser = parse_scopes_json_wrapped, conflicts_with = "scope")]
+        scopes_json: Option<ScopesJson>,
 
         #[command(flatten)]
         tx: TransactionOpts,
@@ -264,7 +223,7 @@ fn parse_limit(s: &str) -> Result<TokenLimit, String> {
         token_str.parse().map_err(|e| format!("invalid token address '{token_str}': {e}"))?;
     let amount: U256 =
         amount_str.parse().map_err(|e| format!("invalid amount '{amount_str}': {e}"))?;
-    Ok(TokenLimit { token, amount })
+    Ok(TokenLimit { token, amount, period: 0 })
 }
 
 /// Parse a `--scope TARGET[:SELECTORS[@RECIPIENTS]]` flag value.
@@ -329,8 +288,12 @@ fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
     Ok(rules)
 }
 
-/// Parse a selector string: either a 4-byte hex (`0xd09de08a`) or a function name
-/// (computed as the first 4 bytes of keccak256 of `name()`).
+/// Parse a selector string: a 4-byte hex (`0xd09de08a`), a full signature
+/// (`transfer(address,uint256)`), or a well-known TIP-20 function name shorthand.
+///
+/// Recognized shorthands: `transfer`, `approve`, `transferFrom`, `transferWithMemo`,
+/// `transferFromWithMemo`. These resolve to the standard ERC20/TIP-20 signatures.
+/// Unknown names without parentheses are hashed as `name()`.
 fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
     let s = s.trim();
     if s.starts_with("0x") || s.starts_with("0X") {
@@ -343,7 +306,21 @@ fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
         arr.copy_from_slice(&bytes);
         Ok(arr)
     } else {
-        let sig = if s.contains('(') { s.to_string() } else { format!("{s}()") };
+        // Expand well-known TIP-20 shorthands to full signatures.
+        let sig = if s.contains('(') {
+            s.to_string()
+        } else {
+            match s {
+                "transfer" => "transfer(address,uint256)".to_string(),
+                "approve" => "approve(address,uint256)".to_string(),
+                "transferFrom" => "transferFrom(address,address,uint256)".to_string(),
+                "transferWithMemo" => "transferWithMemo(address,uint256,bytes32)".to_string(),
+                "transferFromWithMemo" => {
+                    "transferFromWithMemo(address,address,uint256,bytes32)".to_string()
+                }
+                _ => format!("{s}()"),
+            }
+        };
         let hash = keccak256(sig.as_bytes());
         let mut arr = [0u8; 4];
         arr.copy_from_slice(&hash[..4]);
@@ -398,6 +375,15 @@ fn parse_scopes_json(s: &str) -> Result<Vec<CallScope>, String> {
     Ok(scopes)
 }
 
+/// Newtype wrapper for parsed `--scopes` JSON so clap can treat it as a single value.
+#[derive(Debug, Clone)]
+pub struct ScopesJson(Vec<CallScope>);
+
+/// Parse `--scopes` JSON flag value into the newtype wrapper.
+fn parse_scopes_json_wrapped(s: &str) -> Result<ScopesJson, String> {
+    parse_scopes_json(s).map(ScopesJson)
+}
+
 impl KeychainSubcommand {
     pub async fn run(self) -> Result<()> {
         match self {
@@ -417,8 +403,11 @@ impl KeychainSubcommand {
                 tx,
                 send_tx,
             } => {
-                let all_scopes =
-                    if let Some(json_scopes) = scopes_json { json_scopes } else { scope };
+                let all_scopes = if let Some(ScopesJson(json_scopes)) = scopes_json {
+                    json_scopes
+                } else {
+                    scope
+                };
                 run_authorize(
                     key_address,
                     key_type,
@@ -529,15 +518,18 @@ async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) 
     sh_println!("Wallet:         {wallet_address}")?;
     sh_println!("Key:            {key_address}")?;
 
+    if info.isRevoked {
+        sh_println!("Status:         {} revoked", "✗".red())?;
+        return Ok(());
+    }
+
     if !provisioned {
         sh_println!("Status:         {} not provisioned", "✗".red())?;
         return Ok(());
     }
 
-    // Status line: combine provisioned + revoked into a single indicator.
-    if info.isRevoked {
-        sh_println!("Status:         {} revoked", "✗".red())?;
-    } else {
+    // Status line: active key.
+    {
         sh_println!("Status:         {} active", "✓".green())?;
     }
 
@@ -579,41 +571,18 @@ async fn run_authorize(
 ) -> Result<()> {
     let enforce = enforce_limits || !limits.is_empty();
 
-    let calldata = if allowed_calls.is_empty() {
-        // Use the legacy authorizeKey when no scopes are needed.
-        IAccountKeychain::authorizeKeyCall {
-            keyId: key_address,
-            signatureType: key_type,
-            expiry,
-            enforceLimits: enforce,
-            limits,
-        }
-        .abi_encode()
-    } else {
-        // Use the T3+ authorizeKey overload with KeyRestrictions when scopes are provided.
-        let sig_type_u8 = match key_type {
-            SignatureType::Secp256k1 => 0u8,
-            SignatureType::P256 => 1u8,
-            SignatureType::WebAuthn => 2u8,
-            _ => eyre::bail!("unknown signature type"),
-        };
-        let restrictions = KeyRestrictions {
-            expiry,
-            enforceLimits: enforce,
-            limits: limits
-                .into_iter()
-                .map(|l| ExtTokenLimit { token: l.token, amount: l.amount })
-                .collect(),
-            allowAnyCalls: false,
-            allowedCalls: allowed_calls,
-        };
-        authorizeKeyWithRestrictionsCall {
-            keyId: key_address,
-            signatureType: sig_type_u8,
-            config: restrictions,
-        }
-        .abi_encode()
+    // Always use the T3 authorizeKey(address,SignatureType,KeyRestrictions) format.
+    // The legacy authorizeKey selector is rejected after T3 activation.
+    let restrictions = KeyRestrictions {
+        expiry,
+        enforceLimits: enforce,
+        limits,
+        allowAnyCalls: allowed_calls.is_empty(),
+        allowedCalls: allowed_calls,
     };
+    let calldata =
+        authorizeKeyCall { keyId: key_address, signatureType: key_type, config: restrictions }
+            .abi_encode();
 
     send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
@@ -674,7 +643,8 @@ async fn run_set_scope(
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
 ) -> Result<()> {
-    let calldata = setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
+    let calldata =
+        IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
     send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
 
@@ -685,7 +655,8 @@ async fn run_remove_scope(
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
 ) -> Result<()> {
-    let calldata = removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
+    let calldata =
+        IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
     send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
 

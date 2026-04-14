@@ -64,6 +64,7 @@ impl PubSubEthRpcHandler {
                     Params::None => None,
                     Params::Logs(filter) => Some(filter.clone()),
                     Params::Bool(_) => None,
+                    Params::TransactionReceipts(_) => None,
                 };
                 let params = FilteredParams::new(filter.map(|b| *b));
 
@@ -111,6 +112,9 @@ impl PubSubEthRpcHandler {
                                 ));
                             }
                         }
+                    }
+                    SubscriptionKind::TransactionReceipts => {
+                        return RpcError::internal_error_with("Not implemented").into();
                     }
                     SubscriptionKind::Syncing => {
                         return RpcError::internal_error_with("Not implemented").into();

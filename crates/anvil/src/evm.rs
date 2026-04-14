@@ -19,7 +19,7 @@ mod tests {
         eth::EthEvmContext,
         precompiles::{DynPrecompile, PrecompilesMap},
     };
-    use alloy_op_evm::OpEvm;
+    use alloy_op_evm::{OpEvm, OpTx};
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
     use itertools::Itertools;
     use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
@@ -111,8 +111,7 @@ mod tests {
     fn create_op_evm(
         spec: SpecId,
         op_spec: OpSpecId,
-    ) -> (OpTransaction<TxEnv>, OpEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap>)
-    {
+    ) -> (OpTx, OpEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap, OpTx>) {
         let tx = OpTransaction::<TxEnv> {
             base: TxEnv {
                 kind: TxKind::Call(PRECOMPILE_ADDR),
@@ -155,7 +154,7 @@ mod tests {
             true,
         );
 
-        (tx, op_evm)
+        (OpTx(tx), op_evm)
     }
 
     #[test]

@@ -6,10 +6,12 @@
 //! - Native value transfer rejection
 //! - Basic transaction behavior in Tempo mode
 
+use std::num::NonZeroU64;
+
 use alloy_consensus::Typed2718;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
-use alloy_primitives::{Address, Bytes, TxKind, U256};
+use alloy_primitives::{Address, Bytes, TxKind, U256, address};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
@@ -17,10 +19,7 @@ use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::sol;
 use anvil::{NodeConfig, spawn};
-use foundry_evm::core::tempo::{
-    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, TEMPO_PRECOMPILE_ADDRESSES,
-    TEMPO_TIP20_TOKENS, THETA_USD_ADDRESS,
-};
+use foundry_evm::core::tempo::{PATH_USD_ADDRESS, TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS};
 use tempo_alloy::primitives::TempoTxEnvelope;
 use tempo_primitives::{
     AASigned, TempoSignature, TempoTransaction,
@@ -28,9 +27,9 @@ use tempo_primitives::{
 };
 
 const PATH_USD: Address = PATH_USD_ADDRESS;
-const ALPHA_USD: Address = ALPHA_USD_ADDRESS;
-const BETA_USD: Address = BETA_USD_ADDRESS;
-const THETA_USD: Address = THETA_USD_ADDRESS;
+const ALPHA_USD: Address = address!("0x20C0000000000000000000000000000000000001");
+const BETA_USD: Address = address!("0x20C0000000000000000000000000000000000002");
+const THETA_USD: Address = address!("0x20C0000000000000000000000000000000000003");
 
 /// Gas limit for TIP20 transfer calls (precompile interactions need more gas).
 const TIP20_TRANSFER_GAS: u64 = 300_000;
@@ -630,7 +629,7 @@ async fn test_tempo_aa_transaction_with_valid_before() {
         nonce_key: U256::from(3),
         nonce: 0,
         fee_payer_signature: None,
-        valid_before: Some(valid_before),
+        valid_before: NonZeroU64::new(valid_before),
         valid_after: None,
         key_authorization: None,
         tempo_authorization_list: vec![],
@@ -682,8 +681,8 @@ async fn test_tempo_aa_transaction_with_valid_after() {
         nonce_key: U256::from(4),
         nonce: 0,
         fee_payer_signature: None,
-        valid_before: Some(valid_before),
-        valid_after: Some(valid_after),
+        valid_before: NonZeroU64::new(valid_before),
+        valid_after: NonZeroU64::new(valid_after),
         key_authorization: None,
         tempo_authorization_list: vec![],
     };
@@ -740,7 +739,7 @@ async fn test_tempo_aa_expired_valid_before() {
         nonce_key: U256::from(100),
         nonce: 0,
         fee_payer_signature: None,
-        valid_before: Some(valid_before),
+        valid_before: NonZeroU64::new(valid_before),
         valid_after: None,
         key_authorization: None,
         tempo_authorization_list: vec![],
@@ -791,8 +790,8 @@ async fn test_tempo_aa_valid_after_future() {
         nonce_key: U256::from(101),
         nonce: 0,
         fee_payer_signature: None,
-        valid_before: Some(valid_before),
-        valid_after: Some(valid_after),
+        valid_before: NonZeroU64::new(valid_before),
+        valid_after: NonZeroU64::new(valid_after),
         key_authorization: None,
         tempo_authorization_list: vec![],
     };
@@ -1497,7 +1496,7 @@ async fn test_tempo_aa_transaction_expiring_nonce() {
         nonce_key: U256::MAX,
         nonce: 0,
         fee_payer_signature: None,
-        valid_before: Some(valid_before),
+        valid_before: NonZeroU64::new(valid_before),
         valid_after: None,
         key_authorization: None,
         tempo_authorization_list: vec![],
@@ -1552,7 +1551,7 @@ async fn test_tempo_aa_expiring_nonce_replay() {
         nonce_key: U256::MAX,
         nonce: 0,
         fee_payer_signature: None,
-        valid_before: Some(valid_before),
+        valid_before: NonZeroU64::new(valid_before),
         valid_after: None,
         key_authorization: None,
         tempo_authorization_list: vec![],
