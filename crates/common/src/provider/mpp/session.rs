@@ -128,13 +128,13 @@ impl SessionProvider {
     }
 
     /// Set the authorized signer address for keychain mode.
-    pub fn with_authorized_signer(mut self, addr: Address) -> Self {
+    pub const fn with_authorized_signer(mut self, addr: Address) -> Self {
         self.authorized_signer = Some(addr);
         self
     }
 
     /// Set the default deposit amount.
-    pub fn with_default_deposit(mut self, deposit: u128) -> Self {
+    pub const fn with_default_deposit(mut self, deposit: u128) -> Self {
         self.default_deposit = Some(deposit);
         self
     }

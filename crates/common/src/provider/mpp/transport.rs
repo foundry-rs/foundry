@@ -142,12 +142,12 @@ impl MppHttpTransport<LazySessionProvider> {
 
 impl<P> MppHttpTransport<P> {
     /// Create a new MPP transport with an explicit payment provider.
-    pub fn new(client: reqwest::Client, url: Url, provider: P) -> Self {
+    pub const fn new(client: reqwest::Client, url: Url, provider: P) -> Self {
         Self { client, url, provider }
     }
 
     /// Returns a reference to the underlying reqwest client.
-    pub fn client(&self) -> &reqwest::Client {
+    pub const fn client(&self) -> &reqwest::Client {
         &self.client
     }
 }
