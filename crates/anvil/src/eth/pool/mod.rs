@@ -40,7 +40,6 @@ use alloy_consensus::Transaction;
 use alloy_primitives::{Address, TxHash};
 use alloy_rpc_types::txpool::TxpoolStatus;
 use anvil_core::eth::transaction::PendingTransaction;
-use foundry_primitives::FoundryTxEnvelope;
 use futures::channel::mpsc::{Receiver, Sender, channel};
 use parking_lot::{Mutex, RwLock};
 use std::{collections::VecDeque, fmt, sync::Arc};
@@ -48,7 +47,7 @@ use std::{collections::VecDeque, fmt, sync::Arc};
 pub mod transactions;
 
 /// Transaction pool that performs validation.
-pub struct Pool<T = FoundryTxEnvelope> {
+pub struct Pool<T> {
     /// processes all pending transactions
     inner: RwLock<PoolInner<T>>,
     /// listeners for new ready transactions
@@ -125,11 +124,11 @@ impl<T> Pool<T> {
         };
         trace!(target: "txpool", "Dropped transactions: {:?}", removed.iter().map(|tx| tx.hash()).collect::<Vec<_>>());
 
-        let mut dropped = None;
-        if !removed.is_empty() {
-            dropped = removed.into_iter().find(|t| *t.pending_transaction.hash() == tx);
+        if removed.is_empty() {
+            None
+        } else {
+            removed.into_iter().find(|t| *t.pending_transaction.hash() == tx)
         }
-        dropped
     }
 
     /// Notifies listeners if the transaction was added to the ready queue.
@@ -181,8 +180,8 @@ impl<T: Transaction> Pool<T> {
     /// Invoked when a set of transactions ([Self::ready_transactions()]) was executed.
     ///
     /// This will remove the transactions from the pool.
-    pub fn on_mined_block(&self, outcome: MinedBlockOutcome<T>) -> PruneResult<T> {
-        let MinedBlockOutcome { block_number, included, invalid } = outcome;
+    pub fn on_mined_block(self: &Arc<Self>, outcome: MinedBlockOutcome<T>) -> PruneResult<T> {
+        let MinedBlockOutcome { block_number, included, invalid, not_yet_valid } = outcome;
 
         // remove invalid transactions from the pool
         self.remove_invalid(invalid.into_iter().map(|tx| tx.hash()).collect());
@@ -191,6 +190,21 @@ impl<T: Transaction> Pool<T> {
         let res = self
             .prune_markers(block_number, included.into_iter().flat_map(|tx| tx.provides.clone()));
         trace!(target: "txpool", "pruned transaction markers {:?}", res);
+
+        // Re-notify the miner about not-yet-valid transactions so they'll be retried.
+        // Delay by 1 second to let time advance before the next mining attempt.
+        if !not_yet_valid.is_empty() {
+            let tx_hashes: Vec<_> = not_yet_valid.iter().map(|tx| tx.hash()).collect();
+            let pool = Arc::clone(self);
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                for hash in tx_hashes {
+                    trace!(target: "txpool", "re-notifying for not-yet-valid tx: {:?}", hash);
+                    pool.notify_listener(hash);
+                }
+            });
+        }
+
         res
     }
 
@@ -226,7 +240,7 @@ impl<T: Transaction> Pool<T> {
 ///
 /// Contains all transactions that are ready to be executed
 #[derive(Debug)]
-struct PoolInner<T = FoundryTxEnvelope> {
+struct PoolInner<T> {
     ready_transactions: ReadyTransactions<T>,
     pending_transactions: PendingTransactions<T>,
 }
@@ -330,7 +344,7 @@ impl<T: Transaction> PoolInner<T> {
         tx: PoolTransaction<T>,
     ) -> Result<AddedTransaction<T>, PoolError> {
         if self.contains(&tx.hash()) {
-            warn!(target: "txpool", "[{:?}] Already imported", tx.hash());
+            debug!(target: "txpool", "[{:?}] Already imported", tx.hash());
             return Err(PoolError::AlreadyImported(tx.hash()));
         }
 
@@ -382,9 +396,8 @@ impl<T: Transaction> PoolInner<T> {
                         debug!(target: "txpool", "[{:?}] Failed to add tx: {:?}", current_hash,
         err);
                         return Err(err);
-                    } else {
-                        ready.discarded.push(current_hash);
                     }
+                    ready.discarded.push(current_hash);
                 }
             }
             is_new_tx = false;
@@ -434,7 +447,7 @@ impl<T: Transaction> PoolInner<T> {
 }
 
 /// Represents the outcome of a prune
-pub struct PruneResult<T = FoundryTxEnvelope> {
+pub struct PruneResult<T> {
     /// a list of added transactions that a pruned marker satisfied
     pub promoted: Vec<AddedTransaction<T>>,
     /// all transactions that  failed to be promoted and now are discarded
@@ -463,7 +476,7 @@ impl<T> fmt::Debug for PruneResult<T> {
 }
 
 #[derive(Clone, Debug)]
-pub struct ReadyTransaction<T = FoundryTxEnvelope> {
+pub struct ReadyTransaction<T> {
     /// the hash of the submitted transaction
     hash: TxHash,
     /// transactions promoted to the ready queue
@@ -486,7 +499,7 @@ impl<T> ReadyTransaction<T> {
 }
 
 #[derive(Clone, Debug)]
-pub enum AddedTransaction<T = FoundryTxEnvelope> {
+pub enum AddedTransaction<T> {
     /// transaction was successfully added and being processed
     Ready(ReadyTransaction<T>),
     /// Transaction was successfully added but not yet queued for processing
@@ -497,7 +510,7 @@ pub enum AddedTransaction<T = FoundryTxEnvelope> {
 }
 
 impl<T> AddedTransaction<T> {
-    pub fn hash(&self) -> &TxHash {
+    pub const fn hash(&self) -> &TxHash {
         match self {
             Self::Ready(tx) => &tx.hash,
             Self::Pending { hash } => hash,

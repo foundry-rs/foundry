@@ -112,7 +112,7 @@ impl BindJsonArgs {
                     &sess,
                     &arena,
                     FileName::Real(path.clone()),
-                    content.to_string(),
+                    content.clone(),
                 )?;
                 let ast = parser.parse_file().map_err(|e| e.emit())?;
 
@@ -157,13 +157,13 @@ impl BindJsonArgs {
 
             let mut target_files = HashSet::new();
             for (path, source) in &input.input.sources {
-                if !include.is_empty() {
-                    if !include.iter().any(|matcher| matcher.is_match(path)) {
+                if include.is_empty() {
+                    // Exclude library files by default
+                    if project.paths.has_library_ancestor(path) {
                         continue;
                     }
                 } else {
-                    // Exclude library files by default
-                    if project.paths.has_library_ancestor(path) {
+                    if !include.iter().any(|matcher| matcher.is_match(path)) {
                         continue;
                     }
                 }
@@ -398,7 +398,7 @@ struct PreprocessorVisitor {
 }
 
 impl PreprocessorVisitor {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self { updates: Vec::new() }
     }
 
@@ -452,7 +452,7 @@ impl<'ast> Visit<'ast> for PreprocessorVisitor {
         var: &'ast ast::VariableDefinition<'ast>,
     ) -> ControlFlow<Self::BreakValue> {
         // Remove `immutable` attributes.
-        if let Some(VarMut::Immutable) = var.mutability {
+        if var.mutability == Some(VarMut::Immutable) {
             self.updates.push((var.span, ""));
         }
 

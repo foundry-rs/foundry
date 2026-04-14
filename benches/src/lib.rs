@@ -159,7 +159,7 @@ impl BenchmarkProject {
         Self::install_npm_dependencies(&root_path)?;
 
         sh_println!("  ✅ Project {} setup complete at {}", config.name, root);
-        Ok(Self { name: config.name.to_string(), root_path, temp_project })
+        Ok(Self { name: config.name.clone(), root_path, temp_project })
     }
 
     /// Install npm dependencies if package.json exists
@@ -175,13 +175,13 @@ impl BenchmarkProject {
                 .status()
                 .wrap_err("Failed to run npm install")?;
 
-            if !status.success() {
+            if status.success() {
+                sh_println!("  ✅ npm install completed successfully");
+            } else {
                 sh_println!(
                     "  ⚠️  Warning: npm install failed with exit code: {:?}",
                     status.code()
                 );
-            } else {
-                sh_println!("  ✅ npm install completed successfully");
             }
         }
         Ok(())

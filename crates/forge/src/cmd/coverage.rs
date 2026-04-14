@@ -55,7 +55,6 @@ pub struct CoverageArgs {
     /// If not specified, the report will be stored in the root of the project.
     #[arg(
         long,
-        short,
         value_hint = ValueHint::FilePath,
         value_name = "PATH"
     )]
@@ -252,7 +251,7 @@ impl CoverageArgs {
         let outcome =
             self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
 
-        let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
+        let known_contracts = outcome.known_contracts.as_ref().unwrap().clone();
 
         // Add hit data to the coverage report
         let data = outcome.results.values().flat_map(|suite| {
@@ -316,11 +315,11 @@ impl CoverageArgs {
         Ok(())
     }
 
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.test.is_watch()
     }
 
-    pub fn watch(&self) -> &WatchArgs {
+    pub const fn watch(&self) -> &WatchArgs {
         &self.test.watch
     }
 }

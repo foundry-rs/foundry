@@ -17,7 +17,7 @@ pub struct TestSummaryReport {
 }
 
 impl TestSummaryReport {
-    pub fn new(is_detailed: bool, outcome: TestOutcome) -> Self {
+    pub const fn new(is_detailed: bool, outcome: TestOutcome) -> Self {
         Self { is_detailed, outcome }
     }
 }

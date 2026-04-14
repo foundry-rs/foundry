@@ -2,8 +2,10 @@ use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, ruint::aliases::U256};
 use alloy_signer::Signature;
 use clap::Parser;
-use foundry_primitives::FoundryTransactionBuilder;
-use std::str::FromStr;
+use foundry_common::FoundryTransactionBuilder;
+use std::{num::NonZeroU64, str::FromStr};
+
+use crate::utils::parse_fee_token_address;
 
 /// CLI options for Tempo transactions.
 #[derive(Clone, Debug, Default, Parser)]
@@ -16,24 +18,24 @@ pub struct TempoOpts {
     ///
     /// If this is not set, the fee token is chosen according to network rules. See the Tempo docs
     /// for more information.
-    #[arg(long = "tempo.fee-token")]
+    #[arg(long = "tempo.fee-token", value_parser = parse_fee_token_address)]
     pub fee_token: Option<Address>,
 
-    /// Nonce sequence key for Tempo transactions.
+    /// Nonce key for Tempo parallelizable nonces.
     ///
-    /// When set, builds a Tempo (type 0x76) transaction with the specified nonce sequence key.
-    ///
-    /// If this is not set, the protocol sequence key (0) will be used.
+    /// When set, builds a Tempo (type 0x76) transaction with the specified nonce key,
+    /// allowing multiple transactions with the same nonce but different keys
+    /// to be executed in parallel. If not set, the protocol nonce key (0) will be used.
     ///
     /// For more information see <https://docs.tempo.xyz/protocol/transactions/spec-tempo-transaction#parallelizable-nonces>.
-    #[arg(long = "tempo.seq")]
-    pub sequence_key: Option<U256>,
+    #[arg(long = "tempo.nonce-key", value_name = "NONCE_KEY")]
+    pub nonce_key: Option<U256>,
 
     /// Sponsor (fee payer) signature for Tempo sponsored transactions.
     ///
     /// The sponsor signs the `fee_payer_signature_hash` to commit to paying gas fees
     /// on behalf of the sender. Provide as a hex-encoded signature.
-    #[arg(long = "tempo.sponsor-sig", value_parser = parse_signature)]
+    #[arg(long = "tempo.sponsor-signature", value_parser = parse_signature)]
     pub sponsor_signature: Option<Signature>,
 
     /// Print the sponsor signature hash and exit.
@@ -74,9 +76,9 @@ pub struct TempoOpts {
 
 impl TempoOpts {
     /// Returns `true` if any Tempo-specific option is set.
-    pub fn is_tempo(&self) -> bool {
+    pub const fn is_tempo(&self) -> bool {
         self.fee_token.is_some()
-            || self.sequence_key.is_some()
+            || self.nonce_key.is_some()
             || self.sponsor_signature.is_some()
             || self.print_sponsor_hash
             || self.key_id.is_some()
@@ -100,7 +102,7 @@ impl TempoOpts {
             if let Some(nonce) = nonce {
                 tx.set_nonce(nonce);
             }
-            if let Some(nonce_key) = self.sequence_key {
+            if let Some(nonce_key) = self.nonce_key {
                 tx.set_nonce_key(nonce_key);
             }
         }
@@ -109,11 +111,15 @@ impl TempoOpts {
             tx.set_fee_token(fee_token);
         }
 
-        if let Some(valid_before) = self.valid_before {
-            tx.set_valid_before(valid_before);
+        if let Some(valid_before) = self.valid_before
+            && let Some(v) = NonZeroU64::new(valid_before)
+        {
+            tx.set_valid_before(v);
         }
-        if let Some(valid_after) = self.valid_after {
-            tx.set_valid_after(valid_after);
+        if let Some(valid_after) = self.valid_after
+            && let Some(v) = NonZeroU64::new(valid_after)
+        {
+            tx.set_valid_after(v);
         }
 
         if let Some(key_id) = self.key_id {
@@ -121,17 +127,41 @@ impl TempoOpts {
         }
 
         // Force AA tx type if sponsoring or printing sponsor hash.
-        if self.sponsor_signature.is_some() || self.print_sponsor_hash {
-            if tx.nonce_key().is_none() {
-                tx.set_nonce_key(U256::ZERO);
-            }
-            if let Some(sig) = self.sponsor_signature {
-                tx.set_fee_payer_signature(sig);
-            }
+        // Note: the fee_payer_signature is NOT set here. It must be applied AFTER
+        // gas estimation so that `--tempo.print-sponsor-hash` and
+        // `--tempo.sponsor-signature` produce identical gas estimates. Callers
+        // should call `set_fee_payer_signature` on the built tx request.
+        if (self.sponsor_signature.is_some() || self.print_sponsor_hash) && tx.nonce_key().is_none()
+        {
+            tx.set_nonce_key(U256::ZERO);
         }
     }
 }
 
 fn parse_signature(s: &str) -> Result<Signature, String> {
     Signature::from_str(s).map_err(|e| format!("invalid signature: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::address;
+
+    #[test]
+    fn parse_fee_token_id() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.fee-token",
+            "0x20C0000000000000000000000000000000000002",
+        ])
+        .unwrap();
+        assert_eq!(opts.fee_token, Some(address!("0x20C0000000000000000000000000000000000002")),);
+
+        // AlphaUSD token ID is 1u64
+        let opts_with_id = TempoOpts::try_parse_from(["", "--tempo.fee-token", "1"]).unwrap();
+        assert_eq!(
+            opts_with_id.fee_token,
+            Some(address!("0x20C0000000000000000000000000000000000001")),
+        );
+    }
 }

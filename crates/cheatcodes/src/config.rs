@@ -1,6 +1,6 @@
 use super::Result;
 use crate::Vm::Rpc;
-use alloy_primitives::{U256, map::AddressHashMap};
+use alloy_primitives::{Address, U256, map::AddressHashMap};
 use foundry_common::{ContractsByArtifact, fs::normalize_path};
 use foundry_compilers::{ArtifactId, ProjectPathsConfig, utils::canonicalize};
 use foundry_config::{
@@ -56,6 +56,8 @@ pub struct CheatsConfig {
     pub seed: Option<U256>,
     /// Whether to allow `expectRevert` to work for internal calls.
     pub internal_expect_revert: bool,
+    /// Fee token to use for Tempo transactions.
+    pub fee_token: Option<Address>,
 }
 
 impl CheatsConfig {
@@ -65,6 +67,7 @@ impl CheatsConfig {
         evm_opts: EvmOpts,
         available_artifacts: Option<ContractsByArtifact>,
         running_artifact: Option<ArtifactId>,
+        fee_token: Option<Address>,
     ) -> Self {
         let rpc_endpoints = config.rpc_endpoints.clone().resolved();
         trace!(?rpc_endpoints, "using resolved rpc endpoints");
@@ -92,12 +95,19 @@ impl CheatsConfig {
             assertions_revert: config.assertions_revert,
             seed: config.fuzz.seed,
             internal_expect_revert: config.allow_internal_expect_revert,
+            fee_token,
         }
     }
 
     /// Returns a new `CheatsConfig` configured with the given `Config` and `EvmOpts`.
     pub fn clone_with(&self, config: &Config, evm_opts: EvmOpts) -> Self {
-        Self::new(config, evm_opts, self.available_artifacts.clone(), self.running_artifact.clone())
+        Self::new(
+            config,
+            evm_opts,
+            self.available_artifacts.clone(),
+            self.running_artifact.clone(),
+            self.fee_token,
+        )
     }
 
     /// Attempts to canonicalize (see [std::fs::canonicalize]) the path.
@@ -222,6 +232,7 @@ impl Default for CheatsConfig {
             assertions_revert: true,
             seed: None,
             internal_expect_revert: false,
+            fee_token: None,
         }
     }
 }
@@ -235,6 +246,7 @@ mod tests {
         CheatsConfig::new(
             &Config { root: root.into(), fs_permissions, ..Default::default() },
             Default::default(),
+            None,
             None,
             None,
         )

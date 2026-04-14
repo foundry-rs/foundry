@@ -14,6 +14,7 @@ extern crate tracing;
 pub mod error;
 pub mod opts;
 pub mod signer;
+pub mod tempo;
 pub mod utils;
 pub mod wallet_browser;
 pub mod wallet_multi;
@@ -21,6 +22,7 @@ pub mod wallet_raw;
 
 pub use opts::WalletOpts;
 pub use signer::{PendingSigner, WalletSigner};
+pub use tempo::TempoAccessKeyConfig;
 pub use wallet_browser::opts::BrowserWalletOpts;
 pub use wallet_multi::MultiWalletOpts;
 pub use wallet_raw::RawWalletOpts;

@@ -1828,6 +1828,11 @@ interface Vm {
     #[cheatcode(group = Filesystem)]
     function projectRoot() external view returns (string memory path);
 
+    /// Get the source file path of the currently running test or script contract,
+    /// relative to the project root.
+    #[cheatcode(group = Filesystem)]
+    function currentFilePath() external view returns (string memory path);
+
     /// Returns the time since unix epoch in milliseconds.
     #[cheatcode(group = Filesystem)]
     function unixTime() external view returns (uint256 milliseconds);
@@ -2963,16 +2968,16 @@ interface Vm {
     function resumeTracing() external view;
 
     /// Utility cheatcode to copy storage of `from` contract to another `to` contract.
-    #[cheatcode(group = Utilities)]
+    #[cheatcode(group = Utilities, safety = Unsafe)]
     function copyStorage(address from, address to) external;
 
     /// Utility cheatcode to set arbitrary storage for given target address.
-    #[cheatcode(group = Utilities)]
+    #[cheatcode(group = Utilities, safety = Unsafe)]
     function setArbitraryStorage(address target) external;
 
     /// Utility cheatcode to set arbitrary storage for given target address and overwrite
     /// any storage slots that have been previously set.
-    #[cheatcode(group = Utilities)]
+    #[cheatcode(group = Utilities, safety = Unsafe)]
     function setArbitraryStorage(address target, bool overwrite) external;
 
     /// Sorts an array in ascending order.

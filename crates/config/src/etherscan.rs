@@ -135,11 +135,11 @@ impl ResolvedEtherscanConfigs {
         self,
         chain: Chain,
     ) -> Option<Result<ResolvedEtherscanConfig, EtherscanConfigError>> {
-        for (_, config) in self.configs.into_iter() {
+        for (_, config) in self.configs {
             match config {
                 Ok(c) if c.chain == Some(chain) => return Some(Ok(c)),
                 Err(e) => return Some(Err(e)),
-                _ => continue,
+                _ => {}
             }
         }
         None

@@ -31,9 +31,6 @@ chrono.workspace = true
 revm.workspace = true
 yansi.workspace = true
 
-# foundry primitives
-foundry-primitives.workspace = true
-
 # Tempo
 tempo-alloy.workspace = true
 

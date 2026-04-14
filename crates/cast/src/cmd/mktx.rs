@@ -2,7 +2,7 @@ use crate::tx::{self, CastTxBuilder};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, Network, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, Network, NetworkTransactionBuilder};
 use alloy_primitives::{Address, hex};
 use alloy_provider::Provider;
 use alloy_signer::{Signature, Signer};
@@ -12,8 +12,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::LoadConfig,
 };
-use foundry_common::provider::ProviderBuilder;
-use foundry_primitives::FoundryTransactionBuilder;
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
 
@@ -85,7 +84,7 @@ impl MakeTxArgs {
         if self.tx.tempo.is_tempo() {
             self.run_generic::<TempoNetwork>().await
         } else {
-            self.run_generic::<AnyNetwork>().await
+            self.run_generic::<Ethereum>().await
         }
     }
 
@@ -128,7 +127,10 @@ impl MakeTxArgs {
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
         if print_sponsor_hash {
-            let from = eth.wallet.from.unwrap_or(Address::ZERO);
+            // Resolve the signer to derive the actual sender address, since the
+            // sponsor hash commits to the sender.
+            let signer = eth.wallet.signer().await?;
+            let from = signer.address();
             let (tx, _) = tx_builder.build(from).await?;
             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
                 eyre::eyre!("This network does not support sponsored transactions")

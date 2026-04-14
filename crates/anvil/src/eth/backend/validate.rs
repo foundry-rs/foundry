@@ -1,16 +1,13 @@
 //! Support for validating transactions at certain stages
 
-use crate::eth::{
-    backend::env::Env,
-    error::{BlockchainError, InvalidTransactionError},
-};
+use crate::eth::error::{BlockchainError, InvalidTransactionError};
+use alloy_evm::EvmEnv;
 use anvil_core::eth::transaction::PendingTransaction;
-use foundry_primitives::FoundryTxEnvelope;
 use revm::state::AccountInfo;
 
 /// A trait for validating transactions
 #[async_trait::async_trait]
-pub trait TransactionValidator<T = FoundryTxEnvelope> {
+pub trait TransactionValidator<T> {
     /// Validates the transaction's validity when it comes to nonce, payment
     ///
     /// This is intended to be checked before the transaction makes it into the pool and whether it
@@ -25,7 +22,7 @@ pub trait TransactionValidator<T = FoundryTxEnvelope> {
         &self,
         tx: &PendingTransaction<T>,
         account: &AccountInfo,
-        env: &Env,
+        evm_env: &EvmEnv,
     ) -> Result<(), InvalidTransactionError>;
 
     /// Validates the transaction against a specific account
@@ -35,6 +32,6 @@ pub trait TransactionValidator<T = FoundryTxEnvelope> {
         &self,
         tx: &PendingTransaction<T>,
         account: &AccountInfo,
-        env: &Env,
+        evm_env: &EvmEnv,
     ) -> Result<(), InvalidTransactionError>;
 }

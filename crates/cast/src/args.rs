@@ -5,7 +5,6 @@ use crate::{
     traces::identifier::SignaturesIdentifier,
     tx::CastTxSender,
 };
-use alloy_consensus::transaction::Recovered;
 use alloy_dyn_abi::{DynSolValue, ErrorExt, EventExt};
 use alloy_eips::eip7702::SignedAuthorization;
 use alloy_ens::{ProviderEnsExt, namehash};
@@ -15,7 +14,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use eyre::Result;
+use eyre::{Result, WrapErr};
 use foundry_cli::{
     opts::NetworkVariant,
     utils::{self, LoadConfig},
@@ -56,6 +55,7 @@ pub fn setup() -> Result<()> {
 }
 
 /// Run the subcommand.
+#[allow(clippy::large_stack_frames)]
 pub async fn run_command(args: CastArgs) -> Result<()> {
     match args.cmd {
         // Constants
@@ -196,10 +196,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_tokens(&tokens);
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
-            if !packed {
-                sh_println!("{}", SimpleCast::abi_encode(&sig, &args)?)?
-            } else {
+            if packed {
                 sh_println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?)?
+            } else {
+                sh_println!("{}", SimpleCast::abi_encode(&sig, &args)?)?
             }
         }
         CastSubcommand::AbiEncodeEvent { sig, args } => {
@@ -564,6 +564,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::Run(cmd) => cmd.run().await?,
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
+        CastSubcommand::BatchMakeTx(cmd) => cmd.run().await?,
+        CastSubcommand::BatchSend(cmd) => cmd.run().await?,
         CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc, to_request, network } => {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
@@ -684,7 +686,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let provider = utils::get_provider(&config)?;
 
             let who = stdin::unwrap_line(who)?;
-            let address = provider.resolve_name(&who).await?;
+            let address = provider
+                .resolve_name(&who)
+                .await
+                .wrap_err(format!("Failed to resolve ENS name: {who}"))?;
             if verify {
                 let name = provider.lookup_address(&address).await?;
                 eyre::ensure!(
@@ -785,16 +790,18 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
         }
         CastSubcommand::Logs(cmd) => cmd.run().await?,
-        CastSubcommand::DecodeTransaction { tx } => {
+        CastSubcommand::DecodeTransaction { tx, network } => {
             let tx = stdin::unwrap_line(tx)?;
-            let tx = SimpleCast::decode_raw_transaction(&tx)?;
-
-            if let Ok(signer) = tx.recover() {
-                let recovered = Recovered::new_unchecked(tx, signer);
-                sh_println!("{}", serde_json::to_string_pretty(&recovered)?)?;
-            } else {
-                sh_println!("{}", serde_json::to_string_pretty(&tx)?)?;
-            }
+            let decoded_tx = match network {
+                Some(NetworkVariant::Optimism) => {
+                    SimpleCast::decode_raw_transaction::<Optimism>(&tx)?
+                }
+                Some(NetworkVariant::Tempo) => {
+                    SimpleCast::decode_raw_transaction::<TempoNetwork>(&tx)?
+                }
+                _ => SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?,
+            };
+            sh_println!("{}", serde_json::to_string_pretty(&decoded_tx)?)?;
         }
         CastSubcommand::RecoverAuthority { auth } => {
             let auth: SignedAuthorization = serde_json::from_str(&auth)?;
@@ -802,6 +809,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::TxPool { command } => command.run().await?,
         CastSubcommand::Erc20Token { command } => command.run().await?,
+        CastSubcommand::Tip20Token { command } => command.run().await?,
+        CastSubcommand::Keychain { command } => command.run().await?,
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
         }

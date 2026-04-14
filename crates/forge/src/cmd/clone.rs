@@ -256,7 +256,7 @@ impl CloneArgs {
         let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
         let main_file = main_file.strip_prefix(root)?.to_path_buf();
         let storage_layout =
-            main_artifact.storage_layout.to_owned().expect("storage layout not found");
+            main_artifact.storage_layout.clone().expect("storage layout not found");
 
         // dump the metadata to the root directory
         let creation_tx = client.contract_creation_data(address).await?;
@@ -1016,8 +1016,8 @@ mod tests {
         contract_name: &str,
         stripped_creation_code: &str,
     ) {
-        compiled.compiled_contracts_by_compiler_version().iter().for_each(|(_, contracts)| {
-            contracts.iter().for_each(|(name, contract)| {
+        for contracts in compiled.compiled_contracts_by_compiler_version().values() {
+            for (name, contract) in contracts {
                 if name == contract_name {
                     let compiled_creation_code =
                         contract.bin_ref().expect("creation code not found");
@@ -1027,8 +1027,8 @@ mod tests {
                         "inconsistent creation code"
                     );
                 }
-            });
-        });
+            }
+        }
     }
 
     fn mock_etherscan(address: Address) -> impl super::ExplorerClient {
@@ -1149,7 +1149,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_clone_contract_with_relative_import() {
+    async fn flaky_test_clone_contract_with_relative_import() {
         let address = "0x3a23F943181408EAC424116Af7b7790c94Cb97a5".parse().unwrap();
         one_test_case(address, false).await
     }

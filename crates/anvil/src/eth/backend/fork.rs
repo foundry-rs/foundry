@@ -26,7 +26,7 @@ use alloy_rpc_types::{
 };
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
-use foundry_primitives::FoundryTxReceipt;
+use foundry_primitives::{FoundryTxEnvelope, FoundryTxReceipt};
 use parking_lot::{
     RawRwLock, RwLock,
     lock_api::{RwLockReadGuard, RwLockWriteGuard},
@@ -370,24 +370,8 @@ impl<N: Network> ClientFork<N> {
         number: u64,
         index: usize,
     ) -> Result<Option<N::TransactionResponse>, TransportError> {
-        if let Some(block) = self.block_by_number(number).await? {
-            #[allow(clippy::collapsible_match)]
-            match block.transactions() {
-                BlockTransactions::Full(txs) => {
-                    if let Some(tx) = txs.get(index) {
-                        return Ok(Some(tx.clone()));
-                    }
-                }
-                BlockTransactions::Hashes(hashes) => {
-                    if let Some(tx_hash) = hashes.get(index) {
-                        return self.transaction_by_hash(*tx_hash).await;
-                    }
-                }
-                // TODO(evalir): Is it possible to reach this case? Should we support it
-                BlockTransactions::Uncle => panic!("Uncles not supported"),
-            }
-        }
-        Ok(None)
+        let block = self.block_by_number(number).await?;
+        self.transaction_at_block_index(block, index).await
     }
 
     pub async fn transaction_by_block_hash_and_index(
@@ -395,8 +379,16 @@ impl<N: Network> ClientFork<N> {
         hash: B256,
         index: usize,
     ) -> Result<Option<N::TransactionResponse>, TransportError> {
-        if let Some(block) = self.block_by_hash(hash).await? {
-            #[allow(clippy::collapsible_match)]
+        let block = self.block_by_hash(hash).await?;
+        self.transaction_at_block_index(block, index).await
+    }
+
+    async fn transaction_at_block_index(
+        &self,
+        block: Option<N::BlockResponse>,
+        index: usize,
+    ) -> Result<Option<N::TransactionResponse>, TransportError> {
+        if let Some(block) = block {
             match block.transactions() {
                 BlockTransactions::Full(txs) => {
                     if let Some(tx) = txs.get(index) {
@@ -408,8 +400,7 @@ impl<N: Network> ClientFork<N> {
                         return self.transaction_by_hash(*tx_hash).await;
                     }
                 }
-                // TODO(evalir): Is it possible to reach this case? Should we support it
-                BlockTransactions::Uncle => panic!("Uncles not supported"),
+                BlockTransactions::Uncle => {}
             }
         }
         Ok(None)
@@ -664,7 +655,7 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     /// total difficulty of the chain until this block
     pub total_difficulty: U256,
     /// Transactions to force include in the forked chain
-    pub force_transactions: Option<Vec<PoolTransaction>>,
+    pub force_transactions: Option<Vec<PoolTransaction<FoundryTxEnvelope>>>,
 }
 
 impl<N: Network> ClientForkConfig<N> {

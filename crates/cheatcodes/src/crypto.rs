@@ -11,6 +11,7 @@ use alloy_signer_local::{
     },
 };
 use alloy_sol_types::SolValue;
+use foundry_evm_core::evm::FoundryEvmNetwork;
 use k256::{
     FieldBytes, Scalar,
     ecdsa::{SigningKey, hazmat},
@@ -30,28 +31,28 @@ use ed25519_consensus::{
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 
 impl Cheatcode for createWallet_0Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { walletLabel } = self;
         create_wallet(&U256::from_be_bytes(keccak256(walletLabel).0), Some(walletLabel), state)
     }
 }
 
 impl Cheatcode for createWallet_1Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey } = self;
         create_wallet(privateKey, None, state)
     }
 }
 
 impl Cheatcode for createWallet_2Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey, walletLabel } = self;
         create_wallet(privateKey, Some(walletLabel), state)
     }
 }
 
 impl Cheatcode for sign_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { wallet, digest } = self;
         let sig = sign(&wallet.privateKey, digest)?;
         Ok(encode_full_sig(sig))
@@ -59,7 +60,7 @@ impl Cheatcode for sign_0Call {
 }
 
 impl Cheatcode for signWithNonceUnsafeCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let pk: U256 = self.privateKey;
         let digest: B256 = self.digest;
         let nonce: U256 = self.nonce;
@@ -69,7 +70,7 @@ impl Cheatcode for signWithNonceUnsafeCall {
 }
 
 impl Cheatcode for signCompact_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { wallet, digest } = self;
         let sig = sign(&wallet.privateKey, digest)?;
         Ok(encode_compact_sig(sig))
@@ -77,35 +78,35 @@ impl Cheatcode for signCompact_0Call {
 }
 
 impl Cheatcode for deriveKey_0Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { mnemonic, index } = self;
         derive_key::<English>(mnemonic, DEFAULT_DERIVATION_PATH_PREFIX, *index)
     }
 }
 
 impl Cheatcode for deriveKey_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { mnemonic, derivationPath, index } = self;
         derive_key::<English>(mnemonic, derivationPath, *index)
     }
 }
 
 impl Cheatcode for deriveKey_2Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { mnemonic, index, language } = self;
         derive_key_str(mnemonic, DEFAULT_DERIVATION_PATH_PREFIX, *index, language)
     }
 }
 
 impl Cheatcode for deriveKey_3Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { mnemonic, derivationPath, index, language } = self;
         derive_key_str(mnemonic, derivationPath, *index, language)
     }
 }
 
 impl Cheatcode for rememberKeyCall {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey } = self;
         let wallet = parse_wallet(privateKey)?;
         let address = inject_wallet(state, wallet);
@@ -114,7 +115,7 @@ impl Cheatcode for rememberKeyCall {
 }
 
 impl Cheatcode for rememberKeys_0Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { mnemonic, derivationPath, count } = self;
         let wallets = derive_wallets::<English>(mnemonic, derivationPath, *count)?;
         let mut addresses = Vec::<Address>::with_capacity(wallets.len());
@@ -128,7 +129,7 @@ impl Cheatcode for rememberKeys_0Call {
 }
 
 impl Cheatcode for rememberKeys_1Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { mnemonic, derivationPath, language, count } = self;
         let wallets = derive_wallets_str(mnemonic, derivationPath, language, *count)?;
         let mut addresses = Vec::<Address>::with_capacity(wallets.len());
@@ -141,14 +142,17 @@ impl Cheatcode for rememberKeys_1Call {
     }
 }
 
-fn inject_wallet(state: &mut Cheatcodes, wallet: LocalSigner<SigningKey>) -> Address {
+fn inject_wallet<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
+    wallet: LocalSigner<SigningKey>,
+) -> Address {
     let address = wallet.address();
     state.wallets().add_local_signer(wallet);
     address
 }
 
 impl Cheatcode for sign_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey, digest } = self;
         let sig = sign(privateKey, digest)?;
         Ok(encode_full_sig(sig))
@@ -156,7 +160,7 @@ impl Cheatcode for sign_1Call {
 }
 
 impl Cheatcode for signCompact_1Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey, digest } = self;
         let sig = sign(privateKey, digest)?;
         Ok(encode_compact_sig(sig))
@@ -164,7 +168,7 @@ impl Cheatcode for signCompact_1Call {
 }
 
 impl Cheatcode for sign_2Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { digest } = self;
         let sig = sign_with_wallet(state, None, digest)?;
         Ok(encode_full_sig(sig))
@@ -172,7 +176,7 @@ impl Cheatcode for sign_2Call {
 }
 
 impl Cheatcode for signCompact_2Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { digest } = self;
         let sig = sign_with_wallet(state, None, digest)?;
         Ok(encode_compact_sig(sig))
@@ -180,7 +184,7 @@ impl Cheatcode for signCompact_2Call {
 }
 
 impl Cheatcode for sign_3Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { signer, digest } = self;
         let sig = sign_with_wallet(state, Some(*signer), digest)?;
         Ok(encode_full_sig(sig))
@@ -188,7 +192,7 @@ impl Cheatcode for sign_3Call {
 }
 
 impl Cheatcode for signCompact_3Call {
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { signer, digest } = self;
         let sig = sign_with_wallet(state, Some(*signer), digest)?;
         Ok(encode_compact_sig(sig))
@@ -196,14 +200,14 @@ impl Cheatcode for signCompact_3Call {
 }
 
 impl Cheatcode for signP256Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey, digest } = self;
         sign_p256(privateKey, digest)
     }
 }
 
 impl Cheatcode for publicKeyP256Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey } = self;
         let pub_key =
             parse_private_key_p256(privateKey)?.verifying_key().as_affine().to_encoded_point(false);
@@ -215,28 +219,28 @@ impl Cheatcode for publicKeyP256Call {
 }
 
 impl Cheatcode for createEd25519KeyCall {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { salt } = self;
         create_ed25519_key(salt)
     }
 }
 
 impl Cheatcode for publicKeyEd25519Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { privateKey } = self;
         public_key_ed25519(privateKey)
     }
 }
 
 impl Cheatcode for signEd25519Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { namespace, message, privateKey } = self;
         sign_ed25519(namespace, message, privateKey)
     }
 }
 
 impl Cheatcode for verifyEd25519Call {
-    fn apply(&self, _state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, _state: &mut Cheatcodes<FEN>) -> Result {
         let Self { signature, namespace, message, publicKey } = self;
         verify_ed25519(signature, namespace, message, publicKey)
     }
@@ -246,7 +250,11 @@ impl Cheatcode for verifyEd25519Call {
 /// coordinates, and its private key (see the 'Wallet' struct)
 ///
 /// If 'label' is set to 'Some()', assign that label to the associated ETH address in state
-fn create_wallet(private_key: &U256, label: Option<&str>, state: &mut Cheatcodes) -> Result {
+fn create_wallet<FEN: FoundryEvmNetwork>(
+    private_key: &U256,
+    label: Option<&str>,
+    state: &mut Cheatcodes<FEN>,
+) -> Result {
     let key = parse_private_key(private_key)?;
     let addr = alloy_signer::utils::secret_key_to_address(&key);
 
@@ -366,8 +374,8 @@ fn sign_with_nonce(
     Ok(alloy_primitives::Signature::new(r_u256, s_u256, y_parity))
 }
 
-fn sign_with_wallet(
-    state: &mut Cheatcodes,
+fn sign_with_wallet<FEN: FoundryEvmNetwork>(
+    state: &mut Cheatcodes<FEN>,
     signer: Option<Address>,
     digest: &B256,
 ) -> Result<alloy_primitives::Signature> {
@@ -377,7 +385,7 @@ fn sign_with_wallet(
 
     let mut wallets = state.wallets().inner.lock();
     let maybe_provided_sender = wallets.provided_sender;
-    let (signers, _) = wallets.multi_wallet.signers()?;
+    let signers = wallets.multi_wallet.signers()?;
 
     let signer = if let Some(signer) = signer {
         signer

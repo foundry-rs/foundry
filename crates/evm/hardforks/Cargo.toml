@@ -1,0 +1,25 @@
+[package]
+name = "foundry-evm-hardforks"
+description = "EVM hardfork definitions for Foundry"
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+alloy-chains.workspace = true
+alloy-hardforks = { workspace = true, features = ["serde"] }
+alloy-op-hardforks = { workspace = true, features = ["serde"] }
+alloy-rpc-types.workspace = true
+op-revm.workspace = true
+revm.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tempo-chainspec.workspace = true
+foundry-compilers.workspace = true

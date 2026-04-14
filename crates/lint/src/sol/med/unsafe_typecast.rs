@@ -134,7 +134,7 @@ fn infer_source_types(
 }
 
 /// Checks if a type cast from source_type to target_type is unsafe.
-fn is_unsafe_elementary_typecast(
+const fn is_unsafe_elementary_typecast(
     source_type: &ElementaryType,
     target_type: &ElementaryType,
 ) -> bool {
@@ -159,8 +159,7 @@ fn is_unsafe_elementary_typecast(
         }
 
         // Dynamic bytes to fixed bytes (potential truncation)
-        (ElementaryType::Bytes, ElementaryType::FixedBytes(_))
-        | (ElementaryType::String, ElementaryType::FixedBytes(_)) => true,
+        (ElementaryType::Bytes | ElementaryType::String, ElementaryType::FixedBytes(_)) => true,
 
         // Address to smaller uint (truncation) - address is 160 bits
         (ElementaryType::Address(_), ElementaryType::UInt(target_size)) => target_size.bits() < 160,

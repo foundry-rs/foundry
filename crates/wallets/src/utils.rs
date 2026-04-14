@@ -124,9 +124,7 @@ pub fn create_keystore_signer(
         (Some(password), _) => Ok(Some(password.to_string())),
         (_, Some(password_file)) => {
             let password_file = Path::new(password_file);
-            if !password_file.is_file() {
-                Err(eyre::eyre!("Keystore password file `{password_file:?}` does not exist"))
-            } else {
+            if password_file.is_file() {
                 Ok(Some(
                     fs::read_to_string(password_file)
                         .wrap_err_with(|| {
@@ -135,6 +133,8 @@ pub fn create_keystore_signer(
                         .trim_end()
                         .to_string(),
                 ))
+            } else {
+                Err(eyre::eyre!("Keystore password file `{password_file:?}` does not exist"))
             }
         }
         (None, None) => Ok(None),

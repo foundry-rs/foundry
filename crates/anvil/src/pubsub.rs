@@ -37,7 +37,7 @@ impl<N: Network> std::fmt::Debug for LogsSubscription<N> {
 
 impl<N: Network> LogsSubscription<N>
 where
-    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log> + Clone,
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
     fn poll(&mut self, cx: &mut Context<'_>) -> Poll<Option<EthSubscriptionResponse>> {
         loop {
@@ -81,7 +81,7 @@ pub struct EthSubscriptionResponse {
 }
 
 impl EthSubscriptionResponse {
-    pub fn new(params: EthSubscriptionParams) -> Self {
+    pub const fn new(params: EthSubscriptionParams) -> Self {
         Self { jsonrpc: Version::V2, method: "eth_subscription", params }
     }
 }
@@ -115,7 +115,7 @@ impl<N: Network> std::fmt::Debug for EthSubscription<N> {
 
 impl<N: Network> EthSubscription<N>
 where
-    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log> + Clone,
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
     fn poll_response(&mut self, cx: &mut Context<'_>) -> Poll<Option<EthSubscriptionResponse>> {
         match self {
@@ -161,7 +161,7 @@ where
 
 impl<N: Network> Stream for EthSubscription<N>
 where
-    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log> + Clone,
+    N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
     type Item = serde_json::Value;
 

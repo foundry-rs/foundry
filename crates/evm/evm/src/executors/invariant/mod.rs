@@ -5,10 +5,7 @@ use crate::{
     },
     inspectors::Fuzzer,
 };
-use alloy_primitives::{
-    Address, Bytes, FixedBytes, I256, Selector, U256,
-    map::{AddressMap, HashMap},
-};
+use alloy_primitives::{Address, Bytes, FixedBytes, I256, Selector, U256, map::AddressMap};
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{
@@ -18,16 +15,18 @@ use foundry_common::{
 };
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
+    FoundryBlock,
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
     },
+    evm::FoundryEvmNetwork,
     precompiles::PRECOMPILES,
 };
 use foundry_evm_fuzz::{
     BasicTxDetails, FuzzCase, FuzzFixtures, FuzzedCases,
     invariant::{
-        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, RandomCallGenerator,
-        SenderFilters, TargetedContract, TargetedContracts,
+        ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, InvariantSettings,
+        RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
     strategies::{EvmFuzzState, invariant_strat, override_call_strat},
 };
@@ -36,13 +35,13 @@ use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, assert_invariants, can_continue};
-use revm::state::Account;
+use revm::{context::Block, state::Account};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     collections::{HashMap as Map, btree_map::Entry},
     sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 mod error;
@@ -56,7 +55,7 @@ mod result;
 pub use result::InvariantFuzzTestResult;
 
 mod shrink;
-pub use shrink::{check_sequence, check_sequence_value};
+pub use shrink::{CheckSequenceOptions, check_sequence, check_sequence_value};
 
 sol! {
     interface IInvariantTest {
@@ -123,8 +122,70 @@ pub struct InvariantMetrics {
     pub discards: usize,
 }
 
+/// Campaign-level throughput metrics for invariant progress reporting.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct InvariantThroughputMetrics {
+    total_txs: u64,
+    total_gas: u64,
+}
+
+impl InvariantThroughputMetrics {
+    const fn record_call(&mut self, gas_used: u64) {
+        self.total_txs += 1;
+        self.total_gas += gas_used;
+    }
+
+    fn tx_per_sec(self, elapsed: Duration) -> f64 {
+        rate_per_sec(self.total_txs as f64, elapsed)
+    }
+
+    fn gas_per_sec(self, elapsed: Duration) -> f64 {
+        rate_per_sec(self.total_gas as f64, elapsed)
+    }
+}
+
+/// Converts a cumulative campaign total into an average per-second rate.
+///
+/// Returns `0.0` during the initial zero-elapsed startup window to avoid
+/// dividing by zero while progress reporting is warming up.
+fn rate_per_sec(total: f64, elapsed: Duration) -> f64 {
+    let elapsed_secs = elapsed.as_secs_f64();
+    if elapsed_secs > 0.0 { total / elapsed_secs } else { 0.0 }
+}
+
+/// Builds the machine-readable invariant progress payload emitted during a
+/// campaign.
+///
+/// This keeps the existing corpus progress metrics together with cumulative and
+/// derived throughput fields so downstream benchmark tooling can consume a
+/// single JSON event shape.
+fn build_invariant_progress_json<M: Serialize>(
+    timestamp_secs: u64,
+    invariant_name: &str,
+    corpus_metrics: &M,
+    optimization_best: Option<I256>,
+    throughput: InvariantThroughputMetrics,
+    elapsed: Duration,
+) -> serde_json::Value {
+    let mut payload = json!({
+        "timestamp": timestamp_secs,
+        "invariant": invariant_name,
+        "metrics": corpus_metrics,
+        "total_txs": throughput.total_txs,
+        "total_gas": throughput.total_gas,
+        "tx_per_sec": throughput.tx_per_sec(elapsed),
+        "gas_per_sec": throughput.gas_per_sec(elapsed),
+    });
+
+    if let Some(best) = optimization_best {
+        payload["optimization_best"] = json!(best.to_string());
+    }
+
+    payload
+}
+
 /// Contains data collected during invariant test runs.
-struct InvariantTestData {
+struct InvariantTestData<FEN: FoundryEvmNetwork> {
     // Consumed gas and calldata of every successful fuzz call.
     fuzz_cases: Vec<FuzzedCases>,
     // Data related to reverts or failed assertions of the test.
@@ -134,7 +195,7 @@ struct InvariantTestData {
     // Additional traces for gas report.
     gas_report_traces: Vec<Vec<CallTraceArena>>,
     // Last call results of the invariant test.
-    last_call_results: Option<RawCallResult>,
+    last_call_results: Option<RawCallResult<FEN>>,
     // Line coverage information collected from all fuzzed calls.
     line_coverage: Option<HitMaps>,
     // Metrics for each fuzzed selector.
@@ -153,22 +214,22 @@ struct InvariantTestData {
 }
 
 /// Contains invariant test data.
-struct InvariantTest {
+struct InvariantTest<FEN: FoundryEvmNetwork> {
     // Fuzz state of invariant test.
     fuzz_state: EvmFuzzState,
     // Contracts fuzzed by the invariant test.
     targeted_contracts: FuzzRunIdentifiedContracts,
     // Data collected during invariant runs.
-    test_data: InvariantTestData,
+    test_data: InvariantTestData<FEN>,
 }
 
-impl InvariantTest {
+impl<FEN: FoundryEvmNetwork> InvariantTest<FEN> {
     /// Instantiates an invariant test.
     fn new(
         fuzz_state: EvmFuzzState,
         targeted_contracts: FuzzRunIdentifiedContracts,
         failures: InvariantFailures,
-        last_call_results: Option<RawCallResult>,
+        last_call_results: Option<RawCallResult<FEN>>,
         branch_runner: TestRunner,
     ) -> Self {
         let mut fuzz_cases = vec![];
@@ -191,12 +252,12 @@ impl InvariantTest {
     }
 
     /// Returns number of invariant test reverts.
-    fn reverts(&self) -> usize {
+    const fn reverts(&self) -> usize {
         self.test_data.failures.reverts
     }
 
     /// Whether invariant test has errors or not.
-    fn has_errors(&self) -> bool {
+    const fn has_errors(&self) -> bool {
         self.test_data.failures.error.is_some()
     }
 
@@ -206,7 +267,7 @@ impl InvariantTest {
     }
 
     /// Set last invariant test call results.
-    fn set_last_call_results(&mut self, call_result: Option<RawCallResult>) {
+    fn set_last_call_results(&mut self, call_result: Option<RawCallResult<FEN>>) {
         self.test_data.last_call_results = call_result;
     }
 
@@ -240,7 +301,7 @@ impl InvariantTest {
 
     /// End invariant test run by collecting results, cleaning collected artifacts and reverting
     /// created fuzz state.
-    fn end_run(&mut self, run: InvariantTestRun, gas_samples: usize) {
+    fn end_run(&mut self, run: InvariantTestRun<FEN>, gas_samples: usize) {
         // We clear all the targeted contracts created during this run.
         self.targeted_contracts.clear_created_contracts(run.created_contracts);
 
@@ -265,11 +326,11 @@ impl InvariantTest {
 }
 
 /// Contains data for an invariant test run.
-struct InvariantTestRun {
+struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     // Invariant run call sequence.
     inputs: Vec<BasicTxDetails>,
     // Current invariant run executor.
-    executor: Executor,
+    executor: Executor<FEN>,
     // Invariant run stat reports (eg. gas usage).
     fuzz_runs: Vec<FuzzCase>,
     // Contracts created during current invariant run.
@@ -282,11 +343,15 @@ struct InvariantTestRun {
     rejects: u32,
     // Whether new coverage was discovered during this run.
     new_coverage: bool,
+    // For optimization mode: the best value found during this run (if any).
+    optimization_value: Option<I256>,
+    // For optimization mode: the length of the input prefix that produced the best value.
+    optimization_prefix_len: usize,
 }
 
-impl InvariantTestRun {
+impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
     /// Instantiates an invariant test run.
-    fn new(first_input: BasicTxDetails, executor: Executor, depth: usize) -> Self {
+    fn new(first_input: BasicTxDetails, executor: Executor<FEN>, depth: usize) -> Self {
         Self {
             inputs: vec![first_input],
             executor,
@@ -296,6 +361,8 @@ impl InvariantTestRun {
             depth: 0,
             rejects: 0,
             new_coverage: false,
+            optimization_value: None,
+            optimization_prefix_len: 0,
         }
     }
 }
@@ -306,8 +373,8 @@ impl InvariantTestRun {
 /// contracts with inputs, until it finds a counterexample sequence. The provided [`TestRunner`]
 /// contains all the configuration which can be overridden via [environment
 /// variables](proptest::test_runner::Config)
-pub struct InvariantExecutor<'a> {
-    pub executor: Executor,
+pub struct InvariantExecutor<'a, FEN: FoundryEvmNetwork> {
+    pub executor: Executor<FEN>,
     /// Proptest runner.
     runner: TestRunner,
     /// The invariant configuration
@@ -321,10 +388,10 @@ pub struct InvariantExecutor<'a> {
     artifact_filters: ArtifactFilters,
 }
 
-impl<'a> InvariantExecutor<'a> {
+impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     /// Instantiates a fuzzed executor EVM given a testrunner
     pub fn new(
-        executor: Executor,
+        executor: Executor<FEN>,
         runner: TestRunner,
         config: InvariantConfig,
         setup_contracts: &'a ContractsByAddress,
@@ -365,6 +432,8 @@ impl<'a> InvariantExecutor<'a> {
         let mut runs = 0;
         let timer = FuzzTestTimer::new(self.config.timeout);
         let mut last_metrics_report = Instant::now();
+        let campaign_start = Instant::now();
+        let mut throughput = InvariantThroughputMetrics::default();
         let continue_campaign = |runs: u32| {
             if early_exit.should_stop() {
                 return false;
@@ -473,6 +542,7 @@ impl<'a> InvariantExecutor<'a> {
                     current_run
                         .fuzz_runs
                         .push(FuzzCase { gas: call_result.gas_used, stipend: call_result.stipend });
+                    throughput.record_call(call_result.gas_used);
 
                     // Determine if test can continue or should exit.
                     // Check invariants based on check_interval to improve deep run performance.
@@ -480,13 +550,19 @@ impl<'a> InvariantExecutor<'a> {
                     // - check_interval=1 (default): assert after every call
                     // - check_interval=N: assert every N calls AND always on the last call
                     let is_last_call = current_run.depth == self.config.depth - 1;
-                    let should_check_invariant = if self.config.check_interval == 0 {
-                        is_last_call
-                    } else {
-                        self.config.check_interval == 1
-                            || (current_run.depth + 1).is_multiple_of(self.config.check_interval)
-                            || is_last_call
-                    };
+                    // In optimization mode, always evaluate the invariant to track
+                    // the best value at every prefix — check_interval only gates
+                    // boolean invariant assertions.
+                    let is_optimization = invariant_contract.is_optimization();
+                    let should_check_invariant = is_optimization
+                        || if self.config.check_interval == 0 {
+                            is_last_call
+                        } else {
+                            self.config.check_interval == 1
+                                || (current_run.depth + 1)
+                                    .is_multiple_of(self.config.check_interval)
+                                || is_last_call
+                        };
 
                     let result = if should_check_invariant {
                         can_continue(
@@ -516,9 +592,12 @@ impl<'a> InvariantExecutor<'a> {
                                 invariant_test.test_data.failures.error =
                                     Some(InvariantFuzzError::Revert(case_data));
                                 result::RichInvariantResults::new(false, None)
-                            } else if !invariant_contract.is_optimization() {
-                                // In optimization mode, keep reverted calls to preserve
-                                // warp/roll values for correct replay during shrinking.
+                            } else if !invariant_contract.is_optimization()
+                                && !self.config.has_delay()
+                            {
+                                // Delay-enabled campaigns keep reverted calls so shrinking can
+                                // preserve their warp/roll contribution when building the final
+                                // counterexample.
                                 current_run.inputs.pop();
                                 result::RichInvariantResults::new(true, None)
                             } else {
@@ -550,7 +629,17 @@ impl<'a> InvariantExecutor<'a> {
             }
 
             // Extend corpus with current run data.
-            corpus_manager.process_inputs(&current_run.inputs, current_run.new_coverage);
+            // Materialize the optimization best prefix once at run end (avoids
+            // cloning inputs on every new in-run max).
+            let optimization = current_run.optimization_value.map(|v| {
+                let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
+                (v, prefix)
+            });
+            corpus_manager.process_inputs(
+                &current_run.inputs,
+                current_run.new_coverage,
+                optimization,
+            );
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
             if invariant_contract.call_after_invariant && !invariant_test.has_errors() {
@@ -568,21 +657,33 @@ impl<'a> InvariantExecutor<'a> {
             if let Some(progress) = progress {
                 // If running with progress then increment completed runs.
                 progress.inc(1);
-                // Display metrics in progress bar.
-                if edge_coverage_enabled {
-                    progress.set_message(format!("{}", &corpus_manager.metrics));
+                // Display current best value and/or corpus metrics in progress bar.
+                let best = invariant_test.test_data.optimization_best_value;
+                if edge_coverage_enabled || best.is_some() {
+                    let mut msg = String::new();
+                    if let Some(best) = best {
+                        msg.push_str(&format!("best: {best}"));
+                    }
+                    if edge_coverage_enabled {
+                        if !msg.is_empty() {
+                            msg.push_str(", ");
+                        }
+                        msg.push_str(&format!("{}", &corpus_manager.metrics));
+                    }
+                    progress.set_message(msg);
                 }
             } else if edge_coverage_enabled
                 && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
             {
-                // Display metrics inline if corpus dir set.
-                let metrics = json!({
-                    "timestamp": SystemTime::now()
-                        .duration_since(UNIX_EPOCH)?
-                        .as_secs(),
-                    "invariant": invariant_contract.invariant_function.name,
-                    "metrics": &corpus_manager.metrics,
-                });
+                // Display corpus metrics inline as JSON.
+                let metrics = build_invariant_progress_json(
+                    SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+                    &invariant_contract.invariant_function.name,
+                    &corpus_manager.metrics,
+                    invariant_test.test_data.optimization_best_value,
+                    throughput,
+                    campaign_start.elapsed(),
+                );
                 let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
                 last_metrics_report = Instant::now();
             }
@@ -616,7 +717,7 @@ impl<'a> InvariantExecutor<'a> {
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
-    ) -> Result<(InvariantTest, WorkerCorpus)> {
+    ) -> Result<(InvariantTest<FEN>, WorkerCorpus)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -705,13 +806,21 @@ impl<'a> InvariantExecutor<'a> {
             Some(&targeted_contracts),
         )?;
 
-        let invariant_test = InvariantTest::new(
+        let mut invariant_test = InvariantTest::new(
             fuzz_state,
             targeted_contracts,
             failures,
             last_call_results,
             self.runner.clone(),
         );
+
+        // Seed invariant test with previously persisted optimization state,
+        // but only if the current invariant is in optimization mode.
+        if invariant_contract.is_optimization() {
+            let (opt_best_value, opt_best_sequence) = worker.optimization_initial_state();
+            invariant_test.test_data.optimization_best_value = opt_best_value;
+            invariant_test.test_data.optimization_best_sequence = opt_best_sequence;
+        }
 
         Ok((invariant_test, worker))
     }
@@ -918,7 +1027,7 @@ impl<'a> InvariantExecutor<'a> {
                         // Otherwise insert it into the map.
                         .or_insert_with(|| {
                             let mut contract =
-                                TargetedContract::new(identifier.to_string(), abi.clone());
+                                TargetedContract::new(identifier.clone(), abi.clone());
                             contract.storage_layout =
                                 contract_data.storage_layout.as_ref().map(Arc::clone);
                             contract
@@ -1031,31 +1140,41 @@ impl<'a> InvariantExecutor<'a> {
         contract.add_selectors(selectors.iter().copied(), should_exclude)?;
         Ok(())
     }
+
+    /// Computes the current invariant settings for the given invariant contract address.
+    ///
+    /// This extracts the target contracts, selectors, senders, and fail_on_revert setting
+    /// that are used to determine if a persisted counterexample is still valid.
+    pub fn compute_settings(&mut self, invariant_address: Address) -> Result<InvariantSettings> {
+        self.select_contract_artifacts(invariant_address)?;
+        let (sender_filters, targeted_contracts) =
+            self.select_contracts_and_senders(invariant_address)?;
+        let targets = targeted_contracts.targets.lock();
+        Ok(InvariantSettings::new(&targets, &sender_filters, self.config.fail_on_revert))
+    }
 }
 
 /// Collects data from call for fuzzing. However, it first verifies that the sender is not an EOA
 /// before inserting it into the dictionary. Otherwise, we flood the dictionary with
 /// randomly generated addresses.
-fn collect_data(
-    invariant_test: &InvariantTest,
-    state_changeset: &mut HashMap<Address, Account>,
+fn collect_data<FEN: FoundryEvmNetwork>(
+    invariant_test: &InvariantTest<FEN>,
+    state_changeset: &mut AddressMap<Account>,
     tx: &BasicTxDetails,
-    call_result: &RawCallResult,
+    call_result: &RawCallResult<FEN>,
     run_depth: u32,
 ) {
     // Verify it has no code.
-    let mut has_code = false;
-    if let Some(Some(code)) =
+    let has_code = if let Some(Some(code)) =
         state_changeset.get(&tx.sender).map(|account| account.info.code.as_ref())
     {
-        has_code = !code.is_empty();
-    }
+        !code.is_empty()
+    } else {
+        false
+    };
 
     // We keep the nonce changes to apply later.
-    let mut sender_changeset = None;
-    if !has_code {
-        sender_changeset = state_changeset.remove(&tx.sender);
-    }
+    let sender_changeset = if has_code { None } else { state_changeset.remove(&tx.sender) };
 
     // Collect values from fuzzed call result and add them to fuzz dictionary.
     invariant_test.fuzz_state.collect_values_from_call(
@@ -1076,10 +1195,10 @@ fn collect_data(
 /// Calls the `afterInvariant()` function on a contract.
 /// Returns call result and if call succeeded.
 /// The state after the call is not persisted.
-pub(crate) fn call_after_invariant_function(
-    executor: &Executor,
+pub(crate) fn call_after_invariant_function<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
     to: Address,
-) -> Result<(RawCallResult, bool), EvmError> {
+) -> Result<(RawCallResult<FEN>, bool), EvmError<FEN>> {
     let calldata = Bytes::from_static(&IInvariantTest::afterInvariantCall::SELECTOR);
     let mut call_result = executor.call_raw(CALLER, to, calldata, U256::ZERO)?;
     let success = executor.is_raw_call_mut_success(to, &mut call_result, false);
@@ -1087,11 +1206,11 @@ pub(crate) fn call_after_invariant_function(
 }
 
 /// Calls the invariant function and returns call result and if succeeded.
-pub(crate) fn call_invariant_function(
-    executor: &Executor,
+pub(crate) fn call_invariant_function<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
     address: Address,
     calldata: Bytes,
-) -> Result<(RawCallResult, bool)> {
+) -> Result<(RawCallResult<FEN>, bool)> {
     let mut call_result = executor.call_raw(CALLER, address, calldata, U256::ZERO)?;
     let success = executor.is_raw_call_mut_success(address, &mut call_result, false);
     Ok((call_result, success))
@@ -1099,14 +1218,19 @@ pub(crate) fn call_invariant_function(
 
 /// Executes a fuzz call and returns the result.
 /// Applies any block timestamp (warp) and block number (roll) adjustments before the call.
-pub(crate) fn execute_tx(executor: &mut Executor, tx: &BasicTxDetails) -> Result<RawCallResult> {
+pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
+    executor: &mut Executor<FEN>,
+    tx: &BasicTxDetails,
+) -> Result<RawCallResult<FEN>> {
     let warp = tx.warp.unwrap_or_default();
     let roll = tx.roll.unwrap_or_default();
 
     if warp > 0 || roll > 0 {
         // Apply pre-call block adjustments to the executor's env.
-        executor.evm_env_mut().block_env.timestamp += warp;
-        executor.evm_env_mut().block_env.number += roll;
+        let ts = executor.evm_env().block_env.timestamp();
+        let num = executor.evm_env().block_env.number();
+        executor.evm_env_mut().block_env.set_timestamp(ts + warp);
+        executor.evm_env_mut().block_env.set_number(num + roll);
 
         // Also update the inspector's cheatcodes.block if set.
         // The inspector's block may override the env during interpreter initialization,
@@ -1114,8 +1238,10 @@ pub(crate) fn execute_tx(executor: &mut Executor, tx: &BasicTxDetails) -> Result
         let block_env = executor.evm_env().block_env.clone();
         if let Some(cheatcodes) = executor.inspector_mut().cheatcodes.as_mut() {
             if let Some(block) = cheatcodes.block.as_mut() {
-                block.timestamp += warp;
-                block.number += roll;
+                let bts = block.timestamp();
+                let bnum = block.number();
+                block.set_timestamp(bts + warp);
+                block.set_number(bnum + roll);
             } else {
                 cheatcodes.block = Some(block_env);
             }
@@ -1125,4 +1251,54 @@ pub(crate) fn execute_tx(executor: &mut Executor, tx: &BasicTxDetails) -> Result
     executor
         .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), U256::ZERO)
         .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn invariant_progress_json_includes_throughput_fields() {
+        let mut throughput = InvariantThroughputMetrics::default();
+        throughput.record_call(20);
+        throughput.record_call(30);
+
+        let payload = build_invariant_progress_json(
+            123,
+            "invariant_balance",
+            &json!({ "corpus_count": 7 }),
+            Some(I256::try_from(42).unwrap()),
+            throughput,
+            Duration::from_secs(10),
+        );
+
+        assert_eq!(payload["timestamp"], json!(123));
+        assert_eq!(payload["invariant"], json!("invariant_balance"));
+        assert_eq!(payload["metrics"]["corpus_count"], json!(7));
+        assert_eq!(payload["total_txs"], json!(2));
+        assert_eq!(payload["total_gas"], json!(50));
+        assert!((payload["tx_per_sec"].as_f64().unwrap() - 0.2).abs() < 1e-12);
+        assert!((payload["gas_per_sec"].as_f64().unwrap() - 5.0).abs() < 1e-12);
+        assert_eq!(payload["optimization_best"], json!("42"));
+    }
+
+    #[test]
+    fn invariant_progress_json_zero_elapsed_reports_zero_rates() {
+        let mut throughput = InvariantThroughputMetrics::default();
+        throughput.record_call(21_000);
+
+        let payload = build_invariant_progress_json(
+            456,
+            "invariant_zero_elapsed",
+            &json!({ "corpus_count": 1 }),
+            None,
+            throughput,
+            Duration::ZERO,
+        );
+
+        assert_eq!(payload["tx_per_sec"], json!(0.0));
+        assert_eq!(payload["gas_per_sec"], json!(0.0));
+        assert!(payload.get("optimization_best").is_none());
+    }
 }

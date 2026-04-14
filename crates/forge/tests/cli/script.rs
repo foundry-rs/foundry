@@ -2,6 +2,7 @@
 
 use crate::constants::TEMPLATE_CONTRACT;
 use alloy_hardforks::EthereumHardfork;
+use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, address, hex};
 use anvil::{NodeConfig, spawn};
 use forge_script_sequence::ScriptSequence;
@@ -1049,9 +1050,8 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     let run_log = re.replace_all(&run_log, "");
 
     // Clean up carriage return OS differences
-    let re = Regex::new(r"\r\n").unwrap();
-    let fixtures_log = re.replace_all(&fixtures_log, "\n");
-    let run_log = re.replace_all(&run_log, "\n");
+    let fixtures_log = fixtures_log.replace("\r\n", "\n");
+    let run_log = run_log.replace("\r\n", "\n");
 
     similar_asserts::assert_eq!(fixtures_log, run_log);
 });
@@ -2419,7 +2419,8 @@ contract ContractScript is Script {
         .find(|file| file.ends_with("run-latest.json"))
         .expect("No broadcast artifacts");
 
-    let sequence: ScriptSequence = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let sequence: ScriptSequence<Ethereum> =
+        foundry_common::fs::read_json_file(&run_latest).unwrap();
 
     assert_eq!(sequence.transactions.len(), 2);
     assert_eq!(sequence.transactions[1].additional_contracts.len(), 1);
@@ -2566,7 +2567,7 @@ maxFeePerGas
 maxPriorityFeePerGas 
 nonce                0
 to                   
-type                 0
+type                 EIP-1559
 value                0
 
 ### Transaction 2 ###
@@ -2581,7 +2582,7 @@ maxFeePerGas
 maxPriorityFeePerGas 
 nonce                1
 to                   0x5FbDB2315678afecb367f032d93F642f64180aa3
-type                 0
+type                 EIP-1559
 value                0
 contract: Called(0x5FbDB2315678afecb367f032d93F642f64180aa3)
 data (decoded): run(uint256,uint256)(
@@ -3061,7 +3062,7 @@ contract FactoryScript is Script {
     .assert_success();
 
     let broadcast_log = prj.root().join("broadcast/Factory.s.sol/31337/run-latest.json");
-    let script_sequence: ScriptSequence = serde_json::from_reader(
+    let script_sequence: ScriptSequence<Ethereum> = serde_json::from_reader(
         fs::File::open(prj.artifacts().join(broadcast_log)).expect("no broadcast log"),
     )
     .expect("no script sequence");
@@ -3199,7 +3200,7 @@ contract CounterScript is Script {
 error: the following required arguments were not provided:
   --broadcast
 
-Usage: [..] script --broadcast --verify --fork-url <URL> <PATH> [ARGS]...
+Usage: [..] script --broadcast --verify --rpc-url <RPC_URL> <PATH> [ARGS]...
 
 For more information, try '--help'.
 
@@ -3491,3 +3492,40 @@ Script ran successfully.
 
 "#]]);
 });
+
+// Regression test for https://github.com/foundry-rs/foundry/issues/13576
+// On Arbitrum, `block.number` is remapped to the L1 block number. Previously,
+// fork block pinning used the remapped L1 block number, causing the fork to
+// fetch state from an ancient block where contracts did not exist.
+forgetest_init!(
+    #[ignore]
+    flaky_can_call_arbitrum_contract_in_script,
+    |prj, cmd| {
+        let script = prj.add_source(
+            "ArbScript",
+            r#"
+import "forge-std/Script.sol";
+
+interface IERC20 {
+    function name() external view returns (string memory);
+}
+
+contract ArbScript is Script {
+    function run() external view {
+        // USDC on Arbitrum — a contract with zero ETH balance.
+        // Before the fix, the fork pinned to the L1 block number, fetching state from
+        // an ancient block (Sept 2022) where USDC did not exist, causing
+        // "call to non-contract address".
+        IERC20 usdc = IERC20(0xaf88d065e77c8cC2239327C5EDb3A432268e5831);
+        string memory n = usdc.name();
+        require(bytes(n).length > 0, "name should not be empty");
+    }
+}
+    "#,
+        );
+
+        let rpc = foundry_test_utils::rpc::next_rpc_endpoint(alloy_chains::NamedChain::Arbitrum);
+
+        cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvv"]).assert_success();
+    }
+);

@@ -1,10 +1,7 @@
 use crate::{Cheatcode, CheatsCtxt, Result, Vm::*, evm::journaled_account};
 use alloy_primitives::Address;
-use foundry_evm_core::backend::DatabaseExt;
-use revm::{
-    context::{ContextTr, JournalTr, Transaction},
-    inspector::JournalExt,
-};
+use foundry_evm_core::evm::FoundryEvmNetwork;
+use revm::context::{ContextTr, JournalTr, Transaction};
 
 /// Prank information.
 #[derive(Clone, Copy, Debug, Default)]
@@ -29,7 +26,7 @@ pub struct Prank {
 
 impl Prank {
     /// Create a new prank.
-    pub fn new(
+    pub const fn new(
         prank_caller: Address,
         prank_origin: Address,
         new_caller: Address,
@@ -52,104 +49,77 @@ impl Prank {
 
     /// Apply the prank by setting `used` to true if it is false
     /// Only returns self in the case it is updated (first application)
-    pub fn first_time_applied(&self) -> Option<Self> {
+    pub const fn first_time_applied(&self) -> Option<Self> {
         if self.used { None } else { Some(Self { used: true, ..*self }) }
     }
 }
 
 impl Cheatcode for prank_0Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender } = self;
         prank(ccx, msgSender, None, true, false)
     }
 }
 
 impl Cheatcode for startPrank_0Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender } = self;
         prank(ccx, msgSender, None, false, false)
     }
 }
 
 impl Cheatcode for prank_1Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender, txOrigin } = self;
         prank(ccx, msgSender, Some(txOrigin), true, false)
     }
 }
 
 impl Cheatcode for startPrank_1Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender, txOrigin } = self;
         prank(ccx, msgSender, Some(txOrigin), false, false)
     }
 }
 
 impl Cheatcode for prank_2Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender, delegateCall } = self;
         prank(ccx, msgSender, None, true, *delegateCall)
     }
 }
 
 impl Cheatcode for startPrank_2Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender, delegateCall } = self;
         prank(ccx, msgSender, None, false, *delegateCall)
     }
 }
 
 impl Cheatcode for prank_3Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender, txOrigin, delegateCall } = self;
         prank(ccx, msgSender, Some(txOrigin), true, *delegateCall)
     }
 }
 
 impl Cheatcode for startPrank_3Call {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { msgSender, txOrigin, delegateCall } = self;
         prank(ccx, msgSender, Some(txOrigin), false, *delegateCall)
     }
 }
 
 impl Cheatcode for stopPrankCall {
-    fn apply_stateful<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
-        &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-    ) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         ccx.state.pranks.remove(&ccx.ecx.journal().depth());
         Ok(Default::default())
     }
 }
 
-fn prank<CTX: ContextTr<Journal: JournalExt, Db: DatabaseExt>>(
-    ccx: &mut CheatsCtxt<'_, CTX>,
+fn prank<FEN: FoundryEvmNetwork>(
+    ccx: &mut CheatsCtxt<'_, '_, FEN>,
     new_caller: &Address,
     new_origin: Option<&Address>,
     single_call: bool,

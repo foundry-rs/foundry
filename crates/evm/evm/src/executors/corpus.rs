@@ -37,9 +37,11 @@
 use crate::executors::{Executor, RawCallResult, invariant::execute_tx};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Bytes, I256};
 use eyre::{Result, eyre};
+use foundry_common::sh_warn;
 use foundry_config::FuzzCorpusConfig;
+use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_fuzz::{
     BasicTxDetails,
     invariant::FuzzRunIdentifiedContracts,
@@ -51,7 +53,7 @@ use proptest::{
     strategy::{BoxedStrategy, ValueTree},
     test_runner::TestRunner,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -66,6 +68,7 @@ use uuid::Uuid;
 const WORKER: &str = "worker";
 const CORPUS_DIR: &str = "corpus";
 const SYNC_DIR: &str = "sync";
+const OPTIMIZATION_BEST_FILE: &str = "optimization_best.json";
 
 const FAVORABILITY_THRESHOLD: f64 = 0.3;
 const COVERAGE_MAP_SIZE: usize = 65536;
@@ -89,6 +92,13 @@ enum MutationType {
     Suffix,
     /// ABI mutate random args of selected call in sequence.
     Abi,
+}
+
+/// Persisted optimization state: the best value found and the sequence that produced it.
+#[derive(Clone, Serialize, Deserialize)]
+struct OptimizationState {
+    best_value: I256,
+    best_sequence: Vec<BasicTxDetails>,
 }
 
 /// Holds Corpus information.
@@ -220,7 +230,7 @@ impl fmt::Display for CorpusMetrics {
 
 impl CorpusMetrics {
     /// Records number of new edges or features explored during the campaign.
-    pub fn update_seen(&mut self, is_edge: bool) {
+    pub const fn update_seen(&mut self, is_edge: bool) {
         if is_edge {
             self.cumulative_edges_seen += 1;
         } else {
@@ -229,7 +239,7 @@ impl CorpusMetrics {
     }
 
     /// Updates campaign favored items.
-    pub fn update_favored(&mut self, is_favored: bool, corpus_favored: bool) {
+    pub const fn update_favored(&mut self, is_favored: bool, corpus_favored: bool) {
         if is_favored && !corpus_favored {
             self.favored_items += 1;
         } else if !is_favored && corpus_favored {
@@ -268,15 +278,19 @@ pub struct WorkerCorpus {
     worker_dir: Option<PathBuf>,
     /// Metrics at last sync - used to calculate deltas while syncing with global metrics
     last_sync_metrics: CorpusMetrics,
+    /// Optimization mode: the best value found so far (loaded from disk or discovered in-run).
+    optimization_best_value: Option<I256>,
+    /// Optimization mode: the call sequence that produced the best value.
+    optimization_best_sequence: Vec<BasicTxDetails>,
 }
 
 impl WorkerCorpus {
-    pub fn new(
+    pub fn new<FEN: FoundryEvmNetwork>(
         id: usize,
         config: FuzzCorpusConfig,
         tx_generator: BoxedStrategy<BasicTxDetails>,
         // Only required by master worker (id = 0) to replay existing corpus.
-        executor: Option<&Executor>,
+        executor: Option<&Executor<FEN>>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> Result<Self> {
@@ -306,10 +320,42 @@ impl WorkerCorpus {
         let mut history_map = vec![0u8; COVERAGE_MAP_SIZE];
         let mut metrics = CorpusMetrics::default();
         let mut failed_replays = 0;
+        let mut optimization_best_value = None;
+        let mut optimization_best_sequence = vec![];
 
         if id == 0
             && let Some(corpus_dir) = &config.corpus_dir
         {
+            // Load persisted optimization state if it exists.
+            let opt_path = corpus_dir.join(OPTIMIZATION_BEST_FILE);
+            if opt_path.is_file() {
+                match foundry_common::fs::read_json_file::<OptimizationState>(&opt_path) {
+                    Ok(state) => {
+                        debug!(
+                            target: "corpus",
+                            "loaded optimization best value {} with sequence len {}",
+                            state.best_value,
+                            state.best_sequence.len()
+                        );
+                        optimization_best_value = Some(state.best_value);
+                        optimization_best_sequence = state.best_sequence;
+                    }
+                    Err(err) => {
+                        let _ = sh_warn!(
+                            "failed to load optimization state from {}: {err}; starting without persisted optimization seed",
+                            opt_path.display()
+                        );
+                    }
+                }
+            }
+
+            // Seed in-memory corpus with the persisted optimization best sequence
+            // so the mutation engine can build on it in future runs.
+            if !optimization_best_sequence.is_empty() {
+                in_memory_corpus.push(CorpusEntry::new(optimization_best_sequence.clone()));
+                metrics.corpus_count += 1;
+            }
+
             // Master worker loads the initial corpus, if it exists.
             // Then, [distribute]s it to workers.
             let executor = executor.expect("Executor required for master worker");
@@ -372,26 +418,39 @@ impl WorkerCorpus {
             last_sync_timestamp: 0,
             worker_dir,
             last_sync_metrics: Default::default(),
+            optimization_best_value,
+            optimization_best_sequence,
         })
     }
 
     /// Updates stats for the given call sequence, if new coverage produced.
-    /// Persists the call sequence (if corpus directory is configured and new coverage) and updates
-    /// in-memory corpus.
+    /// Persists the call sequence (if corpus directory is configured and new coverage or
+    /// improved optimization value) and updates in-memory corpus.
     #[instrument(skip_all)]
-    pub fn process_inputs(&mut self, inputs: &[BasicTxDetails], new_coverage: bool) {
+    pub fn process_inputs(
+        &mut self,
+        inputs: &[BasicTxDetails],
+        new_coverage: bool,
+        optimization: Option<(I256, Vec<BasicTxDetails>)>,
+    ) {
         let Some(worker_corpus) = &self.worker_dir else {
             return;
         };
         let worker_corpus = worker_corpus.join(CORPUS_DIR);
 
+        // Check if this run improved the optimization value.
+        let improved_optimization = optimization.as_ref().is_some_and(|(value, _)| {
+            self.optimization_best_value.is_none_or(|best| *value > best)
+        });
+
         // Update stats of current mutated primary corpus.
         if let Some(uuid) = &self.current_mutated {
+            let should_credit = new_coverage || improved_optimization;
             if let Some(corpus) =
                 self.in_memory_corpus.iter_mut().find(|corpus| corpus.uuid == *uuid)
             {
                 corpus.total_mutations += 1;
-                if new_coverage {
+                if should_credit {
                     corpus.new_finds_produced += 1
                 }
                 let is_favored = (corpus.new_finds_produced as f64 / corpus.total_mutations as f64)
@@ -409,13 +468,30 @@ impl WorkerCorpus {
             self.current_mutated = None;
         }
 
-        // Collect inputs only if current run produced new coverage.
-        if !new_coverage {
+        // Persist optimization state to disk if improved.
+        if let Some((value, best_seq)) = optimization
+            && improved_optimization
+        {
+            self.optimization_best_value = Some(value);
+            self.optimization_best_sequence = best_seq;
+            self.persist_optimization_state();
+        }
+
+        // Collect inputs if current run produced new coverage or improved optimization.
+        if !new_coverage && !improved_optimization {
             return;
         }
 
+        // When the run is interesting only because of optimization (no new coverage),
+        // add the best prefix to the corpus instead of the full run — the prefix is
+        // the sequence that actually achieved the best value.
         assert!(!inputs.is_empty());
-        let corpus = CorpusEntry::new(inputs.to_vec());
+        let corpus_inputs = if improved_optimization && !new_coverage {
+            self.optimization_best_sequence.clone()
+        } else {
+            inputs.to_vec()
+        };
+        let corpus = CorpusEntry::new(corpus_inputs);
 
         // Persist to disk.
         let write_result = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip);
@@ -440,8 +516,41 @@ impl WorkerCorpus {
         self.in_memory_corpus.push(corpus);
     }
 
+    /// Returns the previously persisted optimization best value and sequence (if any).
+    pub fn optimization_initial_state(&self) -> (Option<I256>, Vec<BasicTxDetails>) {
+        (self.optimization_best_value, self.optimization_best_sequence.clone())
+    }
+
+    /// Persists the current optimization best value and sequence to disk.
+    fn persist_optimization_state(&self) {
+        let Some(value) = self.optimization_best_value else {
+            return;
+        };
+        let Some(corpus_dir) = &self.config.corpus_dir else {
+            return;
+        };
+        let state = OptimizationState {
+            best_value: value,
+            best_sequence: self.optimization_best_sequence.clone(),
+        };
+        let path = corpus_dir.join(OPTIMIZATION_BEST_FILE);
+        if let Err(err) = foundry_common::fs::write_json_file(&path, &state) {
+            debug!(target: "corpus", %err, "failed to persist optimization state");
+        } else {
+            trace!(
+                target: "corpus",
+                "persisted optimization best value {} with sequence len {}",
+                value,
+                self.optimization_best_sequence.len()
+            );
+        }
+    }
+
     /// Collects coverage from call result and updates metrics.
-    pub fn merge_edge_coverage(&mut self, call_result: &mut RawCallResult) -> bool {
+    pub fn merge_edge_coverage<FEN: FoundryEvmNetwork>(
+        &mut self,
+        call_result: &mut RawCallResult<FEN>,
+    ) -> bool {
         if !self.config.collect_edge_coverage() {
             return false;
         }
@@ -598,15 +707,15 @@ impl WorkerCorpus {
 
         self.evict_oldest_corpus()?;
 
-        let tx = if !self.in_memory_corpus.is_empty() {
+        let tx = if self.in_memory_corpus.is_empty() {
+            self.new_tx(test_runner)?
+        } else {
             let corpus = &self.in_memory_corpus
                 [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
             self.current_mutated = Some(corpus.uuid);
             let mut tx = corpus.tx_seq.first().unwrap().clone();
             self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
             tx
-        } else {
-            self.new_tx(test_runner)?
         };
 
         Ok(tx.call_details.calldata)
@@ -759,9 +868,9 @@ impl WorkerCorpus {
     /// Syncs and calibrates the in memory corpus and updates the history_map if new coverage is
     /// found from the corpus findings of other workers.
     #[instrument(skip_all)]
-    fn calibrate(
+    fn calibrate<FEN: FoundryEvmNetwork>(
         &mut self,
-        executor: &Executor,
+        executor: &Executor<FEN>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> Result<()> {
@@ -817,7 +926,7 @@ impl WorkerCorpus {
                     "moved synced corpus to corpus dir",
                 );
 
-                let corpus_entry = CorpusEntry::new_existing(tx_seq.to_vec(), entry.path.clone())?;
+                let corpus_entry = CorpusEntry::new_existing(tx_seq.clone(), entry.path.clone())?;
                 self.in_memory_corpus.push(corpus_entry);
             } else {
                 // Remove the file as it did not generate new coverage.
@@ -972,10 +1081,10 @@ impl WorkerCorpus {
 
     /// Syncs the workers in_memory_corpus and history_map with the findings from other workers.
     #[instrument(skip_all)]
-    pub fn sync(
+    pub fn sync<FEN: FoundryEvmNetwork>(
         &mut self,
         num_workers: usize,
-        executor: &Executor,
+        executor: &Executor<FEN>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
         global_corpus_metrics: &GlobalCorpusMetrics,
@@ -1147,6 +1256,8 @@ mod tests {
             last_sync_timestamp: 0,
             worker_dir: Some(corpus_root),
             last_sync_metrics: CorpusMetrics::default(),
+            optimization_best_value: None,
+            optimization_best_sequence: vec![],
         };
 
         (manager, seed_uuid)
@@ -1165,7 +1276,7 @@ mod tests {
 
         // Mark this as the currently mutated corpus and process a run with new coverage.
         manager.current_mutated = Some(uuid);
-        manager.process_inputs(&[basic_tx()], true);
+        manager.process_inputs(&[basic_tx()], true, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
         assert!(corpus.is_favored, "expected favored to be true when ratio > threshold");
@@ -1187,7 +1298,7 @@ mod tests {
 
         // Next run does NOT produce coverage → only total_mutations increments, ratio drops.
         manager.current_mutated = Some(uuid);
-        manager.process_inputs(&[basic_tx()], false);
+        manager.process_inputs(&[basic_tx()], false, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
         assert!(!corpus.is_favored, "expected favored to be false when ratio < threshold");
@@ -1207,7 +1318,7 @@ mod tests {
         corpus.is_favored = false;
 
         manager.current_mutated = Some(uuid);
-        manager.process_inputs(&[basic_tx()], true);
+        manager.process_inputs(&[basic_tx()], true, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
         assert!(
@@ -1254,6 +1365,8 @@ mod tests {
             last_sync_timestamp: 0,
             worker_dir: Some(corpus_root),
             last_sync_metrics: CorpusMetrics::default(),
+            optimization_best_value: None,
+            optimization_best_sequence: vec![],
         };
 
         // First eviction should remove the non-favored one.

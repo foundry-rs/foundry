@@ -16,10 +16,10 @@ use foundry_cli::{
     utils::{self, parse_function_args},
 };
 use foundry_common::{
-    TransactionReceiptWithRevertReason, fmt::*, get_pretty_receipt_w_reason_attr, shell,
+    FoundryTransactionBuilder, TransactionReceiptWithRevertReason, fmt::*,
+    get_pretty_receipt_w_reason_attr, shell,
 };
 use foundry_config::{Chain, Config};
-use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
@@ -86,10 +86,10 @@ impl SenderKind<'_> {
     /// If from is not specified, but there is a signer configured, returns the signer's address
     /// If from is not specified and there is no signer configured, returns zero address
     pub async fn from_wallet_opts(opts: WalletOpts) -> Result<Self> {
-        if let Some(from) = opts.from {
-            Ok(from.into())
-        } else if let Ok(signer) = opts.signer().await {
+        if let (Some(signer), _) = opts.maybe_signer().await? {
             Ok(Self::OwnedSigner(Box::new(signer)))
+        } else if let Some(from) = opts.from {
+            Ok(from.into())
         } else {
             Ok(Address::ZERO.into())
         }
@@ -171,7 +171,7 @@ where
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     /// Creates a new Cast instance responsible for sending transactions.
-    pub fn new(provider: P) -> Self {
+    pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
     }
 
@@ -291,13 +291,12 @@ where
                     // try to poll for it
                     if cast_async {
                         eyre::bail!("tx not found: {:?}", tx_hash)
-                    } else {
-                        PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
-                            .with_required_confirmations(confs)
-                            .with_timeout(timeout.map(Duration::from_secs))
-                            .get_receipt()
-                            .await?
                     }
+                    PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
+                        .with_required_confirmations(confs)
+                        .with_timeout(timeout.map(Duration::from_secs))
+                        .get_receipt()
+                        .await?
                 }
             },
             revert_reason: None,
@@ -334,7 +333,7 @@ where
 #[derive(Debug)]
 pub struct CastTxBuilder<N: Network, P, S> {
     provider: P,
-    tx: N::TransactionRequest,
+    pub(crate) tx: N::TransactionRequest,
     /// Whether the transaction should be sent as a legacy transaction.
     legacy: bool,
     blob: bool,
@@ -484,6 +483,11 @@ where
         // prepare
         let sender = sender.into();
         self.prepare(&sender);
+
+        // For batch transactions with calls, clear `to` and `value` so the node correctly
+        // identifies this as an AA batch transaction. The `calls` field determines the actual
+        // targets. If `to` is set, `build_aa()` would add a spurious extra call.
+        self.tx.clear_batch_to();
 
         // resolve
         let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
@@ -664,7 +668,7 @@ where
 
     /// Skips gas, fee and nonce filling. Use for read-only calls
     /// (eth_call, eth_estimateGas, eth_createAccessList).
-    pub fn raw(mut self) -> Self {
+    pub const fn raw(mut self) -> Self {
         self.fill = false;
         self
     }

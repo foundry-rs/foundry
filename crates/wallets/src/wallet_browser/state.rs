@@ -52,7 +52,7 @@ impl<N: Network> BrowserWalletState<N> {
     /// This relaxes certain security restrictions for local development.
     ///
     /// **WARNING**: This should only be used in a development environment.
-    pub fn is_development(&self) -> bool {
+    pub const fn is_development(&self) -> bool {
         self.development
     }
 
