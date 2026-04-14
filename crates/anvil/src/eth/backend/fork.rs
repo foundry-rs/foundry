@@ -673,27 +673,17 @@ impl<N: Network> ClientForkConfig<N> {
     ///
     /// This will fail if no new provider could be established (erroneous URL)
     fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
-        self.provider = Arc::new(if self.fork_urls.len() > 1 {
-            // Update the primary URL in-place
-            self.fork_urls[0] = url.clone();
-            ProviderBuilder::<N>::new(url.as_str())
-                .timeout(self.timeout)
-                .max_retry(self.retries)
-                .initial_backoff(self.backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
-                .build_fallback(self.fork_urls.clone())
-                .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?
-        } else {
-            self.fork_urls[0] = url.clone();
+        self.provider = Arc::new(
             ProviderBuilder::<N>::new(url.as_str())
                 .timeout(self.timeout)
                 .max_retry(self.retries)
                 .initial_backoff(self.backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .build()
-                .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?
-        });
+                .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?,
+        );
         trace!(target: "fork", "Updated rpc url  {}", url);
+        self.fork_urls = vec![url];
         Ok(())
     }
     /// Updates the block forked off `(block number, block hash, timestamp)`
