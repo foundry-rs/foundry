@@ -85,7 +85,7 @@ fn is_assert_panic(data: &[u8]) -> bool {
 }
 
 fn is_revert_assertion_failure(data: &[u8]) -> bool {
-    Revert::abi_decode(data).is_ok_and(|revert| revert.reason.starts_with(ASSERTION_FAILED_PREFIX))
+    Revert::abi_decode(data).is_ok_and(|revert| revert.reason.contains(ASSERTION_FAILED_PREFIX))
 }
 
 fn is_cheatcode_assert_revert<FEN: FoundryEvmNetwork>(call_result: &RawCallResult<FEN>) -> bool {
