@@ -14,7 +14,13 @@ use mpp::{
     },
 };
 use reqwest::StatusCode;
-use std::{fmt, sync::Mutex, task, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{Mutex, OnceLock},
+    task,
+    time::Duration,
+};
 use tokio::sync::OwnedMutexGuard;
 use tower::Service;
 use tracing::{Instrument, debug, debug_span, trace};
@@ -36,6 +42,13 @@ fn default_deposit() -> u128 {
     std::env::var("MPP_DEPOSIT").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_DEPOSIT)
 }
 
+/// Process-wide payment serialization locks, keyed by origin URL.
+///
+/// Created eagerly so the lock exists before the first provider init,
+/// preventing concurrent first-402 races.
+static GLOBAL_PAY_LOCKS: OnceLock<Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>> =
+    OnceLock::new();
+
 /// Production transport: lazily discovers MPP keys from the Tempo wallet on
 /// first 402 response.
 pub type LazyMppHttpTransport = MppHttpTransport<LazySessionProvider>;
@@ -45,12 +58,23 @@ pub type LazyMppHttpTransport = MppHttpTransport<LazySessionProvider>;
 #[derive(Clone, Debug)]
 pub struct LazySessionProvider {
     inner: std::sync::Arc<Mutex<Option<SessionProvider>>>,
+    /// Eagerly-created, process-wide payment serialization lock for this origin.
+    pay_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     origin: String,
 }
 
 impl LazySessionProvider {
     fn new(origin: String) -> Self {
-        Self { inner: std::sync::Arc::new(Mutex::new(None)), origin }
+        let pay_lock = {
+            let global = GLOBAL_PAY_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+            global
+                .lock()
+                .unwrap()
+                .entry(origin.clone())
+                .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+                .clone()
+        };
+        Self { inner: std::sync::Arc::new(Mutex::new(None)), pay_lock, origin }
     }
 
     fn set_key_provisioned(&self, provisioned: bool) {
@@ -581,8 +605,8 @@ impl ResolveProvider for LazySessionProvider {
         Self::rollback_pending(self)
     }
     fn lock_pay(&self) -> impl std::future::Future<Output = Option<OwnedMutexGuard<()>>> + Send {
-        let lock = self.inner.lock().unwrap().as_ref().map(|p| p.pay_lock());
-        async move { if let Some(lock) = lock { Some(lock.lock_owned().await) } else { None } }
+        let lock = self.pay_lock.clone();
+        async move { Some(lock.lock_owned().await) }
     }
 }
 

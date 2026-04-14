@@ -174,11 +174,11 @@ pub fn find_channel(
     channels.get(key).filter(|ch| ch.is_usable()).and_then(|ch| ch.to_channel_entry())
 }
 
-/// Insert or update a channel entry and save to disk.
+/// Insert or update a channel entry in memory only (no disk write).
 ///
-/// When updating an existing entry, `deposit` is ignored (preserved from the
-/// original open). When inserting a new entry, `deposit` is recorded.
-pub fn upsert_channel(
+/// Use [`upsert_channel`] when you want to persist immediately, or call
+/// [`save_channels`] separately after this.
+pub fn upsert_channel_in_memory(
     channels: &mut HashMap<String, PersistedChannel>,
     key: &str,
     entry: &ChannelEntry,
@@ -195,7 +195,20 @@ pub fn upsert_channel(
         channels
             .insert(key.to_string(), PersistedChannel::from_channel_entry(entry, deposit, origin));
     }
+}
 
+/// Insert or update a channel entry and save to disk.
+///
+/// When updating an existing entry, `deposit` is ignored (preserved from the
+/// original open). When inserting a new entry, `deposit` is recorded.
+pub fn upsert_channel(
+    channels: &mut HashMap<String, PersistedChannel>,
+    key: &str,
+    entry: &ChannelEntry,
+    deposit: u128,
+    origin: &str,
+) {
+    upsert_channel_in_memory(channels, key, entry, deposit, origin);
     save_channels(channels);
 }
 

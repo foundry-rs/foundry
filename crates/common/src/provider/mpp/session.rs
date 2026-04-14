@@ -30,20 +30,19 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 
-/// Shared per-origin channel state: (channels, persisted, pay_lock, key_provisioned).
-type SharedChannelState = (
-    Arc<Mutex<HashMap<String, ChannelEntry>>>,
-    Arc<Mutex<HashMap<String, PersistedChannel>>>,
-    Arc<tokio::sync::Mutex<()>>,
-    Arc<Mutex<bool>>,
-);
+/// Shared per-origin in-memory channel state: (channels, key_provisioned).
+type SharedChannelState = (Arc<Mutex<HashMap<String, ChannelEntry>>>, Arc<Mutex<bool>>);
 
 /// Process-wide channel state registry, keyed by origin URL.
 ///
-/// Ensures all [`SessionProvider`] instances for the same origin share a single
-/// in-memory channel map, pay lock, and key provisioning state. This prevents
-/// concurrent providers (e.g. multiple transports for the same URL) from racing.
+/// Stores per-origin in-memory channel maps and key provisioning state.
 static GLOBAL_CHANNELS: OnceLock<Mutex<HashMap<String, SharedChannelState>>> = OnceLock::new();
+
+/// Process-wide persisted channel state, shared across ALL origins.
+///
+/// Using a single map ensures saves from different origins don't clobber
+/// each other's state.
+static GLOBAL_PERSISTED: OnceLock<Arc<Mutex<HashMap<String, PersistedChannel>>>> = OnceLock::new();
 
 /// Tracks uncommitted channel state from the most recent payment.
 ///
@@ -86,9 +85,6 @@ pub struct SessionProvider {
     channels: Arc<Mutex<HashMap<String, ChannelEntry>>>,
     key_provisioned: Arc<Mutex<bool>>,
     persisted: Arc<Mutex<HashMap<String, PersistedChannel>>>,
-    /// Process-wide payment serialization lock, shared across all transports
-    /// for the same origin.
-    pay_lock: Arc<tokio::sync::Mutex<()>>,
     /// Tracks uncommitted open/top-up state for deferred persistence.
     pending: Arc<Mutex<Option<PendingAction>>>,
     /// Chain ID from the key entry in `keys.toml` that was used to initialize
@@ -119,24 +115,26 @@ impl SessionProvider {
     /// same URL) from reading stale `cumulative_amount` values from disk and
     /// producing duplicate vouchers.
     pub fn new(signer: mpp::PrivateKeySigner, origin: String) -> Self {
-        let global = GLOBAL_CHANNELS.get_or_init(|| Mutex::new(HashMap::new()));
-        let (channels, persisted, pay_lock, key_provisioned) = {
+        // Global persisted map shared across all origins.
+        let persisted =
+            GLOBAL_PERSISTED.get_or_init(|| Arc::new(Mutex::new(persist::load_channels()))).clone();
+
+        // Per-origin in-memory channel map + key provisioning state.
+        let (channels, key_provisioned) = {
+            let global = GLOBAL_CHANNELS.get_or_init(|| Mutex::new(HashMap::new()));
             let mut map = global.lock().unwrap();
             map.entry(origin.clone())
                 .or_insert_with(|| {
-                    let persisted = persist::load_channels();
+                    // Hydrate only channels belonging to this origin.
                     let mut channels = HashMap::new();
-                    for (key, ch) in &persisted {
-                        if let Some(entry) = ch.to_channel_entry() {
+                    for (key, ch) in persisted.lock().unwrap().iter() {
+                        if ch.origin == origin
+                            && let Some(entry) = ch.to_channel_entry()
+                        {
                             channels.insert(key.clone(), entry);
                         }
                     }
-                    (
-                        Arc::new(Mutex::new(channels)),
-                        Arc::new(Mutex::new(persisted)),
-                        Arc::new(tokio::sync::Mutex::new(())),
-                        Arc::new(Mutex::new(true)),
-                    )
+                    (Arc::new(Mutex::new(channels)), Arc::new(Mutex::new(true)))
                 })
                 .clone()
         };
@@ -149,7 +147,6 @@ impl SessionProvider {
             channels,
             key_provisioned,
             persisted,
-            pay_lock,
             pending: Arc::new(Mutex::new(None)),
             key_chain_id: None,
             key_currencies: vec![],
@@ -232,11 +229,6 @@ impl SessionProvider {
         *self.key_provisioned.lock().unwrap()
     }
 
-    /// Returns the process-wide payment serialization lock for this origin.
-    pub fn pay_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
-        self.pay_lock.clone()
-    }
-
     /// Persist any pending open/top-up state to disk.
     ///
     /// Called by the transport after the server confirms acceptance.
@@ -269,19 +261,21 @@ impl SessionProvider {
 
     fn channel_key(
         payer: &Address,
+        authorized_signer: Option<Address>,
         payee: &Address,
         currency: &Address,
         escrow: &Address,
         chain_id: u64,
     ) -> String {
-        format!("{chain_id}:{payer}:{payee}:{currency}:{escrow}").to_lowercase()
+        let signer = authorized_signer.unwrap_or(*payer);
+        format!("{chain_id}:{payer}:{signer}:{payee}:{currency}:{escrow}").to_lowercase()
     }
 
     fn resolve_deposit(&self, suggested: Option<&str>) -> Result<u128, MppError> {
         let suggested_val = suggested.and_then(|s| s.parse::<u128>().ok());
 
-        // Prefer the server-suggested deposit, but warn when it exceeds the
-        // local default so users can spot unexpected charges.
+        // Local config takes priority. Warn when server suggests more so users
+        // can bump MPP_DEPOSIT if the default is too low.
         if let (Some(sv), Some(local)) = (suggested_val, self.default_deposit)
             && sv > local
         {
@@ -291,7 +285,7 @@ impl SessionProvider {
             );
         }
 
-        let amount = suggested_val.or(self.default_deposit);
+        let amount = self.default_deposit.or(suggested_val);
 
         amount.ok_or_else(|| {
             MppError::InvalidConfig("no deposit amount: set default_deposit".to_string())
@@ -566,7 +560,14 @@ impl SessionProvider {
 
         let payer = self.signing_mode.from_address(self.signer.address());
 
-        let key = Self::channel_key(&payer, &payee, &currency, &escrow_contract, chain_id);
+        let key = Self::channel_key(
+            &payer,
+            self.authorized_signer,
+            &payee,
+            &currency,
+            &escrow_contract,
+            chain_id,
+        );
 
         let voucher_info = {
             let mut channels = self.channels.lock().unwrap();
@@ -636,13 +637,20 @@ impl SessionProvider {
                     )
                     .await?;
 
-                    persist::upsert_channel(
-                        &mut self.persisted.lock().unwrap(),
+                    // Update in-memory persisted state. Only write to disk if
+                    // there is no pending open/top-up (deferred persistence).
+                    let has_pending = self.pending.lock().unwrap().is_some();
+                    let mut persisted = self.persisted.lock().unwrap();
+                    persist::upsert_channel_in_memory(
+                        &mut persisted,
                         &key,
                         &entry,
                         0,
                         &self.origin,
                     );
+                    if !has_pending {
+                        persist::save_channels(&persisted);
+                    }
                     return Ok(build_credential(challenge, payload, chain_id, payer));
                 }
             }
