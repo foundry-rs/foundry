@@ -229,7 +229,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     fn inline_config(&self, func: Option<&Function>) -> Result<Config> {
         let function = func.map(|f| f.name.as_str()).unwrap_or("");
         let config =
-            self.mcr.inline_config.merge(self.name, function, &self.config).extract::<Config>()?;
+            Config::from_provider(self.mcr.inline_config.merge(self.name, function, &self.config))?;
         Ok(config)
     }
 

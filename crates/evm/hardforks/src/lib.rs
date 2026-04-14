@@ -329,6 +329,14 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_tempo_hardfork() {
+        assert_eq!(
+            FoundryHardfork::from_str("tempo:T3"),
+            Ok(FoundryHardfork::Tempo(TempoHardfork::T3))
+        );
+    }
+
+    #[test]
     fn test_hardfork_from_block_tag_numbers() {
         assert_eq!(
             ethereum_hardfork_from_block_tag(MAINNET_HOMESTEAD_BLOCK - 1),
