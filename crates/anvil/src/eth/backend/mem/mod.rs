@@ -2094,11 +2094,8 @@ impl<N: Network> Backend<N> {
             let block_number =
                 forking.block_number.map(BlockNumber::from).unwrap_or(BlockNumber::Latest);
             // reset the fork entirely and reapply the genesis config
-            let reset_urls = forking
-                .json_rpc_url
-                .as_ref()
-                .map(|url| vec![url.clone()])
-                .unwrap_or_default();
+            let reset_urls =
+                forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
             fork.reset(reset_urls, block_number).await?;
             let fork_block_number = fork.block_number();
             let fork_block = fork
