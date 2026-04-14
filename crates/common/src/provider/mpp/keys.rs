@@ -90,7 +90,7 @@ pub fn discover_mpp_config(opts: DiscoverOptions) -> Option<MppKeyConfig> {
 
     let primary = candidates
         .iter()
-        .find(|k| k.wallet_type == WalletType::Passkey)
+        .find(|k| k.wallet_type == WalletType::Passkey && k.has_inline_key())
         .or_else(|| candidates.iter().find(|k| k.has_inline_key()))
         .or(candidates.first())
         .copied();

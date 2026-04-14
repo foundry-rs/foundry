@@ -30,15 +30,32 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 
-/// Shared per-origin channel state: (channels, persisted).
-type SharedChannelState =
-    (Arc<Mutex<HashMap<String, ChannelEntry>>>, Arc<Mutex<HashMap<String, PersistedChannel>>>);
+/// Shared per-origin channel state: (channels, persisted, pay_lock, key_provisioned).
+type SharedChannelState = (
+    Arc<Mutex<HashMap<String, ChannelEntry>>>,
+    Arc<Mutex<HashMap<String, PersistedChannel>>>,
+    Arc<tokio::sync::Mutex<()>>,
+    Arc<Mutex<bool>>,
+);
 
 /// Process-wide channel state registry, keyed by origin URL.
 ///
 /// Ensures all [`SessionProvider`] instances for the same origin share a single
-/// in-memory channel map, preventing stale `cumulative_amount` reads from disk.
+/// in-memory channel map, pay lock, and key provisioning state. This prevents
+/// concurrent providers (e.g. multiple transports for the same URL) from racing.
 static GLOBAL_CHANNELS: OnceLock<Mutex<HashMap<String, SharedChannelState>>> = OnceLock::new();
+
+/// Tracks uncommitted channel state from the most recent payment.
+///
+/// Used to defer persistence until the server confirms acceptance, preventing
+/// local state from getting ahead of reality on failed open/top-up.
+#[derive(Clone, Debug)]
+enum PendingAction {
+    /// A new channel was opened but not yet confirmed by the server.
+    Open { key: String },
+    /// A top-up was prepared but not yet confirmed by the server.
+    TopUp { key: String, old_deposit: String },
+}
 
 /// Expiring nonce key (U256::MAX) — matches the charge flow.
 const EXPIRING_NONCE_KEY: U256 = U256::MAX;
@@ -69,6 +86,11 @@ pub struct SessionProvider {
     channels: Arc<Mutex<HashMap<String, ChannelEntry>>>,
     key_provisioned: Arc<Mutex<bool>>,
     persisted: Arc<Mutex<HashMap<String, PersistedChannel>>>,
+    /// Process-wide payment serialization lock, shared across all transports
+    /// for the same origin.
+    pay_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Tracks uncommitted open/top-up state for deferred persistence.
+    pending: Arc<Mutex<Option<PendingAction>>>,
     /// Chain ID from the key entry in `keys.toml` that was used to initialize
     /// this provider. Used to reject challenges for a different chain.
     key_chain_id: Option<u64>,
@@ -98,7 +120,7 @@ impl SessionProvider {
     /// producing duplicate vouchers.
     pub fn new(signer: mpp::PrivateKeySigner, origin: String) -> Self {
         let global = GLOBAL_CHANNELS.get_or_init(|| Mutex::new(HashMap::new()));
-        let (channels, persisted) = {
+        let (channels, persisted, pay_lock, key_provisioned) = {
             let mut map = global.lock().unwrap();
             map.entry(origin.clone())
                 .or_insert_with(|| {
@@ -109,7 +131,12 @@ impl SessionProvider {
                             channels.insert(key.clone(), entry);
                         }
                     }
-                    (Arc::new(Mutex::new(channels)), Arc::new(Mutex::new(persisted)))
+                    (
+                        Arc::new(Mutex::new(channels)),
+                        Arc::new(Mutex::new(persisted)),
+                        Arc::new(tokio::sync::Mutex::new(())),
+                        Arc::new(Mutex::new(true)),
+                    )
                 })
                 .clone()
         };
@@ -120,8 +147,10 @@ impl SessionProvider {
             authorized_signer: None,
             default_deposit: None,
             channels,
-            key_provisioned: Arc::new(Mutex::new(true)),
+            key_provisioned,
             persisted,
+            pay_lock,
+            pending: Arc::new(Mutex::new(None)),
             key_chain_id: None,
             key_currencies: vec![],
             origin,
@@ -178,6 +207,8 @@ impl SessionProvider {
     /// channels for other RPC endpoints.
     pub fn clear_channels(&self) {
         let origin = &self.origin;
+        // Lock order: channels → persisted (consistent with pay_session)
+        let mut channels = self.channels.lock().unwrap();
         let mut persisted = self.persisted.lock().unwrap();
         let keys_to_remove: Vec<String> = persisted
             .iter()
@@ -185,8 +216,8 @@ impl SessionProvider {
             .map(|(k, _)| k.clone())
             .collect();
         for key in &keys_to_remove {
+            channels.remove(key);
             persisted.remove(key);
-            self.channels.lock().unwrap().remove(key);
         }
         persist::save_channels(&persisted);
     }
@@ -201,8 +232,49 @@ impl SessionProvider {
         *self.key_provisioned.lock().unwrap()
     }
 
-    fn channel_key(payee: &Address, currency: &Address, escrow: &Address, chain_id: u64) -> String {
-        format!("{chain_id}:{payee}:{currency}:{escrow}").to_lowercase()
+    /// Returns the process-wide payment serialization lock for this origin.
+    pub fn pay_lock(&self) -> Arc<tokio::sync::Mutex<()>> {
+        self.pay_lock.clone()
+    }
+
+    /// Persist any pending open/top-up state to disk.
+    ///
+    /// Called by the transport after the server confirms acceptance.
+    pub fn flush_pending(&self) {
+        let pending = self.pending.lock().unwrap().take();
+        if pending.is_some() {
+            persist::save_channels(&self.persisted.lock().unwrap());
+        }
+    }
+
+    /// Roll back pending open/top-up state on failure.
+    ///
+    /// Called by the transport when the server rejects the payment or times out.
+    pub fn rollback_pending(&self) {
+        let pending = self.pending.lock().unwrap().take();
+        if let Some(action) = pending {
+            match action {
+                PendingAction::Open { key } => {
+                    self.channels.lock().unwrap().remove(&key);
+                    self.persisted.lock().unwrap().remove(&key);
+                }
+                PendingAction::TopUp { key, old_deposit } => {
+                    if let Some(p) = self.persisted.lock().unwrap().get_mut(&key) {
+                        p.deposit = old_deposit;
+                    }
+                }
+            }
+        }
+    }
+
+    fn channel_key(
+        payer: &Address,
+        payee: &Address,
+        currency: &Address,
+        escrow: &Address,
+        chain_id: u64,
+    ) -> String {
+        format!("{chain_id}:{payer}:{payee}:{currency}:{escrow}").to_lowercase()
     }
 
     fn resolve_deposit(&self, suggested: Option<&str>) -> Result<u128, MppError> {
@@ -494,7 +566,7 @@ impl SessionProvider {
 
         let payer = self.signing_mode.from_address(self.signer.address());
 
-        let key = Self::channel_key(&payee, &currency, &escrow_contract, chain_id);
+        let key = Self::channel_key(&payer, &payee, &currency, &escrow_contract, chain_id);
 
         let voucher_info = {
             let mut channels = self.channels.lock().unwrap();
@@ -537,11 +609,20 @@ impl SessionProvider {
                         .create_topup_tx(&entry, additional, currency, session_req.fee_payer())
                         .await?;
 
-                    if let Some(p) = self.persisted.lock().unwrap().get_mut(&key) {
-                        let old_deposit: u128 = p.deposit.parse().unwrap_or(0);
-                        p.deposit = (old_deposit + additional).to_string();
-                    }
-                    persist::save_channels(&self.persisted.lock().unwrap());
+                    // Update in-memory state but defer persistence until server confirms.
+                    let old_deposit = {
+                        let mut persisted = self.persisted.lock().unwrap();
+                        if let Some(p) = persisted.get_mut(&key) {
+                            let old = p.deposit.clone();
+                            let old_val: u128 = old.parse().unwrap_or(0);
+                            p.deposit = (old_val + additional).to_string();
+                            old
+                        } else {
+                            "0".to_string()
+                        }
+                    };
+                    *self.pending.lock().unwrap() =
+                        Some(PendingAction::TopUp { key: key.clone(), old_deposit });
 
                     return Ok(build_credential(challenge, payload, chain_id, payer));
                 }
@@ -586,14 +667,13 @@ impl SessionProvider {
             )
             .await?;
 
+        // Update in-memory state but defer disk persistence until server confirms.
         self.channels.lock().unwrap().insert(key.clone(), entry.clone());
-        persist::upsert_channel(
-            &mut self.persisted.lock().unwrap(),
-            &key,
-            &entry,
-            deposit,
-            &self.origin,
+        self.persisted.lock().unwrap().insert(
+            key.clone(),
+            persist::PersistedChannel::from_channel_entry(&entry, deposit, &self.origin),
         );
+        *self.pending.lock().unwrap() = Some(PendingAction::Open { key });
         Ok(build_credential(challenge, payload, chain_id, payer))
     }
 }
@@ -636,17 +716,22 @@ mod tests {
         }
     }
 
+    /// Generate a unique origin URL per test to avoid shared state collisions.
+    fn unique_origin() -> String {
+        format!("https://rpc-{}.example.com", alloy_primitives::B256::random())
+    }
+
     #[test]
     fn test_key_provisioned_default_is_true() {
         let signer = mpp::PrivateKeySigner::random();
-        let provider = SessionProvider::new(signer, "https://rpc.example.com".into());
+        let provider = SessionProvider::new(signer, unique_origin());
         assert!(*provider.key_provisioned.lock().unwrap());
     }
 
     #[test]
     fn test_set_key_provisioned() {
         let signer = mpp::PrivateKeySigner::random();
-        let provider = SessionProvider::new(signer, "https://rpc.example.com".into());
+        let provider = SessionProvider::new(signer, unique_origin());
         provider.set_key_provisioned(false);
         assert!(!*provider.key_provisioned.lock().unwrap());
         provider.set_key_provisioned(true);
@@ -662,8 +747,8 @@ mod tests {
             key_authorization: Some(Box::new(test_key_authorization())),
             version: KeychainVersion::V2,
         };
-        let provider = SessionProvider::new(signer, "https://rpc.example.com".into())
-            .with_signing_mode(signing_mode);
+        let provider =
+            SessionProvider::new(signer, unique_origin()).with_signing_mode(signing_mode);
 
         let provisioned = *provider.key_provisioned.lock().unwrap();
         let result_mode = strip_key_auth_if_provisioned(&provider.signing_mode, provisioned);
@@ -683,8 +768,8 @@ mod tests {
             key_authorization: Some(Box::new(test_key_authorization())),
             version: KeychainVersion::V2,
         };
-        let provider = SessionProvider::new(signer, "https://rpc.example.com".into())
-            .with_signing_mode(signing_mode);
+        let provider =
+            SessionProvider::new(signer, unique_origin()).with_signing_mode(signing_mode);
 
         provider.set_key_provisioned(false);
 
@@ -700,7 +785,7 @@ mod tests {
     #[test]
     fn test_pay_charge_direct_mode_unaffected() {
         let signer = mpp::PrivateKeySigner::random();
-        let provider = SessionProvider::new(signer, "https://rpc.example.com".into())
+        let provider = SessionProvider::new(signer, unique_origin())
             .with_signing_mode(TempoSigningMode::Direct);
 
         let provisioned = *provider.key_provisioned.lock().unwrap();

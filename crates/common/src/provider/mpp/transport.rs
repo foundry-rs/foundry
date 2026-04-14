@@ -14,7 +14,7 @@ use mpp::{
     },
 };
 use reqwest::StatusCode;
-use std::{fmt, sync::Mutex, task};
+use std::{fmt, sync::Mutex, task, time::Duration};
 use tokio::sync::OwnedMutexGuard;
 use tower::Service;
 use tracing::{Instrument, debug, debug_span, trace};
@@ -27,6 +27,9 @@ use super::{
 
 /// Default deposit amount for new channels (in base units).
 const DEFAULT_DEPOSIT: u128 = 100_000;
+
+/// Timeout for MPP retry requests (open/topUp may wait for on-chain settlement).
+const MPP_RETRY_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Resolve the deposit amount from `MPP_DEPOSIT` env var or the default.
 fn default_deposit() -> u128 {
@@ -42,19 +45,12 @@ pub type LazyMppHttpTransport = MppHttpTransport<LazySessionProvider>;
 #[derive(Clone, Debug)]
 pub struct LazySessionProvider {
     inner: std::sync::Arc<Mutex<Option<SessionProvider>>>,
-    /// Shared payment serialization lock. Held across the entire 402 → pay →
-    /// retry → response cycle at the transport level.
-    pay_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     origin: String,
 }
 
 impl LazySessionProvider {
     fn new(origin: String) -> Self {
-        Self {
-            inner: std::sync::Arc::new(Mutex::new(None)),
-            pay_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
-            origin,
-        }
+        Self { inner: std::sync::Arc::new(Mutex::new(None)), origin }
     }
 
     fn set_key_provisioned(&self, provisioned: bool) {
@@ -66,6 +62,18 @@ impl LazySessionProvider {
     fn clear_channels(&self) {
         if let Some(p) = self.inner.lock().unwrap().as_ref() {
             p.clear_channels();
+        }
+    }
+
+    fn flush_pending(&self) {
+        if let Some(p) = self.inner.lock().unwrap().as_ref() {
+            p.flush_pending();
+        }
+    }
+
+    fn rollback_pending(&self) {
+        if let Some(p) = self.inner.lock().unwrap().as_ref() {
+            p.rollback_pending();
         }
     }
 
@@ -257,13 +265,17 @@ where
         let retry_resp = self
             .client
             .post(self.url.clone())
+            .timeout(MPP_RETRY_TIMEOUT)
             .headers(headers.clone())
             .header("content-type", "application/json")
             .header(AUTHORIZATION_HEADER, &auth_header)
             .body(body.clone())
             .send()
             .await
-            .map_err(TransportErrorKind::custom)?;
+            .map_err(|e| {
+                self.provider.rollback_pending();
+                TransportErrorKind::custom(e)
+            })?;
 
         // 204 No Content → topUp accepted, re-pay with voucher
         if retry_resp.status() == StatusCode::NO_CONTENT {
@@ -284,6 +296,7 @@ where
             let voucher_resp = self
                 .client
                 .post(self.url.clone())
+                .timeout(MPP_RETRY_TIMEOUT)
                 .headers(headers.clone())
                 .header("content-type", "application/json")
                 .header(AUTHORIZATION_HEADER, &auth_header)
@@ -295,6 +308,9 @@ where
             let result = Self::handle_response(voucher_resp).await;
             if result.is_ok() {
                 self.provider.set_key_provisioned(true);
+                self.provider.flush_pending();
+            } else {
+                self.provider.rollback_pending();
             }
             return result;
         }
@@ -302,6 +318,7 @@ where
         // 410 Gone → channel stale
         if retry_resp.status() == StatusCode::GONE {
             debug!("MPP channel not found (410), clearing stale local state");
+            self.provider.rollback_pending();
             self.provider.clear_channels();
 
             return Err(TransportErrorKind::custom(std::io::Error::other(
@@ -338,6 +355,7 @@ where
                     let final_resp = self
                         .client
                         .post(self.url.clone())
+                        .timeout(MPP_RETRY_TIMEOUT)
                         .headers(headers.clone())
                         .header("content-type", "application/json")
                         .header(AUTHORIZATION_HEADER, auth_header)
@@ -346,7 +364,11 @@ where
                         .await
                         .map_err(TransportErrorKind::custom)?;
 
-                    return Self::handle_response(final_resp).await;
+                    let result = Self::handle_response(final_resp).await;
+                    if result.is_ok() {
+                        self.provider.flush_pending();
+                    }
+                    return result;
                 }
             }
 
@@ -380,6 +402,7 @@ where
                     let final_resp = self
                         .client
                         .post(self.url.clone())
+                        .timeout(MPP_RETRY_TIMEOUT)
                         .headers(headers)
                         .header("content-type", "application/json")
                         .header(AUTHORIZATION_HEADER, auth_header)
@@ -391,6 +414,7 @@ where
                     let result = Self::handle_response(final_resp).await;
                     if result.is_ok() {
                         self.provider.set_key_provisioned(true);
+                        self.provider.flush_pending();
                     }
                     return result;
                 }
@@ -425,6 +449,7 @@ where
                     let final_resp = self
                         .client
                         .post(self.url.clone())
+                        .timeout(MPP_RETRY_TIMEOUT)
                         .headers(headers)
                         .header("content-type", "application/json")
                         .header(AUTHORIZATION_HEADER, auth_header)
@@ -436,11 +461,13 @@ where
                     let result = Self::handle_response(final_resp).await;
                     if result.is_ok() {
                         self.provider.set_key_provisioned(true);
+                        self.provider.flush_pending();
                     }
                     return result;
                 }
             }
 
+            self.provider.rollback_pending();
             return Err(TransportErrorKind::http_error(
                 StatusCode::PAYMENT_REQUIRED.as_u16(),
                 retry_text.into_owned(),
@@ -450,6 +477,9 @@ where
         let result = Self::handle_response(retry_resp).await;
         if result.is_ok() {
             self.provider.set_key_provisioned(true);
+            self.provider.flush_pending();
+        } else {
+            self.provider.rollback_pending();
         }
         result
     }
@@ -504,6 +534,8 @@ pub(crate) trait ResolveProvider {
         true
     }
     fn clear_channels(&self) {}
+    fn flush_pending(&self) {}
+    fn rollback_pending(&self) {}
     /// Acquire the payment serialization lock. The returned guard must be held
     /// across the entire 402 → pay → retry → response cycle to prevent
     /// concurrent channel opens and colliding expiring-nonce transactions.
@@ -542,9 +574,15 @@ impl ResolveProvider for LazySessionProvider {
     fn clear_channels(&self) {
         Self::clear_channels(self)
     }
+    fn flush_pending(&self) {
+        Self::flush_pending(self)
+    }
+    fn rollback_pending(&self) {
+        Self::rollback_pending(self)
+    }
     fn lock_pay(&self) -> impl std::future::Future<Output = Option<OwnedMutexGuard<()>>> + Send {
-        let lock = self.pay_lock.clone();
-        async move { Some(lock.lock_owned().await) }
+        let lock = self.inner.lock().unwrap().as_ref().map(|p| p.pay_lock());
+        async move { if let Some(lock) = lock { Some(lock.lock_owned().await) } else { None } }
     }
 }
 

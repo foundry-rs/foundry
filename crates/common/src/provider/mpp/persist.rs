@@ -21,7 +21,7 @@ use crate::tempo::tempo_home;
 const CHANNELS_PATH: &str = "foundry/channels.json";
 
 /// Current schema version.
-const SCHEMA_VERSION: u64 = 1;
+const SCHEMA_VERSION: u64 = 2;
 
 /// On-disk representation of the channel store.
 #[derive(Debug, Serialize, Deserialize)]
