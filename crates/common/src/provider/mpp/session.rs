@@ -201,12 +201,7 @@ impl SessionProvider {
         *self.key_provisioned.lock().unwrap()
     }
 
-    fn channel_key(
-        payee: &Address,
-        currency: &Address,
-        escrow: &Address,
-        chain_id: u64,
-    ) -> String {
+    fn channel_key(payee: &Address, currency: &Address, escrow: &Address, chain_id: u64) -> String {
         format!("{chain_id}:{payee}:{currency}:{escrow}").to_lowercase()
     }
 

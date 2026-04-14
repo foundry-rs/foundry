@@ -216,9 +216,9 @@ where
             let (chain_id, currency) = extract_challenge_chain_and_currency(c);
             let currency = currency.and_then(|s| s.parse().ok());
             match self.provider.resolve_for(DiscoverOptions { chain_id, currency }) {
-                Ok(provider) => provider
-                    .supports(c.method.as_str(), c.intent.as_str())
-                    .then_some((provider, c)),
+                Ok(provider) => {
+                    provider.supports(c.method.as_str(), c.intent.as_str()).then_some((provider, c))
+                }
                 Err(e) => {
                     last_resolve_err = Some(e);
                     None
