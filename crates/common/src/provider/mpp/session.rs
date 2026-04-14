@@ -218,9 +218,7 @@ impl SessionProvider {
         if let (Some(sv), Some(local)) = (suggested_val, self.default_deposit)
             && sv > local
         {
-            tracing::warn!(
-                suggested = sv,
-                local_default = local,
+            let _ = sh_warn!(
                 "server-suggested deposit ({sv}) exceeds local default ({local}); \
                  set MPP_DEPOSIT to override"
             );
