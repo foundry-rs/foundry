@@ -1,8 +1,9 @@
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_bench::{
-    ALL_BENCHMARKS, BENCHMARK_REPOS, BenchmarkProject, RUNS, RepoConfig, get_forge_version_details,
-    install_foundry_version, results::BenchmarkResults, switch_foundry_version,
+    ALL_BENCHMARKS, BENCH_SUITE_DIR, BENCHMARK_REPOS, BenchmarkProject, RUNS, RepoConfig,
+    get_forge_version_details, install_foundry_version, results::BenchmarkResults,
+    switch_foundry_version,
 };
 use foundry_common::sh_println;
 use rayon::prelude::*;
@@ -47,9 +48,15 @@ struct Cli {
     #[clap(long, value_delimiter = ',')]
     benchmarks: Option<Vec<String>>,
 
-    /// Comma-separated list of repos in org/repo[:rev] format
+    /// Comma-separated list of repos in org/repo[:rev] format.
+    /// Ignored when --local is used.
     #[clap(long, value_delimiter = ',')]
     repos: Option<Vec<String>>,
+
+    /// Use the built-in bench-suite fixtures instead of cloning external repos.
+    /// This is the default when --repos is not specified.
+    #[clap(long, default_value_t = true)]
+    local: bool,
 
     /// Output structured JSON bundle instead of markdown
     #[clap(long)]
@@ -85,7 +92,11 @@ fn main() -> Result<()> {
         );
     }
 
-    let repos = if let Some(repo_specs) = cli.repos.clone() {
+    let use_local = cli.local && cli.repos.is_none();
+
+    let repos: Vec<RepoConfig> = if use_local {
+        vec![]
+    } else if let Some(repo_specs) = cli.repos.clone() {
         repo_specs.iter().map(|spec| spec.parse::<RepoConfig>()).collect::<Result<Vec<_>>>()?
     } else {
         BENCHMARK_REPOS.clone()
@@ -94,10 +105,14 @@ fn main() -> Result<()> {
     sh_println!("🚀 Foundry Benchmark Runner (baseline vs feature)");
     sh_println!("  Baseline: {}", cli.baseline);
     sh_println!("  Feature:  {}", cli.feature);
-    sh_println!(
-        "  Repos:    {}",
-        repos.iter().map(|r| format!("{}/{}", r.org, r.repo)).collect::<Vec<_>>().join(", ")
-    );
+    if use_local {
+        sh_println!("  Suite:    built-in bench-suite");
+    } else {
+        sh_println!(
+            "  Repos:    {}",
+            repos.iter().map(|r| format!("{}/{}", r.org, r.repo)).collect::<Vec<_>>().join(", ")
+        );
+    }
 
     if cli.force_install {
         sh_println!("📦 Installing Foundry versions...");
@@ -128,19 +143,38 @@ fn main() -> Result<()> {
     // Ensure output directory exists.
     fs::create_dir_all(&cli.output_dir)?;
 
-    // Setup all projects upfront.
+    // Setup projects.
     sh_println!("📦 Setting up test projects...");
-    let projects: Vec<(RepoConfig, BenchmarkProject)> = repos
-        .par_iter()
-        .map(|repo_config| -> Result<(RepoConfig, BenchmarkProject)> {
-            sh_println!("  Setting up {}/{}", repo_config.org, repo_config.repo);
-            let project = BenchmarkProject::setup(repo_config).wrap_err(format!(
-                "Failed to setup project for {}/{}",
-                repo_config.org, repo_config.repo
-            ))?;
-            Ok((repo_config.clone(), project))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let projects: Vec<(RepoConfig, BenchmarkProject)> = if use_local {
+        let suite_path = std::path::Path::new(BENCH_SUITE_DIR);
+        if !suite_path.exists() {
+            eyre::bail!(
+                "Built-in bench-suite not found at '{}'. Run from the foundry repo root.",
+                BENCH_SUITE_DIR
+            );
+        }
+        let project = BenchmarkProject::setup_local(suite_path)
+            .wrap_err("Failed to setup local bench-suite")?;
+        let config = RepoConfig {
+            name: "bench-suite".to_string(),
+            org: "local".to_string(),
+            repo: "bench-suite".to_string(),
+            rev: String::new(),
+        };
+        vec![(config, project)]
+    } else {
+        repos
+            .par_iter()
+            .map(|repo_config| -> Result<(RepoConfig, BenchmarkProject)> {
+                sh_println!("  Setting up {}/{}", repo_config.org, repo_config.repo);
+                let project = BenchmarkProject::setup(repo_config).wrap_err(format!(
+                    "Failed to setup project for {}/{}",
+                    repo_config.org, repo_config.repo
+                ))?;
+                Ok((repo_config.clone(), project))
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
     sh_println!("✅ All projects ready\n");
 
     let mut results = BenchmarkResults::new();

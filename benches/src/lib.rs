@@ -100,6 +100,9 @@ pub fn default_benchmark_repos() -> Vec<RepoConfig> {
 
 pub static BENCHMARK_REPOS: Lazy<Vec<RepoConfig>> = Lazy::new(default_benchmark_repos);
 
+/// Path to the built-in benchmark fixture suite.
+pub const BENCH_SUITE_DIR: &str = "benches/fixtures/bench-suite";
+
 /// A benchmark project that represents a cloned repository ready for testing.
 pub struct BenchmarkProject {
     pub name: String,
@@ -109,7 +112,7 @@ pub struct BenchmarkProject {
 }
 
 impl BenchmarkProject {
-    /// Set up a benchmark project by cloning the repository.
+    /// Set up a benchmark project by cloning a remote repository.
     #[allow(unused_must_use)]
     pub fn setup(config: &RepoConfig) -> Result<Self> {
         let temp_project =
@@ -148,6 +151,37 @@ impl BenchmarkProject {
 
         sh_println!("  ✅ Project {} setup complete at {}", config.name, root);
         Ok(Self { name: config.name.clone(), root_path, temp_project })
+    }
+
+    /// Set up a benchmark project from a local directory (copies to a temp dir).
+    #[allow(unused_must_use)]
+    pub fn setup_local(source: &Path) -> Result<Self> {
+        let temp_project =
+            TempProject::dapptools().wrap_err("Failed to create temporary project")?;
+
+        let root_path = temp_project.root().to_path_buf();
+
+        // Clear temp directory.
+        for entry in std::fs::read_dir(&root_path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                std::fs::remove_dir_all(&path).ok();
+            } else {
+                std::fs::remove_file(&path).ok();
+            }
+        }
+
+        // Copy source directory contents into temp dir.
+        copy_dir_recursive(source, &root_path)?;
+
+        let name = source
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "local".to_string());
+
+        sh_println!("  ✅ Local project {} setup complete at {}", name, root_path.display());
+        Ok(Self { name, root_path, temp_project })
     }
 
     #[allow(unused_must_use)]
@@ -496,4 +530,21 @@ pub fn get_forge_version_details() -> Result<String> {
     } else {
         Ok(lines.first().unwrap_or(&"unknown").to_string())
     }
+}
+
+/// Recursively copy a directory tree.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }

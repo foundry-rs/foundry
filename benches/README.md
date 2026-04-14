@@ -18,7 +18,7 @@ detection.
 # Build the benchmark runner
 cargo build --release --bin foundry-bench
 
-# Compare stable vs nightly (default benchmarks: test, fuzz, invariant)
+# Compare stable vs nightly using the built-in bench-suite (default)
 ./target/release/foundry-bench --baseline stable --feature nightly --force-install
 
 # Output structured JSON for automation
@@ -30,9 +30,10 @@ cargo build --release --bin foundry-bench
 # Run specific benchmarks
 ./target/release/foundry-bench \
   --baseline stable --feature nightly \
-  --benchmarks forge_test,forge_fuzz_test,forge_invariant_test,forge_fork_test
+  --benchmarks forge_test,forge_fuzz_test,forge_invariant_test,forge_fork_test \
+  --fork-url https://eth.merkle.io
 
-# Run on specific repositories
+# Run on external repositories instead of the built-in suite
 ./target/release/foundry-bench \
   --baseline stable --feature nightly \
   --repos ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22
@@ -54,6 +55,36 @@ cargo build --release --bin foundry-bench
 Default benchmarks (when `--benchmarks` is not specified): `forge_test`, `forge_fuzz_test`,
 `forge_invariant_test`.
 
+## Built-in Bench Suite
+
+By default, `foundry-bench` uses the built-in benchmark suite at `benches/fixtures/bench-suite/`
+instead of cloning external repositories. This suite is:
+
+- **Self-contained**: no git submodules, no external dependencies, no forge-std
+- **Backwards compatible**: `pragma solidity >=0.8.0`, stable across Foundry versions
+- **Deterministic**: no network calls, no randomness beyond the fuzzer
+- **Targeted**: contracts designed to stress specific Foundry subsystems
+
+The suite includes:
+
+| Contract | What it exercises |
+|----------|------------------|
+| `ERC20` | Minimal token — baseline EVM execution, storage reads/writes |
+| `Vault` | AMM constant-product pool — math-heavy, multi-contract interactions |
+| `Registry` | Mapping-heavy key-value store — storage-bound workloads, batch ops |
+
+Test files:
+
+| File | Type | What it benchmarks |
+|------|------|--------------------|
+| `UnitTests.t.sol` | Unit | Test runner startup / TTFB, basic assertion speed |
+| `FuzzERC20.t.sol` | Fuzz | Fuzzer input generation, property checking |
+| `FuzzVault.t.sol` | Fuzz | Multi-step fuzz with math validation |
+| `InvariantVault.t.sol` | Invariant | Handler-based invariant testing, state exploration |
+| `InvariantRegistry.t.sol` | Invariant | Storage-heavy invariant testing, multi-actor |
+
+To use external repos instead: `--repos ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22`
+
 ## CLI Options
 
 | Option | Description | Default |
@@ -61,7 +92,8 @@ Default benchmarks (when `--benchmarks` is not specified): `forge_test`, `forge_
 | `--baseline <VERSION>` | Baseline Foundry version | `stable` |
 | `--feature <VERSION>` | Feature Foundry version | `nightly` |
 | `--benchmarks <LIST>` | Comma-separated benchmark names | test, fuzz, invariant |
-| `--repos <LIST>` | Comma-separated repos (`org/repo[:rev]`) | ithacaxyz/account, solady |
+| `--local` | Use built-in bench-suite fixtures | `true` |
+| `--repos <LIST>` | External repos (`org/repo[:rev]`), disables `--local` | — |
 | `--runs <N>` | Number of runs per benchmark | `5` |
 | `--json` | Output structured JSON bundle | `false` |
 | `--noise-threshold <PCT>` | Noise threshold for verdict (%) | `3.0` |

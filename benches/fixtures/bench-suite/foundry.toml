@@ -1,0 +1,13 @@
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.27"
+
+[fuzz]
+runs = 1024
+
+[invariant]
+runs = 64
+depth = 128
