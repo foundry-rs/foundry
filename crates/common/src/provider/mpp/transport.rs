@@ -15,6 +15,7 @@ use mpp::{
 };
 use reqwest::StatusCode;
 use std::{fmt, sync::Mutex, task};
+use tokio::sync::OwnedMutexGuard;
 use tower::Service;
 use tracing::{Instrument, debug, debug_span, trace};
 use url::Url;
@@ -468,11 +469,6 @@ fn extract_challenge_chain_and_currency(
     }
 }
 
-/// Guard type that keeps the payment serialization lock held.
-///
-/// When dropped, releases the lock allowing the next payment to proceed.
-pub(crate) struct PayLockGuard(Option<tokio::sync::OwnedMutexGuard<()>>);
-
 /// Trait for resolving a concrete `PaymentProvider` from a potentially lazy wrapper.
 pub(crate) trait ResolveProvider {
     type Provider: PaymentProvider;
@@ -488,8 +484,8 @@ pub(crate) trait ResolveProvider {
     /// Acquire the payment serialization lock. The returned guard must be held
     /// across the entire 402 → pay → retry → response cycle to prevent
     /// concurrent channel opens and colliding expiring-nonce transactions.
-    fn lock_pay(&self) -> impl std::future::Future<Output = PayLockGuard> + Send {
-        async { PayLockGuard(None) }
+    fn lock_pay(&self) -> impl std::future::Future<Output = Option<OwnedMutexGuard<()>>> + Send {
+        async { None }
     }
 }
 
@@ -523,9 +519,9 @@ impl ResolveProvider for LazySessionProvider {
     fn clear_channels(&self) {
         Self::clear_channels(self)
     }
-    fn lock_pay(&self) -> impl std::future::Future<Output = PayLockGuard> + Send {
+    fn lock_pay(&self) -> impl std::future::Future<Output = Option<OwnedMutexGuard<()>>> + Send {
         let lock = self.pay_lock.clone();
-        async move { PayLockGuard(Some(lock.lock_owned().await)) }
+        async move { Some(lock.lock_owned().await) }
     }
 }
 

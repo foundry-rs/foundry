@@ -6,6 +6,7 @@
 //! `eth_getTransactionCount`. This avoids the chicken-and-egg problem when
 //! the RPC endpoint is itself 402-gated.
 
+use super::persist::{self, PersistedChannel};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use mpp::{
     client::{
@@ -28,7 +29,6 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex, OnceLock},
 };
-use super::persist::{self, PersistedChannel};
 
 /// Shared per-origin channel state: (channels, persisted).
 type SharedChannelState =
@@ -157,17 +157,16 @@ impl SessionProvider {
     /// Check whether this provider's key is compatible with the given
     /// chain ID and currency from a 402 challenge.
     pub fn matches_challenge(&self, chain_id: Option<u64>, currency: Option<Address>) -> bool {
-        if let Some(cid) = chain_id {
-            if self.key_chain_id.is_some_and(|k| k != cid) {
-                return false;
-            }
+        if let Some(cid) = chain_id
+            && self.key_chain_id.is_some_and(|k| k != cid)
+        {
+            return false;
         }
-        if let Some(cur) = currency {
-            if !self.key_currencies.is_empty()
-                && !self.key_currencies.iter().any(|c| *c == cur)
-            {
-                return false;
-            }
+        if let Some(cur) = currency
+            && !self.key_currencies.is_empty()
+            && !self.key_currencies.contains(&cur)
+        {
+            return false;
         }
         true
     }
