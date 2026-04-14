@@ -211,23 +211,34 @@ where
         // Try each challenge until we find one with a matching key (chain + currency)
         // in keys.toml. This handles servers that offer multiple chains and currencies
         // (e.g. mainnet + testnet) — we pick the first one the user has a key for.
-        let (resolved, challenge) = challenges
-            .iter()
-            .find_map(|c| {
-                let (chain_id, currency) = extract_challenge_chain_and_currency(c);
-                let currency = currency.and_then(|s| s.parse().ok());
-                let provider =
-                    self.provider.resolve_for(DiscoverOptions { chain_id, currency }).ok()?;
-                provider.supports(c.method.as_str(), c.intent.as_str()).then_some((provider, c))
-            })
-            .ok_or_else(|| {
-                let offered: Vec<_> =
-                    challenges.iter().map(|c| format!("{}.{}", c.method, c.intent)).collect();
-                TransportErrorKind::custom(std::io::Error::other(format!(
-                    "no supported MPP challenge; server offered [{}]",
-                    offered.join(", ")
-                )))
-            })?;
+        let mut last_resolve_err: Option<TransportError> = None;
+        let resolved_pair = challenges.iter().find_map(|c| {
+            let (chain_id, currency) = extract_challenge_chain_and_currency(c);
+            let currency = currency.and_then(|s| s.parse().ok());
+            match self.provider.resolve_for(DiscoverOptions { chain_id, currency }) {
+                Ok(provider) => provider
+                    .supports(c.method.as_str(), c.intent.as_str())
+                    .then_some((provider, c)),
+                Err(e) => {
+                    last_resolve_err = Some(e);
+                    None
+                }
+            }
+        });
+
+        let (resolved, challenge) = resolved_pair.ok_or_else(|| {
+            // Surface the real config error (invalid key, bad key_authorization, etc.)
+            // instead of a generic "no supported challenge" message.
+            if let Some(err) = last_resolve_err {
+                return err;
+            }
+            let offered: Vec<_> =
+                challenges.iter().map(|c| format!("{}.{}", c.method, c.intent)).collect();
+            TransportErrorKind::custom(std::io::Error::other(format!(
+                "no supported MPP challenge; server offered [{}]",
+                offered.join(", "),
+            )))
+        })?;
 
         debug!(id = %challenge.id, method = %challenge.method, intent = %challenge.intent, "received MPP 402 challenge, paying");
 
@@ -281,8 +292,11 @@ where
                 .await
                 .map_err(TransportErrorKind::custom)?;
 
-            self.provider.set_key_provisioned(true);
-            return Self::handle_response(voucher_resp).await;
+            let result = Self::handle_response(voucher_resp).await;
+            if result.is_ok() {
+                self.provider.set_key_provisioned(true);
+            }
+            return result;
         }
 
         // 410 Gone → channel stale
@@ -374,8 +388,11 @@ where
                         .await
                         .map_err(TransportErrorKind::custom)?;
 
-                    self.provider.set_key_provisioned(true);
-                    return Self::handle_response(final_resp).await;
+                    let result = Self::handle_response(final_resp).await;
+                    if result.is_ok() {
+                        self.provider.set_key_provisioned(true);
+                    }
+                    return result;
                 }
             }
 
@@ -416,8 +433,11 @@ where
                         .await
                         .map_err(TransportErrorKind::custom)?;
 
-                    self.provider.set_key_provisioned(true);
-                    return Self::handle_response(final_resp).await;
+                    let result = Self::handle_response(final_resp).await;
+                    if result.is_ok() {
+                        self.provider.set_key_provisioned(true);
+                    }
+                    return result;
                 }
             }
 
@@ -427,8 +447,11 @@ where
             ));
         }
 
-        self.provider.set_key_provisioned(true);
-        Self::handle_response(retry_resp).await
+        let result = Self::handle_response(retry_resp).await;
+        if result.is_ok() {
+            self.provider.set_key_provisioned(true);
+        }
+        result
     }
 
     async fn handle_response(resp: reqwest::Response) -> TransportResult<ResponsePacket> {
@@ -779,8 +802,8 @@ mod tests {
         let msg = err.to_string();
 
         assert!(
-            msg.contains("no supported MPP challenge"),
-            "expected 'no supported MPP challenge' in error, got: {msg}"
+            msg.contains("402 Payment Required") || msg.contains("no supported MPP challenge"),
+            "expected MPP setup instructions or 'no supported MPP challenge' in error, got: {msg}"
         );
 
         handle.abort();

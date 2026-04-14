@@ -148,8 +148,9 @@ impl SessionProvider {
 
     /// Set the chain ID and currencies from the key entry used to initialize
     /// this provider. Used to reject challenges for incompatible chains/currencies.
-    pub fn with_key_filters(mut self, chain_id: u64, currencies: Vec<Address>) -> Self {
-        self.key_chain_id = Some(chain_id);
+    /// When `chain_id` is `None` (e.g. env var key), chain filtering is skipped.
+    pub fn with_key_filters(mut self, chain_id: Option<u64>, currencies: Vec<Address>) -> Self {
+        self.key_chain_id = chain_id;
         self.key_currencies = currencies;
         self
     }
@@ -171,11 +172,22 @@ impl SessionProvider {
         true
     }
 
-    /// Clear all in-memory and persisted channels (e.g. after server 410).
+    /// Clear channels belonging to this origin (e.g. after server 410).
+    ///
+    /// Only removes channels whose `origin` matches `self.origin`, preserving
+    /// channels for other RPC endpoints.
     pub fn clear_channels(&self) {
-        self.channels.lock().unwrap().clear();
+        let origin = &self.origin;
         let mut persisted = self.persisted.lock().unwrap();
-        persisted.clear();
+        let keys_to_remove: Vec<String> = persisted
+            .iter()
+            .filter(|(_, ch)| ch.origin == *origin)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in &keys_to_remove {
+            persisted.remove(key);
+            self.channels.lock().unwrap().remove(key);
+        }
         persist::save_channels(&persisted);
     }
 
@@ -189,14 +201,24 @@ impl SessionProvider {
         *self.key_provisioned.lock().unwrap()
     }
 
-    fn channel_key(payee: &Address, currency: &Address, escrow: &Address) -> String {
-        format!("{payee}:{currency}:{escrow}").to_lowercase()
+    fn channel_key(
+        payee: &Address,
+        currency: &Address,
+        escrow: &Address,
+        chain_id: u64,
+    ) -> String {
+        format!("{chain_id}:{payee}:{currency}:{escrow}").to_lowercase()
     }
 
     fn resolve_deposit(&self, suggested: Option<&str>) -> Result<u128, MppError> {
-        let suggested_val = suggested.and_then(|s| s.parse::<u128>().ok()).or(self.default_deposit);
+        // Local config takes priority over server-suggested deposit to prevent
+        // a malicious server from pushing the user into opening a larger channel
+        // than expected.
+        let amount = self
+            .default_deposit
+            .or_else(|| suggested.and_then(|s| s.parse::<u128>().ok()));
 
-        suggested_val.ok_or_else(|| {
+        amount.ok_or_else(|| {
             MppError::InvalidConfig("no deposit amount: set default_deposit".to_string())
         })
     }
@@ -469,7 +491,7 @@ impl SessionProvider {
 
         let payer = self.signing_mode.from_address(self.signer.address());
 
-        let key = Self::channel_key(&payee, &currency, &escrow_contract);
+        let key = Self::channel_key(&payee, &currency, &escrow_contract, chain_id);
 
         let voucher_info = {
             let mut channels = self.channels.lock().unwrap();
@@ -577,6 +599,21 @@ impl SessionProvider {
 mod tests {
     use super::*;
     use mpp::client::tempo::signing::KeychainVersion;
+    use tempo_primitives::transaction::{
+        KeyAuthorization, PrimitiveSignature, SignatureType, SignedKeyAuthorization,
+    };
+
+    /// Create a dummy `SignedKeyAuthorization` for tests.
+    fn test_key_authorization() -> SignedKeyAuthorization {
+        SignedKeyAuthorization {
+            authorization: KeyAuthorization::unrestricted(
+                4217,
+                SignatureType::Secp256k1,
+                Address::ZERO,
+            ),
+            signature: PrimitiveSignature::from_bytes(&[0u8; 65]).expect("valid dummy signature"),
+        }
+    }
 
     fn strip_key_auth_if_provisioned(
         mode: &TempoSigningMode,
@@ -619,7 +656,7 @@ mod tests {
         let wallet = Address::repeat_byte(0xAA);
         let signing_mode = TempoSigningMode::Keychain {
             wallet,
-            key_authorization: Some(Box::new(unsafe { std::mem::zeroed() })),
+            key_authorization: Some(Box::new(test_key_authorization())),
             version: KeychainVersion::V2,
         };
         let provider = SessionProvider::new(signer, "https://rpc.example.com".into())
@@ -640,7 +677,7 @@ mod tests {
         let wallet = Address::repeat_byte(0xAA);
         let signing_mode = TempoSigningMode::Keychain {
             wallet,
-            key_authorization: Some(Box::new(unsafe { std::mem::zeroed() })),
+            key_authorization: Some(Box::new(test_key_authorization())),
             version: KeychainVersion::V2,
         };
         let provider = SessionProvider::new(signer, "https://rpc.example.com".into())

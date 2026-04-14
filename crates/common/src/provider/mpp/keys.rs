@@ -32,8 +32,9 @@ pub struct MppKeyConfig {
     pub key_address: Option<Address>,
     /// RLP-encoded signed key authorization (hex string).
     pub key_authorization: Option<String>,
-    /// Chain ID from the key entry in `keys.toml`.
-    pub chain_id: u64,
+    /// Chain ID from the key entry in `keys.toml`. `None` when discovered from
+    /// the `TEMPO_PRIVATE_KEY` env var (no keychain metadata available).
+    pub chain_id: Option<u64>,
     /// Currencies from the key's spending limits.
     pub currencies: Vec<Address>,
 }
@@ -63,7 +64,7 @@ pub fn discover_mpp_config(opts: DiscoverOptions) -> Option<MppKeyConfig> {
                 wallet_address: None,
                 key_address: None,
                 key_authorization: None,
-                chain_id: 0,
+                chain_id: None,
                 currencies: vec![],
             });
         }
@@ -105,7 +106,7 @@ pub fn discover_mpp_config(opts: DiscoverOptions) -> Option<MppKeyConfig> {
                 wallet_address: Some(entry.wallet_address),
                 key_address: entry.key_address,
                 key_authorization: entry.key_authorization.clone(),
-                chain_id: entry.chain_id,
+                chain_id: Some(entry.chain_id),
                 currencies: entry.limits.iter().map(|l| l.currency).collect(),
             });
         }
