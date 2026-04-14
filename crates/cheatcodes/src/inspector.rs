@@ -912,21 +912,23 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
 
             if curr_depth >= prank.depth && call.caller == prank.prank_caller {
-                let mut prank_applied = false;
-
                 // At the target depth we set `msg.sender`
-                if curr_depth == prank.depth {
+                let prank_applied = if curr_depth == prank.depth {
                     // Ensure new caller is loaded and touched
                     let _ = journaled_account(ecx, prank.new_caller);
                     call.caller = prank.new_caller;
-                    prank_applied = true;
-                }
+                    true
+                } else {
+                    false
+                };
 
                 // At the target depth, or deeper, we set `tx.origin`
-                if let Some(new_origin) = prank.new_origin {
+                let prank_applied = if let Some(new_origin) = prank.new_origin {
                     ecx.tx_mut().set_caller(new_origin);
-                    prank_applied = true;
-                }
+                    true
+                } else {
+                    prank_applied
+                };
 
                 // If prank applied for first time, then update
                 if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
@@ -1060,19 +1062,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
-            let initialized;
-            let old_balance;
-            let old_nonce;
-
-            if let Ok(acc) = ecx.journal_mut().load_account(call.target_address) {
-                initialized = acc.data.info.exists();
-                old_balance = acc.data.info.balance;
-                old_nonce = acc.data.info.nonce;
-            } else {
-                initialized = false;
-                old_balance = U256::ZERO;
-                old_nonce = 0;
-            }
+            let (initialized, old_balance, old_nonce) =
+                if let Ok(acc) = ecx.journal_mut().load_account(call.target_address) {
+                    (acc.data.info.exists(), acc.data.info.balance, acc.data.info.nonce)
+                } else {
+                    (false, U256::ZERO, 0)
+                };
 
             let kind = match call.scheme {
                 CallScheme::Call => crate::Vm::AccountAccessKind::Call,
@@ -1473,13 +1468,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
                 if outcome.result.is_revert() {
-                    last_recorded_depth.iter_mut().for_each(|element| {
+                    for element in &mut *last_recorded_depth {
                         element.reverted = true;
-                        element
-                            .storageAccesses
-                            .iter_mut()
-                            .for_each(|storage_access| storage_access.reverted = true);
-                    })
+                        for storage_access in &mut element.storageAccesses {
+                            storage_access.reverted = true;
+                        }
+                    }
                 }
 
                 if let Some(call_access) = last_recorded_depth.first_mut() {
@@ -1743,21 +1737,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             && curr_depth >= prank.depth
             && input.caller() == prank.prank_caller
         {
-            let mut prank_applied = false;
-
             // At the target depth we set `msg.sender`
-            if curr_depth == prank.depth {
+            let prank_applied = if curr_depth == prank.depth {
                 // Ensure new caller is loaded and touched
                 let _ = journaled_account(ecx, prank.new_caller);
                 input.set_caller(prank.new_caller);
-                prank_applied = true;
-            }
+                true
+            } else {
+                false
+            };
 
             // At the target depth, or deeper, we set `tx.origin`
-            if let Some(new_origin) = prank.new_origin {
+            let prank_applied = if let Some(new_origin) = prank.new_origin {
                 ecx.tx_mut().set_caller(new_origin);
-                prank_applied = true;
-            }
+                true
+            } else {
+                prank_applied
+            };
 
             // If prank applied for first time, then update
             if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
@@ -1917,13 +1913,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
                 if outcome.result.is_revert() {
-                    last_depth.iter_mut().for_each(|element| {
+                    for element in &mut *last_depth {
                         element.reverted = true;
-                        element
-                            .storageAccesses
-                            .iter_mut()
-                            .for_each(|storage_access| storage_access.reverted = true);
-                    })
+                        for storage_access in &mut element.storageAccesses {
+                            storage_access.reverted = true;
+                        }
+                    }
                 }
 
                 if let Some(create_access) = last_depth.first_mut() {
@@ -2214,13 +2209,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                 // Try to include present value for informational purposes, otherwise assume
                 // it's not set (zero value)
-                let mut present_value = U256::ZERO;
                 // Try to load the account and the slot's present value
-                if ecx.journal_mut().load_account(address).is_ok()
+                let present_value = if ecx.journal_mut().load_account(address).is_ok()
                     && let Some(previous) = ecx.sload(address, key)
                 {
-                    present_value = previous.data;
-                }
+                    previous.data
+                } else {
+                    U256::ZERO
+                };
                 let access = crate::Vm::StorageAccess {
                     account: interpreter.input.target_address,
                     slot: key.into(),
@@ -2241,12 +2237,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 let address = interpreter.input.target_address;
                 // Try to load the account and the slot's previous value, otherwise, assume it's
                 // not set (zero value)
-                let mut previous_value = U256::ZERO;
-                if ecx.journal_mut().load_account(address).is_ok()
+                let previous_value = if ecx.journal_mut().load_account(address).is_ok()
                     && let Some(previous) = ecx.sload(address, key)
                 {
-                    previous_value = previous.data;
-                }
+                    previous.data
+                } else {
+                    U256::ZERO
+                };
 
                 let access = crate::Vm::StorageAccess {
                     account: address,
@@ -2272,18 +2269,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 };
                 let address =
                     Address::from_word(B256::from(try_or_return!(interpreter.stack.peek(0))));
-                let initialized;
-                let balance;
-                let nonce;
-                if let Ok(acc) = ecx.journal_mut().load_account(address) {
-                    initialized = acc.data.info.exists();
-                    balance = acc.data.info.balance;
-                    nonce = acc.data.info.nonce;
-                } else {
-                    initialized = false;
-                    balance = U256::ZERO;
-                    nonce = 0;
-                }
+                let (initialized, balance, nonce) =
+                    if let Ok(acc) = ecx.journal_mut().load_account(address) {
+                        (acc.data.info.exists(), acc.data.info.balance, acc.data.info.nonce)
+                    } else {
+                        (false, U256::ZERO, 0)
+                    };
                 let curr_depth =
                     ecx.journal().depth().try_into().expect("journaled state depth exceeds u64");
                 let account_access = crate::Vm::AccountAccess {

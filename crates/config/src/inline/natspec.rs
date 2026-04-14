@@ -58,14 +58,15 @@ impl NatSpec {
                 warn!(?abs_path, %contract, "could not parse natspec with solar");
             }
 
-            let mut used_solc = false;
-            if !used_solar
+            let used_solc = if !used_solar
                 && let Some(ast) = &artifact.ast
                 && let Some(node) = solc.contract_root_node(&ast.nodes, &contract)
             {
                 solc.parse(&mut natspecs, &contract, node, true);
-                used_solc = true;
-            }
+                true
+            } else {
+                false
+            };
 
             if !used_solar && !used_solc {
                 warn!(?abs_path, %contract, "could not parse natspec");
