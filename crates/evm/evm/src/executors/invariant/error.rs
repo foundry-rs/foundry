@@ -2,7 +2,10 @@ use super::InvariantContract;
 use crate::executors::RawCallResult;
 use alloy_primitives::{Address, Bytes};
 use foundry_config::InvariantConfig;
-use foundry_evm_core::{decode::RevertDecoder, evm::FoundryEvmNetwork};
+use foundry_evm_core::{
+    decode::{ASSERTION_FAILED_PREFIX, EMPTY_REVERT_DATA, RevertDecoder},
+    evm::FoundryEvmNetwork,
+};
 use foundry_evm_fuzz::{BasicTxDetails, Reason, invariant::FuzzRunIdentifiedContracts};
 use proptest::test_runner::TestError;
 
@@ -85,11 +88,12 @@ impl FailedInvariantCaseData {
             .decode(call_result.result.as_ref(), call_result.exit_reason);
         // Non-reverting assertion failures surface through Foundry's failure flags instead of
         // revert data. Use a stable fallback so invariant output is not blank.
-        let revert_reason = if revert_reason.is_empty() && !call_result.reverted {
-            "assertion failed".to_string()
-        } else {
-            revert_reason
-        };
+        let revert_reason =
+            if !call_result.reverted && matches!(revert_reason.as_str(), "" | EMPTY_REVERT_DATA) {
+                ASSERTION_FAILED_PREFIX.to_string()
+            } else {
+                revert_reason
+            };
 
         let func = invariant_contract.invariant_function;
         debug_assert!(func.inputs.is_empty());
@@ -114,8 +118,8 @@ impl FailedInvariantCaseData {
     /// non-reverting assertion paths into a stable user-facing message.
     pub fn with_assertion_failure(mut self, assertion_failure: bool) -> Self {
         self.assertion_failure = assertion_failure;
-        if assertion_failure && self.revert_reason == "<empty revert data>" {
-            self.revert_reason = "assertion failed".to_string();
+        if assertion_failure && matches!(self.revert_reason.as_str(), "" | EMPTY_REVERT_DATA) {
+            self.revert_reason = ASSERTION_FAILED_PREFIX.to_string();
         }
         self
     }

@@ -508,13 +508,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         break 'stop;
                     }
                 } else {
-                    let should_fail_on_assert = self.config.fail_on_assert
-                        && did_fail_on_assert(
-                            &current_run.executor,
-                            &call_result,
-                            &call_result.state_changeset,
-                        );
-                    if !self.config.fail_on_assert {
+                    let assertion_failure =
+                        did_fail_on_assert(&call_result, &call_result.state_changeset);
+                    let should_fail_on_assert = self.config.fail_on_assert && assertion_failure;
+                    if assertion_failure && !self.config.fail_on_assert {
                         ignore_global_failure(
                             &mut current_run.executor,
                             &mut call_result.state_changeset,

@@ -728,13 +728,23 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         }
     }
 
-    /// Returns whether the global assertion failure flag is set either in the in-flight state
-    /// changeset or in the committed backend state.
-    pub fn has_global_failure(&self, state_changeset: &StateChangeset) -> bool {
+    /// Returns whether the in-flight state changeset for the current call sets the global
+    /// assertion failure flag.
+    pub fn has_pending_global_failure(state_changeset: &StateChangeset) -> bool {
         if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS)
             && let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT)
             && !failed_slot.present_value().is_zero()
         {
+            return true;
+        }
+
+        false
+    }
+
+    /// Returns whether the global assertion failure flag is set either in the in-flight state
+    /// changeset or in the committed backend state.
+    pub fn has_global_failure(&self, state_changeset: &StateChangeset) -> bool {
+        if Self::has_pending_global_failure(state_changeset) {
             return true;
         }
 

@@ -222,9 +222,9 @@ fn check_sequence_simple<FEN: FoundryEvmNetwork>(
     for call_index in sequence {
         let tx = &calls[call_index];
         let mut call_result = execute_tx(&mut executor, tx)?;
-        let should_fail_on_assert = options.fail_on_assert
-            && did_fail_on_assert(&executor, &call_result, &call_result.state_changeset);
-        if !options.fail_on_assert {
+        let assertion_failure = did_fail_on_assert(&call_result, &call_result.state_changeset);
+        let should_fail_on_assert = options.fail_on_assert && assertion_failure;
+        if assertion_failure && !options.fail_on_assert {
             ignore_global_failure(&mut executor, &mut call_result.state_changeset)?;
         }
         // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios that
@@ -275,9 +275,9 @@ fn check_sequence_with_accumulation<FEN: FoundryEvmNetwork>(
 
         let tx_with_accumulated = apply_warp_roll(tx, accumulated_warp, accumulated_roll);
         let mut call_result = execute_tx(&mut executor, &tx_with_accumulated)?;
-        let should_fail_on_assert = options.fail_on_assert
-            && did_fail_on_assert(&executor, &call_result, &call_result.state_changeset);
-        if !options.fail_on_assert {
+        let assertion_failure = did_fail_on_assert(&call_result, &call_result.state_changeset);
+        let should_fail_on_assert = options.fail_on_assert && assertion_failure;
+        if assertion_failure && !options.fail_on_assert {
             ignore_global_failure(&mut executor, &mut call_result.state_changeset)?;
         }
 
