@@ -294,7 +294,9 @@ pub fn format_benchmark_name(name: &str) -> String {
         "forge_coverage" => "Forge Coverage",
         "forge_isolate_test" => "Forge Test (Isolated)",
         "forge_invariant_test" => "Forge Invariant Test",
+        "forge_cheatcode_test" => "Forge Cheatcode Test",
         "forge_fork_test" => "Forge Fork Test",
+        "forge_multifork_test" => "Forge Multi-Fork Test",
         _ => name,
     }
     .to_string()

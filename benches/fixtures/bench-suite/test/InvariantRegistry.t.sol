@@ -2,11 +2,7 @@
 pragma solidity >=0.8.0;
 
 import {Registry} from "../src/Registry.sol";
-
-interface Vm {
-    function prank(address) external;
-    function targetContract(address) external;
-}
+import {Vm} from "./Vm.sol";
 
 contract RegistryHandler {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));

@@ -131,9 +131,11 @@ fn main() -> Result<()> {
     };
 
     // Validate fork URL requirement.
-    if benchmarks.iter().any(|b| b == "forge_fork_test") && cli.fork_url.is_none() {
+    let needs_fork =
+        benchmarks.iter().any(|b| b == "forge_fork_test" || b == "forge_multifork_test");
+    if needs_fork && cli.fork_url.is_none() {
         eyre::bail!(
-            "forge_fork_test requires --fork-url to be set. \
+            "forge_fork_test and forge_multifork_test require --fork-url to be set. \
              Example: --fork-url https://eth.merkle.io"
         );
     }

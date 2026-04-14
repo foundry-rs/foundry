@@ -46,7 +46,9 @@ cargo build --release --bin foundry-bench
 | `forge_test` | `forge test` | Overall test execution speed |
 | `forge_fuzz_test` | `forge test --match-test "test[^(]*\([^)]+\)"` | Fuzz test performance |
 | `forge_invariant_test` | `forge test --match-test "invariant"` | Invariant test performance |
-| `forge_fork_test` | `forge test --fork-url <url>` | Fork-mode test performance |
+| `forge_cheatcode_test` | `forge test --match-contract CheatcodeTests` | Cheatcode inspector throughput |
+| `forge_fork_test` | `forge test --match-contract ForkTests` | Fork-mode RPC reads/writes |
+| `forge_multifork_test` | `forge test --match-contract MultiForkTests` | Multi-fork switching, persistent state |
 | `forge_isolate_test` | `forge test --isolate` | Isolated test execution |
 | `forge_build_no_cache` | `forge build` (cold) | Compilation speed without cache |
 | `forge_build_with_cache` | `forge build` (warm) | Cache hit performance |
@@ -82,6 +84,9 @@ Test files:
 | `FuzzVault.t.sol` | Fuzz | Multi-step fuzz with math validation |
 | `InvariantVault.t.sol` | Invariant | Handler-based invariant testing, state exploration |
 | `InvariantRegistry.t.sol` | Invariant | Storage-heavy invariant testing, multi-actor |
+| `CheatcodeTests.t.sol` | Cheatcodes | Inspector throughput: deal, prank, warp, store, snapshot, mock |
+| `ForkTests.t.sol` | Fork | `vm.createFork`, forked state reads/writes, `vm.rollFork` |
+| `MultiForkTests.t.sol` | Multi-fork | Fork switching, `vm.makePersistent`, cross-fork reads |
 
 To use external repos instead: `--repos ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22`
 
@@ -97,7 +102,7 @@ To use external repos instead: `--repos ithacaxyz/account:v0.3.2,Vectorized/sola
 | `--runs <N>` | Number of runs per benchmark | `5` |
 | `--json` | Output structured JSON bundle | `false` |
 | `--noise-threshold <PCT>` | Noise threshold for verdict (%) | `3.0` |
-| `--fork-url <URL>` | RPC URL for fork-mode benchmarks (required for forge_fork_test) | — |
+| `--fork-url <URL>` | RPC URL for fork/multifork benchmarks (required for those types) | — |
 | `--force-install` | Force install versions before benchmarking | `false` |
 | `--verbose` | Show hyperfine output | `false` |
 | `--output-dir <DIR>` | Directory for output files | `.` |

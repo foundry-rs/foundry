@@ -2,10 +2,7 @@
 pragma solidity >=0.8.0;
 
 import {ERC20} from "../src/ERC20.sol";
-
-interface Vm {
-    function prank(address) external;
-}
+import {Vm} from "./Vm.sol";
 
 contract FuzzERC20Test {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));

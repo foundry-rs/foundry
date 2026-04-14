@@ -26,7 +26,9 @@ pub const ALL_BENCHMARKS: &[&str] = &[
     "forge_test",
     "forge_fuzz_test",
     "forge_invariant_test",
+    "forge_cheatcode_test",
     "forge_fork_test",
+    "forge_multifork_test",
     "forge_isolate_test",
     "forge_build_no_cache",
     "forge_build_with_cache",
@@ -286,7 +288,11 @@ impl BenchmarkProject {
             "forge_build_with_cache" => self.bench_forge_build_with_cache(label, runs, verbose),
             "forge_fuzz_test" => self.bench_forge_fuzz_test(label, runs, verbose),
             "forge_invariant_test" => self.bench_forge_invariant_test(label, runs, verbose),
+            "forge_cheatcode_test" => self.bench_forge_cheatcode_test(label, runs, verbose),
             "forge_fork_test" => self.bench_forge_fork_test(label, runs, verbose, fork_url),
+            "forge_multifork_test" => {
+                self.bench_forge_multifork_test(label, runs, verbose, fork_url)
+            }
             "forge_coverage" => self.bench_forge_coverage(label, runs, verbose),
             "forge_isolate_test" => self.bench_forge_isolate_test(label, runs, verbose),
             _ => eyre::bail!("Unknown benchmark: {}", benchmark),
@@ -345,6 +351,25 @@ impl BenchmarkProject {
         )
     }
 
+    fn bench_forge_cheatcode_test(
+        &self,
+        label: &str,
+        runs: u32,
+        verbose: bool,
+    ) -> Result<HyperfineResult> {
+        self.hyperfine(
+            "forge_cheatcode_test",
+            label,
+            "forge test --match-contract CheatcodeTests",
+            runs,
+            Some("forge build"),
+            None,
+            None,
+            verbose,
+            &[],
+        )
+    }
+
     fn bench_forge_fork_test(
         &self,
         label: &str,
@@ -356,13 +381,35 @@ impl BenchmarkProject {
         self.hyperfine(
             "forge_fork_test",
             label,
-            r#"forge test --fork-url "$FOUNDRY_BENCH_FORK_URL""#,
+            "forge test --match-contract ForkTests",
             runs,
             Some("forge build"),
             None,
             None,
             verbose,
-            &[("FOUNDRY_BENCH_FORK_URL", url)],
+            &[("FORK_URL", url)],
+        )
+    }
+
+    fn bench_forge_multifork_test(
+        &self,
+        label: &str,
+        runs: u32,
+        verbose: bool,
+        fork_url: Option<&str>,
+    ) -> Result<HyperfineResult> {
+        let url =
+            fork_url.ok_or_else(|| eyre::eyre!("forge_multifork_test requires --fork-url"))?;
+        self.hyperfine(
+            "forge_multifork_test",
+            label,
+            "forge test --match-contract MultiForkTests",
+            runs,
+            Some("forge build"),
+            None,
+            None,
+            verbose,
+            &[("FORK_URL", url)],
         )
     }
 

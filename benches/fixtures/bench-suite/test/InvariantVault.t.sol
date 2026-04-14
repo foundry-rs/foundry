@@ -3,13 +3,7 @@ pragma solidity >=0.8.0;
 
 import {ERC20} from "../src/ERC20.sol";
 import {Vault} from "../src/Vault.sol";
-
-interface Vm {
-    function prank(address) external;
-    function startPrank(address) external;
-    function stopPrank() external;
-    function targetContract(address) external;
-}
+import {Vm} from "./Vm.sol";
 
 contract VaultHandler {
     Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
