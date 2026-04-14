@@ -70,9 +70,13 @@ pub struct InMemoryBlockStates {
 }
 
 impl InMemoryBlockStates {
+    const fn normalize_in_memory_limit(limit: usize) -> usize {
+        if limit == 0 { 1 } else { limit }
+    }
+
     /// Creates a new instance with limited slots
     pub fn new(in_memory_limit: usize, on_disk_limit: usize) -> Self {
-        let in_memory_limit = in_memory_limit.max(1);
+        let in_memory_limit = Self::normalize_in_memory_limit(in_memory_limit);
         Self {
             states: Default::default(),
             on_disk_states: Default::default(),
@@ -199,7 +203,7 @@ impl InMemoryBlockStates {
 
     /// Sets the maximum number of stats we keep in memory
     pub const fn set_cache_limit(&mut self, limit: usize) {
-        let limit = if limit == 0 { 1 } else { limit };
+        let limit = Self::normalize_in_memory_limit(limit);
         self.in_memory_limit = limit;
         self.min_in_memory_limit =
             if limit < MIN_HISTORY_LIMIT { limit } else { MIN_HISTORY_LIMIT };
