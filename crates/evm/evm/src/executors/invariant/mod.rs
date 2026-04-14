@@ -34,10 +34,7 @@ use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
-use result::{
-    assert_after_invariant, assert_invariants, can_continue, did_fail_on_assert,
-    ignore_global_failure,
-};
+use result::{assert_after_invariant, assert_invariants, can_continue, did_fail_on_assert};
 use revm::{context::Block, state::Account};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -510,14 +507,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 } else {
                     let assertion_failure =
                         did_fail_on_assert(&call_result, &call_result.state_changeset);
-                    let should_fail_on_assert = self.config.fail_on_assert && assertion_failure;
-                    if assertion_failure && !self.config.fail_on_assert {
-                        ignore_global_failure(
-                            &mut current_run.executor,
-                            &mut call_result.state_changeset,
-                        )
-                        .map_err(|e| eyre!(e.to_string()))?;
-                    }
 
                     // Commit executed call result.
                     current_run.executor.commit(&mut call_result);
@@ -593,8 +582,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         if call_result.reverted {
                             invariant_test.test_data.failures.reverts += 1;
                         }
-                        if should_fail_on_assert
-                            || (call_result.reverted && self.config.fail_on_revert)
+                        if assertion_failure || (call_result.reverted && self.config.fail_on_revert)
                         {
                             let case_data = error::FailedInvariantCaseData::new(
                                 &invariant_contract,
@@ -604,15 +592,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 call_result,
                                 &[],
                             )
-                            .with_assertion_failure(should_fail_on_assert);
+                            .with_assertion_failure(assertion_failure);
                             invariant_test.test_data.failures.revert_reason =
                                 Some(case_data.revert_reason.clone());
-                            invariant_test.test_data.failures.error =
-                                Some(if should_fail_on_assert {
-                                    InvariantFuzzError::BrokenInvariant(case_data)
-                                } else {
-                                    InvariantFuzzError::Revert(case_data)
-                                });
+                            invariant_test.test_data.failures.error = Some(if assertion_failure {
+                                InvariantFuzzError::BrokenInvariant(case_data)
+                            } else {
+                                InvariantFuzzError::Revert(case_data)
+                            });
                             result::RichInvariantResults::new(false, None)
                         } else if call_result.reverted
                             && !invariant_contract.is_optimization()
@@ -1170,12 +1157,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let (sender_filters, targeted_contracts) =
             self.select_contracts_and_senders(invariant_address)?;
         let targets = targeted_contracts.targets.lock();
-        Ok(InvariantSettings::new(
-            &targets,
-            &sender_filters,
-            self.config.fail_on_revert,
-            self.config.fail_on_assert,
-        ))
+        Ok(InvariantSettings::new(&targets, &sender_filters, self.config.fail_on_revert))
     }
 }
 

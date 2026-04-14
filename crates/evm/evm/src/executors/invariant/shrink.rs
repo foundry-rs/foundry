@@ -2,7 +2,7 @@ use crate::executors::{
     EarlyExit, EvmError, Executor, RawCallResult,
     invariant::{
         call_after_invariant_function, call_invariant_function, execute_tx,
-        result::{did_fail_on_assert, ignore_global_failure},
+        result::did_fail_on_assert,
     },
 };
 use alloy_primitives::{Address, Bytes, I256, U256};
@@ -163,7 +163,6 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
             CheckSequenceOptions {
                 accumulate_warp_roll,
                 fail_on_revert: config.fail_on_revert,
-                fail_on_assert: config.fail_on_assert,
                 expect_assertion_failure,
                 call_after_invariant: invariant_contract.call_after_invariant,
                 rd: None,
@@ -223,15 +222,11 @@ fn check_sequence_simple<FEN: FoundryEvmNetwork>(
         let tx = &calls[call_index];
         let mut call_result = execute_tx(&mut executor, tx)?;
         let assertion_failure = did_fail_on_assert(&call_result, &call_result.state_changeset);
-        let should_fail_on_assert = options.fail_on_assert && assertion_failure;
-        if assertion_failure && !options.fail_on_assert {
-            ignore_global_failure(&mut executor, &mut call_result.state_changeset)?;
-        }
         // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios that
         // are replayed with a modified version of test driver (that use new `vm.assume`
         // cheatcodes).
         if call_result.result.as_ref() != MAGIC_ASSUME {
-            if should_fail_on_assert {
+            if assertion_failure {
                 return Ok((false, false, assertion_failure_reason(call_result, options.rd)));
             }
 
@@ -276,13 +271,9 @@ fn check_sequence_with_accumulation<FEN: FoundryEvmNetwork>(
         let tx_with_accumulated = apply_warp_roll(tx, accumulated_warp, accumulated_roll);
         let mut call_result = execute_tx(&mut executor, &tx_with_accumulated)?;
         let assertion_failure = did_fail_on_assert(&call_result, &call_result.state_changeset);
-        let should_fail_on_assert = options.fail_on_assert && assertion_failure;
-        if assertion_failure && !options.fail_on_assert {
-            ignore_global_failure(&mut executor, &mut call_result.state_changeset)?;
-        }
 
         if call_result.result.as_ref() != MAGIC_ASSUME {
-            if should_fail_on_assert {
+            if assertion_failure {
                 return Ok((false, false, assertion_failure_reason(call_result, options.rd)));
             }
 
@@ -342,7 +333,6 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
 pub struct CheckSequenceOptions<'a> {
     pub accumulate_warp_roll: bool,
     pub fail_on_revert: bool,
-    pub fail_on_assert: bool,
     pub expect_assertion_failure: bool,
     pub call_after_invariant: bool,
     pub rd: Option<&'a RevertDecoder>,

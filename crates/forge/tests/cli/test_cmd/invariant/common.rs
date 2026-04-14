@@ -1483,7 +1483,6 @@ forgetest_init!(invariant_fail_on_assert_panic, |prj, cmd| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = false;
-        config.invariant.fail_on_assert = true;
     });
 
     prj.add_test(
@@ -1528,7 +1527,6 @@ forgetest_init!(invariant_ignore_assert_panic_when_flag_off, |prj, cmd| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = false;
-        config.invariant.fail_on_assert = false;
     });
 
     prj.add_test(
@@ -1558,9 +1556,12 @@ contract InvariantIgnoreAssertWhenFlagOff is Test {
 "#,
     );
 
-    assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
-[PASS] invariant_assert_discarded() ([RUNS])
+Ran 1 test for test/InvariantIgnoreAssertWhenFlagOff.t.sol:InvariantIgnoreAssertWhenFlagOff
+[FAIL: panic: assertion failed (0x01)]
+...
+ invariant_assert_discarded() ([RUNS])
 ...
 "#]]);
 });
@@ -1570,7 +1571,6 @@ forgetest_init!(invariant_fail_on_assert_ignores_non_assert_panic, |prj, cmd| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = false;
-        config.invariant.fail_on_assert = true;
     });
 
     prj.add_test(
@@ -1613,7 +1613,6 @@ forgetest_init!(invariant_fail_on_assert_ignores_require_revert, |prj, cmd| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = false;
-        config.invariant.fail_on_assert = true;
     });
 
     prj.add_test(
@@ -1654,7 +1653,6 @@ forgetest_init!(invariant_replay_fail_on_assert, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
         config.invariant.fail_on_revert = false;
-        config.invariant.fail_on_assert = true;
         config.invariant.runs = 1;
         config.invariant.depth = 200;
     });
@@ -1706,7 +1704,6 @@ forgetest_init!(invariant_fail_on_vm_assert_revert, |prj, cmd| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = false;
-        config.invariant.fail_on_assert = true;
     });
 
     prj.add_test(
@@ -1752,7 +1749,6 @@ forgetest_init!(invariant_ignore_vm_assert_when_flag_off, |prj, cmd| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = false;
-        config.invariant.fail_on_assert = false;
     });
 
     prj.add_test(
@@ -1783,9 +1779,12 @@ contract InvariantIgnoreVmAssertWhenFlagOff is Test {
 "#,
     );
 
-    assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
-[PASS] invariant_vm_assert_discarded() ([RUNS])
+Ran 1 test for test/InvariantIgnoreVmAssertWhenFlagOff.t.sol:InvariantIgnoreVmAssertWhenFlagOff
+[FAIL: assertion failed: 1 != 2]
+...
+ invariant_vm_assert_discarded() ([RUNS])
 ...
 "#]]);
 });
@@ -1795,7 +1794,6 @@ forgetest_init!(invariant_fail_on_vm_assert_global_flag, |prj, cmd| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = false;
-        config.invariant.fail_on_assert = true;
         config.assertions_revert = false;
     });
 
@@ -1842,7 +1840,6 @@ forgetest_init!(invariant_ignore_vm_assert_global_flag_when_flag_off, |prj, cmd|
         config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = false;
-        config.invariant.fail_on_assert = false;
         config.assertions_revert = false;
     });
 
@@ -1874,9 +1871,12 @@ contract InvariantIgnoreVmAssertGlobalFlagWhenFlagOff is Test {
 "#,
     );
 
-    assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
-[PASS] invariant_vm_assert_global_flag_discarded() ([RUNS])
+Ran 1 test for test/InvariantIgnoreVmAssertGlobalFlagWhenFlagOff.t.sol:InvariantIgnoreVmAssertGlobalFlagWhenFlagOff
+[FAIL: assertion failed]
+...
+ invariant_vm_assert_global_flag_discarded() ([RUNS])
 ...
 "#]]);
 });

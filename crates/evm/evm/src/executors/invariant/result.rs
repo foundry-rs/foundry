@@ -120,18 +120,6 @@ pub(crate) fn did_fail_on_assert<FEN: FoundryEvmNetwork>(
         || logged_assertion_failure(call_result)
 }
 
-/// Clears the global assertion failure flag when the current call set it and `fail_on_assert` is
-/// disabled.
-pub(crate) fn ignore_global_failure<FEN: FoundryEvmNetwork>(
-    executor: &mut Executor<FEN>,
-    state_changeset: &mut StateChangeset,
-) -> Result<()> {
-    if Executor::<FEN>::has_pending_global_failure(state_changeset) {
-        executor.clear_global_failure(Some(state_changeset))?;
-    }
-    Ok(())
-}
-
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.
 /// Either returns the call result if successful, or nothing if there was an error.
@@ -243,8 +231,7 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
         }
     } else {
         let invariant_data = &mut invariant_test.test_data;
-        let is_assert_failure =
-            invariant_config.fail_on_assert && did_fail_on_assert(&call_result, state_changeset);
+        let is_assert_failure = did_fail_on_assert(&call_result, state_changeset);
 
         if call_result.reverted {
             invariant_data.failures.reverts += 1;

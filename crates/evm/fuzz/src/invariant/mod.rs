@@ -306,8 +306,6 @@ pub struct InvariantSettings {
     pub excluded_senders: Vec<Address>,
     /// Whether the test should fail on any revert.
     pub fail_on_revert: bool,
-    /// Whether handler assertions should fail the test even when reverts are ignored.
-    pub fail_on_assert: bool,
 }
 
 impl InvariantSettings {
@@ -316,7 +314,6 @@ impl InvariantSettings {
         targeted_contracts: &TargetedContracts,
         sender_filters: &SenderFilters,
         fail_on_revert: bool,
-        fail_on_assert: bool,
     ) -> Self {
         let target_contracts = targeted_contracts
             .inner
@@ -346,7 +343,6 @@ impl InvariantSettings {
             target_senders,
             excluded_senders,
             fail_on_revert,
-            fail_on_assert,
         }
     }
 
@@ -396,13 +392,6 @@ impl InvariantSettings {
             ));
         }
 
-        if self.fail_on_assert != other.fail_on_assert {
-            changes.push(format!(
-                "fail_on_assert changed from {} to {}",
-                self.fail_on_assert, other.fail_on_assert
-            ));
-        }
-
         if changes.is_empty() { None } else { Some(changes.join(", ")) }
     }
 }
@@ -411,13 +400,12 @@ impl fmt::Display for InvariantSettings {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "targets: {}, selectors: {}, senders: {}, excluded: {}, fail_on_revert: {}, fail_on_assert: {}",
+            "targets: {}, selectors: {}, senders: {}, excluded: {}, fail_on_revert: {}",
             self.target_contracts.len(),
             self.target_selectors.values().map(|v| v.len()).sum::<usize>(),
             self.target_senders.len(),
             self.excluded_senders.len(),
             self.fail_on_revert,
-            self.fail_on_assert,
         )
     }
 }

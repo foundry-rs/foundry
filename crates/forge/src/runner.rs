@@ -802,7 +802,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 CheckSequenceOptions {
                     accumulate_warp_roll: invariant_config.has_delay(),
                     fail_on_revert: invariant_config.fail_on_revert,
-                    fail_on_assert: invariant_config.fail_on_assert,
                     expect_assertion_failure: assertion_failure,
                     call_after_invariant: invariant_contract.call_after_invariant,
                     rd: Some(self.revert_decoder()),
