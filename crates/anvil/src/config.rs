@@ -1583,7 +1583,14 @@ pub struct PruneStateHistoryConfig {
 impl PruneStateHistoryConfig {
     /// Returns `true` if writing state history is supported
     pub const fn is_state_history_supported(&self) -> bool {
-        !self.enabled || self.max_memory_history.is_some()
+        if !self.enabled {
+            return true;
+        }
+
+        match self.max_memory_history {
+            Some(limit) => limit > 0,
+            None => false,
+        }
     }
 
     /// Returns true if this setting was enabled.
@@ -1592,7 +1599,11 @@ impl PruneStateHistoryConfig {
     }
 
     pub fn from_args(val: Option<Option<usize>>) -> Self {
-        val.map(|max_memory_history| Self { enabled: true, max_memory_history }).unwrap_or_default()
+        val.map(|max_memory_history| Self {
+            enabled: true,
+            max_memory_history: max_memory_history.filter(|limit| *limit > 0),
+        })
+        .unwrap_or_default()
     }
 }
 
@@ -1707,6 +1718,9 @@ mod tests {
         let config = PruneStateHistoryConfig::default();
         assert!(config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(None));
+        assert!(!config.is_state_history_supported());
+        let config = PruneStateHistoryConfig::from_args(Some(Some(0)));
+        assert!(config.is_config_enabled());
         assert!(!config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(Some(10)));
         assert!(config.is_state_history_supported());
