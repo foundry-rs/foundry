@@ -230,7 +230,7 @@ impl fmt::Display for CorpusMetrics {
 
 impl CorpusMetrics {
     /// Records number of new edges or features explored during the campaign.
-    pub fn update_seen(&mut self, is_edge: bool) {
+    pub const fn update_seen(&mut self, is_edge: bool) {
         if is_edge {
             self.cumulative_edges_seen += 1;
         } else {
@@ -239,7 +239,7 @@ impl CorpusMetrics {
     }
 
     /// Updates campaign favored items.
-    pub fn update_favored(&mut self, is_favored: bool, corpus_favored: bool) {
+    pub const fn update_favored(&mut self, is_favored: bool, corpus_favored: bool) {
         if is_favored && !corpus_favored {
             self.favored_items += 1;
         } else if !is_favored && corpus_favored {

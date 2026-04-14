@@ -86,7 +86,7 @@ impl<N: Network> BrowserSigner<N> {
         Ok(tx_hash)
     }
 
-    pub fn address(&self) -> Address {
+    pub const fn address(&self) -> Address {
         self.address
     }
 }

@@ -15,7 +15,7 @@ use std::fmt;
 const IGNORE: [Address; 2] = [HARDHAT_CONSOLE_ADDRESS, CHEATCODE_ADDRESS];
 
 /// Checks if the call scheme corresponds to any sort of delegate call
-pub fn is_delegatecall(scheme: CallScheme) -> bool {
+pub const fn is_delegatecall(scheme: CallScheme) -> bool {
     matches!(scheme, CallScheme::DelegateCall | CallScheme::CallCode)
 }
 
@@ -68,12 +68,12 @@ pub struct RevertDiagnostic {
 impl RevertDiagnostic {
     /// Returns the effective target address whose code would be executed.
     /// For delegate calls, this is the `bytecode_address`. Otherwise, it's the `target_address`.
-    fn code_target_address(&self, inputs: &mut CallInputs) -> Address {
+    const fn code_target_address(&self, inputs: &mut CallInputs) -> Address {
         if is_delegatecall(inputs.scheme) { inputs.bytecode_address } else { inputs.target_address }
     }
 
     /// Derives the revert reason based on the cached data. Should only be called after a revert.
-    fn reason(&self) -> Option<DetailedRevertReason> {
+    const fn reason(&self) -> Option<DetailedRevertReason> {
         if let Some((addr, scheme, _)) = self.non_contract_call {
             let reason = if is_delegatecall(scheme) {
                 DetailedRevertReason::DelegateCallToNonContract(addr)

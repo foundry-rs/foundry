@@ -310,7 +310,7 @@ impl Drop for NodeHandle {
 
 impl NodeHandle {
     /// The [NodeConfig] the node was launched with.
-    pub fn config(&self) -> &NodeConfig {
+    pub const fn config(&self) -> &NodeConfig {
         &self.config
     }
 
@@ -387,7 +387,7 @@ impl NodeHandle {
     }
 
     /// Native token balance of every genesis account in the genesis block.
-    pub fn genesis_balance(&self) -> U256 {
+    pub const fn genesis_balance(&self) -> U256 {
         self.config.genesis_balance
     }
 
@@ -397,14 +397,14 @@ impl NodeHandle {
     }
 
     /// Returns the shutdown signal.
-    pub fn shutdown_signal(&self) -> &Option<Signal> {
+    pub const fn shutdown_signal(&self) -> &Option<Signal> {
         &self._signal
     }
 
     /// Returns mutable access to the shutdown signal.
     ///
     /// This can be used to extract the Signal.
-    pub fn shutdown_signal_mut(&mut self) -> &mut Option<Signal> {
+    pub const fn shutdown_signal_mut(&mut self) -> &mut Option<Signal> {
         &mut self._signal
     }
 
@@ -423,7 +423,7 @@ impl NodeHandle {
     ///
     /// # }
     /// ```
-    pub fn task_manager(&self) -> &TaskManager {
+    pub const fn task_manager(&self) -> &TaskManager {
         &self.task_manager
     }
 }

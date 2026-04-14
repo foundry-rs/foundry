@@ -48,6 +48,6 @@ fn should_lint_require(args: &solar::ast::CallArgs<'_>) -> bool {
 }
 
 /// Checks if an expression is a string literal.
-fn is_string_literal(expr: &Expr<'_>) -> bool {
+const fn is_string_literal(expr: &Expr<'_>) -> bool {
     matches!(&expr.kind, ExprKind::Lit(lit, _) if matches!(lit.kind, solar::ast::LitKind::Str(..)))
 }

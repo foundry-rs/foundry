@@ -299,7 +299,7 @@ pub enum Erc20Subcommand {
 }
 
 impl Erc20Subcommand {
-    fn rpc_opts(&self) -> &RpcOpts {
+    const fn rpc_opts(&self) -> &RpcOpts {
         match self {
             Self::Allowance { rpc, .. } => rpc,
             Self::Approve { send_tx, .. } => &send_tx.eth.rpc,
@@ -314,7 +314,7 @@ impl Erc20Subcommand {
         }
     }
 
-    fn erc20_opts(&self) -> Option<&Erc20TxOpts> {
+    const fn erc20_opts(&self) -> Option<&Erc20TxOpts> {
         match self {
             Self::Approve { tx, .. }
             | Self::Transfer { tx, .. }

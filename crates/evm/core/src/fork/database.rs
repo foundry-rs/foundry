@@ -56,15 +56,15 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
         }
     }
 
-    pub fn database(&self) -> &CacheDB<SharedBackend<N, B>> {
+    pub const fn database(&self) -> &CacheDB<SharedBackend<N, B>> {
         &self.cache_db
     }
 
-    pub fn database_mut(&mut self) -> &mut CacheDB<SharedBackend<N, B>> {
+    pub const fn database_mut(&mut self) -> &mut CacheDB<SharedBackend<N, B>> {
         &mut self.cache_db
     }
 
-    pub fn state_snapshots(&self) -> &Arc<Mutex<StateSnapshots<ForkDbStateSnapshot<N, B>>>> {
+    pub const fn state_snapshots(&self) -> &Arc<Mutex<StateSnapshots<ForkDbStateSnapshot<N, B>>>> {
         &self.state_snapshots
     }
 
@@ -92,7 +92,7 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
     }
 
     /// Returns the database that holds the remote state
-    pub fn inner(&self) -> &BlockchainDb<B> {
+    pub const fn inner(&self) -> &BlockchainDb<B> {
         &self.db
     }
 

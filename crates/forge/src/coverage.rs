@@ -115,7 +115,7 @@ pub struct LcovReporter {
 
 impl LcovReporter {
     /// Create a new LCOV reporter.
-    pub fn new(path: PathBuf, version: Version) -> Self {
+    pub const fn new(path: PathBuf, version: Version) -> Self {
         Self { path, version }
     }
 }
@@ -270,7 +270,7 @@ pub struct BytecodeReporter {
 }
 
 impl BytecodeReporter {
-    pub fn new(root: PathBuf, destdir: PathBuf) -> Self {
+    pub const fn new(root: PathBuf, destdir: PathBuf) -> Self {
         Self { root, destdir }
     }
 }

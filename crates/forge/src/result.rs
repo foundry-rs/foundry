@@ -51,7 +51,7 @@ pub struct TestOutcome {
 
 impl TestOutcome {
     /// Creates a new test outcome with the given results.
-    pub fn new(
+    pub const fn new(
         known_contracts: Option<ContractsByArtifact>,
         results: BTreeMap<String, SuiteResult>,
         allow_failure: bool,
@@ -68,7 +68,7 @@ impl TestOutcome {
     }
 
     /// Creates a new empty test outcome.
-    pub fn empty(known_contracts: Option<ContractsByArtifact>, allow_failure: bool) -> Self {
+    pub const fn empty(known_contracts: Option<ContractsByArtifact>, allow_failure: bool) -> Self {
         Self::new(known_contracts, BTreeMap::new(), allow_failure, None)
     }
 
@@ -391,19 +391,19 @@ pub enum TestStatus {
 impl TestStatus {
     /// Returns `true` if the test was successful.
     #[inline]
-    pub fn is_success(self) -> bool {
+    pub const fn is_success(self) -> bool {
         matches!(self, Self::Success)
     }
 
     /// Returns `true` if the test failed.
     #[inline]
-    pub fn is_failure(self) -> bool {
+    pub const fn is_failure(self) -> bool {
         matches!(self, Self::Failure)
     }
 
     /// Returns `true` if the test was skipped.
     #[inline]
-    pub fn is_skipped(self) -> bool {
+    pub const fn is_skipped(self) -> bool {
         matches!(self, Self::Skipped)
     }
 }
@@ -784,7 +784,7 @@ impl TestResult {
     }
 
     /// Returns `true` if this is the result of a fuzz test
-    pub fn is_fuzz(&self) -> bool {
+    pub const fn is_fuzz(&self) -> bool {
         matches!(self.kind, TestKind::Fuzz { .. })
     }
 
@@ -877,7 +877,7 @@ impl fmt::Display for TestKindReport {
 
 impl TestKindReport {
     /// Returns the main gas value to compare against
-    pub fn gas(&self) -> u64 {
+    pub const fn gas(&self) -> u64 {
         match *self {
             Self::Unit { gas } => gas,
             // We use the median for comparisons
@@ -924,12 +924,12 @@ impl Default for TestKind {
 
 impl TestKind {
     /// Returns `true` if this is a fuzz test.
-    pub fn is_fuzz(&self) -> bool {
+    pub const fn is_fuzz(&self) -> bool {
         matches!(self, Self::Fuzz { .. })
     }
 
     /// Returns `true` if this is an invariant test.
-    pub fn is_invariant(&self) -> bool {
+    pub const fn is_invariant(&self) -> bool {
         matches!(self, Self::Invariant { .. })
     }
 

@@ -51,7 +51,7 @@ pub(crate) struct RichInvariantResults<FEN: FoundryEvmNetwork> {
 }
 
 impl<FEN: FoundryEvmNetwork> RichInvariantResults<FEN> {
-    pub(crate) fn new(can_continue: bool, call_result: Option<RawCallResult<FEN>>) -> Self {
+    pub(crate) const fn new(can_continue: bool, call_result: Option<RawCallResult<FEN>>) -> Self {
         Self { can_continue, call_result }
     }
 }

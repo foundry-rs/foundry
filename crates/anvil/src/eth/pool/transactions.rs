@@ -91,7 +91,7 @@ pub struct PoolTransaction<T> {
 // == impl PoolTransaction ==
 
 impl<T> PoolTransaction<T> {
-    pub fn new(transaction: PendingTransaction<T>) -> Self {
+    pub const fn new(transaction: PendingTransaction<T>) -> Self {
         Self {
             pending_transaction: transaction,
             requires: vec![],
@@ -101,7 +101,7 @@ impl<T> PoolTransaction<T> {
     }
 
     /// Returns the hash of this transaction
-    pub fn hash(&self) -> TxHash {
+    pub const fn hash(&self) -> TxHash {
         *self.pending_transaction.hash()
     }
 }
@@ -466,11 +466,11 @@ impl<T> ReadyTransactions<T> {
         self.ready_tx.read().get(hash).cloned()
     }
 
-    pub fn provided_markers(&self) -> &HashMap<TxMarker, TxHash> {
+    pub const fn provided_markers(&self) -> &HashMap<TxMarker, TxHash> {
         &self.provided_markers
     }
 
-    fn next_id(&mut self) -> u64 {
+    const fn next_id(&mut self) -> u64 {
         let id = self.id;
         self.id = self.id.wrapping_add(1);
         id

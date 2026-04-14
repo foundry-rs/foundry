@@ -72,7 +72,7 @@ impl<FEN: FoundryEvmNetwork> Debug for CowBackend<'_, FEN> {
 
 impl<'a, FEN: FoundryEvmNetwork> CowBackend<'a, FEN> {
     /// Creates a new `CowBackend` with the given `Backend`.
-    pub fn new_borrowed(backend: &'a Backend<FEN>) -> Self {
+    pub const fn new_borrowed(backend: &'a Backend<FEN>) -> Self {
         Self { backend: Cow::Borrowed(backend), pending_init: None }
     }
 

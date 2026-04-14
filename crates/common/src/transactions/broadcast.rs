@@ -23,15 +23,15 @@ pub enum TransactionMaybeSigned<N: Network> {
 
 impl<N: Network> TransactionMaybeSigned<N> {
     /// Creates a new (unsigned) transaction for broadcast
-    pub fn new(tx: N::TransactionRequest) -> Self {
+    pub const fn new(tx: N::TransactionRequest) -> Self {
         Self::Unsigned(tx)
     }
 
-    pub fn is_unsigned(&self) -> bool {
+    pub const fn is_unsigned(&self) -> bool {
         matches!(self, Self::Unsigned(_))
     }
 
-    pub fn as_unsigned_mut(&mut self) -> Option<&mut N::TransactionRequest> {
+    pub const fn as_unsigned_mut(&mut self) -> Option<&mut N::TransactionRequest> {
         match self {
             Self::Unsigned(tx) => Some(tx),
             _ => None,

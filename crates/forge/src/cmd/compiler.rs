@@ -109,7 +109,9 @@ impl ResolveArgs {
                 // Clear paths if verbosity is 0, performed only after filtering to avoid being
                 // skipped.
                 if shell::verbosity() == 0 {
-                    versions_with_paths.iter_mut().for_each(|version| version.paths.clear());
+                    for version in &mut versions_with_paths {
+                        version.paths.clear();
+                    }
                 }
 
                 output.insert(language.to_string(), versions_with_paths);

@@ -29,7 +29,7 @@ pub struct ScriptRunner<FEN: FoundryEvmNetwork> {
 }
 
 impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
-    pub fn new(executor: Executor<FEN>, evm_opts: EvmOpts) -> Self {
+    pub const fn new(executor: Executor<FEN>, evm_opts: EvmOpts) -> Self {
         Self { executor, evm_opts }
     }
 

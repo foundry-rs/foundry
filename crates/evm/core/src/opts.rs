@@ -361,7 +361,7 @@ impl EvmOpts {
     /// - u64::MAX, if `no_rpc_rate_limit` if set (as rate limiting is disabled)
     /// - the assigned compute units, if `compute_units_per_second` is set
     /// - ALCHEMY_FREE_TIER_CUPS (330) otherwise
-    fn get_compute_units_per_second(&self) -> u64 {
+    const fn get_compute_units_per_second(&self) -> u64 {
         if self.no_rpc_rate_limit {
             u64::MAX
         } else if let Some(cups) = self.compute_units_per_second {

@@ -567,7 +567,7 @@ impl Installer<'_> {
                     sh_println!("[{i}] {c} selected")?;
                     return Ok(c.clone());
                 }
-                _ => continue,
+                _ => {}
             }
         }
     }

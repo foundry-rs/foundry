@@ -78,7 +78,7 @@ impl FoundryTxEnvelope {
         }
     }
 
-    pub fn sidecar(&self) -> Option<&TxEip4844WithSidecar> {
+    pub const fn sidecar(&self) -> Option<&TxEip4844WithSidecar> {
         match self {
             Self::Eip4844(signed_variant) => match signed_variant.tx() {
                 TxEip4844Variant::TxEip4844WithSidecar(with_sidecar) => Some(with_sidecar),
@@ -107,7 +107,7 @@ impl FoundryTxEnvelope {
     }
 
     /// Returns `true` if this is a Tempo transaction.
-    pub fn is_tempo(&self) -> bool {
+    pub const fn is_tempo(&self) -> bool {
         matches!(self, Self::Tempo(_))
     }
 

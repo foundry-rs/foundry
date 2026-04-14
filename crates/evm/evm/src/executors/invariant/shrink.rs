@@ -35,7 +35,7 @@ impl CallSequenceShrinker {
     }
 
     /// Advance to the next call index, wrapping around to 0 at the end.
-    fn next_index(&self, call_idx: usize) -> usize {
+    const fn next_index(&self, call_idx: usize) -> usize {
         if call_idx + 1 == self.call_sequence_len { 0 } else { call_idx + 1 }
     }
 }

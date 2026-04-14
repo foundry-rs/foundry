@@ -22,7 +22,7 @@ pub struct HttpEthRpcHandler {
 
 impl HttpEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
-    pub fn new(api: EthApi<FoundryNetwork>) -> Self {
+    pub const fn new(api: EthApi<FoundryNetwork>) -> Self {
         Self { api }
     }
 }
@@ -45,7 +45,7 @@ pub struct PubSubEthRpcHandler {
 
 impl PubSubEthRpcHandler {
     /// Creates a new instance of the handler using the given `EthApi`
-    pub fn new(api: EthApi<FoundryNetwork>) -> Self {
+    pub const fn new(api: EthApi<FoundryNetwork>) -> Self {
         Self { api }
     }
 

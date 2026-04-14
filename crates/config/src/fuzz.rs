@@ -132,12 +132,12 @@ impl FuzzCorpusConfig {
     }
 
     /// Whether edge coverage should be collected and displayed.
-    pub fn collect_edge_coverage(&self) -> bool {
+    pub const fn collect_edge_coverage(&self) -> bool {
         self.corpus_dir.is_some() || self.show_edge_coverage
     }
 
     /// Whether coverage guided fuzzing is enabled.
-    pub fn is_coverage_guided(&self) -> bool {
+    pub const fn is_coverage_guided(&self) -> bool {
         self.corpus_dir.is_some()
     }
 }
