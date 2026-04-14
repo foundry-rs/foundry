@@ -211,12 +211,22 @@ impl SessionProvider {
     }
 
     fn resolve_deposit(&self, suggested: Option<&str>) -> Result<u128, MppError> {
-        // Local config takes priority over server-suggested deposit to prevent
-        // a malicious server from pushing the user into opening a larger channel
-        // than expected.
-        let amount = self
-            .default_deposit
-            .or_else(|| suggested.and_then(|s| s.parse::<u128>().ok()));
+        let suggested_val = suggested.and_then(|s| s.parse::<u128>().ok());
+
+        // Prefer the server-suggested deposit, but warn when it exceeds the
+        // local default so users can spot unexpected charges.
+        if let (Some(sv), Some(local)) = (suggested_val, self.default_deposit)
+            && sv > local
+        {
+            tracing::warn!(
+                suggested = sv,
+                local_default = local,
+                "server-suggested deposit ({sv}) exceeds local default ({local}); \
+                 set MPP_DEPOSIT to override"
+            );
+        }
+
+        let amount = suggested_val.or(self.default_deposit);
 
         amount.ok_or_else(|| {
             MppError::InvalidConfig("no deposit amount: set default_deposit".to_string())
