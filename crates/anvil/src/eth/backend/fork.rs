@@ -98,7 +98,7 @@ impl<N: Network> ClientFork<N> {
     }
 
     pub fn eth_rpc_url(&self) -> String {
-        self.config.read().eth_rpc_url.clone()
+        self.config.read().eth_rpc_url().to_string()
     }
 
     pub fn chain_id(&self) -> u64 {
@@ -626,8 +626,9 @@ impl ClientFork {
 /// Contains all fork metadata
 #[derive(Clone, Debug)]
 pub struct ClientForkConfig<N: Network = AnyNetwork> {
-    pub eth_rpc_url: String,
-    /// All fork URLs when using multi-endpoint load balancing.
+    /// All fork URLs. The first entry is the primary endpoint.
+    /// When multiple URLs are present, requests are distributed using
+    /// `FallbackService` with automatic failover.
     pub fork_urls: Vec<String>,
     /// The block number of the forked block
     pub block_number: u64,
@@ -661,18 +662,20 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
 }
 
 impl<N: Network> ClientForkConfig<N> {
+    /// Returns the primary RPC URL (first entry in `fork_urls`).
+    pub fn eth_rpc_url(&self) -> &str {
+        &self.fork_urls[0]
+    }
+
     /// Updates the provider URL
     ///
     /// # Errors
     ///
     /// This will fail if no new provider could be established (erroneous URL)
     fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
-        // Update fork_urls to reflect the new primary URL
-        if self.fork_urls.len() > 1 {
-            self.fork_urls[0] = url.clone();
-        }
-
         self.provider = Arc::new(if self.fork_urls.len() > 1 {
+            // Update the primary URL in-place
+            self.fork_urls[0] = url.clone();
             ProviderBuilder::<N>::new(url.as_str())
                 .timeout(self.timeout)
                 .max_retry(self.retries)
@@ -681,6 +684,7 @@ impl<N: Network> ClientForkConfig<N> {
                 .build_fallback(self.fork_urls.clone())
                 .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?
         } else {
+            self.fork_urls[0] = url.clone();
             ProviderBuilder::<N>::new(url.as_str())
                 .timeout(self.timeout)
                 .max_retry(self.retries)
@@ -690,7 +694,6 @@ impl<N: Network> ClientForkConfig<N> {
                 .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?
         });
         trace!(target: "fork", "Updated rpc url  {}", url);
-        self.eth_rpc_url = url;
         Ok(())
     }
     /// Updates the block forked off `(block number, block hash, timestamp)`

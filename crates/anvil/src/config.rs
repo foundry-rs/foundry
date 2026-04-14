@@ -134,15 +134,13 @@ pub struct NodeConfig {
     pub port: u16,
     /// maximum number of transactions in a block
     pub max_transactions: usize,
-    /// url of the rpc server that should be used for any rpc calls
-    pub eth_rpc_url: Option<String>,
-    /// Additional fork URLs for load balancing across multiple RPC endpoints.
+    /// Fork URLs for RPC calls. The first entry is the primary endpoint.
     /// When multiple URLs are provided, requests are distributed using Alloy's
     /// `FallbackService` with automatic failover based on endpoint health.
     pub fork_urls: Vec<String>,
     /// pins the block number or transaction hash for the state fork
     pub fork_choice: Option<ForkChoice>,
-    /// headers to use with `eth_rpc_url`
+    /// headers to use with fork RPC endpoints
     pub fork_headers: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
@@ -477,7 +475,6 @@ impl Default for NodeConfig {
             mixed_mining: false,
             port: NODE_PORT,
             max_transactions: 1_000,
-            eth_rpc_url: None,
             fork_urls: vec![],
             fork_choice: None,
             account_generator: None,
@@ -867,14 +864,16 @@ impl NodeConfig {
         self
     }
 
-    /// Sets the `eth_rpc_url` to use when forking
+    /// Sets the `eth_rpc_url` to use when forking (single endpoint convenience).
     #[must_use]
     pub fn with_eth_rpc_url<U: Into<String>>(mut self, eth_rpc_url: Option<U>) -> Self {
-        self.eth_rpc_url = eth_rpc_url.map(Into::into);
+        if let Some(url) = eth_rpc_url {
+            self.fork_urls = vec![url.into()];
+        }
         self
     }
 
-    /// Sets the fork URLs for load-balanced multi-endpoint forking
+    /// Sets the fork URLs for load-balanced multi-endpoint forking.
     #[must_use]
     pub fn with_fork_urls(mut self, fork_urls: Vec<String>) -> Self {
         self.fork_urls = fork_urls;
@@ -910,7 +909,7 @@ impl NodeConfig {
         self
     }
 
-    /// Sets the `fork_headers` to use with `eth_rpc_url`
+    /// Sets the `fork_headers` to use with fork RPC endpoints
     #[must_use]
     pub fn with_fork_headers(mut self, headers: Vec<String>) -> Self {
         self.fork_headers = headers;
@@ -1033,7 +1032,7 @@ impl NodeConfig {
     ///
     /// See also [ Config::foundry_block_cache_file()]
     pub fn block_cache_path(&self, block: u64) -> Option<PathBuf> {
-        if self.no_storage_caching || self.eth_rpc_url.is_none() {
+        if self.no_storage_caching || self.fork_urls.is_empty() {
             return None;
         }
         let chain_id = self.get_chain_id();
@@ -1161,7 +1160,7 @@ impl NodeConfig {
         );
 
         let (db, fork): (Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>) =
-            if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
+            if let Some(eth_rpc_url) = self.fork_urls.first().cloned() {
                 self.setup_fork_db(eth_rpc_url, &mut evm_env, &fees).await?
             } else {
                 (Arc::new(TokioRwLock::new(Box::<MemDb>::default())), None)
@@ -1224,7 +1223,7 @@ impl NodeConfig {
 
         // Writes the default create2 deployer to the backend,
         // if the option is not disabled and we are not forking.
-        if !self.disable_default_create2_deployer && self.eth_rpc_url.is_none() {
+        if !self.disable_default_create2_deployer && self.fork_urls.is_empty() {
             backend
                 .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
                 .await
@@ -1445,7 +1444,6 @@ latest block number: {latest_block}"
         .await;
 
         let config = ClientForkConfig {
-            eth_rpc_url,
             fork_urls: self.fork_urls.clone(),
             block_number: fork_block_number,
             block_hash,

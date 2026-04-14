@@ -2105,7 +2105,8 @@ impl<N: Network> Backend<N> {
                     // If rpc url is unspecified, then update the fork with the new block number and
                     // existing rpc url, this updates the cache path
                     {
-                        let maybe_fork_url = { self.node_config.read().await.eth_rpc_url.clone() };
+                        let maybe_fork_url =
+                            { self.node_config.read().await.fork_urls.first().cloned() };
                         if let Some(fork_url) = maybe_fork_url {
                             self.reset_block_number(fork_url, fork_block_number).await?;
                         }

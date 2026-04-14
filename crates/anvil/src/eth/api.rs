@@ -412,7 +412,7 @@ impl<N: Network> EthApi<N> {
                     let config = fork.config.read();
 
                     NodeForkConfig {
-                        fork_url: Some(config.eth_rpc_url.clone()),
+                        fork_url: Some(config.eth_rpc_url().to_string()),
                         fork_block_number: Some(config.block_number),
                         fork_retry_backoff: Some(config.backoff.as_millis()),
                     }
@@ -533,8 +533,8 @@ impl<N: Network> EthApi<N> {
                 )?, // .interval(interval),
             );
             config.provider = new_provider;
-            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url, url);
-            config.eth_rpc_url = url;
+            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url(), url);
+            config.fork_urls = vec![url];
         }
         Ok(())
     }
