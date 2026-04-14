@@ -269,7 +269,7 @@ impl<N: Network> ClientFork<N> {
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     pub async fn reset(
         &self,
-        url: Option<String>,
+        urls: Vec<String>,
         block_number: impl Into<BlockId>,
     ) -> Result<(), BlockchainError> {
         let block_number = block_number.into();
@@ -277,12 +277,12 @@ impl<N: Network> ClientFork<N> {
             self.database
                 .write()
                 .await
-                .maybe_reset(url.clone(), block_number)
+                .maybe_reset(urls.first().cloned(), block_number)
                 .map_err(BlockchainError::Internal)?;
         }
 
-        if let Some(url) = url {
-            self.config.write().update_urls(vec![url])?;
+        if !urls.is_empty() {
+            self.config.write().update_urls(urls)?;
             let override_chain_id = self.config.read().override_chain_id;
             let chain_id = if let Some(chain_id) = override_chain_id {
                 chain_id
