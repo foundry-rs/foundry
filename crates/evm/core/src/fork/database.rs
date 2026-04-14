@@ -71,7 +71,7 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     pub fn reset(
         &mut self,
-        _url: Option<String>,
+        _urls: Vec<String>,
         block_number: impl Into<BlockId>,
     ) -> Result<(), String> {
         self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;

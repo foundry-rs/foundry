@@ -277,7 +277,7 @@ impl<N: Network> ClientFork<N> {
             self.database
                 .write()
                 .await
-                .maybe_reset(urls.first().cloned(), block_number)
+                .maybe_reset(urls.clone(), block_number)
                 .map_err(BlockchainError::Internal)?;
         }
 
