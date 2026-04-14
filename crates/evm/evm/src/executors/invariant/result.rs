@@ -350,11 +350,9 @@ mod tests {
     fn detects_vm_assert_revert() {
         let call_result = RawCallResult::<EthEvmNetwork> {
             reverted: true,
-            result: Vm::CheatcodeError {
-                message: format!("{ASSERTION_FAILED_PREFIX}: 1 != 2").into(),
-            }
-            .abi_encode()
-            .into(),
+            result: Vm::CheatcodeError { message: format!("{ASSERTION_FAILED_PREFIX}: 1 != 2") }
+                .abi_encode()
+                .into(),
             reverter: Some(CHEATCODE_ADDRESS),
             ..Default::default()
         };
