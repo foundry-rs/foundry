@@ -282,7 +282,7 @@ impl<N: Network> ClientFork<N> {
         }
 
         if let Some(url) = url {
-            self.config.write().update_url(url)?;
+            self.config.write().update_urls(vec![url])?;
             let override_chain_id = self.config.read().override_chain_id;
             let chain_id = if let Some(chain_id) = override_chain_id {
                 chain_id
@@ -667,23 +667,35 @@ impl<N: Network> ClientForkConfig<N> {
         &self.fork_urls[0]
     }
 
-    /// Updates the provider URL
+    /// Updates the provider URLs
     ///
     /// # Errors
     ///
     /// This will fail if no new provider could be established (erroneous URL)
-    fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
-        self.provider = Arc::new(
-            ProviderBuilder::<N>::new(url.as_str())
+    fn update_urls(&mut self, urls: Vec<String>) -> Result<(), BlockchainError> {
+        let primary = urls.first().ok_or_else(|| {
+            BlockchainError::InvalidUrl("at least one fork URL required".to_string())
+        })?;
+
+        self.provider = Arc::new(if urls.len() > 1 {
+            ProviderBuilder::<N>::new(primary.as_str())
+                .timeout(self.timeout)
+                .max_retry(self.retries)
+                .initial_backoff(self.backoff.as_millis() as u64)
+                .compute_units_per_second(self.compute_units_per_second)
+                .build_fallback(urls.clone())
+                .map_err(|e| BlockchainError::InvalidUrl(format!("{primary}: {e}")))?
+        } else {
+            ProviderBuilder::<N>::new(primary.as_str())
                 .timeout(self.timeout)
                 .max_retry(self.retries)
                 .initial_backoff(self.backoff.as_millis() as u64)
                 .compute_units_per_second(self.compute_units_per_second)
                 .build()
-                .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?,
-        );
-        trace!(target: "fork", "Updated rpc url  {}", url);
-        self.fork_urls = vec![url];
+                .map_err(|e| BlockchainError::InvalidUrl(format!("{primary}: {e}")))?
+        });
+        trace!(target: "fork", "Updated fork urls: {:?}", urls);
+        self.fork_urls = urls;
         Ok(())
     }
     /// Updates the block forked off `(block number, block hash, timestamp)`
