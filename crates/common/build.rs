@@ -75,6 +75,11 @@ Build Profile: {profile}"
         println!("cargo:rustc-env=FOUNDRY_LONG_VERSION_{i}={line}");
     }
 
+    // The long SHA of the latest commit.
+    //
+    // Example: 5186142d3bb4d1be7bb4ade548b77c8e2270717e
+    println!("cargo:rustc-env=FOUNDRY_COMMIT_SHA={sha}");
+
     Ok(())
 }
 
