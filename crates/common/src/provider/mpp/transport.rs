@@ -101,6 +101,12 @@ impl LazySessionProvider {
         }
     }
 
+    fn commit_topup_and_track_voucher(&self) {
+        if let Some(p) = self.inner.lock().unwrap().as_ref() {
+            p.commit_topup_and_track_voucher();
+        }
+    }
+
     fn get_or_init(&self, opts: DiscoverOptions) -> TransportResult<SessionProvider> {
         let mut guard = self.inner.lock().unwrap();
         if let Some(ref provider) = *guard {
@@ -305,13 +311,19 @@ where
         if retry_resp.status() == StatusCode::NO_CONTENT {
             debug!("MPP topUp accepted (204), retrying with voucher");
 
+            // Top-up is confirmed — commit the deposit increase and start
+            // tracking the follow-up voucher cumulative bump separately.
+            self.provider.commit_topup_and_track_voucher();
+
             let resolved = self.provider.resolve()?;
             let credential = resolved.pay(challenge).await.map_err(|e| {
+                self.provider.rollback_pending();
                 TransportErrorKind::custom(std::io::Error::other(format!(
                     "MPP payment failed: {e}"
                 )))
             })?;
             let auth_header = format_authorization(&credential).map_err(|e| {
+                self.provider.rollback_pending();
                 TransportErrorKind::custom(std::io::Error::other(format!(
                     "failed to format MPP credential: {e}"
                 )))
@@ -327,7 +339,10 @@ where
                 .body(body.clone())
                 .send()
                 .await
-                .map_err(TransportErrorKind::custom)?;
+                .map_err(|e| {
+                    self.provider.rollback_pending();
+                    TransportErrorKind::custom(e)
+                })?;
 
             let result = Self::handle_response(voucher_resp).await;
             if result.is_ok() {
@@ -386,11 +401,16 @@ where
                         .body(body.clone())
                         .send()
                         .await
-                        .map_err(TransportErrorKind::custom)?;
+                        .map_err(|e| {
+                            self.provider.rollback_pending();
+                            TransportErrorKind::custom(e)
+                        })?;
 
                     let result = Self::handle_response(final_resp).await;
                     if result.is_ok() {
                         self.provider.flush_pending();
+                    } else {
+                        self.provider.rollback_pending();
                     }
                     return result;
                 }
@@ -433,12 +453,17 @@ where
                         .body(body)
                         .send()
                         .await
-                        .map_err(TransportErrorKind::custom)?;
+                        .map_err(|e| {
+                            self.provider.rollback_pending();
+                            TransportErrorKind::custom(e)
+                        })?;
 
                     let result = Self::handle_response(final_resp).await;
                     if result.is_ok() {
                         self.provider.set_key_provisioned(true);
                         self.provider.flush_pending();
+                    } else {
+                        self.provider.rollback_pending();
                     }
                     return result;
                 }
@@ -480,12 +505,17 @@ where
                         .body(body)
                         .send()
                         .await
-                        .map_err(TransportErrorKind::custom)?;
+                        .map_err(|e| {
+                            self.provider.rollback_pending();
+                            TransportErrorKind::custom(e)
+                        })?;
 
                     let result = Self::handle_response(final_resp).await;
                     if result.is_ok() {
                         self.provider.set_key_provisioned(true);
                         self.provider.flush_pending();
+                    } else {
+                        self.provider.rollback_pending();
                     }
                     return result;
                 }
@@ -560,6 +590,7 @@ pub(crate) trait ResolveProvider {
     fn clear_channels(&self) {}
     fn flush_pending(&self) {}
     fn rollback_pending(&self) {}
+    fn commit_topup_and_track_voucher(&self) {}
     /// Acquire the payment serialization lock. The returned guard must be held
     /// across the entire 402 → pay → retry → response cycle to prevent
     /// concurrent channel opens and colliding expiring-nonce transactions.
@@ -603,6 +634,9 @@ impl ResolveProvider for LazySessionProvider {
     }
     fn rollback_pending(&self) {
         Self::rollback_pending(self)
+    }
+    fn commit_topup_and_track_voucher(&self) {
+        Self::commit_topup_and_track_voucher(self)
     }
     fn lock_pay(&self) -> impl std::future::Future<Output = Option<OwnedMutexGuard<()>>> + Send {
         let lock = self.pay_lock.clone();

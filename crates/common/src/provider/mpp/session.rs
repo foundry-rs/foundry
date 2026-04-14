@@ -54,6 +54,8 @@ enum PendingAction {
     Open { key: String },
     /// A top-up was prepared but not yet confirmed by the server.
     TopUp { key: String, old_deposit: String },
+    /// A voucher cumulative_amount was advanced but not yet confirmed.
+    Voucher { key: String, old_cumulative: u128 },
 }
 
 /// Expiring nonce key (U256::MAX) — matches the charge flow.
@@ -229,7 +231,7 @@ impl SessionProvider {
         *self.key_provisioned.lock().unwrap()
     }
 
-    /// Persist any pending open/top-up state to disk.
+    /// Persist any pending open/top-up/voucher state to disk.
     ///
     /// Called by the transport after the server confirms acceptance.
     pub fn flush_pending(&self) {
@@ -239,7 +241,23 @@ impl SessionProvider {
         }
     }
 
-    /// Roll back pending open/top-up state on failure.
+    /// Commit a pending top-up (deposit increase) without flushing to disk.
+    ///
+    /// Called by the transport when the server returns 204 (top-up accepted).
+    /// The deposit increase is now committed, but the follow-up voucher is
+    /// tracked as a new pending action.
+    pub fn commit_topup_and_track_voucher(&self) {
+        let pending = self.pending.lock().unwrap().take();
+        if let Some(PendingAction::TopUp { key, .. }) = pending {
+            // Top-up is now committed — read the current cumulative_amount
+            // so we can roll back just the voucher increment if needed.
+            let old_cumulative =
+                self.channels.lock().unwrap().get(&key).map(|e| e.cumulative_amount).unwrap_or(0);
+            *self.pending.lock().unwrap() = Some(PendingAction::Voucher { key, old_cumulative });
+        }
+    }
+
+    /// Roll back pending open/top-up/voucher state on failure.
     ///
     /// Called by the transport when the server rejects the payment or times out.
     pub fn rollback_pending(&self) {
@@ -255,11 +273,20 @@ impl SessionProvider {
                         p.deposit = old_deposit;
                     }
                 }
+                PendingAction::Voucher { key, old_cumulative } => {
+                    if let Some(entry) = self.channels.lock().unwrap().get_mut(&key) {
+                        entry.cumulative_amount = old_cumulative;
+                    }
+                    if let Some(p) = self.persisted.lock().unwrap().get_mut(&key) {
+                        p.cumulative_amount = old_cumulative.to_string();
+                    }
+                }
             }
         }
     }
 
     fn channel_key(
+        origin: &str,
         payer: &Address,
         authorized_signer: Option<Address>,
         payee: &Address,
@@ -267,8 +294,12 @@ impl SessionProvider {
         escrow: &Address,
         chain_id: u64,
     ) -> String {
+        // Use first 8 bytes of origin hash to scope the key without persisting
+        // the full URL (which may contain secrets in query params).
+        let origin_hash = &alloy_primitives::keccak256(origin.as_bytes()).to_string()[..18];
         let signer = authorized_signer.unwrap_or(*payer);
-        format!("{chain_id}:{payer}:{signer}:{payee}:{currency}:{escrow}").to_lowercase()
+        format!("{origin_hash}:{chain_id}:{payer}:{signer}:{payee}:{currency}:{escrow}")
+            .to_lowercase()
     }
 
     fn resolve_deposit(&self, suggested: Option<&str>) -> Result<u128, MppError> {
@@ -561,6 +592,7 @@ impl SessionProvider {
         let payer = self.signing_mode.from_address(self.signer.address());
 
         let key = Self::channel_key(
+            &self.origin,
             &payer,
             self.authorized_signer,
             &payee,
@@ -628,6 +660,7 @@ impl SessionProvider {
                     return Ok(build_credential(challenge, payload, chain_id, payer));
                 }
                 Ok(entry) => {
+                    let old_cumulative = entry.cumulative_amount - amount;
                     let payload = create_voucher_payload(
                         &self.signer,
                         entry.channel_id,
@@ -637,9 +670,9 @@ impl SessionProvider {
                     )
                     .await?;
 
-                    // Update in-memory persisted state. Only write to disk if
-                    // there is no pending open/top-up (deferred persistence).
-                    let has_pending = self.pending.lock().unwrap().is_some();
+                    // Update in-memory persisted state but never write to disk
+                    // here — flush_pending() handles persistence after server
+                    // confirms acceptance.
                     let mut persisted = self.persisted.lock().unwrap();
                     persist::upsert_channel_in_memory(
                         &mut persisted,
@@ -648,9 +681,15 @@ impl SessionProvider {
                         0,
                         &self.origin,
                     );
-                    if !has_pending {
-                        persist::save_channels(&persisted);
+                    drop(persisted);
+
+                    // Track the voucher so we can roll back cumulative_amount
+                    // if the server rejects.
+                    if self.pending.lock().unwrap().is_none() {
+                        *self.pending.lock().unwrap() =
+                            Some(PendingAction::Voucher { key, old_cumulative });
                     }
+
                     return Ok(build_credential(challenge, payload, chain_id, payer));
                 }
             }
