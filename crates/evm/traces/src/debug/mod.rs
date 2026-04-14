@@ -1,8 +1,8 @@
 mod sources;
 use crate::CallTraceNode;
 use alloy_dyn_abi::{
-    parser::{Parameters, Storage},
     DynSolType, DynSolValue, Specifier,
+    parser::{Parameters, Storage},
 };
 use alloy_primitives::U256;
 use foundry_common::fmt::format_token;
@@ -281,18 +281,6 @@ fn try_decode_args_from_step(args: &Parameters<'_>, step: &CallTraceStep) -> Opt
     Some(decoded)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::source_span;
-
-    #[test]
-    fn source_span_returns_none_for_invalid_ranges() {
-        assert_eq!(source_span("abcdef", 2, 3), Some(("cde", 5)));
-        assert_eq!(source_span("abcdef", 7, 1), None);
-        assert_eq!(source_span("abcdef", usize::MAX, 1), None);
-    }
-}
-
 /// Decodes given [DynSolType] from memory.
 fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option<DynSolValue> {
     let first_word = memory.get(location..location + 32)?;
@@ -339,5 +327,17 @@ fn decode_from_memory(ty: &DynSolType, memory: &[u8], location: usize) -> Option
             Some(DynSolValue::Array(decoded))
         }
         _ => ty.abi_decode(first_word).ok(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::source_span;
+
+    #[test]
+    fn source_span_returns_none_for_invalid_ranges() {
+        assert_eq!(source_span("abcdef", 2, 3), Some(("cde", 5)));
+        assert_eq!(source_span("abcdef", 7, 1), None);
+        assert_eq!(source_span("abcdef", usize::MAX, 1), None);
     }
 }
