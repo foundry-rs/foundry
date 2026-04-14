@@ -41,12 +41,19 @@ pub type LazyMppHttpTransport = MppHttpTransport<LazySessionProvider>;
 #[derive(Clone, Debug)]
 pub struct LazySessionProvider {
     inner: std::sync::Arc<Mutex<Option<SessionProvider>>>,
+    /// Shared payment serialization lock. Held across the entire 402 → pay →
+    /// retry → response cycle at the transport level.
+    pay_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
     origin: String,
 }
 
 impl LazySessionProvider {
     fn new(origin: String) -> Self {
-        Self { inner: std::sync::Arc::new(Mutex::new(None)), origin }
+        Self {
+            inner: std::sync::Arc::new(Mutex::new(None)),
+            pay_lock: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            origin,
+        }
     }
 
     fn set_key_provisioned(&self, provisioned: bool) {
@@ -106,7 +113,8 @@ impl LazySessionProvider {
 
         let mut provider = SessionProvider::new(signer, self.origin.clone())
             .with_signing_mode(signing_mode)
-            .with_default_deposit(default_deposit());
+            .with_default_deposit(default_deposit())
+            .with_key_filters(config.chain_id, config.currencies);
 
         if let Some(addr) = config.key_address {
             provider = provider.with_authorized_signer(addr);
@@ -174,6 +182,12 @@ where
         if resp.status() != StatusCode::PAYMENT_REQUIRED {
             return Self::handle_response(resp).await;
         }
+
+        // Serialize the entire 402 → pay → retry → response cycle.
+        // This prevents concurrent requests from opening duplicate channels
+        // or producing colliding expiring-nonce transactions. The lock is
+        // held until the retry response is fully handled.
+        let _pay_guard = self.provider.lock_pay().await;
 
         let www_auth_values: Vec<&str> = resp
             .headers()
@@ -454,6 +468,11 @@ fn extract_challenge_chain_and_currency(
     }
 }
 
+/// Guard type that keeps the payment serialization lock held.
+///
+/// When dropped, releases the lock allowing the next payment to proceed.
+pub(crate) struct PayLockGuard(Option<tokio::sync::OwnedMutexGuard<()>>);
+
 /// Trait for resolving a concrete `PaymentProvider` from a potentially lazy wrapper.
 pub(crate) trait ResolveProvider {
     type Provider: PaymentProvider;
@@ -466,6 +485,12 @@ pub(crate) trait ResolveProvider {
         true
     }
     fn clear_channels(&self) {}
+    /// Acquire the payment serialization lock. The returned guard must be held
+    /// across the entire 402 → pay → retry → response cycle to prevent
+    /// concurrent channel opens and colliding expiring-nonce transactions.
+    fn lock_pay(&self) -> impl std::future::Future<Output = PayLockGuard> + Send {
+        async { PayLockGuard(None) }
+    }
 }
 
 impl<P: PaymentProvider + Clone> ResolveProvider for P {
@@ -478,7 +503,16 @@ impl<P: PaymentProvider + Clone> ResolveProvider for P {
 impl ResolveProvider for LazySessionProvider {
     type Provider = SessionProvider;
     fn resolve_for(&self, opts: DiscoverOptions) -> TransportResult<SessionProvider> {
-        self.get_or_init(opts)
+        let provider = self.get_or_init(opts.clone())?;
+        // After the first init, get_or_init returns the cached provider
+        // regardless of opts. Re-check that the provider's key is compatible
+        // with this challenge's chain/currency.
+        if !provider.matches_challenge(opts.chain_id, opts.currency) {
+            return Err(TransportErrorKind::custom(std::io::Error::other(
+                "cached provider does not match challenge chain/currency",
+            )));
+        }
+        Ok(provider)
     }
     fn set_key_provisioned(&self, provisioned: bool) {
         Self::set_key_provisioned(self, provisioned)
@@ -488,6 +522,10 @@ impl ResolveProvider for LazySessionProvider {
     }
     fn clear_channels(&self) {
         Self::clear_channels(self)
+    }
+    fn lock_pay(&self) -> impl std::future::Future<Output = PayLockGuard> + Send {
+        let lock = self.pay_lock.clone();
+        async move { PayLockGuard(Some(lock.lock_owned().await)) }
     }
 }
 

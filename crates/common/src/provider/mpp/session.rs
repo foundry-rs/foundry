@@ -28,7 +28,6 @@ use std::{
     collections::HashMap,
     sync::{Arc, Mutex, OnceLock},
 };
-
 use super::persist::{self, PersistedChannel};
 
 /// Shared per-origin channel state: (channels, persisted).
@@ -70,6 +69,12 @@ pub struct SessionProvider {
     channels: Arc<Mutex<HashMap<String, ChannelEntry>>>,
     key_provisioned: Arc<Mutex<bool>>,
     persisted: Arc<Mutex<HashMap<String, PersistedChannel>>>,
+    /// Chain ID from the key entry in `keys.toml` that was used to initialize
+    /// this provider. Used to reject challenges for a different chain.
+    key_chain_id: Option<u64>,
+    /// Currencies from the key's spending limits. Used to reject challenges
+    /// for currencies the key cannot pay with.
+    key_currencies: Vec<Address>,
     origin: String,
 }
 
@@ -117,6 +122,8 @@ impl SessionProvider {
             channels,
             key_provisioned: Arc::new(Mutex::new(true)),
             persisted,
+            key_chain_id: None,
+            key_currencies: vec![],
             origin,
         }
     }
@@ -137,6 +144,32 @@ impl SessionProvider {
     pub const fn with_default_deposit(mut self, deposit: u128) -> Self {
         self.default_deposit = Some(deposit);
         self
+    }
+
+    /// Set the chain ID and currencies from the key entry used to initialize
+    /// this provider. Used to reject challenges for incompatible chains/currencies.
+    pub fn with_key_filters(mut self, chain_id: u64, currencies: Vec<Address>) -> Self {
+        self.key_chain_id = Some(chain_id);
+        self.key_currencies = currencies;
+        self
+    }
+
+    /// Check whether this provider's key is compatible with the given
+    /// chain ID and currency from a 402 challenge.
+    pub fn matches_challenge(&self, chain_id: Option<u64>, currency: Option<Address>) -> bool {
+        if let Some(cid) = chain_id {
+            if self.key_chain_id.is_some_and(|k| k != cid) {
+                return false;
+            }
+        }
+        if let Some(cur) = currency {
+            if !self.key_currencies.is_empty()
+                && !self.key_currencies.iter().any(|c| *c == cur)
+            {
+                return false;
+            }
+        }
+        true
     }
 
     /// Clear all in-memory and persisted channels (e.g. after server 410).

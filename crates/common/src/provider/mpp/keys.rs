@@ -10,7 +10,7 @@ use alloy_primitives::Address;
 use tracing::debug;
 
 /// Options for MPP key discovery filtering.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct DiscoverOptions {
     /// Only consider keys matching this chain ID.
     pub chain_id: Option<u64>,
@@ -32,6 +32,8 @@ pub struct MppKeyConfig {
     pub key_address: Option<Address>,
     /// RLP-encoded signed key authorization (hex string).
     pub key_authorization: Option<String>,
+    /// Chain ID from the key entry in `keys.toml`.
+    pub chain_id: u64,
     /// Currencies from the key's spending limits.
     pub currencies: Vec<Address>,
 }
@@ -61,6 +63,7 @@ pub fn discover_mpp_config(opts: DiscoverOptions) -> Option<MppKeyConfig> {
                 wallet_address: None,
                 key_address: None,
                 key_authorization: None,
+                chain_id: 0,
                 currencies: vec![],
             });
         }
@@ -102,6 +105,7 @@ pub fn discover_mpp_config(opts: DiscoverOptions) -> Option<MppKeyConfig> {
                 wallet_address: Some(entry.wallet_address),
                 key_address: entry.key_address,
                 key_authorization: entry.key_authorization.clone(),
+                chain_id: entry.chain_id,
                 currencies: entry.limits.iter().map(|l| l.currency).collect(),
             });
         }
