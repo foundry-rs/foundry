@@ -88,7 +88,7 @@ impl<'a, FEN: FoundryEvmNetwork> Deref for ContractRunner<'a, FEN> {
 }
 
 impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
-    pub fn new(
+    pub const fn new(
         name: &'a str,
         contract: &'a TestContract,
         executor: Executor<FEN>,
@@ -501,7 +501,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
     }
 
-    fn revert_decoder(&self) -> &'a RevertDecoder {
+    const fn revert_decoder(&self) -> &'a RevertDecoder {
         &self.cr.mcr.revert_decoder
     }
 

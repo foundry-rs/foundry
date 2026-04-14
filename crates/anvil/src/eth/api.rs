@@ -477,6 +477,10 @@ impl<N: Network> EthApi<N> {
     /// Sets the specific timestamp and returns the number of seconds between the given timestamp
     /// and the current time.
     ///
+    /// The `timestamp` is in seconds. The `evm_setTime` JSON-RPC method accepts both seconds and
+    /// milliseconds (values above 1e12 are treated as milliseconds); the RPC handler normalises
+    /// the input to seconds before calling this function.
+    ///
     /// Handler for RPC call: `evm_setTime`
     pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
         node_info!("evm_setTime");
@@ -485,7 +489,7 @@ impl<N: Network> EthApi<N> {
 
         // number of seconds between the given timestamp and the current time.
         let offset = timestamp.saturating_sub(now);
-        Ok(Duration::from_millis(offset).as_secs())
+        Ok(offset)
     }
 
     /// Set the next block gas limit
@@ -1755,7 +1759,15 @@ impl EthApi<FoundryNetwork> {
                         "The timestamp is too big",
                     ));
                 }
-                let time = timestamp.to::<u64>();
+                // evm_setTime accepts either seconds or milliseconds for Ganache compatibility.
+                // Timestamps above 1e12 are interpreted as milliseconds and converted to
+                // seconds; below that threshold they are treated as seconds directly.
+                let raw = timestamp.to::<u64>();
+                let time = if raw > 1_000_000_000_000 {
+                    Duration::from_millis(raw).as_secs()
+                } else {
+                    raw
+                };
                 self.evm_set_time(time).to_rpc_result()
             }
             EthRequest::EvmSetBlockGasLimit(gas_limit) => {

@@ -171,7 +171,7 @@ where
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     /// Creates a new Cast instance responsible for sending transactions.
-    pub fn new(provider: P) -> Self {
+    pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
     }
 
@@ -668,7 +668,7 @@ where
 
     /// Skips gas, fee and nonce filling. Use for read-only calls
     /// (eth_call, eth_estimateGas, eth_createAccessList).
-    pub fn raw(mut self) -> Self {
+    pub const fn raw(mut self) -> Self {
         self.fill = false;
         self
     }

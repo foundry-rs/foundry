@@ -648,7 +648,7 @@ impl From<bool> for DenyLevel {
 
 impl DenyLevel {
     /// Returns `true` if the deny level includes warnings.
-    pub fn warnings(&self) -> bool {
+    pub const fn warnings(&self) -> bool {
         match self {
             Self::Never => false,
             Self::Warnings | Self::Notes => true,
@@ -656,7 +656,7 @@ impl DenyLevel {
     }
 
     /// Returns `true` if the deny level includes notes.
-    pub fn notes(&self) -> bool {
+    pub const fn notes(&self) -> bool {
         match self {
             Self::Never | Self::Warnings => false,
             Self::Notes => true,
@@ -664,7 +664,7 @@ impl DenyLevel {
     }
 
     /// Returns `true` if the deny level is set to never (only errors).
-    pub fn never(&self) -> bool {
+    pub const fn never(&self) -> bool {
         match self {
             Self::Never => true,
             Self::Warnings | Self::Notes => false,
@@ -1009,7 +1009,7 @@ impl Config {
 
     /// Normalizes optimizer settings.
     /// See <https://github.com/foundry-rs/foundry/issues/9665>
-    pub fn normalized_optimizer_settings(mut self) -> Self {
+    pub const fn normalized_optimizer_settings(mut self) -> Self {
         self.normalize_optimizer_settings();
         self
     }
@@ -1023,7 +1023,7 @@ impl Config {
     /// - with default settings, optimizer is set to false and optimizer runs to 200
     /// - if optimizer is set and optimizer runs not specified, then optimizer runs is set to 200
     /// - enable optimizer if not explicitly set and optimizer runs set to a value greater than 0
-    pub fn normalize_optimizer_settings(&mut self) {
+    pub const fn normalize_optimizer_settings(&mut self) {
         match (self.optimizer, self.optimizer_runs) {
             // Default: set the optimizer to false and optimizer runs to 200.
             (None, None) => {
@@ -1067,6 +1067,7 @@ impl Config {
     /// Cleans up any duplicate `Remapping` and sorts them
     ///
     /// On windows this will convert any `\` in the remapping path into a `/`
+    #[allow(clippy::missing_const_for_fn)]
     pub fn sanitize_remappings(&mut self) {
         #[cfg(target_os = "windows")]
         {
@@ -1336,7 +1337,7 @@ impl Config {
     ///
     /// Returns `false` if `solc_version` is explicitly set, otherwise returns the value of
     /// `auto_detect_solc`
-    pub fn is_auto_detect(&self) -> bool {
+    pub const fn is_auto_detect(&self) -> bool {
         if self.solc.is_some() {
             return false;
         }

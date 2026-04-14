@@ -20,7 +20,7 @@ where
     St: Stream,
     F: Fn(<St as Stream>::Item) -> Fut,
 {
-    pub fn new(on_shutdown: Shutdown, block_stream: St, task_factory: F) -> Self {
+    pub const fn new(on_shutdown: Shutdown, block_stream: St, task_factory: F) -> Self {
         Self { stream: block_stream, task_factory, task: None, on_shutdown }
     }
 }

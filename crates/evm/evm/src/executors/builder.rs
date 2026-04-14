@@ -51,27 +51,27 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
 
     /// Sets the EVM spec to use.
     #[inline]
-    pub fn spec_id(mut self, spec: SpecFor<FEN>) -> Self {
+    pub const fn spec_id(mut self, spec: SpecFor<FEN>) -> Self {
         self.spec = Some(spec);
         self
     }
 
     /// Optionally sets the EVM spec. When `None`, the spec from `EvmEnv::cfg_env` is preserved.
     #[inline]
-    pub fn spec_id_opt(self, spec: Option<SpecFor<FEN>>) -> Self {
+    pub const fn spec_id_opt(self, spec: Option<SpecFor<FEN>>) -> Self {
         if let Some(spec) = spec { self.spec_id(spec) } else { self }
     }
 
     /// Sets the executor gas limit.
     #[inline]
-    pub fn gas_limit(mut self, gas_limit: u64) -> Self {
+    pub const fn gas_limit(mut self, gas_limit: u64) -> Self {
         self.gas_limit = Some(gas_limit);
         self
     }
 
     /// Sets the `legacy_assertions` flag.
     #[inline]
-    pub fn legacy_assertions(mut self, legacy_assertions: bool) -> Self {
+    pub const fn legacy_assertions(mut self, legacy_assertions: bool) -> Self {
         self.legacy_assertions = legacy_assertions;
         self
     }

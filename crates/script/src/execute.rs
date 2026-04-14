@@ -232,8 +232,7 @@ impl RpcData {
     /// Iterates over script transactions and collects RPC urls.
     fn from_transactions<N: Network>(txs: &BroadcastableTransactions<N>) -> Self {
         let missing_rpc = txs.iter().any(|tx| tx.rpc.is_none());
-        let total_rpcs =
-            txs.iter().filter_map(|tx| tx.rpc.as_ref().cloned()).collect::<HashSet<_>>();
+        let total_rpcs = txs.iter().filter_map(|tx| tx.rpc.clone()).collect::<HashSet<_>>();
 
         Self { total_rpcs, missing_rpc }
     }

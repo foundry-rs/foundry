@@ -198,7 +198,7 @@ pub struct TargetedContract {
 
 impl TargetedContract {
     /// Returns a new `TargetedContract` instance.
-    pub fn new(identifier: String, abi: JsonAbi) -> Self {
+    pub const fn new(identifier: String, abi: JsonAbi) -> Self {
         Self {
             identifier,
             abi,
@@ -274,7 +274,7 @@ pub struct InvariantContract<'a> {
 
 impl<'a> InvariantContract<'a> {
     /// Creates a new invariant contract.
-    pub fn new(
+    pub const fn new(
         address: Address,
         invariant_function: &'a Function,
         call_after_invariant: bool,

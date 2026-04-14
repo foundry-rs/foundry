@@ -57,19 +57,19 @@ pub enum WalletSignerError {
 }
 
 impl WalletSignerError {
-    pub fn aws_unsupported() -> Self {
+    pub const fn aws_unsupported() -> Self {
         Self::UnsupportedSigner("AWS KMS")
     }
 
-    pub fn gcp_unsupported() -> Self {
+    pub const fn gcp_unsupported() -> Self {
         Self::UnsupportedSigner("Google Cloud KMS")
     }
 
-    pub fn turnkey_unsupported() -> Self {
+    pub const fn turnkey_unsupported() -> Self {
         Self::UnsupportedSigner("Turnkey")
     }
 
-    pub fn browser_unsupported() -> Self {
+    pub const fn browser_unsupported() -> Self {
         Self::UnsupportedSigner("Browser Wallet")
     }
 }

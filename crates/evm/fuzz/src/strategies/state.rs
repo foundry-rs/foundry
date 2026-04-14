@@ -460,7 +460,7 @@ impl FuzzDictionary {
         }
     }
 
-    pub fn values(&self) -> &B256IndexSet {
+    pub const fn values(&self) -> &B256IndexSet {
         &self.state_values
     }
 
@@ -499,7 +499,7 @@ impl FuzzDictionary {
     }
 
     #[inline]
-    pub fn addresses(&self) -> &AddressIndexSet {
+    pub const fn addresses(&self) -> &AddressIndexSet {
         &self.addresses
     }
 

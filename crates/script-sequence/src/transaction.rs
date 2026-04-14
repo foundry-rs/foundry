@@ -43,15 +43,15 @@ pub struct TransactionWithMetadata<N: Network> {
     pub is_fixed_gas_limit: bool,
 }
 
-fn default_string() -> Option<String> {
+const fn default_string() -> Option<String> {
     Some(String::new())
 }
 
-fn default_address() -> Option<Address> {
+const fn default_address() -> Option<Address> {
     Some(Address::ZERO)
 }
 
-fn default_vec_of_strings() -> Option<Vec<String>> {
+const fn default_vec_of_strings() -> Option<Vec<String>> {
     Some(vec![])
 }
 
@@ -71,11 +71,11 @@ impl<N: Network> TransactionWithMetadata<N> {
         }
     }
 
-    pub fn tx(&self) -> &TransactionMaybeSigned<N> {
+    pub const fn tx(&self) -> &TransactionMaybeSigned<N> {
         &self.transaction
     }
 
-    pub fn tx_mut(&mut self) -> &mut TransactionMaybeSigned<N> {
+    pub const fn tx_mut(&mut self) -> &mut TransactionMaybeSigned<N> {
         &mut self.transaction
     }
 

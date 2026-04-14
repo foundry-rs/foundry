@@ -314,7 +314,7 @@ impl NumberWithBase {
     }
 
     /// Creates a copy of the number with the provided base.
-    pub fn with_base(&self, base: Base) -> Self {
+    pub const fn with_base(&self, base: Base) -> Self {
         Self { number: self.number, is_nonnegative: self.is_nonnegative, base }
     }
 
@@ -336,17 +336,17 @@ impl NumberWithBase {
 
     /// Returns a copy of the underlying number as an unsigned integer. If the value is negative
     /// then the two's complement of its absolute value will be returned.
-    pub fn number(&self) -> U256 {
+    pub const fn number(&self) -> U256 {
         self.number
     }
 
     /// Returns whether the underlying number is positive or zero.
-    pub fn is_nonnegative(&self) -> bool {
+    pub const fn is_nonnegative(&self) -> bool {
         self.is_nonnegative
     }
 
     /// Returns the underlying base. Defaults to [Decimal][Base].
-    pub fn base(&self) -> Base {
+    pub const fn base(&self) -> Base {
         self.base
     }
 
@@ -356,7 +356,7 @@ impl NumberWithBase {
     }
 
     /// Sets the number's base to format to.
-    pub fn set_base(&mut self, base: Base) -> &mut Self {
+    pub const fn set_base(&mut self, base: Base) -> &mut Self {
         self.base = base;
         self
     }

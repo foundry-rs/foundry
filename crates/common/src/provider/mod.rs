@@ -190,19 +190,19 @@ impl<N: Network> ProviderBuilder<N> {
     /// response body has finished.
     ///
     /// Default is no timeout.
-    pub fn timeout(mut self, timeout: Duration) -> Self {
+    pub const fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
     /// Sets the chain of the node the provider will connect to
-    pub fn chain(mut self, chain: NamedChain) -> Self {
+    pub const fn chain(mut self, chain: NamedChain) -> Self {
         self.chain = chain;
         self
     }
 
     /// How often to retry a failed request
-    pub fn max_retry(mut self, max_retry: u32) -> Self {
+    pub const fn max_retry(mut self, max_retry: u32) -> Self {
         self.max_retry = max_retry;
         self
     }
@@ -221,7 +221,7 @@ impl<N: Network> ProviderBuilder<N> {
     }
 
     /// The starting backoff delay to use after the first failed request
-    pub fn initial_backoff(mut self, initial_backoff: u64) -> Self {
+    pub const fn initial_backoff(mut self, initial_backoff: u64) -> Self {
         self.initial_backoff = initial_backoff;
         self
     }
@@ -229,7 +229,7 @@ impl<N: Network> ProviderBuilder<N> {
     /// Sets the number of assumed available compute units per second
     ///
     /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
-    pub fn compute_units_per_second(mut self, compute_units_per_second: u64) -> Self {
+    pub const fn compute_units_per_second(mut self, compute_units_per_second: u64) -> Self {
         self.compute_units_per_second = compute_units_per_second;
         self
     }
@@ -237,7 +237,10 @@ impl<N: Network> ProviderBuilder<N> {
     /// Sets the number of assumed available compute units per second
     ///
     /// See also, <https://docs.alchemy.com/reference/compute-units#what-are-cups-compute-units-per-second>
-    pub fn compute_units_per_second_opt(mut self, compute_units_per_second: Option<u64>) -> Self {
+    pub const fn compute_units_per_second_opt(
+        mut self,
+        compute_units_per_second: Option<u64>,
+    ) -> Self {
         if let Some(cups) = compute_units_per_second {
             self.compute_units_per_second = cups;
         }
@@ -247,7 +250,7 @@ impl<N: Network> ProviderBuilder<N> {
     /// Sets the provider to be local.
     ///
     /// This is useful for local dev nodes.
-    pub fn local(mut self, is_local: bool) -> Self {
+    pub const fn local(mut self, is_local: bool) -> Self {
         self.is_local = is_local;
         self
     }
@@ -255,7 +258,7 @@ impl<N: Network> ProviderBuilder<N> {
     /// Sets aggressive `max_retry` and `initial_backoff` values
     ///
     /// This is only recommend for local dev nodes
-    pub fn aggressive(self) -> Self {
+    pub const fn aggressive(self) -> Self {
         self.max_retry(100).initial_backoff(100).local(true)
     }
 
@@ -279,7 +282,7 @@ impl<N: Network> ProviderBuilder<N> {
     }
 
     /// Sets whether to accept invalid certificates.
-    pub fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
+    pub const fn accept_invalid_certs(mut self, accept_invalid_certs: bool) -> Self {
         self.accept_invalid_certs = accept_invalid_certs;
         self
     }
@@ -288,7 +291,7 @@ impl<N: Network> ProviderBuilder<N> {
     ///
     /// This can help in sandboxed environments (e.g., Cursor IDE sandbox, macOS App Sandbox)
     /// where system proxy detection via SCDynamicStore causes crashes.
-    pub fn no_proxy(mut self, no_proxy: bool) -> Self {
+    pub const fn no_proxy(mut self, no_proxy: bool) -> Self {
         self.no_proxy = no_proxy;
         self
     }
@@ -297,7 +300,7 @@ impl<N: Network> ProviderBuilder<N> {
     ///
     /// When enabled, the provider will print equivalent curl commands to stdout
     /// instead of actually executing the RPC requests.
-    pub fn curl_mode(mut self, curl_mode: bool) -> Self {
+    pub const fn curl_mode(mut self, curl_mode: bool) -> Self {
         self.curl_mode = curl_mode;
         self
     }

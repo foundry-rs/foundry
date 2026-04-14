@@ -66,7 +66,7 @@ pub struct Comment {
 
 impl Comment {
     /// Create new instance of [Comment].
-    pub fn new(tag: CommentTag, value: String) -> Self {
+    pub const fn new(tag: CommentTag, value: String) -> Self {
         Self { tag, value }
     }
 
@@ -90,7 +90,7 @@ impl Comment {
     }
 
     /// Check if this comment is a custom tag.
-    pub fn is_custom(&self) -> bool {
+    pub const fn is_custom(&self) -> bool {
         matches!(self.tag, CommentTag::Custom(_))
     }
 }

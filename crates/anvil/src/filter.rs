@@ -74,7 +74,7 @@ impl<N: Network> Filters<N> {
     }
 
     /// The duration how long to keep alive stale filters
-    pub fn keep_alive(&self) -> Duration {
+    pub const fn keep_alive(&self) -> Duration {
         self.keepalive
     }
 

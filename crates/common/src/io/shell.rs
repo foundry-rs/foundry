@@ -204,7 +204,7 @@ impl Shell {
     }
 
     /// Creates a shell that ignores all output.
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             output: ShellOut::Empty(std::io::empty()),
             output_format: OutputFormat::Text,
@@ -264,22 +264,22 @@ impl Shell {
     }
 
     /// Gets the output format of the shell.
-    pub fn output_format(&self) -> OutputFormat {
+    pub const fn output_format(&self) -> OutputFormat {
         self.output_format
     }
 
     /// Gets the output mode of the shell.
-    pub fn output_mode(&self) -> OutputMode {
+    pub const fn output_mode(&self) -> OutputMode {
         self.output_mode
     }
 
     /// Gets the verbosity of the shell when [`OutputMode::Normal`] is set.
-    pub fn verbosity(&self) -> Verbosity {
+    pub const fn verbosity(&self) -> Verbosity {
         self.verbosity
     }
 
     /// Sets the verbosity level.
-    pub fn set_verbosity(&mut self, verbosity: Verbosity) {
+    pub const fn set_verbosity(&mut self, verbosity: Verbosity) {
         self.verbosity = verbosity;
     }
 
@@ -287,7 +287,7 @@ impl Shell {
     ///
     /// If we are not using a color stream, this will always return `Never`, even if the color
     /// choice has been set to something else.
-    pub fn color_choice(&self) -> ColorChoice {
+    pub const fn color_choice(&self) -> ColorChoice {
         match self.output {
             ShellOut::Stream { color_choice, .. } => color_choice,
             ShellOut::Empty(_) => ColorChoice::Never,
@@ -295,7 +295,7 @@ impl Shell {
     }
 
     /// Returns `true` if stderr is a tty.
-    pub fn is_err_tty(&self) -> bool {
+    pub const fn is_err_tty(&self) -> bool {
         match self.output {
             ShellOut::Stream { stderr_tty, .. } => stderr_tty,
             ShellOut::Empty(_) => false,
@@ -489,7 +489,7 @@ impl ShellOut {
 
 impl ColorChoice {
     /// Converts our color choice to [`anstream`]'s version.
-    fn to_anstream_color_choice(self) -> anstream::ColorChoice {
+    const fn to_anstream_color_choice(self) -> anstream::ColorChoice {
         match self {
             Self::Always => anstream::ColorChoice::Always,
             Self::Never => anstream::ColorChoice::Never,
@@ -498,7 +498,7 @@ impl ColorChoice {
     }
 }
 
-fn supports_color(choice: anstream::ColorChoice) -> bool {
+const fn supports_color(choice: anstream::ColorChoice) -> bool {
     match choice {
         anstream::ColorChoice::Always
         | anstream::ColorChoice::AlwaysAnsi

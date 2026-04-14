@@ -203,7 +203,7 @@ struct InlineLinkTarget<'a> {
 }
 
 impl<'a> InlineLinkTarget<'a> {
-    fn borrowed(section: &'a str, target_path: PathBuf) -> Self {
+    const fn borrowed(section: &'a str, target_path: PathBuf) -> Self {
         Self { section: Cow::Borrowed(section), target_path }
     }
 }
@@ -261,12 +261,8 @@ impl<'a> InlineLink<'a> {
         self.exact_identifier().split('-').next().unwrap()
     }
 
-    fn exact_identifier(&self) -> &str {
-        let mut name = self.identifier;
-        if let Some(part) = self.part {
-            name = part;
-        }
-        name
+    const fn exact_identifier(&self) -> &str {
+        if let Some(part) = self.part { part } else { self.identifier }
     }
 
     /// Returns the content of the matched link.
@@ -275,7 +271,7 @@ impl<'a> InlineLink<'a> {
     }
 
     /// Returns true if the link is external.
-    fn is_external(&self) -> bool {
+    const fn is_external(&self) -> bool {
         self.part.is_some()
     }
 }

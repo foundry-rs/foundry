@@ -595,7 +595,7 @@ impl ScriptArgs {
     }
 
     /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
-    fn should_broadcast(&self) -> bool {
+    const fn should_broadcast(&self) -> bool {
         self.broadcast || self.resume || self.verify
     }
 }
