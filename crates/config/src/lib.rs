@@ -790,6 +790,18 @@ impl Config {
         Self::from_figment(Figment::from(provider))
     }
 
+    /// Applies an inline provider on top of the current config without reloading external
+    /// providers such as `foundry.toml`, env vars, or remappings.
+    pub fn merge_inline_provider<T: Provider>(&self, provider: T) -> Result<Self, Error> {
+        let mut config =
+            self.to_figment(FigmentProviders::None).merge(provider).extract::<Self>()?;
+        config.profile = self.profile.clone();
+        config.profiles = self.profiles.clone();
+        config.normalize_hardfork_settings()?;
+
+        Ok(config)
+    }
+
     #[doc(hidden)]
     #[deprecated(note = "use `Config::from_provider` instead")]
     pub fn try_from<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
@@ -842,12 +854,12 @@ impl Config {
         }
 
         config.normalize_optimizer_settings();
-        config.normalize_hardfork_settings()?;
+        config.normalize_hardfork_settings().map_err(ExtractConfigError::new)?;
 
         Ok(config)
     }
 
-    fn normalize_hardfork_settings(&mut self) -> Result<(), ExtractConfigError> {
+    fn normalize_hardfork_settings(&mut self) -> Result<(), Error> {
         let Some(hardfork) = self.hardfork else { return Ok(()) };
 
         let (name, network) = match hardfork {
@@ -867,10 +879,10 @@ impl Config {
             .filter(|&configured| Some(configured) != name);
 
         if let Some(configured) = conflict {
-            return Err(ExtractConfigError::new(Error::from(format!(
+            return Err(Error::from(format!(
                 "hardfork `{}` conflicts with configured network `{configured}`",
                 String::from(hardfork),
-            ))));
+            )));
         }
 
         if let Some(network) = network {
