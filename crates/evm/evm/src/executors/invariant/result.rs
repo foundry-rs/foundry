@@ -5,9 +5,7 @@ use super::{
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_primitives::I256;
-use alloy_sol_types::{
-    ContractError, ContractError::Revert, Panic, PanicKind, RevertReason, SolError,
-};
+use alloy_sol_types::{Panic, PanicKind, Revert, SolError, SolInterface};
 use eyre::Result;
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
@@ -87,15 +85,12 @@ fn is_assert_panic(data: &[u8]) -> bool {
 }
 
 fn is_revert_assertion_failure(data: &[u8]) -> bool {
-    matches!(
-        RevertReason::decode(data),
-        Some(ContractError(Revert(revert))) if revert.reason.starts_with(ASSERTION_FAILED_PREFIX)
-    )
+    Revert::abi_decode(data).is_ok_and(|revert| revert.reason.starts_with(ASSERTION_FAILED_PREFIX))
 }
 
 fn is_cheatcode_assert_revert<FEN: FoundryEvmNetwork>(call_result: &RawCallResult<FEN>) -> bool {
     fn decoded_cheatcode_message(data: &[u8]) -> Option<String> {
-        ContractError::<Vm::VmErrors>::abi_decode(data).ok().map(|error| error.to_string())
+        Vm::VmErrors::abi_decode(data).ok().map(|error| error.to_string())
     }
 
     call_result.reverter == Some(CHEATCODE_ADDRESS)
@@ -312,7 +307,6 @@ pub(crate) fn assert_after_invariant<FEN: FoundryEvmNetwork>(
 mod tests {
     use super::*;
     use alloy_primitives::Bytes;
-    use alloy_sol_types::{Revert, SolError};
     use foundry_evm_core::evm::EthEvmNetwork;
 
     fn panic_payload(code: u8) -> Bytes {
