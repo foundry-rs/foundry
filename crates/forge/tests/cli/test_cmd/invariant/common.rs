@@ -1978,7 +1978,9 @@ contract InvariantReplayKeepsInvariantAssertion is Test {
     );
 
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
-...
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
 Ran 1 test for test/InvariantReplayKeepsInvariantAssertion.t.sol:InvariantReplayKeepsInvariantAssertion
 [FAIL: wrong counter assert]
 	[Sequence] (original: 2, shrunk: 2)
@@ -2050,7 +2052,9 @@ contract InvariantReplayKeepsAfterInvariantAssertion is Test {
     );
 
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
-...
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
 Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantReplayKeepsAfterInvariantAssertion
 [FAIL: afterInvariant assertion]
 	[SEQUENCE]
