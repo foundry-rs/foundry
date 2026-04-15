@@ -2777,10 +2777,13 @@ impl BasicConfig {
     ///
     /// This serializes to a table with the name of the profile
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        let mut s = toml::to_string_pretty(self)?;
-        if let Some(ref network) = self.network {
-            s.push_str(&format!("{network} = true\n"));
+        let mut value = toml::Value::try_from(self)?;
+        if let Some(ref network) = self.network
+            && let toml::Value::Table(ref mut table) = value
+        {
+            table.insert(network.clone(), toml::Value::Boolean(true));
         }
+        let s = toml::to_string_pretty(&value)?;
         Ok(format!(
             "\
 [profile.{}]
