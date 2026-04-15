@@ -343,7 +343,15 @@ struct JsonCallScope {
 #[serde(untagged)]
 enum JsonSelectorEntry {
     Name(String),
-    WithRecipients { selector: String, recipients: Vec<Address> },
+    WithRecipients(JsonSelectorWithRecipients),
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonSelectorWithRecipients {
+    selector: String,
+    #[serde(default)]
+    recipients: Vec<Address>,
 }
 
 /// Parse `--scopes` JSON flag value.
@@ -360,9 +368,7 @@ fn parse_scopes_json(s: &str) -> Result<Vec<CallScope>, String> {
                 for sel_entry in sels {
                     let (selector_str, recipients) = match sel_entry {
                         JsonSelectorEntry::Name(name) => (name, vec![]),
-                        JsonSelectorEntry::WithRecipients { selector, recipients } => {
-                            (selector, recipients)
-                        }
+                        JsonSelectorEntry::WithRecipients(r) => (r.selector, r.recipients),
                     };
                     let selector = parse_selector_bytes(&selector_str)
                         .map_err(|e| format!("in --scopes JSON: {e}"))?;
@@ -851,4 +857,134 @@ fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
         "has_authorization": entry.key_authorization.is_some(),
         "limits": limits,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_parse_selector_bytes_named() {
+        let sel = parse_selector_bytes("transfer").unwrap();
+        assert_eq!(sel, keccak256(b"transfer(address,uint256)")[..4]);
+
+        let sel = parse_selector_bytes("approve").unwrap();
+        assert_eq!(sel, keccak256(b"approve(address,uint256)")[..4]);
+
+        let sel = parse_selector_bytes("transferWithMemo").unwrap();
+        assert_eq!(sel, keccak256(b"transferWithMemo(address,uint256,bytes32)")[..4]);
+    }
+
+    #[test]
+    fn test_parse_selector_bytes_hex() {
+        let sel = parse_selector_bytes("0xaabbccdd").unwrap();
+        assert_eq!(sel, [0xaa, 0xbb, 0xcc, 0xdd]);
+
+        let sel = parse_selector_bytes("0xd09de08a").unwrap();
+        assert_eq!(sel, [0xd0, 0x9d, 0xe0, 0x8a]);
+    }
+
+    #[test]
+    fn test_parse_selector_bytes_hex_invalid() {
+        assert!(parse_selector_bytes("0xaabb").is_err());
+        assert!(parse_selector_bytes("0xaabbccddee").is_err());
+        assert!(parse_selector_bytes("0xzzzzzzzz").is_err());
+    }
+
+    #[test]
+    fn test_parse_selector_bytes_full_signature() {
+        let sel = parse_selector_bytes("increment()").unwrap();
+        assert_eq!(sel, keccak256(b"increment()")[..4]);
+    }
+
+    #[test]
+    fn test_parse_selector_rules_simple() {
+        let rules = parse_selector_rules("transfer,approve").unwrap();
+        assert_eq!(rules.len(), 2);
+        assert!(rules[0].recipients.is_empty());
+        assert!(rules[1].recipients.is_empty());
+    }
+
+    #[test]
+    fn test_parse_selector_rules_with_recipient() {
+        let rules =
+            parse_selector_rules("transfer@0x1111111111111111111111111111111111111111").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].recipients.len(), 1);
+        assert_eq!(
+            rules[0].recipients[0],
+            Address::from_str("0x1111111111111111111111111111111111111111").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_parse_selector_rules_hex_with_recipient() {
+        let rules =
+            parse_selector_rules("0xaabbccdd@0x1111111111111111111111111111111111111111").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
+        assert_eq!(rules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_scope_target_only() {
+        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap();
+        assert_eq!(
+            scope.target,
+            Address::from_str("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap()
+        );
+        assert!(scope.selectorRules.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scope_with_selectors() {
+        let scope =
+            parse_scope("0x20c0000000000000000000000000000000000001:transfer,approve").unwrap();
+        assert_eq!(scope.selectorRules.len(), 2);
+        assert!(scope.selectorRules[0].recipients.is_empty());
+        assert!(scope.selectorRules[1].recipients.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scope_hex_selector() {
+        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xaabbccdd").unwrap();
+        assert_eq!(scope.selectorRules.len(), 1);
+        assert_eq!(scope.selectorRules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
+        assert!(scope.selectorRules[0].recipients.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scope_selector_with_recipient() {
+        let scope = parse_scope(
+            "0x20c0000000000000000000000000000000000001:transfer@0x1111111111111111111111111111111111111111",
+        )
+        .unwrap();
+        assert_eq!(scope.selectorRules.len(), 1);
+        assert_eq!(scope.selectorRules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_scopes_json_plain() {
+        let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":["transfer","approve"]},{"target":"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D"}]"#;
+        let result = parse_scopes_json(json).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].selectorRules.len(), 2);
+        assert!(result[1].selectorRules.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scopes_json_with_recipients() {
+        let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":[{"selector":"transfer","recipients":["0x1111111111111111111111111111111111111111"]}]}]"#;
+        let result = parse_scopes_json(json).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].selectorRules.len(), 1);
+        assert_eq!(result[0].selectorRules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_scopes_json_deny_unknown_fields() {
+        let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":[{"selector":"transfer","recipients":[],"bogus":true}]}]"#;
+        assert!(parse_scopes_json(json).is_err());
+    }
 }
