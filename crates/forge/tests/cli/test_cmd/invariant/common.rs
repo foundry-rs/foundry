@@ -1970,7 +1970,7 @@ contract InvariantReplayKeepsInvariantAssertion is Test {
         counter = new Counter();
     }
 
-    function invariant_with_assert() public {
+    function invariant_with_assert() public view {
         assertTrue(counter.number() < 2, "wrong counter assert");
     }
 }
@@ -1980,10 +1980,10 @@ contract InvariantReplayKeepsInvariantAssertion is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
 Ran 1 test for test/InvariantReplayKeepsInvariantAssertion.t.sol:InvariantReplayKeepsInvariantAssertion
 [FAIL: wrong counter assert]
-	[Sequence] (original: 2, shrunk: 2)
 ...
  invariant_with_assert() ([..])
 ...
@@ -2012,11 +2012,6 @@ forgetest_init!(invariant_replay_keeps_assertion_failure_from_after_invariant, |
         r#"
 import "forge-std/Test.sol";
 
-struct FuzzSelector {
-    address addr;
-    bytes4[] selectors;
-}
-
 contract AfterInvariantAssertHandler {
     uint256 public count;
 
@@ -2030,14 +2025,7 @@ contract InvariantReplayKeepsAfterInvariantAssertion is Test {
 
     function setUp() public {
         handler = new AfterInvariantAssertHandler();
-    }
-
-    function targetSelectors() public view returns (FuzzSelector[] memory) {
-        FuzzSelector[] memory targets = new FuzzSelector[](1);
-        bytes4[] memory selectors = new bytes4[](1);
-        selectors[0] = handler.inc.selector;
-        targets[0] = FuzzSelector(address(handler), selectors);
-        return targets;
+        targetContract(address(handler));
     }
 
     function afterInvariant() public view {
@@ -2051,9 +2039,10 @@ contract InvariantReplayKeepsAfterInvariantAssertion is Test {
 "#,
     );
 
-    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
 Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantReplayKeepsAfterInvariantAssertion
 [FAIL: afterInvariant assertion]
@@ -2062,10 +2051,9 @@ Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantR
 ...
 "#]]);
 
-    cmd.assert_failure().stdout_eq(str![[r#"
-...
-Replayed invariant failure from [..] file.
-...
+    assert_invariant(&mut cmd).failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
 Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantReplayKeepsAfterInvariantAssertion
 [FAIL: afterInvariant assertion]
 	[SEQUENCE]
