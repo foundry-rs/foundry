@@ -617,7 +617,8 @@ impl SessionProvider {
                 if entry.cumulative_amount + amount > deposit {
                     Some(Err((entry.clone(), deposit)))
                 } else {
-                    entry.cumulative_amount += amount;
+                    // Clone without incrementing — only commit after
+                    // create_voucher_payload succeeds.
                     Some(Ok(entry.clone()))
                 }
             } else {
@@ -660,24 +661,34 @@ impl SessionProvider {
                     return Ok(build_credential(challenge, payload, chain_id, payer));
                 }
                 Ok(entry) => {
-                    let old_cumulative = entry.cumulative_amount - amount;
+                    let old_cumulative = entry.cumulative_amount;
+                    let new_cumulative = old_cumulative + amount;
                     let payload = create_voucher_payload(
                         &self.signer,
                         entry.channel_id,
-                        entry.cumulative_amount,
+                        new_cumulative,
                         escrow_contract,
                         chain_id,
                     )
                     .await?;
 
+                    // Payload succeeded — now commit the cumulative increment.
+                    {
+                        let mut channels = self.channels.lock().unwrap();
+                        if let Some(e) = channels.get_mut(&key) {
+                            e.cumulative_amount = new_cumulative;
+                        }
+                    }
+
                     // Update in-memory persisted state but never write to disk
                     // here — flush_pending() handles persistence after server
                     // confirms acceptance.
+                    let updated_entry = ChannelEntry { cumulative_amount: new_cumulative, ..entry };
                     let mut persisted = self.persisted.lock().unwrap();
                     persist::upsert_channel_in_memory(
                         &mut persisted,
                         &key,
-                        &entry,
+                        &updated_entry,
                         0,
                         &self.origin,
                     );

@@ -178,9 +178,9 @@ pub struct MppHttpTransport<P> {
 impl MppHttpTransport<LazySessionProvider> {
     /// Create a new lazy MPP transport that discovers keys on first 402.
     ///
-    /// Builds a separate reqwest client with a longer timeout (120s) for MPP
-    /// requests, since channel open/topUp involves on-chain transaction
-    /// settlement which can take much longer than normal RPC calls.
+    /// Uses the provided `client` for all requests. Per-request timeouts are
+    /// extended on retry requests that involve on-chain settlement (channel
+    /// open/topUp).
     pub fn lazy(client: reqwest::Client, url: Url) -> Self {
         let origin = url.to_string();
         Self { client, url, provider: LazySessionProvider::new(origin) }
@@ -372,10 +372,18 @@ where
             let retry_body = retry_resp.bytes().await.map_err(TransportErrorKind::custom)?;
             let retry_text = String::from_utf8_lossy(&retry_body);
 
+            // Parse RFC 9457 Problem Details if present. The `type` URI is the
+            // structured error code; the `detail` string provides context.
+            let problem: Option<mpp::error::PaymentErrorDetails> =
+                serde_json::from_slice(&retry_body).ok();
+            let problem_type = problem.as_ref().map(|p| p.problem_type.as_str()).unwrap_or("");
+            let detail = problem.as_ref().map(|p| p.detail.as_str()).unwrap_or("");
+
             // Stale voucher: another provider instance (or a previous process)
             // already used a higher cumulative_amount. Re-pay with a fresh
             // voucher whose amount will be strictly greater.
-            let is_stale_voucher = retry_text.contains("cumulativeAmount must be strictly greater");
+            let is_stale_voucher = problem_type.ends_with("/stale-voucher")
+                || detail.contains("cumulativeAmount must be strictly greater");
             if is_stale_voucher {
                 debug!("MPP voucher stale, retrying with fresh voucher");
                 let resolved = self.provider.resolve()?;
@@ -420,8 +428,9 @@ where
             // the access key is not provisioned on-chain. Unconditionally
             // retrying caused "access key already exists" when the 402 was for
             // a different reason (e.g. wrong currency, insufficient balance).
-            let needs_key_provisioning = retry_text.contains("access key does not exist")
-                || retry_text.contains("key is not provisioned");
+            let needs_key_provisioning = problem_type.ends_with("/key-not-provisioned")
+                || detail.contains("access key does not exist")
+                || detail.contains("key is not provisioned");
 
             if needs_key_provisioning {
                 self.provider.set_key_provisioned(false);
@@ -472,8 +481,9 @@ where
             // Retry with key_authorization when verification failed and key appears
             // provisioned — handles first-time provisioning where key_auth was stripped
             // but the key was not yet provisioned on-chain.
-            let needs_verification_retry =
-                retry_text.contains("verification-failed") && self.provider.is_key_provisioned();
+            let needs_verification_retry = (problem_type.ends_with("/verification-failed")
+                || retry_text.contains("verification-failed"))
+                && self.provider.is_key_provisioned();
 
             if needs_verification_retry {
                 self.provider.set_key_provisioned(false);
