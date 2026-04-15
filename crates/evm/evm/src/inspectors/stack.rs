@@ -845,7 +845,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let (result, address, output) = match res.result {
             ExecutionResult::Success { reason, gas: result_gas, logs: _, output } => {
                 gas.set_refund(result_gas.final_refunded() as i64);
-                let _ = gas.record_cost(result_gas.used());
+                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
                 let address = match output {
                     Output::Create(_, address) => address,
                     Output::Call(_) => None,
@@ -853,11 +853,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 (reason.into(), address, output.into_data())
             }
             ExecutionResult::Halt { reason, gas: result_gas, .. } => {
-                let _ = gas.record_cost(result_gas.used());
+                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
                 (InstructionResult::from(reason), None, Bytes::new())
             }
             ExecutionResult::Revert { gas: result_gas, output, .. } => {
-                let _ = gas.record_cost(result_gas.used());
+                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
                 (InstructionResult::Revert, None, output)
             }
         };
@@ -1059,7 +1059,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                     .or_else(|| input_bytes.get(..4).and_then(|selector| mocks.get(selector)))
                 {
                     call.bytecode_address = *target;
-                    call.known_bytecode = None;
+
+                    let target = ecx
+                        .journal_mut()
+                        .load_account_with_code(*target)
+                        .expect("failed to load account");
+                    call.known_bytecode =
+                        (target.info.code_hash, target.info.code.clone().unwrap_or_default());
                 }
             }
 

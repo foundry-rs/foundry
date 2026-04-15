@@ -114,6 +114,7 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
             EVMError::Header(invalid_header) => EVMError::Header(invalid_header),
             EVMError::Database(db_error) => EVMError::Database(db_error),
             EVMError::Custom(custom_error) => EVMError::Custom(custom_error),
+            EVMError::CustomAny(custom_any_error) => EVMError::CustomAny(custom_any_error),
         })?;
 
         Ok(ResultAndState::new(result, self.inner.ctx_ref().journaled_state.inner.state.clone()))
@@ -172,6 +173,7 @@ fn map_op_error(e: EVMError<DatabaseError, OpTransactionError>) -> EVMError<Data
         EVMError::Header(h) => EVMError::Header(h),
         EVMError::Custom(s) => EVMError::Custom(s),
         EVMError::Transaction(t) => EVMError::Custom(format!("op transaction error: {t}")),
+        EVMError::CustomAny(custom_any_error) => EVMError::CustomAny(custom_any_error),
     }
 }
 
@@ -355,9 +357,13 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
                         let (ctx, inspector) = evm.ctx_inspector();
                         if inspector.should_use_create2_factory(ctx.journal().depth(), inputs) {
                             let gas_limit = inputs.gas_limit();
-                            let create2_deployer = evm.inspector().create2_deployer();
-                            let call_inputs =
-                                get_create2_factory_call_inputs(salt, inputs, create2_deployer);
+                            let create2_deployer = inspector.create2_deployer();
+                            let call_inputs = get_create2_factory_call_inputs(
+                                salt,
+                                inputs,
+                                create2_deployer,
+                                ctx.journal_mut(),
+                            )?;
 
                             self.create2_overrides
                                 .push((evm.ctx_ref().journal().depth(), call_inputs.clone()));

@@ -239,7 +239,12 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
                 let create2_deployer = evm.inspector().create2_deployer();
 
                 // Generate call inputs for CREATE2 factory.
-                let call_inputs = get_create2_factory_call_inputs(salt, inputs, create2_deployer);
+                let call_inputs = get_create2_factory_call_inputs(
+                    salt,
+                    inputs,
+                    create2_deployer,
+                    evm.journal_mut(),
+                )?;
 
                 // Push data about current override to the stack.
                 self.create2_overrides.push((evm.journal().depth(), call_inputs.clone()));

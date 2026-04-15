@@ -1110,13 +1110,13 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
 ) -> eyre::Result<RawCallResult<FEN>> {
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
         ExecutionResult::Success { reason, gas, output, logs } => {
-            (reason.into(), gas.final_refunded(), gas.used(), Some(output), logs)
+            (reason.into(), gas.final_refunded(), gas.tx_gas_used(), Some(output), logs)
         }
         ExecutionResult::Revert { gas, output, logs } => {
-            (InstructionResult::Revert, 0_u64, gas.used(), Some(Output::Call(output)), logs)
+            (InstructionResult::Revert, 0_u64, gas.tx_gas_used(), Some(Output::Call(output)), logs)
         }
         ExecutionResult::Halt { reason, gas, logs } => {
-            (reason.into_instruction_result(), 0_u64, gas.used(), None, logs)
+            (reason.into_instruction_result(), 0_u64, gas.tx_gas_used(), None, logs)
         }
     };
     let gas = revm::interpreter::gas::calculate_initial_tx_gas_for_tx(
@@ -1156,7 +1156,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         result,
         gas_used,
         gas_refunded,
-        stipend: gas.initial_gas,
+        stipend: gas.initial_total_gas,
         logs,
         labels,
         traces,
