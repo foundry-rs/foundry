@@ -14,6 +14,7 @@ use alloy_evm::precompiles::PrecompilesMap;
 use alloy_op_hardforks::{OpChainHardforks, OpHardforks};
 use alloy_primitives::{Address, map::AddressHashMap};
 use clap::Parser;
+use foundry_evm_hardforks::FoundryHardfork;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -92,6 +93,19 @@ impl NetworkConfigs {
         self.celo
     }
 
+    /// Returns the name of the currently active non-Ethereum network, or `None` for plain Ethereum.
+    pub const fn active_network_name(&self) -> Option<&'static str> {
+        if self.tempo {
+            Some("tempo")
+        } else if self.optimism {
+            Some("optimism")
+        } else if self.celo {
+            Some("celo")
+        } else {
+            None
+        }
+    }
+
     pub fn with_chain_id(mut self, chain_id: u64) -> Self {
         // Only infer network if no explicit network is already set
         if !self.celo && !self.tempo && !self.optimism {
@@ -105,6 +119,29 @@ impl NetworkConfigs {
             }
         }
         self
+    }
+
+    /// Validates `hardfork` against the current `NetworkConfigs` and, if consistent, returns an
+    /// updated instance with the network implied by the enabled hardfork.
+    ///
+    /// Returns `Err` when the hardfork's network family conflicts with the configured one.
+    pub fn normalize_for_hardfork(self, hardfork: FoundryHardfork) -> Result<Self, String> {
+        if let Some(configured) =
+            self.active_network_name().filter(|&n| Some(n) != hardfork.namespace())
+        {
+            return Err(format!(
+                "hardfork `{}` conflicts with network config `{configured}`",
+                String::from(hardfork),
+            ));
+        }
+
+        let network = match hardfork {
+            FoundryHardfork::Ethereum(_) => self,
+            FoundryHardfork::Tempo(_) => Self::with_tempo(),
+            FoundryHardfork::Optimism(_) => Self::with_optimism(),
+        };
+
+        Ok(network)
     }
 
     /// Inject precompiles for configured networks.

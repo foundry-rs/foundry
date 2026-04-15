@@ -113,5 +113,4 @@ allow-git = [
     "https://github.com/tempoxyz/mpp-rs",
     # Transitive dependency of Tempo
     "https://github.com/paradigmxyz/reth",
-    "https://github.com/stevencartavia/reth",
 ]

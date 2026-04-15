@@ -85,6 +85,10 @@ impl FoundryEvmFactory for TempoEvmFactory {
     {
         Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_nested_evm())
     }
+
+    fn tx_gas_limit_cap(spec: &TempoHardfork) -> Option<u64> {
+        spec.tx_gas_limit_cap()
+    }
 }
 
 impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>> Evm

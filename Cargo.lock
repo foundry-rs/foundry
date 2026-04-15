@@ -5382,6 +5382,7 @@ dependencies = [
  "alloy-op-hardforks",
  "alloy-primitives",
  "clap",
+ "foundry-evm-hardforks",
  "revm",
  "serde",
 ]
