@@ -9,7 +9,6 @@
 use crate::inspectors::{
     Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
 };
-use sancov::SancovGuard;
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
@@ -43,6 +42,7 @@ use revm::{
     database::{DatabaseCommit, DatabaseRef},
     interpreter::{InstructionResult, return_ok},
 };
+use sancov::SancovGuard;
 use std::{
     borrow::Cow,
     sync::{
@@ -548,8 +548,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let sancov_active = sancov_edges || sancov_trace_cmp;
         let mut backend = CowBackend::new_borrowed(self.backend());
         let result = {
-            let _guard =
-                sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+            let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
             backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?
         };
         let mut result = convert_executed_result(
@@ -581,8 +580,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         let sancov_active = sancov_edges || sancov_trace_cmp;
         let backend = self.backend_mut();
         let result = {
-            let _guard =
-                sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+            let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
             backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?
         };
         let mut result = convert_executed_result(

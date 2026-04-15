@@ -372,8 +372,8 @@ impl WorkerCorpus {
                 for tx in &tx_seq {
                     if Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                         let mut call_result = execute_tx(&mut executor, tx)?;
-                        let (new_coverage, is_edge) =
-                            call_result.merge_all_coverage(&mut history_map, &mut sancov_history_map);
+                        let (new_coverage, is_edge) = call_result
+                            .merge_all_coverage(&mut history_map, &mut sancov_history_map);
                         if new_coverage {
                             metrics.update_seen(is_edge);
                         }
@@ -895,8 +895,8 @@ impl WorkerCorpus {
                 let mut call_result = execute_tx(&mut executor, tx)?;
 
                 // Check if this provides new coverage.
-                let (new_coverage, is_edge) =
-                    call_result.merge_all_coverage(&mut self.history_map, &mut self.sancov_history_map);
+                let (new_coverage, is_edge) = call_result
+                    .merge_all_coverage(&mut self.history_map, &mut self.sancov_history_map);
 
                 if new_coverage {
                     self.metrics.update_seen(is_edge);
