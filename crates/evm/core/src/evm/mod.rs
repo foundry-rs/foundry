@@ -184,11 +184,11 @@ pub trait FoundryEvmFactory:
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> Box<dyn NestedEvm<Spec = Self::Spec, Block = Self::BlockEnv, Tx = Self::Tx> + 'db>;
 
-    /// Returns the per-tx gas limit cap to enforce during `executeTransaction`.
+    /// Returns the canonical per-tx gas limit cap for the given spec, if any.
     ///
-    /// Returns `None` for networks with no extra cap (default).
+    /// Returns `None` for networks with no explicit cap (default).
     /// Networks with tx gas caps must override so `executeTransaction` mirrors production checks.
-    fn execute_tx_gas_limit_cap(_spec: &Self::Spec) -> Option<u64> {
+    fn tx_gas_limit_cap(_spec: &Self::Spec) -> Option<u64> {
         None
     }
 }

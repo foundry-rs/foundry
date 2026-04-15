@@ -1134,8 +1134,8 @@ impl Cheatcode for executeTransactionCall {
         ccx.ecx.cfg_mut().limit_contract_initcode_size =
             Some(revm::primitives::eip3860::MAX_INITCODE_SIZE);
 
-        // Enforce any network-specific per-tx gas limit cap for realistic simulation.
-        if let Some(cap) = <EvmFactoryFor<FEN>>::execute_tx_gas_limit_cap(ccx.ecx.cfg().spec()) {
+        // Enforce the canonical per-tx gas limit cap, if any, for realistic simulation.
+        if let Some(cap) = <EvmFactoryFor<FEN>>::tx_gas_limit_cap(ccx.ecx.cfg().spec()) {
             ccx.ecx.cfg_mut().tx_gas_limit_cap = Some(cap);
         }
 

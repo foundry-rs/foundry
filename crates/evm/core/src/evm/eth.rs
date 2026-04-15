@@ -138,6 +138,10 @@ impl FoundryEvmFactory for EthEvmFactory {
     ) -> Box<dyn NestedEvm<Spec = SpecId, Block = BlockEnv, Tx = TxEnv> + 'db> {
         Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_nested_evm())
     }
+
+    fn tx_gas_limit_cap(spec: &SpecId) -> Option<u64> {
+        spec.is_enabled_in(SpecId::OSAKA).then_some(revm::primitives::eip7825::TX_GAS_LIMIT_CAP)
+    }
 }
 
 impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>> NestedEvm
