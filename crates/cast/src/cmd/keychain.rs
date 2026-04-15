@@ -17,13 +17,15 @@ use foundry_common::{
     shell,
     tempo::{self, KeyType, KeysFile, WalletType, read_tempo_keys_file, tempo_keys_path},
 };
+use foundry_evm::hardfork::TempoHardfork;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, IAccountKeychain,
     IAccountKeychain::{
-        CallScope, KeyInfo, KeyRestrictions, SelectorRule, SignatureType, TokenLimit,
+        CallScope, KeyInfo, KeyRestrictions, LegacyTokenLimit, SelectorRule, SignatureType,
+        TokenLimit,
     },
-    account_keychain::authorizeKeyCall,
+    account_keychain::{authorizeKeyCall, legacyAuthorizeKeyCall},
 };
 use yansi::Paint;
 
@@ -341,7 +343,15 @@ struct JsonCallScope {
 #[serde(untagged)]
 enum JsonSelectorEntry {
     Name(String),
-    WithRecipients { selector: String, recipients: Vec<Address> },
+    WithRecipients(JsonSelectorWithRecipients),
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonSelectorWithRecipients {
+    selector: String,
+    #[serde(default)]
+    recipients: Vec<Address>,
 }
 
 /// Parse `--scopes` JSON flag value.
@@ -358,9 +368,7 @@ fn parse_scopes_json(s: &str) -> Result<Vec<CallScope>, String> {
                 for sel_entry in sels {
                     let (selector_str, recipients) = match sel_entry {
                         JsonSelectorEntry::Name(name) => (name, vec![]),
-                        JsonSelectorEntry::WithRecipients { selector, recipients } => {
-                            (selector, recipients)
-                        }
+                        JsonSelectorEntry::WithRecipients(r) => (r.selector, r.recipients),
                     };
                     let selector = parse_selector_bytes(&selector_str)
                         .map_err(|e| format!("in --scopes JSON: {e}"))?;
@@ -571,18 +579,35 @@ async fn run_authorize(
 ) -> Result<()> {
     let enforce = enforce_limits || !limits.is_empty();
 
-    // Always use the T3 authorizeKey(address,SignatureType,KeyRestrictions) format.
-    // The legacy authorizeKey selector is rejected after T3 activation.
-    let restrictions = KeyRestrictions {
-        expiry,
-        enforceLimits: enforce,
-        limits,
-        allowAnyCalls: allowed_calls.is_empty(),
-        allowedCalls: allowed_calls,
-    };
-    let calldata =
+    let config = send_tx.eth.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+
+    let calldata = if is_hardfork_active(&provider, TempoHardfork::T3).await {
+        // T3+ authorizeKey(address,SignatureType,KeyRestrictions)
+        let restrictions = KeyRestrictions {
+            expiry,
+            enforceLimits: enforce,
+            limits,
+            allowAnyCalls: allowed_calls.is_empty(),
+            allowedCalls: allowed_calls,
+        };
         authorizeKeyCall { keyId: key_address, signatureType: key_type, config: restrictions }
-            .abi_encode();
+            .abi_encode()
+    } else {
+        // Legacy (pre-T3) authorizeKey(address,SignatureType,uint64,bool,LegacyTokenLimit[])
+        let legacy_limits: Vec<LegacyTokenLimit> = limits
+            .into_iter()
+            .map(|l| LegacyTokenLimit { token: l.token, amount: l.amount })
+            .collect();
+        legacyAuthorizeKeyCall {
+            keyId: key_address,
+            signatureType: key_type,
+            expiry,
+            enforceLimits: enforce,
+            limits: legacy_limits,
+        }
+        .abi_encode()
+    };
 
     send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
@@ -607,8 +632,16 @@ async fn run_remaining_limit(
     let config = rpc.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
-    let remaining: U256 =
-        provider.get_keychain_remaining_limit(wallet_address, key_address, token).await?;
+    let remaining: U256 = if is_hardfork_active(&provider, TempoHardfork::T3).await {
+        provider.get_keychain_remaining_limit(wallet_address, key_address, token).await?
+    } else {
+        // Pre-T3: use the legacy getRemainingLimit(address,address,address)
+        provider
+            .account_keychain()
+            .getRemainingLimit(wallet_address, key_address, token)
+            .call()
+            .await?
+    };
 
     if shell::is_json() {
         sh_println!("{}", serde_json::to_string(&remaining.to_string())?)?;
@@ -658,6 +691,22 @@ async fn run_remove_scope(
     let calldata =
         IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
     send_keychain_tx(calldata, tx_opts, &send_tx).await
+}
+
+/// Returns `true` when the connected Tempo chain has the given hardfork active.
+async fn is_hardfork_active<P: Provider<TempoNetwork>>(
+    provider: &P,
+    hardfork: TempoHardfork,
+) -> bool {
+    let Ok(chain_id) = provider.get_chain_id().await else { return true };
+    let block_ts = provider
+        .get_block(Default::default())
+        .await
+        .ok()
+        .flatten()
+        .map(|b| b.header.inner.inner.inner.timestamp)
+        .unwrap_or(0);
+    TempoHardfork::from_chain_and_timestamp(chain_id, block_ts).is_none_or(|h| h >= hardfork)
 }
 
 /// Shared helper to send a keychain precompile transaction.
@@ -808,4 +857,134 @@ fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
         "has_authorization": entry.key_authorization.is_some(),
         "limits": limits,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_parse_selector_bytes_named() {
+        let sel = parse_selector_bytes("transfer").unwrap();
+        assert_eq!(sel, keccak256(b"transfer(address,uint256)")[..4]);
+
+        let sel = parse_selector_bytes("approve").unwrap();
+        assert_eq!(sel, keccak256(b"approve(address,uint256)")[..4]);
+
+        let sel = parse_selector_bytes("transferWithMemo").unwrap();
+        assert_eq!(sel, keccak256(b"transferWithMemo(address,uint256,bytes32)")[..4]);
+    }
+
+    #[test]
+    fn test_parse_selector_bytes_hex() {
+        let sel = parse_selector_bytes("0xaabbccdd").unwrap();
+        assert_eq!(sel, [0xaa, 0xbb, 0xcc, 0xdd]);
+
+        let sel = parse_selector_bytes("0xd09de08a").unwrap();
+        assert_eq!(sel, [0xd0, 0x9d, 0xe0, 0x8a]);
+    }
+
+    #[test]
+    fn test_parse_selector_bytes_hex_invalid() {
+        assert!(parse_selector_bytes("0xaabb").is_err());
+        assert!(parse_selector_bytes("0xaabbccddee").is_err());
+        assert!(parse_selector_bytes("0xzzzzzzzz").is_err());
+    }
+
+    #[test]
+    fn test_parse_selector_bytes_full_signature() {
+        let sel = parse_selector_bytes("increment()").unwrap();
+        assert_eq!(sel, keccak256(b"increment()")[..4]);
+    }
+
+    #[test]
+    fn test_parse_selector_rules_simple() {
+        let rules = parse_selector_rules("transfer,approve").unwrap();
+        assert_eq!(rules.len(), 2);
+        assert!(rules[0].recipients.is_empty());
+        assert!(rules[1].recipients.is_empty());
+    }
+
+    #[test]
+    fn test_parse_selector_rules_with_recipient() {
+        let rules =
+            parse_selector_rules("transfer@0x1111111111111111111111111111111111111111").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].recipients.len(), 1);
+        assert_eq!(
+            rules[0].recipients[0],
+            Address::from_str("0x1111111111111111111111111111111111111111").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_parse_selector_rules_hex_with_recipient() {
+        let rules =
+            parse_selector_rules("0xaabbccdd@0x1111111111111111111111111111111111111111").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
+        assert_eq!(rules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_scope_target_only() {
+        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap();
+        assert_eq!(
+            scope.target,
+            Address::from_str("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap()
+        );
+        assert!(scope.selectorRules.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scope_with_selectors() {
+        let scope =
+            parse_scope("0x20c0000000000000000000000000000000000001:transfer,approve").unwrap();
+        assert_eq!(scope.selectorRules.len(), 2);
+        assert!(scope.selectorRules[0].recipients.is_empty());
+        assert!(scope.selectorRules[1].recipients.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scope_hex_selector() {
+        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xaabbccdd").unwrap();
+        assert_eq!(scope.selectorRules.len(), 1);
+        assert_eq!(scope.selectorRules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
+        assert!(scope.selectorRules[0].recipients.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scope_selector_with_recipient() {
+        let scope = parse_scope(
+            "0x20c0000000000000000000000000000000000001:transfer@0x1111111111111111111111111111111111111111",
+        )
+        .unwrap();
+        assert_eq!(scope.selectorRules.len(), 1);
+        assert_eq!(scope.selectorRules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_scopes_json_plain() {
+        let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":["transfer","approve"]},{"target":"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D"}]"#;
+        let result = parse_scopes_json(json).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].selectorRules.len(), 2);
+        assert!(result[1].selectorRules.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scopes_json_with_recipients() {
+        let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":[{"selector":"transfer","recipients":["0x1111111111111111111111111111111111111111"]}]}]"#;
+        let result = parse_scopes_json(json).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].selectorRules.len(), 1);
+        assert_eq!(result[0].selectorRules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_scopes_json_deny_unknown_fields() {
+        let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":[{"selector":"transfer","recipients":[],"bogus":true}]}]"#;
+        assert!(parse_scopes_json(json).is_err());
+    }
 }

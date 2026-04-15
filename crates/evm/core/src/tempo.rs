@@ -77,6 +77,11 @@ pub fn initialize_tempo_genesis_inner(
     admin: Address,
     recipient: Address,
 ) -> Result<(), TempoPrecompileError> {
+    // Idempotent: PATH_USD is the first token created during genesis; if it already exists, skip.
+    if TIP20Factory::new().is_tip20(PATH_USD_ADDRESS)? {
+        return Ok(());
+    }
+
     let mut ctx = StorageCtx;
 
     // Set sentinel bytecode for precompile addresses

@@ -100,6 +100,17 @@ impl FoundryHardfork {
         }
     }
 
+    /// Returns the network namespace for this hardfork, or `None` for plain Ethereum.
+    ///
+    /// Mirrors the namespace prefix used in the `"network:hardfork"` serialization format.
+    pub const fn namespace(&self) -> Option<&'static str> {
+        match self {
+            Self::Ethereum(_) => None,
+            Self::Optimism(_) => Some("optimism"),
+            Self::Tempo(_) => Some("tempo"),
+        }
+    }
+
     /// Auto-detect the active hardfork for a given chain at a specific timestamp.
     ///
     /// Tries Ethereum, then Optimism. Returns `None` for unknown chains.
