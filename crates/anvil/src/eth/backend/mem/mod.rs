@@ -683,6 +683,10 @@ impl<N: Network> Backend<N> {
         self.active_state_snapshots.lock().clone().into_iter().collect()
     }
 
+    fn clear_state_snapshots(&self) {
+        self.active_state_snapshots.lock().clear();
+    }
+
     /// Returns the environment for the next block
     fn next_evm_env(&self) -> EvmEnv {
         let mut evm_env = self.evm_env.read().clone();
@@ -2160,6 +2164,7 @@ impl<N: Network> Backend<N> {
                 fork.total_difficulty(),
             );
             self.states.write().clear();
+            self.clear_state_snapshots();
             self.db.write().await.clear();
 
             self.apply_genesis().await?;
@@ -2199,6 +2204,7 @@ impl<N: Network> Backend<N> {
             genesis_number,
         );
         self.states.write().clear();
+        self.clear_state_snapshots();
 
         // Clear the database
         self.db.write().await.clear();
@@ -2243,49 +2249,60 @@ impl<N: Network> Backend<N> {
 
     /// Reverts the state to the state snapshot identified by the given `id`.
     pub async fn revert_state_snapshot(&self, id: U256) -> Result<bool, BlockchainError> {
-        let block = { self.active_state_snapshots.lock().remove(&id) };
-        if let Some((num, hash)) = block {
-            let best_block_hash = {
-                // revert the storage that's newer than the snapshot
-                let current_height = self.best_number();
-                let mut storage = self.blockchain.storage.write();
+        let Some((num, hash)) = ({ self.active_state_snapshots.lock().get(&id).copied() }) else {
+            return Ok(false);
+        };
 
-                for n in ((num + 1)..=current_height).rev() {
-                    trace!(target: "backend", "reverting block {}", n);
-                    if let Some(hash) = storage.hashes.remove(&n)
-                        && let Some(block) = storage.blocks.remove(&hash)
-                    {
-                        for tx in block.body.transactions {
-                            let _ = storage.transactions.remove(&tx.hash());
-                        }
+        let Some(block) = self.block_by_hash(hash).await? else {
+            self.active_state_snapshots.lock().remove(&id);
+            return Ok(false);
+        };
+
+        if !self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove) {
+            self.active_state_snapshots.lock().remove(&id);
+            return Ok(false);
+        }
+
+        {
+            // revert the storage that's newer than the snapshot
+            let current_height = self.best_number();
+            let mut storage = self.blockchain.storage.write();
+
+            for n in ((num + 1)..=current_height).rev() {
+                trace!(target: "backend", "reverting block {}", n);
+                if let Some(hash) = storage.hashes.remove(&n)
+                    && let Some(block) = storage.blocks.remove(&hash)
+                {
+                    for tx in block.body.transactions {
+                        let _ = storage.transactions.remove(&tx.hash());
                     }
                 }
-
-                storage.best_number = num;
-                storage.best_hash = hash;
-                hash
-            };
-            let block =
-                self.block_by_hash(best_block_hash).await?.ok_or(BlockchainError::BlockNotFound)?;
-
-            let reset_time = block.header.timestamp();
-            self.time.reset(reset_time);
-
-            let mut env = self.evm_env.write();
-            env.block_env = BlockEnv {
-                number: U256::from(num),
-                timestamp: U256::from(block.header.timestamp()),
-                difficulty: block.header.difficulty(),
-                // ensures prevrandao is set
-                prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
-                gas_limit: block.header.gas_limit(),
-                // Keep previous `beneficiary` and `basefee` value
-                beneficiary: env.block_env.beneficiary,
-                basefee: env.block_env.basefee,
-                ..Default::default()
             }
+
+            storage.best_number = num;
+            storage.best_hash = hash;
         }
-        Ok(self.db.write().await.revert_state(id, RevertStateSnapshotAction::RevertRemove))
+
+        let reset_time = block.header.timestamp();
+        self.time.reset(reset_time);
+
+        let mut env = self.evm_env.write();
+        env.block_env = BlockEnv {
+            number: U256::from(num),
+            timestamp: U256::from(block.header.timestamp()),
+            difficulty: block.header.difficulty(),
+            // ensures prevrandao is set
+            prevrandao: Some(block.header.mix_hash().unwrap_or_default()),
+            gas_limit: block.header.gas_limit(),
+            // Keep previous `beneficiary` and `basefee` value
+            beneficiary: env.block_env.beneficiary,
+            basefee: env.block_env.basefee,
+            ..Default::default()
+        };
+
+        self.active_state_snapshots.lock().remove(&id);
+
+        Ok(true)
     }
 
     /// executes the transactions without writing to the underlying database
@@ -4543,9 +4560,11 @@ pub use foundry_evm::core::evm::IntoInstructionResult;
 
 #[cfg(test)]
 mod tests {
+    use super::in_memory_db::MemDb;
     use crate::{NodeConfig, spawn};
+    use alloy_rpc_types::anvil::Forking;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_deterministic_block_mining() {
         // Test that mine_block produces deterministic block hashes with same initial conditions
         let genesis_timestamp = 1743944919u64;
@@ -4597,5 +4616,50 @@ mod tests {
             block_a_1.header.hash, block_a_2.header.hash,
             "Different blocks should have different hashes"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_failed_revert_state_snapshot_keeps_chain_state() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+
+        let snapshot_id = api.evm_snapshot().await.unwrap();
+        api.mine_one().await;
+        let best_number_before_revert = api.backend.best_number();
+
+        assert_eq!(api.backend.list_state_snapshots().len(), 1);
+
+        *api.backend.get_db().write().await = Box::new(MemDb::default());
+
+        assert!(!api.evm_revert(snapshot_id).await.unwrap());
+        assert_eq!(api.backend.best_number(), best_number_before_revert);
+        assert!(api.backend.list_state_snapshots().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_reset_to_in_mem_clears_state_snapshots() {
+        let (api, _handle) = spawn(NodeConfig::test()).await;
+
+        let snapshot_id = api.evm_snapshot().await.unwrap();
+        assert_eq!(api.backend.list_state_snapshots().len(), 1);
+
+        api.anvil_reset(None).await.unwrap();
+
+        assert!(api.backend.list_state_snapshots().is_empty());
+        assert!(!api.evm_revert(snapshot_id).await.unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_reset_fork_clears_state_snapshots() {
+        let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
+        let (api, _handle) =
+            spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_handle.http_endpoint()))).await;
+
+        let snapshot_id = api.evm_snapshot().await.unwrap();
+        assert_eq!(api.backend.list_state_snapshots().len(), 1);
+
+        api.anvil_reset(Some(Forking::default())).await.unwrap();
+
+        assert!(api.backend.list_state_snapshots().is_empty());
+        assert!(!api.evm_revert(snapshot_id).await.unwrap());
     }
 }
