@@ -7,7 +7,8 @@ use alloy_primitives::{
 };
 use parking_lot::RwLock;
 use revm::precompile::{
-    PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult, call_eth_precompile, secp256k1::ec_recover_run, utilities::right_pad
+    PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult, call_eth_precompile,
+    secp256k1::ec_recover_run, utilities::right_pad,
 };
 use std::{borrow::Cow, sync::Arc};
 
@@ -120,7 +121,11 @@ impl Precompile for CheatEcrecover {
         if let Some(addr) = self.cheats.get_recover_override(&sig_bytes_wrapped) {
             let mut out = [0u8; 32];
             out[12..].copy_from_slice(addr.as_slice());
-            return Ok(PrecompileOutput::new(ECRECOVER_BASE, Bytes::copy_from_slice(&out), input.reservoir));
+            return Ok(PrecompileOutput::new(
+                ECRECOVER_BASE,
+                Bytes::copy_from_slice(&out),
+                input.reservoir,
+            ));
         }
         Ok(call_eth_precompile(ec_recover_run, input.data, input.gas, input.reservoir))
     }

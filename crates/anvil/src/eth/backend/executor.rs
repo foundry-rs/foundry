@@ -16,7 +16,9 @@ use alloy_eips::{
 use alloy_evm::{
     Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
-        BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError, ExecutableTx, GasOutput, OnStateHook, StateChangePreBlockSource, StateChangeSource, StateDB, TxResult
+        BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
+        ExecutableTx, GasOutput, OnStateHook, StateChangePreBlockSource, StateChangeSource,
+        StateDB, TxResult,
     },
     eth::{
         EthTxResult,
@@ -214,7 +216,10 @@ where
         })
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<GasOutput, BlockExecutionError> {
+    fn commit_transaction(
+        &mut self,
+        output: Self::Result,
+    ) -> Result<GasOutput, BlockExecutionError> {
         let AnvilTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
             sender,
