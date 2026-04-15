@@ -369,6 +369,10 @@ pub struct InspectorStackInner {
     pub tracer: Option<Box<TracingInspector>>,
 
     // FoundryInspectorExt and other internal data.
+    /// Whether to collect sancov edge coverage from instrumented native crates.
+    pub sancov_edges: bool,
+    /// Whether to capture sancov trace-cmp operands for dictionary injection.
+    pub sancov_trace_cmp: bool,
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
     pub create2_deployer: Address,
@@ -533,6 +537,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     pub fn collect_edge_coverage(&mut self, yes: bool) {
         // TODO: configurable edge size?
         self.edge_coverage = yes.then(EdgeCovInspector::new).map(Into::into);
+    }
+
+    /// Set whether to collect sancov edge coverage from instrumented native crates.
+    #[inline]
+    pub const fn collect_sancov_edges(&mut self, yes: bool) {
+        self.inner.sancov_edges = yes;
+    }
+
+    /// Set whether to capture sancov trace-cmp operands for dictionary injection.
+    #[inline]
+    pub const fn collect_sancov_trace_cmp(&mut self, yes: bool) {
+        self.inner.sancov_trace_cmp = yes;
     }
 
     /// Set whether to enable call isolation.
