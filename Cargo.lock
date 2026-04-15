@@ -2536,7 +2536,7 @@ version = "3.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "519bd3116aeeb42d5372c29d982d16d0170d3d4a5ed85fc7dd91642ffff3c67c"
 dependencies = [
- "darling 0.20.11",
+ "darling 0.23.0",
  "ident_case",
  "prettyplease",
  "proc-macro2",
@@ -3252,7 +3252,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -4632,7 +4632,7 @@ dependencies = [
  "serde_json",
  "solar-compiler",
  "thiserror 2.0.18",
- "toml",
+ "toml 1.1.2+spec-1.1.0",
  "tracing",
 ]
 
@@ -4647,7 +4647,7 @@ dependencies = [
  "similar",
  "snapbox",
  "solar-compiler",
- "toml",
+ "toml 1.1.2+spec-1.1.0",
 ]
 
 [[package]]
@@ -4872,7 +4872,7 @@ dependencies = [
  "serde_json",
  "solar-compiler",
  "thiserror 2.0.18",
- "toml",
+ "toml 1.1.2+spec-1.1.0",
  "tracing",
  "walkdir",
 ]
@@ -5004,7 +5004,7 @@ dependencies = [
  "tempo-primitives",
  "thiserror 2.0.18",
  "tokio",
- "toml",
+ "toml 1.1.2+spec-1.1.0",
  "tower",
  "tracing",
  "url",
@@ -5169,7 +5169,7 @@ dependencies = [
  "soldeer-core",
  "tempfile",
  "thiserror 2.0.18",
- "toml",
+ "toml 1.1.2+spec-1.1.0",
  "toml_edit 0.24.1+spec-1.1.0",
  "tracing",
  "unit-prefix",
@@ -5546,7 +5546,7 @@ dependencies = [
  "tempo-primitives",
  "thiserror 2.0.18",
  "tokio",
- "toml",
+ "toml 1.1.2+spec-1.1.0",
  "tower",
  "tower-http",
  "tracing",
@@ -7042,7 +7042,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
  "tracing",
 ]
 
@@ -7065,7 +7065,7 @@ dependencies = [
  "serde_json",
  "shlex",
  "tempfile",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
  "topological-sort",
  "tracing",
 ]
@@ -8415,7 +8415,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -10614,7 +10614,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "itoa",
  "normalize-path",
  "once_map",
@@ -10649,7 +10649,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.11.0",
  "bumpalo",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -11551,6 +11551,21 @@ dependencies = [
  "toml_parser",
  "toml_writer",
  "winnow 0.7.15",
+]
+
+[[package]]
+name = "toml"
+version = "1.1.2+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81f3d15e84cbcd896376e6730314d59fb5a87f31e4b038454184435cd57defee"
+dependencies = [
+ "indexmap 2.14.0",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime 1.1.1+spec-1.1.0",
+ "toml_parser",
+ "toml_writer",
+ "winnow 1.0.1",
 ]
 
 [[package]]
