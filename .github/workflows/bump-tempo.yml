@@ -1,0 +1,51 @@
+name: Bump Tempo Dependencies
+
+permissions: {}
+
+on:
+  schedule:
+    # Run daily at 00:00 UTC
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  bump-tempo:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Bump tempo dependencies
+        id: bump
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./.github/scripts/bump-tempo.sh
+
+      - name: Create Pull Request
+        if: steps.bump.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LATEST_REV="${{ steps.bump.outputs.latest_rev }}"
+          BRANCH_NAME="deps/bump-tempo-${LATEST_REV:0:7}"
+
+          # Configure git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create and push branch
+          git checkout -b "$BRANCH_NAME"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore(deps): bump tempo dependencies to ${LATEST_REV:0:7}"
+          git push origin "$BRANCH_NAME"
+
+          # Create PR
+          gh pr create \
+            --title "chore(deps): bump tempo dependencies to ${LATEST_REV:0:7}" \
+            --body-file "${{ steps.bump.outputs.changelog }}" \
+            --base main \
+            --head "$BRANCH_NAME"
