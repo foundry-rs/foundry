@@ -1939,6 +1939,137 @@ Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
 "#]]);
 });
 
+forgetest_init!(invariant_replay_keeps_assertion_failure_from_invariant_function, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(100u32));
+        config.invariant.runs = 1;
+        config.invariant.depth = 15;
+    });
+
+    prj.add_test(
+        "InvariantReplayKeepsInvariantAssertion.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+
+    function decrement() public {
+        number--;
+    }
+}
+
+contract InvariantReplayKeepsInvariantAssertion is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function invariant_with_assert() public {
+        assertTrue(counter.number() < 2, "wrong counter assert");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantReplayKeepsInvariantAssertion.t.sol:InvariantReplayKeepsInvariantAssertion
+[FAIL: wrong counter assert]
+	[Sequence] (original: 2, shrunk: 2)
+...
+ invariant_with_assert() ([..])
+...
+"#]]);
+
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantReplayKeepsInvariantAssertion.t.sol:InvariantReplayKeepsInvariantAssertion
+[FAIL: wrong counter assert]
+	[Sequence] (original: 2, shrunk: 2)
+...
+ invariant_with_assert() ([..])
+...
+"#]]);
+});
+
+forgetest_init!(invariant_replay_keeps_assertion_failure_from_after_invariant, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(119u32));
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+    });
+
+    prj.add_test(
+        "InvariantReplayKeepsAfterInvariantAssertion.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+struct FuzzSelector {
+    address addr;
+    bytes4[] selectors;
+}
+
+contract AfterInvariantAssertHandler {
+    uint256 public count;
+
+    function inc() external {
+        count += 1;
+    }
+}
+
+contract InvariantReplayKeepsAfterInvariantAssertion is Test {
+    AfterInvariantAssertHandler handler;
+
+    function setUp() public {
+        handler = new AfterInvariantAssertHandler();
+    }
+
+    function targetSelectors() public view returns (FuzzSelector[] memory) {
+        FuzzSelector[] memory targets = new FuzzSelector[](1);
+        bytes4[] memory selectors = new bytes4[](1);
+        selectors[0] = handler.inc.selector;
+        targets[0] = FuzzSelector(address(handler), selectors);
+        return targets;
+    }
+
+    function afterInvariant() public view {
+        assertTrue(handler.count() < 2, "afterInvariant assertion");
+    }
+
+    function invariant_success() public view {
+        require(handler.count() < 10, "invariant should not fail");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantReplayKeepsAfterInvariantAssertion
+[FAIL: afterInvariant assertion]
+	[SEQUENCE]
+ invariant_success() ([RUNS])
+...
+"#]]);
+
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Replayed invariant failure from [..] file.
+...
+Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantReplayKeepsAfterInvariantAssertion
+[FAIL: afterInvariant assertion]
+	[SEQUENCE]
+ invariant_success() ([RUNS])
+...
+"#]]);
+});
+
 forgetest_init!(invariant_test1, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.depth = 10;

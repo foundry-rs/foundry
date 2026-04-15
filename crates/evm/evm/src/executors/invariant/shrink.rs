@@ -304,13 +304,28 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
     calldata: Bytes,
     options: &CheckSequenceOptions<'_>,
 ) -> eyre::Result<(bool, bool, Option<String>)> {
+    let handle_terminal_failure = |call_result: RawCallResult<FEN>| {
+        let should_ignore_failure = options.expect_assertion_failure
+            && !executor.has_global_failure(&call_result.state_changeset)
+            && !did_fail_on_assert(&call_result, &call_result.state_changeset);
+
+        if should_ignore_failure {
+            return (true, true, None);
+        }
+
+        let reason = if options.expect_assertion_failure {
+            assertion_failure_reason(call_result, options.rd)
+        } else {
+            call_failure_reason(call_result, options.rd)
+        };
+
+        (false, true, reason)
+    };
+
     let (invariant_result, mut success) =
         call_invariant_function(executor, test_address, calldata)?;
     if !success {
-        if options.expect_assertion_failure {
-            return Ok((true, true, None));
-        }
-        return Ok((false, true, call_failure_reason(invariant_result, options.rd)));
+        return Ok(handle_terminal_failure(invariant_result));
     }
 
     // Check after invariant result if invariant is success and `afterInvariant` function is
@@ -320,10 +335,7 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
             call_after_invariant_function(executor, test_address)?;
         success = after_invariant_success;
         if !success {
-            if options.expect_assertion_failure {
-                return Ok((true, true, None));
-            }
-            return Ok((false, true, call_failure_reason(after_invariant_result, options.rd)));
+            return Ok(handle_terminal_failure(after_invariant_result));
         }
     }
 
