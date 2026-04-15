@@ -867,13 +867,13 @@ mod tests {
     #[test]
     fn test_parse_selector_bytes_named() {
         let sel = parse_selector_bytes("transfer").unwrap();
-        assert_eq!(sel, keccak256("transfer(address,uint256)".as_bytes())[..4]);
+        assert_eq!(sel, keccak256(b"transfer(address,uint256)")[..4]);
 
         let sel = parse_selector_bytes("approve").unwrap();
-        assert_eq!(sel, keccak256("approve(address,uint256)".as_bytes())[..4]);
+        assert_eq!(sel, keccak256(b"approve(address,uint256)")[..4]);
 
         let sel = parse_selector_bytes("transferWithMemo").unwrap();
-        assert_eq!(sel, keccak256("transferWithMemo(address,uint256,bytes32)".as_bytes())[..4]);
+        assert_eq!(sel, keccak256(b"transferWithMemo(address,uint256,bytes32)")[..4]);
     }
 
     #[test]
@@ -895,7 +895,7 @@ mod tests {
     #[test]
     fn test_parse_selector_bytes_full_signature() {
         let sel = parse_selector_bytes("increment()").unwrap();
-        assert_eq!(sel, keccak256("increment()".as_bytes())[..4]);
+        assert_eq!(sel, keccak256(b"increment()")[..4]);
     }
 
     #[test]
