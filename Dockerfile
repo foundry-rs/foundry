@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM rust:1-bookworm AS chef
+FROM rust:1-bookworm@sha256:6ae102bdbf528294bc79ad6e1fae682f6f7c2a6e6621506ba959f9685b308a55 AS chef
 WORKDIR /app
 
 RUN apt update && apt install -y build-essential libssl-dev git pkg-config curl perl
@@ -52,7 +52,7 @@ RUN ln -s /app/target/debug /app/target/dev \
     /app/target/${RUST_PROFILE}/chisel \
     /app/output/
 
-FROM ubuntu:22.04 AS runtime
+FROM ubuntu:22.04@sha256:eb29ed27b0821dca09c2e28b39135e185fc1302036427d5f4d70a41ce8fd7659 AS runtime
 
 # Install runtime dependencies.
 RUN apt update && apt install -y git

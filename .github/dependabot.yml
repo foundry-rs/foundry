@@ -8,3 +8,19 @@ updates:
       default-days: 7
     ignore:
       - dependency-name: "softprops/action-gh-release"
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "npm"
+    directory: "/npm"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5

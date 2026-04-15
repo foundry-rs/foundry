@@ -4,6 +4,7 @@ run.bun = true
 
 [install]
 auto = "auto"
+minimumReleaseAge = 86400
 
 [install.scopes]
 "@foundry-rs" = { url = "$NPM_REGISTRY_URL", username = "$NPM_USERNAME" }
