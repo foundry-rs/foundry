@@ -861,34 +861,7 @@ impl Config {
 
     fn normalize_hardfork_settings(&mut self) -> Result<(), Error> {
         let Some(hardfork) = self.hardfork else { return Ok(()) };
-
-        let (name, network) = match hardfork {
-            FoundryHardfork::Ethereum(_) => (None, None),
-            FoundryHardfork::Tempo(_) => (Some("tempo"), Some(NetworkConfigs::with_tempo())),
-            FoundryHardfork::Optimism(_) => {
-                (Some("optimism"), Some(NetworkConfigs::with_optimism()))
-            }
-        };
-
-        let conflict = self
-            .networks
-            .is_tempo()
-            .then_some("tempo")
-            .or_else(|| self.networks.is_optimism().then_some("optimism"))
-            .or_else(|| self.networks.is_celo().then_some("celo"))
-            .filter(|&configured| Some(configured) != name);
-
-        if let Some(configured) = conflict {
-            return Err(Error::from(format!(
-                "hardfork `{}` conflicts with configured network `{configured}`",
-                String::from(hardfork),
-            )));
-        }
-
-        if let Some(network) = network {
-            self.networks = network;
-        }
-
+        self.networks = self.networks.normalize_for_hardfork(hardfork).map_err(Error::from)?;
         Ok(())
     }
 
@@ -5022,7 +4995,7 @@ mod tests {
             assert!(
                 err.to_string()
                     .to_lowercase()
-                    .contains("hardfork `shanghai` conflicts with configured network `tempo`")
+                    .contains("hardfork `shanghai` conflicts with network config `tempo`")
             );
 
             Ok(())
