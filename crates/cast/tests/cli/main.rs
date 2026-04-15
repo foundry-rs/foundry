@@ -2712,8 +2712,10 @@ casttest!(ens_resolve_no_dot_eth, |_prj, cmd| {
     cmd.args(["resolve-name", "emo", "--rpc-url", &eth_rpc_url, "--verify"])
         .assert_failure()
         .stderr_eq(str![[r#"
-Error: ENS resolver not found for name "emo"
+Error: Failed to resolve ENS name: emo
 
+Context:
+- [..]
 "#]]);
 });
 

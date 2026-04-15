@@ -1,6 +1,7 @@
 use alloy_consensus::{BlobTransactionSidecarVariant, EthereumTypedTransaction};
 use alloy_network::{
-    BuildResult, NetworkWallet, TransactionBuilder, TransactionBuilder4844, TransactionBuilderError,
+    BuildResult, NetworkTransactionBuilder, NetworkWallet, TransactionBuilder,
+    TransactionBuilder4844, TransactionBuilderError,
 };
 use alloy_primitives::{Address, B256, ChainId, TxKind, U256};
 use alloy_rpc_types::{AccessList, TransactionInputKind, TransactionRequest};
@@ -303,7 +304,7 @@ impl From<op_alloy_rpc_types::Transaction<FoundryTxEnvelope>> for FoundryTransac
 }
 
 // TransactionBuilder trait implementation for FoundryNetwork
-impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
+impl TransactionBuilder for FoundryTransactionRequest {
     fn chain_id(&self) -> Option<ChainId> {
         self.as_ref().chain_id
     }
@@ -416,7 +417,9 @@ impl TransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
     fn set_access_list(&mut self, access_list: AccessList) {
         self.as_mut().access_list = Some(access_list);
     }
+}
 
+impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
     fn complete_type(&self, ty: FoundryTxType) -> Result<(), Vec<&'static str>> {
         match ty {
             FoundryTxType::Legacy => self.as_ref().complete_legacy(),
