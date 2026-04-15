@@ -686,15 +686,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         }
 
         // Check the global failure slot.
-        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS)
-            && let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT)
-            && !failed_slot.present_value().is_zero()
-        {
-            return false;
-        }
-        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
-            && !failed_slot.is_zero()
-        {
+        if self.has_global_failure(&state_changeset) {
             return false;
         }
 
@@ -734,6 +726,47 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                 }
             }
         }
+    }
+
+    /// Returns whether the in-flight state changeset for the current call sets the global
+    /// assertion failure flag.
+    pub fn has_pending_global_failure(state_changeset: &StateChangeset) -> bool {
+        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS)
+            && let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT)
+            && !failed_slot.present_value().is_zero()
+        {
+            return true;
+        }
+
+        false
+    }
+
+    /// Returns whether the global assertion failure flag is set either in the in-flight state
+    /// changeset or in the committed backend state.
+    pub fn has_global_failure(&self, state_changeset: &StateChangeset) -> bool {
+        if Self::has_pending_global_failure(state_changeset) {
+            return true;
+        }
+
+        self.backend()
+            .storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            .is_ok_and(|failed_slot| !failed_slot.is_zero())
+    }
+
+    /// Clears the global assertion failure flag from both the committed backend state and, when
+    /// provided, the in-flight state changeset for the current call.
+    pub fn clear_global_failure(
+        &mut self,
+        state_changeset: Option<&mut StateChangeset>,
+    ) -> BackendResult<()> {
+        if let Some(state_changeset) = state_changeset
+            && let Some(acc) = state_changeset.get_mut(&CHEATCODE_ADDRESS)
+            && let Some(failed_slot) = acc.storage.get_mut(&GLOBAL_FAIL_SLOT)
+        {
+            failed_slot.present_value = U256::ZERO;
+        }
+
+        self.set_storage_slot(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::ZERO)
     }
 
     /// Creates the environment to use when executing a transaction in a test context

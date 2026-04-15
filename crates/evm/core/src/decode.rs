@@ -13,6 +13,12 @@ use itertools::Itertools;
 use revm::interpreter::InstructionResult;
 use std::{fmt, sync::OnceLock};
 
+/// Stable user-facing fallback for empty revert payloads.
+pub const EMPTY_REVERT_DATA: &str = "<empty revert data>";
+
+/// Prefix used by Foundry assertion helpers in user-visible failure messages.
+pub const ASSERTION_FAILED_PREFIX: &str = "assertion failed";
+
 /// A skip reason.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkipReason(pub Option<String>);
@@ -119,7 +125,7 @@ impl RevertDecoder {
     /// than user output.
     pub fn decode(&self, err: &[u8], status: Option<InstructionResult>) -> String {
         self.maybe_decode(err, status).unwrap_or_else(|| {
-            if err.is_empty() { "<empty revert data>".to_string() } else { trimmed_hex(err) }
+            if err.is_empty() { EMPTY_REVERT_DATA.to_string() } else { trimmed_hex(err) }
         })
     }
 

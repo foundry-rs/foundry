@@ -67,6 +67,9 @@ impl FoundryEvmFactory for TempoEvmFactory {
         let mut inner = tempo_evm.into_inner();
         inner.ctx.cfg.gas_params = tempo_gas_params(spec);
         inner.ctx.cfg.tx_chain_id_check = true;
+        if inner.ctx.cfg.tx_gas_limit_cap.is_none() {
+            inner.ctx.cfg.tx_gas_limit_cap = spec.tx_gas_limit_cap();
+        }
 
         let mut evm = TempoFoundryEvm { inner };
         let networks = Evm::inspector(&evm).get_networks();
@@ -84,10 +87,6 @@ impl FoundryEvmFactory for TempoEvmFactory {
     ) -> Box<dyn NestedEvm<Spec = TempoHardfork, Block = TempoBlockEnv, Tx = TempoTxEnv> + 'db>
     {
         Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_nested_evm())
-    }
-
-    fn tx_gas_limit_cap(spec: &TempoHardfork) -> Option<u64> {
-        spec.tx_gas_limit_cap()
     }
 }
 
