@@ -1,4 +1,5 @@
 use super::*;
+use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
 
 pub type EthRevmEvm<'db, I> = RevmEvm<
     EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>,
@@ -140,7 +141,7 @@ impl FoundryEvmFactory for EthEvmFactory {
     }
 
     fn tx_gas_limit_cap(spec: &SpecId) -> Option<u64> {
-        spec.is_enabled_in(SpecId::OSAKA).then_some(revm::primitives::eip7825::TX_GAS_LIMIT_CAP)
+        spec.is_enabled_in(SpecId::OSAKA).then_some(TX_GAS_LIMIT_CAP)
     }
 }
 
