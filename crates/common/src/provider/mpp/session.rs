@@ -855,8 +855,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_concurrent_voucher_increments_are_unique() {
+    /// Verify that a payment serialization lock (mirroring `lock_pay()` in
+    /// `LazySessionProvider`) prevents concurrent voucher increments from
+    /// producing duplicate cumulative amounts.
+    #[tokio::test]
+    async fn test_concurrent_voucher_increments_are_unique() {
         let channels: Arc<Mutex<HashMap<String, ChannelEntry>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let key = "test-channel".to_string();
@@ -872,39 +875,47 @@ mod tests {
             },
         );
 
+        // Mirrors the `pay_lock` tokio::sync::Mutex used in LazySessionProvider
+        // to serialize the 402 → pay → retry cycle.
+        let pay_lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
         let amount: u128 = 1000;
-        let num_threads = 20;
+        let num_tasks = 20;
         let results: Arc<Mutex<Vec<u128>>> = Arc::new(Mutex::new(Vec::new()));
 
-        std::thread::scope(|s| {
-            for _ in 0..num_threads {
-                let channels = channels.clone();
-                let key = key.clone();
-                let results = results.clone();
-                s.spawn(move || {
-                    let cumulative = {
-                        let mut ch = channels.lock().unwrap();
-                        let entry = ch.get_mut(&key).unwrap();
-                        entry.cumulative_amount += amount;
-                        entry.cumulative_amount
-                    };
-                    results.lock().unwrap().push(cumulative);
-                });
-            }
-        });
+        let mut handles = Vec::new();
+        for _ in 0..num_tasks {
+            let channels = channels.clone();
+            let key = key.clone();
+            let results = results.clone();
+            let pay_lock = pay_lock.clone();
+            handles.push(tokio::spawn(async move {
+                let _guard = pay_lock.lock().await;
+                let cumulative = {
+                    let mut ch = channels.lock().unwrap();
+                    let entry = ch.get_mut(&key).unwrap();
+                    entry.cumulative_amount += amount;
+                    entry.cumulative_amount
+                };
+                results.lock().unwrap().push(cumulative);
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
 
         let mut amounts = results.lock().unwrap().clone();
         amounts.sort();
         amounts.dedup();
         assert_eq!(
             amounts.len(),
-            num_threads,
+            num_tasks,
             "each concurrent increment should produce a unique cumulative_amount"
         );
         assert_eq!(
             *amounts.last().unwrap(),
-            amount * num_threads as u128,
-            "final cumulative_amount should equal amount × num_threads"
+            amount * num_tasks as u128,
+            "final cumulative_amount should equal amount × num_tasks"
         );
     }
 }

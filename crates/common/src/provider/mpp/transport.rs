@@ -482,7 +482,7 @@ where
             // provisioned — handles first-time provisioning where key_auth was stripped
             // but the key was not yet provisioned on-chain.
             let needs_verification_retry = (problem_type.ends_with("/verification-failed")
-                || retry_text.contains("verification-failed"))
+                || detail.contains("verification-failed"))
                 && self.provider.is_key_provisioned();
 
             if needs_verification_retry {
