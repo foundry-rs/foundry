@@ -951,15 +951,15 @@ forgetest!(can_execute_test_and_script_with_default_tempo_config, |prj, cmd| {
     // Run tests, Tempo EVM selection is made by reading foundry.toml config
     cmd.forge_fuse().arg("test").arg("--root").arg(prj.root()).assert_success();
 
-    // Same for script, re-enable after https://github.com/foundry-rs/foundry/pull/14336
-    // cmd.forge_fuse()
-    //     .arg("script")
-    //     .arg("script/Mail.s.sol")
-    //     .arg("temposalt")
-    //     .arg("--tempo")
-    //     .arg("--root")
-    //     .arg(prj.root())
-    //     .assert_success();
+    // Same for script
+    cmd.forge_fuse()
+        .arg("script")
+        .arg("script/Mail.s.sol")
+        .arg("temposalt")
+        .arg("--tempo")
+        .arg("--root")
+        .arg(prj.root())
+        .assert_success();
 });
 
 // checks that clone works with raw src containing `node_modules`
