@@ -217,11 +217,9 @@ mod tests {
         // Chain 9745 is recognized as NamedChain::Plasma by alloy-chains.
         // Previously, dict() would insert chain_id as the string "plasma",
         // causing deserialization failure when EvmOpts expects u64.
-        let args: EtherscanOpts =
-            EtherscanOpts::parse_from(["foundry-cli", "--chain", "9745"]);
+        let args = EtherscanOpts::parse_from(["foundry-cli", "--chain", "9745"]);
         let dict = args.dict();
         let chain_id = dict.get("chain_id").expect("chain_id should be present");
-        // Must deserialize as u64, not fail with "found string, expected u64".
         let id: u64 = chain_id.deserialize().expect("chain_id should deserialize as u64");
         assert_eq!(id, 9745);
     }
