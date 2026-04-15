@@ -7,7 +7,9 @@ use crate::{
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::{BlockId, eip2718::Encodable2718};
-use alloy_network::{EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
+use alloy_network::{
+    EthereumWallet, Network, NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder,
+};
 use alloy_primitives::{
     Address, TxHash, TxKind, U256,
     map::{AddressHashMap, AddressHashSet},

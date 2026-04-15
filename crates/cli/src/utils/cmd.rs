@@ -196,6 +196,10 @@ pub trait LoadConfig {
         let mut evm_opts = figment.extract::<EvmOpts>().map_err(ExtractConfigError::new)?;
         let config = Config::from_provider(figment)?.sanitized();
 
+        if config.networks != Default::default() {
+            evm_opts.networks = config.networks;
+        }
+
         // update the fork url if it was an alias
         if let Some(fork_url) = config.get_rpc_url() {
             trace!(target: "forge::config", ?fork_url, "Update EvmOpts fork url");

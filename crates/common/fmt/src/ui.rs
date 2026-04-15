@@ -1,5 +1,7 @@
 //! Helper trait and functions to format Ethereum types.
 
+use std::num::NonZeroU64;
+
 use alloy_consensus::{
     BlockHeader, Eip658Value, Signed, Transaction as TxTrait, TxEip1559, TxEip2930,
     TxEip4844Variant, TxEip7702, TxEnvelope, TxLegacy, TxReceipt, Typed2718,
@@ -86,6 +88,12 @@ impl UIfmt for String {
 impl UIfmt for u64 {
     fn pretty(&self) -> String {
         self.to_string()
+    }
+}
+
+impl UIfmt for NonZeroU64 {
+    fn pretty(&self) -> String {
+        self.get().pretty()
     }
 }
 

@@ -1,6 +1,6 @@
 use alloy_consensus::Transaction;
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_network::{Network, TransactionBuilder};
+use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_common_fmt::UIfmt;
 use serde::{Deserialize, Serialize};
@@ -128,7 +128,7 @@ value                {}",
                 tx.max_priority_fee_per_gas().pretty(),
                 tx.nonce().pretty(),
                 tx.to().pretty(),
-                tx.output_tx_type(),
+                NetworkTransactionBuilder::<N>::output_tx_type(tx),
                 tx.value().pretty(),
             ),
         }

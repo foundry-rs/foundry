@@ -28,7 +28,7 @@ use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     env::FoundryContextExt,
-    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    evm::{EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceMode;
@@ -1134,6 +1134,11 @@ impl Cheatcode for executeTransactionCall {
         ccx.ecx.cfg_mut().limit_contract_initcode_size =
             Some(revm::primitives::eip3860::MAX_INITCODE_SIZE);
 
+        // Enforce the canonical per-tx gas limit cap, if any, for realistic simulation.
+        if let Some(cap) = <EvmFactoryFor<FEN>>::tx_gas_limit_cap(ccx.ecx.cfg().spec()) {
+            ccx.ecx.cfg_mut().tx_gas_limit_cap = Some(cap);
+        }
+
         // Snapshot the modified env for EVM construction.
         let modified_evm_env = ccx.ecx.evm_clone();
         let modified_tx_env = ccx.ecx.tx_clone();
@@ -1180,6 +1185,7 @@ impl Cheatcode for executeTransactionCall {
         nested_evm_env.cfg_env.disable_nonce_check = cached_evm_env.cfg_env.disable_nonce_check;
         nested_evm_env.cfg_env.limit_contract_initcode_size =
             cached_evm_env.cfg_env.limit_contract_initcode_size;
+        nested_evm_env.cfg_env.tx_gas_limit_cap = cached_evm_env.cfg_env.tx_gas_limit_cap;
         ccx.ecx.set_evm(nested_evm_env);
         ccx.ecx.set_tx(cached_tx_env);
 

@@ -19,7 +19,7 @@ use alloy_evm::{
     precompiles::PrecompilesMap,
 };
 use alloy_network::{Ethereum, Network};
-use alloy_op_evm::OpEvmFactory;
+use alloy_op_evm::{OpEvmFactory, OpTx};
 use alloy_primitives::{Address, Bytes, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
@@ -27,14 +27,18 @@ use foundry_config::FromEvmVersion;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
 use op_alloy_network::Optimism;
 use op_revm::{
-    DefaultOp, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction, handler::OpHandler,
+    L1BlockInfo, OpEvm, OpHaltReason, OpSpecId, OpTransaction, handler::OpHandler,
     precompiles::OpPrecompiles, transaction::error::OpTransactionError,
 };
 use revm::{
-    Context,
+    Context, Journal, MainContext,
     context::{
-        BlockEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContextTr, TxEnv,
-        result::{EVMError, ExecResultAndState, ExecutionResult, HaltReason, ResultAndState},
+        BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContextTr,
+        TxEnv,
+        result::{
+            EVMError, ExecResultAndState, ExecutionResult, HaltReason, InvalidTransaction,
+            ResultAndState,
+        },
     },
     handler::{
         EthFrame, EvmTr, FrameResult, FrameTr, Handler, ItemOrResult, instructions::EthInstructions,
@@ -57,6 +61,9 @@ use tempo_revm::{
     TempoBlockEnv, TempoHaltReason, TempoInvalidTransaction, TempoTxEnv, evm::TempoContext,
     gas_params::tempo_gas_params, handler::TempoEvmHandler,
 };
+
+// Modified revm's OpContext with `OpTx`
+pub type OpContext<DB> = Context<BlockEnv, OpTx, CfgEnv<OpSpecId>, DB, Journal<DB>, L1BlockInfo>;
 
 pub mod eth;
 pub mod op;
@@ -176,6 +183,14 @@ pub trait FoundryEvmFactory:
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> Box<dyn NestedEvm<Spec = Self::Spec, Block = Self::BlockEnv, Tx = Self::Tx> + 'db>;
+
+    /// Returns the canonical per-tx gas limit cap for the given spec, if any.
+    ///
+    /// Returns `None` for networks with no explicit cap (default).
+    /// Networks with tx gas caps must override so `executeTransaction` mirrors production checks.
+    fn tx_gas_limit_cap(_spec: &Self::Spec) -> Option<u64> {
+        None
+    }
 }
 
 /// Trait for converting a Foundry EVM wrapper into its inner `NestedEvm` implementation.
