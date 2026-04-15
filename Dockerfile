@@ -4,8 +4,20 @@ FROM rust:1-bookworm@sha256:6ae102bdbf528294bc79ad6e1fae682f6f7c2a6e6621506ba959
 WORKDIR /app
 
 RUN apt update && apt install -y build-essential libssl-dev git pkg-config curl perl
-RUN curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | sh
-RUN cargo binstall cargo-chef sccache
+RUN set -eux; \
+    BINSTALL_VERSION="v1.18.1"; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) ARCH="x86_64-unknown-linux-musl"; SHA256="cf2a4b54494ea8555d6349685e9a301efc1051d9fba6308c76914b2486f8700f" ;; \
+      arm64) ARCH="aarch64-unknown-linux-musl"; SHA256="c55962a0115f9716b709216de7f8bdd59d6ba8738779e60b051b4593f677717a" ;; \
+      *) echo "unsupported architecture" >&2; exit 1 ;; \
+    esac; \
+    curl -L --proto '=https' --tlsv1.2 -sSf \
+      "https://github.com/cargo-bins/cargo-binstall/releases/download/${BINSTALL_VERSION}/cargo-binstall-${ARCH}.tgz" \
+      -o /tmp/cargo-binstall.tgz; \
+    echo "${SHA256}  /tmp/cargo-binstall.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/cargo-binstall.tgz -C /usr/local/cargo/bin cargo-binstall; \
+    rm /tmp/cargo-binstall.tgz
+RUN cargo binstall -y cargo-chef sccache
 
 # Prepare the cargo-chef recipe.
 FROM chef AS planner
