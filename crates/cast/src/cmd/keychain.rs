@@ -368,9 +368,7 @@ fn parse_scopes_json(s: &str) -> Result<Vec<CallScope>, String> {
                 for sel_entry in sels {
                     let (selector_str, recipients) = match sel_entry {
                         JsonSelectorEntry::Name(name) => (name, vec![]),
-                        JsonSelectorEntry::WithRecipients(r) => {
-                            (r.selector, r.recipients)
-                        }
+                        JsonSelectorEntry::WithRecipients(r) => (r.selector, r.recipients),
                     };
                     let selector = parse_selector_bytes(&selector_str)
                         .map_err(|e| format!("in --scopes JSON: {e}"))?;
@@ -910,10 +908,8 @@ mod tests {
 
     #[test]
     fn test_parse_selector_rules_with_recipient() {
-        let rules = parse_selector_rules(
-            "transfer@0x1111111111111111111111111111111111111111",
-        )
-        .unwrap();
+        let rules =
+            parse_selector_rules("transfer@0x1111111111111111111111111111111111111111").unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].recipients.len(), 1);
         assert_eq!(
@@ -924,10 +920,8 @@ mod tests {
 
     #[test]
     fn test_parse_selector_rules_hex_with_recipient() {
-        let rules = parse_selector_rules(
-            "0xaabbccdd@0x1111111111111111111111111111111111111111",
-        )
-        .unwrap();
+        let rules =
+            parse_selector_rules("0xaabbccdd@0x1111111111111111111111111111111111111111").unwrap();
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
         assert_eq!(rules[0].recipients.len(), 1);
@@ -935,8 +929,7 @@ mod tests {
 
     #[test]
     fn test_parse_scope_target_only() {
-        let scope =
-            parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap();
+        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap();
         assert_eq!(
             scope.target,
             Address::from_str("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap()
@@ -955,8 +948,7 @@ mod tests {
 
     #[test]
     fn test_parse_scope_hex_selector() {
-        let scope =
-            parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xaabbccdd").unwrap();
+        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xaabbccdd").unwrap();
         assert_eq!(scope.selectorRules.len(), 1);
         assert_eq!(scope.selectorRules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
         assert!(scope.selectorRules[0].recipients.is_empty());
