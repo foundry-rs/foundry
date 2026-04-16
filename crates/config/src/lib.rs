@@ -59,6 +59,7 @@ pub use utils::*;
 mod endpoints;
 pub use endpoints::{
     ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl, RpcEndpoints,
+    builtin_rpc_url,
 };
 
 mod etherscan;
@@ -1527,6 +1528,10 @@ impl Config {
 
         if let Some(mesc_url) = self.get_rpc_url_from_mesc(maybe_alias) {
             return Some(Ok(Cow::Owned(mesc_url)));
+        }
+
+        if let Some(builtin) = crate::endpoints::builtin_rpc_url(maybe_alias) {
+            return Some(Ok(Cow::Borrowed(builtin)));
         }
 
         None
