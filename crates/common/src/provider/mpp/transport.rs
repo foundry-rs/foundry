@@ -228,59 +228,11 @@ where
         // held until the retry response is fully handled.
         let _pay_guard = self.provider.lock_pay().await;
 
-        let www_auth_values: Vec<&str> = resp
-            .headers()
-            .get_all(WWW_AUTHENTICATE_HEADER)
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .collect();
-
-        if www_auth_values.is_empty() {
-            return Err(TransportErrorKind::custom(std::io::Error::other(
-                "402 response missing WWW-Authenticate header",
-            )));
-        }
-
-        let challenges: Vec<_> = parse_www_authenticate_all(www_auth_values)
-            .into_iter()
-            .filter_map(|r| r.ok())
-            .collect();
-
-        // Try each challenge until we find one with a matching key (chain + currency)
-        // in keys.toml. This handles servers that offer multiple chains and currencies
-        // (e.g. mainnet + testnet) — we pick the first one the user has a key for.
-        let mut last_resolve_err: Option<TransportError> = None;
-        let resolved_pair = challenges.iter().find_map(|c| {
-            let (chain_id, currency) = extract_challenge_chain_and_currency(c);
-            let currency = currency.and_then(|s| s.parse().ok());
-            match self.provider.resolve_for(DiscoverOptions { chain_id, currency }) {
-                Ok(provider) => {
-                    provider.supports(c.method.as_str(), c.intent.as_str()).then_some((provider, c))
-                }
-                Err(e) => {
-                    last_resolve_err = Some(e);
-                    None
-                }
-            }
-        });
-
-        let (resolved, challenge) = resolved_pair.ok_or_else(|| {
-            // Surface the real config error (invalid key, bad key_authorization, etc.)
-            // instead of a generic "no supported challenge" message.
-            if let Some(err) = last_resolve_err {
-                return err;
-            }
-            let offered: Vec<_> =
-                challenges.iter().map(|c| format!("{}.{}", c.method, c.intent)).collect();
-            TransportErrorKind::custom(std::io::Error::other(format!(
-                "no supported MPP challenge; server offered [{}]",
-                offered.join(", "),
-            )))
-        })?;
+        let (resolved, challenge) = Self::select_challenge(&resp, &self.provider)?;
 
         debug!(id = %challenge.id, method = %challenge.method, intent = %challenge.intent, "received MPP 402 challenge, paying");
 
-        let credential = resolved.pay(challenge).await.map_err(|e| {
+        let credential = resolved.pay(&challenge).await.map_err(|e| {
             TransportErrorKind::custom(std::io::Error::other(format!("MPP payment failed: {e}")))
         })?;
 
@@ -316,33 +268,7 @@ where
             self.provider.commit_topup_and_track_voucher();
 
             let resolved = self.provider.resolve()?;
-            let credential = resolved.pay(challenge).await.map_err(|e| {
-                self.provider.rollback_pending();
-                TransportErrorKind::custom(std::io::Error::other(format!(
-                    "MPP payment failed: {e}"
-                )))
-            })?;
-            let auth_header = format_authorization(&credential).map_err(|e| {
-                self.provider.rollback_pending();
-                TransportErrorKind::custom(std::io::Error::other(format!(
-                    "failed to format MPP credential: {e}"
-                )))
-            })?;
-
-            let voucher_resp = self
-                .client
-                .post(self.url.clone())
-                .timeout(MPP_RETRY_TIMEOUT)
-                .headers(headers.clone())
-                .header("content-type", "application/json")
-                .header(AUTHORIZATION_HEADER, &auth_header)
-                .body(body.clone())
-                .send()
-                .await
-                .map_err(|e| {
-                    self.provider.rollback_pending();
-                    TransportErrorKind::custom(e)
-                })?;
+            let voucher_resp = self.pay_and_retry(&challenge, &resolved, &headers, &body).await?;
 
             let result = Self::handle_response(voucher_resp).await;
             if result.is_ok() {
@@ -388,31 +314,8 @@ where
                 debug!("MPP voucher stale, retrying with fresh voucher");
                 let resolved = self.provider.resolve()?;
                 if resolved.supports(challenge.method.as_str(), challenge.intent.as_str()) {
-                    let credential = resolved.pay(challenge).await.map_err(|e| {
-                        TransportErrorKind::custom(std::io::Error::other(format!(
-                            "MPP payment failed: {e}"
-                        )))
-                    })?;
-                    let auth_header = format_authorization(&credential).map_err(|e| {
-                        TransportErrorKind::custom(std::io::Error::other(format!(
-                            "failed to format MPP credential: {e}"
-                        )))
-                    })?;
-
-                    let final_resp = self
-                        .client
-                        .post(self.url.clone())
-                        .timeout(MPP_RETRY_TIMEOUT)
-                        .headers(headers.clone())
-                        .header("content-type", "application/json")
-                        .header(AUTHORIZATION_HEADER, auth_header)
-                        .body(body.clone())
-                        .send()
-                        .await
-                        .map_err(|e| {
-                            self.provider.rollback_pending();
-                            TransportErrorKind::custom(e)
-                        })?;
+                    let final_resp =
+                        self.pay_and_retry(&challenge, &resolved, &headers, &body).await?;
 
                     let result = Self::handle_response(final_resp).await;
                     if result.is_ok() {
@@ -425,151 +328,42 @@ where
             }
 
             // Retry with key_authorization when the error explicitly indicates
-            // the access key is not provisioned on-chain. Unconditionally
-            // retrying caused "access key already exists" when the 402 was for
-            // a different reason (e.g. wrong currency, insufficient balance).
+            // the access key is not provisioned on-chain, or when verification
+            // failed and the key appears provisioned (first-time provisioning
+            // where key_auth was stripped but not yet provisioned on-chain).
+            //
+            // We fetch a fresh challenge because the server may have consumed
+            // the original challenge ID on first use.
             let needs_key_provisioning = problem_type.ends_with("/key-not-provisioned")
                 || detail.contains("access key does not exist")
                 || detail.contains("key is not provisioned");
 
-            if needs_key_provisioning {
-                self.provider.set_key_provisioned(false);
-                let resolved = self.provider.resolve()?;
-
-                if resolved.supports(challenge.method.as_str(), challenge.intent.as_str()) {
-                    debug!(
-                        "MPP 402 indicates key not provisioned, retrying with key_authorization"
-                    );
-
-                    let credential = resolved.pay(challenge).await.map_err(|e| {
-                        TransportErrorKind::custom(std::io::Error::other(format!(
-                            "MPP payment failed: {e}"
-                        )))
-                    })?;
-                    let auth_header = format_authorization(&credential).map_err(|e| {
-                        TransportErrorKind::custom(std::io::Error::other(format!(
-                            "failed to format MPP credential: {e}"
-                        )))
-                    })?;
-
-                    let final_resp = self
-                        .client
-                        .post(self.url.clone())
-                        .timeout(MPP_RETRY_TIMEOUT)
-                        .headers(headers)
-                        .header("content-type", "application/json")
-                        .header(AUTHORIZATION_HEADER, auth_header)
-                        .body(body)
-                        .send()
-                        .await
-                        .map_err(|e| {
-                            self.provider.rollback_pending();
-                            TransportErrorKind::custom(e)
-                        })?;
-
-                    let result = Self::handle_response(final_resp).await;
-                    if result.is_ok() {
-                        self.provider.set_key_provisioned(true);
-                        self.provider.flush_pending();
-                    } else {
-                        self.provider.rollback_pending();
-                    }
-                    return result;
-                }
-            }
-
-            // Retry with key_authorization when verification failed and key appears
-            // provisioned — handles first-time provisioning where key_auth was stripped
-            // but the key was not yet provisioned on-chain.
-            //
-            // We must make a fresh initial request to obtain a new 402 challenge
-            // because the server consumes challenge IDs on first use — reusing the
-            // original challenge would fail again.
             let needs_verification_retry = (problem_type.ends_with("/verification-failed")
                 || detail.contains("verification-failed"))
                 && self.provider.is_key_provisioned();
 
-            if needs_verification_retry {
+            if needs_key_provisioning || needs_verification_retry {
                 debug!(
-                    "MPP 402 verification-failed with key provisioned, retrying with key_authorization"
+                    problem_type,
+                    "MPP 402 key not provisioned/verification-failed, retrying with key_authorization"
                 );
                 self.provider.set_key_provisioned(false);
                 self.provider.rollback_pending();
 
-                // Fresh request → new 402 challenge
-                let fresh_resp = self
-                    .client
-                    .post(self.url.clone())
-                    .headers(headers.clone())
-                    .header("content-type", "application/json")
-                    .body(body.clone())
-                    .send()
-                    .await
-                    .map_err(TransportErrorKind::custom)?;
+                let (resolved, fresh_challenge) =
+                    self.fetch_fresh_challenge(&headers, &body).await?;
 
-                if fresh_resp.status() != StatusCode::PAYMENT_REQUIRED {
+                let final_resp =
+                    self.pay_and_retry(&fresh_challenge, &resolved, &headers, &body).await?;
+
+                let result = Self::handle_response(final_resp).await;
+                if result.is_ok() {
                     self.provider.set_key_provisioned(true);
-                    return Self::handle_response(fresh_resp).await;
+                    self.provider.flush_pending();
+                } else {
+                    self.provider.rollback_pending();
                 }
-
-                let fresh_www_auth: Vec<&str> = fresh_resp
-                    .headers()
-                    .get_all(WWW_AUTHENTICATE_HEADER)
-                    .iter()
-                    .filter_map(|v| v.to_str().ok())
-                    .collect();
-
-                let fresh_challenges: Vec<_> = parse_www_authenticate_all(fresh_www_auth)
-                    .into_iter()
-                    .filter_map(|r| r.ok())
-                    .collect();
-
-                let fresh_pair = fresh_challenges.iter().find_map(|c| {
-                    let (cid, cur) = extract_challenge_chain_and_currency(c);
-                    let cur = cur.and_then(|s| s.parse().ok());
-                    let p = self
-                        .provider
-                        .resolve_for(DiscoverOptions { chain_id: cid, currency: cur })
-                        .ok()?;
-                    p.supports(c.method.as_str(), c.intent.as_str()).then_some((p, c))
-                });
-
-                if let Some((resolved, fresh_challenge)) = fresh_pair {
-                    let credential = resolved.pay(fresh_challenge).await.map_err(|e| {
-                        TransportErrorKind::custom(std::io::Error::other(format!(
-                            "MPP payment failed: {e}"
-                        )))
-                    })?;
-                    let auth_header = format_authorization(&credential).map_err(|e| {
-                        TransportErrorKind::custom(std::io::Error::other(format!(
-                            "failed to format MPP credential: {e}"
-                        )))
-                    })?;
-
-                    let final_resp = self
-                        .client
-                        .post(self.url.clone())
-                        .timeout(MPP_RETRY_TIMEOUT)
-                        .headers(headers)
-                        .header("content-type", "application/json")
-                        .header(AUTHORIZATION_HEADER, auth_header)
-                        .body(body)
-                        .send()
-                        .await
-                        .map_err(|e| {
-                            self.provider.rollback_pending();
-                            TransportErrorKind::custom(e)
-                        })?;
-
-                    let result = Self::handle_response(final_resp).await;
-                    if result.is_ok() {
-                        self.provider.set_key_provisioned(true);
-                        self.provider.flush_pending();
-                    } else {
-                        self.provider.rollback_pending();
-                    }
-                    return result;
-                }
+                return result;
             }
 
             self.provider.rollback_pending();
@@ -587,6 +381,125 @@ where
             self.provider.rollback_pending();
         }
         result
+    }
+
+    /// Pay a challenge and send the authenticated retry request.
+    async fn pay_and_retry(
+        &self,
+        challenge: &mpp::protocol::core::PaymentChallenge,
+        provider: &P::Provider,
+        headers: &reqwest::header::HeaderMap,
+        body: &[u8],
+    ) -> TransportResult<reqwest::Response> {
+        let credential = provider.pay(challenge).await.map_err(|e| {
+            self.provider.rollback_pending();
+            TransportErrorKind::custom(std::io::Error::other(format!("MPP payment failed: {e}")))
+        })?;
+
+        let auth_header = format_authorization(&credential).map_err(|e| {
+            self.provider.rollback_pending();
+            TransportErrorKind::custom(std::io::Error::other(format!(
+                "failed to format MPP credential: {e}"
+            )))
+        })?;
+
+        self.client
+            .post(self.url.clone())
+            .timeout(MPP_RETRY_TIMEOUT)
+            .headers(headers.clone())
+            .header("content-type", "application/json")
+            .header(AUTHORIZATION_HEADER, auth_header)
+            .body(body.to_vec())
+            .send()
+            .await
+            .map_err(|e| {
+                self.provider.rollback_pending();
+                TransportErrorKind::custom(e)
+            })
+    }
+
+    /// Fetch a fresh 402 challenge from the server (unauthenticated request).
+    ///
+    /// Returns `Ok(Some((provider, challenge)))` if the server returns a 402
+    /// with a matching challenge. Returns `Ok(None)` with the response handled
+    /// if the server returns a non-402 status. Errors on network or parse failures.
+    async fn fetch_fresh_challenge(
+        &self,
+        headers: &reqwest::header::HeaderMap,
+        body: &[u8],
+    ) -> TransportResult<(P::Provider, mpp::protocol::core::PaymentChallenge)> {
+        let fresh_resp = self
+            .client
+            .post(self.url.clone())
+            .timeout(MPP_RETRY_TIMEOUT)
+            .headers(headers.clone())
+            .header("content-type", "application/json")
+            .body(body.to_vec())
+            .send()
+            .await
+            .map_err(TransportErrorKind::custom)?;
+
+        if fresh_resp.status() != StatusCode::PAYMENT_REQUIRED {
+            // Non-402 → return whatever the server sent (could be success or error).
+            let result = Self::handle_response(fresh_resp).await;
+            return Err(result.err().unwrap_or_else(|| {
+                TransportErrorKind::custom(std::io::Error::other(
+                    "unexpected success on unauthenticated fresh probe",
+                ))
+            }));
+        }
+
+        Self::select_challenge(&fresh_resp, &self.provider)
+    }
+
+    /// Parse `WWW-Authenticate` challenges from a 402 response and resolve
+    /// the first one matching a locally configured key (chain + currency).
+    fn select_challenge(
+        resp: &reqwest::Response,
+        provider: &P,
+    ) -> TransportResult<(P::Provider, mpp::protocol::core::PaymentChallenge)> {
+        let www_auth_values: Vec<&str> = resp
+            .headers()
+            .get_all(WWW_AUTHENTICATE_HEADER)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect();
+
+        if www_auth_values.is_empty() {
+            return Err(TransportErrorKind::custom(std::io::Error::other(
+                "402 response missing WWW-Authenticate header",
+            )));
+        }
+
+        let challenges: Vec<_> = parse_www_authenticate_all(www_auth_values)
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut last_resolve_err: Option<TransportError> = None;
+        let resolved_pair = challenges.iter().find_map(|c| {
+            let (chain_id, currency) = extract_challenge_chain_and_currency(c);
+            let currency = currency.and_then(|s| s.parse().ok());
+            match provider.resolve_for(DiscoverOptions { chain_id, currency }) {
+                Ok(p) => p.supports(c.method.as_str(), c.intent.as_str()).then_some((p, c.clone())),
+                Err(e) => {
+                    last_resolve_err = Some(e);
+                    None
+                }
+            }
+        });
+
+        resolved_pair.ok_or_else(|| {
+            if let Some(err) = last_resolve_err {
+                return err;
+            }
+            let offered: Vec<_> =
+                challenges.iter().map(|c| format!("{}.{}", c.method, c.intent)).collect();
+            TransportErrorKind::custom(std::io::Error::other(format!(
+                "no supported MPP challenge; server offered [{}]",
+                offered.join(", "),
+            )))
+        })
     }
 
     async fn handle_response(resp: reqwest::Response) -> TransportResult<ResponsePacket> {
