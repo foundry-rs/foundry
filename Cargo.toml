@@ -159,6 +159,12 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 
+[profile.fuzz]
+inherits = "release"
+lto = "thin"
+strip = "none"
+debug = "line-tables-only"
+
 # Speed up tests and dev build.
 [profile.dev.package]
 # Solc and artifacts.

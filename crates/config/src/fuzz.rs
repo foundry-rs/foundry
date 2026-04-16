@@ -143,6 +143,16 @@ impl FuzzCorpusConfig {
         self.corpus_dir.is_some() || self.show_edge_coverage || self.sancov_edges
     }
 
+    /// Whether the EVM `EdgeCovInspector` should be enabled.
+    ///
+    /// Disabled when sancov edge coverage is active — sancov provides the
+    /// coverage signal and EVM hits from the Solidity handler would dilute it.
+    /// Trace-cmp-only mode keeps EVM edges enabled since trace-cmp only
+    /// contributes dictionary entries, not edge coverage.
+    pub const fn collect_evm_edge_coverage(&self) -> bool {
+        !self.sancov_edges && (self.corpus_dir.is_some() || self.show_edge_coverage)
+    }
+
     /// Whether sancov edge coverage collection is enabled.
     pub const fn collect_sancov_edges(&self) -> bool {
         self.sancov_edges
