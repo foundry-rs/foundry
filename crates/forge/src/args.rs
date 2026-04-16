@@ -1,11 +1,11 @@
 use crate::{
-    cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch},
+    cmd::{cache::CacheSubcommands, generate::GenerateSubcommands,install,  watch},
     opts::{Forge, ForgeSubcommand},
 };
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::Result;
-use foundry_cli::utils;
+use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::shell;
 use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 
@@ -62,7 +62,14 @@ pub fn run_command(args: Forge) -> Result<()> {
                 outcome.ensure_ok(silent)
             }
         }
-        ForgeSubcommand::Script(cmd) => global.block_on(cmd.run_script()),
+       // ForgeSubcommand::Script(cmd) => global.block_on(cmd.run_script()),
+       ForgeSubcommand::Script(cmd) => global.block_on(async {
+            // Install missing dependencies before running the script.
+            // Config is reloaded internally by run_script() via preprocess().
+            let mut config = cmd.load_config()?;
+            install::install_missing_dependencies(&mut config).await;
+            cmd.run_script().await
+        }),
         ForgeSubcommand::Coverage(cmd) => {
             if cmd.is_watch() {
                 global.block_on(watch::watch_coverage(cmd))
@@ -78,7 +85,11 @@ pub fn run_command(args: Forge) -> Result<()> {
                 global.block_on(cmd.run()).map(drop)
             }
         }
-        ForgeSubcommand::VerifyContract(args) => global.block_on(args.run()),
+        ForgeSubcommand::VerifyContract(args) => global.block_on(async {
+            let mut config = args.load_config()?;
+            install::install_missing_dependencies(&mut config).await;
+            args.run().await
+        }),
         ForgeSubcommand::VerifyCheck(args) => global.block_on(args.run()),
         ForgeSubcommand::VerifyBytecode(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Clone(cmd) => global.block_on(cmd.run()),
