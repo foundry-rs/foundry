@@ -1,6 +1,6 @@
 use super::*;
 
-type OpUpstreamHandler<'db, I> = OpHandler<
+type OpEvmHandler<'db, I> = OpHandler<
     OpRevmEvm<'db, I>,
     EVMError<DatabaseError, OpTransactionError>,
     EthFrame<EthInterpreter>,
@@ -102,7 +102,7 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         self.inner.ctx().set_tx(tx);
 
-        let mut handler = OpUpstreamHandler::<I>::new();
+        let mut handler = OpEvmHandler::<I>::new();
         // Convert OpTransactionError to InvalidTransaction due to missing InvalidTxError impl
         let result = handler.inspect_run(&mut self.inner).map_err(|e| match e {
             EVMError::Transaction(tx_error) => EVMError::Transaction(match tx_error {
@@ -195,7 +195,7 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
-        let mut handler = OpUpstreamHandler::<I>::new();
+        let mut handler = OpEvmHandler::<I>::new();
 
         let memory =
             SharedMemory::new_with_buffer(self.ctx_ref().local.shared_memory_buffer().clone());
@@ -215,7 +215,7 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
         self.ctx().set_tx(tx);
 
-        let mut handler = OpUpstreamHandler::<I>::new();
+        let mut handler = OpEvmHandler::<I>::new();
         let result = handler.inspect_run(self).map_err(map_op_error)?;
 
         let result = result.map_haltreason(|h| match h {

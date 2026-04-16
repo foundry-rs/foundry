@@ -1,6 +1,6 @@
 use super::*;
 
-type EthMainnetHandler<'db, I> =
+type EthEvmHandler<'db, I> =
     MainnetHandler<EthRevmEvm<'db, I>, EVMError<DatabaseError>, EthFrame<EthInterpreter>>;
 
 pub type EthRevmEvm<'db, I> = RevmEvm<
@@ -60,7 +60,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
         self.inner.set_tx(tx);
 
-        let result = EthMainnetHandler::<I>::default().inspect_run(&mut self.inner)?;
+        let result = EthEvmHandler::<I>::default().inspect_run(&mut self.inner)?;
 
         Ok(ResultAndState::new(result, self.inner.ctx.journaled_state.inner.state.clone()))
     }
@@ -154,7 +154,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
     }
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
-        let mut handler = EthMainnetHandler::<I>::default();
+        let mut handler = EthEvmHandler::<I>::default();
 
         // Create first frame
         let memory =
@@ -176,7 +176,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
         self.set_tx(tx);
 
-        let result = EthMainnetHandler::<I>::default().inspect_run(self)?;
+        let result = EthEvmHandler::<I>::default().inspect_run(self)?;
 
         Ok(ResultAndState::new(result, self.ctx.journaled_state.inner.state.clone()))
     }
