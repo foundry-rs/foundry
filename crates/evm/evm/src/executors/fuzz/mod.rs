@@ -381,9 +381,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             result.breakpoints = last_run_worker.breakpoints.clone();
         }
 
-        if !self.config.show_logs {
-            result.logs = workers[last_run_worker_idx].logs.clone();
-        }
+        let last_run_logs = (!self.config.show_logs)
+            .then(|| std::mem::take(&mut workers[last_run_worker_idx].logs));
 
         for mut worker in workers {
             result.gas_by_case.append(&mut worker.gas_by_case);
@@ -393,6 +392,10 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             result.gas_report_traces.extend(worker.traces.into_iter().map(|t| t.arena));
             HitMaps::merge_opt(&mut result.line_coverage, worker.coverage);
             result.deprecated_cheatcodes.extend(worker.deprecated_cheatcodes);
+        }
+
+        if let Some(logs) = last_run_logs {
+            result.logs = logs;
         }
 
         if let Some(reason) = &result.reason
@@ -605,8 +608,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         } else {
                             rd.maybe_decode(&outcome.1.result, status)
                         };
-                        worker.logs.extend(outcome.1.logs.clone());
-                        worker.counterexample = outcome;
+                        let (calldata, mut call) = outcome;
+                        worker.logs.extend(std::mem::take(&mut call.logs));
+                        worker.counterexample = (calldata, call);
                         worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
                         shared_state.try_claim_failure(worker_id);
                         break 'stop;

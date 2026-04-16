@@ -41,9 +41,9 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     // Replay each call from the sequence, collect logs, traces and coverage.
     for tx in inputs {
         let mut call_result = execute_tx(&mut executor, tx)?;
-        logs.extend(call_result.logs.clone());
+        logs.extend(std::mem::take(&mut call_result.logs));
         traces.push((TraceKind::Execution, call_result.traces.clone().unwrap()));
-        HitMaps::merge_opt(line_coverage, call_result.line_coverage.clone());
+        HitMaps::merge_opt(line_coverage, call_result.line_coverage.take());
 
         // Commit state changes to persist across calls in the sequence.
         executor.commit(&mut call_result);
@@ -66,13 +66,13 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     // Checking after each call doesn't add valuable info for passing scenario
     // (invariant call result is always success) nor for failed scenarios
     // (invariant call result is always success until the last call that breaks it).
-    let (invariant_result, invariant_success) = call_invariant_function(
+    let (mut invariant_result, invariant_success) = call_invariant_function(
         &executor,
         invariant_contract.address,
         invariant_contract.invariant_function.abi_encode_input(&[])?.into(),
     )?;
-    traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
-    logs.extend(invariant_result.logs);
+    traces.push((TraceKind::Execution, invariant_result.traces.take().unwrap()));
+    logs.extend(std::mem::take(&mut invariant_result.logs));
     deprecated_cheatcodes.extend(
         invariant_result
             .cheatcodes
@@ -82,10 +82,10 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
 
     // Collect after invariant logs and traces.
     if invariant_contract.call_after_invariant && invariant_success {
-        let (after_invariant_result, _) =
+        let (mut after_invariant_result, _) =
             call_after_invariant_function(&executor, invariant_contract.address)?;
-        traces.push((TraceKind::Execution, after_invariant_result.traces.clone().unwrap()));
-        logs.extend(after_invariant_result.logs);
+        traces.push((TraceKind::Execution, after_invariant_result.traces.take().unwrap()));
+        logs.extend(std::mem::take(&mut after_invariant_result.logs));
     }
 
     Ok(counterexample_sequence)
