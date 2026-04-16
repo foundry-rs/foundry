@@ -2078,6 +2078,7 @@ impl<N: Network> Backend<N> {
                     // we want to force the correct base fee for the next block during
                     // `setup_fork_db_config`
                     node_config.base_fee.take();
+                    node_config.fork_urls = vec![eth_rpc_url.clone()];
 
                     node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?
                 };

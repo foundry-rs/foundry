@@ -8,6 +8,7 @@ use crate::{
     provider::{curl_transport::CurlTransport, runtime_transport::RuntimeTransportBuilder},
 };
 use alloy_chains::NamedChain;
+use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_network::{Network, NetworkWallet};
 use alloy_provider::{
     Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
@@ -16,8 +17,7 @@ use alloy_provider::{
 };
 use alloy_rpc_client::ClientBuilder;
 use alloy_transport::{
-    layers::{FallbackLayer, RetryBackoffLayer},
-    utils::guess_local_url,
+    TransportError, TransportFut, layers::RetryBackoffLayer, utils::guess_local_url,
 };
 use eyre::{Result, WrapErr};
 use foundry_config::Config;
@@ -25,12 +25,16 @@ use reqwest::Url;
 use std::{
     marker::PhantomData,
     net::SocketAddr,
-    num::NonZeroUsize,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    task::{Context, Poll},
     time::Duration,
 };
-use tower::Layer;
+use tower::Service;
 use url::ParseError;
 
 /// The assumed block time for unknown chains.
@@ -77,6 +81,51 @@ pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
 #[inline]
 pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
     ProviderBuilder::new(builder.as_ref()).build()
+}
+
+/// A round-robin transport that distributes requests across multiple transports.
+///
+/// Each request is sent to exactly one transport, rotating through the list.
+/// Failover on error is handled by the retry layer above this service.
+#[derive(Clone)]
+pub struct RoundRobinService<S> {
+    transports: Arc<Vec<S>>,
+    next: Arc<AtomicUsize>,
+}
+
+impl<S> RoundRobinService<S> {
+    /// Creates a new round-robin service from a list of transports.
+    pub fn new(transports: Vec<S>) -> Self {
+        Self { transports: Arc::new(transports), next: Arc::new(AtomicUsize::new(0)) }
+    }
+}
+
+impl<S> Service<RequestPacket> for RoundRobinService<S>
+where
+    S: Service<
+            RequestPacket,
+            Response = ResponsePacket,
+            Error = TransportError,
+            Future = TransportFut<'static>,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = TransportFut<'static>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: RequestPacket) -> Self::Future {
+        let transports = self.transports.clone();
+        let idx = self.next.fetch_add(1, Ordering::Relaxed) % transports.len();
+        let mut transport = transports[idx].clone();
+        transport.call(req)
+    }
 }
 
 /// Helper type to construct a `RetryProvider`
@@ -416,18 +465,15 @@ impl<N: Network> ProviderBuilder<N> {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        // Wrap in FallbackService: use active_transport_count=1 for sequential failover
-        // (only the best-scored endpoint is tried per request, closest to round-robin)
-        let fallback_layer =
-            FallbackLayer::default().with_active_transport_count(NonZeroUsize::new(1).unwrap());
-        let fallback_service = fallback_layer.layer(transports);
+        // Wrap in RoundRobinService: each request goes to one transport, rotating.
+        // On failure, the next transport in the ring is tried before returning an error.
+        let round_robin = RoundRobinService::new(transports);
 
-        // Apply retry layer on top of the fallback service
+        // Apply retry layer on top of the round-robin service
         let retry_layer =
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
         let is_local = urls.iter().all(guess_local_url);
-        let client =
-            ClientBuilder::default().layer(retry_layer).transport(fallback_service, is_local);
+        let client = ClientBuilder::default().layer(retry_layer).transport(round_robin, is_local);
 
         if !is_local {
             client.set_poll_interval(
