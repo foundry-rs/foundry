@@ -1,10 +1,40 @@
-use super::*;
+use std::ops::{Deref, DerefMut};
 
-type OpEvmHandler<'db, I> = OpHandler<
-    OpRevmEvm<'db, I>,
-    EVMError<DatabaseError, OpTransactionError>,
-    EthFrame<EthInterpreter>,
->;
+use alloy_evm::{Evm, EvmEnv, precompiles::PrecompilesMap};
+use alloy_op_evm::{OpEvmFactory, OpTx};
+use alloy_primitives::{Address, Bytes};
+use foundry_fork_db::DatabaseError;
+use op_revm::{
+    L1BlockInfo, OpEvm, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
+    handler::OpHandler, precompiles::OpPrecompiles,
+};
+use revm::{
+    Context, Journal, MainContext,
+    context::{
+        BlockEnv, CfgEnv, ContextTr, LocalContextTr,
+        result::{
+            EVMError, ExecResultAndState, ExecutionResult, HaltReason, InvalidTransaction,
+            ResultAndState,
+        },
+    },
+    handler::{EthFrame, EvmTr, FrameResult, Handler, instructions::EthInstructions},
+    inspector::{InspectorEvmTr, InspectorHandler},
+    interpreter::{
+        FrameInput, SharedMemory, interpreter::EthInterpreter, interpreter_action::FrameInit,
+    },
+};
+
+use crate::{
+    FoundryContextExt, FoundryInspectorExt,
+    backend::{DatabaseExt, JournaledState},
+    evm::{FoundryEvmFactory, NestedEvm},
+};
+
+// Modified revm's OpContext with `OpTx`
+pub type OpContext<DB> = Context<BlockEnv, OpTx, CfgEnv<OpSpecId>, DB, Journal<DB>, L1BlockInfo>;
+
+type OpEvmHandler<'db, I> =
+    OpHandler<OpRevmEvm<'db, I>, EVMError<DatabaseError, OpTransactionError>, EthFrame>;
 
 pub type OpRevmEvm<'db, I> = op_revm::OpEvm<
     OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>,
@@ -13,8 +43,8 @@ pub type OpRevmEvm<'db, I> = op_revm::OpEvm<
     PrecompilesMap,
 >;
 
-/// Optimism counterpart of [`EthFoundryEvm`]. Wraps `op_revm::OpEvm` and routes execution
-/// through [`OpHandler`].
+/// Wraps [`op_revm::OpEvm`] and routes execution through [`OpHandler`].
+/// It uses foundry's custom [`OpContext`] as op-revm's one is not compatible with [`OpTx`].
 pub struct OpFoundryEvm<
     'db,
     I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>,
@@ -188,7 +218,7 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
         let mut handler = OpEvmHandler::<I>::new();
 
         let memory =
-            SharedMemory::new_with_buffer(self.ctx_ref().local.shared_memory_buffer().clone());
+            SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
         let first_frame_input = FrameInit { depth: 0, memory, frame_input: frame };
 
         let mut frame_result =
@@ -217,6 +247,6 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
     }
 
     fn to_evm_env(&self) -> EvmEnv<Self::Spec, Self::Block> {
-        EvmEnv::new(self.ctx_ref().cfg.clone(), self.ctx_ref().block.clone())
+        self.ctx_ref().evm_clone()
     }
 }
