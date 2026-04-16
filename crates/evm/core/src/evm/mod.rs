@@ -1,6 +1,5 @@
 use std::{
     fmt::Debug,
-    marker::PhantomData,
     ops::{Deref, DerefMut},
 };
 
@@ -8,12 +7,10 @@ use crate::{
     FoundryBlock, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
     FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
-    constants::{CALLER, DEFAULT_CREATE2_DEPLOYER_CODEHASH, TEST_CONTRACT_ADDRESS},
+    constants::{CALLER, TEST_CONTRACT_ADDRESS},
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_genesis_inner},
 };
-use alloy_consensus::{
-    SignableTransaction, Signed, constants::KECCAK_EMPTY, transaction::SignerRecoverable,
-};
+use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
 use alloy_evm::{
     EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, eth::EthEvmContext,
     precompiles::PrecompilesMap,
@@ -33,21 +30,19 @@ use op_revm::{
 use revm::{
     Context, Database, Journal, MainContext,
     context::{
-        BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContextTr,
-        TxEnv,
+        BlockEnv, CfgEnv, ContextTr, Evm as RevmEvm, JournalTr, LocalContextTr, TxEnv,
         result::{
             EVMError, ExecResultAndState, ExecutionResult, HaltReason, InvalidTransaction,
             ResultAndState,
         },
     },
     handler::{
-        EthFrame, EvmTr, FrameResult, FrameTr, Handler, ItemOrResult, instructions::EthInstructions,
+        EthFrame, EvmTr, FrameResult, Handler, MainnetHandler, instructions::EthInstructions,
     },
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{
-        CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
-        FrameInput, Gas, InstructionResult, InterpreterResult, SharedMemory,
-        interpreter::EthInterpreter, interpreter_action::FrameInit, return_ok,
+        CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, InstructionResult,
+        SharedMemory, interpreter::EthInterpreter, interpreter_action::FrameInit,
     },
     primitives::hardfork::SpecId,
     state::Bytecode,
@@ -258,7 +253,7 @@ pub fn with_cloned_context<CTX: FoundryContextExt>(
 }
 
 /// Get the call inputs for the CREATE2 factory.
-pub(crate) fn get_create2_factory_call_inputs<T: JournalTr>(
+pub fn get_create2_factory_call_inputs<T: JournalTr>(
     salt: U256,
     inputs: &CreateInputs,
     deployer: Address,

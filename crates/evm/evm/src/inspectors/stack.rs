@@ -12,10 +12,12 @@ use foundry_common::compile::Analysis;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
     backend::{DatabaseError, DatabaseExt, JournaledState},
+    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     env::FoundryContextExt,
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, IntoNestedEvm, NestedEvm, SpecFor, TxEnvFor, with_cloned_context,
+        FoundryEvmNetwork, IntoNestedEvm, NestedEvm, SpecFor, TxEnvFor,
+        get_create2_factory_call_inputs, with_cloned_context,
     },
 };
 use foundry_evm_coverage::HitMaps;
@@ -28,11 +30,13 @@ use revm::{
         result::{EVMError, ExecutionResult, Output},
     },
     context_interface::CreateScheme,
+    handler::FrameResult,
     inspector::JournalExt,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
-        Interpreter, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
+        InstructionResult, Interpreter, InterpreterResult, return_ok,
     },
+    primitives::KECCAK_EMPTY,
     state::{Account, AccountStatus},
 };
 use revm_inspectors::edge_cov::EdgeCovInspector;
@@ -382,6 +386,12 @@ pub struct InspectorStackInner {
     pub top_frame_journal: AddressMap<Account>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
+    /// LIFO stack tracking CREATE2 frames that were redirected to the CREATE2 factory.
+    /// Each entry records the journal depth at which the redirect occurred.
+    pub pending_create2_redirects: Vec<usize>,
+    /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
+    /// it goes through the normal inspector lifecycle (tracing, etc.).
+    pub pending_create2_error: Option<CreateOutcome>,
 }
 
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
@@ -1031,6 +1041,94 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         );
     }
 
+    fn frame_start(
+        &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        frame_input: &mut FrameInput,
+    ) -> Option<FrameResult> {
+        if let FrameInput::Create(inputs) = frame_input
+            && let CreateScheme::Create2 { salt } = inputs.scheme()
+            && self.should_use_create2_factory(ecx.journal().depth(), inputs)
+        {
+            let gas_limit = inputs.gas_limit();
+            let create2_deployer = self.create2_deployer();
+
+            // Validate deployer before rewriting.
+            let code_hash = ecx.journal_mut().load_account(create2_deployer).ok()?.info.code_hash;
+            if code_hash == KECCAK_EMPTY {
+                // Store the revert so `create` can return it inside the normal inspector
+                // lifecycle (avoids tracing mismatch from short-circuiting in frame_start).
+                self.inner.pending_create2_error = Some(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: Bytes::from(
+                            format!("missing CREATE2 deployer: {create2_deployer}").into_bytes(),
+                        ),
+                        gas: Gas::new(gas_limit),
+                    },
+                    address: None,
+                });
+                return None;
+            } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
+                self.inner.pending_create2_error = Some(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "invalid CREATE2 deployer bytecode".into(),
+                        gas: Gas::new(gas_limit),
+                    },
+                    address: None,
+                });
+                return None;
+            }
+
+            let call_inputs =
+                get_create2_factory_call_inputs(salt, inputs, create2_deployer, ecx.journal_mut())
+                    .ok()?;
+
+            // Record the redirect depth *after* validation succeeds.
+            self.inner.pending_create2_redirects.push(ecx.journal().depth());
+
+            // Rewrite the frame input from Create to Call.
+            *frame_input = FrameInput::Call(Box::new(call_inputs));
+        }
+
+        None
+    }
+
+    fn frame_end(
+        &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        _frame_input: &FrameInput,
+        frame_result: &mut FrameResult,
+    ) {
+        let depth = ecx.journal().depth();
+        if self.inner.pending_create2_redirects.last().copied() != Some(depth) {
+            return;
+        }
+
+        self.inner.pending_create2_redirects.pop();
+
+        let FrameResult::Call(call) = frame_result else {
+            debug_assert!(false, "pending CREATE2 redirect ended with non-call result");
+            return;
+        };
+
+        let address = match call.instruction_result() {
+            return_ok!() => Address::try_from(call.output().as_ref())
+                .map_err(|_| {
+                    call.result = InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "invalid CREATE2 factory output".into(),
+                        gas: Gas::new(call.result.gas.limit()),
+                    };
+                })
+                .ok(),
+            _ => None,
+        };
+
+        *frame_result = FrameResult::Create(CreateOutcome { result: call.result.clone(), address });
+    }
+
     fn call(
         &mut self,
         ecx: &mut FoundryContextFor<'_, FEN>,
@@ -1178,6 +1276,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             |inspector| inspector.create(ecx, create).map(Some),
         );
 
+        // If frame_start detected an invalid CREATE2 deployer, return the error here
+        // (after sub-inspectors have been notified) so tracing stays balanced.
+        if let Some(error) = self.inner.pending_create2_error.take() {
+            return Some(error);
+        }
+
         if !matches!(create.scheme(), CreateScheme::Create2 { .. })
             && self.enable_isolation
             && !self.in_inner_context
@@ -1313,6 +1417,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Inspector
         log: Log,
     ) {
         self.as_mut().log_full(interpreter, ecx, log)
+    }
+
+    fn frame_start(
+        &mut self,
+        context: &mut FoundryContextFor<'_, FEN>,
+        frame_input: &mut FrameInput,
+    ) -> Option<FrameResult> {
+        self.as_mut().frame_start(context, frame_input)
+    }
+
+    fn frame_end(
+        &mut self,
+        context: &mut FoundryContextFor<'_, FEN>,
+        frame_input: &FrameInput,
+        frame_result: &mut FrameResult,
+    ) {
+        self.as_mut().frame_end(context, frame_input, frame_result)
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
