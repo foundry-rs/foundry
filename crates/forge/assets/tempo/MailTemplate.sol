@@ -58,6 +58,9 @@ contract Mail {
         // `verify()` returns `false` on signer mismatch, reverts on malformed signatures.
         require(StdPrecompiles.SIGNATURE_VERIFIER.verify(from, hash, signature), "invalid signature");
 
+        // `recover()` returns the signer address directly, reverts on malformed signatures.
+        // require(StdPrecompiles.SIGNATURE_VERIFIER.recover(hash, signature) == from, "invalid signature");
+
         nonces[from]++;
         token.transferFromWithMemo(from, to, attachment.amount, attachment.memo);
         emit MailSent(from, to, message, attachment);
