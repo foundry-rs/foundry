@@ -27,7 +27,6 @@ use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryNetwork;
 use foundry_test_utils::rpc::{self, next_http_rpc_endpoint, next_rpc_endpoint};
 use futures::StreamExt;
-use revm::precompile::PrecompileStatus;
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
@@ -1915,9 +1914,8 @@ async fn test_config_with_osaka_hardfork_with_precompile_factory() {
                         Ok(revm::precompile::PrecompileOutput {
                             bytes: Bytes::copy_from_slice(input.data),
                             gas_used: 0,
-                            status: PrecompileStatus::Success,
-                            state_gas_used: 0,
-                            reservoir: input.reservoir,
+                            gas_refunded: 0,
+                            reverted: false,
                         })
                     },
                 ),

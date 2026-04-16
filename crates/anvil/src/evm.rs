@@ -30,7 +30,7 @@ mod tests {
         handler::{EthPrecompiles, instructions::EthInstructions},
         inspector::NoOpInspector,
         interpreter::interpreter::EthInterpreter,
-        precompile::{PrecompileOutput, PrecompileSpecId, PrecompileStatus, Precompiles},
+        precompile::{PrecompileOutput, PrecompileSpecId, Precompiles},
         primitives::hardfork::SpecId,
     };
 
@@ -57,11 +57,10 @@ mod tests {
                 PRECOMPILE_ADDR,
                 DynPrecompile::from(|input: PrecompileInput<'_>| {
                     Ok(PrecompileOutput {
-                        status: PrecompileStatus::Success,
                         bytes: Bytes::copy_from_slice(input.data),
                         gas_used: 0,
-                        state_gas_used: 0,
-                        reservoir: input.reservoir,
+                        gas_refunded: 0,
+                        reverted: false,
                     })
                 }),
             )]
