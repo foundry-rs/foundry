@@ -156,6 +156,7 @@ where
             },
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::Message(err),
+            EVMError::CustomAny(err) => Self::Message(err.to_string()),
         }
     }
 }
@@ -182,6 +183,7 @@ where
             },
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::Message(err),
+            EVMError::CustomAny(err) => Self::Message(err.to_string()),
         }
     }
 }
@@ -199,6 +201,7 @@ where
             EVMError::Header(err) => EVMError::<T, OpTransactionError>::Header(err).into(),
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::Message(err),
+            EVMError::CustomAny(err) => Self::Message(err.to_string()),
         }
     }
 }
@@ -221,6 +224,7 @@ where
             },
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::Message(err),
+            EVMError::CustomAny(err) => Self::Message(err.to_string()),
         }
     }
 }

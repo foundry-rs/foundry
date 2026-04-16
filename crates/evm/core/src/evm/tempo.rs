@@ -194,6 +194,7 @@ pub(crate) fn map_tempo_error(
         EVMError::Database(db) => EVMError::Database(db),
         EVMError::Header(h) => EVMError::Header(h),
         EVMError::Custom(s) => EVMError::Custom(s),
+        EVMError::CustomAny(custom_any_error) => EVMError::CustomAny(custom_any_error),
         EVMError::Transaction(t) => match t {
             TempoInvalidTransaction::EthInvalidTransaction(eth) => EVMError::Transaction(eth),
             t => EVMError::Custom(format!("tempo transaction error: {t}")),
@@ -411,8 +412,9 @@ fn handle_create2_frame<
 
         if inspector.should_use_create2_factory(ctx.journal().depth(), inputs) {
             let gas_limit = inputs.gas_limit();
-            let create2_deployer = evm.inspector().create2_deployer();
-            let call_inputs = get_create2_factory_call_inputs(salt, inputs, create2_deployer);
+            let create2_deployer = inspector.create2_deployer();
+            let call_inputs =
+                get_create2_factory_call_inputs(salt, inputs, create2_deployer, ctx.journal_mut())?;
 
             create2_overrides.push((evm.journal().depth(), call_inputs.clone()));
 
