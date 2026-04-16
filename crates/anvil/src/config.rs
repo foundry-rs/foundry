@@ -270,7 +270,7 @@ Block number:   {}
 Block hash:     {:?}
 Chain ID:       {}
 "#,
-                fork.eth_rpc_url(),
+                fork.eth_rpc_url().as_deref().unwrap_or("none"),
                 fork.block_number(),
                 fork.block_hash(),
                 fork.chain_id()
@@ -402,7 +402,7 @@ Genesis Number
             json!({
               "available_accounts": available_accounts,
               "private_keys": private_keys,
-              "endpoint": fork.eth_rpc_url(),
+              "endpoint": fork.eth_rpc_url().unwrap_or_default(),
               "block_number": fork.block_number(),
               "block_hash": fork.block_hash(),
               "chain_id": fork.chain_id(),
@@ -1266,25 +1266,20 @@ impl NodeConfig {
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
+        let builder = ProviderBuilder::new(&eth_rpc_url)
+            .timeout(self.fork_request_timeout)
+            .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+            .compute_units_per_second(self.compute_units_per_second)
+            .max_retry(self.fork_request_retries)
+            .headers(self.fork_headers.clone());
+
         let provider = Arc::new(if self.fork_urls.len() > 1 {
             debug!(target: "node", urls=?self.fork_urls, "using multi-endpoint fallback provider");
-            ProviderBuilder::new(&eth_rpc_url)
-                .timeout(self.fork_request_timeout)
-                .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
-                .max_retry(self.fork_request_retries)
-                .headers(self.fork_headers.clone())
+            builder
                 .build_fallback(self.fork_urls.clone())
                 .wrap_err("failed to establish fallback provider to fork urls")?
         } else {
-            ProviderBuilder::new(&eth_rpc_url)
-                .timeout(self.fork_request_timeout)
-                .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
-                .max_retry(self.fork_request_retries)
-                .headers(self.fork_headers.clone())
-                .build()
-                .wrap_err("failed to establish provider to fork url")?
+            builder.build().wrap_err("failed to establish provider to fork url")?
         });
 
         let (fork_block_number, fork_chain_id, force_transactions) = if let Some(fork_choice) =
@@ -1460,6 +1455,7 @@ latest block number: {latest_block}"
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
+            headers: self.fork_headers.clone(),
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
             blob_gas_used: block.header.blob_gas_used().map(|g| g as u128),
             blob_excess_gas_and_price: evm_env.block_env.blob_excess_gas_and_price,

@@ -97,8 +97,8 @@ impl<N: Network> ClientFork<N> {
         self.config.read().block_hash
     }
 
-    pub fn eth_rpc_url(&self) -> String {
-        self.config.read().eth_rpc_url().to_string()
+    pub fn eth_rpc_url(&self) -> Option<String> {
+        self.config.read().eth_rpc_url().map(|s| s.to_string())
     }
 
     pub fn chain_id(&self) -> u64 {
@@ -655,6 +655,8 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub backoff: Duration,
     /// available CUPS
     pub compute_units_per_second: u64,
+    /// Headers to include with RPC requests
+    pub headers: Vec<String>,
     /// total difficulty of the chain until this block
     pub total_difficulty: U256,
     /// Transactions to force include in the forked chain
@@ -663,8 +665,8 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
 
 impl<N: Network> ClientForkConfig<N> {
     /// Returns the primary RPC URL (first entry in `fork_urls`).
-    pub fn eth_rpc_url(&self) -> &str {
-        &self.fork_urls[0]
+    pub fn eth_rpc_url(&self) -> Option<&str> {
+        self.fork_urls.first().map(|s| s.as_str())
     }
 
     /// Updates the provider URLs
@@ -677,27 +679,25 @@ impl<N: Network> ClientForkConfig<N> {
             BlockchainError::InvalidUrl("at least one fork URL required".to_string())
         })?;
 
+        let builder = ProviderBuilder::<N>::new(primary.as_str())
+            .timeout(self.timeout)
+            .max_retry(self.retries)
+            .initial_backoff(self.backoff.as_millis() as u64)
+            .compute_units_per_second(self.compute_units_per_second)
+            .headers(self.headers.clone());
+
         self.provider = Arc::new(if urls.len() > 1 {
-            ProviderBuilder::<N>::new(primary.as_str())
-                .timeout(self.timeout)
-                .max_retry(self.retries)
-                .initial_backoff(self.backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
+            builder
                 .build_fallback(urls.clone())
                 .map_err(|e| BlockchainError::InvalidUrl(format!("{primary}: {e}")))?
         } else {
-            ProviderBuilder::<N>::new(primary.as_str())
-                .timeout(self.timeout)
-                .max_retry(self.retries)
-                .initial_backoff(self.backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
-                .build()
-                .map_err(|e| BlockchainError::InvalidUrl(format!("{primary}: {e}")))?
+            builder.build().map_err(|e| BlockchainError::InvalidUrl(format!("{primary}: {e}")))?
         });
         trace!(target: "fork", "Updated fork urls: {:?}", urls);
         self.fork_urls = urls;
         Ok(())
     }
+
     /// Updates the block forked off `(block number, block hash, timestamp)`
     pub fn update_block(
         &mut self,

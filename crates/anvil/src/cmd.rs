@@ -657,13 +657,23 @@ impl AnvilEvmArgs {
                 let mut endpoints = config.rpc_endpoints.clone().resolved();
                 if let Some(endpoint) = endpoints.remove(&fork_url.url) {
                     // Alias matched — expand all URLs from the endpoint config
-                    if let Ok(urls) = endpoint.all_urls() {
-                        for (i, url) in urls.into_iter().enumerate() {
-                            resolved_urls.push(ForkUrl {
-                                url,
-                                // Only the first URL inherits the block suffix
-                                block: if i == 0 { fork_url.block } else { None },
-                            });
+                    match endpoint.all_urls() {
+                        Ok(urls) => {
+                            for (i, url) in urls.into_iter().enumerate() {
+                                resolved_urls.push(ForkUrl {
+                                    url,
+                                    // Only the first URL inherits the block suffix
+                                    block: if i == 0 { fork_url.block } else { None },
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            warn!(target: "node", alias=%fork_url.url, %e, "could not resolve all endpoints, using primary endpoint only");
+                            if let Ok(url) = endpoint.url() {
+                                resolved_urls.push(ForkUrl { url, block: fork_url.block });
+                            } else {
+                                resolved_urls.push(fork_url.clone());
+                            }
                         }
                     }
                 } else if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
