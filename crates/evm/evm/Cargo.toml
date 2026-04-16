@@ -48,6 +48,7 @@ revm = { workspace = true, default-features = false, features = [
 ] }
 revm-inspectors.workspace = true
 tempo-precompiles.workspace = true
+tempo-primitives.workspace = true
 
 eyre.workspace = true
 parking_lot.workspace = true
