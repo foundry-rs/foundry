@@ -4455,16 +4455,30 @@ pub fn transaction_build(
     // there's no `info` yet.
     let hash = tx_hash.unwrap_or_else(|| eth_transaction.hash());
 
-    let eth_envelope = FoundryTxEnvelope::from(eth_transaction)
-        .try_into_eth()
-        .expect("non-standard transactions are handled above");
+    let envelope = match FoundryTxEnvelope::from(eth_transaction).try_into_eth() {
+        Ok(eth_envelope) => match eth_envelope {
+            TxEnvelope::Legacy(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(rehash(s, hash))),
+            TxEnvelope::Eip1559(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(rehash(s, hash))),
+            TxEnvelope::Eip2930(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(rehash(s, hash))),
+            TxEnvelope::Eip4844(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(rehash(s, hash))),
+            TxEnvelope::Eip7702(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(rehash(s, hash))),
+        },
+        Err(non_standard_tx) => {
+            error!(
+                target: "backend",
+                tx_type = non_standard_tx.ty(),
+                "encountered unhandled non-standard tx in transaction_build; falling back to unknown envelope"
+            );
 
-    let envelope = match eth_envelope {
-        TxEnvelope::Legacy(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(rehash(s, hash))),
-        TxEnvelope::Eip1559(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(rehash(s, hash))),
-        TxEnvelope::Eip2930(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(rehash(s, hash))),
-        TxEnvelope::Eip4844(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(rehash(s, hash))),
-        TxEnvelope::Eip7702(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(rehash(s, hash))),
+            AnyTxEnvelope::Unknown(UnknownTxEnvelope {
+                hash,
+                inner: UnknownTypedTransaction {
+                    ty: AnyTxType(non_standard_tx.ty()),
+                    fields: Default::default(),
+                    memo: Default::default(),
+                },
+            })
+        }
     };
 
     let tx = Transaction {
