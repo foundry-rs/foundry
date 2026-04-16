@@ -207,7 +207,7 @@ impl RunArgs {
                     evm_env.cfg_env.chain_id,
                     block.header().timestamp(),
                 ) {
-                    evm_env.cfg_env.set_spec(hardfork.into());
+                    evm_env.cfg_env.set_spec_and_mainnet_gas_params(hardfork.into());
                 } else if block.header().excess_blob_gas().is_some() {
                     // TODO: add glamsterdam header field checks in the future
                     evm_version = Some(EvmVersion::Cancun);

@@ -23,7 +23,7 @@ foundry-evm-networks.workspace = true
 
 alloy-chains.workspace = true
 alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
-alloy-evm = { workspace = true, features = ["rpc", "op"] }
+alloy-evm = { workspace = true, features = ["rpc"] }
 alloy-genesis.workspace = true
 alloy-hardforks.workspace = true
 alloy-json-abi.workspace = true
@@ -36,7 +36,8 @@ alloy-primitives = { workspace = true, features = [
 alloy-provider.workspace = true
 alloy-network.workspace = true
 alloy-consensus.workspace = true
-alloy-rpc-types.workspace = true
+alloy-op-evm.workspace = true
+alloy-rpc-types = { workspace = true, features = ["anvil"] }
 alloy-sol-types.workspace = true
 alloy-rlp.workspace = true
 foundry-fork-db.workspace = true
@@ -54,7 +55,6 @@ revm = { workspace = true, features = [
 ] }
 revm-inspectors.workspace = true
 op-alloy-consensus = { workspace = true, features = ["k256"] }
-alloy-op-evm.workspace = true
 op-alloy-network.workspace = true
 op-revm.workspace = true
 tempo-revm.workspace = true
@@ -77,7 +77,6 @@ tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-alloy-op-evm.workspace = true
 alloy-serde.workspace = true
 op-alloy-consensus.workspace = true
 op-alloy-rpc-types.workspace = true

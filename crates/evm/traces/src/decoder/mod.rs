@@ -22,7 +22,6 @@ use foundry_evm_core::{
         BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY,
         MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
-    tempo::{ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS},
 };
 use itertools::Itertools;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
@@ -220,9 +219,6 @@ impl CallTraceDecoder {
                 (VALIDATOR_CONFIG_ADDRESS, "ValidatorConfig".to_string()),
                 (ACCOUNT_KEYCHAIN_ADDRESS, "AccountKeychain".to_string()),
                 (PATH_USD_ADDRESS, "PathUSD".to_string()),
-                (ALPHA_USD_ADDRESS, "AlphaUSD".to_string()),
-                (BETA_USD_ADDRESS, "BetaUSD".to_string()),
-                (THETA_USD_ADDRESS, "ThetaUSD".to_string()),
             ]),
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),

@@ -156,6 +156,7 @@ where
             },
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::Message(err),
+            EVMError::CustomAny(err) => Self::Message(err.to_string()),
         }
     }
 }
@@ -182,6 +183,25 @@ where
             },
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::Message(err),
+            EVMError::CustomAny(err) => Self::Message(err.to_string()),
+        }
+    }
+}
+
+impl<T> From<EVMError<T, alloy_op_evm::OpTxError>> for BlockchainError
+where
+    T: Into<Self>,
+{
+    fn from(err: EVMError<T, alloy_op_evm::OpTxError>) -> Self {
+        match err {
+            EVMError::Transaction(err) => {
+                let op_err: OpTransactionError = err.0;
+                EVMError::<T, OpTransactionError>::Transaction(op_err).into()
+            }
+            EVMError::Header(err) => EVMError::<T, OpTransactionError>::Header(err).into(),
+            EVMError::Database(err) => err.into(),
+            EVMError::Custom(err) => Self::Message(err),
+            EVMError::CustomAny(err) => Self::Message(err.to_string()),
         }
     }
 }
@@ -204,6 +224,7 @@ where
             },
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::Message(err),
+            EVMError::CustomAny(err) => Self::Message(err.to_string()),
         }
     }
 }

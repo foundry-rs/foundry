@@ -17,7 +17,8 @@ use alloy_evm::{
     Evm, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockValidationError,
-        ExecutableTx, OnStateHook, StateChangePreBlockSource, StateChangeSource, StateDB, TxResult,
+        ExecutableTx, GasOutput, OnStateHook, StateChangePreBlockSource, StateChangeSource,
+        StateDB, TxResult,
     },
     eth::{
         EthTxResult,
@@ -88,6 +89,10 @@ impl<H> TxResult for AnvilTxResult<H> {
 
     fn result(&self) -> &ResultAndState<Self::HaltReason> {
         self.inner.result()
+    }
+
+    fn into_result(self) -> ResultAndState<Self::HaltReason> {
+        self.inner.into_result()
     }
 }
 
@@ -211,7 +216,10 @@ where
         })
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> Result<u64, BlockExecutionError> {
+    fn commit_transaction(
+        &mut self,
+        output: Self::Result,
+    ) -> Result<GasOutput, BlockExecutionError> {
         let AnvilTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
             sender,
@@ -221,7 +229,7 @@ where
             hook.on_state(StateChangeSource::Transaction(self.receipts.len()), &state);
         }
 
-        let gas_used = result.gas_used();
+        let gas_used = result.tx_gas_used();
         self.gas_used += gas_used;
 
         if self.spec_id >= SpecId::CANCUN {
@@ -257,7 +265,7 @@ where
         self.receipts.push(receipt);
         self.evm.db_mut().commit(state);
 
-        Ok(gas_used)
+        Ok(GasOutput::new(gas_used))
     }
 
     fn finish(
@@ -406,7 +414,7 @@ where
         match executor.execute_transaction_without_commit((tx_env, recovered)) {
             Ok(result) => {
                 let exec_result = result.result().result.clone();
-                let gas_used = result.result().result.gas_used();
+                let gas_used = result.result().result.tx_gas_used();
 
                 executor.commit_transaction(result).expect("commit failed");
 

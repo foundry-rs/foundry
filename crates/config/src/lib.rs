@@ -53,7 +53,7 @@ use std::{
 mod macros;
 
 pub mod utils;
-pub use foundry_evm_hardforks::{FromEvmVersion, evm_spec_id};
+pub use foundry_evm_hardforks::{FoundryHardfork, FromEvmVersion, evm_spec_id};
 pub use utils::*;
 
 mod endpoints;
@@ -235,6 +235,8 @@ pub struct Config {
     /// The EVM version to use when building contracts.
     #[serde(with = "from_str_lowercase")]
     pub evm_version: EvmVersion,
+    /// The runtime hardfork to use when executing tests and scripts.
+    pub hardfork: Option<FoundryHardfork>,
     /// List of contracts to generate gas reports for.
     pub gas_reports: Vec<String>,
     /// List of contracts to ignore for gas reports.
@@ -788,6 +790,18 @@ impl Config {
         Self::from_figment(Figment::from(provider))
     }
 
+    /// Applies an inline provider on top of the current config without reloading external
+    /// providers such as `foundry.toml`, env vars, or remappings.
+    pub fn merge_inline_provider<T: Provider>(&self, provider: T) -> Result<Self, Error> {
+        let mut config =
+            self.to_figment(FigmentProviders::None).merge(provider).extract::<Self>()?;
+        config.profile = self.profile.clone();
+        config.profiles = self.profiles.clone();
+        config.normalize_hardfork_settings()?;
+
+        Ok(config)
+    }
+
     #[doc(hidden)]
     #[deprecated(note = "use `Config::from_provider` instead")]
     pub fn try_from<T: Provider>(provider: T) -> Result<Self, ExtractConfigError> {
@@ -840,8 +854,15 @@ impl Config {
         }
 
         config.normalize_optimizer_settings();
+        config.normalize_hardfork_settings().map_err(ExtractConfigError::new)?;
 
         Ok(config)
+    }
+
+    fn normalize_hardfork_settings(&mut self) -> Result<(), Error> {
+        let Some(hardfork) = self.hardfork else { return Ok(()) };
+        self.networks = self.networks.normalize_for_hardfork(hardfork).map_err(Error::from)?;
+        Ok(())
     }
 
     /// Returns the populated [Figment] using the requested [FigmentProviders] preset.
@@ -1067,7 +1088,8 @@ impl Config {
     /// Cleans up any duplicate `Remapping` and sorts them
     ///
     /// On windows this will convert any `\` in the remapping path into a `/`
-    pub const fn sanitize_remappings(&mut self) {
+    #[allow(clippy::missing_const_for_fn)]
+    pub fn sanitize_remappings(&mut self) {
         #[cfg(target_os = "windows")]
         {
             // force `/` in remappings on windows
@@ -1329,7 +1351,7 @@ impl Config {
 
     /// Returns the Spec derived from the configured [EvmVersion]
     pub fn evm_spec_id<SPEC: FromEvmVersion>(&self) -> SPEC {
-        evm_spec_id(self.evm_version)
+        self.hardfork.map(Into::into).unwrap_or_else(|| evm_spec_id(self.evm_version))
     }
 
     /// Returns whether the compiler version should be auto-detected
@@ -1898,6 +1920,7 @@ impl Config {
             out: self.out,
             libs: self.libs,
             remappings: self.remappings,
+            network: self.networks.active_network_name().map(String::from),
         }
     }
 
@@ -2540,6 +2563,7 @@ impl Default for Config {
             include_paths: vec![],
             force: false,
             evm_version: EvmVersion::Osaka,
+            hardfork: None,
             gas_reports: vec!["*".to_string()],
             gas_reports_ignore: vec![],
             gas_reports_include_tests: false,
@@ -2743,6 +2767,9 @@ pub struct BasicConfig {
     /// `Remappings` to use for this repo
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remappings: Vec<RelativeRemapping>,
+    /// The active non-Ethereum network (e.g. `"tempo"`).
+    #[serde(skip)]
+    pub network: Option<String>,
 }
 
 impl BasicConfig {
@@ -2750,7 +2777,13 @@ impl BasicConfig {
     ///
     /// This serializes to a table with the name of the profile
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        let s = toml::to_string_pretty(self)?;
+        let mut value = toml::Value::try_from(self)?;
+        if let Some(ref network) = self.network
+            && let toml::Value::Table(ref mut table) = value
+        {
+            table.insert(network.clone(), toml::Value::Boolean(true));
+        }
+        let s = toml::to_string_pretty(&value)?;
         Ok(format!(
             "\
 [profile.{}]
@@ -2807,6 +2840,7 @@ mod tests {
     use foundry_compilers::artifacts::{
         ModelCheckerEngine, YulDetails, vyper::VyperOptimizationMode,
     };
+    use foundry_evm_hardforks::TempoHardfork;
     use similar_asserts::assert_eq;
     use soldeer_core::remappings::RemappingsLocation;
     use std::{fs::File, io::Write};
@@ -4261,6 +4295,7 @@ mod tests {
                     out: "myout".into(),
                     libs: default.libs.clone(),
                     remappings: default.remappings.clone(),
+                    network: None,
                 }
             );
             jail.set_env("FOUNDRY_PROFILE", r"other");
@@ -4273,6 +4308,7 @@ mod tests {
                     out: "myout".into(),
                     libs: default.libs.clone(),
                     remappings: default.remappings,
+                    network: None,
                 }
             );
             Ok(())
@@ -4894,7 +4930,8 @@ mod tests {
                     src: "src".into(),
                     out: "out".into(),
                     libs: vec!["lib".into()],
-                    remappings: vec![]
+                    remappings: vec![],
+                    network: None,
                 }
             )
         );
@@ -4920,6 +4957,58 @@ mod tests {
                     unknown_section: Profile::new("default"),
                     source: Some("foundry.toml".into())
                 }]
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hardfork_overrides_spec_id() {
+        let config = Config {
+            hardfork: Some(FoundryHardfork::Tempo(TempoHardfork::T3)),
+            ..Config::default()
+        };
+
+        assert_eq!(config.evm_spec_id::<TempoHardfork>(), TempoHardfork::T3);
+    }
+
+    #[test]
+    fn tempo_hardfork_infers_tempo_network() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                hardfork = "tempo:T3"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.hardfork, Some(FoundryHardfork::Tempo(TempoHardfork::T3)));
+            assert!(config.networks.is_tempo());
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hardfork_rejects_conflicting_network() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                tempo = true
+                hardfork = "shanghai"
+            "#,
+            )?;
+
+            let err = Config::load().unwrap_err();
+            assert!(
+                err.to_string()
+                    .to_lowercase()
+                    .contains("hardfork `shanghai` conflicts with network config `tempo`")
             );
 
             Ok(())

@@ -14,6 +14,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+foundry-evm-hardforks.workspace = true
+
 alloy-chains.workspace = true
 alloy-eips.workspace = true
 alloy-evm.workspace = true

@@ -1,6 +1,5 @@
 use std::{
     fmt::Debug,
-    marker::PhantomData,
     ops::{Deref, DerefMut},
 };
 
@@ -8,18 +7,16 @@ use crate::{
     FoundryBlock, FoundryContextExt, FoundryInspectorExt, FoundryTransaction,
     FromAnyRpcTransaction,
     backend::{DatabaseExt, JournaledState},
-    constants::{CALLER, DEFAULT_CREATE2_DEPLOYER_CODEHASH, TEST_CONTRACT_ADDRESS},
+    constants::{CALLER, TEST_CONTRACT_ADDRESS},
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS, initialize_tempo_genesis_inner},
 };
-use alloy_consensus::{
-    SignableTransaction, Signed, constants::KECCAK_EMPTY, transaction::SignerRecoverable,
-};
+use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverable};
 use alloy_evm::{
     EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, eth::EthEvmContext,
     precompiles::PrecompilesMap,
 };
 use alloy_network::{Ethereum, Network};
-use alloy_op_evm::OpEvmFactory;
+use alloy_op_evm::{OpEvmFactory, OpTx};
 use alloy_primitives::{Address, Bytes, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
@@ -27,23 +24,25 @@ use foundry_config::FromEvmVersion;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
 use op_alloy_network::Optimism;
 use op_revm::{
-    DefaultOp, OpBuilder, OpContext, OpHaltReason, OpSpecId, OpTransaction, handler::OpHandler,
+    L1BlockInfo, OpEvm, OpHaltReason, OpSpecId, OpTransaction, handler::OpHandler,
     precompiles::OpPrecompiles, transaction::error::OpTransactionError,
 };
 use revm::{
-    Context,
+    Context, Database, Journal, MainContext,
     context::{
-        BlockEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContextTr, TxEnv,
-        result::{EVMError, ExecResultAndState, ExecutionResult, HaltReason, ResultAndState},
+        BlockEnv, CfgEnv, ContextTr, Evm as RevmEvm, JournalTr, LocalContextTr, TxEnv,
+        result::{
+            EVMError, ExecResultAndState, ExecutionResult, HaltReason, InvalidTransaction,
+            ResultAndState,
+        },
     },
     handler::{
-        EthFrame, EvmTr, FrameResult, FrameTr, Handler, ItemOrResult, instructions::EthInstructions,
+        EthFrame, EvmTr, FrameResult, Handler, MainnetHandler, instructions::EthInstructions,
     },
     inspector::{InspectorEvmTr, InspectorHandler},
     interpreter::{
-        CallInput, CallInputs, CallOutcome, CallScheme, CallValue, CreateInputs, CreateOutcome,
-        FrameInput, Gas, InstructionResult, InterpreterResult, SharedMemory,
-        interpreter::EthInterpreter, interpreter_action::FrameInit, return_ok,
+        CallInput, CallInputs, CallScheme, CallValue, CreateInputs, FrameInput, InstructionResult,
+        SharedMemory, interpreter::EthInterpreter, interpreter_action::FrameInit,
     },
     primitives::hardfork::SpecId,
     state::Bytecode,
@@ -57,6 +56,9 @@ use tempo_revm::{
     TempoBlockEnv, TempoHaltReason, TempoInvalidTransaction, TempoTxEnv, evm::TempoContext,
     gas_params::tempo_gas_params, handler::TempoEvmHandler,
 };
+
+// Modified revm's OpContext with `OpTx`
+pub type OpContext<DB> = Context<BlockEnv, OpTx, CfgEnv<OpSpecId>, DB, Journal<DB>, L1BlockInfo>;
 
 pub mod eth;
 pub mod op;
@@ -152,7 +154,6 @@ pub trait FoundryEvmFactory:
             Spec = Self::Spec,
             HaltReason = Self::HaltReason,
         > + Deref<Target = Self::FoundryContext<'db>>
-        + IntoNestedEvm<Self::Spec, Self::BlockEnv, Self::Tx>
     where
         Self: 'db;
 
@@ -176,18 +177,6 @@ pub trait FoundryEvmFactory:
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> Box<dyn NestedEvm<Spec = Self::Spec, Block = Self::BlockEnv, Tx = Self::Tx> + 'db>;
-}
-
-/// Trait for converting a Foundry EVM wrapper into its inner `NestedEvm` implementation.
-///
-/// Both [`EthFoundryEvm`] and [`TempoFoundryEvm`] wrap an inner revm EVM that implements
-/// [`NestedEvm`]. This trait provides a uniform way to unwrap them.
-pub trait IntoNestedEvm<SPEC, BLOCK, TX> {
-    /// The inner type that implements [`NestedEvm`].
-    type Inner: NestedEvm<Spec = SPEC, Block = BLOCK, Tx = TX>;
-
-    /// Consumes the wrapper, returning the inner revm EVM.
-    fn into_nested_evm(self) -> Self::Inner;
 }
 
 /// Object-safe trait exposing the operations that cheatcode nested EVM closures need.
@@ -251,24 +240,27 @@ pub fn with_cloned_context<CTX: FoundryContextExt>(
 }
 
 /// Get the call inputs for the CREATE2 factory.
-pub(crate) fn get_create2_factory_call_inputs(
+pub fn get_create2_factory_call_inputs<T: JournalTr>(
     salt: U256,
     inputs: &CreateInputs,
     deployer: Address,
-) -> CallInputs {
+    journal: &mut T,
+) -> Result<CallInputs, <T::Database as Database>::Error> {
     let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code()[..]].concat();
-    CallInputs {
+    let account = journal.load_account_with_code(deployer)?;
+    Ok(CallInputs {
         caller: inputs.caller(),
         bytecode_address: deployer,
-        known_bytecode: None,
+        known_bytecode: (account.info.code_hash, account.info.code.clone().unwrap_or_default()),
         target_address: deployer,
         scheme: CallScheme::Call,
         value: CallValue::Transfer(inputs.value()),
         input: CallInput::Bytes(calldata.into()),
         gas_limit: inputs.gas_limit(),
+        reservoir: inputs.reservoir(),
         is_static: false,
         return_memory_offset: 0..0,
-    }
+    })
 }
 
 /// Converts a network-specific halt reason into an [`InstructionResult`].

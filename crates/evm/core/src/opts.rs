@@ -254,7 +254,7 @@ impl EvmOpts {
     }
 
     /// Returns the [`EvmEnv`] configured with only local settings.
-    fn local_evm_env<SPEC: Into<SpecId> + Default, BLOCK: FoundryBlock + Default>(
+    fn local_evm_env<SPEC: Into<SpecId> + Default + Clone, BLOCK: FoundryBlock + Default>(
         &self,
     ) -> EvmEnv<SPEC, BLOCK> {
         let cfg_env = self.cfg_env(self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID));
@@ -298,7 +298,7 @@ impl EvmOpts {
     }
 
     /// Builds a [`CfgEnv`] from the options, using the provided [`ChainId`].
-    fn cfg_env<SPEC: Into<SpecId> + Default>(&self, chain_id: ChainId) -> CfgEnv<SPEC> {
+    fn cfg_env<SPEC: Into<SpecId> + Default + Clone>(&self, chain_id: ChainId) -> CfgEnv<SPEC> {
         let mut cfg = CfgEnv::default();
         cfg.chain_id = chain_id;
         cfg.memory_limit = self.memory_limit;
