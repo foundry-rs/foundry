@@ -481,20 +481,61 @@ where
             // Retry with key_authorization when verification failed and key appears
             // provisioned — handles first-time provisioning where key_auth was stripped
             // but the key was not yet provisioned on-chain.
+            //
+            // We must make a fresh initial request to obtain a new 402 challenge
+            // because the server consumes challenge IDs on first use — reusing the
+            // original challenge would fail again.
             let needs_verification_retry = (problem_type.ends_with("/verification-failed")
                 || detail.contains("verification-failed"))
                 && self.provider.is_key_provisioned();
 
             if needs_verification_retry {
+                debug!(
+                    "MPP 402 verification-failed with key provisioned, retrying with key_authorization"
+                );
                 self.provider.set_key_provisioned(false);
-                let resolved = self.provider.resolve()?;
+                self.provider.rollback_pending();
 
-                if resolved.supports(challenge.method.as_str(), challenge.intent.as_str()) {
-                    debug!(
-                        "MPP 402 verification-failed with key provisioned, retrying with key_authorization"
-                    );
+                // Fresh request → new 402 challenge
+                let fresh_resp = self
+                    .client
+                    .post(self.url.clone())
+                    .headers(headers.clone())
+                    .header("content-type", "application/json")
+                    .body(body.clone())
+                    .send()
+                    .await
+                    .map_err(TransportErrorKind::custom)?;
 
-                    let credential = resolved.pay(challenge).await.map_err(|e| {
+                if fresh_resp.status() != StatusCode::PAYMENT_REQUIRED {
+                    self.provider.set_key_provisioned(true);
+                    return Self::handle_response(fresh_resp).await;
+                }
+
+                let fresh_www_auth: Vec<&str> = fresh_resp
+                    .headers()
+                    .get_all(WWW_AUTHENTICATE_HEADER)
+                    .iter()
+                    .filter_map(|v| v.to_str().ok())
+                    .collect();
+
+                let fresh_challenges: Vec<_> = parse_www_authenticate_all(fresh_www_auth)
+                    .into_iter()
+                    .filter_map(|r| r.ok())
+                    .collect();
+
+                let fresh_pair = fresh_challenges.iter().find_map(|c| {
+                    let (cid, cur) = extract_challenge_chain_and_currency(c);
+                    let cur = cur.and_then(|s| s.parse().ok());
+                    let p = self
+                        .provider
+                        .resolve_for(DiscoverOptions { chain_id: cid, currency: cur })
+                        .ok()?;
+                    p.supports(c.method.as_str(), c.intent.as_str()).then_some((p, c))
+                });
+
+                if let Some((resolved, fresh_challenge)) = fresh_pair {
+                    let credential = resolved.pay(fresh_challenge).await.map_err(|e| {
                         TransportErrorKind::custom(std::io::Error::other(format!(
                             "MPP payment failed: {e}"
                         )))
