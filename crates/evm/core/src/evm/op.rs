@@ -43,8 +43,8 @@ pub type OpRevmEvm<'db, I> = op_revm::OpEvm<
     PrecompilesMap,
 >;
 
-/// Optimism counterpart of [`EthFoundryEvm`]. Wraps `op_revm::OpEvm` and routes execution
-/// through [`OpHandler`].
+/// Wraps [`op_revm::OpEvm`] and routes execution through [`OpHandler`].
+/// It uses foundry's custom [`OpContext`] as op-revm's one is not compatible with [`OpTx`].
 pub struct OpFoundryEvm<
     'db,
     I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>,
