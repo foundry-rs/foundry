@@ -2,14 +2,13 @@
 //! WebSocket, or IPC transport. Retries are handled by a client layer (e.g.,
 //! `RetryBackoffLayer`) when used.
 
-use crate::{DEFAULT_USER_AGENT, REQUEST_TIMEOUT};
+use crate::{DEFAULT_USER_AGENT, REQUEST_TIMEOUT, provider::mpp::transport::LazyMppHttpTransport};
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
 use alloy_rpc_types_engine::{Claims, JwtSecret};
 use alloy_transport::{
     Authorization, BoxTransport, TransportError, TransportErrorKind, TransportFut,
 };
-use alloy_transport_http::Http;
 use alloy_transport_ipc::IpcConnect;
 use alloy_transport_ws::WsConnect;
 use reqwest::header::{HeaderName, HeaderValue};
@@ -23,8 +22,8 @@ use url::Url;
 /// Only meant to be used internally by [RuntimeTransport].
 #[derive(Clone, Debug)]
 pub enum InnerTransport {
-    /// HTTP transport
-    Http(Http<reqwest::Client>),
+    /// HTTP transport with lazy MPP 402 handling
+    Http(LazyMppHttpTransport),
     /// WebSocket transport
     Ws(PubSubFrontend),
     /// IPC transport
@@ -220,15 +219,29 @@ impl RuntimeTransport {
             );
         }
 
+        // If MPP_API_KEY is set, attach it as x-api-key for gated MPP proxies.
+        // Does not override an explicit x-api-key header from the user.
+        if !headers.contains_key(HeaderName::from_static("x-api-key"))
+            && let Ok(api_key) = std::env::var("MPP_API_KEY")
+        {
+            let api_key = api_key.trim();
+            if !api_key.is_empty() {
+                let mut value = HeaderValue::from_str(api_key)
+                    .map_err(|_| RuntimeTransportError::BadHeader("MPP_API_KEY".to_string()))?;
+                value.set_sensitive(true);
+                headers.insert(HeaderName::from_static("x-api-key"), value);
+            }
+        }
+
         client_builder = client_builder.default_headers(headers);
 
         Ok(client_builder.build()?)
     }
 
-    /// Connects to an HTTP [alloy_transport_http::Http] transport.
+    /// Connects to an HTTP transport with lazy MPP 402 handling.
     fn connect_http(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let client = self.reqwest_client()?;
-        Ok(InnerTransport::Http(Http::with_client(client, self.url.clone())))
+        Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(client, self.url.clone())))
     }
 
     /// Connects to a WS transport.

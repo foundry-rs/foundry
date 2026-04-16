@@ -42,6 +42,7 @@ use revm::{
     database::{DatabaseCommit, DatabaseRef},
     interpreter::{InstructionResult, return_ok},
 };
+use sancov::SancovGuard;
 use std::{
     borrow::Cow,
     sync::{
@@ -61,6 +62,7 @@ pub mod invariant;
 pub use invariant::InvariantExecutor;
 
 mod corpus;
+mod sancov;
 mod trace;
 
 pub use trace::TracingExecutor;
@@ -541,15 +543,28 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         mut tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
+        let sancov_edges = stack.inner.sancov_edges;
+        let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
+        let sancov_active = sancov_edges || sancov_trace_cmp;
         let mut backend = CowBackend::new_borrowed(self.backend());
-        let result = backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?;
-        convert_executed_result(
+        let result = {
+            let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+            backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?
+        };
+        let mut result = convert_executed_result(
             evm_env,
             tx_env,
             stack,
             result,
             backend.has_state_snapshot_failure(),
-        )
+        )?;
+        if sancov_edges {
+            SancovGuard::append_edges_into(&mut result);
+        }
+        if sancov_trace_cmp {
+            SancovGuard::drain_cmp_into(&mut result);
+        }
+        Ok(result)
     }
 
     /// Execute the transaction configured in `tx_env`.
@@ -560,8 +575,14 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         mut tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<RawCallResult<FEN>> {
         let mut stack = self.inspector().clone();
+        let sancov_edges = stack.inner.sancov_edges;
+        let sancov_trace_cmp = stack.inner.sancov_trace_cmp;
+        let sancov_active = sancov_edges || sancov_trace_cmp;
         let backend = self.backend_mut();
-        let result = backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?;
+        let result = {
+            let _guard = sancov_active.then(|| SancovGuard::new(sancov_edges, sancov_trace_cmp));
+            backend.inspect(&mut evm_env, &mut tx_env, &mut stack)?
+        };
         let mut result = convert_executed_result(
             evm_env,
             tx_env,
@@ -569,6 +590,12 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             result,
             backend.has_state_snapshot_failure(),
         )?;
+        if sancov_edges {
+            SancovGuard::append_edges_into(&mut result);
+        }
+        if sancov_trace_cmp {
+            SancovGuard::drain_cmp_into(&mut result);
+        }
         self.commit(&mut result);
         Ok(result)
     }
@@ -686,15 +713,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         }
 
         // Check the global failure slot.
-        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS)
-            && let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT)
-            && !failed_slot.present_value().is_zero()
-        {
-            return false;
-        }
-        if let Ok(failed_slot) = self.backend().storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
-            && !failed_slot.is_zero()
-        {
+        if self.has_global_failure(&state_changeset) {
             return false;
         }
 
@@ -734,6 +753,47 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                 }
             }
         }
+    }
+
+    /// Returns whether the in-flight state changeset for the current call sets the global
+    /// assertion failure flag.
+    pub fn has_pending_global_failure(state_changeset: &StateChangeset) -> bool {
+        if let Some(acc) = state_changeset.get(&CHEATCODE_ADDRESS)
+            && let Some(failed_slot) = acc.storage.get(&GLOBAL_FAIL_SLOT)
+            && !failed_slot.present_value().is_zero()
+        {
+            return true;
+        }
+
+        false
+    }
+
+    /// Returns whether the global assertion failure flag is set either in the in-flight state
+    /// changeset or in the committed backend state.
+    pub fn has_global_failure(&self, state_changeset: &StateChangeset) -> bool {
+        if Self::has_pending_global_failure(state_changeset) {
+            return true;
+        }
+
+        self.backend()
+            .storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
+            .is_ok_and(|failed_slot| !failed_slot.is_zero())
+    }
+
+    /// Clears the global assertion failure flag from both the committed backend state and, when
+    /// provided, the in-flight state changeset for the current call.
+    pub fn clear_global_failure(
+        &mut self,
+        state_changeset: Option<&mut StateChangeset>,
+    ) -> BackendResult<()> {
+        if let Some(state_changeset) = state_changeset
+            && let Some(acc) = state_changeset.get_mut(&CHEATCODE_ADDRESS)
+            && let Some(failed_slot) = acc.storage.get_mut(&GLOBAL_FAIL_SLOT)
+        {
+            failed_slot.present_value = U256::ZERO;
+        }
+
+        self.set_storage_slot(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::ZERO)
     }
 
     /// Creates the environment to use when executing a transaction in a test context
@@ -901,6 +961,11 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub line_coverage: Option<HitMaps>,
     /// The edge coverage info collected during the call
     pub edge_coverage: Option<Vec<u8>>,
+    /// Sancov edge coverage from instrumented native Rust crates (e.g. precompiles).
+    /// Tracked separately from EVM edge coverage to avoid ID-space collisions.
+    pub sancov_coverage: Option<Vec<u8>>,
+    /// Comparison operands captured via sancov trace-cmp callbacks.
+    pub sancov_cmp_values: Option<Vec<foundry_evm_sancov::CmpSample>>,
     /// Scripted transactions generated from this call
     pub transactions: Option<BroadcastableTransactions<FEN::Network>>,
     /// The changeset of the state.
@@ -933,6 +998,8 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             traces: None,
             line_coverage: None,
             edge_coverage: None,
+            sancov_coverage: None,
+            sancov_cmp_values: None,
             transactions: None,
             state_changeset: HashMap::default(),
             evm_env: EvmEnv::default(),
@@ -1041,6 +1108,54 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
         }
         (new_coverage, is_edge)
     }
+
+    /// Update provided history map with sancov coverage info collected during this call.
+    /// Same AFL binning algo as [`Self::merge_edge_coverage`].
+    pub fn merge_sancov_coverage(&mut self, history_map: &mut Vec<u8>) -> (bool, bool) {
+        let mut new_coverage = false;
+        let mut is_edge = false;
+        if let Some(x) = &mut self.sancov_coverage {
+            if history_map.len() < x.len() {
+                history_map.resize(x.len(), 0);
+            }
+            for (curr, hist) in std::iter::zip(x.iter_mut(), history_map.iter_mut()) {
+                if *curr > 0 {
+                    let bucket = match *curr {
+                        0 => 0,
+                        1 => 1,
+                        2 => 2,
+                        3 => 4,
+                        4..=7 => 8,
+                        8..=15 => 16,
+                        16..=31 => 32,
+                        32..=127 => 64,
+                        128..=255 => 128,
+                    };
+                    if *hist < bucket {
+                        if *hist == 0 {
+                            is_edge = true;
+                        }
+                        *hist = bucket;
+                        new_coverage = true;
+                    }
+                    *curr = 0;
+                }
+            }
+        }
+        (new_coverage, is_edge)
+    }
+
+    /// Merge both EVM and sancov coverage into their respective history maps.
+    /// Returns `(new_coverage, is_edge)` — true if either domain produced new coverage.
+    pub fn merge_all_coverage(
+        &mut self,
+        evm_history: &mut [u8],
+        sancov_history: &mut Vec<u8>,
+    ) -> (bool, bool) {
+        let (new_evm, edge_evm) = self.merge_edge_coverage(evm_history);
+        let (new_san, edge_san) = self.merge_sancov_coverage(sancov_history);
+        (new_evm || new_san, edge_evm || edge_san)
+    }
 }
 
 /// The result of a call.
@@ -1077,13 +1192,13 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
 ) -> eyre::Result<RawCallResult<FEN>> {
     let (exit_reason, gas_refunded, gas_used, out, exec_logs) = match result {
         ExecutionResult::Success { reason, gas, output, logs } => {
-            (reason.into(), gas.final_refunded(), gas.used(), Some(output), logs)
+            (reason.into(), gas.final_refunded(), gas.tx_gas_used(), Some(output), logs)
         }
         ExecutionResult::Revert { gas, output, logs } => {
-            (InstructionResult::Revert, 0_u64, gas.used(), Some(Output::Call(output)), logs)
+            (InstructionResult::Revert, 0_u64, gas.tx_gas_used(), Some(Output::Call(output)), logs)
         }
         ExecutionResult::Halt { reason, gas, logs } => {
-            (reason.into_instruction_result(), 0_u64, gas.used(), None, logs)
+            (reason.into_instruction_result(), 0_u64, gas.tx_gas_used(), None, logs)
         }
     };
     let gas = revm::interpreter::gas::calculate_initial_tx_gas_for_tx(
@@ -1123,12 +1238,14 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         result,
         gas_used,
         gas_refunded,
-        stipend: gas.initial_gas,
+        stipend: gas.initial_total_gas,
         logs,
         labels,
         traces,
         line_coverage,
         edge_coverage,
+        sancov_coverage: None,
+        sancov_cmp_values: None,
         transactions,
         state_changeset,
         evm_env,

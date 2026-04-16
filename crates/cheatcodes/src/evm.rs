@@ -28,7 +28,7 @@ use foundry_evm_core::{
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
     constants::{CALLER, CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, TEST_CONTRACT_ADDRESS},
     env::FoundryContextExt,
-    evm::{EvmFactoryFor, FoundryEvmFactory, FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
+    evm::{FoundryEvmNetwork, TxEnvFor, TxEnvelopeFor},
     utils::get_blob_base_fee_update_fraction_by_spec_id,
 };
 use foundry_evm_traces::TraceMode;
@@ -1134,10 +1134,10 @@ impl Cheatcode for executeTransactionCall {
         ccx.ecx.cfg_mut().limit_contract_initcode_size =
             Some(revm::primitives::eip3860::MAX_INITCODE_SIZE);
 
-        // Enforce the canonical per-tx gas limit cap, if any, for realistic simulation.
-        if let Some(cap) = <EvmFactoryFor<FEN>>::tx_gas_limit_cap(ccx.ecx.cfg().spec()) {
-            ccx.ecx.cfg_mut().tx_gas_limit_cap = Some(cap);
-        }
+        // Reset the tx gas limit cap so revm applies the spec-defined default (EIP-7825).
+        // Normal test execution sets `Some(u64::MAX)` to disable the cap; clearing it here
+        // lets the nested EVM enforce the real network limit for realistic simulation.
+        ccx.ecx.cfg_mut().tx_gas_limit_cap = None;
 
         // Snapshot the modified env for EVM construction.
         let modified_evm_env = ccx.ecx.evm_clone();

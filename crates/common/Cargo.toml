@@ -36,10 +36,6 @@ alloy-rpc-client.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
 alloy-rpc-types-engine = { workspace = true, features = ["jwt"] }
 alloy-sol-types.workspace = true
-alloy-transport-http = { workspace = true, features = [
-    "reqwest",
-    "reqwest-rustls-tls",
-] }
 alloy-transport-ipc.workspace = true
 alloy-transport-ws.workspace = true
 alloy-transport.workspace = true
@@ -85,6 +81,7 @@ ciborium.workspace = true
 flate2.workspace = true
 tempo-alloy.workspace = true
 tempo-primitives.workspace = true
+mpp.workspace = true
 
 [build-dependencies]
 chrono.workspace = true
@@ -93,3 +90,4 @@ vergen = { workspace = true, features = ["build", "emit_and_set"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 axum = { workspace = true }
+tempfile.workspace = true

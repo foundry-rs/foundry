@@ -110,6 +110,7 @@ allow-git = [
     "https://github.com/rust-cli/rexpect",
     # Tempo
     "https://github.com/tempoxyz/tempo",
+    "https://github.com/tempoxyz/mpp-rs",
     # Transitive dependency of Tempo
     "https://github.com/paradigmxyz/reth",
 ]

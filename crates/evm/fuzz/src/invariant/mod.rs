@@ -405,7 +405,7 @@ impl fmt::Display for InvariantSettings {
             self.target_selectors.values().map(|v| v.len()).sum::<usize>(),
             self.target_senders.len(),
             self.excluded_senders.len(),
-            self.fail_on_revert
+            self.fail_on_revert,
         )
     }
 }
