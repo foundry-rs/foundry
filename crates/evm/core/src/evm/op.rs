@@ -58,7 +58,7 @@ impl FoundryEvmFactory for OpEvmFactory {
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> Box<dyn NestedEvm<Spec = OpSpecId, Block = BlockEnv, Tx = OpTx> + 'db> {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_nested_evm())
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).inner)
     }
 }
 
@@ -159,16 +159,6 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner.0.ctx
-    }
-}
-
-impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>>
-    IntoNestedEvm<OpSpecId, BlockEnv, OpTx> for OpFoundryEvm<'db, I>
-{
-    type Inner = OpRevmEvm<'db, I>;
-
-    fn into_nested_evm(self) -> Self::Inner {
-        self.inner
     }
 }
 

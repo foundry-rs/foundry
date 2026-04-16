@@ -154,7 +154,6 @@ pub trait FoundryEvmFactory:
             Spec = Self::Spec,
             HaltReason = Self::HaltReason,
         > + Deref<Target = Self::FoundryContext<'db>>
-        + IntoNestedEvm<Self::Spec, Self::BlockEnv, Self::Tx>
     where
         Self: 'db;
 
@@ -178,18 +177,6 @@ pub trait FoundryEvmFactory:
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> Box<dyn NestedEvm<Spec = Self::Spec, Block = Self::BlockEnv, Tx = Self::Tx> + 'db>;
-}
-
-/// Trait for converting a Foundry EVM wrapper into its inner `NestedEvm` implementation.
-///
-/// Both [`EthFoundryEvm`] and [`TempoFoundryEvm`] wrap an inner revm EVM that implements
-/// [`NestedEvm`]. This trait provides a uniform way to unwrap them.
-pub trait IntoNestedEvm<SPEC, BLOCK, TX> {
-    /// The inner type that implements [`NestedEvm`].
-    type Inner: NestedEvm<Spec = SPEC, Block = BLOCK, Tx = TX>;
-
-    /// Consumes the wrapper, returning the inner revm EVM.
-    fn into_nested_evm(self) -> Self::Inner;
 }
 
 /// Object-safe trait exposing the operations that cheatcode nested EVM closures need.

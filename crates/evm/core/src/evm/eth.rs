@@ -102,16 +102,6 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
     }
 }
 
-impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFactory>>>>
-    IntoNestedEvm<SpecId, BlockEnv, TxEnv> for EthFoundryEvm<'db, I>
-{
-    type Inner = EthRevmEvm<'db, I>;
-
-    fn into_nested_evm(self) -> Self::Inner {
-        self.inner
-    }
-}
-
 impl FoundryEvmFactory for EthEvmFactory {
     type FoundryContext<'db> = EthEvmContext<&'db mut dyn DatabaseExt<Self>>;
 
@@ -138,7 +128,7 @@ impl FoundryEvmFactory for EthEvmFactory {
         evm_env: EvmEnv,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> Box<dyn NestedEvm<Spec = SpecId, Block = BlockEnv, Tx = TxEnv> + 'db> {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_nested_evm())
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).inner)
     }
 }
 

@@ -85,7 +85,7 @@ impl FoundryEvmFactory for TempoEvmFactory {
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> Box<dyn NestedEvm<Spec = TempoHardfork, Block = TempoBlockEnv, Tx = TempoTxEnv> + 'db>
     {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_nested_evm())
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).inner)
     }
 }
 
@@ -169,16 +169,6 @@ impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmF
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner.ctx
-    }
-}
-
-impl<'db, I: FoundryInspectorExt<TempoContext<&'db mut dyn DatabaseExt<TempoEvmFactory>>>>
-    IntoNestedEvm<TempoHardfork, TempoBlockEnv, TempoTxEnv> for TempoFoundryEvm<'db, I>
-{
-    type Inner = TempoRevmEvm<'db, I>;
-
-    fn into_nested_evm(self) -> Self::Inner {
-        self.inner
     }
 }
 
