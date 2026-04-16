@@ -1452,7 +1452,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         let gas = outcome.result.gas;
         self.gas_metering.last_call_gas = Some(crate::Vm::Gas {
             gasLimit: gas.limit(),
-            gasTotalUsed: gas.spent(),
+            gasTotalUsed: gas.total_gas_spent(),
             gasMemoryUsed: 0,
             gasRefunded: gas.refunded(),
             gasRemaining: gas.remaining(),
@@ -2030,14 +2030,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // Skip the first opcode of the first call frame as it includes the gas cost of
                     // creating the snapshot.
                     if self.gas_metering.last_gas_used != 0 {
-                        let gas_diff =
-                            interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
+                        let gas_diff = interpreter
+                            .gas
+                            .total_gas_spent()
+                            .saturating_sub(self.gas_metering.last_gas_used);
                         record.gas_used = record.gas_used.saturating_add(gas_diff);
                     }
 
                     // Update `last_gas_used` to the current spent gas for the next iteration to
                     // compare against.
-                    self.gas_metering.last_gas_used = interpreter.gas.spent();
+                    self.gas_metering.last_gas_used = interpreter.gas.total_gas_spent();
                 }
             });
         }
@@ -2070,7 +2072,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // Reset gas if spent is less than refunded.
             // This can happen if gas was paused / resumed or reset.
             // https://github.com/foundry-rs/foundry/issues/4370
-            if interpreter.gas.spent()
+            if interpreter.gas.total_gas_spent()
                 < u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
             {
                 interpreter.gas = Gas::new(interpreter.gas.limit());

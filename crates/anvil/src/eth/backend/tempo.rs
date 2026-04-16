@@ -48,6 +48,7 @@ pub struct AnvilStorageProvider<'a> {
     block_number: u64,
     gas_used: u64,
     gas_refunded: i64,
+    reservoir: u64,
     transient: HashMap<(Address, U256), U256>,
     hardfork: TempoHardfork,
 }
@@ -67,6 +68,7 @@ impl<'a> AnvilStorageProvider<'a> {
             block_number,
             gas_used: 0,
             gas_refunded: 0,
+            reservoir: 0,
             transient: HashMap::new(),
             hardfork,
         }
@@ -169,6 +171,10 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
 
     fn gas_refunded(&self) -> i64 {
         self.gas_refunded
+    }
+
+    fn reservoir(&self) -> u64 {
+        self.reservoir
     }
 
     fn refund_gas(&mut self, gas: i64) {

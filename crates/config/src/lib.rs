@@ -1920,6 +1920,7 @@ impl Config {
             out: self.out,
             libs: self.libs,
             remappings: self.remappings,
+            network: self.networks.active_network_name().map(String::from),
         }
     }
 
@@ -2766,6 +2767,9 @@ pub struct BasicConfig {
     /// `Remappings` to use for this repo
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remappings: Vec<RelativeRemapping>,
+    /// The active non-Ethereum network (e.g. `"tempo"`).
+    #[serde(skip)]
+    pub network: Option<String>,
 }
 
 impl BasicConfig {
@@ -2773,7 +2777,13 @@ impl BasicConfig {
     ///
     /// This serializes to a table with the name of the profile
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        let s = toml::to_string_pretty(self)?;
+        let mut value = toml::Value::try_from(self)?;
+        if let Some(ref network) = self.network
+            && let toml::Value::Table(ref mut table) = value
+        {
+            table.insert(network.clone(), toml::Value::Boolean(true));
+        }
+        let s = toml::to_string_pretty(&value)?;
         Ok(format!(
             "\
 [profile.{}]
@@ -4285,6 +4295,7 @@ mod tests {
                     out: "myout".into(),
                     libs: default.libs.clone(),
                     remappings: default.remappings.clone(),
+                    network: None,
                 }
             );
             jail.set_env("FOUNDRY_PROFILE", r"other");
@@ -4297,6 +4308,7 @@ mod tests {
                     out: "myout".into(),
                     libs: default.libs.clone(),
                     remappings: default.remappings,
+                    network: None,
                 }
             );
             Ok(())
@@ -4918,7 +4930,8 @@ mod tests {
                     src: "src".into(),
                     out: "out".into(),
                     libs: vec!["lib".into()],
-                    remappings: vec![]
+                    remappings: vec![],
+                    network: None,
                 }
             )
         );

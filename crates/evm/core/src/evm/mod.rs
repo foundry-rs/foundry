@@ -31,7 +31,7 @@ use op_revm::{
     precompiles::OpPrecompiles, transaction::error::OpTransactionError,
 };
 use revm::{
-    Context, Journal, MainContext,
+    Context, Database, Journal, MainContext,
     context::{
         BlockEnv, CfgEnv, ContextTr, CreateScheme, Evm as RevmEvm, JournalTr, LocalContextTr,
         TxEnv,
@@ -258,24 +258,27 @@ pub fn with_cloned_context<CTX: FoundryContextExt>(
 }
 
 /// Get the call inputs for the CREATE2 factory.
-pub(crate) fn get_create2_factory_call_inputs(
+pub(crate) fn get_create2_factory_call_inputs<T: JournalTr>(
     salt: U256,
     inputs: &CreateInputs,
     deployer: Address,
-) -> CallInputs {
+    journal: &mut T,
+) -> Result<CallInputs, <T::Database as Database>::Error> {
     let calldata = [&salt.to_be_bytes::<32>()[..], &inputs.init_code()[..]].concat();
-    CallInputs {
+    let account = journal.load_account_with_code(deployer)?;
+    Ok(CallInputs {
         caller: inputs.caller(),
         bytecode_address: deployer,
-        known_bytecode: None,
+        known_bytecode: (account.info.code_hash, account.info.code.clone().unwrap_or_default()),
         target_address: deployer,
         scheme: CallScheme::Call,
         value: CallValue::Transfer(inputs.value()),
         input: CallInput::Bytes(calldata.into()),
         gas_limit: inputs.gas_limit(),
+        reservoir: inputs.reservoir(),
         is_static: false,
         return_memory_offset: 0..0,
-    }
+    })
 }
 
 /// Converts a network-specific halt reason into an [`InstructionResult`].

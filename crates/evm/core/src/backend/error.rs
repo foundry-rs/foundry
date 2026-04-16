@@ -58,6 +58,7 @@ impl<T: Into<Self>> From<EVMError<T>> for BackendError {
             EVMError::Custom(err) => Self::msg(err),
             EVMError::Header(err) => Self::msg(err.to_string()),
             EVMError::Transaction(err) => Self::msg(err.to_string()),
+            EVMError::CustomAny(err) => Self::msg(err.to_string()),
         }
     }
 }
