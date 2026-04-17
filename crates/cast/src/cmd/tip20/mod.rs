@@ -71,7 +71,7 @@ pub enum Tip20Subcommand {
         no_random: bool,
 
         /// Submit `registerVirtualMaster(bytes32)` on Tempo after finding or validating the salt.
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["seed", "no_random"])]
         register: bool,
 
         #[command(flatten)]

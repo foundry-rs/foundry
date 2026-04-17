@@ -59,9 +59,6 @@ pub(super) fn prepare_output(
     if n_threads == 0 {
         n_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     }
-    if cfg!(test) {
-        n_threads = n_threads.min(2);
-    }
 
     let mut salt = B256::ZERO;
     if !no_random {
