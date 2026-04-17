@@ -513,17 +513,17 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "310c9a1f3fe485fa9c7a8
     "client",
     "reqwest-rustls-tls",
 ] }
-tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c", default-features = false }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c", default-features = false, features = [
+tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "f873f0e", default-features = false }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "f873f0e", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c", default-features = false }
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c", default-features = false }
-tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c", default-features = false, features = [
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "f873f0e", default-features = false }
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "f873f0e", default-features = false }
+tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "f873f0e", default-features = false, features = [
     "serde",
 ] }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c" }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "f873f0e" }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "f873f0e" }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
@@ -620,9 +620,9 @@ op-revm = { git = "https://github.com/foundry-rs/op-revm", rev = "780b812" }
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "b139c57c2b54bc06a9e4c9783941f5bbd4bd3a1f" }
 
 ## tempo — unify crates.io versions (pulled by mpp) with git rev
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "f873f0e" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "f873f0e" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "f873f0e" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
