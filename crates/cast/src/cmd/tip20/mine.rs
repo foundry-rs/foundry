@@ -10,13 +10,7 @@ use eyre::Result;
 use foundry_cli::utils::{LoadConfig, get_chain};
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
-use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 use tempo_alloy::{
     TempoNetwork,
     contracts::precompiles::{ADDRESS_REGISTRY_ADDRESS, IAddressRegistry},
@@ -138,61 +132,20 @@ pub(super) async fn register(
 }
 
 fn mine(master: Address, salt: B256, n_threads: usize, pow_bytes: usize) -> Result<Output> {
-    // Pre-pack master address once; each thread copies this and only updates the salt portion.
-    let mut packed_prefix = [0u8; 52];
-    packed_prefix[..20].copy_from_slice(master.as_slice());
+    let mut packed = [0u8; 52];
+    packed[..20].copy_from_slice(master.as_slice());
 
-    let found = Arc::new(AtomicBool::new(false));
-    let mut handles = Vec::with_capacity(n_threads);
+    crate::cmd::miner::mine_salt(salt, n_threads, move |salt| {
+        packed[20..].copy_from_slice(salt.as_slice());
+        let registration_hash = keccak256(packed);
 
-    // Loops through all possible salts in parallel until a result is found.
-    // Each thread iterates over `(i..).step_by(n_threads)`.
-    for i in 0..n_threads {
-        let increment = n_threads;
-        let found = Arc::clone(&found);
-
-        handles.push(std::thread::spawn(move || {
-            #[repr(C)]
-            struct B256Aligned(B256, [usize; 0]);
-
-            let mut salt = B256Aligned(salt, []);
-            // SAFETY: `B256` is aligned to `usize`.
-            let salt_word = unsafe {
-                &mut *salt.0.as_mut_ptr().add(32 - usize::BITS as usize / 8).cast::<usize>()
-            };
-            *salt_word = salt_word.wrapping_add(i);
-
-            let mut packed = packed_prefix;
-
-            loop {
-                if found.load(Ordering::Relaxed) {
-                    break None;
-                }
-
-                packed[20..].copy_from_slice(salt.0.as_slice());
-                let registration_hash = keccak256(packed);
-
-                if has_pow(&registration_hash, pow_bytes) {
-                    found.store(true, Ordering::Relaxed);
-                    let master_id = MasterId::from_slice(&registration_hash[4..8]);
-                    let zero_tag_virtual_address = Address::new_virtual(master_id, UserTag::ZERO);
-                    break Some(Output {
-                        salt: salt.0,
-                        registration_hash,
-                        master_id,
-                        zero_tag_virtual_address,
-                    });
-                }
-
-                *salt_word = salt_word.wrapping_add(increment);
-            }
-        }));
-    }
-
-    handles
-        .into_iter()
-        .find_map(|h| h.join().ok().flatten())
-        .ok_or_else(|| eyre::eyre!("virtual master mining failed: all threads panicked"))
+        has_pow(&registration_hash, pow_bytes).then(|| {
+            let master_id = MasterId::from_slice(&registration_hash[4..8]);
+            let zero_tag_virtual_address = Address::new_virtual(master_id, UserTag::ZERO);
+            Output { salt, registration_hash, master_id, zero_tag_virtual_address }
+        })
+    })
+    .ok_or_else(|| eyre::eyre!("virtual master mining failed: all threads panicked"))
 }
 
 fn derive(master: Address, salt: B256) -> Output {
