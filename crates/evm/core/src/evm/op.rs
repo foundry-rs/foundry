@@ -108,6 +108,10 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
         &self.inner.ctx_ref().block
     }
 
+    fn cfg_env(&self) -> &revm::context::CfgEnv<Self::Spec> {
+        &self.inner.ctx_ref().cfg
+    }
+
     fn chain_id(&self) -> u64 {
         self.inner.ctx_ref().cfg.chain_id
     }
