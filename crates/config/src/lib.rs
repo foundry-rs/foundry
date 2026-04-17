@@ -45,7 +45,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -1286,6 +1286,22 @@ impl Config {
         }
     }
 
+    fn remove_file_if_exists(path: &Path) -> io::Result<()> {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn remove_dir_all_if_exists(path: &Path) -> io::Result<()> {
+        match fs::remove_dir_all(path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
     /// Cleans the project.
     pub fn cleanup<C: Compiler, T: ArtifactOutput<CompilerContract = C::CompilerContract>>(
         &self,
@@ -1294,21 +1310,30 @@ impl Config {
         project.cleanup()?;
 
         // Remove last test run failures file.
-        let _ = fs::remove_file(&self.test_failures_file);
+        Self::remove_file_if_exists(&self.test_failures_file).map_err(|err| {
+            SolcError::msg(format!(
+                "failed to remove last test run failures file {}: {err}",
+                self.test_failures_file.display()
+            ))
+        })?;
 
         // Remove fuzz and invariant cache directories.
-        let remove_test_dir = |test_dir: &Option<PathBuf>| {
+        let remove_test_dir = |test_dir: &Option<PathBuf>| -> Result<(), SolcError> {
             if let Some(test_dir) = test_dir {
                 let path = project.root().join(test_dir);
-                if path.exists() {
-                    let _ = fs::remove_dir_all(&path);
-                }
+                Self::remove_dir_all_if_exists(&path).map_err(|err| {
+                    SolcError::msg(format!(
+                        "failed to remove test cache directory {}: {err}",
+                        path.display()
+                    ))
+                })?;
             }
+            Ok(())
         };
-        remove_test_dir(&self.fuzz.failure_persist_dir);
-        remove_test_dir(&self.fuzz.corpus.corpus_dir);
-        remove_test_dir(&self.invariant.corpus.corpus_dir);
-        remove_test_dir(&self.invariant.failure_persist_dir);
+        remove_test_dir(&self.fuzz.failure_persist_dir)?;
+        remove_test_dir(&self.fuzz.corpus.corpus_dir)?;
+        remove_test_dir(&self.invariant.corpus.corpus_dir)?;
+        remove_test_dir(&self.invariant.failure_persist_dir)?;
 
         Ok(())
     }
@@ -2146,7 +2171,9 @@ impl Config {
     pub fn clean_foundry_cache() -> eyre::Result<()> {
         if let Some(cache_dir) = Self::foundry_cache_dir() {
             let path = cache_dir.as_path();
-            let _ = fs::remove_dir_all(path);
+            Self::remove_dir_all_if_exists(path).wrap_err_with(|| {
+                format!("failed to remove foundry cache at {}", path.display())
+            })?;
         } else {
             eyre::bail!("failed to get foundry_cache_dir");
         }
@@ -2158,7 +2185,9 @@ impl Config {
     pub fn clean_foundry_chain_cache(chain: Chain) -> eyre::Result<()> {
         if let Some(cache_dir) = Self::foundry_chain_cache_dir(chain) {
             let path = cache_dir.as_path();
-            let _ = fs::remove_dir_all(path);
+            Self::remove_dir_all_if_exists(path).wrap_err_with(|| {
+                format!("failed to remove foundry cache for chain {chain} at {}", path.display())
+            })?;
         } else {
             eyre::bail!("failed to get foundry_chain_cache_dir");
         }
@@ -2170,7 +2199,12 @@ impl Config {
     pub fn clean_foundry_block_cache(chain: Chain, block: u64) -> eyre::Result<()> {
         if let Some(cache_dir) = Self::foundry_block_cache_dir(chain, block) {
             let path = cache_dir.as_path();
-            let _ = fs::remove_dir_all(path);
+            Self::remove_dir_all_if_exists(path).wrap_err_with(|| {
+                format!(
+                    "failed to remove foundry cache for chain {chain} block {block} at {}",
+                    path.display()
+                )
+            })?;
         } else {
             eyre::bail!("failed to get foundry_block_cache_dir");
         }
@@ -2182,7 +2216,9 @@ impl Config {
     pub fn clean_foundry_etherscan_cache() -> eyre::Result<()> {
         if let Some(cache_dir) = Self::foundry_etherscan_cache_dir() {
             let path = cache_dir.as_path();
-            let _ = fs::remove_dir_all(path);
+            Self::remove_dir_all_if_exists(path).wrap_err_with(|| {
+                format!("failed to remove foundry etherscan cache at {}", path.display())
+            })?;
         } else {
             eyre::bail!("failed to get foundry_etherscan_cache_dir");
         }
@@ -2194,7 +2230,12 @@ impl Config {
     pub fn clean_foundry_etherscan_chain_cache(chain: Chain) -> eyre::Result<()> {
         if let Some(cache_dir) = Self::foundry_etherscan_chain_cache_dir(chain) {
             let path = cache_dir.as_path();
-            let _ = fs::remove_dir_all(path);
+            Self::remove_dir_all_if_exists(path).wrap_err_with(|| {
+                format!(
+                    "failed to remove foundry etherscan cache for chain {chain} at {}",
+                    path.display()
+                )
+            })?;
         } else {
             eyre::bail!("failed to get foundry_etherscan_cache_dir for chain: {}", chain);
         }
@@ -5217,6 +5258,36 @@ mod tests {
         assert_eq!(result, 600);
 
         chain_dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_remove_file_ignores_missing_paths_and_surfaces_other_errors() -> eyre::Result<()> {
+        let dir = tempdir()?;
+        let missing = dir.path().join("missing");
+        Config::remove_file_if_exists(&missing)?;
+
+        let err = Config::remove_file_if_exists(dir.path()).unwrap_err();
+        assert_ne!(err.kind(), io::ErrorKind::NotFound);
+
+        dir.close()?;
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_remove_dir_all_ignores_missing_paths_and_surfaces_other_errors() -> eyre::Result<()>
+    {
+        let dir = tempdir()?;
+        let missing = dir.path().join("missing");
+        Config::remove_dir_all_if_exists(&missing)?;
+
+        let file = dir.path().join("file");
+        File::create(&file)?;
+
+        let err = Config::remove_dir_all_if_exists(&file).unwrap_err();
+        assert_ne!(err.kind(), io::ErrorKind::NotFound);
+
+        dir.close()?;
         Ok(())
     }
 
