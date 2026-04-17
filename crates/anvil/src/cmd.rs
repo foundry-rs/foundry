@@ -223,6 +223,14 @@ const DEFAULT_DUMP_INTERVAL: Duration = Duration::from_secs(60);
 
 impl NodeArgs {
     pub fn into_node_config(self) -> eyre::Result<NodeConfig> {
+        let has_init_state = self.load_state.is_some()
+            || self.state.as_ref().and_then(|state| state.state.as_ref()).is_some();
+        if self.evm.fork_url.is_none() && self.evm.fork_block_number.is_some() && !has_init_state {
+            eyre::bail!(
+                "`--fork-block-number` without `--fork-url` requires `--load-state` or `--state`"
+            );
+        }
+
         let genesis_balance = Unit::ETHER.wei().saturating_mul(U256::from(self.balance));
         let compute_units_per_second =
             if self.evm.no_rate_limit { Some(u64::MAX) } else { self.evm.compute_units_per_second };
@@ -463,13 +471,7 @@ pub struct AnvilEvmArgs {
     /// If negative, the given value is subtracted from the `latest` block number.
     ///
     /// See --fork-url.
-    #[arg(
-        long,
-        requires = "fork_url",
-        value_name = "BLOCK",
-        help_heading = "Fork config",
-        allow_hyphen_values = true
-    )]
+    #[arg(long, value_name = "BLOCK", help_heading = "Fork config", allow_hyphen_values = true)]
     pub fork_block_number: Option<i128>,
 
     /// Fetch state from after a specific transaction hash has been applied over a remote endpoint.
@@ -490,11 +492,10 @@ pub struct AnvilEvmArgs {
     #[arg(long, requires = "fork_url", value_name = "BACKOFF", help_heading = "Fork config")]
     pub fork_retry_backoff: Option<u64>,
 
-    /// Specify chain id to skip fetching it from remote endpoint. This enables offline-start mode.
+    /// Specify chain id to skip fetching it from remote endpoint in fork mode.
     ///
-    /// You still must pass both `--fork-url` and `--fork-block-number`, and already have your
-    /// required state cached on disk, anything missing locally would be fetched from the
-    /// remote.
+    /// When restarting from `--load-state` without `--fork-url`, this also becomes the local
+    /// chain id so offline snapshots preserve the forked chain id.
     #[arg(
         long,
         help_heading = "Fork config",
@@ -964,5 +965,25 @@ mod tests {
             args.host,
             ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
         );
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/9721>
+    #[test]
+    fn can_parse_offline_load_state_fork_args_without_fork_url() {
+        let state_path = format!("{}/test-data/state-dump.json", env!("CARGO_MANIFEST_DIR"));
+        let args = NodeArgs::try_parse_from([
+            "anvil",
+            "--load-state",
+            state_path.as_str(),
+            "--fork-block-number",
+            "2",
+            "--fork-chain-id",
+            "84532",
+        ])
+        .unwrap();
+
+        let config = args.into_node_config().unwrap();
+        assert!(config.eth_rpc_url.is_none());
+        assert_eq!(config.get_chain_id(), 84532);
     }
 }

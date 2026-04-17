@@ -617,6 +617,7 @@ impl NodeConfig {
     /// Returns the chain ID to use
     pub fn get_chain_id(&self) -> u64 {
         self.chain_id
+            .or_else(|| self.fork_chain_id.map(|chain_id| chain_id.to()))
             .or_else(|| self.genesis.as_ref().map(|g| g.config.chain_id))
             .unwrap_or(CHAIN_ID)
     }
@@ -1100,6 +1101,15 @@ impl NodeConfig {
                 ReceiptEnvelope = foundry_primitives::FoundryReceiptEnvelope,
             >,
     {
+        // Offline `--load-state` mode can rely on `--fork-chain-id` without configuring an
+        // upstream RPC. Mirror that chain ID into the local wallets before the backend is built.
+        if self.chain_id.is_none()
+            && self.eth_rpc_url.is_none()
+            && let Some(fork_chain_id) = self.fork_chain_id
+        {
+            self.set_chain_id(Some(fork_chain_id.to::<u64>()));
+        }
+
         // configure the revm environment
 
         let mut cfg = CfgEnv::default();
