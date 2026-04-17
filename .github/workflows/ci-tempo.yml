@@ -59,21 +59,20 @@ jobs:
           cargo build --profile dev --locked -p forge -p cast -p anvil -p chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
-      # TODO(upstream): re-enable when mpp is supported https://github.com/foundry-rs/foundry/pull/14192
-      # - name: Run MPP e2e test
-      #   if: github.event_name == 'push' || github.event_name == 'pull_request'
-      #   env:
-      #     TEMPO_KEYS_TOML_B64: ${{ secrets.TEMPO_KEYS_TOML_B64 }}
-      #     MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
-      #     MPP_DEPOSIT: "1000000"
-      #   run: |
-      #     if [ -z "${TEMPO_KEYS_TOML_B64:-}" ]; then
-      #       echo "::warning::TEMPO_KEYS_TOML_B64 secret not set, skipping MPP e2e"
-      #       exit 0
-      #     fi
-      #     mkdir -p ~/.tempo/wallet
-      #     echo "$TEMPO_KEYS_TOML_B64" | tr -d '[:space:]' | base64 -d > ~/.tempo/wallet/keys.toml
-      #     ./.github/scripts/tempo-mpp.sh "$(which cast | xargs dirname)"
+      - name: Run MPP e2e test
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        env:
+          TEMPO_KEYS_TOML_B64: ${{ secrets.TEMPO_KEYS_TOML_B64 }}
+          MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
+          MPP_DEPOSIT: "1000000"
+        run: |
+          if [ -z "${TEMPO_KEYS_TOML_B64:-}" ]; then
+            echo "::warning::TEMPO_KEYS_TOML_B64 secret not set, skipping MPP e2e"
+            exit 0
+          fi
+          mkdir -p ~/.tempo/wallet
+          echo "$TEMPO_KEYS_TOML_B64" | tr -d '[:space:]' | base64 -d > ~/.tempo/wallet/keys.toml
+          ./.github/scripts/tempo-mpp.sh "$(which cast | xargs dirname)"
 
       # TODO(upstream): re-enable when flaky devnet faucet is fixed
       # - name: Run Tempo check on devnet

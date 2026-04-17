@@ -59,6 +59,7 @@ pub use utils::*;
 mod endpoints;
 pub use endpoints::{
     ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl, RpcEndpoints,
+    builtin_rpc_url,
 };
 
 mod etherscan;
@@ -856,6 +857,17 @@ impl Config {
         config.normalize_optimizer_settings();
         config.normalize_hardfork_settings().map_err(ExtractConfigError::new)?;
 
+        // Validate optimizer_runs does not exceed u32::MAX (Solidity compiler limit)
+        if let Some(runs) = config.optimizer_runs
+            && runs > u32::MAX as usize
+        {
+            return Err(ExtractConfigError::new(Error::from(format!(
+                "`optimizer_runs` value {} exceeds maximum allowed value of {}",
+                runs,
+                u32::MAX
+            ))));
+        }
+
         Ok(config)
     }
 
@@ -1527,6 +1539,10 @@ impl Config {
 
         if let Some(mesc_url) = self.get_rpc_url_from_mesc(maybe_alias) {
             return Some(Ok(Cow::Owned(mesc_url)));
+        }
+
+        if let Some(builtin) = crate::endpoints::builtin_rpc_url(maybe_alias) {
+            return Some(Ok(Cow::Borrowed(builtin)));
         }
 
         None
