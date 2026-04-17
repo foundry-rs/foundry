@@ -519,7 +519,9 @@ tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c",
 ] }
 tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c", default-features = false }
 tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c", default-features = false }
-tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c", default-features = false, features = ["serde"] }
+tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c", default-features = false, features = [
+    "serde",
+] }
 tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c" }
 tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "807b57c" }
 

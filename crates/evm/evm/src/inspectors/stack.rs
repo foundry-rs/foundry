@@ -898,12 +898,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .map(|cheats| core::mem::replace(cheats, Cheatcodes::new(cheats.config.clone())));
         let mut inner = std::mem::take(self.inner);
 
+        // Save pending CREATE2 redirects so frame_end in the nested EVM doesn't consume them.
+        // These belong to the outer EVM's frame lifecycle and must be restored after.
+        let saved_create2_redirects = std::mem::take(&mut inner.pending_create2_redirects);
+
         let out = f(InspectorStackRefMut { cheatcodes: cheatcodes.as_mut(), inner: &mut inner });
 
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
             *cheats = cheatcodes.unwrap();
         }
 
+        inner.pending_create2_redirects = saved_create2_redirects;
         *self.inner = inner;
 
         out
