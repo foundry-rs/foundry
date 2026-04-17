@@ -138,6 +138,10 @@ pub(super) async fn register(
 }
 
 fn mine(master: Address, salt: B256, n_threads: usize, pow_bytes: usize) -> Result<Output> {
+    // Pre-pack master address once; each thread copies this and only updates the salt portion.
+    let mut packed_prefix = [0u8; 52];
+    packed_prefix[..20].copy_from_slice(master.as_slice());
+
     let found = Arc::new(AtomicBool::new(false));
     let mut handles = Vec::with_capacity(n_threads);
 
@@ -158,15 +162,26 @@ fn mine(master: Address, salt: B256, n_threads: usize, pow_bytes: usize) -> Resu
             };
             *salt_word = salt_word.wrapping_add(i);
 
+            let mut packed = packed_prefix;
+
             loop {
                 if found.load(Ordering::Relaxed) {
                     break None;
                 }
 
-                let output = derive(master, salt.0);
-                if has_pow(&output.registration_hash, pow_bytes) {
+                packed[20..].copy_from_slice(salt.0.as_slice());
+                let registration_hash = keccak256(packed);
+
+                if has_pow(&registration_hash, pow_bytes) {
                     found.store(true, Ordering::Relaxed);
-                    break Some(output);
+                    let master_id = MasterId::from_slice(&registration_hash[4..8]);
+                    let zero_tag_virtual_address = Address::new_virtual(master_id, UserTag::ZERO);
+                    break Some(Output {
+                        salt: salt.0,
+                        registration_hash,
+                        master_id,
+                        zero_tag_virtual_address,
+                    });
                 }
 
                 *salt_word = salt_word.wrapping_add(increment);
