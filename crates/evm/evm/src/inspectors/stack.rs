@@ -1187,7 +1187,17 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             }
         }
 
-        if self.enable_isolation && !self.in_inner_context && ecx.journal().depth() == 1 {
+        // Skip isolation for calls that are actually CREATE2 redirects (rewritten by
+        // frame_start). These should execute in the current context so frame_end can
+        // transform the result back to a CreateOutcome.
+        let is_create2_redirect =
+            self.inner.pending_create2_redirects.last().copied() == Some(ecx.journal().depth());
+
+        if self.enable_isolation
+            && !self.in_inner_context
+            && ecx.journal().depth() == 1
+            && !is_create2_redirect
+        {
             match call.scheme {
                 // Isolate CALLs
                 CallScheme::Call => {
