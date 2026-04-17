@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 mod create;
 pub(crate) use create::iso4217_warning_message;
-mod virtual_master;
+mod mine;
 
 /// TIP-20 token operations (Tempo).
 #[derive(Debug, Parser, Clone)]
@@ -47,9 +47,9 @@ pub enum Tip20Subcommand {
         tx: TxParams,
     },
 
-    /// Mine a TIP-1022 salt for virtual master registration on Tempo.
-    #[command(visible_alias = "vm")]
-    VirtualMaster {
+    /// Mine a TIP-1022 salt for virtual address' master registration on Tempo.
+    #[command(visible_alias = "m")]
+    Mine {
         /// Address that will call `registerVirtualMaster(bytes32)`.
         #[arg(value_name = "ADDRESS")]
         master: Address,
@@ -99,20 +99,10 @@ impl Tip20Subcommand {
                 create::run(name, symbol, currency, quote_token, admin, salt, force, send_tx, tx)
                     .await?;
             }
-            Self::VirtualMaster {
-                master,
-                salt,
-                threads,
-                seed,
-                no_random,
-                register,
-                send_tx,
-                tx,
-            } => {
-                let output =
-                    virtual_master::prepare_output(master, salt, threads, seed, no_random)?;
+            Self::Mine { master, salt, threads, seed, no_random, register, send_tx, tx } => {
+                let output = mine::run(master, salt, threads, seed, no_random)?;
                 if register {
-                    virtual_master::register(master, output.salt, send_tx, tx).await?;
+                    mine::register(master, output.salt, send_tx, tx).await?;
                 }
             }
         }

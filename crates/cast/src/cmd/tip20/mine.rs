@@ -32,7 +32,7 @@ pub(super) struct Output {
     pub(super) zero_tag_virtual_address: Address,
 }
 
-pub(super) fn prepare_output(
+pub(super) fn run(
     master: Address,
     salt: Option<B256>,
     threads: Option<usize>,
