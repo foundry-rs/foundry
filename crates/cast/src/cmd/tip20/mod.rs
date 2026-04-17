@@ -85,7 +85,17 @@ pub enum Tip20Subcommand {
 impl Tip20Subcommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
-            Self::Create { name, symbol, currency, quote_token, admin, salt, force, send_tx, tx } => {
+            Self::Create {
+                name,
+                symbol,
+                currency,
+                quote_token,
+                admin,
+                salt,
+                force,
+                send_tx,
+                tx,
+            } => {
                 create::run(name, symbol, currency, quote_token, admin, salt, force, send_tx, tx)
                     .await?;
             }
