@@ -494,9 +494,15 @@ impl Installer<'_> {
         let res = self.git.root(path).checkout(recurse, &tag);
         if let Err(mut e) = res {
             // remove dependency on failed checkout
-            fs::remove_dir_all(path)?;
+            let cleanup_err = fs::remove_dir_all(path).err();
             if e.to_string().contains("did not match any file(s) known to git") {
                 e = eyre::eyre!("Tag: \"{tag}\" not found for repo \"{url}\"!")
+            }
+            if let Some(cleanup_err) = cleanup_err {
+                return Err(eyre::eyre!(
+                    "{e}\nAdditionally failed to clean up dependency directory {}: {cleanup_err}",
+                    path.display()
+                ));
             }
             return Err(e);
         }
