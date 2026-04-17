@@ -60,6 +60,7 @@ mod tests {
                         status: PrecompileStatus::Success,
                         bytes: Bytes::copy_from_slice(input.data),
                         gas_used: 0,
+                        gas_refunded: 0,
                         state_gas_used: 0,
                         reservoir: input.reservoir,
                     })

@@ -113,4 +113,7 @@ allow-git = [
     "https://github.com/tempoxyz/mpp-rs",
     # Transitive dependency of Tempo
     "https://github.com/paradigmxyz/reth",
+    "https://github.com/paradigmxyz/reth-core",
+    # TIP-1016: patched op-revm
+    "https://github.com/foundry-rs/op-revm",
 ]

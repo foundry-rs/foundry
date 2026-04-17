@@ -62,7 +62,7 @@ impl<'a> Iterator for InstIter<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|&opcode| {
-            let opcode = unsafe { OpCode::new_unchecked(opcode) };
+            let opcode = OpCode::new_or_unknown(opcode);
             let len = imm_len(opcode.get()) as usize;
             let (immediate, rest) = self.iter.as_slice().split_at_checked(len).unwrap_or_default();
             self.iter = rest.iter();
@@ -163,7 +163,7 @@ mod tests {
     use revm::bytecode::opcode as op;
 
     fn o(op: u8) -> OpCode {
-        unsafe { OpCode::new_unchecked(op) }
+        OpCode::new_or_unknown(op)
     }
 
     #[test]
