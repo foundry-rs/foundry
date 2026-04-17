@@ -513,15 +513,15 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "310c9a1f3fe485fa9c7a8
     "client",
     "reqwest-rustls-tls",
 ] }
-tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "39b9262", default-features = false }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "39b9262", default-features = false, features = [
+tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "2e6e9d1", default-features = false }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "2e6e9d1", default-features = false, features = [
     "serde",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "39b9262", default-features = false }
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "39b9262", default-features = false }
-tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "39b9262", default-features = false, features = ["serde"] }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "39b9262" }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "39b9262" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "2e6e9d1", default-features = false }
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "2e6e9d1", default-features = false }
+tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "2e6e9d1", default-features = false, features = ["serde"] }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "2e6e9d1" }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "2e6e9d1" }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
@@ -585,11 +585,11 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 ## alloy-evm
 # alloy-evm = { git = "https://github.com/paradigmxyz/evm.git", rev = "04d8e4a" }
 
-## reth-core
-# reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth-core", rev = "af2174c" }
-# reth-codecs = { git = "https://github.com/paradigmxyz/reth-core", rev = "af2174c" }
-# reth-codecs-derive = { git = "https://github.com/paradigmxyz/reth-core", rev = "af2174c" }
-# reth-rpc-traits = { git = "https://github.com/paradigmxyz/reth-core", rev = "af2174c" }
+## reth-core — Bytecode::new_analyzed is unsafe in patched revm
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth-core", rev = "6b12498" }
+reth-codecs = { git = "https://github.com/paradigmxyz/reth-core", rev = "6b12498" }
+reth-codecs-derive = { git = "https://github.com/paradigmxyz/reth-core", rev = "6b12498" }
+reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev = "6b12498" }
 
 ## op-alloy / alloy-op-evm
 op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
@@ -599,18 +599,28 @@ op-alloy = { git = "https://github.com/foundry-rs/optimism", branch = "develop" 
 alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
 alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
 
-## revm
-# revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
-# op-revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
-# revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "22dcee2" }
+## revm — TIP-1016: InitialAndFloorGas handler change
+revm = { git = "https://github.com/bluealloy/revm", rev = "a1a1824" }
+revm-bytecode = { git = "https://github.com/bluealloy/revm", rev = "a1a1824" }
+revm-context = { git = "https://github.com/bluealloy/revm", rev = "a1a1824" }
+revm-context-interface = { git = "https://github.com/bluealloy/revm", rev = "a1a1824" }
+revm-database = { git = "https://github.com/bluealloy/revm", rev = "a1a1824" }
+revm-database-interface = { git = "https://github.com/bluealloy/revm", rev = "a1a1824" }
+revm-handler = { git = "https://github.com/bluealloy/revm", rev = "a1a1824" }
+revm-inspector = { git = "https://github.com/bluealloy/revm", rev = "a1a1824" }
+revm-interpreter = { git = "https://github.com/bluealloy/revm", rev = "a1a1824" }
+revm-precompile = { git = "https://github.com/bluealloy/revm", rev = "a1a1824" }
+revm-primitives = { git = "https://github.com/bluealloy/revm", rev = "a1a1824" }
+revm-state = { git = "https://github.com/bluealloy/revm", rev = "a1a1824" }
+op-revm = { git = "https://github.com/foundry-rs/op-revm", rev = "66388e6" }
 
 ## foundry-fork-db
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "b139c57c2b54bc06a9e4c9783941f5bbd4bd3a1f" }
 
 ## tempo — unify crates.io versions (pulled by mpp) with git rev
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "39b9262" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "39b9262" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "39b9262" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "2e6e9d1" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "2e6e9d1" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "2e6e9d1" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
