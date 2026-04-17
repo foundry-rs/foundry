@@ -186,6 +186,9 @@ impl CheatsConfig {
     pub fn rpc_endpoint(&self, url_or_alias: &str) -> Result<ResolvedRpcEndpoint> {
         if let Some(endpoint) = self.rpc_endpoints.get(url_or_alias) {
             Ok(endpoint.clone().try_resolve())
+        } else if let Some(builtin_url) = foundry_config::builtin_rpc_url(url_or_alias) {
+            let url = RpcEndpointUrl::Url(builtin_url.to_string());
+            Ok(RpcEndpoint::new(url).resolve())
         } else {
             // check if it's a URL or a path to an existing file to an ipc socket
             if url_or_alias.starts_with("http") ||
