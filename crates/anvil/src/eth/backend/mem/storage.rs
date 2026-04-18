@@ -201,7 +201,8 @@ impl InMemoryBlockStates {
     pub const fn set_cache_limit(&mut self, limit: usize) {
         let limit = if limit == 0 { 1 } else { limit };
         self.in_memory_limit = limit;
-        self.min_in_memory_limit = limit.min(MIN_HISTORY_LIMIT);
+        self.min_in_memory_limit =
+            if limit < MIN_HISTORY_LIMIT { limit } else { MIN_HISTORY_LIMIT };
     }
 
     /// Clears all entries
