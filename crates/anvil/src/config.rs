@@ -1583,8 +1583,8 @@ pub struct PruneStateHistoryConfig {
 impl PruneStateHistoryConfig {
     /// Returns `true` if writing state history is supported
     pub const fn is_state_history_supported(&self) -> bool {
-        !self.enabled ||
-            match self.max_memory_history {
+        !self.enabled
+            || match self.max_memory_history {
                 Some(limit) => limit > 0,
                 None => false,
             }
