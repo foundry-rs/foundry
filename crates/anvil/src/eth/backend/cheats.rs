@@ -7,8 +7,8 @@ use alloy_primitives::{
 };
 use parking_lot::RwLock;
 use revm::precompile::{
-    PrecompileError, PrecompileId, PrecompileOutput, PrecompileResult, secp256k1::ec_recover_run,
-    utilities::right_pad,
+    PrecompileHalt, PrecompileId, PrecompileOutput, PrecompileResult, call_eth_precompile,
+    secp256k1::ec_recover_run, utilities::right_pad,
 };
 use std::{borrow::Cow, sync::Arc};
 
@@ -105,12 +105,12 @@ impl CheatEcrecover {
 impl Precompile for CheatEcrecover {
     fn call(&self, input: PrecompileInput<'_>) -> PrecompileResult {
         if !self.cheats.has_recover_overrides() {
-            return ec_recover_run(input.data, input.gas);
+            return Ok(call_eth_precompile(ec_recover_run, input.data, input.gas, input.reservoir));
         }
 
         const ECRECOVER_BASE: u64 = 3_000;
         if input.gas < ECRECOVER_BASE {
-            return Err(PrecompileError::OutOfGas);
+            return Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, input.reservoir));
         }
         let padded = right_pad::<128>(input.data);
         let v = padded[63];
@@ -121,9 +121,13 @@ impl Precompile for CheatEcrecover {
         if let Some(addr) = self.cheats.get_recover_override(&sig_bytes_wrapped) {
             let mut out = [0u8; 32];
             out[12..].copy_from_slice(addr.as_slice());
-            return Ok(PrecompileOutput::new(ECRECOVER_BASE, Bytes::copy_from_slice(&out)));
+            return Ok(PrecompileOutput::new(
+                ECRECOVER_BASE,
+                Bytes::copy_from_slice(&out),
+                input.reservoir,
+            ));
         }
-        ec_recover_run(input.data, input.gas)
+        Ok(call_eth_precompile(ec_recover_run, input.data, input.gas, input.reservoir))
     }
 
     fn precompile_id(&self) -> &PrecompileId {

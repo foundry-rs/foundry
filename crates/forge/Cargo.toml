@@ -29,6 +29,7 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
+foundry-evm-networks.workspace = true
 foundry-linking.workspace = true
 
 comfy-table.workspace = true
@@ -104,7 +105,6 @@ quick-junit = "0.5.2"
 [dev-dependencies]
 alloy-hardforks.workspace = true
 anvil.workspace = true
-foundry-evm-networks.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
 

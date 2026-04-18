@@ -4,6 +4,7 @@ use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
     constants::CHEATCODE_ADDRESS,
+    decode::ASSERTION_FAILED_PREFIX,
     evm::FoundryEvmNetwork,
 };
 use itertools::Itertools;
@@ -195,7 +196,7 @@ fn handle_assertion_result<FEN: FoundryEvmNetwork, E>(
     error_formatter: Option<&dyn Fn(&E) -> String>,
     error_msg: Option<&str>,
 ) -> Result {
-    let error_msg = error_msg.unwrap_or("assertion failed");
+    let error_msg = error_msg.unwrap_or(ASSERTION_FAILED_PREFIX);
     let msg = if let Some(error_formatter) = error_formatter {
         Cow::Owned(format!("{error_msg}: {}", error_formatter(&err)))
     } else {

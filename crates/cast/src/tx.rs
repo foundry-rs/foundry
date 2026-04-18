@@ -4,7 +4,7 @@ use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U64, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind};
 use alloy_signer::Signer;
@@ -12,7 +12,7 @@ use alloy_transport::TransportError;
 use clap::Args;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    opts::{CliAuthorizationList, EthereumOpts, TransactionOpts},
+    opts::{CliAuthorizationList, EthereumOpts, TempoOpts, TransactionOpts},
     utils::{self, parse_function_args},
 };
 use foundry_common::{
@@ -55,6 +55,55 @@ pub struct SendTxOpts {
     /// Browser wallet options
     #[command(flatten)]
     pub browser: BrowserWalletOpts,
+}
+
+/// Transaction options shared across cast commands that submit on-chain transactions.
+#[derive(Debug, Clone, Args)]
+#[command(next_help_heading = "Transaction options")]
+pub struct TxParams {
+    /// Gas limit for the transaction.
+    #[arg(long, env = "ETH_GAS_LIMIT")]
+    pub gas_limit: Option<U256>,
+
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    #[arg(long, env = "ETH_GAS_PRICE")]
+    pub gas_price: Option<U256>,
+
+    /// Max priority fee per gas for EIP1559 transactions.
+    #[arg(long, env = "ETH_PRIORITY_GAS_PRICE")]
+    pub priority_gas_price: Option<U256>,
+
+    /// Nonce for the transaction.
+    #[arg(long)]
+    pub nonce: Option<U64>,
+
+    #[command(flatten)]
+    pub tempo: TempoOpts,
+}
+
+impl TxParams {
+    pub(crate) fn apply<N: Network>(&self, tx: &mut N::TransactionRequest, legacy: bool)
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        if let Some(gas_limit) = self.gas_limit {
+            tx.set_gas_limit(gas_limit.to());
+        }
+
+        if let Some(gas_price) = self.gas_price {
+            if legacy {
+                tx.set_gas_price(gas_price.to());
+            } else {
+                tx.set_max_fee_per_gas(gas_price.to());
+            }
+        }
+
+        if !legacy && let Some(priority_fee) = self.priority_gas_price {
+            tx.set_max_priority_fee_per_gas(priority_fee.to());
+        }
+
+        self.tempo.apply::<N>(tx, self.nonce.map(|n| n.to()));
+    }
 }
 
 /// Different sender kinds used by [`CastTxBuilder`].

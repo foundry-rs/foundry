@@ -12,10 +12,11 @@ use foundry_common::compile::Analysis;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
     backend::{DatabaseError, DatabaseExt, JournaledState},
+    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     env::FoundryContextExt,
     evm::{
         BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
-        FoundryEvmNetwork, IntoNestedEvm, NestedEvm, SpecFor, TxEnvFor, with_cloned_context,
+        FoundryEvmNetwork, SpecFor, TxEnvFor, get_create2_factory_call_inputs, with_cloned_context,
     },
 };
 use foundry_evm_coverage::HitMaps;
@@ -28,11 +29,13 @@ use revm::{
         result::{EVMError, ExecutionResult, Output},
     },
     context_interface::CreateScheme,
+    handler::FrameResult,
     inspector::JournalExt,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
-        Interpreter, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
+        InstructionResult, Interpreter, InterpreterResult, return_ok,
     },
+    primitives::KECCAK_EMPTY,
     state::{Account, AccountStatus},
 };
 use revm_inspectors::edge_cov::EdgeCovInspector;
@@ -369,6 +372,10 @@ pub struct InspectorStackInner {
     pub tracer: Option<Box<TracingInspector>>,
 
     // FoundryInspectorExt and other internal data.
+    /// Whether to collect sancov edge coverage from instrumented native crates.
+    pub sancov_edges: bool,
+    /// Whether to capture sancov trace-cmp operands for dictionary injection.
+    pub sancov_trace_cmp: bool,
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
     pub create2_deployer: Address,
@@ -378,6 +385,12 @@ pub struct InspectorStackInner {
     pub top_frame_journal: AddressMap<Account>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
+    /// LIFO stack tracking CREATE2 frames that were redirected to the CREATE2 factory.
+    /// Each entry records the journal depth at which the redirect occurred.
+    pub pending_create2_redirects: Vec<usize>,
+    /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
+    /// it goes through the normal inspector lifecycle (tracing, etc.).
+    pub pending_create2_error: Option<CreateOutcome>,
 }
 
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
@@ -396,11 +409,10 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         with_cloned_context(ecx, |db, evm_env, journal_inner| {
-            let mut evm = FEN::EvmFactory::default()
-                .create_foundry_evm_with_inspector(db, evm_env, &mut inspector)
-                .into_nested_evm();
+            let mut evm =
+                FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, &mut inspector);
             *evm.journal_inner_mut() = journal_inner;
-            f(&mut evm)?;
+            f(&mut *evm)?;
             let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
             Ok((sub_evm_env, sub_inner))
@@ -415,10 +427,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
         f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let mut evm = FEN::EvmFactory::default()
-            .create_foundry_evm_with_inspector(db, evm_env, &mut inspector)
-            .into_nested_evm();
-        f(&mut evm)?;
+        let mut evm =
+            FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, &mut inspector);
+        f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
 
@@ -533,6 +544,18 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     pub fn collect_edge_coverage(&mut self, yes: bool) {
         // TODO: configurable edge size?
         self.edge_coverage = yes.then(EdgeCovInspector::new).map(Into::into);
+    }
+
+    /// Set whether to collect sancov edge coverage from instrumented native crates.
+    #[inline]
+    pub const fn collect_sancov_edges(&mut self, yes: bool) {
+        self.inner.sancov_edges = yes;
+    }
+
+    /// Set whether to capture sancov trace-cmp operands for dictionary injection.
+    #[inline]
+    pub const fn collect_sancov_trace_cmp(&mut self, yes: bool) {
+        self.inner.sancov_trace_cmp = yes;
     }
 
     /// Set whether to enable call isolation.
@@ -764,9 +787,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let res = self.with_inspector(|mut inspector| {
             let (res, nested_env) = {
                 let (db, journal) = ecx.db_journal_inner_mut();
-                let mut evm = FEN::EvmFactory::default()
-                    .create_foundry_evm_with_inspector(db, evm_env, &mut inspector)
-                    .into_nested_evm();
+                let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
+                    db,
+                    evm_env,
+                    &mut inspector,
+                );
 
                 evm.journal_inner_mut().state = {
                     let mut state = journal.state.clone();
@@ -845,7 +870,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let (result, address, output) = match res.result {
             ExecutionResult::Success { reason, gas: result_gas, logs: _, output } => {
                 gas.set_refund(result_gas.final_refunded() as i64);
-                let _ = gas.record_cost(result_gas.used());
+                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
                 let address = match output {
                     Output::Create(_, address) => address,
                     Output::Call(_) => None,
@@ -853,11 +878,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 (reason.into(), address, output.into_data())
             }
             ExecutionResult::Halt { reason, gas: result_gas, .. } => {
-                let _ = gas.record_cost(result_gas.used());
+                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
                 (InstructionResult::from(reason), None, Bytes::new())
             }
             ExecutionResult::Revert { gas: result_gas, output, .. } => {
-                let _ = gas.record_cost(result_gas.used());
+                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
                 (InstructionResult::Revert, None, output)
             }
         };
@@ -873,12 +898,17 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .map(|cheats| core::mem::replace(cheats, Cheatcodes::new(cheats.config.clone())));
         let mut inner = std::mem::take(self.inner);
 
+        // Save pending CREATE2 redirects so frame_end in the nested EVM doesn't consume them.
+        // These belong to the outer EVM's frame lifecycle and must be restored after.
+        let saved_create2_redirects = std::mem::take(&mut inner.pending_create2_redirects);
+
         let out = f(InspectorStackRefMut { cheatcodes: cheatcodes.as_mut(), inner: &mut inner });
 
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
             *cheats = cheatcodes.unwrap();
         }
 
+        inner.pending_create2_redirects = saved_create2_redirects;
         *self.inner = inner;
 
         out
@@ -1015,6 +1045,94 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         );
     }
 
+    fn frame_start(
+        &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        frame_input: &mut FrameInput,
+    ) -> Option<FrameResult> {
+        if let FrameInput::Create(inputs) = frame_input
+            && let CreateScheme::Create2 { salt } = inputs.scheme()
+            && self.should_use_create2_factory(ecx.journal().depth(), inputs)
+        {
+            let gas_limit = inputs.gas_limit();
+            let create2_deployer = self.create2_deployer();
+
+            // Validate deployer before rewriting.
+            let code_hash = ecx.journal_mut().load_account(create2_deployer).ok()?.info.code_hash;
+            if code_hash == KECCAK_EMPTY {
+                // Store the revert so `create` can return it inside the normal inspector
+                // lifecycle (avoids tracing mismatch from short-circuiting in frame_start).
+                self.inner.pending_create2_error = Some(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: Bytes::from(
+                            format!("missing CREATE2 deployer: {create2_deployer}").into_bytes(),
+                        ),
+                        gas: Gas::new(gas_limit),
+                    },
+                    address: None,
+                });
+                return None;
+            } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
+                self.inner.pending_create2_error = Some(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "invalid CREATE2 deployer bytecode".into(),
+                        gas: Gas::new(gas_limit),
+                    },
+                    address: None,
+                });
+                return None;
+            }
+
+            let call_inputs =
+                get_create2_factory_call_inputs(salt, inputs, create2_deployer, ecx.journal_mut())
+                    .ok()?;
+
+            // Record the redirect depth *after* validation succeeds.
+            self.inner.pending_create2_redirects.push(ecx.journal().depth());
+
+            // Rewrite the frame input from Create to Call.
+            *frame_input = FrameInput::Call(Box::new(call_inputs));
+        }
+
+        None
+    }
+
+    fn frame_end(
+        &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        _frame_input: &FrameInput,
+        frame_result: &mut FrameResult,
+    ) {
+        let depth = ecx.journal().depth();
+        if self.inner.pending_create2_redirects.last().copied() != Some(depth) {
+            return;
+        }
+
+        self.inner.pending_create2_redirects.pop();
+
+        let FrameResult::Call(call) = frame_result else {
+            debug_assert!(false, "pending CREATE2 redirect ended with non-call result");
+            return;
+        };
+
+        let address = match call.instruction_result() {
+            return_ok!() => Address::try_from(call.output().as_ref())
+                .map_err(|_| {
+                    call.result = InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "invalid CREATE2 factory output".into(),
+                        gas: Gas::new(call.result.gas.limit()),
+                    };
+                })
+                .ok(),
+            _ => None,
+        };
+
+        *frame_result = FrameResult::Create(CreateOutcome { result: call.result.clone(), address });
+    }
+
     fn call(
         &mut self,
         ecx: &mut FoundryContextFor<'_, FEN>,
@@ -1059,7 +1177,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                     .or_else(|| input_bytes.get(..4).and_then(|selector| mocks.get(selector)))
                 {
                     call.bytecode_address = *target;
-                    call.known_bytecode = None;
+
+                    let target = ecx
+                        .journal_mut()
+                        .load_account_with_code(*target)
+                        .expect("failed to load account");
+                    call.known_bytecode =
+                        (target.info.code_hash, target.info.code.clone().unwrap_or_default());
                 }
             }
 
@@ -1155,6 +1279,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             [&mut self.tracer, &mut self.line_coverage, &mut self.cheatcodes],
             |inspector| inspector.create(ecx, create).map(Some),
         );
+
+        // If frame_start detected an invalid CREATE2 deployer, return the error here
+        // (after sub-inspectors have been notified) so tracing stays balanced.
+        if let Some(error) = self.inner.pending_create2_error.take() {
+            return Some(error);
+        }
 
         if !matches!(create.scheme(), CreateScheme::Create2 { .. })
             && self.enable_isolation
@@ -1291,6 +1421,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Inspector
         log: Log,
     ) {
         self.as_mut().log_full(interpreter, ecx, log)
+    }
+
+    fn frame_start(
+        &mut self,
+        context: &mut FoundryContextFor<'_, FEN>,
+        frame_input: &mut FrameInput,
+    ) -> Option<FrameResult> {
+        self.as_mut().frame_start(context, frame_input)
+    }
+
+    fn frame_end(
+        &mut self,
+        context: &mut FoundryContextFor<'_, FEN>,
+        frame_input: &FrameInput,
+        frame_result: &mut FrameResult,
+    ) {
+        self.as_mut().frame_end(context, frame_input, frame_result)
     }
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {

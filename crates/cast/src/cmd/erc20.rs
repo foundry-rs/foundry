@@ -1,17 +1,21 @@
 use std::{str::FromStr, time::Duration};
 
-use crate::{cmd::send::cast_send, format_uint_exp, tx::SendTxOpts};
+use crate::{
+    cmd::send::cast_send,
+    format_uint_exp,
+    tx::{SendTxOpts, TxParams},
+};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
 use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
-use alloy_primitives::{U64, U256};
+use alloy_primitives::U256;
 use alloy_provider::{Provider, fillers::RecommendedFillers};
 use alloy_signer::Signature;
 use alloy_sol_types::sol;
-use clap::{Args, Parser};
+use clap::Parser;
 use foundry_cli::{
-    opts::{RpcOpts, TempoOpts},
+    opts::RpcOpts,
     utils::{LoadConfig, get_chain, get_provider},
 };
 use foundry_common::{
@@ -42,32 +46,6 @@ sol! {
     }
 }
 
-/// Transaction options for ERC20 operations.
-///
-/// This struct contains only the transaction options relevant to ERC20 token interactions
-#[derive(Debug, Clone, Args)]
-#[command(next_help_heading = "Transaction options")]
-pub struct Erc20TxOpts {
-    /// Gas limit for the transaction.
-    #[arg(long, env = "ETH_GAS_LIMIT")]
-    pub gas_limit: Option<U256>,
-
-    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
-    #[arg(long, env = "ETH_GAS_PRICE")]
-    pub gas_price: Option<U256>,
-
-    /// Max priority fee per gas for EIP1559 transactions.
-    #[arg(long, env = "ETH_PRIORITY_GAS_PRICE")]
-    pub priority_gas_price: Option<U256>,
-
-    /// Nonce for the transaction.
-    #[arg(long)]
-    pub nonce: Option<U64>,
-
-    #[command(flatten)]
-    pub tempo: TempoOpts,
-}
-
 /// Creates a provider with a pre-resolved signer.
 pub(crate) fn build_provider_with_signer<N: Network + RecommendedFillers>(
     tx_opts: &SendTxOpts,
@@ -84,32 +62,6 @@ where
         provider.client().set_poll_interval(Duration::from_secs(interval))
     }
     Ok(provider)
-}
-
-impl Erc20TxOpts {
-    /// Applies gas, fee, nonce, and Tempo options to a transaction request.
-    fn apply<N: Network>(&self, tx: &mut N::TransactionRequest, legacy: bool)
-    where
-        N::TransactionRequest: FoundryTransactionBuilder<N>,
-    {
-        if let Some(gas_limit) = self.gas_limit {
-            tx.set_gas_limit(gas_limit.to());
-        }
-
-        if let Some(gas_price) = self.gas_price {
-            if legacy {
-                tx.set_gas_price(gas_price.to());
-            } else {
-                tx.set_max_fee_per_gas(gas_price.to());
-            }
-        }
-
-        if !legacy && let Some(priority_fee) = self.priority_gas_price {
-            tx.set_max_priority_fee_per_gas(priority_fee.to());
-        }
-
-        self.tempo.apply::<N>(tx, self.nonce.map(|n| n.to()));
-    }
 }
 
 /// Interact with ERC20 tokens.
@@ -152,7 +104,7 @@ pub enum Erc20Subcommand {
         send_tx: SendTxOpts,
 
         #[command(flatten)]
-        tx: Erc20TxOpts,
+        tx: TxParams,
     },
 
     /// Approve ERC20 token spending.
@@ -173,7 +125,7 @@ pub enum Erc20Subcommand {
         send_tx: SendTxOpts,
 
         #[command(flatten)]
-        tx: Erc20TxOpts,
+        tx: TxParams,
     },
 
     /// Query ERC20 token allowance.
@@ -277,7 +229,7 @@ pub enum Erc20Subcommand {
         send_tx: SendTxOpts,
 
         #[command(flatten)]
-        tx: Erc20TxOpts,
+        tx: TxParams,
     },
 
     /// Burn ERC20 tokens.
@@ -294,7 +246,7 @@ pub enum Erc20Subcommand {
         send_tx: SendTxOpts,
 
         #[command(flatten)]
-        tx: Erc20TxOpts,
+        tx: TxParams,
     },
 }
 
@@ -314,7 +266,7 @@ impl Erc20Subcommand {
         }
     }
 
-    const fn erc20_opts(&self) -> Option<&Erc20TxOpts> {
+    const fn erc20_opts(&self) -> Option<&TxParams> {
         match self {
             Self::Approve { tx, .. }
             | Self::Transfer { tx, .. }

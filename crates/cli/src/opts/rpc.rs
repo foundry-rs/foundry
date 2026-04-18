@@ -1,5 +1,4 @@
 use crate::opts::{ChainValueParser, RpcCommonOpts};
-use alloy_chains::ChainKind;
 use clap::Parser;
 use eyre::Result;
 use foundry_config::{
@@ -158,11 +157,7 @@ impl EtherscanOpts {
         }
 
         if let Some(chain) = self.chain {
-            if let ChainKind::Id(id) = chain.kind() {
-                dict.insert("chain_id".into(), (*id).into());
-            } else {
-                dict.insert("chain_id".into(), chain.to_string().into());
-            }
+            dict.insert("chain_id".into(), chain.id().into());
         }
         dict
     }
@@ -214,5 +209,18 @@ mod tests {
         let args: EtherscanOpts =
             EtherscanOpts::parse_from(["foundry-cli", "--etherscan-api-key", ""]);
         assert!(!args.has_key());
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/14314>
+    #[test]
+    fn named_chain_dict_inserts_numeric_id() {
+        // Chain 9745 is recognized as NamedChain::Plasma by alloy-chains.
+        // Previously, dict() would insert chain_id as the string "plasma",
+        // causing deserialization failure when EvmOpts expects u64.
+        let args = EtherscanOpts::parse_from(["foundry-cli", "--chain", "9745"]);
+        let dict = args.dict();
+        let chain_id = dict.get("chain_id").expect("chain_id should be present");
+        let id: u64 = chain_id.deserialize().expect("chain_id should deserialize as u64");
+        assert_eq!(id, 9745);
     }
 }

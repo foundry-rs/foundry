@@ -1156,6 +1156,7 @@ impl<N: Network> Backend<N> {
                 EVMError::Database(db) => EVMError::Database(db),
                 EVMError::Header(h) => EVMError::Header(h),
                 EVMError::Custom(s) => EVMError::Custom(s),
+                EVMError::CustomAny(err) => EVMError::CustomAny(err),
                 EVMError::Transaction(t) => EVMError::Transaction(t),
             })?;
             Ok(ResultAndState {
@@ -2917,7 +2918,7 @@ where
 
                             Ok(tracing_inspector
                                 .into_geth_builder()
-                                .geth_call_traces(call_config, result.gas_used())
+                                .geth_call_traces(call_config, result.tx_gas_used())
                                 .into())
                         }
                         GethDebugBuiltInTracerType::PreStateTracer => {
@@ -3917,7 +3918,7 @@ impl Backend<FoundryNetwork> {
 
                     // commit the transaction
                     cache_db.commit(state);
-                    gas_used += result.gas_used();
+                    gas_used += result.tx_gas_used();
 
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
@@ -3941,7 +3942,7 @@ impl Backend<FoundryNetwork> {
                     let return_data = result.output().cloned().unwrap_or_default();
                     let sim_res = SimCallResult {
                         return_data,
-                        gas_used: result.gas_used(),
+                        gas_used: result.tx_gas_used(),
                         max_used_gas: None,
                         status: result.is_success(),
                         error: result.is_success().not().then(|| {
@@ -4524,13 +4525,13 @@ fn unpack_execution_result<H: IntoInstructionResult>(
 ) -> (InstructionResult, u64, Option<Output>, Vec<revm::primitives::Log>) {
     match result {
         ExecutionResult::Success { reason, gas, output, logs, .. } => {
-            (reason.into(), gas.used(), Some(output), logs)
+            (reason.into(), gas.tx_gas_used(), Some(output), logs)
         }
         ExecutionResult::Revert { gas, output, logs, .. } => {
-            (InstructionResult::Revert, gas.used(), Some(Output::Call(output)), logs)
+            (InstructionResult::Revert, gas.tx_gas_used(), Some(Output::Call(output)), logs)
         }
         ExecutionResult::Halt { reason, gas, logs, .. } => {
-            (reason.into_instruction_result(), gas.used(), None, logs)
+            (reason.into_instruction_result(), gas.tx_gas_used(), None, logs)
         }
     }
 }

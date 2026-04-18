@@ -40,8 +40,7 @@ use foundry_evm_core::{
     env::FoundryContextExt,
     evm::{
         BlockEnvFor, EthEvmNetwork, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
-        IntoNestedEvm, NestedEvm, NestedEvmClosure, SpecFor, TransactionRequestFor, TxEnvFor,
-        with_cloned_context,
+        NestedEvmClosure, SpecFor, TransactionRequestFor, TxEnvFor, with_cloned_context,
     },
 };
 use foundry_evm_traces::{
@@ -176,11 +175,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
     ) -> Result<(), EVMError<DatabaseError>> {
         with_cloned_context(ecx, |db, evm_env, journal_inner| {
-            let mut evm = FEN::EvmFactory::default()
-                .create_foundry_evm_with_inspector(db, evm_env, cheats)
-                .into_nested_evm();
+            let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, cheats);
             *evm.journal_inner_mut() = journal_inner;
-            f(&mut evm)?;
+            f(&mut *evm)?;
             let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
             Ok((sub_evm_env, sub_inner))
@@ -194,10 +191,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
         f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
-        let mut evm = FEN::EvmFactory::default()
-            .create_foundry_evm_with_inspector(db, evm_env, cheats)
-            .into_nested_evm();
-        f(&mut evm)?;
+        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, cheats);
+        f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
 
@@ -1452,7 +1447,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         let gas = outcome.result.gas;
         self.gas_metering.last_call_gas = Some(crate::Vm::Gas {
             gasLimit: gas.limit(),
-            gasTotalUsed: gas.spent(),
+            gasTotalUsed: gas.total_gas_spent(),
             gasMemoryUsed: 0,
             gasRefunded: gas.refunded(),
             gasRemaining: gas.remaining(),
@@ -2030,14 +2025,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // Skip the first opcode of the first call frame as it includes the gas cost of
                     // creating the snapshot.
                     if self.gas_metering.last_gas_used != 0 {
-                        let gas_diff =
-                            interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
+                        let gas_diff = interpreter
+                            .gas
+                            .total_gas_spent()
+                            .saturating_sub(self.gas_metering.last_gas_used);
                         record.gas_used = record.gas_used.saturating_add(gas_diff);
                     }
 
                     // Update `last_gas_used` to the current spent gas for the next iteration to
                     // compare against.
-                    self.gas_metering.last_gas_used = interpreter.gas.spent();
+                    self.gas_metering.last_gas_used = interpreter.gas.total_gas_spent();
                 }
             });
         }
@@ -2070,7 +2067,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // Reset gas if spent is less than refunded.
             // This can happen if gas was paused / resumed or reset.
             // https://github.com/foundry-rs/foundry/issues/4370
-            if interpreter.gas.spent()
+            if interpreter.gas.total_gas_spent()
                 < u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
             {
                 interpreter.gas = Gas::new(interpreter.gas.limit());

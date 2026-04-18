@@ -1,6 +1,7 @@
 //! Provider-related instantiation and usage utilities.
 
 pub mod curl_transport;
+pub mod mpp;
 pub mod runtime_transport;
 
 use crate::{
