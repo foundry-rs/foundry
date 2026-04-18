@@ -5,9 +5,9 @@ use crate::{
     Cheatcode, Cheatcodes, CheatcodesExecutor, CheatsCtxt, Result, Vm::*, inspector::exec_create,
 };
 use alloy_dyn_abi::DynSolType;
-use alloy_json_abi::ContractObject;
+use alloy_json_abi::{ContractObject, JsonAbi};
 use alloy_network::{Network, ReceiptResponse};
-use alloy_primitives::{Bytes, U256, hex, map::Entry};
+use alloy_primitives::{Bytes, FixedBytes, U256, hex, map::Entry};
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
 use forge_script_sequence::{BroadcastReader, TransactionWithMetadata};
@@ -380,6 +380,16 @@ impl Cheatcode for getDeployedCodeCall {
     }
 }
 
+impl Cheatcode for getSelectorsCall {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
+        let Self { artifactPath: path } = self;
+        let abi = get_artifact_abi(state, path)?;
+        let selectors: Vec<FixedBytes<4>> =
+            abi.functions().map(|func| func.selector().into()).collect();
+        Ok(selectors.abi_encode())
+    }
+}
+
 impl Cheatcode for deployCode_0Call {
     fn apply_full<FEN: FoundryEvmNetwork>(
         &self,
@@ -673,6 +683,136 @@ fn get_artifact_code<FEN: FoundryEvmNetwork>(
     let artifact = serde_json::from_str::<ContractObject>(&data)?;
     let maybe_bytecode = if deployed { artifact.deployed_bytecode } else { artifact.bytecode };
     maybe_bytecode.ok_or_else(|| fmt_err!("no bytecode for contract; is it abstract or unlinked?"))
+}
+
+/// Returns the ABI of a matching artifact from the given path.
+///
+/// See [`get_artifact_code`] for the supported path formats.
+fn get_artifact_abi<FEN: FoundryEvmNetwork>(
+    state: &Cheatcodes<FEN>,
+    path: &str,
+) -> Result<JsonAbi> {
+    if path.ends_with(".json") {
+        // Read JSON artifact directly from disk.
+        let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+        let data = fs::read_to_string(path)?;
+        let json: serde_json::Value = serde_json::from_str(&data)?;
+        let abi = json.get("abi").ok_or_else(|| fmt_err!("no `abi` field in artifact JSON"))?;
+        return serde_json::from_value(abi.clone()).map_err(|e| fmt_err!("{e}"));
+    }
+
+    let mut parts = path.split(':');
+
+    let mut file = None;
+    let mut contract_name = None;
+    let mut version = None;
+
+    let path_or_name = parts.next().unwrap();
+    if path_or_name.contains('.') {
+        file = Some(PathBuf::from(path_or_name));
+        if let Some(name_or_version) = parts.next() {
+            if name_or_version.contains('.') {
+                version = Some(name_or_version);
+            } else {
+                contract_name = Some(name_or_version);
+                version = parts.next();
+            }
+        }
+    } else {
+        contract_name = Some(path_or_name);
+        version = parts.next();
+    }
+
+    let version = if let Some(version) = version {
+        Some(Version::parse(version).map_err(|e| fmt_err!("failed parsing version: {e}"))?)
+    } else {
+        None
+    };
+
+    // Use available artifacts list if present.
+    if let Some(artifacts) = &state.config.available_artifacts {
+        let filtered = artifacts
+            .iter()
+            .filter(|(id, _)| {
+                let id_name = id.name.split('.').next().unwrap();
+
+                if let Some(path) = &file
+                    && !id.source.ends_with(path)
+                {
+                    return false;
+                }
+                if let Some(name) = contract_name
+                    && id_name != name
+                {
+                    return false;
+                }
+                if let Some(ref version) = version
+                    && (id.version.minor != version.minor
+                        || id.version.major != version.major
+                        || id.version.patch != version.patch)
+                {
+                    return false;
+                }
+                true
+            })
+            .collect::<Vec<_>>();
+
+        let artifact = match &filtered[..] {
+            [] => None,
+            [artifact] => Some(Ok(*artifact)),
+            filtered => {
+                let mut filtered = filtered.to_vec();
+                Some(
+                    state
+                        .config
+                        .running_artifact
+                        .as_ref()
+                        .and_then(|running| {
+                            filtered.retain(|(id, _)| id.version == running.version);
+                            if filtered.len() == 1 {
+                                return Some(filtered[0]);
+                            }
+                            filtered.retain(|(id, _)| id.profile == running.profile);
+                            (filtered.len() == 1).then(|| filtered[0])
+                        })
+                        .ok_or_else(|| fmt_err!("multiple matching artifacts found")),
+                )
+            }
+        };
+
+        if let Some(artifact) = artifact {
+            let artifact = artifact?;
+            return Ok(artifact.1.abi.clone());
+        }
+    }
+
+    // Fallback: construct path manually and read JSON from disk.
+    let path_in_artifacts = match (file.map(|f| f.to_string_lossy().to_string()), contract_name) {
+        (Some(file), Some(contract_name)) => {
+            PathBuf::from(format!("{file}/{contract_name}.json"))
+        }
+        (None, Some(contract_name)) => {
+            PathBuf::from(format!("{contract_name}.sol/{contract_name}.json"))
+        }
+        (Some(file), None) => {
+            let name = file.replace(".sol", "");
+            PathBuf::from(format!("{file}/{name}.json"))
+        }
+        _ => bail!("invalid artifact path"),
+    };
+
+    let path = state.config.paths.artifacts.join(path_in_artifacts);
+    let path = state.config.ensure_path_allowed(path, FsAccessKind::Read)?;
+    let data = fs::read_to_string(path).map_err(|e| {
+        if state.config.available_artifacts.is_some() {
+            fmt_err!("no matching artifact found")
+        } else {
+            e.into()
+        }
+    })?;
+    let json: serde_json::Value = serde_json::from_str(&data)?;
+    let abi = json.get("abi").ok_or_else(|| fmt_err!("no `abi` field in artifact JSON"))?;
+    serde_json::from_value(abi.clone()).map_err(|e| fmt_err!("{e}"))
 }
 
 impl Cheatcode for ffiCall {
