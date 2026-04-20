@@ -6,7 +6,7 @@ use revm::{
     inspector::JournalExt,
     interpreter::{CallInputs, CallOutcome, interpreter::EthInterpreter},
 };
-use tempo_precompiles::tip20::is_tip20_prefix;
+use tempo_primitives::TempoAddressExt;
 
 /// Inspector that labels TIP20 token precompile addresses with their on-chain names.
 ///
@@ -25,9 +25,7 @@ where
     CTX::Journal: JournalExt,
 {
     fn call(&mut self, ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        if is_tip20_prefix(inputs.target_address)
-            && !self.labels.contains_key(&inputs.target_address)
-        {
+        if inputs.target_address.is_tip20() && !self.labels.contains_key(&inputs.target_address) {
             let bytes = ctx
                 .db_mut()
                 .storage(inputs.target_address, tempo_precompiles::tip20::slots::NAME)
