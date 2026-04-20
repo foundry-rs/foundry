@@ -6,7 +6,8 @@
 //! opening a new on-chain channel for every `cast` / `forge` command.
 
 use alloy_primitives::{Address, B256};
-use mpp::{Channel, ChannelDb, client::channel_ops::ChannelEntry};
+use foundry_core_wallets::{Channel, ChannelDb};
+use mpp::client::channel_ops::ChannelEntry;
 use std::{
     collections::HashMap,
     sync::OnceLock,

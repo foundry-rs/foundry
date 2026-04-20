@@ -2765,7 +2765,7 @@ dependencies = [
  "foundry-debugger",
  "foundry-evm",
  "foundry-test-utils",
- "foundry-wallets",
+ "foundry-wallets 1.6.0",
  "futures",
  "itertools 0.14.0",
  "op-alloy-consensus",
@@ -4606,7 +4606,7 @@ dependencies = [
  "foundry-evm-networks",
  "foundry-linking",
  "foundry-test-utils",
- "foundry-wallets",
+ "foundry-wallets 1.6.0",
  "globset",
  "indicatif",
  "inferno",
@@ -4728,7 +4728,7 @@ dependencies = [
  "foundry-evm",
  "foundry-evm-networks",
  "foundry-linking",
- "foundry-wallets",
+ "foundry-wallets 1.6.0",
  "futures",
  "indicatif",
  "itertools 0.14.0",
@@ -4890,7 +4890,7 @@ dependencies = [
  "foundry-evm-core",
  "foundry-evm-fuzz",
  "foundry-evm-traces",
- "foundry-wallets",
+ "foundry-wallets 1.6.0",
  "itertools 0.14.0",
  "jsonpath_lib",
  "k256",
@@ -4951,7 +4951,7 @@ dependencies = [
  "foundry-config",
  "foundry-evm",
  "foundry-evm-networks",
- "foundry-wallets",
+ "foundry-wallets 1.6.0",
  "futures",
  "indicatif",
  "itertools 0.14.0",
@@ -5020,6 +5020,7 @@ dependencies = [
  "foundry-common-fmt",
  "foundry-compilers",
  "foundry-config",
+ "foundry-wallets 0.1.0",
  "itertools 0.14.0",
  "jiff",
  "mpp",
@@ -5549,6 +5550,43 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.23",
  "ui_test",
+]
+
+[[package]]
+name = "foundry-wallets"
+version = "0.1.0"
+source = "git+https://github.com/foundry-rs/foundry-core?branch=steven%2Fadd-channel-db#32bb0997207c5c10addac3ced7f6d50ff88b7a09"
+dependencies = [
+ "alloy-consensus",
+ "alloy-dyn-abi",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-signer",
+ "alloy-signer-ledger",
+ "alloy-signer-local",
+ "alloy-signer-trezor",
+ "alloy-sol-types",
+ "async-trait",
+ "axum",
+ "clap",
+ "derive_builder",
+ "dirs",
+ "eth-keystore",
+ "eyre",
+ "rpassword",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempo-primitives",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tower",
+ "tower-http",
+ "tracing",
+ "uuid 1.23.1",
+ "webbrowser",
 ]
 
 [[package]]
@@ -7362,7 +7400,7 @@ dependencies = [
 [[package]]
 name = "mpp"
 version = "0.9.3"
-source = "git+https://github.com/stevencartavia/mpp-rs?branch=add-channel-db#d74d40525f290cc6e38bdda77d4e8fae155a1705"
+source = "git+https://github.com/tempoxyz/mpp-rs?rev=310c9a1f3fe485fa9c7a877fd4da6b7a6ab34815#310c9a1f3fe485fa9c7a877fd4da6b7a6ab34815"
 dependencies = [
  "alloy",
  "base64 0.22.1",
@@ -7370,7 +7408,6 @@ dependencies = [
  "hmac",
  "rand 0.9.4",
  "reqwest 0.12.28",
- "rusqlite",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",

@@ -508,6 +508,7 @@ flate2 = "1.1"
 ethereum_ssz = "0.10"
 
 # Tempo
+foundry-core-wallets = { git = "https://github.com/foundry-rs/foundry-core", branch = "steven/add-channel-db", package = "foundry-wallets" }
 mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "310c9a1f3fe485fa9c7a877fd4da6b7a6ab34815", default-features = false, features = [
     "tempo",
     "client",
@@ -618,5 +619,3 @@ solar-interface = { package = "solar-interface", git = "https://github.com/parad
 solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
 solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
 
-[patch."https://github.com/tempoxyz/mpp-rs"]
-mpp = { git = "https://github.com/stevencartavia/mpp-rs", branch = "add-channel-db" }
