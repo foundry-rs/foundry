@@ -1269,14 +1269,9 @@ impl Config {
         let project = builder.build(self.compiler()?)?;
 
         if self.force {
-            let warnings = self.cleanup(&project)?;
-            for w in warnings {
-                // `sh_warn!` is a circular dependency, preventing us from using it here.
-                eprintln!(
-                    "{}",
-                    yansi::Paint::yellow(&format!("Warning: {w}"))
-                );
-            }
+            // Warnings are intentionally dropped here because `sh_warn!` is a circular
+            // dependency. Callers that need warnings should call `cleanup()` directly.
+            let _ = self.cleanup(&project);
         }
 
         Ok(project)
@@ -1319,26 +1314,26 @@ impl Config {
         }
 
         // Remove last test run failures file.
-        if let Err(err) = fs::remove_file(&self.test_failures_file) {
-            if err.kind() != io::ErrorKind::NotFound {
-                warnings.push(format!(
-                    "failed to remove test failures file {}: {err}",
-                    self.test_failures_file.display()
-                ));
-            }
+        if let Err(err) = fs::remove_file(&self.test_failures_file)
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            warnings.push(format!(
+                "failed to remove test failures file {}: {err}",
+                self.test_failures_file.display()
+            ));
         }
 
         // Remove fuzz and invariant cache directories.
         let mut remove_test_dir = |test_dir: &Option<PathBuf>| {
             if let Some(test_dir) = test_dir {
                 let path = project.root().join(test_dir);
-                if let Err(err) = fs::remove_dir_all(&path) {
-                    if err.kind() != io::ErrorKind::NotFound {
-                        warnings.push(format!(
-                            "failed to remove test cache directory {}: {err}",
-                            path.display()
-                        ));
-                    }
+                if let Err(err) = fs::remove_dir_all(&path)
+                    && err.kind() != io::ErrorKind::NotFound
+                {
+                    warnings.push(format!(
+                        "failed to remove test cache directory {}: {err}",
+                        path.display()
+                    ));
                 }
             }
         };
@@ -2185,13 +2180,13 @@ impl Config {
     pub fn clean_foundry_cache() -> eyre::Result<Vec<String>> {
         if let Some(cache_dir) = Self::foundry_cache_dir() {
             let path = cache_dir.as_path();
-            if let Err(err) = fs::remove_dir_all(path) {
-                if err.kind() != io::ErrorKind::NotFound {
-                    return Ok(vec![format!(
-                        "failed to remove foundry cache at {}: {err}",
-                        path.display()
-                    )]);
-                }
+            if let Err(err) = fs::remove_dir_all(path)
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                return Ok(vec![format!(
+                    "failed to remove foundry cache at {}: {err}",
+                    path.display()
+                )]);
             }
         } else {
             eyre::bail!("failed to get foundry_cache_dir");
@@ -2206,13 +2201,13 @@ impl Config {
     pub fn clean_foundry_chain_cache(chain: Chain) -> eyre::Result<Vec<String>> {
         if let Some(cache_dir) = Self::foundry_chain_cache_dir(chain) {
             let path = cache_dir.as_path();
-            if let Err(err) = fs::remove_dir_all(path) {
-                if err.kind() != io::ErrorKind::NotFound {
-                    return Ok(vec![format!(
-                        "failed to remove foundry cache for chain {chain} at {}: {err}",
-                        path.display()
-                    )]);
-                }
+            if let Err(err) = fs::remove_dir_all(path)
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                return Ok(vec![format!(
+                    "failed to remove foundry cache for chain {chain} at {}: {err}",
+                    path.display()
+                )]);
             }
         } else {
             eyre::bail!("failed to get foundry_chain_cache_dir");
@@ -2227,13 +2222,13 @@ impl Config {
     pub fn clean_foundry_block_cache(chain: Chain, block: u64) -> eyre::Result<Vec<String>> {
         if let Some(cache_dir) = Self::foundry_block_cache_dir(chain, block) {
             let path = cache_dir.as_path();
-            if let Err(err) = fs::remove_dir_all(path) {
-                if err.kind() != io::ErrorKind::NotFound {
-                    return Ok(vec![format!(
-                        "failed to remove foundry cache for chain {chain} block {block} at {}: {err}",
-                        path.display()
-                    )]);
-                }
+            if let Err(err) = fs::remove_dir_all(path)
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                return Ok(vec![format!(
+                    "failed to remove foundry cache for chain {chain} block {block} at {}: {err}",
+                    path.display()
+                )]);
             }
         } else {
             eyre::bail!("failed to get foundry_block_cache_dir");
@@ -2248,13 +2243,13 @@ impl Config {
     pub fn clean_foundry_etherscan_cache() -> eyre::Result<Vec<String>> {
         if let Some(cache_dir) = Self::foundry_etherscan_cache_dir() {
             let path = cache_dir.as_path();
-            if let Err(err) = fs::remove_dir_all(path) {
-                if err.kind() != io::ErrorKind::NotFound {
-                    return Ok(vec![format!(
-                        "failed to remove foundry etherscan cache at {}: {err}",
-                        path.display()
-                    )]);
-                }
+            if let Err(err) = fs::remove_dir_all(path)
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                return Ok(vec![format!(
+                    "failed to remove foundry etherscan cache at {}: {err}",
+                    path.display()
+                )]);
             }
         } else {
             eyre::bail!("failed to get foundry_etherscan_cache_dir");
@@ -2269,13 +2264,13 @@ impl Config {
     pub fn clean_foundry_etherscan_chain_cache(chain: Chain) -> eyre::Result<Vec<String>> {
         if let Some(cache_dir) = Self::foundry_etherscan_chain_cache_dir(chain) {
             let path = cache_dir.as_path();
-            if let Err(err) = fs::remove_dir_all(path) {
-                if err.kind() != io::ErrorKind::NotFound {
-                    return Ok(vec![format!(
-                        "failed to remove foundry etherscan cache for chain {chain} at {}: {err}",
-                        path.display()
-                    )]);
-                }
+            if let Err(err) = fs::remove_dir_all(path)
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                return Ok(vec![format!(
+                    "failed to remove foundry etherscan cache for chain {chain} at {}: {err}",
+                    path.display()
+                )]);
             }
         } else {
             eyre::bail!("failed to get foundry_etherscan_cache_dir for chain: {}", chain);
