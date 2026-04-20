@@ -1282,11 +1282,11 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tempo-alloy",
+ "tempo-alloy 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "tempo-chainspec",
  "tempo-evm",
  "tempo-precompiles",
- "tempo-primitives",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "tempo-revm",
  "thiserror 2.0.18",
  "tokio",
@@ -2781,9 +2781,9 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tempo-alloy",
- "tempo-contracts",
- "tempo-primitives",
+ "tempo-alloy 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
+ "tempo-contracts 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "tokio",
  "tracing",
  "yansi",
@@ -4621,7 +4621,7 @@ dependencies = [
  "strum",
  "svm-rs",
  "tempfile",
- "tempo-alloy",
+ "tempo-alloy 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "thiserror 2.0.18",
  "tokio",
  "toml_edit 0.24.1+spec-1.1.0",
@@ -4726,8 +4726,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tempo-alloy",
- "tempo-primitives",
+ "tempo-alloy 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -5023,8 +5023,8 @@ dependencies = [
  "serde_json",
  "solar-compiler",
  "tempfile",
- "tempo-alloy",
- "tempo-primitives",
+ "tempo-alloy 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "thiserror 2.0.18",
  "tokio",
  "toml",
@@ -5055,7 +5055,7 @@ dependencies = [
  "serde",
  "serde_json",
  "similar-asserts",
- "tempo-alloy",
+ "tempo-alloy 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "yansi",
 ]
 
@@ -5307,8 +5307,8 @@ dependencies = [
  "revm-inspectors",
  "serde",
  "serde_json",
- "tempo-alloy",
- "tempo-contracts",
+ "tempo-alloy 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
+ "tempo-contracts 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "tempo-evm",
  "tempo-precompiles",
  "tempo-revm",
@@ -5420,7 +5420,7 @@ dependencies = [
  "serde_json",
  "solar-compiler",
  "tempfile",
- "tempo-contracts",
+ "tempo-contracts 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "tempo-precompiles",
  "tokio",
  "tracing",
@@ -5492,8 +5492,8 @@ dependencies = [
  "revm",
  "serde",
  "serde_json",
- "tempo-alloy",
- "tempo-primitives",
+ "tempo-alloy 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "tempo-revm",
 ]
 
@@ -5570,7 +5570,7 @@ dependencies = [
  "rpassword",
  "serde",
  "serde_json",
- "tempo-primitives",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "thiserror 2.0.18",
  "tokio",
  "toml",
@@ -7342,8 +7342,8 @@ dependencies = [
  "serde_json",
  "serde_json_canonicalizer",
  "sha2 0.10.9",
- "tempo-alloy",
- "tempo-primitives",
+ "tempo-alloy 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=6f4f5cc)",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=6f4f5cc)",
  "thiserror 2.0.18",
  "time",
  "uuid 1.23.1",
@@ -11313,15 +11313,42 @@ dependencies = [
  "derive_more",
  "futures",
  "serde",
- "tempo-contracts",
- "tempo-primitives",
+ "tempo-contracts 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=6f4f5cc)",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=6f4f5cc)",
+ "tracing",
+]
+
+[[package]]
+name = "tempo-alloy"
+version = "1.6.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=bb08bb9#bb08bb905b6ee13fafe046aa9531aea2cdf60651"
+dependencies = [
+ "alloy-consensus",
+ "alloy-contract",
+ "alloy-eips 2.0.0",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-provider",
+ "alloy-rpc-types-eth",
+ "alloy-serde 2.0.0",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "alloy-transport",
+ "async-trait",
+ "dashmap",
+ "derive_more",
+ "futures",
+ "serde",
+ "tempo-chainspec",
+ "tempo-contracts 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "tracing",
 ]
 
 [[package]]
 name = "tempo-chainspec"
 version = "1.5.3"
-source = "git+https://github.com/tempoxyz/tempo?rev=6f4f5cc#6f4f5cca86a0f2aea8a863dee4b06430866ff9e5"
+source = "git+https://github.com/tempoxyz/tempo?rev=bb08bb9#bb08bb905b6ee13fafe046aa9531aea2cdf60651"
 dependencies = [
  "alloy-eips 2.0.0",
  "alloy-evm",
@@ -11334,13 +11361,13 @@ dependencies = [
  "reth-network-peers",
  "serde",
  "serde_json",
- "tempo-primitives",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
 ]
 
 [[package]]
 name = "tempo-consensus"
 version = "1.6.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=6f4f5cc#6f4f5cca86a0f2aea8a863dee4b06430866ff9e5"
+source = "git+https://github.com/tempoxyz/tempo?rev=bb08bb9#bb08bb905b6ee13fafe046aa9531aea2cdf60651"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -11350,7 +11377,7 @@ dependencies = [
  "reth-ethereum-consensus",
  "reth-primitives-traits 0.3.0",
  "tempo-chainspec",
- "tempo-primitives",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
 ]
 
 [[package]]
@@ -11365,9 +11392,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "tempo-contracts"
+version = "1.6.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=bb08bb9#bb08bb905b6ee13fafe046aa9531aea2cdf60651"
+dependencies = [
+ "alloy-contract",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "serde",
+]
+
+[[package]]
 name = "tempo-evm"
 version = "1.6.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=6f4f5cc#6f4f5cca86a0f2aea8a863dee4b06430866ff9e5"
+source = "git+https://github.com/tempoxyz/tempo?rev=bb08bb9#bb08bb905b6ee13fafe046aa9531aea2cdf60651"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -11384,8 +11422,8 @@ dependencies = [
  "reth-revm",
  "tempo-chainspec",
  "tempo-consensus",
- "tempo-contracts",
- "tempo-primitives",
+ "tempo-contracts 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "tempo-revm",
  "thiserror 2.0.18",
  "tracing",
@@ -11394,7 +11432,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles"
 version = "1.6.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=6f4f5cc#6f4f5cca86a0f2aea8a863dee4b06430866ff9e5"
+source = "git+https://github.com/tempoxyz/tempo?rev=bb08bb9#bb08bb905b6ee13fafe046aa9531aea2cdf60651"
 dependencies = [
  "alloy",
  "alloy-evm",
@@ -11404,9 +11442,9 @@ dependencies = [
  "revm",
  "scoped-tls",
  "tempo-chainspec",
- "tempo-contracts",
+ "tempo-contracts 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "tempo-precompiles-macros",
- "tempo-primitives",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -11414,7 +11452,7 @@ dependencies = [
 [[package]]
 name = "tempo-precompiles-macros"
 version = "1.6.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=6f4f5cc#6f4f5cca86a0f2aea8a863dee4b06430866ff9e5"
+source = "git+https://github.com/tempoxyz/tempo?rev=bb08bb9#bb08bb905b6ee13fafe046aa9531aea2cdf60651"
 dependencies = [
  "alloy",
  "proc-macro2",
@@ -11450,13 +11488,42 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tempo-contracts",
+ "tempo-contracts 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=6f4f5cc)",
+]
+
+[[package]]
+name = "tempo-primitives"
+version = "1.6.0"
+source = "git+https://github.com/tempoxyz/tempo?rev=bb08bb9#bb08bb905b6ee13fafe046aa9531aea2cdf60651"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips 2.0.0",
+ "alloy-network",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-eth",
+ "alloy-serde 2.0.0",
+ "aws-lc-rs",
+ "base64 0.22.1",
+ "derive_more",
+ "ed25519-consensus",
+ "once_cell",
+ "p256",
+ "reth-codecs 0.3.0",
+ "reth-ethereum-primitives",
+ "reth-primitives-traits 0.3.0",
+ "reth-rpc-convert",
+ "revm",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempo-contracts 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
 ]
 
 [[package]]
 name = "tempo-revm"
 version = "1.6.0"
-source = "git+https://github.com/tempoxyz/tempo?rev=6f4f5cc#6f4f5cca86a0f2aea8a863dee4b06430866ff9e5"
+source = "git+https://github.com/tempoxyz/tempo?rev=bb08bb9#bb08bb905b6ee13fafe046aa9531aea2cdf60651"
 dependencies = [
  "alloy-consensus",
  "alloy-evm",
@@ -11469,9 +11536,9 @@ dependencies = [
  "revm",
  "serde",
  "tempo-chainspec",
- "tempo-contracts",
+ "tempo-contracts 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "tempo-precompiles",
- "tempo-primitives",
+ "tempo-primitives 1.6.0 (git+https://github.com/tempoxyz/tempo?rev=bb08bb9)",
  "thiserror 2.0.18",
  "tracing",
 ]
