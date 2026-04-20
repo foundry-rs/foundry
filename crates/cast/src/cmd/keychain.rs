@@ -582,7 +582,7 @@ async fn run_authorize(
     let config = send_tx.eth.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
-    let calldata = if provider.is_hardfork_active(TempoHardfork::T3).await.unwrap_or(true) {
+    let calldata = if provider.is_hardfork_active(TempoHardfork::T3).await? {
         // T3+ authorizeKey(address,SignatureType,KeyRestrictions)
         let restrictions = KeyRestrictions {
             expiry,
@@ -632,7 +632,7 @@ async fn run_remaining_limit(
     let config = rpc.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
-    let remaining: U256 = if provider.is_hardfork_active(TempoHardfork::T3).await.unwrap_or(true) {
+    let remaining: U256 = if provider.is_hardfork_active(TempoHardfork::T3).await? {
         provider.get_keychain_remaining_limit(wallet_address, key_address, token).await?
     } else {
         // Pre-T3: use the legacy getRemainingLimit(address,address,address)
