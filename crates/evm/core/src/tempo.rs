@@ -11,11 +11,14 @@ use tempo_contracts::{
     ARACHNID_CREATE2_FACTORY_ADDRESS, CREATEX_ADDRESS, CreateX, MULTICALL3_ADDRESS, Multicall3,
     PERMIT2_ADDRESS, Permit2, SAFE_DEPLOYER_ADDRESS, SafeDeployer,
     contracts::ARACHNID_CREATE2_FACTORY_BYTECODE,
+    precompiles::{
+        ACCOUNT_KEYCHAIN_ADDRESS, ADDRESS_REGISTRY_ADDRESS, NONCE_PRECOMPILE_ADDRESS,
+        SIGNATURE_VERIFIER_ADDRESS, STABLECOIN_DEX_ADDRESS, TIP_FEE_MANAGER_ADDRESS,
+        TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS, VALIDATOR_CONFIG_ADDRESS,
+        VALIDATOR_CONFIG_V2_ADDRESS,
+    },
 };
 use tempo_precompiles::{
-    ACCOUNT_KEYCHAIN_ADDRESS, NONCE_PRECOMPILE_ADDRESS, STABLECOIN_DEX_ADDRESS,
-    TIP_FEE_MANAGER_ADDRESS, TIP20_FACTORY_ADDRESS, TIP403_REGISTRY_ADDRESS,
-    VALIDATOR_CONFIG_ADDRESS, VALIDATOR_CONFIG_V2_ADDRESS,
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
     tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
@@ -24,12 +27,6 @@ use tempo_precompiles::{
 };
 
 pub use tempo_contracts::precompiles::PATH_USD_ADDRESS;
-
-// TODO: remove once we can re-export from tempo_precompiles instead.
-pub const SIGNATURE_VERIFIER_ADDRESS: Address =
-    address!("0x5165300000000000000000000000000000000000");
-pub const ADDRESS_REGISTRY_ADDRESS: Address =
-    address!("0xFDC0000000000000000000000000000000000000");
 
 /// All well-known Tempo precompile addresses.
 pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
@@ -92,7 +89,7 @@ pub fn initialize_tempo_genesis_inner(
 
     // Create PathUSD token: 0x20C0000000000000000000000000000000000000
     let path_usd_token_address = create_and_mint_token(
-        address!("20C0000000000000000000000000000000000000"),
+        PATH_USD_ADDRESS,
         "PathUSD",
         "PathUSD",
         "USD",

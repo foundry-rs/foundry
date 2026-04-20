@@ -45,7 +45,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -59,6 +59,7 @@ pub use utils::*;
 mod endpoints;
 pub use endpoints::{
     ResolvedRpcEndpoint, ResolvedRpcEndpoints, RpcEndpoint, RpcEndpointUrl, RpcEndpoints,
+    builtin_rpc_url,
 };
 
 mod etherscan;
@@ -856,6 +857,17 @@ impl Config {
         config.normalize_optimizer_settings();
         config.normalize_hardfork_settings().map_err(ExtractConfigError::new)?;
 
+        // Validate optimizer_runs does not exceed u32::MAX (Solidity compiler limit)
+        if let Some(runs) = config.optimizer_runs
+            && runs > u32::MAX as usize
+        {
+            return Err(ExtractConfigError::new(Error::from(format!(
+                "`optimizer_runs` value {} exceeds maximum allowed value of {}",
+                runs,
+                u32::MAX
+            ))));
+        }
+
         Ok(config)
     }
 
@@ -1257,7 +1269,9 @@ impl Config {
         let project = builder.build(self.compiler()?)?;
 
         if self.force {
-            self.cleanup(&project)?;
+            // Warnings are intentionally dropped here because `sh_warn!` is a circular
+            // dependency. Callers that need warnings should call `cleanup()` directly.
+            let _ = self.cleanup(&project);
         }
 
         Ok(project)
@@ -1286,21 +1300,40 @@ impl Config {
     }
 
     /// Cleans the project.
+    ///
+    /// Returns a list of warning messages for any non-fatal cleanup failures. Cleanup is
+    /// best-effort: all steps are attempted even if some fail.
     pub fn cleanup<C: Compiler, T: ArtifactOutput<CompilerContract = C::CompilerContract>>(
         &self,
         project: &Project<C, T>,
-    ) -> Result<(), SolcError> {
-        project.cleanup()?;
+    ) -> Result<Vec<String>, SolcError> {
+        let mut warnings = Vec::new();
+
+        if let Err(err) = project.cleanup() {
+            warnings.push(format!("failed to clean project artifacts: {err}"));
+        }
 
         // Remove last test run failures file.
-        let _ = fs::remove_file(&self.test_failures_file);
+        if let Err(err) = fs::remove_file(&self.test_failures_file)
+            && err.kind() != io::ErrorKind::NotFound
+        {
+            warnings.push(format!(
+                "failed to remove test failures file {}: {err}",
+                self.test_failures_file.display()
+            ));
+        }
 
         // Remove fuzz and invariant cache directories.
-        let remove_test_dir = |test_dir: &Option<PathBuf>| {
+        let mut remove_test_dir = |test_dir: &Option<PathBuf>| {
             if let Some(test_dir) = test_dir {
                 let path = project.root().join(test_dir);
-                if path.exists() {
-                    let _ = fs::remove_dir_all(&path);
+                if let Err(err) = fs::remove_dir_all(&path)
+                    && err.kind() != io::ErrorKind::NotFound
+                {
+                    warnings.push(format!(
+                        "failed to remove test cache directory {}: {err}",
+                        path.display()
+                    ));
                 }
             }
         };
@@ -1309,7 +1342,7 @@ impl Config {
         remove_test_dir(&self.invariant.corpus.corpus_dir);
         remove_test_dir(&self.invariant.failure_persist_dir);
 
-        Ok(())
+        Ok(warnings)
     }
 
     /// Ensures that the configured version is installed if explicitly set
@@ -1527,6 +1560,10 @@ impl Config {
 
         if let Some(mesc_url) = self.get_rpc_url_from_mesc(maybe_alias) {
             return Some(Ok(Cow::Owned(mesc_url)));
+        }
+
+        if let Some(builtin) = crate::endpoints::builtin_rpc_url(maybe_alias) {
+            return Some(Ok(Cow::Borrowed(builtin)));
         }
 
         None
@@ -1920,6 +1957,7 @@ impl Config {
             out: self.out,
             libs: self.libs,
             remappings: self.remappings,
+            network: self.networks.active_network_name().map(String::from),
         }
     }
 
@@ -2137,63 +2175,108 @@ impl Config {
     }
 
     /// Clears the foundry cache.
-    pub fn clean_foundry_cache() -> eyre::Result<()> {
+    ///
+    /// Returns warnings for any non-fatal deletion failures.
+    pub fn clean_foundry_cache() -> eyre::Result<Vec<String>> {
         if let Some(cache_dir) = Self::foundry_cache_dir() {
             let path = cache_dir.as_path();
-            let _ = fs::remove_dir_all(path);
+            if let Err(err) = fs::remove_dir_all(path)
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                return Ok(vec![format!(
+                    "failed to remove foundry cache at {}: {err}",
+                    path.display()
+                )]);
+            }
         } else {
             eyre::bail!("failed to get foundry_cache_dir");
         }
 
-        Ok(())
+        Ok(vec![])
     }
 
     /// Clears the foundry cache for `chain`.
-    pub fn clean_foundry_chain_cache(chain: Chain) -> eyre::Result<()> {
+    ///
+    /// Returns warnings for any non-fatal deletion failures.
+    pub fn clean_foundry_chain_cache(chain: Chain) -> eyre::Result<Vec<String>> {
         if let Some(cache_dir) = Self::foundry_chain_cache_dir(chain) {
             let path = cache_dir.as_path();
-            let _ = fs::remove_dir_all(path);
+            if let Err(err) = fs::remove_dir_all(path)
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                return Ok(vec![format!(
+                    "failed to remove foundry cache for chain {chain} at {}: {err}",
+                    path.display()
+                )]);
+            }
         } else {
             eyre::bail!("failed to get foundry_chain_cache_dir");
         }
 
-        Ok(())
+        Ok(vec![])
     }
 
     /// Clears the foundry cache for `chain` and `block`.
-    pub fn clean_foundry_block_cache(chain: Chain, block: u64) -> eyre::Result<()> {
+    ///
+    /// Returns warnings for any non-fatal deletion failures.
+    pub fn clean_foundry_block_cache(chain: Chain, block: u64) -> eyre::Result<Vec<String>> {
         if let Some(cache_dir) = Self::foundry_block_cache_dir(chain, block) {
             let path = cache_dir.as_path();
-            let _ = fs::remove_dir_all(path);
+            if let Err(err) = fs::remove_dir_all(path)
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                return Ok(vec![format!(
+                    "failed to remove foundry cache for chain {chain} block {block} at {}: {err}",
+                    path.display()
+                )]);
+            }
         } else {
             eyre::bail!("failed to get foundry_block_cache_dir");
         }
 
-        Ok(())
+        Ok(vec![])
     }
 
     /// Clears the foundry etherscan cache.
-    pub fn clean_foundry_etherscan_cache() -> eyre::Result<()> {
+    ///
+    /// Returns warnings for any non-fatal deletion failures.
+    pub fn clean_foundry_etherscan_cache() -> eyre::Result<Vec<String>> {
         if let Some(cache_dir) = Self::foundry_etherscan_cache_dir() {
             let path = cache_dir.as_path();
-            let _ = fs::remove_dir_all(path);
+            if let Err(err) = fs::remove_dir_all(path)
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                return Ok(vec![format!(
+                    "failed to remove foundry etherscan cache at {}: {err}",
+                    path.display()
+                )]);
+            }
         } else {
             eyre::bail!("failed to get foundry_etherscan_cache_dir");
         }
 
-        Ok(())
+        Ok(vec![])
     }
 
     /// Clears the foundry etherscan cache for `chain`.
-    pub fn clean_foundry_etherscan_chain_cache(chain: Chain) -> eyre::Result<()> {
+    ///
+    /// Returns warnings for any non-fatal deletion failures.
+    pub fn clean_foundry_etherscan_chain_cache(chain: Chain) -> eyre::Result<Vec<String>> {
         if let Some(cache_dir) = Self::foundry_etherscan_chain_cache_dir(chain) {
             let path = cache_dir.as_path();
-            let _ = fs::remove_dir_all(path);
+            if let Err(err) = fs::remove_dir_all(path)
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                return Ok(vec![format!(
+                    "failed to remove foundry etherscan cache for chain {chain} at {}: {err}",
+                    path.display()
+                )]);
+            }
         } else {
             eyre::bail!("failed to get foundry_etherscan_cache_dir for chain: {}", chain);
         }
 
-        Ok(())
+        Ok(vec![])
     }
 
     /// List the data in the foundry cache.
@@ -2766,6 +2849,9 @@ pub struct BasicConfig {
     /// `Remappings` to use for this repo
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remappings: Vec<RelativeRemapping>,
+    /// The active non-Ethereum network (e.g. `"tempo"`).
+    #[serde(skip)]
+    pub network: Option<String>,
 }
 
 impl BasicConfig {
@@ -2773,7 +2859,13 @@ impl BasicConfig {
     ///
     /// This serializes to a table with the name of the profile
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        let s = toml::to_string_pretty(self)?;
+        let mut value = toml::Value::try_from(self)?;
+        if let Some(ref network) = self.network
+            && let toml::Value::Table(ref mut table) = value
+        {
+            table.insert(network.clone(), toml::Value::Boolean(true));
+        }
+        let s = toml::to_string_pretty(&value)?;
         Ok(format!(
             "\
 [profile.{}]
@@ -4285,6 +4377,7 @@ mod tests {
                     out: "myout".into(),
                     libs: default.libs.clone(),
                     remappings: default.remappings.clone(),
+                    network: None,
                 }
             );
             jail.set_env("FOUNDRY_PROFILE", r"other");
@@ -4297,6 +4390,7 @@ mod tests {
                     out: "myout".into(),
                     libs: default.libs.clone(),
                     remappings: default.remappings,
+                    network: None,
                 }
             );
             Ok(())
@@ -4918,7 +5012,8 @@ mod tests {
                     src: "src".into(),
                     out: "out".into(),
                     libs: vec!["lib".into()],
-                    remappings: vec![]
+                    remappings: vec![],
+                    network: None,
                 }
             )
         );

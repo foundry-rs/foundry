@@ -22,6 +22,7 @@ pub mod find_block;
 pub mod interface;
 pub mod keychain;
 pub mod logs;
+pub(crate) mod miner;
 pub mod mktx;
 pub mod rpc;
 pub mod run;

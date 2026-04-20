@@ -453,6 +453,18 @@ impl DerefMut for ResolvedRpcEndpoints {
     }
 }
 
+/// Returns the URL for a built-in RPC alias, if one exists.
+///
+/// Built-in aliases act as fallbacks: they are only used when the alias has **not** been
+/// defined by the user in `[rpc_endpoints]` or resolved via MESC.
+pub fn builtin_rpc_url(alias: &str) -> Option<&'static str> {
+    match alias {
+        "tempo" => Some("https://rpc.mpp.tempo.xyz"),
+        "moderato" => Some("https://rpc.mpp.moderato.tempo.xyz"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

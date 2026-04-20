@@ -915,6 +915,14 @@ Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: N
     ]]);
 
     assert!(prj.root().join("foundry.toml").exists());
+
+    // Verify foundry.toml contains `tempo = true` so subsequent commands auto-detect the network.
+    let foundry_toml = std::fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
+    assert!(
+        foundry_toml.contains("tempo = true"),
+        "foundry.toml should contain `tempo = true`, got:\n{foundry_toml}"
+    );
+
     assert!(prj.root().join("lib/forge-std").exists());
     assert!(prj.root().join("lib/tempo-std").exists());
 
@@ -931,6 +939,27 @@ Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: N
     assert!(prj.root().join(".github").join("workflows").join("test.yml").exists());
 
     assert!(prj.root().join("README.md").exists());
+});
+
+// checks that `forge init --network tempo` correctly setup network key in config
+forgetest!(can_execute_test_and_script_with_default_tempo_config, |prj, cmd| {
+    prj.wipe();
+
+    // Initialize a Tempo project.
+    cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success();
+
+    // Run tests, Tempo EVM selection is made by reading foundry.toml config
+    cmd.forge_fuse().arg("test").arg("--root").arg(prj.root()).assert_success();
+
+    // Same for script
+    cmd.forge_fuse()
+        .arg("script")
+        .arg("script/Mail.s.sol")
+        .arg("temposalt")
+        .arg("--tempo")
+        .arg("--root")
+        .arg(prj.root())
+        .assert_success();
 });
 
 // checks that clone works with raw src containing `node_modules`
