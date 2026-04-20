@@ -25,9 +25,7 @@ where
     CTX::Journal: JournalExt,
 {
     fn call(&mut self, ctx: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
-        if inputs.target_address.is_tip20()
-            && !self.labels.contains_key(&inputs.target_address)
-        {
+        if inputs.target_address.is_tip20() && !self.labels.contains_key(&inputs.target_address) {
             let bytes = ctx
                 .db_mut()
                 .storage(inputs.target_address, tempo_precompiles::tip20::slots::NAME)
