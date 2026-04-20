@@ -243,3 +243,163 @@ where
         self.walk_ty(ty)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::linter::LinterConfig;
+    use foundry_common::comments::inline_config::InlineConfig;
+    use foundry_config::lint::LintSpecificConfig;
+    use solar::{
+        interface::{Session, source_map::FileName},
+        sema::Compiler,
+    };
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug, Default)]
+    struct HookCounts {
+        nested_item: usize,
+        nested_contract: usize,
+        nested_function: usize,
+        nested_var: usize,
+        modifier: usize,
+        call_args: usize,
+    }
+
+    struct RecordingPass {
+        counts: Arc<Mutex<HookCounts>>,
+    }
+
+    impl RecordingPass {
+        fn record(&self, update: impl FnOnce(&mut HookCounts)) {
+            update(&mut self.counts.lock().unwrap());
+        }
+    }
+
+    impl<'hir> LateLintPass<'hir> for RecordingPass {
+        fn check_nested_item(
+            &mut self,
+            _ctx: &LintContext,
+            _hir: &'hir hir::Hir<'hir>,
+            _id: hir::ItemId,
+        ) {
+            self.record(|counts| counts.nested_item += 1);
+        }
+
+        fn check_nested_contract(
+            &mut self,
+            _ctx: &LintContext,
+            _hir: &'hir hir::Hir<'hir>,
+            _id: hir::ContractId,
+        ) {
+            self.record(|counts| counts.nested_contract += 1);
+        }
+
+        fn check_nested_function(
+            &mut self,
+            _ctx: &LintContext,
+            _hir: &'hir hir::Hir<'hir>,
+            _id: hir::FunctionId,
+        ) {
+            self.record(|counts| counts.nested_function += 1);
+        }
+
+        fn check_nested_var(
+            &mut self,
+            _ctx: &LintContext,
+            _hir: &'hir hir::Hir<'hir>,
+            _id: hir::VariableId,
+        ) {
+            self.record(|counts| counts.nested_var += 1);
+        }
+
+        fn check_modifier(
+            &mut self,
+            _ctx: &LintContext,
+            _hir: &'hir hir::Hir<'hir>,
+            _modifier: &'hir hir::Modifier<'hir>,
+        ) {
+            self.record(|counts| counts.modifier += 1);
+        }
+
+        fn check_call_args(
+            &mut self,
+            _ctx: &LintContext,
+            _hir: &'hir hir::Hir<'hir>,
+            _args: &'hir hir::CallArgs<'hir>,
+        ) {
+            self.record(|counts| counts.call_args += 1);
+        }
+    }
+
+    #[test]
+    fn calls_hooks_for_nested_items_modifiers_and_call_args() {
+        let counts = Arc::new(Mutex::new(HookCounts::default()));
+        let inline = InlineConfig::default();
+        let lint_specific = LintSpecificConfig::default();
+        let source = r#"
+            pragma solidity ^0.8.20;
+
+            contract Base {
+                function hook(uint256 value) internal pure returns (uint256) {
+                    return value;
+                }
+            }
+
+            contract Test is Base {
+                uint256 stored;
+
+                modifier gated(uint256 amount) {
+                    _;
+                }
+
+                function run(uint256 amount) public gated(amount) returns (uint256) {
+                    return hook(amount + stored);
+                }
+            }
+        "#;
+
+        let mut compiler =
+            Compiler::new(Session::builder().with_buffer_emitter(Default::default()).build());
+        compiler
+            .enter_mut(|compiler| -> solar::interface::Result<()> {
+                let mut pcx = compiler.parse();
+                pcx.set_resolve_imports(false);
+                let file = compiler
+                    .sess()
+                    .source_map()
+                    .new_source_file(FileName::Stdin, source)
+                    .expect("failed to create source file");
+                pcx.add_file(file);
+                pcx.parse();
+
+                let ControlFlow::Continue(()) = compiler.lower_asts()? else {
+                    panic!("expected HIR lowering to continue");
+                };
+
+                let gcx = compiler.gcx();
+                let source_id = gcx.hir.source_ids().next().expect("expected one lowered source");
+                let ctx = LintContext::new(
+                    gcx.sess,
+                    false,
+                    false,
+                    LinterConfig { inline: &inline, lint_specific: &lint_specific },
+                    Vec::new(),
+                );
+                let mut passes: Vec<Box<dyn LateLintPass<'_>>> =
+                    vec![Box::new(RecordingPass { counts: counts.clone() })];
+                let mut visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
+                let _ = hir::Visit::visit_nested_source(&mut visitor, source_id);
+                Ok(())
+            })
+            .expect("failed to lower test source");
+
+        let counts = counts.lock().unwrap();
+        assert!(counts.nested_item > 0, "expected nested item hook to run");
+        assert!(counts.nested_contract > 0, "expected nested contract hook to run");
+        assert!(counts.nested_function > 0, "expected nested function hook to run");
+        assert!(counts.nested_var > 0, "expected nested var hook to run");
+        assert!(counts.modifier > 0, "expected modifier hook to run");
+        assert!(counts.call_args > 0, "expected call args hook to run");
+    }
+}
