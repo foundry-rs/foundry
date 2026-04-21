@@ -6,7 +6,7 @@ use crate::{
 };
 use alloy_dyn_abi::DynSolType;
 use alloy_json_abi::ContractObject;
-use alloy_network::{Ethereum, Network, ReceiptResponse};
+use alloy_network::{Network, ReceiptResponse};
 use alloy_primitives::{Bytes, U256, hex, map::Entry};
 use alloy_sol_types::SolValue;
 use dialoguer::{Input, Password};
@@ -792,7 +792,7 @@ impl Cheatcode for getBroadcastCall {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { contractName, chainId, txType } = self;
 
-        let latest_broadcast = latest_broadcast(
+        let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
             *chainId,
             &state.config.broadcast,
@@ -810,7 +810,7 @@ impl Cheatcode for getBroadcasts_0Call {
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?
             .with_tx_type(map_broadcast_tx_type(*txType));
 
-        let broadcasts = reader.read::<Ethereum>()?;
+        let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -830,7 +830,7 @@ impl Cheatcode for getBroadcasts_1Call {
 
         let reader = BroadcastReader::new(contractName.clone(), *chainId, &state.config.broadcast)?;
 
-        let broadcasts = reader.read::<Ethereum>()?;
+        let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -849,7 +849,7 @@ impl Cheatcode for getDeployment_0Call {
         let Self { contractName } = self;
         let chain_id = ccx.ecx.cfg().chain_id();
 
-        let latest_broadcast = latest_broadcast(
+        let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
             chain_id,
             &ccx.state.config.broadcast,
@@ -864,7 +864,7 @@ impl Cheatcode for getDeployment_1Call {
     fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let Self { contractName, chainId } = self;
 
-        let latest_broadcast = latest_broadcast(
+        let latest_broadcast = latest_broadcast::<<FEN as FoundryEvmNetwork>::Network>(
             contractName,
             *chainId,
             &state.config.broadcast,
@@ -883,7 +883,7 @@ impl Cheatcode for getDeploymentsCall {
             .with_tx_type(CallKind::Create)
             .with_tx_type(CallKind::Create2);
 
-        let broadcasts = reader.read::<Ethereum>()?;
+        let broadcasts = reader.read::<<FEN as FoundryEvmNetwork>::Network>()?;
 
         let summaries = broadcasts
             .into_iter()
@@ -929,19 +929,22 @@ fn parse_broadcast_results<N: Network>(
         .collect()
 }
 
-fn latest_broadcast(
+fn latest_broadcast<N: Network>(
     contract_name: &String,
     chain_id: u64,
     broadcast_path: &Path,
     filters: Vec<CallKind>,
-) -> Result<BroadcastTxSummary> {
+) -> Result<BroadcastTxSummary>
+where
+    N::TxEnvelope: for<'d> serde::Deserialize<'d>,
+{
     let mut reader = BroadcastReader::new(contract_name.clone(), chain_id, broadcast_path)?;
 
     for filter in filters {
         reader = reader.with_tx_type(filter);
     }
 
-    let broadcast = reader.read_latest::<Ethereum>()?;
+    let broadcast = reader.read_latest::<N>()?;
 
     let results = reader.into_tx_receipts(broadcast);
 
@@ -957,7 +960,9 @@ fn latest_broadcast(
 mod tests {
     use super::*;
     use crate::CheatsConfig;
-    use std::sync::Arc;
+    use alloy_primitives::{address, b256};
+    use foundry_evm_core::evm::TempoEvmNetwork;
+    use std::{env, fs as stdfs, sync::Arc};
 
     fn cheats() -> Cheatcodes {
         let config = CheatsConfig {
@@ -1030,5 +1035,100 @@ mod tests {
         assert!(result.is_err(), "should reject unlinked bytecode with placeholders");
         let err = result.unwrap_err().to_string();
         assert!(err.contains("expected bytecode, found unlinked bytecode with placeholder"));
+    }
+
+    fn unique_temp_dir(prefix: &str) -> PathBuf {
+        env::temp_dir().join(format!(
+            "foundry-cheatcodes-{prefix}-{}",
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ))
+    }
+
+    #[test]
+    fn test_latest_broadcast_reads_tempo_sequences() {
+        let root = unique_temp_dir("tempo-broadcast");
+        let broadcast_path = root.join("broadcast");
+        let sequence_dir = broadcast_path.join("Counter.s.sol").join("31337");
+        stdfs::create_dir_all(&sequence_dir).unwrap();
+
+        let tx_hash = "0x04548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f";
+        let block_hash = "0x860f788b251ece768e63b0d3906d156f652d843848b71c7fe81faacd49139d66";
+        let from = "0xa70ab0448e66cd77995bfbba5c5b64b41a85f3fd";
+        let contract_address = "0x20c0000000000000000000000000000000000000";
+        let zero_bloom = format!("0x{}", "0".repeat(512));
+
+        let sequence = serde_json::json!({
+            "transactions": [{
+                "hash": tx_hash,
+                "transactionType": "CREATE",
+                "contractName": "Counter",
+                "contractAddress": contract_address,
+                "function": serde_json::Value::Null,
+                "arguments": serde_json::Value::Null,
+                "transaction": {
+                    "type": "0x76",
+                    "from": from,
+                    "to": serde_json::Value::Null,
+                    "data": "0x",
+                    "value": "0x0",
+                    "gas": "0x5208",
+                    "nonce": "0x0",
+                    "accessList": [],
+                    "calls": [],
+                    "nonceKey": "0x0",
+                    "feePayerSignature": serde_json::Value::Null,
+                    "validBefore": serde_json::Value::Null,
+                    "validAfter": serde_json::Value::Null,
+                    "keyAuthorization": serde_json::Value::Null,
+                    "aaAuthorizationList": []
+                },
+                "additionalContracts": [],
+                "isFixedGasLimit": false
+            }],
+            "receipts": [{
+                "type": "0x76",
+                "status": "0x1",
+                "cumulativeGasUsed": "0x5208",
+                "logs": [],
+                "logsBloom": zero_bloom,
+                "transactionHash": tx_hash,
+                "transactionIndex": "0x0",
+                "blockHash": block_hash,
+                "blockNumber": "0x7",
+                "gasUsed": "0x5208",
+                "effectiveGasPrice": "0x1",
+                "from": from,
+                "to": serde_json::Value::Null,
+                "contractAddress": contract_address,
+                "feePayer": from
+            }],
+            "libraries": [],
+            "pending": [],
+            "returns": {},
+            "timestamp": 1,
+            "chain": 31337,
+            "commit": serde_json::Value::Null
+        });
+
+        fs::write_json_file(&sequence_dir.join("run-1.json"), &sequence).unwrap();
+
+        let latest = latest_broadcast::<<TempoEvmNetwork as FoundryEvmNetwork>::Network>(
+            &"Counter".to_owned(),
+            31337,
+            &broadcast_path,
+            vec![CallKind::Create],
+        )
+        .unwrap();
+
+        assert_eq!(
+            latest.txHash,
+            b256!("04548a0ea27e2cccc1479af3c2ff02da4d4d3ea46af8e8d7edaa49f6ea27073f")
+        );
+        assert_eq!(latest.blockNumber, 7);
+        assert!(matches!(latest.txType, BroadcastTxType::Create));
+        assert_eq!(latest.contractAddress, address!("20c0000000000000000000000000000000000000"));
+        assert!(latest.success);
+
+        stdfs::remove_dir_all(root).unwrap();
     }
 }

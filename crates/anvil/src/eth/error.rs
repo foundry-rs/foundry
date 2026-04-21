@@ -73,6 +73,8 @@ pub enum BlockchainError {
     BlockOutOfRange(u64, u64),
     #[error("Resource not found")]
     BlockNotFound,
+    #[error("unknown block")]
+    UnknownBlock,
     /// Thrown when a requested transaction is not found
     #[error("transaction not found")]
     TransactionNotFound,
@@ -647,6 +649,11 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::FilterNotFound => RpcError {
                     code: ErrorCode::ServerError(-32000),
                     message: "filter not found".into(),
+                    data: None,
+                },
+                err @ BlockchainError::UnknownBlock => RpcError {
+                    code: ErrorCode::ServerError(-32000),
+                    message: err.to_string().into(),
                     data: None,
                 },
             }
