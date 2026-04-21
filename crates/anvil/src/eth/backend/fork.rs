@@ -443,7 +443,9 @@ impl<N: Network> ClientFork<N> {
         hash: B256,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
         if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
-            return Ok(Some(self.convert_to_full_block(block)));
+            if let Some(block) = self.convert_to_full_block(block) {
+                return Ok(Some(block));
+            }
         }
         self.fetch_full_block(hash).await
     }
@@ -480,7 +482,9 @@ impl<N: Network> ClientFork<N> {
             .copied()
             .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
         {
-            return Ok(Some(self.convert_to_full_block(block)));
+            if let Some(block) = self.convert_to_full_block(block) {
+                return Ok(Some(block));
+            }
         }
 
         self.fetch_full_block(block_number).await
@@ -509,15 +513,15 @@ impl<N: Network> ClientFork<N> {
     }
 
     /// Converts a block of hashes into a full block
-    fn convert_to_full_block(&self, mut block: N::BlockResponse) -> N::BlockResponse {
+    fn convert_to_full_block(&self, mut block: N::BlockResponse) -> Option<N::BlockResponse> {
         let storage = self.storage.read();
         let transactions = block
             .transactions()
             .hashes()
-            .filter_map(|hash| storage.transactions.get(&hash).cloned())
-            .collect();
+            .map(|hash| storage.transactions.get(&hash).cloned())
+            .collect::<Option<Vec<_>>>()?;
         *block.transactions_mut() = BlockTransactions::Full(transactions);
-        block
+        Some(block)
     }
 }
 
