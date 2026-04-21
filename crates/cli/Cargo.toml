@@ -21,6 +21,8 @@ foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 foundry-wallets.workspace = true
 
+tempo-primitives.workspace = true
+
 foundry-compilers.workspace = true
 solar.workspace = true
 
