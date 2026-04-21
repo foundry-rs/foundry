@@ -1,14 +1,14 @@
 use std::{str::FromStr, time::Duration};
 
 use crate::{
-    cmd::send::cast_send,
+    cmd::send::{cast_send, cast_send_with_access_key},
     format_uint_exp,
     tx::{SendTxOpts, TxParams},
 };
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
-use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
+use alloy_network::{Ethereum, EthereumWallet, Network};
 use alloy_primitives::U256;
 use alloy_provider::{Provider, fillers::RecommendedFillers};
 use alloy_signer::Signature;
@@ -335,8 +335,9 @@ impl Erc20Subcommand {
             ) => {{
                 let timeout = $send_tx.timeout.unwrap_or(config.transaction_timeout);
                 if let Some(ref access_key) = tempo_keychain {
-                    let signer =
-                        pre_resolved_signer.as_ref().expect("signer required for access key");
+                    let signer = pre_resolved_signer
+                        .as_ref()
+                        .ok_or_else(|| eyre::eyre!("signer required for access key"))?;
                     let $provider =
                         ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                     let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
@@ -345,8 +346,7 @@ impl Erc20Subcommand {
                         &mut tx,
                         get_chain(config.chain, &$provider).await?.is_legacy(),
                     );
-                    apply_tempo_access_key::<TempoNetwork>(&mut tx, Some(access_key));
-                    send_tempo_keychain(
+                    cast_send_with_access_key(
                         &$provider,
                         tx,
                         signer,
@@ -502,50 +502,4 @@ impl Erc20Subcommand {
         };
         Ok(())
     }
-}
-
-/// Applies Tempo access key fields (from, key_id) to a transaction request.
-///
-/// Note: `key_authorization` is intentionally not set here. It is only included
-/// if the key is not yet provisioned on-chain (checked in [`send_tempo_keychain`]).
-fn apply_tempo_access_key<N: Network>(
-    tx: &mut N::TransactionRequest,
-    config: Option<&TempoAccessKeyConfig>,
-) where
-    N::TransactionRequest: FoundryTransactionBuilder<N>,
-{
-    if let Some(config) = config {
-        tx.set_from(config.wallet_address);
-        tx.set_key_id(config.key_address);
-    }
-}
-
-/// Sends a Tempo transaction using access key (keychain V2 mode).
-///
-/// Signs the transaction with the access key and sends it via `send_raw_transaction`,
-/// bypassing `EthereumWallet`. Only includes `key_authorization` if the key is not yet
-/// provisioned on-chain.
-async fn send_tempo_keychain<P: Provider<TempoNetwork>>(
-    provider: &P,
-    tx: <TempoNetwork as Network>::TransactionRequest,
-    signer: &WalletSigner,
-    access_key: &TempoAccessKeyConfig,
-    cast_async: bool,
-    confirmations: u64,
-    timeout: u64,
-) -> eyre::Result<()> {
-    let raw_tx = tx
-        .sign_with_access_key(
-            provider,
-            signer,
-            access_key.wallet_address,
-            access_key.key_address,
-            access_key.key_authorization.as_ref(),
-        )
-        .await?;
-
-    let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-
-    let cast = crate::tx::CastTxSender::new(provider);
-    cast.print_tx_result(tx_hash, cast_async, confirmations, timeout).await
 }

@@ -6,23 +6,21 @@
 
 use crate::{
     call_spec::CallSpec,
-    cmd::send::cast_send,
-    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
+    cmd::send::{cast_send, cast_send_with_access_key},
+    tx::{self, CastTxBuilder, SendTxOpts},
 };
 use alloy_network::EthereumWallet;
-use alloy_primitives::Bytes;
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::Signer;
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{self, LoadConfig, parse_function_args},
+    utils::{self, LoadConfig},
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::provider::ProviderBuilder;
 use std::time::Duration;
 use tempo_alloy::TempoNetwork;
-use tempo_primitives::transaction::Call;
 
 /// CLI arguments for `cast batch-send`.
 ///
@@ -79,25 +77,8 @@ impl BatchSendArgs {
         // Build Vec<Call> from specs
         let mut tempo_calls = Vec::with_capacity(call_specs.len());
         for (i, spec) in call_specs.iter().enumerate() {
-            let input = if let Some(data) = &spec.data {
-                data.clone()
-            } else if let Some(sig) = &spec.sig {
-                let (encoded, _) = parse_function_args(
-                    sig,
-                    spec.args.clone(),
-                    Some(spec.to),
-                    chain,
-                    &provider,
-                    etherscan_api_key.as_deref(),
-                )
-                .await
-                .map_err(|e| eyre!("Failed to encode call {}: {}", i + 1, e))?;
-                Bytes::from(encoded)
-            } else {
-                Bytes::new()
-            };
-
-            tempo_calls.push(Call { to: spec.to.into(), value: spec.value, input });
+            tempo_calls
+                .push(spec.resolve(i, chain, &provider, etherscan_api_key.as_deref()).await?);
         }
 
         sh_println!("Building batch transaction with {} call(s)...", tempo_calls.len())?;
@@ -139,38 +120,22 @@ impl BatchSendArgs {
                 Some(s) => s,
                 None => send_tx.eth.wallet.signer().await?,
             };
-            let from = if let Some(ref access_key) = tempo_access_key {
-                access_key.wallet_address
-            } else {
-                Signer::address(&signer)
-            };
-
-            if tempo_access_key.is_none() {
-                tx::validate_from_address(send_tx.eth.wallet.from, from)?;
-            }
-
-            let (tx_request, _) = if tempo_access_key.is_some() {
-                builder.build(from).await?
-            } else {
-                builder.build(&signer).await?
-            };
 
             if let Some(ref access_key) = tempo_access_key {
-                let raw_tx = tx_request
-                    .sign_with_access_key(
-                        &provider,
-                        &signer,
-                        access_key.wallet_address,
-                        access_key.key_address,
-                        access_key.key_authorization.as_ref(),
-                    )
-                    .await?;
-
-                let cast = CastTxSender::new(&provider);
-                let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-                cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
-                    .await?;
+                let (tx_request, _) = builder.build(access_key.wallet_address).await?;
+                cast_send_with_access_key(
+                    &provider,
+                    tx_request,
+                    &signer,
+                    access_key,
+                    send_tx.cast_async,
+                    send_tx.confirmations,
+                    timeout,
+                )
+                .await?;
             } else {
+                tx::validate_from_address(send_tx.eth.wallet.from, Signer::address(&signer))?;
+                let (tx_request, _) = builder.build(&signer).await?;
                 let wallet = EthereumWallet::from(signer);
                 let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
                     .wallet(wallet)

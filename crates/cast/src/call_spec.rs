@@ -8,9 +8,14 @@
 //! - `0x123::transfer(address,uint256):0x789,1000` - Contract call with signature
 //! - `0x123::0xabcdef` - Contract call with raw calldata
 
+use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, U256, hex};
+use alloy_provider::Provider;
 use eyre::{Result, WrapErr, eyre};
+use foundry_cli::utils::parse_function_args;
+use foundry_config::Chain;
 use std::str::FromStr;
+use tempo_primitives::transaction::Call;
 
 /// A parsed call specification for batch transactions.
 #[derive(Debug, Clone)]
@@ -97,6 +102,35 @@ impl CallSpec {
         }
 
         Ok(Self { to, value, sig, args, data })
+    }
+
+    /// Resolves this spec into a [`Call`], encoding function arguments if needed.
+    /// `i` is the 0-based index of this call; displayed as `i + 1` in error messages.
+    pub async fn resolve<N: Network, P: Provider<N>>(
+        &self,
+        i: usize,
+        chain: Chain,
+        provider: &P,
+        etherscan_api_key: Option<&str>,
+    ) -> Result<Call> {
+        let input = if let Some(data) = &self.data {
+            data.clone()
+        } else if let Some(sig) = &self.sig {
+            let (encoded, _) = parse_function_args(
+                sig,
+                self.args.clone(),
+                Some(self.to),
+                chain,
+                provider,
+                etherscan_api_key,
+            )
+            .await
+            .map_err(|e| eyre!("Failed to encode call {}: {e}", i + 1))?;
+            Bytes::from(encoded)
+        } else {
+            Bytes::new()
+        };
+        Ok(Call { to: self.to.into(), value: self.value, input })
     }
 }
 
