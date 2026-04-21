@@ -1,7 +1,7 @@
 use alloy_ens::NameOrAddress;
 use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, U256, hex, keccak256};
-use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
+use alloy_provider::ProviderBuilder as AlloyProviderBuilder;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
 use chrono::DateTime;
