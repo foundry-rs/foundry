@@ -746,7 +746,8 @@ async fn send_keychain_tx(
             .wallet(wallet)
             .connect_provider(&provider);
 
-        cast_send(provider, tx, send_tx.cast_async, false, send_tx.confirmations, timeout).await?;
+        cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
+            .await?;
     }
 
     Ok(())
