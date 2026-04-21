@@ -180,10 +180,6 @@ impl VerificationProvider for SourcifyVerificationProvider {
             .await
             .wrap_err("Checking verification result failed")
     }
-
-    fn kind(&self) -> crate::provider::VerificationProviderType {
-        crate::provider::VerificationProviderType::Sourcify
-    }
 }
 
 impl SourcifyVerificationProvider {

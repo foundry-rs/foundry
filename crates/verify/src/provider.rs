@@ -125,13 +125,6 @@ pub trait VerificationProvider {
 
     /// Checks whether the contract is verified.
     async fn check(&self, args: VerifyCheckArgs) -> Result<()>;
-
-    /// Returns the concrete verifier type this provider implements.
-    ///
-    /// Useful for logging and for tests that need to assert which provider
-    /// was selected by [`VerificationProviderType::client`] (whose return type
-    /// is a trait object and therefore erases the concrete type).
-    fn kind(&self) -> VerificationProviderType;
 }
 
 impl FromStr for VerificationProviderType {
@@ -273,26 +266,5 @@ mod tests {
                 assert!(err.to_string().contains("No known Etherscan API URL"));
             }
         }
-    }
-
-    /// `VerificationProviderType::Sourcify` is also the `#[default]` enum value, so it
-    /// represents "user passed no `--verifier` flag". When an Etherscan API key is present,
-    /// that default is overridden and the returned provider is Etherscan. Make sure we
-    /// actually return an Etherscan client, not just any `Ok` value.
-    #[test]
-    fn no_verifier_flag_with_etherscan_key_returns_etherscan_client() {
-        let provider = VerificationProviderType::Sourcify
-            .client(Some("key"), None, true)
-            .expect("client construction should succeed");
-        assert_eq!(provider.kind(), VerificationProviderType::Etherscan);
-    }
-
-    /// No key, no `--verifier` flag → Sourcify (the documented default).
-    #[test]
-    fn no_verifier_flag_without_etherscan_key_returns_sourcify_client() {
-        let provider = VerificationProviderType::Sourcify
-            .client(None, None, true)
-            .expect("client construction should succeed");
-        assert_eq!(provider.kind(), VerificationProviderType::Sourcify);
     }
 }

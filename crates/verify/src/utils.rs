@@ -1,6 +1,4 @@
-use crate::{
-    bytecode::VerifyBytecodeArgs, provider::VerificationProviderType, types::VerificationType,
-};
+use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_evm::EvmEnv;
 use alloy_primitives::{Address, Bytes, TxKind};
@@ -389,14 +387,15 @@ pub fn is_host_only(url: &Url) -> bool {
 }
 
 /// Wraps a failed verification error with guidance when `--verifier-url` looks misconfigured for
-/// the active provider. Returns `err` untouched when no hint applies.
+/// the Etherscan provider. Returns `err` untouched when no hint applies.
 ///
-/// The hint only fires for the Etherscan provider, which requires an API endpoint (typically
-/// `/api`). Sourcify, Blockscout, etc. accept host-only URLs, so we leave their errors alone.
+/// The hint only fires when the Etherscan verifier is active: it requires an API endpoint
+/// (typically `/api`). Sourcify, Blockscout, etc. accept host-only URLs, so we leave their
+/// errors alone.
 pub fn wrap_verifier_url_error(
     err: eyre::Error,
     verifier_url: Option<&str>,
-    provider: VerificationProviderType,
+    using_etherscan: bool,
 ) -> eyre::Error {
     let Some(verifier_url) = verifier_url else { return err };
     let url = match Url::parse(verifier_url) {
@@ -405,7 +404,7 @@ pub fn wrap_verifier_url_error(
             return err.wrap_err(format!("Invalid URL {verifier_url} provided: {url_err}"));
         }
     };
-    if is_host_only(&url) && provider == VerificationProviderType::Etherscan {
+    if is_host_only(&url) && using_etherscan {
         return err.wrap_err(format!(
             "Verifier `etherscan` requires an API endpoint, but `--verifier-url` is host-only: `{verifier_url}`.\n\
              Fixes (pick one):\n\
@@ -452,18 +451,14 @@ mod tests {
     #[test]
     fn wrap_verifier_url_error_passes_through_when_no_url() {
         let err = eyre::eyre!("upstream failure");
-        let wrapped = wrap_verifier_url_error(err, None, VerificationProviderType::Etherscan);
+        let wrapped = wrap_verifier_url_error(err, None, true);
         assert_eq!(wrapped.to_string(), "upstream failure");
     }
 
     #[test]
     fn wrap_verifier_url_error_adds_hint_for_host_only_etherscan_url() {
         let err = eyre::eyre!("upstream failure");
-        let wrapped = wrap_verifier_url_error(
-            err,
-            Some("https://contracts.tempo.xyz"),
-            VerificationProviderType::Etherscan,
-        );
+        let wrapped = wrap_verifier_url_error(err, Some("https://contracts.tempo.xyz"), true);
         let msg = format!("{wrapped:#}");
         assert!(msg.contains("host-only"), "message: {msg}");
         assert!(msg.contains("--verifier-url https://contracts.tempo.xyz/api"), "message: {msg}");
@@ -475,19 +470,14 @@ mod tests {
     #[test]
     fn wrap_verifier_url_error_does_not_hint_for_non_etherscan_provider() {
         let err = eyre::eyre!("upstream failure");
-        let wrapped = wrap_verifier_url_error(
-            err,
-            Some("https://contracts.tempo.xyz"),
-            VerificationProviderType::Sourcify,
-        );
+        let wrapped = wrap_verifier_url_error(err, Some("https://contracts.tempo.xyz"), false);
         assert_eq!(wrapped.to_string(), "upstream failure");
     }
 
     #[test]
     fn wrap_verifier_url_error_reports_invalid_url() {
         let err = eyre::eyre!("upstream failure");
-        let wrapped =
-            wrap_verifier_url_error(err, Some("not a url"), VerificationProviderType::Etherscan);
+        let wrapped = wrap_verifier_url_error(err, Some("not a url"), true);
         let msg = format!("{wrapped:#}");
         assert!(msg.contains("Invalid URL"), "message: {msg}");
     }

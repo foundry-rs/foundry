@@ -281,16 +281,28 @@ impl VerifyArgs {
         {
             sh_println!("Constructor args: {args}")?
         }
-        let mut provider = self.verifier.verifier.client(
-            self.etherscan.key().as_deref(),
-            self.etherscan.chain,
-            self.verifier.verifier_url.is_some(),
-        )?;
-        let provider_kind = provider.kind();
-        provider
+        // `client()` picks Etherscan when `--verifier etherscan` is passed, or when
+        // `ETHERSCAN_API_KEY` is set and no other provider was explicitly chosen. This mirrors
+        // that selection closely enough to decide whether the host-only URL hint applies.
+        let etherscan_key = self.etherscan.key();
+        let using_etherscan = self.verifier.verifier.is_etherscan()
+            || (etherscan_key.as_deref().is_some_and(|k| !k.is_empty())
+                && !matches!(
+                    self.verifier.verifier,
+                    VerificationProviderType::Blockscout
+                        | VerificationProviderType::Oklink
+                        | VerificationProviderType::Custom
+                ));
+        self.verifier
+            .verifier
+            .client(
+                etherscan_key.as_deref(),
+                self.etherscan.chain,
+                self.verifier.verifier_url.is_some(),
+            )?
             .verify(self, context)
             .await
-            .map_err(|err| wrap_verifier_url_error(err, verifier_url.as_deref(), provider_kind))
+            .map_err(|err| wrap_verifier_url_error(err, verifier_url.as_deref(), using_etherscan))
     }
 
     /// Returns the configured verification provider
