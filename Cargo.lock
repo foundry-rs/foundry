@@ -5543,7 +5543,8 @@ dependencies = [
 
 [[package]]
 name = "foundry-wallets"
-version = "1.6.0"
+version = "0.1.0"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=5a61865efb2bfe76912211a293a96fe6f4d5480e#5a61865efb2bfe76912211a293a96fe6f4d5480e"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -5566,9 +5567,6 @@ dependencies = [
  "dirs",
  "eth-keystore",
  "eyre",
- "foundry-common",
- "foundry-config",
- "reqwest 0.13.2",
  "rpassword",
  "serde",
  "serde_json",
