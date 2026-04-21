@@ -35,7 +35,7 @@ pub(super) fn run(
     no_random: bool,
 ) -> Result<Output> {
     if !master.is_valid_master() {
-        eyre::bail!("invalid master address {master}; see https://docs.tempo.xyz/protocol/tip1022");
+        eyre::bail!("invalid master address {master}; see https://docs.tempo.xyz/protocol/tips/tip-1022");
     }
 
     if let Some(salt) = salt {
