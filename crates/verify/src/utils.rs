@@ -409,11 +409,7 @@ pub fn wrap_verifier_url_error(
             "Verifier `etherscan` requires an API endpoint, but `--verifier-url` is host-only: `{verifier_url}`.\n\
              Fixes (pick one):\n\
              - Append the API path, e.g. `--verifier-url {verifier_url}/api`\n\
-             - Switch verifier, e.g. `--verifier sourcify` (works with host-only URLs)\n\
-             \n\
-             Etherscan was selected because `ETHERSCAN_API_KEY` is set or `--verifier etherscan` \
-             was passed. Unset the env var or pass `--verifier sourcify` to pick a different \
-             provider."
+             - Switch verifier, e.g. `--verifier sourcify` (works with host-only URLs)"
         ));
     }
     err

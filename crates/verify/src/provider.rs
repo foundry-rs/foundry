@@ -223,7 +223,7 @@ impl VerificationProviderType {
 
         // 4. If no `--verifier` is specified but `ETHERSCAN_API_KEY` is set, default to Etherscan.
         if has_key {
-            sh_println!(
+            sh_eprintln!(
                 "ETHERSCAN_API_KEY is set, defaulting to Etherscan verifier. \
                  Unset it or pass `--verifier sourcify` (or another provider) to override."
             )?;
