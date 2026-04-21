@@ -135,8 +135,8 @@ pub struct NodeConfig {
     /// maximum number of transactions in a block
     pub max_transactions: usize,
     /// Fork URLs for RPC calls. The first entry is the primary endpoint.
-    /// When multiple URLs are provided, requests are distributed using Alloy's
-    /// `FallbackService` with automatic failover based on endpoint health.
+    /// When multiple URLs are provided, requests are distributed using
+    /// round-robin load balancing with retry-based failover.
     pub fork_urls: Vec<String>,
     /// pins the block number or transaction hash for the state fork
     pub fork_choice: Option<ForkChoice>,
@@ -1266,21 +1266,20 @@ impl NodeConfig {
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
-        let builder = ProviderBuilder::new(&eth_rpc_url)
-            .timeout(self.fork_request_timeout)
-            .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
-            .compute_units_per_second(self.compute_units_per_second)
-            .max_retry(self.fork_request_retries)
-            .headers(self.fork_headers.clone());
 
-        let provider = Arc::new(if self.fork_urls.len() > 1 {
-            debug!(target: "node", urls=?self.fork_urls, "using multi-endpoint fallback provider");
-            builder
-                .build_fallback(self.fork_urls.clone())
-                .wrap_err("failed to establish fallback provider to fork urls")?
-        } else {
-            builder.build().wrap_err("failed to establish provider to fork url")?
-        });
+        // Always bootstrap with the primary URL only to avoid race conditions
+        // where discovery calls (get_chain_id, find_latest_fork_block, get_block)
+        // hit different endpoints that may be at different chain tips.
+        let provider = Arc::new(
+            ProviderBuilder::new(&eth_rpc_url)
+                .timeout(self.fork_request_timeout)
+                .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+                .compute_units_per_second(self.compute_units_per_second)
+                .max_retry(self.fork_request_retries)
+                .headers(self.fork_headers.clone())
+                .build()
+                .wrap_err("failed to establish provider to fork url")?,
+        );
 
         let (fork_block_number, fork_chain_id, force_transactions) = if let Some(fork_choice) =
             &self.fork_choice
@@ -1430,6 +1429,25 @@ latest block number: {latest_block}"
             BlockchainDb::new_skip_check(meta, self.block_cache_path(fork_block_number))
         } else {
             BlockchainDb::new(meta, self.block_cache_path(fork_block_number))
+        };
+
+        // After bootstrap, rebuild the provider with round-robin if multiple URLs are
+        // configured. This ensures bootstrap used only the primary endpoint for consistency,
+        // while ongoing requests are distributed across all endpoints.
+        let provider = if self.fork_urls.len() > 1 {
+            debug!(target: "node", urls=?self.fork_urls, "using multi-endpoint round-robin provider");
+            Arc::new(
+                ProviderBuilder::new(&eth_rpc_url)
+                    .timeout(self.fork_request_timeout)
+                    .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+                    .compute_units_per_second(self.compute_units_per_second)
+                    .max_retry(self.fork_request_retries)
+                    .headers(self.fork_headers.clone())
+                    .build_fallback(self.fork_urls.clone())
+                    .wrap_err("failed to establish round-robin provider to fork urls")?,
+            )
+        } else {
+            provider
         };
 
         // This will spawn the background thread that will use the provider to fetch

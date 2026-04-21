@@ -440,8 +440,8 @@ pub struct AnvilEvmArgs {
     /// If you want to fetch state from a specific block number, add a block number like `http://localhost:8545@1400000` or use the `--fork-block-number` argument.
     ///
     /// Multiple `--fork-url` flags can be provided to distribute requests across endpoints
-    /// with automatic failover. Requests are routed to the best-performing endpoint based on
-    /// latency and success rate.
+    /// using round-robin load balancing. On failure, the retry layer rotates to the next
+    /// endpoint.
     #[arg(
         long,
         short,

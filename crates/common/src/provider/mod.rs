@@ -95,8 +95,13 @@ pub struct RoundRobinService<S> {
 }
 
 impl<S> RoundRobinService<S> {
-    /// Creates a new round-robin service from a list of transports.
+    /// Creates a new round-robin service from a non-empty list of transports.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `transports` is empty.
     pub fn new(transports: Vec<S>) -> Self {
+        assert!(!transports.is_empty(), "RoundRobinService requires at least one transport");
         Self { transports: Arc::new(transports), next: Arc::new(AtomicUsize::new(0)) }
     }
 }
@@ -422,15 +427,12 @@ impl<N: Network> ProviderBuilder<N> {
 }
 
 impl<N: Network> ProviderBuilder<N> {
-    /// Constructs a `RetryProvider` backed by multiple URLs using Alloy's `FallbackService`.
+    /// Constructs a `RetryProvider` backed by multiple URLs using round-robin load balancing.
     ///
-    /// Requests are distributed across all provided endpoints using a scored strategy:
-    /// the top `active_transport_count` endpoints (by latency + success rate) are queried,
-    /// and the first successful response wins. Endpoints that return errors or time out
-    /// are automatically deprioritized.
-    ///
-    /// Set `active_transport_count` to 1 for sequential (round-robin-like) behavior where
-    /// only the best-scored endpoint handles each request.
+    /// Each request is sent to exactly one transport, rotating through the list via
+    /// [`RoundRobinService`]. There is no health scoring or endpoint deprioritization.
+    /// On failure, the `RetryBackoffLayer` retries the request, which naturally hits
+    /// the next transport in the rotation.
     pub fn build_fallback(self, urls: Vec<String>) -> Result<RetryProvider<N>> {
         let Self {
             chain,
@@ -451,11 +453,13 @@ impl<N: Network> ProviderBuilder<N> {
 
         // Build a RuntimeTransport for each URL, using the same URL normalization
         // as ProviderBuilder::new() (handles localhost:port, raw socket addrs, IPC paths)
+        let mut parsed_urls = Vec::with_capacity(urls.len());
         let transports: Vec<_> = urls
             .iter()
             .map(|url_str| {
                 let builder = Self::new(url_str);
                 let url = builder.url?;
+                parsed_urls.push(url.clone());
                 Ok(RuntimeTransportBuilder::new(url)
                     .with_timeout(timeout)
                     .with_headers(headers.clone())
@@ -466,14 +470,12 @@ impl<N: Network> ProviderBuilder<N> {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        // Wrap in RoundRobinService: each request goes to one transport, rotating.
-        // On failure, the next transport in the ring is tried before returning an error.
         let round_robin = RoundRobinService::new(transports);
 
-        // Apply retry layer on top of the round-robin service
         let retry_layer =
             RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
-        let is_local = urls.iter().all(guess_local_url);
+        // Use normalized/parsed URLs for local detection, consistent with build()
+        let is_local = parsed_urls.iter().all(|url| guess_local_url(url.as_str()));
         let client = ClientBuilder::default().layer(retry_layer).transport(round_robin, is_local);
 
         if !is_local {

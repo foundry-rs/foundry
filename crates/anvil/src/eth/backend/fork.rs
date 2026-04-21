@@ -631,7 +631,7 @@ impl ClientFork {
 pub struct ClientForkConfig<N: Network = AnyNetwork> {
     /// All fork URLs. The first entry is the primary endpoint.
     /// When multiple URLs are present, requests are distributed using
-    /// `FallbackService` with automatic failover.
+    /// round-robin load balancing with retry-based failover.
     pub fork_urls: Vec<String>,
     /// The block number of the forked block
     pub block_number: u64,
