@@ -58,7 +58,7 @@ use alloy_rpc_types::{
     state::{AccountOverride, EvmOverrides, StateOverridesBuilder},
     trace::{
         filter::TraceFilter,
-        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
+        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
@@ -1671,6 +1671,12 @@ impl EthApi<FoundryNetwork> {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
             }
             EthRequest::DebugDbGet(key) => self.debug_db_get(key).await.to_rpc_result(),
+            EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
+                self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
+            }
+            EthRequest::DebugTraceBlockByNumber(block_number, opts) => {
+                self.debug_trace_block_by_number(block_number, opts).await.to_rpc_result()
+            }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
             EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
@@ -2748,6 +2754,30 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<GethTrace> {
         node_info!("debug_traceTransaction");
         self.backend.debug_trace_transaction(tx_hash, opts).await
+    }
+
+    /// Returns traces for all transactions in a block by hash.
+    ///
+    /// Handler for RPC call: `debug_traceBlockByHash`
+    pub async fn debug_trace_block_by_hash(
+        &self,
+        block_hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        node_info!("debug_traceBlockByHash");
+        self.backend.debug_trace_block_by_hash(block_hash, opts).await
+    }
+
+    /// Returns traces for all transactions in a block by number.
+    ///
+    /// Handler for RPC call: `debug_traceBlockByNumber`
+    pub async fn debug_trace_block_by_number(
+        &self,
+        block_number: BlockNumber,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        node_info!("debug_traceBlockByNumber");
+        self.backend.debug_trace_block_by_number(block_number, opts).await
     }
 
     /// Returns traces for the transaction for geth's tracing endpoint

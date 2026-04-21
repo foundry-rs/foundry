@@ -75,6 +75,7 @@ use alloy_rpc_types::{
         geth::{
             FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
             GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame,
+            TraceResult,
         },
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
@@ -3464,6 +3465,78 @@ where
         }
 
         Ok(GethTrace::Default(Default::default()))
+    }
+
+    /// Returns geth-style traces for all transactions in a block by hash.
+    pub async fn debug_trace_block_by_hash(
+        &self,
+        block_hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        if let Some(block) = self.blockchain.get_block_by_hash(&block_hash) {
+            let mut traces = Vec::new();
+            for tx in &block.body.transactions {
+                let tx_hash = tx.hash();
+                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
+                    Ok(trace) => {
+                        traces.push(TraceResult::Success {
+                            result: trace,
+                            tx_hash: Some(tx_hash),
+                        });
+                    }
+                    Err(error) => {
+                        traces.push(TraceResult::Error {
+                            error: error.to_string(),
+                            tx_hash: Some(tx_hash),
+                        });
+                    }
+                }
+            }
+            return Ok(traces);
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.debug_trace_block_by_hash(block_hash, opts).await?);
+        }
+
+        Err(BlockchainError::BlockNotFound)
+    }
+
+    /// Returns geth-style traces for all transactions in a block by number.
+    pub async fn debug_trace_block_by_number(
+        &self,
+        block_number: BlockNumber,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        let number = self.convert_block_number(Some(block_number));
+
+        if let Some(block) = self.get_block(BlockId::Number(BlockNumber::Number(number))) {
+            let mut traces = Vec::new();
+            for tx in &block.body.transactions {
+                let tx_hash = tx.hash();
+                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
+                    Ok(trace) => {
+                        traces.push(TraceResult::Success {
+                            result: trace,
+                            tx_hash: Some(tx_hash),
+                        });
+                    }
+                    Err(error) => {
+                        traces.push(TraceResult::Error {
+                            error: error.to_string(),
+                            tx_hash: Some(tx_hash),
+                        });
+                    }
+                }
+            }
+            return Ok(traces);
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.debug_trace_block_by_number(number, opts).await?);
+        }
+
+        Err(BlockchainError::BlockNotFound)
     }
 
     fn geth_trace(
