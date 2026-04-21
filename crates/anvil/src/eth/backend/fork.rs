@@ -442,10 +442,10 @@ impl<N: Network> ClientFork<N> {
         &self,
         hash: B256,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
-        if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
-            if let Some(block) = self.convert_to_full_block(block) {
-                return Ok(Some(block));
-            }
+        if let Some(block) = self.storage_read().blocks.get(&hash).cloned()
+            && let Some(block) = self.convert_to_full_block(block)
+        {
+            return Ok(Some(block));
         }
         self.fetch_full_block(hash).await
     }
@@ -481,10 +481,9 @@ impl<N: Network> ClientFork<N> {
             .get(&block_number)
             .copied()
             .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
+            && let Some(block) = self.convert_to_full_block(block)
         {
-            if let Some(block) = self.convert_to_full_block(block) {
-                return Ok(Some(block));
-            }
+            return Ok(Some(block));
         }
 
         self.fetch_full_block(block_number).await
