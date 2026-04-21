@@ -1,14 +1,15 @@
 use crate::{
-    cmd::{erc20::build_provider_with_signer, send::cast_send},
-    tx::{CastTxSender, SendTxOpts, TxParams},
+    cmd::{
+        erc20::build_provider_with_signer,
+        send::{cast_send, cast_send_with_access_key},
+    },
+    tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
-use alloy_network::TransactionBuilder;
 use alloy_primitives::B256;
-use alloy_provider::Provider;
 use alloy_sol_types::sol;
 use foundry_cli::utils::{LoadConfig, get_chain};
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::provider::ProviderBuilder;
 use tempo_alloy::TempoNetwork;
 use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 
@@ -91,23 +92,16 @@ pub(super) async fn run(
 
     if let Some(ref access_key) = tempo_access_key {
         let signer = signer.as_ref().ok_or_else(|| eyre::eyre!("access key requires a signer"))?;
-        tx.set_from(access_key.wallet_address);
-        tx.set_key_id(access_key.key_address);
-
-        let raw_tx = tx
-            .sign_with_access_key(
-                &provider,
-                signer,
-                access_key.wallet_address,
-                access_key.key_address,
-                access_key.key_authorization.as_ref(),
-            )
-            .await?;
-
-        let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-        CastTxSender::new(&provider)
-            .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
-            .await?;
+        cast_send_with_access_key(
+            &provider,
+            tx,
+            signer,
+            access_key,
+            send_tx.cast_async,
+            send_tx.confirmations,
+            timeout,
+        )
+        .await?;
     } else {
         let signer = signer.unwrap_or(send_tx.eth.wallet.signer().await?);
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
