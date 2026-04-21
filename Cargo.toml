@@ -410,7 +410,7 @@ op-alloy-rpc-types = "0.24.0"
 op-alloy-flz = "0.13.1"
 
 ## alloy-evm
-alloy-evm = "0.33.1"
+alloy-evm = "0.33.2"
 alloy-op-evm = "0.30.0"
 
 # revm
