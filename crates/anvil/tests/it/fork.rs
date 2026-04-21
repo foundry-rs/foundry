@@ -2022,8 +2022,7 @@ async fn test_anvil_set_rpc_url_syncs_fork_config() {
     let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let origin_url = origin_handle.http_endpoint();
 
-    let (api, _handle) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
+    let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
 
     // Verify initial fork URL
     let fork = api.backend.get_fork().unwrap();
@@ -2051,8 +2050,7 @@ async fn test_anvil_reset_with_url_updates_fork_urls() {
     let (_origin_api, origin_handle) = spawn(NodeConfig::test()).await;
     let origin_url = origin_handle.http_endpoint();
 
-    let (api, _handle) =
-        spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
+    let (api, _handle) = spawn(NodeConfig::test().with_eth_rpc_url(Some(origin_url.clone()))).await;
 
     // Spawn a second origin
     let (_origin2_api, origin2_handle) = spawn(NodeConfig::test()).await;
