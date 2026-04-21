@@ -2554,6 +2554,39 @@ contract Dummy {
     assert!(dump_path.exists());
 });
 
+// <https://github.com/foundry-rs/foundry/issues/10322>
+forgetest!(test_debug_with_dump_setup_revert, |prj, cmd| {
+    prj.add_test(
+        "SetupRevertDebug.t.sol",
+        r#"
+contract SetupRevertDebugTest {
+    function setUp() public {
+        revert("setUp failed");
+    }
+
+    function testDummy() public {}
+}
+"#,
+    );
+
+    let dump_path = prj.root().join("setup_revert_dump.json");
+
+    let out = cmd
+        .args(["test", "--mt", "testDummy", "--debug", "--dump", dump_path.to_str().unwrap()])
+        .execute();
+
+    assert!(out.status.success(), "debug run with --dump should complete even when setUp reverts");
+    assert!(dump_path.exists(), "debugger dump should still be generated");
+    assert!(
+        !out.stderr_lossy().contains("debug arena is empty"),
+        "debugger should not fail with an empty arena on setUp revert"
+    );
+    assert!(
+        out.stdout_lossy().contains("[FAIL: setUp failed] setUp()"),
+        "expected setup failure output in forge test report"
+    );
+});
+
 forgetest_init!(test_assume_no_revert_with_data, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(111));
