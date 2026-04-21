@@ -1,14 +1,15 @@
 use crate::{
-    cmd::{erc20::build_provider_with_signer, send::cast_send},
-    tx::{CastTxSender, SendTxOpts, TxParams},
+    cmd::{
+        erc20::build_provider_with_signer,
+        send::{cast_send, cast_send_with_access_key},
+    },
+    tx::{SendTxOpts, TxParams},
 };
-use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, B256, keccak256};
-use alloy_provider::Provider;
 use alloy_signer::Signer;
 use eyre::Result;
 use foundry_cli::utils::{LoadConfig, get_chain};
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::provider::ProviderBuilder;
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use std::time::{Duration, Instant};
 use tempo_alloy::{
@@ -104,24 +105,17 @@ pub(super) async fn register(
 
     sh_println!("Submitting registerVirtualMaster({salt}) on Tempo...")?;
 
-    if let Some(access_key) = tempo_access_key {
-        tx.set_from(access_key.wallet_address);
-        tx.set_key_id(access_key.key_address);
-
-        let raw_tx = tx
-            .sign_with_access_key(
-                &provider,
-                &signer,
-                access_key.wallet_address,
-                access_key.key_address,
-                access_key.key_authorization.as_ref(),
-            )
-            .await?;
-
-        let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-        CastTxSender::new(&provider)
-            .print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
-            .await?;
+    if let Some(ref access_key) = tempo_access_key {
+        cast_send_with_access_key(
+            &provider,
+            tx,
+            &signer,
+            access_key,
+            send_tx.cast_async,
+            send_tx.confirmations,
+            timeout,
+        )
+        .await?;
     } else {
         let provider = build_provider_with_signer::<TempoNetwork>(&send_tx, signer)?;
         cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)

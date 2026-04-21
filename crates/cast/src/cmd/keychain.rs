@@ -1,7 +1,7 @@
 use alloy_ens::NameOrAddress;
 use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, U256, hex, keccak256};
-use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
+use alloy_provider::ProviderBuilder as AlloyProviderBuilder;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
 use chrono::DateTime;
@@ -12,7 +12,6 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_common::{
-    FoundryTransactionBuilder,
     provider::ProviderBuilder,
     shell,
     tempo::{self, KeyType, KeysFile, WalletType, read_tempo_keys_file, tempo_keys_path},
@@ -29,7 +28,10 @@ use tempo_contracts::precompiles::{
 };
 use yansi::Paint;
 
-use crate::tx::{CastTxBuilder, CastTxSender, SendTxOpts};
+use crate::{
+    cmd::send::{cast_send, cast_send_with_access_key},
+    tx::{CastTxBuilder, SendTxOpts},
+};
 
 /// Tempo keychain management commands.
 ///
@@ -718,23 +720,19 @@ async fn send_keychain_tx(
         .await?;
 
     if let Some(ref ak) = tempo_access_key {
-        let signer = signer.as_ref().expect("signer required for access key");
-        let from = ak.wallet_address;
-        let (tx, _) = builder.build(from).await?;
-
-        let raw_tx = tx
-            .sign_with_access_key(
-                &provider,
-                signer,
-                ak.wallet_address,
-                ak.key_address,
-                ak.key_authorization.as_ref(),
-            )
-            .await?;
-
-        let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-        let cast = CastTxSender::new(&provider);
-        cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await?;
+        let signer =
+            signer.as_ref().ok_or_else(|| eyre::eyre!("signer required for access key"))?;
+        let (tx, _) = builder.build(ak.wallet_address).await?;
+        cast_send_with_access_key(
+            &provider,
+            tx,
+            signer,
+            ak,
+            send_tx.cast_async,
+            send_tx.confirmations,
+            timeout,
+        )
+        .await?;
     } else {
         let signer = match signer {
             Some(s) => s,
@@ -748,10 +746,8 @@ async fn send_keychain_tx(
             .wallet(wallet)
             .connect_provider(&provider);
 
-        let cast = CastTxSender::new(provider);
-        let pending_tx = cast.send(tx).await?;
-        let tx_hash = *pending_tx.inner().tx_hash();
-        cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await?;
+        cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
+            .await?;
     }
 
     Ok(())
