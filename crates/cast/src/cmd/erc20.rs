@@ -3,13 +3,13 @@ use std::{str::FromStr, time::Duration};
 use crate::{
     cmd::send::{cast_send, cast_send_with_access_key},
     format_uint_exp,
-    tx::{SendTxOpts, TxParams},
+    tx::{CastTxSender, SendTxOpts, TxParams},
 };
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::BlockId;
 use alloy_ens::NameOrAddress;
-use alloy_network::{Ethereum, EthereumWallet, Network};
-use alloy_primitives::U256;
+use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
+use alloy_primitives::{Address, U256};
 use alloy_provider::{Provider, fillers::RecommendedFillers};
 use alloy_signer::Signature;
 use alloy_sol_types::sol;
@@ -356,6 +356,25 @@ impl Erc20Subcommand {
                         timeout,
                     )
                     .await?
+                } else if let Some(browser) = $send_tx.browser.run::<N>().await? {
+                    let $provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+                    if let Some(interval) = $send_tx.poll_interval {
+                        $provider.client().set_poll_interval(Duration::from_secs(interval));
+                    }
+                    let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
+                    let mut tx = { $build_tx }.into_transaction_request();
+                    let chain = get_chain(config.chain, &$provider).await?;
+                    $tx_opts.apply::<N>(&mut tx, chain.is_legacy());
+                    fill_tx(&$provider, &mut tx, browser.address(), chain).await?;
+                    let tx_hash = browser.send_transaction_via_browser(tx).await?;
+                    CastTxSender::new(&$provider)
+                        .print_tx_result(
+                            tx_hash,
+                            $send_tx.cast_async,
+                            $send_tx.confirmations,
+                            timeout,
+                        )
+                        .await?
                 } else {
                     let signer = pre_resolved_signer.unwrap_or($send_tx.eth.wallet.signer().await?);
                     let $provider = build_provider_with_signer::<N>(&$send_tx, signer)?;
@@ -502,4 +521,47 @@ impl Erc20Subcommand {
         };
         Ok(())
     }
+}
+
+/// Fills from, chain_id, nonce, fees, and gas limit on a transaction request for the browser
+/// wallet path. Mirrors the filling logic in the shared tx builder but operates on a
+/// pre-built transaction request from the sol! macro rather than through the builder pipeline.
+/// Only fills fields that haven't already been set by the user.
+async fn fill_tx<N: Network, P: Provider<N>>(
+    provider: &P,
+    tx: &mut N::TransactionRequest,
+    from: Address,
+    chain: Chain,
+) -> eyre::Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    tx.set_from(from);
+    tx.set_chain_id(chain.id());
+
+    if tx.nonce().is_none() {
+        tx.set_nonce(provider.get_transaction_count(from).await?);
+    }
+
+    let legacy = chain.is_legacy();
+
+    if legacy {
+        if tx.gas_price().is_none() {
+            tx.set_gas_price(provider.get_gas_price().await?);
+        }
+    } else if tx.max_fee_per_gas().is_none() || tx.max_priority_fee_per_gas().is_none() {
+        let estimate = provider.estimate_eip1559_fees().await?;
+        if tx.max_fee_per_gas().is_none() {
+            tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+        }
+        if tx.max_priority_fee_per_gas().is_none() {
+            tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+        }
+    }
+
+    if tx.gas_limit().is_none() {
+        tx.set_gas_limit(provider.estimate_gas(tx.clone()).await?);
+    }
+
+    Ok(())
 }
