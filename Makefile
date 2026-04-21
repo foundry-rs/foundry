@@ -30,7 +30,7 @@ help: ## Display this help.
 
 .PHONY: build
 build: ## Build the project.
-	cargo build --features "$(FEATURES)" --profile "$(PROFILE)"
+	cargo build --locked --features "$(FEATURES)" --profile "$(PROFILE)"
 
 .PHONY: build-docker
 build-docker: ## Build the docker image.
@@ -47,17 +47,17 @@ build-docker: ## Build the docker image.
 ## is unstable (https://github.com/taiki-e/cargo-llvm-cov/issues/2).
 .PHONY: test-coverage
 test-coverage:
-	cargo +nightly llvm-cov --no-report nextest -E 'kind(test) & !test(/\b(issue|ext_integration|flaky_)/)' && \
-	cargo +nightly llvm-cov --no-report --doc && \
+	cargo +nightly llvm-cov --no-report nextest --locked -E 'kind(test) & !test(/\b(issue|ext_integration|flaky_)/)' && \
+	cargo +nightly llvm-cov --no-report --doc --locked && \
 	cargo +nightly llvm-cov report --doctests --open
 
 .PHONY: test-unit
 test-unit: ## Run unit tests.
-	cargo nextest run -E 'kind(test) & !test(/\b(issue|ext_integration|flaky_)/)'
+	cargo nextest run --workspace --locked -E 'kind(test) & !test(/\b(issue|ext_integration|flaky_)/)'
 
 .PHONY: test-doc
 test-doc: ## Run doc tests.
-	cargo test --doc --workspace
+	cargo test --doc --workspace --locked
 
 .PHONY: test
 test: ## Run all tests.
@@ -77,6 +77,7 @@ lint-clippy: ## Run clippy on the codebase.
 	--workspace \
 	--all-targets \
 	--all-features \
+	--locked \
 	-- -D warnings
 
 .PHONY: lint-clippy-fix
@@ -85,6 +86,7 @@ lint-clippy-fix: ## Run clippy on the codebase and fix warnings.
 	--workspace \
 	--all-targets \
 	--all-features \
+	--locked \
 	--fix \
 	--allow-dirty \
 	--allow-staged \
@@ -104,7 +106,23 @@ lint: ## Run all linters.
 	$(MAKE) lint-clippy && \
 	$(MAKE) lint-typos
 
+##@ Documentation
+
+.PHONY: doc
+doc: ## Build the documentation.
+	RUSTDOCFLAGS="--cfg docsrs -D warnings -Zunstable-options --show-type-layout --generate-link-to-definition" \
+	cargo +nightly doc \
+	--workspace \
+	--all-features \
+	--document-private-items \
+	--no-deps \
+	--locked
+
 ##@ Other
+
+.PHONY: lock
+lock: ## Update the Cargo.lock file with the current dependencies.
+	cargo fetch
 
 .PHONY: clean
 clean: ## Clean the project.
@@ -112,13 +130,22 @@ clean: ## Clean the project.
 
 .PHONY: deny
 deny: ## Perform a `cargo` deny check.
-	cargo deny --all-features check all
+	cargo deny --locked --all-features check all
+
+.PHONY: check
+check: ## Run a feature check on all crates and binaries.
+	cargo hack check --locked --feature-powerset --depth 1
+
+.PHONY: shear
+shear: ## Run `cargo shear` to check for unused dependencies.
+	cargo shear --locked
 
 .PHONY: pr
 pr: ## Run all checks and tests.
 	$(MAKE) deny && \
 	$(MAKE) lint && \
-	$(MAKE) test
+	$(MAKE) test && \
+	$(MAKE) doc
 
 # dprint formatting commands
 .PHONY: dprint-fmt
