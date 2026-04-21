@@ -28,6 +28,15 @@ fn global_db() -> Option<&'static ChannelDb> {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
+        if let Some(old) =
+            tempo_home().map(|h| h.join("foundry/channels.json")).filter(|p| p.exists())
+        {
+            warn!(
+                ?old,
+                "found old channels.json — this file is no longer used; channels will be re-opened"
+            );
+        }
+
         match ChannelDb::open(&path) {
             Ok(db) => {
                 debug!(?path, "opened channel database");
