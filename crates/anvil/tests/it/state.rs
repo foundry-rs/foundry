@@ -6,7 +6,7 @@ use alloy_primitives::{Bytes, U256, Uint, address, b256, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, eth::backend::db::SerializableState, spawn, try_spawn};
+use anvil::{NodeConfig, eth::backend::db::SerializableState, spawn};
 use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta},
@@ -455,15 +455,14 @@ async fn load_state_with_fork_url_uses_local_fork_bootstrap() {
         fork_block_number
     );
 
-    let (api, handle) = try_spawn(
+    let (api, handle) = spawn(
         NodeConfig::test()
             .with_init_state(Some(state))
             .with_eth_rpc_url(Some("http://127.0.0.1:1".to_string()))
             .with_fork_block_number(Some(fork_block_number))
             .with_fork_chain_id(Some(U256::from(chain_id))),
     )
-    .await
-    .unwrap();
+    .await;
 
     assert_eq!(api.eth_chain_id().unwrap().unwrap().to::<u64>(), chain_id);
     assert_eq!(api.chain_id(), chain_id);
