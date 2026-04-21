@@ -1,4 +1,6 @@
-use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
+use crate::{
+    bytecode::VerifyBytecodeArgs, provider::VerificationProviderType, types::VerificationType,
+};
 use alloy_dyn_abi::DynSolValue;
 use alloy_evm::EvmEnv;
 use alloy_primitives::{Address, Bytes, TxKind};
@@ -386,6 +388,38 @@ pub fn is_host_only(url: &Url) -> bool {
     matches!(url.path(), "/" | "")
 }
 
+/// Wraps a failed verification error with guidance when `--verifier-url` looks misconfigured for
+/// the active provider. Returns `err` untouched when no hint applies.
+///
+/// The hint only fires for the Etherscan provider, which requires an API endpoint (typically
+/// `/api`). Sourcify, Blockscout, etc. accept host-only URLs, so we leave their errors alone.
+pub fn wrap_verifier_url_error(
+    err: eyre::Error,
+    verifier_url: Option<&str>,
+    provider: VerificationProviderType,
+) -> eyre::Error {
+    let Some(verifier_url) = verifier_url else { return err };
+    let url = match Url::parse(verifier_url) {
+        Ok(url) => url,
+        Err(url_err) => {
+            return err.wrap_err(format!("Invalid URL {verifier_url} provided: {url_err}"));
+        }
+    };
+    if is_host_only(&url) && provider == VerificationProviderType::Etherscan {
+        return err.wrap_err(format!(
+            "Verifier `etherscan` requires an API endpoint, but `--verifier-url` is host-only: `{verifier_url}`.\n\
+             Fixes (pick one):\n\
+             - Append the API path, e.g. `--verifier-url {verifier_url}/api`\n\
+             - Switch verifier, e.g. `--verifier sourcify` (works with host-only URLs)\n\
+             \n\
+             Etherscan was selected because `ETHERSCAN_API_KEY` is set or `--verifier etherscan` \
+             was passed. Unset the env var or pass `--verifier sourcify` to pick a different \
+             provider."
+        ));
+    }
+    err
+}
+
 /// Given any solc [Version] return a [Version] with build metadata
 ///
 /// # Example
@@ -413,5 +447,48 @@ mod tests {
         assert!(!is_host_only(&Url::parse("https://blockscout.net/api").unwrap()));
         assert!(is_host_only(&Url::parse("https://blockscout.net/").unwrap()));
         assert!(is_host_only(&Url::parse("https://blockscout.net").unwrap()));
+    }
+
+    #[test]
+    fn wrap_verifier_url_error_passes_through_when_no_url() {
+        let err = eyre::eyre!("upstream failure");
+        let wrapped = wrap_verifier_url_error(err, None, VerificationProviderType::Etherscan);
+        assert_eq!(wrapped.to_string(), "upstream failure");
+    }
+
+    #[test]
+    fn wrap_verifier_url_error_adds_hint_for_host_only_etherscan_url() {
+        let err = eyre::eyre!("upstream failure");
+        let wrapped = wrap_verifier_url_error(
+            err,
+            Some("https://contracts.tempo.xyz"),
+            VerificationProviderType::Etherscan,
+        );
+        let msg = format!("{wrapped:#}");
+        assert!(msg.contains("host-only"), "message: {msg}");
+        assert!(msg.contains("--verifier-url https://contracts.tempo.xyz/api"), "message: {msg}");
+        assert!(msg.contains("--verifier sourcify"), "message: {msg}");
+    }
+
+    /// Sourcify and other non-etherscan verifiers accept host-only URLs; we must not emit the
+    /// hint for them, otherwise we would mislead the user into editing a correct URL.
+    #[test]
+    fn wrap_verifier_url_error_does_not_hint_for_non_etherscan_provider() {
+        let err = eyre::eyre!("upstream failure");
+        let wrapped = wrap_verifier_url_error(
+            err,
+            Some("https://contracts.tempo.xyz"),
+            VerificationProviderType::Sourcify,
+        );
+        assert_eq!(wrapped.to_string(), "upstream failure");
+    }
+
+    #[test]
+    fn wrap_verifier_url_error_reports_invalid_url() {
+        let err = eyre::eyre!("upstream failure");
+        let wrapped =
+            wrap_verifier_url_error(err, Some("not a url"), VerificationProviderType::Etherscan);
+        let msg = format!("{wrapped:#}");
+        assert!(msg.contains("Invalid URL"), "message: {msg}");
     }
 }

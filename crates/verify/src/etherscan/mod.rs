@@ -204,6 +204,10 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .await
             .wrap_err("Checking verification result failed")
     }
+
+    fn kind(&self) -> crate::provider::VerificationProviderType {
+        crate::provider::VerificationProviderType::Etherscan
+    }
 }
 
 impl EtherscanVerificationProvider {

@@ -4,7 +4,7 @@ use crate::{
     RetryArgs,
     etherscan::EtherscanVerificationProvider,
     provider::{VerificationContext, VerificationProvider, VerificationProviderType},
-    utils::is_host_only,
+    utils::wrap_verifier_url_error,
 };
 use alloy_primitives::{Address, TxHash, map::HashSet};
 use alloy_provider::Provider;
@@ -20,7 +20,6 @@ use foundry_config::{
     Chain, Config, SolcReq, figment, impl_figment_convert, impl_figment_convert_cast,
 };
 use itertools::Itertools;
-use reqwest::Url;
 use semver::BuildMetadata;
 use std::path::PathBuf;
 
@@ -282,25 +281,16 @@ impl VerifyArgs {
         {
             sh_println!("Constructor args: {args}")?
         }
-        self.verifier.verifier.client(self.etherscan.key().as_deref(), self.etherscan.chain, self.verifier.verifier_url.is_some())?.verify(self, context).await.map_err(|err| {
-            if let Some(verifier_url) = verifier_url {
-                 match Url::parse(&verifier_url) {
-                    Ok(url) if is_host_only(&url) => {
-                        return err.wrap_err(format!(
-                            "Provided URL `{verifier_url}` is host only.\n Did you mean to use the API endpoint`{verifier_url}/api` ?"
-                        ))
-                    }
-                    Err(url_err) => {
-                        return err.wrap_err(format!(
-                            "Invalid URL {verifier_url} provided: {url_err}"
-                        ))
-                    }
-                    _ => {}
-                }
-            }
-
-            err
-        })
+        let mut provider = self.verifier.verifier.client(
+            self.etherscan.key().as_deref(),
+            self.etherscan.chain,
+            self.verifier.verifier_url.is_some(),
+        )?;
+        let provider_kind = provider.kind();
+        provider
+            .verify(self, context)
+            .await
+            .map_err(|err| wrap_verifier_url_error(err, verifier_url.as_deref(), provider_kind))
     }
 
     /// Returns the configured verification provider
