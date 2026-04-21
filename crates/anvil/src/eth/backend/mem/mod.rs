@@ -2371,7 +2371,7 @@ where
             return Ok(fork.logs(&filter).await?);
         }
 
-        Ok(Vec::new())
+        Err(BlockchainError::UnknownBlock)
     }
 
     /// Returns the logs that match the filter in the given range of blocks
