@@ -1994,6 +1994,16 @@ impl<N: Network> Backend<N> {
         trace!(target: "backend", "setting genesis balances");
 
         if self.fork.read().is_some() {
+            if self.node_config.read().await.init_state.is_some() {
+                // Loading a fork snapshot already provides the local account state, so avoid
+                // eagerly hydrating dev accounts from the remote fork endpoint.
+                let mut db = self.db.write().await;
+                for (account, info) in self.genesis.account_infos() {
+                    db.insert_account(account, info);
+                }
+                return Ok(());
+            }
+
             // fetch all account first
             let mut genesis_accounts_futures = Vec::with_capacity(self.genesis.accounts.len());
             for address in self.genesis.accounts.iter().copied() {

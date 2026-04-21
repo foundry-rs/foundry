@@ -6,10 +6,15 @@ use alloy_primitives::{Bytes, U256, Uint, address, b256, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, eth::backend::db::SerializableState, spawn};
+use anvil::{NodeConfig, eth::backend::db::SerializableState, spawn, try_spawn};
+use foundry_config::Config;
+use foundry_evm::{
+    backend::{BlockchainDb, BlockchainDbMeta},
+    utils::block_env_from_header,
+};
 use foundry_test_utils::rpc::next_http_archive_rpc_url;
 use revm::{
-    context_interface::block::BlobExcessGasAndPrice,
+    context::BlockEnv, context_interface::block::BlobExcessGasAndPrice,
     primitives::eip4844::BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE,
 };
 use serde_json::json;
@@ -397,6 +402,74 @@ async fn load_state_without_fork_url_preserves_fork_chain_id() {
     assert_eq!(rpc_chain_id, Some(84532u64), "last rpc error: {last_err:?}");
     assert_eq!(api.chain_id(), 84532u64);
     assert_eq!(handle.config().chain_id, Some(84532u64));
+}
+
+// <https://github.com/foundry-rs/foundry/issues/9721>
+#[tokio::test(flavor = "multi_thread")]
+async fn load_state_with_fork_url_uses_local_fork_bootstrap() {
+    let chain_id = 84532u64;
+    let (origin_api, origin_handle) = spawn(NodeConfig::test().with_chain_id(Some(chain_id))).await;
+
+    origin_api.mine_one().await;
+    origin_api.mine_one().await;
+
+    let fork_block_number = origin_api.block_number().unwrap().to::<u64>();
+    let fork_block = origin_api
+        .block_by_number(alloy_eips::BlockNumberOrTag::Number(fork_block_number))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let state = origin_api.serialized_state(false).await.unwrap();
+
+    let cache_path = Config::foundry_block_cache_file(chain_id, fork_block_number).unwrap();
+    if let Some(parent) = cache_path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    let _ = std::fs::remove_file(&cache_path);
+
+    let block_cache: BlockchainDb<BlockEnv> = BlockchainDb::new_skip_check(
+        BlockchainDbMeta::new(
+            block_env_from_header(&fork_block.header),
+            origin_handle.http_endpoint(),
+        ),
+        Some(cache_path.clone()),
+    );
+    block_cache
+        .block_hashes()
+        .write()
+        .insert(U256::from(fork_block_number), fork_block.header.hash);
+    block_cache.cache().flush();
+    assert!(cache_path.exists(), "missing block cache at {}", cache_path.display());
+
+    let verify_cache: BlockchainDb<BlockEnv> = BlockchainDb::new_skip_check(
+        BlockchainDbMeta::new(BlockEnv::default(), "http://127.0.0.1:1".to_string()),
+        Some(cache_path.clone()),
+    );
+    assert_eq!(
+        verify_cache.block_hashes().read().get(&U256::from(fork_block_number)).copied(),
+        Some(fork_block.header.hash)
+    );
+    assert_eq!(
+        verify_cache.meta().read().block_env.number.saturating_to::<u64>(),
+        fork_block_number
+    );
+
+    let (api, handle) = try_spawn(
+        NodeConfig::test()
+            .with_init_state(Some(state))
+            .with_eth_rpc_url(Some("http://127.0.0.1:1".to_string()))
+            .with_fork_block_number(Some(fork_block_number))
+            .with_fork_chain_id(Some(U256::from(chain_id))),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(api.eth_chain_id().unwrap().unwrap().to::<u64>(), chain_id);
+    assert_eq!(api.chain_id(), chain_id);
+    assert_eq!(handle.config().chain_id, Some(chain_id));
+
+    let _ = std::fs::remove_file(cache_path);
 }
 
 // <https://github.com/foundry-rs/foundry/issues/10488>

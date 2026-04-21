@@ -18,7 +18,7 @@ use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, BlockResponse, TransactionResponse};
-use alloy_primitives::{BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
+use alloy_primitives::{B256, BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
@@ -92,6 +92,14 @@ const BANNER: &str = r"
     | (_| | | | | |  \ V /  | | | |
      \__,_| |_| |_|   \_/   |_| |_|
 ";
+
+#[derive(Clone, Debug)]
+struct OfflineForkBootstrap {
+    block_chain_db: BlockchainDb,
+    block_number: u64,
+    block_hash: B256,
+    block_env: BlockEnv,
+}
 
 /// Configurations of the EVM node
 #[derive(Clone, Debug)]
@@ -1026,6 +1034,128 @@ impl NodeConfig {
         Config::foundry_block_cache_file(chain_id, block)
     }
 
+    fn try_offline_fork_bootstrap(&self, eth_rpc_url: &str) -> Option<OfflineForkBootstrap> {
+        let _ = self.init_state.as_ref()?;
+        let fork_block_number = match self.fork_choice? {
+            ForkChoice::Block(block_number) if block_number >= 0 => block_number as u64,
+            _ => return None,
+        };
+
+        let chain_id = self.chain_id.or_else(|| self.fork_chain_id.map(|id| id.to::<u64>()))?;
+        let cache_path = Config::foundry_block_cache_file(chain_id, fork_block_number)?;
+
+        let block_chain_db = BlockchainDb::new_skip_check(
+            BlockchainDbMeta::new(BlockEnv::default(), eth_rpc_url.to_string()),
+            Some(cache_path),
+        );
+
+        let block_hash =
+            block_chain_db.block_hashes().read().get(&U256::from(fork_block_number)).copied()?;
+        let block_env = block_chain_db.meta().read().block_env.clone();
+
+        if block_env.number.saturating_to::<u64>() != fork_block_number {
+            return None;
+        }
+
+        Some(OfflineForkBootstrap {
+            block_chain_db,
+            block_number: fork_block_number,
+            block_hash,
+            block_env,
+        })
+    }
+
+    async fn setup_offline_fork_db_config(
+        &mut self,
+        eth_rpc_url: String,
+        evm_env: &mut EvmEnv,
+        fees: &FeeManager,
+        provider: Arc<RetryProvider<AnyNetwork>>,
+        bootstrap: OfflineForkBootstrap,
+    ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
+        let OfflineForkBootstrap { block_chain_db, block_number, block_hash, mut block_env } =
+            bootstrap;
+
+        let gas_limit = if !self.disable_block_gas_limit {
+            if let Some(gas_limit) = self.gas_limit {
+                gas_limit
+            } else if block_env.gas_limit > 0 {
+                block_env.gas_limit
+            } else {
+                u64::MAX
+            }
+        } else {
+            u64::MAX
+        };
+        self.gas_limit = Some(gas_limit);
+        block_env.gas_limit = gas_limit;
+        evm_env.block_env = block_env;
+
+        let chain_id = if let Some(chain_id) = self.chain_id {
+            chain_id
+        } else {
+            let chain_id = self.fork_chain_id.expect("checked in offline bootstrap").to();
+            self.set_chain_id(Some(chain_id));
+            chain_id
+        };
+        evm_env.cfg_env.chain_id = chain_id;
+
+        if self.hardfork.is_none()
+            && let Some(hardfork) = FoundryHardfork::from_chain_and_timestamp(
+                chain_id,
+                evm_env.block_env.timestamp.saturating_to(),
+            )
+        {
+            evm_env.cfg_env.spec = SpecId::from(hardfork);
+            self.hardfork = Some(hardfork);
+        }
+
+        if self.base_fee.is_none() {
+            self.base_fee = Some(evm_env.block_env.basefee);
+            fees.set_base_fee(evm_env.block_env.basefee);
+        }
+
+        let override_chain_id = self.chain_id;
+        let backend = SharedBackend::spawn_backend(
+            Arc::clone(&provider),
+            block_chain_db.clone(),
+            Some(block_number.into()),
+        )
+        .await;
+
+        let config = ClientForkConfig {
+            eth_rpc_url,
+            block_number,
+            block_hash,
+            transaction_hash: None,
+            provider,
+            chain_id,
+            override_chain_id,
+            timestamp: evm_env.block_env.timestamp.saturating_to(),
+            base_fee: Some(evm_env.block_env.basefee as u128),
+            timeout: self.fork_request_timeout,
+            retries: self.fork_request_retries,
+            backoff: self.fork_retry_backoff,
+            compute_units_per_second: self.compute_units_per_second,
+            total_difficulty: U256::ZERO,
+            blob_gas_used: None,
+            blob_excess_gas_and_price: evm_env.block_env.blob_excess_gas_and_price,
+            force_transactions: None,
+        };
+
+        debug!(
+            target: "node",
+            fork_number = config.block_number,
+            fork_hash = %config.block_hash,
+            "set up fork db from local cache"
+        );
+
+        let mut db = ForkedDatabase::new(backend, block_chain_db);
+        db.insert_block_hash(U256::from(config.block_number), config.block_hash);
+
+        Ok((db, config))
+    }
+
     /// Sets whether to disable the default create2 deployer
     #[must_use]
     pub const fn with_disable_default_create2_deployer(mut self, yes: bool) -> Self {
@@ -1268,6 +1398,12 @@ impl NodeConfig {
                 .build()
                 .wrap_err("failed to establish provider to fork url")?,
         );
+
+        if let Some(bootstrap) = self.try_offline_fork_bootstrap(&eth_rpc_url) {
+            return self
+                .setup_offline_fork_db_config(eth_rpc_url, evm_env, fees, provider, bootstrap)
+                .await;
+        }
 
         let (fork_block_number, fork_chain_id, force_transactions) = if let Some(fork_choice) =
             &self.fork_choice
