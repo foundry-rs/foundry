@@ -349,7 +349,7 @@ async fn test_fork_load_state_with_greater_state_block() {
 
 // <https://github.com/foundry-rs/foundry/issues/9721>
 #[tokio::test(flavor = "multi_thread")]
-async fn load_state_with_fork_url_uses_local_fork_bootstrap() {
+async fn load_state_with_fork_url_skips_remote_fork_block_fetch() {
     let chain_id = 84532u64;
     let (origin_api, origin_handle) = spawn(NodeConfig::test().with_chain_id(Some(chain_id))).await;
 
@@ -398,6 +398,8 @@ async fn load_state_with_fork_url_uses_local_fork_bootstrap() {
         fork_block_number
     );
 
+    // An unreachable fork URL confirms startup uses the cached fork metadata instead of
+    // refetching the pinned block from the upstream RPC.
     let (api, handle) = spawn(
         NodeConfig::test()
             .with_init_state(Some(state))

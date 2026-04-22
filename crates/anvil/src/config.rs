@@ -93,6 +93,7 @@ const BANNER: &str = r"
      \__,_| |_| |_|   \_/   |_| |_|
 ";
 
+/// Cached metadata needed to restore a pinned fork from disk without refetching the fork block.
 #[derive(Clone, Debug)]
 struct OfflineForkBootstrap {
     block_chain_db: BlockchainDb,
@@ -1035,6 +1036,8 @@ impl NodeConfig {
 
     fn try_offline_fork_bootstrap(&self, eth_rpc_url: &str) -> Option<OfflineForkBootstrap> {
         let _ = self.init_state.as_ref()?;
+        // Only an absolute pinned block can be restored fully offline. Relative block numbers or
+        // transaction-based fork choices still need the remote RPC to resolve the target block.
         let fork_block_number = match self.fork_choice? {
             ForkChoice::Block(block_number) if block_number >= 0 => block_number as u64,
             _ => return None,
@@ -1389,6 +1392,8 @@ impl NodeConfig {
                 .wrap_err("failed to establish provider to fork url")?,
         );
 
+        // When restarting from `--load-state` with a pinned fork block, prefer the cached fork
+        // metadata so startup does not refetch that block from the RPC.
         if let Some(bootstrap) = self.try_offline_fork_bootstrap(&eth_rpc_url) {
             return self
                 .setup_offline_fork_db_config(eth_rpc_url, evm_env, fees, provider, bootstrap)
