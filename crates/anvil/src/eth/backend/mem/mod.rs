@@ -143,6 +143,7 @@ use tempo_evm::evm::TempoEvmFactory;
 use tempo_precompiles::{
     storage::StorageCtx,
     tip_fee_manager::{IFeeManager, TipFeeManager},
+    tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
 };
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tempo_revm::{
@@ -4142,6 +4143,18 @@ impl Backend<FoundryNetwork> {
             hardfork.into(),
         );
         StorageCtx::enter(&mut storage, || {
+            // Mint the required tokens to admin so it can provide liquidity.
+            // grant_role_internal bypasses the caller check, matching genesis seeding.
+            for &token_address in &[user_token, validator_token] {
+                let mut token = TIP20Token::from_address(token_address)
+                    .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
+                token
+                    .grant_role_internal(admin, *ISSUER_ROLE)
+                    .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
+                token
+                    .mint(admin, ITIP20::mintCall { to: admin, amount })
+                    .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
+            }
             let mut fee_manager = TipFeeManager::new();
             fee_manager
                 .mint(admin, user_token, validator_token, amount, admin)
