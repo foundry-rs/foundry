@@ -282,6 +282,33 @@ impl Erc20Subcommand {
         }
     }
 
+    const fn uses_browser_send(&self) -> bool {
+        match self {
+            Self::Transfer { send_tx, .. }
+            | Self::Approve { send_tx, .. }
+            | Self::Mint { send_tx, .. }
+            | Self::Burn { send_tx, .. } => send_tx.browser.browser,
+            _ => false,
+        }
+    }
+
+    async fn should_use_tempo_network(
+        &self,
+        tempo_access_key: &Option<TempoAccessKeyConfig>,
+    ) -> eyre::Result<bool> {
+        if self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo()) || tempo_access_key.is_some()
+        {
+            return Ok(true);
+        }
+
+        if self.uses_browser_send() {
+            let config = self.rpc_opts().load_config()?;
+            return Ok(get_chain(config.chain, &get_provider(&config)?).await?.is_tempo());
+        }
+
+        Ok(false)
+    }
+
     pub async fn run(self) -> eyre::Result<()> {
         // Resolve the signer once for state-changing variants.
         let (signer, tempo_access_key) = match &self {
@@ -300,12 +327,7 @@ impl Erc20Subcommand {
             _ => (None, None),
         };
 
-        let is_tempo = self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo())
-            || tempo_access_key.is_some()
-            || {
-                let config = self.rpc_opts().load_config()?;
-                get_chain(config.chain, &get_provider(&config)?).await?.is_tempo()
-            };
+        let is_tempo = self.should_use_tempo_network(&tempo_access_key).await?;
 
         if is_tempo {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
