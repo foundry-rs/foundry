@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-// SHOULD FAIL: Interface named IERC721 with incorrect function signatures
-interface IERC721 {
+interface IERC721 {}
+
+// SHOULD FAIL: Interface inheriting from IERC721 with incorrect function signatures
+interface IERC721Incorrect is IERC721 {
     function balanceOf(address owner) external view returns (bool); //~WARN: incorrect ERC721 function interface
     function ownerOf(uint256 tokenId) external view returns (bool); //~WARN: incorrect ERC721 function interface
     function safeTransferFrom(address from, address to, uint256 tokenId, bytes calldata data) external returns (bool); //~WARN: incorrect ERC721 function interface
@@ -17,8 +19,8 @@ interface IERC721 {
     function supportsInterface(bytes4 interfaceId) external view returns (uint256); //~WARN: incorrect ERC721 function interface
 }
 
-// SHOULD PASS: Correct ERC721 interface
-interface IERC721Correct {
+// SHOULD PASS: Correct ERC721 interface inheriting from IERC721
+interface IERC721Correct is IERC721 {
     function balanceOf(address owner) external view returns (uint256);
     function ownerOf(uint256 tokenId) external view returns (address);
     function safeTransferFrom(address from, address to, uint256 tokenId, bytes calldata data) external;

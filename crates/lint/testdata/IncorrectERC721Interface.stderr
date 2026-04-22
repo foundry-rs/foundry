@@ -1,7 +1,7 @@
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
    │
-LL │ interface IERC721 {
+LL │ interface IERC721 {}
    │           ━━━━━━━
    │
    ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
@@ -9,7 +9,15 @@ LL │ interface IERC721 {
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
    │
-LL │ interface IERC721Correct {
+LL │ interface IERC721Incorrect is IERC721 {
+   │           ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+   ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
+   │
+LL │ interface IERC721Correct is IERC721 {
    │           ━━━━━━━━━━━━━━
    │
    ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
