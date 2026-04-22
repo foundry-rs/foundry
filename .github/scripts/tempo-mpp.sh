@@ -110,7 +110,7 @@ BLOCK2=$("$CAST" block-number --rpc-url "$RPC_MPP")
 AFTER2=$("$CAST" erc20 balance "$TOKEN" "$WALLET" --rpc-url "$RPC" | awk '{print $1}')
 SPENT2=$((BEFORE2 - AFTER2))
 echo "Block: $BLOCK2"
-echo "Spent: $SPENT2 units (should be 0 — channel reused from ~/.tempo/foundry/channels.json)"
+echo "Spent: $SPENT2 units (should be 0 — channel reused from ~/.tempo/channels.db)"
 
 # 6. forge script via MPP
 echo ""
@@ -129,9 +129,9 @@ contract MppCheck is Script {
     }
 }
 SOL
-VCNT_BEFORE=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_BEFORE=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 "$FORGE" script "$TMPDIR/script/Mpp.s.sol" --rpc-url "$RPC_MPP" --root "$TMPDIR"
-VCNT_AFTER=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_AFTER=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 echo "Vouchers paid: +$((VCNT_AFTER - VCNT_BEFORE)) ($((( VCNT_AFTER - VCNT_BEFORE ) / 1000)) RPC calls via MPP)"
 
 # 7. forge test with vm.createSelectFork via MPP
@@ -149,15 +149,15 @@ contract MppForkTest is Test {
     }
 }
 SOL
-VCNT_BEFORE=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_BEFORE=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 "$FORGE" test --match-test test_fork_via_mpp --root "$TMPDIR" -vvv
-VCNT_AFTER=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_AFTER=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 echo "Vouchers paid: +$((VCNT_AFTER - VCNT_BEFORE)) ($((( VCNT_AFTER - VCNT_BEFORE ) / 1000)) RPC calls via MPP)"
 
 # 8. anvil fork via MPP
 echo ""
 echo "=== 8. anvil --fork-url (via MPP) ==="
-VCNT_BEFORE=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_BEFORE=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 "$ANVIL" --fork-url "$RPC_MPP" --port 8555 --silent &
 ANVIL_PID=$!
 for _ in $(seq 1 30); do
@@ -167,15 +167,15 @@ done
 echo "chain-id: $("$CAST" chain-id --rpc-url http://localhost:8555)"
 kill $ANVIL_PID 2>/dev/null
 wait $ANVIL_PID 2>/dev/null
-VCNT_AFTER=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_AFTER=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 echo "Vouchers paid: +$((VCNT_AFTER - VCNT_BEFORE)) ($((( VCNT_AFTER - VCNT_BEFORE ) / 1000)) RPC calls via MPP)"
 
 # 9. chisel fork via MPP
 echo ""
 echo "=== 9. chisel --fork-url (via MPP) ==="
-VCNT_BEFORE=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_BEFORE=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 echo 'block.number' | "$CHISEL" --fork-url "$RPC_MPP" 2>&1 | grep -E "Decimal|Type"
-VCNT_AFTER=$(grep cumulative_amount ~/.tempo/foundry/channels.json | awk -F'"' '{print $4}')
+VCNT_AFTER=$(sqlite3 ~/.tempo/channels.db "SELECT cumulative_amount FROM channels LIMIT 1")
 echo "Vouchers paid: +$((VCNT_AFTER - VCNT_BEFORE)) ($((( VCNT_AFTER - VCNT_BEFORE ) / 1000)) RPC calls via MPP)"
 
 echo ""

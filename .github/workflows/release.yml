@@ -179,7 +179,7 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
-          flags=(--target $TARGET --profile $RUST_PROFILE --bins
+          flags=(--locked --target $TARGET --profile $RUST_PROFILE --bins
             --no-default-features --features "$RUST_FEATURES")
 
           # `jemalloc` is not fully supported on MSVC or aarch64 Linux.
