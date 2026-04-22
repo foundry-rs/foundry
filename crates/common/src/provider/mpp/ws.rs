@@ -47,7 +47,7 @@ const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 /// WebSocket connector with automatic MPP payment at connect time.
 ///
 /// Implements [`PubSubConnect`] so it can be used as a drop-in replacement for
-/// [`alloy_transport_ws::WsConnect`]. On connect, it:
+/// alloy's `WsConnect`. On connect, it:
 ///
 /// 1. Opens a WebSocket connection.
 /// 2. Waits briefly for an MPP challenge frame from the server.
