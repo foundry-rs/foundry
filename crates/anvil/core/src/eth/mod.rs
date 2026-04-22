@@ -716,6 +716,26 @@ pub enum EthRequest {
     /// Rollback the chain
     #[serde(rename = "anvil_rollback", with = "sequence")]
     Rollback(Option<u64>),
+
+    /// Sets the fee token for a user (Tempo-only)
+    #[serde(rename = "anvil_setFeeToken")]
+    SetFeeToken(Address, Address),
+
+    /// Sets the fee token for a validator (Tempo-only)
+    #[serde(rename = "anvil_setValidatorFeeToken")]
+    SetValidatorFeeToken(Address, Address),
+
+    /// Mints FeeAMM liquidity for a token pair (Tempo-only)
+    #[serde(rename = "anvil_setFeeAmmLiquidity")]
+    SetFeeAmmLiquidity(
+        /// user_token
+        Address,
+        /// validator_token
+        Address,
+        /// amount
+        #[serde(deserialize_with = "deserialize_number")]
+        U256,
+    ),
 }
 
 /// Represents ethereum JSON-RPC API

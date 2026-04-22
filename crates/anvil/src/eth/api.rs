@@ -1853,6 +1853,16 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
             EthRequest::Rollback(depth) => self.anvil_rollback(depth).await.to_rpc_result(),
+            EthRequest::SetFeeToken(user, token) => {
+                self.anvil_set_fee_token(user, token).await.to_rpc_result()
+            }
+            EthRequest::SetValidatorFeeToken(validator, token) => {
+                self.anvil_set_validator_fee_token(validator, token).await.to_rpc_result()
+            }
+            EthRequest::SetFeeAmmLiquidity(user_token, validator_token, amount) => self
+                .anvil_set_fee_amm_liquidity(user_token, validator_token, amount)
+                .await
+                .to_rpc_result(),
         };
 
         if let ResponseResult::Error(err) = &response {
@@ -3529,6 +3539,57 @@ impl EthApi<FoundryNetwork> {
             FoundryTxEnvelope::Legacy(_) => Ok(()),
             FoundryTxEnvelope::Tempo(_) => self.backend.ensure_tempo_active(),
         }
+    }
+
+    /// Sets the fee token for a user address.
+    ///
+    /// Handler for RPC call: `anvil_setFeeToken`
+    ///
+    /// Only supported when running in Tempo mode (`--tempo`).
+    pub async fn anvil_set_fee_token(&self, user: Address, token: Address) -> Result<()> {
+        node_info!("anvil_setFeeToken");
+        if !self.backend.is_tempo() {
+            return Err(BlockchainError::RpcUnimplemented);
+        }
+        self.backend.set_fee_token(user, token).await?;
+        Ok(())
+    }
+
+    /// Sets the fee token for a validator address.
+    ///
+    /// Handler for RPC call: `anvil_setValidatorFeeToken`
+    ///
+    /// Only supported when running in Tempo mode (`--tempo`).
+    pub async fn anvil_set_validator_fee_token(
+        &self,
+        validator: Address,
+        token: Address,
+    ) -> Result<()> {
+        node_info!("anvil_setValidatorFeeToken");
+        if !self.backend.is_tempo() {
+            return Err(BlockchainError::RpcUnimplemented);
+        }
+        self.backend.set_validator_fee_token(validator, token).await?;
+        Ok(())
+    }
+
+    /// Mints FeeAMM liquidity for a token pair.
+    ///
+    /// Handler for RPC call: `anvil_setFeeAmmLiquidity`
+    ///
+    /// Only supported when running in Tempo mode (`--tempo`).
+    pub async fn anvil_set_fee_amm_liquidity(
+        &self,
+        user_token: Address,
+        validator_token: Address,
+        amount: U256,
+    ) -> Result<()> {
+        node_info!("anvil_setFeeAmmLiquidity");
+        if !self.backend.is_tempo() {
+            return Err(BlockchainError::RpcUnimplemented);
+        }
+        self.backend.set_fee_amm_liquidity(user_token, validator_token, amount).await?;
+        Ok(())
     }
 }
 

@@ -19,6 +19,7 @@ use crate::{
                 storage::MinedTransactionReceipt,
             },
             notifications::{NewBlockNotification, NewBlockNotifications},
+            tempo::AnvilStorageProvider,
             time::{TimeManager, utc_from_secs},
             validate::TransactionValidator,
         },
@@ -139,6 +140,10 @@ use std::{
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
+use tempo_precompiles::{
+    storage::StorageCtx,
+    tip_fee_manager::{IFeeManager, TipFeeManager},
+};
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tempo_revm::{
     TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext,
@@ -4061,6 +4066,88 @@ impl Backend<FoundryNetwork> {
         }
 
         Ok(None)
+    }
+
+    /// Sets the fee token for a user address (Tempo-only).
+    pub async fn set_fee_token(&self, user: Address, token: Address) -> DatabaseResult<()> {
+        let hardfork = self.hardfork();
+        let chain_id = self.evm_env.read().cfg_env.chain_id;
+        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
+        let block_number: u64 = self.evm_env.read().block_env.number.to();
+        let mut db = self.db.write().await;
+        let mut storage = AnvilStorageProvider::new(
+            &mut **db,
+            chain_id,
+            timestamp,
+            block_number,
+            hardfork.into(),
+        );
+        StorageCtx::enter(&mut storage, || {
+            let mut fee_manager = TipFeeManager::new();
+            fee_manager
+                .set_user_token(user, IFeeManager::setUserTokenCall { token })
+                .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))
+        })
+    }
+
+    /// Sets the fee token for a validator address (Tempo-only).
+    pub async fn set_validator_fee_token(
+        &self,
+        validator: Address,
+        token: Address,
+    ) -> DatabaseResult<()> {
+        let hardfork = self.hardfork();
+        let chain_id = self.evm_env.read().cfg_env.chain_id;
+        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
+        let block_number: u64 = self.evm_env.read().block_env.number.to();
+        let mut db = self.db.write().await;
+        let mut storage = AnvilStorageProvider::new(
+            &mut **db,
+            chain_id,
+            timestamp,
+            block_number,
+            hardfork.into(),
+        );
+        StorageCtx::enter(&mut storage, || {
+            let mut fee_manager = TipFeeManager::new();
+            // Use Address::ZERO as beneficiary so the check `sender != beneficiary` passes
+            fee_manager
+                .set_validator_token(
+                    validator,
+                    IFeeManager::setValidatorTokenCall { token },
+                    Address::ZERO,
+                )
+                .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))
+        })
+    }
+
+    /// Mints FeeAMM liquidity for a token pair (Tempo-only).
+    pub async fn set_fee_amm_liquidity(
+        &self,
+        user_token: Address,
+        validator_token: Address,
+        amount: U256,
+    ) -> DatabaseResult<()> {
+        let hardfork = self.hardfork();
+        let chain_id = self.evm_env.read().cfg_env.chain_id;
+        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
+        let block_number: u64 = self.evm_env.read().block_env.number.to();
+        let admin = Address::ZERO;
+        let mut db = self.db.write().await;
+        let mut storage = AnvilStorageProvider::new(
+            &mut **db,
+            chain_id,
+            timestamp,
+            block_number,
+            hardfork.into(),
+        );
+        StorageCtx::enter(&mut storage, || {
+            let mut fee_manager = TipFeeManager::new();
+            fee_manager
+                .mint(admin, user_token, validator_token, amount, admin)
+                .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
+            Ok(())
+        })
     }
 }
 
