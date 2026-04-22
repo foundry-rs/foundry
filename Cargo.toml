@@ -355,7 +355,7 @@ svm = { package = "svm-rs", version = "0.5", default-features = false, features 
 ] }
 
 ## foundry-core
-foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "e8c8be1", default-features = false }
+foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "d6c92dfcb41be26fbc1de21221a5bfc6bdd93245", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "2.0.0", default-features = false }
