@@ -1,8 +1,24 @@
+note[interface-naming]: interface names should be prefixed with 'I'
+   ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
+   │
+LL │ interface ERC721 {
+   │           ━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#interface-naming
+
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
    │
 LL │ interface IERC721 {}
    │           ━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+   ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
+   │
+LL │ interface ERC721 {
+   │           ━━━━━━
    │
    ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
 
@@ -25,10 +41,34 @@ LL │ interface IERC721Correct is IERC721 {
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
    │
+LL │ interface IERC721NamedCorrect {
+   │           ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+   ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
+   │
 LL │ interface INotERC721 {
    │           ━━━━━━━━━━
    │
    ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+warning[incorrect-erc721-interface]: incorrect ERC721 function interface
+   ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
+   │
+LL │     function balanceOf(address owner) external view returns (bool);
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
+
+warning[incorrect-erc721-interface]: incorrect ERC721 function interface
+   ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
+   │
+LL │     function ownerOf(uint256 tokenId) external view returns (bool);
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-erc721-interface
 
 warning[incorrect-erc721-interface]: incorrect ERC721 function interface
    ╭▸ ROOT/testdata/IncorrectERC721Interface.sol:LL:CC
