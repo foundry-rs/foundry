@@ -6,11 +6,9 @@
 //! after connecting, we assume the server is a plain JSON-RPC WebSocket.
 
 use alloy_json_rpc::PubSubItem;
-use alloy_pubsub::{ConnectionHandle, ConnectionInterface, PubSubConnect};
-use alloy_transport::{
-    Authorization, TransportErrorKind, TransportResult,
-    utils::{Spawnable, guess_local_url},
-};
+use alloy_pubsub::{ConnectionHandle, PubSubConnect};
+use alloy_transport::{Authorization, TransportErrorKind, TransportResult, utils::guess_local_url};
+use alloy_transport_ws::WsBackend;
 use futures::{SinkExt, StreamExt};
 use mpp::{
     client::{
@@ -19,14 +17,13 @@ use mpp::{
     },
     protocol::core::{PaymentChallenge, format_authorization},
 };
-use reqwest::header::{AUTHORIZATION, HeaderValue};
 use std::{io, time::Duration};
-use tokio::time::{sleep, timeout};
+use tokio::time::timeout;
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async,
     tungstenite::{Message, client::IntoClientRequest},
 };
-use tracing::{debug, error, trace};
+use tracing::debug;
 
 use super::{
     keys::DiscoverOptions,
@@ -251,10 +248,10 @@ impl PubSubConnect for MppWsConnect {
             self.url.as_str().into_client_request().map_err(TransportErrorKind::custom)?;
 
         if let Some(ref auth) = self.auth {
-            let mut auth_value =
-                HeaderValue::from_str(&auth.to_string()).map_err(TransportErrorKind::custom)?;
+            let mut auth_value = reqwest::header::HeaderValue::from_str(&auth.to_string())
+                .map_err(TransportErrorKind::custom)?;
             auth_value.set_sensitive(true);
-            request.headers_mut().insert(AUTHORIZATION, auth_value);
+            request.headers_mut().insert(reqwest::header::AUTHORIZATION, auth_value);
         }
 
         let (mut socket, _) = connect_async(request).await.map_err(TransportErrorKind::custom)?;
@@ -271,134 +268,10 @@ impl PubSubConnect for MppWsConnect {
             }
         }
 
-        // Spawn the backend loop.
-        let backend = MppWsBackend { socket, interface, keepalive_interval: KEEPALIVE_INTERVAL };
-        backend.spawn();
+        // Reuse alloy's WsBackend for the post-handshake JSON-RPC loop.
+        WsBackend::from_socket(socket, interface, KEEPALIVE_INTERVAL).spawn();
 
         Ok(handle)
-    }
-}
-
-/// Backend that bridges an authenticated WebSocket to a [`ConnectionInterface`].
-///
-/// This is functionally equivalent to alloy's `WsBackend` — it forwards
-/// JSON-RPC messages between the WebSocket and the pubsub service. The MPP
-/// handshake is already complete before this backend starts.
-struct MppWsBackend {
-    socket: TungsteniteStream,
-    interface: ConnectionInterface,
-    keepalive_interval: Duration,
-}
-
-impl MppWsBackend {
-    /// Handle an inbound text message from the WebSocket.
-    fn handle_text(&self, text: &str) -> Result<(), ()> {
-        trace!(%text, "received message from MPP websocket");
-        match serde_json::from_str(text) {
-            Ok(item) => {
-                if let Err(err) = self.interface.send_to_frontend(item) {
-                    error!(item=?err.0, "failed to send item to frontend");
-                    return Err(());
-                }
-            }
-            Err(err) => {
-                error!(%err, "failed to deserialize WS message");
-                return Err(());
-            }
-        }
-        Ok(())
-    }
-
-    /// Handle an inbound WebSocket message.
-    fn handle(&self, msg: Message) -> Result<(), ()> {
-        match msg {
-            Message::Text(text) => self.handle_text(&text),
-            Message::Close(frame) => {
-                if frame.is_some() {
-                    error!(?frame, "received close frame with data");
-                } else {
-                    error!("WS server has gone away");
-                }
-                Err(())
-            }
-            Message::Binary(_) => {
-                error!("received binary message, expected text");
-                Err(())
-            }
-            Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => Ok(()),
-        }
-    }
-
-    /// Spawn the backend task.
-    fn spawn(mut self) {
-        let fut = async move {
-            let mut errored = false;
-            let mut expecting_pong = false;
-            let keepalive = sleep(self.keepalive_interval);
-            tokio::pin!(keepalive);
-
-            loop {
-                tokio::select! {
-                    biased;
-
-                    inst = self.interface.recv_from_frontend() => {
-                        match inst {
-                            Some(msg) => {
-                                keepalive.set(sleep(self.keepalive_interval));
-                                if let Err(err) = self.socket.send(Message::Text(msg.get().to_owned().into())).await {
-                                    error!(%err, "WS send error");
-                                    errored = true;
-                                    break;
-                                }
-                            }
-                            None => break,
-                        }
-                    }
-
-                    _ = &mut keepalive => {
-                        if expecting_pong {
-                            error!("WS server missed a pong");
-                            errored = true;
-                            break;
-                        }
-                        keepalive.set(sleep(self.keepalive_interval));
-                        if let Err(err) = self.socket.send(Message::Ping(Default::default())).await {
-                            error!(%err, "WS ping error");
-                            errored = true;
-                            break;
-                        }
-                        expecting_pong = true;
-                    }
-
-                    resp = self.socket.next() => {
-                        match resp {
-                            Some(Ok(item)) => {
-                                if item.is_pong() {
-                                    expecting_pong = false;
-                                }
-                                errored = self.handle(item).is_err();
-                                if errored { break; }
-                            }
-                            Some(Err(err)) => {
-                                error!(%err, "WS connection error");
-                                errored = true;
-                                break;
-                            }
-                            None => {
-                                error!("WS server has gone away");
-                                errored = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if errored {
-                self.interface.close_with_error();
-            }
-        };
-        fut.spawn_task();
     }
 }
 
