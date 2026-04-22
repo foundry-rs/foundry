@@ -28,6 +28,7 @@ use foundry_common::{
 pub use foundry_config::{Chain, utils::*};
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::TempoNetwork;
+use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
 sol! {
     #[sol(rpc)]
@@ -369,6 +370,9 @@ impl Erc20Subcommand {
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;
                     $tx_opts.apply::<N>(&mut tx, chain.is_legacy());
+                    if chain.is_tempo() && tx.fee_token().is_none() {
+                        tx.set_fee_token(PATH_USD_ADDRESS);
+                    }
                     fill_tx(&$provider, &mut tx, browser.address(), chain).await?;
                     let tx_hash = browser.send_transaction_via_browser(tx).await?;
                     CastTxSender::new(&$provider)
