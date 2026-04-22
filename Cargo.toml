@@ -382,7 +382,6 @@ alloy-signer-local = { version = "2.0.0", default-features = false }
 alloy-signer-trezor = { version = "2.0.0", default-features = false }
 alloy-signer-turnkey = { version = "2.0.0", default-features = false }
 alloy-transport = { version = "2.0.0", default-features = false }
-alloy-transport-http = { version = "2.0.0", default-features = false }
 alloy-transport-ipc = { version = "2.0.0", default-features = false }
 alloy-transport-ws = { version = "2.0.0", default-features = false }
 alloy-hardforks = { version = "0.4.7", default-features = false }
@@ -620,3 +619,6 @@ solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/sola
 solar-interface = { package = "solar-interface", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
 solar-ast = { package = "solar-ast", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
 solar-sema = { package = "solar-sema", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }
+
+[workspace.metadata.cargo-shear]
+ignored = ["idna_adapter", "cast", "chisel", "forge", "alloy-contract"]
