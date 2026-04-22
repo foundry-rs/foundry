@@ -17,9 +17,6 @@ use tracing::{debug, warn};
 
 use crate::tempo::tempo_home;
 
-/// Re-export as `PersistedChannel` for backward compatibility.
-pub type PersistedChannel = Channel;
-
 /// Process-wide database handle.
 fn global_db() -> Option<&'static ChannelDb> {
     static DB: OnceLock<Option<ChannelDb>> = OnceLock::new();
@@ -132,7 +129,7 @@ pub fn from_channel_entry(
 }
 
 /// Load channels from database, evicting spent/inactive entries.
-pub fn load_channels() -> HashMap<String, PersistedChannel> {
+pub fn load_channels() -> HashMap<String, Channel> {
     let Some(db) = global_db() else {
         return HashMap::new();
     };
@@ -145,7 +142,7 @@ pub fn load_channels() -> HashMap<String, PersistedChannel> {
         }
     };
 
-    let usable: HashMap<String, PersistedChannel> = channels
+    let usable: HashMap<String, Channel> = channels
         .into_iter()
         .filter(is_usable)
         .map(|ch| {
@@ -159,7 +156,7 @@ pub fn load_channels() -> HashMap<String, PersistedChannel> {
 }
 
 /// Save channels to database.
-pub fn save_channels(channels: &HashMap<String, PersistedChannel>) {
+pub fn save_channels(channels: &HashMap<String, Channel>) {
     let Some(db) = global_db() else {
         return;
     };
@@ -183,16 +180,13 @@ pub fn delete_channel_from_db(channel_id: &str) {
 }
 
 /// Look up a usable persisted channel by key.
-pub fn find_channel(
-    channels: &HashMap<String, PersistedChannel>,
-    key: &str,
-) -> Option<ChannelEntry> {
+pub fn find_channel(channels: &HashMap<String, Channel>, key: &str) -> Option<ChannelEntry> {
     channels.get(key).filter(|ch| is_usable(ch)).and_then(to_channel_entry)
 }
 
 /// Insert or update a channel entry in memory only (no DB write).
 pub fn upsert_channel_in_memory(
-    channels: &mut HashMap<String, PersistedChannel>,
+    channels: &mut HashMap<String, Channel>,
     key: &str,
     entry: &ChannelEntry,
 ) {
