@@ -296,7 +296,8 @@ impl Erc20Subcommand {
         &self,
         tempo_access_key: &Option<TempoAccessKeyConfig>,
     ) -> eyre::Result<bool> {
-        if self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo()) || tempo_access_key.is_some()
+        if self.erc20_opts().is_some_and(|erc20| erc20.tempo.is_tempo())
+            || tempo_access_key.is_some()
         {
             return Ok(true);
         }
