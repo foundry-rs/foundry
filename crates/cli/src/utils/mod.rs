@@ -130,7 +130,7 @@ where
 /// it is interpreted as wei.
 pub fn parse_ether_value(value: &str) -> Result<U256> {
     Ok(if value.starts_with("0x") {
-        U256::from_str_radix(value, 16)?
+        U256::from_str_radix(value.strip_prefix("0x").unwrap_or(value), 16)?
     } else {
         alloy_dyn_abi::DynSolType::coerce_str(&alloy_dyn_abi::DynSolType::Uint(256), value)?
             .as_uint()
@@ -842,6 +842,11 @@ mod tests {
         assert!(p.is_sol());
         let p = Path::new("contracts/Greeter.sol");
         assert!(!p.is_sol_test());
+    }
+
+    #[test]
+    fn parse_ether_value_accepts_hex_prefixed_wei() {
+        assert_eq!(parse_ether_value("0x10").unwrap(), U256::from(16));
     }
 
     // loads .env from cwd and project dir, See [`find_project_root()`]

@@ -146,7 +146,8 @@ impl FromStr for CallSpec {
 fn parse_ether_or_wei(s: &str) -> Result<U256> {
     // Use alloy's DynSolType coercion which handles "1ether", "1gwei", "1000" etc.
     if s.starts_with("0x") {
-        U256::from_str_radix(s, 16).map_err(|e| eyre!("Invalid hex value '{}': {}", s, e))
+        U256::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16)
+            .map_err(|e| eyre!("Invalid hex value '{}': {}", s, e))
     } else {
         alloy_dyn_abi::DynSolType::coerce_str(&alloy_dyn_abi::DynSolType::Uint(256), s)
             .wrap_err_with(|| format!("Invalid value '{s}'"))?
@@ -178,6 +179,11 @@ mod tests {
         let spec = CallSpec::parse("0x1234567890123456789012345678901234567890:1ether").unwrap();
         assert_eq!(spec.value, parse_ether_or_wei("1ether").unwrap());
         assert!(spec.sig.is_none());
+    }
+
+    #[test]
+    fn test_parse_hex_value() {
+        assert_eq!(parse_ether_or_wei("0x10").unwrap(), U256::from(16));
     }
 
     #[test]
