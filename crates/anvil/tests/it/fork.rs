@@ -886,9 +886,25 @@ async fn flaky_test_reset_fork_on_new_blocks() {
         .with_poll_interval(Duration::from_secs(2))
         .into_stream()
         .flat_map(futures::stream::iter);
-    // the http watcher may fetch multiple blocks at once, so we set a timeout here to offset edge
-    // cases where the stream immediately returns a block
-    tokio::time::sleep(Duration::from_secs(12)).await;
+    // Poll the live provider until at least one new block appears (max 15s).
+    // This replaces the fixed 12-second sleep which was the primary source of
+    // flakiness: on a slow CI runner the block may not have arrived in time.
+    let live_provider = provider.clone();
+    let initial_live_block = live_provider.get_block_number().await.unwrap();
+    let advanced = foundry_test_utils::rpc_retry::poll_until(
+        30,
+        Duration::from_millis(500),
+        || {
+            let p = live_provider.clone();
+            async move {
+                p.get_block_number().await.map(|b| b > initial_live_block).unwrap_or(false)
+            }
+        },
+    )
+    .await;
+    assert!(advanced, "live RPC did not produce a new block within 15 seconds");
+
+    // Consume two block hashes from the watcher stream (they may already be buffered).
     stream.next().await.unwrap();
     stream.next().await.unwrap();
 

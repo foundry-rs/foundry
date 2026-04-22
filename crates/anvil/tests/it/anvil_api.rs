@@ -701,7 +701,21 @@ async fn flaky_test_reorg() {
     let prev_height = provider.get_block_number().await.unwrap();
     api.anvil_reorg(ReorgOptions { depth: 7, tx_block_pairs: txs }).await.unwrap();
 
+    // Poll until the chain tip stabilises after reorg (max 5s).
+    // The reorg state machine may still be applying blocks on a background task
+    // when the RPC responds, so an immediate assertion is a data race.
+    let settled = foundry_test_utils::rpc_retry::poll_until(
+        10,
+        Duration::from_millis(500),
+        || {
+            let p = provider.clone();
+            let expected = prev_height;
+            async move { p.get_block_number().await.map(|h| h == expected).unwrap_or(false) }
+        },
+    )
+    .await;
     let reorged_height = provider.get_block_number().await.unwrap();
+    assert!(settled, "chain tip did not stabilise: expected {prev_height}, got {reorged_height}");
     assert_eq!(reorged_height, prev_height);
 
     // The first 3 reorged blocks should have 5 transactions each
