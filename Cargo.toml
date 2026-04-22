@@ -611,35 +611,6 @@ alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = 
 ## foundry-fork-db
 # foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "b139c57c2b54bc06a9e4c9783941f5bbd4bd3a1f" }
 
-## alloy — use WsBackend::from_socket constructor (https://github.com/alloy-rs/alloy/pull/3911)
-alloy-transport-ws = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-pubsub = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-transport = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-json-rpc = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-transport-http = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-transport-ipc = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-rpc-client = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-rpc-types-eth = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-serde = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-provider = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-network = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-network-primitives = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-consensus = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-consensus-any = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-rpc-types-engine = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-contract = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-signer = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-signer-local = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-eips = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-rpc-types-any = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-rpc-types-txpool = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-rpc-types-anvil = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-rpc-types-debug = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-alloy-genesis = { git = "https://github.com/alloy-rs/alloy", rev = "5c64130" }
-
 ## tempo — unify crates.io versions (pulled by mpp) with git rev
 tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9" }
 tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9" }
