@@ -92,6 +92,14 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         self.block_number
     }
 
+    fn gas_limit(&self) -> u64 {
+        0
+    }
+
+    fn state_gas_used(&self) -> u64 {
+        0
+    }
+
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<(), TempoPrecompileError> {
         self.db.insert_account(
             address,

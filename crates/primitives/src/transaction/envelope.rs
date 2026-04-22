@@ -161,6 +161,10 @@ impl OpTransactionTrait for FoundryTxEnvelope {
             _ => None,
         }
     }
+
+    fn as_post_exec(&self) -> Option<&Sealed<op_alloy_consensus::TxPostExec>> {
+        None
+    }
 }
 
 impl TryFrom<FoundryTxEnvelope> for TxEnvelope {
@@ -191,6 +195,9 @@ impl From<op_alloy_consensus::OpTxEnvelope> for FoundryTxEnvelope {
             op_alloy_consensus::OpTxEnvelope::Eip1559(tx) => Self::Eip1559(tx),
             op_alloy_consensus::OpTxEnvelope::Eip7702(tx) => Self::Eip7702(tx),
             op_alloy_consensus::OpTxEnvelope::Deposit(tx) => Self::Deposit(tx),
+            op_alloy_consensus::OpTxEnvelope::PostExec(_) => {
+                panic!("PostExec transactions are not supported in FoundryTxEnvelope")
+            }
         }
     }
 }

@@ -411,13 +411,13 @@ op-alloy-rpc-types = "0.24.0"
 op-alloy-flz = "0.13.1"
 
 ## alloy-evm
-alloy-evm = "0.32.0"
+alloy-evm = "0.33.2"
 alloy-op-evm = "0.30.0"
 
 # revm
-revm = { version = "37.0.0", default-features = false }
-revm-inspectors = { version = "0.38.1", features = ["serde"] }
-op-revm = { version = "18.0.0", default-features = false }
+revm = { version = "38.0.0", default-features = false }
+revm-inspectors = { version = "0.39.0", features = ["serde"] }
+op-revm = { version = "17.0.0", default-features = false }
 
 ## cli
 anstream = "1.0"
@@ -514,16 +514,16 @@ mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "310c9a1f3fe485fa9c7a8
     "client",
     "reqwest-rustls-tls",
 ] }
-tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9", default-features = false }
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9", default-features = false, features = [
+tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "007f582", default-features = false }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "007f582", default-features = false, features = [
     "serde",
     "reth-codec",
 ] }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9", default-features = false }
-tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9", default-features = false }
-tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9", default-features = false, features = ["serde"] }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9" }
-tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "007f582", default-features = false }
+tempo-evm = { git = "https://github.com/tempoxyz/tempo", rev = "007f582", default-features = false }
+tempo-revm = { git = "https://github.com/tempoxyz/tempo", rev = "007f582", default-features = false, features = ["serde"] }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "007f582" }
+tempo-precompiles = { git = "https://github.com/tempoxyz/tempo", rev = "007f582" }
 
 ## Pinned dependencies. Enabled for the workspace in crates/test-utils.
 
@@ -593,13 +593,13 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 # reth-codecs-derive = { git = "https://github.com/paradigmxyz/reth-core", rev = "af2174c" }
 # reth-rpc-traits = { git = "https://github.com/paradigmxyz/reth-core", rev = "af2174c" }
 
-## op-alloy / alloy-op-evm
-op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
-op-alloy-network = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
-op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
-op-alloy = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
-alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
-alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "develop" }
+## op-alloy / alloy-op-evm — extracted to foundry-core
+op-alloy-consensus = { git = "https://github.com/foundry-rs/foundry-core", branch = "op-crates" }
+op-alloy-network = { git = "https://github.com/foundry-rs/foundry-core", branch = "op-crates" }
+op-alloy-rpc-types = { git = "https://github.com/foundry-rs/foundry-core", branch = "op-crates" }
+alloy-op-evm = { git = "https://github.com/foundry-rs/foundry-core", branch = "op-crates" }
+alloy-op-hardforks = { git = "https://github.com/foundry-rs/foundry-core", branch = "op-crates" }
+op-revm = { git = "https://github.com/foundry-rs/foundry-core", branch = "op-crates" }
 
 ## revm
 # revm = { git = "https://github.com/bluealloy/revm.git", rev = "7e59936" }
@@ -607,12 +607,12 @@ alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = 
 # revm-inspectors = { git = "https://github.com/paradigmxyz/revm-inspectors.git", rev = "22dcee2" }
 
 ## foundry-fork-db
-# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", rev = "b139c57c2b54bc06a9e4c9783941f5bbd4bd3a1f" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", branch = "main" }
 
 ## tempo — unify crates.io versions (pulled by mpp) with git rev
-tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9" }
-tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9" }
-tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9" }
+tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "007f582" }
+tempo-alloy = { git = "https://github.com/tempoxyz/tempo", rev = "007f582" }
+tempo-contracts = { git = "https://github.com/tempoxyz/tempo", rev = "007f582" }
 
 # solar
 solar = { package = "solar-compiler", git = "https://github.com/paradigmxyz/solar", rev = "530f129" }

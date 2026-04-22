@@ -600,6 +600,7 @@ impl UIfmt for OpTxEnvelope {
             Self::Eip1559(tx) => tx.pretty(),
             Self::Eip7702(tx) => tx.pretty(),
             Self::Deposit(tx) => tx.pretty(),
+            Self::PostExec(tx) => format!("PostExec {{ hash: {:?} }}", tx.hash_ref()),
         }
     }
 }

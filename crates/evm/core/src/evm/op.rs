@@ -65,7 +65,7 @@ impl FoundryEvmFactory for OpEvmFactory {
     ) -> Self::FoundryEvm<'db, I> {
         let spec_id = *evm_env.spec_id();
         let inner = Context::mainnet()
-            .with_tx(OpTx(OpTransaction::builder().build_fill()))
+            .with_tx(OpTx(OpTransaction::default()))
             .with_cfg(CfgEnv::new_with_spec(OpSpecId::BEDROCK))
             .with_chain(L1BlockInfo::default())
             .with_db(db)
@@ -106,6 +106,10 @@ impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory
 
     fn block(&self) -> &BlockEnv {
         &self.inner.ctx_ref().block
+    }
+
+    fn cfg_env(&self) -> &revm::context::CfgEnv<Self::Spec> {
+        &self.inner.ctx_ref().cfg
     }
 
     fn chain_id(&self) -> u64 {
