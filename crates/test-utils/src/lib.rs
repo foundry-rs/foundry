@@ -16,6 +16,7 @@ mod macros;
 
 pub mod etherscan;
 pub mod rpc;
+pub mod rpc_retry;
 
 pub mod fd_lock;
 

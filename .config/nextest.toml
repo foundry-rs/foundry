@@ -19,5 +19,13 @@ retries = 0
 # Run with: cargo nextest run --profile flaky
 [profile.flaky]
 default-filter = "test(/flaky_/)"
-retries = { backoff = "exponential", count = 5, delay = "10s", jitter = true }
-slow-timeout = { period = "60s", terminate-after = 3 }
+# Serialize flaky tests (test-threads=1) to prevent port/fork-state collisions
+# between tests that all spawn local Anvil nodes or share RPC endpoints.
+test-threads = 1
+# Exponential backoff with jitter, capped at 30s per retry.
+# count=5 gives up to ~2 min total retry time per test (2+4+8+16+30s).
+retries = { backoff = "exponential", count = 5, delay = "2s", jitter = true, max-delay = "30s" }
+# Kill tests that are stuck for 120s (3 consecutive slow periods).
+slow-timeout = { period = "120s", terminate-after = 3 }
+# Run ALL flaky tests even if some fail — gives complete picture per nightly run.
+fail-fast = false
