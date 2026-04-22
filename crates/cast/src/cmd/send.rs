@@ -2,7 +2,7 @@ use std::{path::PathBuf, str::FromStr, time::Duration};
 
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
-use alloy_network::{Ethereum, EthereumWallet, Network};
+use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
 use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
@@ -271,24 +271,17 @@ impl SendTxArgs {
                 Some(s) => s,
                 None => send_tx.eth.wallet.signer().await?,
             };
-            let from = ak.wallet_address;
-
-            let (tx_request, _) = builder.build(from).await?;
-
-            let raw_tx = tx_request
-                .sign_with_access_key(
-                    &provider,
-                    &signer,
-                    ak.wallet_address,
-                    ak.key_address,
-                    ak.key_authorization.as_ref(),
-                )
-                .await?;
-
-            let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-
-            let cast = CastTxSender::new(&provider);
-            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
+            let (tx_request, _) = builder.build(ak.wallet_address).await?;
+            cast_send_with_access_key(
+                &provider,
+                tx_request,
+                &signer,
+                &ak,
+                send_tx.cast_async,
+                send_tx.confirmations,
+                timeout,
+            )
+            .await
         // Case 4:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -353,4 +346,38 @@ where
     }
 
     Ok(())
+}
+
+/// Signs a transaction with a Tempo access key and sends it via `send_raw_transaction`.
+///
+/// Sets `from` and `key_id` on the transaction before signing, making it idempotent for txs built
+/// with [`CastTxBuilder`] (fields already set) and also with sol!-bindings (fields not yet set).
+///
+/// NOTE: The default implementation returns an error. Only `TempoNetwork` supports this.
+pub(crate) async fn cast_send_with_access_key<N: Network, P: Provider<N>>(
+    provider: &P,
+    mut tx: N::TransactionRequest,
+    signer: &WalletSigner,
+    access_key: &TempoAccessKeyConfig,
+    cast_async: bool,
+    confirmations: u64,
+    timeout: u64,
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+{
+    tx.set_from(access_key.wallet_address);
+    tx.set_key_id(access_key.key_address);
+    let raw_tx = tx
+        .sign_with_access_key(
+            provider,
+            signer,
+            access_key.wallet_address,
+            access_key.key_address,
+            access_key.key_authorization.as_ref(),
+        )
+        .await?;
+    let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
+    CastTxSender::new(provider).print_tx_result(tx_hash, cast_async, confirmations, timeout).await
 }

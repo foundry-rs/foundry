@@ -65,7 +65,7 @@ foundry-test-utils.workspace = true
 rexpect = "0.6"
 
 [features]
-default = ["jemalloc"]
+default = ["jemalloc", "asm-keccak"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]

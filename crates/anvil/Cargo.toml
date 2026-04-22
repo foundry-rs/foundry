@@ -124,8 +124,8 @@ op-alloy-rpc-types.workspace = true
 tempo-alloy.workspace = true
 
 [features]
-default = ["cli", "jemalloc"]
-asm-keccak = ["alloy-primitives/asm-keccak"]
+default = ["cli", "jemalloc", "asm-keccak"]
+asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
