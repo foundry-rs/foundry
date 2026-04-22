@@ -31,6 +31,7 @@ jobs:
       contents: read
       actions: read
       id-token: write
+    environment: release
     name: ${{ matrix.tool }}-${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
     strategy:
@@ -240,6 +241,7 @@ jobs:
       contents: read
       actions: read
       id-token: write
+    environment: release
     needs: publish-arch
     name: Publish Meta Package
     runs-on: ubuntu-latest
