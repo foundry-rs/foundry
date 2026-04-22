@@ -19,7 +19,6 @@ use revm::{
 };
 use serde_json::json;
 use std::str::FromStr;
-use tokio::time::{Duration, sleep};
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_load_state() {
@@ -346,62 +345,6 @@ async fn test_fork_load_state_with_greater_state_block() {
     let new_block_number = api.block_number().unwrap();
 
     assert_eq!(new_block_number, block_number);
-}
-
-// <https://github.com/foundry-rs/foundry/issues/9721>
-#[tokio::test(flavor = "multi_thread")]
-async fn load_state_without_fork_url_preserves_fork_chain_id() {
-    let state_path = format!("{}/test-data/state-dump.json", env!("CARGO_MANIFEST_DIR"));
-    let (api, handle) = spawn(
-        NodeConfig::test()
-            .with_init_state_path(state_path)
-            .with_fork_block_number(Some(2u64))
-            .with_fork_chain_id(Some(U256::from(84532u64))),
-    )
-    .await;
-
-    let client = reqwest::Client::builder().no_proxy().build().unwrap();
-    let mut rpc_chain_id = None;
-    let mut last_err = None;
-    for _ in 0..100 {
-        let response = client
-            .post(handle.http_endpoint())
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "method": "eth_chainId",
-                "params": [],
-                "id": 1
-            }))
-            .send()
-            .await;
-
-        match response {
-            Ok(resp) => match resp.json::<serde_json::Value>().await {
-                Ok(body) => {
-                    rpc_chain_id = body["result"].as_str().and_then(|value| {
-                        u64::from_str_radix(value.trim_start_matches("0x"), 16).ok()
-                    });
-                    if rpc_chain_id.is_some() {
-                        break;
-                    }
-                    last_err = Some(format!("unexpected body: {body}"));
-                }
-                Err(err) => last_err = Some(err.to_string()),
-            },
-            Err(err) => {
-                last_err = Some(err.to_string());
-            }
-        }
-
-        sleep(Duration::from_millis(100)).await;
-    }
-
-    let chain_id = api.eth_chain_id().unwrap().unwrap().to::<u64>();
-
-    assert_eq!(chain_id, 84532u64);
-    assert_eq!(rpc_chain_id, Some(84532u64), "last rpc error: {last_err:?}");
-    assert_eq!(api.chain_id(), 84532u64);
-    assert_eq!(handle.config().chain_id, Some(84532u64));
 }
 
 // <https://github.com/foundry-rs/foundry/issues/9721>
