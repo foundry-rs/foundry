@@ -129,8 +129,8 @@ where
 /// If the string represents an untagged amount (e.g. "100") then
 /// it is interpreted as wei.
 pub fn parse_ether_value(value: &str) -> Result<U256> {
-    Ok(if value.starts_with("0x") {
-        U256::from_str_radix(value, 16)?
+    Ok(if value.starts_with("0x") || value.starts_with("0X") {
+        U256::from_str(value)?
     } else {
         alloy_dyn_abi::DynSolType::coerce_str(&alloy_dyn_abi::DynSolType::Uint(256), value)?
             .as_uint()
@@ -803,6 +803,15 @@ mod tests {
     use foundry_common::fs;
     use std::{env, fs::File, io::Write};
     use tempfile::tempdir;
+
+    #[test]
+    fn parse_ether_value_hex_prefix() {
+        assert_eq!(parse_ether_value("0x12").unwrap(), U256::from(0x12));
+        assert_eq!(parse_ether_value("0X12").unwrap(), U256::from(0x12));
+        assert_eq!(parse_ether_value("0xff").unwrap(), U256::from(0xff));
+        assert_eq!(parse_ether_value("100").unwrap(), U256::from(100));
+        assert_eq!(parse_ether_value("1ether").unwrap(), U256::from(1000000000000000000u128));
+    }
 
     #[test]
     fn parse_submodule_status() {
