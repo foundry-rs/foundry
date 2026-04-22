@@ -2,7 +2,10 @@
 //! WebSocket, or IPC transport. Retries are handled by a client layer (e.g.,
 //! `RetryBackoffLayer`) when used.
 
-use crate::{DEFAULT_USER_AGENT, REQUEST_TIMEOUT, provider::mpp::transport::LazyMppHttpTransport};
+use crate::{
+    DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
+    provider::mpp::{transport::LazyMppHttpTransport, ws::MppWsConnect},
+};
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
 use alloy_rpc_types_engine::{Claims, JwtSecret};
@@ -10,7 +13,6 @@ use alloy_transport::{
     Authorization, BoxTransport, TransportError, TransportErrorKind, TransportFut,
 };
 use alloy_transport_ipc::IpcConnect;
-use alloy_transport_ws::WsConnect;
 use reqwest::header::{HeaderName, HeaderValue};
 use std::{fmt, path::PathBuf, str::FromStr, sync::Arc};
 use thiserror::Error;
@@ -244,13 +246,12 @@ impl RuntimeTransport {
         Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(client, self.url.clone())))
     }
 
-    /// Connects to a WS transport.
+    /// Connects to a WS transport with automatic MPP payment handling.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
-        let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
-        let mut ws = WsConnect::new(self.url.to_string());
-        if let Some(auth) = auth {
+        let mut ws = MppWsConnect::new(self.url.to_string());
+        if let Some(auth) = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok()) {
             ws = ws.with_auth(auth);
-        };
+        }
         let service = ws
             .into_service()
             .await

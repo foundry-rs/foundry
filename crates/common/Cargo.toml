@@ -37,7 +37,6 @@ alloy-rpc-types = { workspace = true, features = ["eth", "engine"] }
 alloy-rpc-types-engine = { workspace = true, features = ["jwt"] }
 alloy-sol-types.workspace = true
 alloy-transport-ipc.workspace = true
-alloy-transport-ws.workspace = true
 alloy-transport.workspace = true
 alloy-consensus = { workspace = true, features = ["k256"] }
 alloy-network.workspace = true
@@ -82,7 +81,9 @@ flate2.workspace = true
 tempo-alloy.workspace = true
 tempo-primitives.workspace = true
 mpp.workspace = true
-foundry-wallets.workspace = true
+foundry-wallets = { workspace = true, features = ["tempo"] }
+tokio-tungstenite.workspace = true
+futures.workspace = true
 
 [build-dependencies]
 chrono.workspace = true
