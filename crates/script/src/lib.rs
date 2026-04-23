@@ -655,6 +655,7 @@ impl<N: Network> Default for ScriptResult<N> {
             labeled_addresses: Default::default(),
             transactions: Default::default(),
             returned: Default::default(),
+            exit_reason: Default::default(),
             address: Default::default(),
             breakpoints: Default::default(),
         }
