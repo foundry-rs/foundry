@@ -1144,7 +1144,7 @@ impl NodeConfig {
         .await;
 
         let config = ClientForkConfig {
-            eth_rpc_url,
+            fork_urls: vec![eth_rpc_url],
             block_number,
             block_hash,
             transaction_hash: None,
@@ -1157,6 +1157,7 @@ impl NodeConfig {
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
+            headers: self.fork_headers.clone(),
             total_difficulty: U256::ZERO,
             blob_gas_used: None,
             blob_excess_gas_and_price: evm_env.block_env.blob_excess_gas_and_price,
