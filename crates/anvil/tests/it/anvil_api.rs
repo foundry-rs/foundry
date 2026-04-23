@@ -1013,7 +1013,7 @@ async fn test_increase_time_by_zero() {
     let init_number = init_blk.header.number;
     let init_timestamp = init_blk.header.timestamp;
 
-api.evm_set_next_block_timestamp(init_timestamp).unwrap();
+    api.evm_set_next_block_timestamp(init_timestamp).unwrap();
 
     api.mine_one().await;
 
