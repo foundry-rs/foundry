@@ -6,8 +6,9 @@
 //! `eth_getTransactionCount`. This avoids the chicken-and-egg problem when
 //! the RPC endpoint is itself 402-gated.
 
-use super::persist::{self, PersistedChannel};
+use super::persist;
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
+use foundry_wallets::Channel;
 use mpp::{
     client::{
         PaymentProvider,
@@ -42,7 +43,7 @@ static GLOBAL_CHANNELS: OnceLock<Mutex<HashMap<String, SharedChannelState>>> = O
 ///
 /// Using a single map ensures saves from different origins don't clobber
 /// each other's state.
-static GLOBAL_PERSISTED: OnceLock<Arc<Mutex<HashMap<String, PersistedChannel>>>> = OnceLock::new();
+static GLOBAL_PERSISTED: OnceLock<Arc<Mutex<HashMap<String, Channel>>>> = OnceLock::new();
 
 /// Tracks uncommitted channel state from the most recent payment.
 ///
@@ -86,7 +87,7 @@ pub struct SessionProvider {
     default_deposit: Option<u128>,
     channels: Arc<Mutex<HashMap<String, ChannelEntry>>>,
     key_provisioned: Arc<Mutex<bool>>,
-    persisted: Arc<Mutex<HashMap<String, PersistedChannel>>>,
+    persisted: Arc<Mutex<HashMap<String, Channel>>>,
     /// Tracks uncommitted open/top-up state for deferred persistence.
     pending: Arc<Mutex<Option<PendingAction>>>,
     /// Chain ID from the key entry in `keys.toml` that was used to initialize
@@ -128,10 +129,10 @@ impl SessionProvider {
             map.entry(origin.clone())
                 .or_insert_with(|| {
                     // Hydrate only channels belonging to this origin.
-                    let mut channels = HashMap::new();
+                    let mut channels: HashMap<String, ChannelEntry> = HashMap::new();
                     for (key, ch) in persisted.lock().unwrap().iter() {
                         if ch.origin == origin
-                            && let Some(entry) = ch.to_channel_entry()
+                            && let Some(entry) = persist::to_channel_entry(ch)
                         {
                             channels.insert(key.clone(), entry);
                         }
@@ -209,16 +210,16 @@ impl SessionProvider {
         // Lock order: channels → persisted (consistent with pay_session)
         let mut channels = self.channels.lock().unwrap();
         let mut persisted = self.persisted.lock().unwrap();
-        let keys_to_remove: Vec<String> = persisted
+        let keys_to_remove: Vec<(String, String)> = persisted
             .iter()
             .filter(|(_, ch)| ch.origin == *origin)
-            .map(|(k, _)| k.clone())
+            .map(|(k, ch): (&String, &Channel)| (k.clone(), ch.channel_id.clone()))
             .collect();
-        for key in &keys_to_remove {
+        for (key, channel_id) in &keys_to_remove {
             channels.remove(key);
             persisted.remove(key);
+            persist::delete_channel_from_db(channel_id);
         }
-        persist::save_channels(&persisted);
     }
 
     /// Mark whether the access key has been provisioned on-chain.
@@ -685,13 +686,7 @@ impl SessionProvider {
                     // confirms acceptance.
                     let updated_entry = ChannelEntry { cumulative_amount: new_cumulative, ..entry };
                     let mut persisted = self.persisted.lock().unwrap();
-                    persist::upsert_channel_in_memory(
-                        &mut persisted,
-                        &key,
-                        &updated_entry,
-                        0,
-                        &self.origin,
-                    );
+                    persist::upsert_channel_in_memory(&mut persisted, &key, &updated_entry);
                     drop(persisted);
 
                     // Track the voucher so we can roll back cumulative_amount
@@ -727,9 +722,18 @@ impl SessionProvider {
 
         // Update in-memory state but defer disk persistence until server confirms.
         self.channels.lock().unwrap().insert(key.clone(), entry.clone());
+        let authorized_signer = self.authorized_signer.unwrap_or(payer);
         self.persisted.lock().unwrap().insert(
             key.clone(),
-            persist::PersistedChannel::from_channel_entry(&entry, deposit, &self.origin),
+            persist::from_channel_entry(
+                &entry,
+                deposit,
+                &self.origin,
+                &payer,
+                &payee,
+                &currency,
+                &authorized_signer,
+            ),
         );
         *self.pending.lock().unwrap() = Some(PendingAction::Open { key });
         Ok(build_credential(challenge, payload, chain_id, payer))
