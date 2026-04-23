@@ -3485,10 +3485,7 @@ where
                 let tx_hash = tx.hash();
                 match self.debug_trace_transaction(tx_hash, opts.clone()).await {
                     Ok(trace) => {
-                        traces.push(TraceResult::Success {
-                            result: trace,
-                            tx_hash: Some(tx_hash),
-                        });
+                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
                     }
                     Err(error) => {
                         traces.push(TraceResult::Error {
@@ -3522,10 +3519,7 @@ where
                 let tx_hash = tx.hash();
                 match self.debug_trace_transaction(tx_hash, opts.clone()).await {
                     Ok(trace) => {
-                        traces.push(TraceResult::Success {
-                            result: trace,
-                            tx_hash: Some(tx_hash),
-                        });
+                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
                     }
                     Err(error) => {
                         traces.push(TraceResult::Error {
