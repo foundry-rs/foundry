@@ -134,11 +134,13 @@ pub struct NodeConfig {
     pub port: u16,
     /// maximum number of transactions in a block
     pub max_transactions: usize,
-    /// url of the rpc server that should be used for any rpc calls
-    pub eth_rpc_url: Option<String>,
+    /// Fork URLs for RPC calls. The first entry is the primary endpoint.
+    /// When multiple URLs are provided, requests are distributed using
+    /// round-robin load balancing with retry-based failover.
+    pub fork_urls: Vec<String>,
     /// pins the block number or transaction hash for the state fork
     pub fork_choice: Option<ForkChoice>,
-    /// headers to use with `eth_rpc_url`
+    /// headers to use with fork RPC endpoints
     pub fork_headers: Vec<String>,
     /// specifies chain id for cache to skip fetching from remote in offline-start mode
     pub fork_chain_id: Option<U256>,
@@ -268,11 +270,18 @@ Block number:   {}
 Block hash:     {:?}
 Chain ID:       {}
 "#,
-                fork.eth_rpc_url(),
+                fork.eth_rpc_url().as_deref().unwrap_or("none"),
                 fork.block_number(),
                 fork.block_hash(),
                 fork.chain_id()
             );
+
+            if self.fork_urls.len() > 1 {
+                let _ = writeln!(s, "Endpoints:      {}", self.fork_urls.len());
+                for (i, url) in self.fork_urls.iter().enumerate() {
+                    let _ = writeln!(s, "  ({i}) {url}");
+                }
+            }
 
             if let Some(tx_hash) = fork.transaction_hash() {
                 let _ = writeln!(s, "Transaction hash: {tx_hash}");
@@ -393,7 +402,7 @@ Genesis Number
             json!({
               "available_accounts": available_accounts,
               "private_keys": private_keys,
-              "endpoint": fork.eth_rpc_url(),
+              "endpoint": fork.eth_rpc_url().unwrap_or_default(),
               "block_number": fork.block_number(),
               "block_hash": fork.block_hash(),
               "chain_id": fork.chain_id(),
@@ -466,7 +475,7 @@ impl Default for NodeConfig {
             mixed_mining: false,
             port: NODE_PORT,
             max_transactions: 1_000,
-            eth_rpc_url: None,
+            fork_urls: vec![],
             fork_choice: None,
             account_generator: None,
             base_fee: None,
@@ -855,10 +864,19 @@ impl NodeConfig {
         self
     }
 
-    /// Sets the `eth_rpc_url` to use when forking
+    /// Sets the `eth_rpc_url` to use when forking (single endpoint convenience).
     #[must_use]
     pub fn with_eth_rpc_url<U: Into<String>>(mut self, eth_rpc_url: Option<U>) -> Self {
-        self.eth_rpc_url = eth_rpc_url.map(Into::into);
+        if let Some(url) = eth_rpc_url {
+            self.fork_urls = vec![url.into()];
+        }
+        self
+    }
+
+    /// Sets the fork URLs for load-balanced multi-endpoint forking.
+    #[must_use]
+    pub fn with_fork_urls(mut self, fork_urls: Vec<String>) -> Self {
+        self.fork_urls = fork_urls;
         self
     }
 
@@ -891,7 +909,7 @@ impl NodeConfig {
         self
     }
 
-    /// Sets the `fork_headers` to use with `eth_rpc_url`
+    /// Sets the `fork_headers` to use with fork RPC endpoints
     #[must_use]
     pub fn with_fork_headers(mut self, headers: Vec<String>) -> Self {
         self.fork_headers = headers;
@@ -1017,7 +1035,7 @@ impl NodeConfig {
     ///
     /// See also [ Config::foundry_block_cache_file()]
     pub fn block_cache_path(&self, block: u64) -> Option<PathBuf> {
-        if self.no_storage_caching || self.eth_rpc_url.is_none() {
+        if self.no_storage_caching || self.fork_urls.is_empty() {
             return None;
         }
         let chain_id = self.get_chain_id();
@@ -1145,7 +1163,7 @@ impl NodeConfig {
         );
 
         let (db, fork): (Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>) =
-            if let Some(eth_rpc_url) = self.eth_rpc_url.clone() {
+            if let Some(eth_rpc_url) = self.fork_urls.first().cloned() {
                 self.setup_fork_db(eth_rpc_url, &mut evm_env, &fees).await?
             } else {
                 (Arc::new(TokioRwLock::new(Box::<MemDb>::default())), None)
@@ -1208,7 +1226,7 @@ impl NodeConfig {
 
         // Writes the default create2 deployer to the backend,
         // if the option is not disabled and we are not forking.
-        if !self.disable_default_create2_deployer && self.eth_rpc_url.is_none() {
+        if !self.disable_default_create2_deployer && self.fork_urls.is_empty() {
             backend
                 .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
                 .await
@@ -1248,6 +1266,10 @@ impl NodeConfig {
         fees: &FeeManager,
     ) -> Result<(ForkedDatabase<AnyNetwork>, ClientForkConfig)> {
         debug!(target: "node", ?eth_rpc_url, "setting up fork db");
+
+        // Always bootstrap with the primary URL only to avoid race conditions
+        // where discovery calls (get_chain_id, find_latest_fork_block, get_block)
+        // hit different endpoints that may be at different chain tips.
         let provider = Arc::new(
             ProviderBuilder::new(&eth_rpc_url)
                 .timeout(self.fork_request_timeout)
@@ -1409,6 +1431,25 @@ latest block number: {latest_block}"
             BlockchainDb::new(meta, self.block_cache_path(fork_block_number))
         };
 
+        // After bootstrap, rebuild the provider with round-robin if multiple URLs are
+        // configured. This ensures bootstrap used only the primary endpoint for consistency,
+        // while ongoing requests are distributed across all endpoints.
+        let provider = if self.fork_urls.len() > 1 {
+            debug!(target: "node", urls=?self.fork_urls, "using multi-endpoint round-robin provider");
+            Arc::new(
+                ProviderBuilder::new(&eth_rpc_url)
+                    .timeout(self.fork_request_timeout)
+                    .initial_backoff(self.fork_retry_backoff.as_millis() as u64)
+                    .compute_units_per_second(self.compute_units_per_second)
+                    .max_retry(self.fork_request_retries)
+                    .headers(self.fork_headers.clone())
+                    .build_fallback(self.fork_urls.clone())
+                    .wrap_err("failed to establish round-robin provider to fork urls")?,
+            )
+        } else {
+            provider
+        };
+
         // This will spawn the background thread that will use the provider to fetch
         // blockchain data from the other client
         let backend = SharedBackend::spawn_backend(
@@ -1419,7 +1460,7 @@ latest block number: {latest_block}"
         .await;
 
         let config = ClientForkConfig {
-            eth_rpc_url,
+            fork_urls: self.fork_urls.clone(),
             block_number: fork_block_number,
             block_hash,
             transaction_hash: self.fork_choice.and_then(|fc| fc.transaction_hash()),
@@ -1432,6 +1473,7 @@ latest block number: {latest_block}"
             retries: self.fork_request_retries,
             backoff: self.fork_retry_backoff,
             compute_units_per_second: self.compute_units_per_second,
+            headers: self.fork_headers.clone(),
             total_difficulty: block.header.total_difficulty.unwrap_or_default(),
             blob_gas_used: block.header.blob_gas_used().map(|g| g as u128),
             blob_excess_gas_and_price: evm_env.block_env.blob_excess_gas_and_price,

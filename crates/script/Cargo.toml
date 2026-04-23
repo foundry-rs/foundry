@@ -23,7 +23,7 @@ foundry-evm-networks.workspace = true
 alloy-evm.workspace = true
 foundry-debugger.workspace = true
 foundry-cheatcodes.workspace = true
-foundry-wallets.workspace = true
+foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 foundry-linking.workspace = true
 forge-script-sequence.workspace = true
 

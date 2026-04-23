@@ -82,6 +82,7 @@ flate2.workspace = true
 tempo-alloy.workspace = true
 tempo-primitives.workspace = true
 mpp.workspace = true
+foundry-wallets.workspace = true
 
 [build-dependencies]
 chrono.workspace = true

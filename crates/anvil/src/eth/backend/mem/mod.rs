@@ -246,7 +246,7 @@ pub struct Backend<N: Network> {
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
     transaction_block_keeper: Option<usize>,
-    node_config: Arc<AsyncRwLock<NodeConfig>>,
+    pub(crate) node_config: Arc<AsyncRwLock<NodeConfig>>,
     /// Slots in an epoch
     slots_in_an_epoch: u64,
     /// Precompiles to inject to the EVM.
@@ -2079,6 +2079,7 @@ impl<N: Network> Backend<N> {
                     // we want to force the correct base fee for the next block during
                     // `setup_fork_db_config`
                     node_config.base_fee.take();
+                    node_config.fork_urls = vec![eth_rpc_url.clone()];
 
                     node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?
                 };
@@ -2101,7 +2102,9 @@ impl<N: Network> Backend<N> {
             let block_number =
                 forking.block_number.map(BlockNumber::from).unwrap_or(BlockNumber::Latest);
             // reset the fork entirely and reapply the genesis config
-            fork.reset(forking.json_rpc_url.clone(), block_number).await?;
+            let reset_urls =
+                forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
+            fork.reset(reset_urls, block_number).await?;
             let fork_block_number = fork.block_number();
             let fork_block = fork
                 .block_by_number(fork_block_number)
@@ -2115,7 +2118,8 @@ impl<N: Network> Backend<N> {
                     // If rpc url is unspecified, then update the fork with the new block number and
                     // existing rpc url, this updates the cache path
                     {
-                        let maybe_fork_url = { self.node_config.read().await.eth_rpc_url.clone() };
+                        let maybe_fork_url =
+                            { self.node_config.read().await.fork_urls.first().cloned() };
                         if let Some(fork_url) = maybe_fork_url {
                             self.reset_block_number(fork_url, fork_block_number).await?;
                         }
@@ -2229,6 +2233,8 @@ impl<N: Network> Backend<N> {
     ) -> Result<(), BlockchainError> {
         let mut node_config = self.node_config.write().await;
         node_config.fork_choice = Some(ForkChoice::Block(fork_block_number as i128));
+        // Update fork_urls so setup_fork_db_config uses the correct URL set
+        node_config.fork_urls = vec![fork_url.clone()];
 
         let mut evm_env = self.evm_env.read().clone();
         let (forked_db, client_fork_config) =
