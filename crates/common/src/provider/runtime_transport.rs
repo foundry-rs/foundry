@@ -21,6 +21,17 @@ use tokio::sync::RwLock;
 use tower::Service;
 use url::Url;
 
+/// Known MPP-enabled RPC host suffixes.
+///
+/// Endpoints matching these patterns are always connected via [`MppWsConnect`],
+/// regardless of whether local MPP keys have been discovered.
+const KNOWN_MPP_HOSTS: &[&str] = &[".mpp.tempo.xyz"];
+
+/// Returns `true` if `url` points to a known MPP-enabled RPC service.
+fn is_known_mpp_endpoint(url: &Url) -> bool {
+    url.host_str().is_some_and(|host| KNOWN_MPP_HOSTS.iter().any(|suffix| host.ends_with(suffix)))
+}
+
 /// An enum representing the different transports that can be used to connect to a runtime.
 /// Only meant to be used internally by [RuntimeTransport].
 #[derive(Clone, Debug)]
@@ -249,14 +260,14 @@ impl RuntimeTransport {
 
     /// Connects to a WS transport.
     ///
-    /// When MPP keys are discoverable (via `TEMPO_PRIVATE_KEY` env var or the
-    /// Tempo wallet), uses [`MppWsConnect`] which performs an automatic MPP
-    /// challenge/credential handshake at connect time. Otherwise falls back to
-    /// alloy's plain [`WsConnect`] with zero overhead.
+    /// Uses [`MppWsConnect`] (which performs the MPP challenge/credential
+    /// handshake at connect time) when the endpoint is a known MPP service or
+    /// when MPP keys are discoverable. Otherwise falls back to alloy's plain
+    /// [`WsConnect`] with zero overhead.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
 
-        let service = if discover_mpp_key().is_some() {
+        let service = if is_known_mpp_endpoint(&self.url) || discover_mpp_key().is_some() {
             let mut ws = MppWsConnect::new(self.url.to_string());
             if let Some(auth) = auth {
                 ws = ws.with_auth(auth);
