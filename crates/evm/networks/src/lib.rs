@@ -114,7 +114,7 @@ impl NetworkConfigs {
         } else if self.tempo {
             Some(NetworkVariant::Tempo)
         } else {
-            Some(NetworkVariant::Ethereum)
+            None
         })
     }
 
@@ -153,22 +153,23 @@ impl NetworkConfigs {
         self.bypass_prevrandao
     }
 
-    pub fn with_chain_id(mut self, chain_id: u64) -> Self {
+    pub fn with_chain_id(self, chain_id: u64) -> Self {
+        let chain = Chain::from_id(chain_id);
         if self.resolved_network().is_none() {
-            let chain = Chain::from_id(chain_id);
             if chain.is_tempo() {
-                self.network = Some(NetworkVariant::Tempo);
+                Self::with_tempo()
             } else if chain.is_optimism() {
-                self.network = Some(NetworkVariant::Optimism);
+                Self::with_optimism()
+            } else {
+                self
             }
+        } else if !self.celo
+            && matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia))
+        {
+            Self::with_celo()
+        } else {
+            self
         }
-        if !self.celo {
-            let chain = Chain::from_id(chain_id);
-            if matches!(chain.named(), Some(NamedChain::Celo | NamedChain::CeloSepolia)) {
-                self.celo = true;
-            }
-        }
-        self
     }
 
     /// Validates `hardfork` against the current `NetworkConfigs` and, if consistent, returns an
