@@ -4945,7 +4945,6 @@ dependencies = [
  "dotenvy",
  "dunce",
  "eyre",
- "foundry-block-explorers",
  "foundry-cli-markdown",
  "foundry-common",
  "foundry-compilers",
@@ -5560,7 +5559,8 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?rev=d6c92dfcb41be26fbc1de21221a5bfc6bdd93245#d6c92dfcb41be26fbc1de21221a5bfc6bdd93245"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3f2cc1ff7ea002addf41bd9c5785cd34f6a7b9658998c50035cc860ffebc3a9"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",

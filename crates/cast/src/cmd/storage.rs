@@ -7,7 +7,6 @@ use alloy_rpc_types::BlockId;
 use clap::Parser;
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::Result;
-use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{BuildOpts, EtherscanOpts, RpcOpts},
     utils,
@@ -141,10 +140,16 @@ impl StorageArgs {
         }
 
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let api_key = config.get_etherscan_api_key(Some(chain)).or_else(|| self.etherscan.key()).ok_or_else(|| {
-            eyre::eyre!("You must provide an Etherscan API key if you're fetching a remote contract's storage.")
-        })?;
-        let client = Client::new(chain, api_key)?;
+        let etherscan_api_key = self.etherscan.key();
+        let client = match config.get_etherscan_config_with_chain(Some(chain))? {
+            Some(etherscan_config) => etherscan_config.into_client()?,
+            None => {
+                let api_key = etherscan_api_key.ok_or_else(|| {
+                    eyre::eyre!("You must provide an Etherscan API key if you're fetching a remote contract's storage.")
+                })?;
+                foundry_block_explorers::Client::new(chain, api_key)?
+            }
+        };
         let source = if let Some(proxy) = self.proxy {
             find_source(client, proxy.resolve(&provider).await?).await?
         } else {
