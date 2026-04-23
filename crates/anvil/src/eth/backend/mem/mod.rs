@@ -490,12 +490,12 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns true if op-stack deposits are active
-    pub const fn is_optimism(&self) -> bool {
+    pub fn is_optimism(&self) -> bool {
         self.networks.is_optimism()
     }
 
     /// Returns true if Tempo network mode is active
-    pub const fn is_tempo(&self) -> bool {
+    pub fn is_tempo(&self) -> bool {
         self.networks.is_tempo()
     }
 
@@ -589,7 +589,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if op-stack deposits are not active
-    pub const fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
+    pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
             return Ok(());
         }
@@ -597,7 +597,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if Tempo transactions are not active
-    pub const fn ensure_tempo_active(&self) -> Result<(), BlockchainError> {
+    pub fn ensure_tempo_active(&self) -> Result<(), BlockchainError> {
         if self.is_tempo() {
             return Ok(());
         }
