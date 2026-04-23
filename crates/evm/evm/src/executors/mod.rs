@@ -207,9 +207,9 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.evm_env.cfg_env.spec
     }
 
-    /// Sets the EVM spec.
-    pub const fn set_spec_id(&mut self, spec_id: SpecFor<FEN>) {
-        self.evm_env.cfg_env.spec = spec_id;
+    /// Sets the EVM spec and updates spec-dependent gas parameters.
+    pub fn set_spec_id(&mut self, spec_id: SpecFor<FEN>) {
+        self.evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
     }
 
     /// Returns the gas limit for calls and deployments.
@@ -1316,6 +1316,7 @@ impl EarlyExit {
 mod tests {
     use super::*;
     use foundry_evm_core::constants::MAGIC_SKIP;
+    use revm::{context::Cfg, primitives::hardfork::SpecId};
 
     #[test]
     fn cheatcode_skip_payload_is_classified_as_skip() {
@@ -1351,5 +1352,31 @@ mod tests {
 
         let err = raw.into_evm_error(None);
         assert!(matches!(err, EvmError::Execution(_)));
+    }
+
+    #[test]
+    fn set_spec_id_updates_spec_dependent_cfg_state() {
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default().build(
+            EvmEnvFor::<EthEvmNetwork>::default(),
+            TxEnvFor::<EthEvmNetwork>::default(),
+            backend,
+        );
+
+        executor.evm_env_mut().cfg_env.set_spec_and_mainnet_gas_params(SpecId::HOMESTEAD);
+        assert_eq!(
+            executor.evm_env().cfg_env.gas_params(),
+            &revm::context_interface::cfg::GasParams::new_spec(SpecId::HOMESTEAD),
+        );
+        assert!(!executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+
+        executor.set_spec_id(SpecId::AMSTERDAM);
+
+        assert_eq!(executor.spec_id(), SpecId::AMSTERDAM);
+        assert_eq!(
+            executor.evm_env().cfg_env.gas_params(),
+            &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
+        );
+        assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
     }
 }

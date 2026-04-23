@@ -19,6 +19,7 @@ use crate::{
                 storage::MinedTransactionReceipt,
             },
             notifications::{NewBlockNotification, NewBlockNotifications},
+            tempo::AnvilStorageProvider,
             time::{TimeManager, utc_from_secs},
             validate::TransactionValidator,
         },
@@ -75,6 +76,7 @@ use alloy_rpc_types::{
         geth::{
             FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerType,
             GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, NoopFrame,
+            TraceResult,
         },
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
@@ -139,6 +141,11 @@ use std::{
 use storage::{Blockchain, DEFAULT_HISTORY_LIMIT, MinedTransaction};
 use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
+use tempo_precompiles::{
+    storage::StorageCtx,
+    tip_fee_manager::{IFeeManager, TipFeeManager},
+    tip20::{ISSUER_ROLE, ITIP20, TIP20Token},
+};
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tempo_revm::{
     TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext,
@@ -483,12 +490,12 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns true if op-stack deposits are active
-    pub const fn is_optimism(&self) -> bool {
+    pub fn is_optimism(&self) -> bool {
         self.networks.is_optimism()
     }
 
     /// Returns true if Tempo network mode is active
-    pub const fn is_tempo(&self) -> bool {
+    pub fn is_tempo(&self) -> bool {
         self.networks.is_tempo()
     }
 
@@ -582,7 +589,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if op-stack deposits are not active
-    pub const fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
+    pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
             return Ok(());
         }
@@ -590,7 +597,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if Tempo transactions are not active
-    pub const fn ensure_tempo_active(&self) -> Result<(), BlockchainError> {
+    pub fn ensure_tempo_active(&self) -> Result<(), BlockchainError> {
         if self.is_tempo() {
             return Ok(());
         }
@@ -3472,6 +3479,72 @@ where
         Ok(GethTrace::Default(Default::default()))
     }
 
+    /// Returns geth-style traces for all transactions in a block by hash.
+    pub async fn debug_trace_block_by_hash(
+        &self,
+        block_hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        if let Some(block) = self.blockchain.get_block_by_hash(&block_hash) {
+            let mut traces = Vec::new();
+            for tx in &block.body.transactions {
+                let tx_hash = tx.hash();
+                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
+                    Ok(trace) => {
+                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
+                    }
+                    Err(error) => {
+                        traces.push(TraceResult::Error {
+                            error: error.to_string(),
+                            tx_hash: Some(tx_hash),
+                        });
+                    }
+                }
+            }
+            return Ok(traces);
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.debug_trace_block_by_hash(block_hash, opts).await?);
+        }
+
+        Err(BlockchainError::BlockNotFound)
+    }
+
+    /// Returns geth-style traces for all transactions in a block by number.
+    pub async fn debug_trace_block_by_number(
+        &self,
+        block_number: BlockNumber,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, BlockchainError> {
+        let number = self.convert_block_number(Some(block_number));
+
+        if let Some(block) = self.get_block(BlockId::Number(BlockNumber::Number(number))) {
+            let mut traces = Vec::new();
+            for tx in &block.body.transactions {
+                let tx_hash = tx.hash();
+                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
+                    Ok(trace) => {
+                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
+                    }
+                    Err(error) => {
+                        traces.push(TraceResult::Error {
+                            error: error.to_string(),
+                            tx_hash: Some(tx_hash),
+                        });
+                    }
+                }
+            }
+            return Ok(traces);
+        }
+
+        if let Some(fork) = self.get_fork() {
+            return Ok(fork.debug_trace_block_by_number(number, opts).await?);
+        }
+
+        Err(BlockchainError::BlockNotFound)
+    }
+
     fn geth_trace(
         &self,
         tx: &MinedTransaction<N>,
@@ -4061,6 +4134,100 @@ impl Backend<FoundryNetwork> {
         }
 
         Ok(None)
+    }
+
+    /// Sets the fee token for a user address (Tempo-only).
+    pub async fn set_fee_token(&self, user: Address, token: Address) -> DatabaseResult<()> {
+        let hardfork = self.hardfork();
+        let chain_id = self.evm_env.read().cfg_env.chain_id;
+        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
+        let block_number: u64 = self.evm_env.read().block_env.number.to();
+        let mut db = self.db.write().await;
+        let mut storage = AnvilStorageProvider::new(
+            &mut **db,
+            chain_id,
+            timestamp,
+            block_number,
+            hardfork.into(),
+        );
+        StorageCtx::enter(&mut storage, || {
+            let mut fee_manager = TipFeeManager::new();
+            fee_manager
+                .set_user_token(user, IFeeManager::setUserTokenCall { token })
+                .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))
+        })
+    }
+
+    /// Sets the fee token for a validator address (Tempo-only).
+    pub async fn set_validator_fee_token(
+        &self,
+        validator: Address,
+        token: Address,
+    ) -> DatabaseResult<()> {
+        let hardfork = self.hardfork();
+        let chain_id = self.evm_env.read().cfg_env.chain_id;
+        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
+        let block_number: u64 = self.evm_env.read().block_env.number.to();
+        let mut db = self.db.write().await;
+        let mut storage = AnvilStorageProvider::new(
+            &mut **db,
+            chain_id,
+            timestamp,
+            block_number,
+            hardfork.into(),
+        );
+        StorageCtx::enter(&mut storage, || {
+            let mut fee_manager = TipFeeManager::new();
+            // Use Address::ZERO as beneficiary so the check `sender != beneficiary` passes
+            fee_manager
+                .set_validator_token(
+                    validator,
+                    IFeeManager::setValidatorTokenCall { token },
+                    Address::ZERO,
+                )
+                .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))
+        })
+    }
+
+    /// Mints FeeAMM liquidity for a token pair (Tempo-only).
+    pub async fn set_fee_amm_liquidity(
+        &self,
+        user_token: Address,
+        validator_token: Address,
+        amount: U256,
+    ) -> DatabaseResult<()> {
+        let hardfork = self.hardfork();
+        let chain_id = self.evm_env.read().cfg_env.chain_id;
+        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
+        let block_number: u64 = self.evm_env.read().block_env.number.to();
+        let admin = Address::ZERO;
+        let mut db = self.db.write().await;
+        let mut storage = AnvilStorageProvider::new(
+            &mut **db,
+            chain_id,
+            timestamp,
+            block_number,
+            hardfork.into(),
+        );
+        StorageCtx::enter(&mut storage, || {
+            // Mint the required tokens to admin so it can provide liquidity.
+            // grant_role_internal bypasses the caller check, matching genesis seeding.
+            for &token_address in &[user_token, validator_token] {
+                let mut token = TIP20Token::from_address(token_address)
+                    .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
+                token
+                    .grant_role_internal(admin, *ISSUER_ROLE)
+                    .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
+                token
+                    .mint(admin, ITIP20::mintCall { to: admin, amount })
+                    .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
+            }
+            let mut fee_manager = TipFeeManager::new();
+            fee_manager
+                .mint(admin, user_token, validator_token, amount, admin)
+                .map_err(|e| DatabaseError::AnyRequest(Arc::new(eyre::eyre!("{e}"))))?;
+            Ok(())
+        })
     }
 }
 
