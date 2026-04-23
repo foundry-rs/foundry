@@ -1013,10 +1013,6 @@ async fn test_increase_time_by_zero() {
     let init_number = init_blk.header.number;
     let init_timestamp = init_blk.header.timestamp;
 
-    // `evm_increase_time(0)` adds zero to the offset but does not pin an exact
-    // next-block timestamp, so wall-clock drift can cause the mined block to be
-    // 1 s ahead.  Use `evm_set_next_block_timestamp` to deterministically keep
-    // the same timestamp as the previous block.
 api.evm_set_next_block_timestamp(init_timestamp).unwrap();
 
     api.mine_one().await;
