@@ -20,7 +20,7 @@ use alloy_rpc_types::{
     FeeHistory, Filter, Log,
     simulate::{SimulatePayload, SimulatedBlock},
     trace::{
-        geth::{GethDebugTracingOptions, GethTrace},
+        geth::{GethDebugTracingOptions, GethTrace, TraceResult},
         parity::{LocalizedTransactionTrace as Trace, TraceResultsWithTransactionHash, TraceType},
     },
 };
@@ -97,8 +97,8 @@ impl<N: Network> ClientFork<N> {
         self.config.read().block_hash
     }
 
-    pub fn eth_rpc_url(&self) -> String {
-        self.config.read().eth_rpc_url.clone()
+    pub fn eth_rpc_url(&self) -> Option<String> {
+        self.config.read().eth_rpc_url().map(|s| s.to_string())
     }
 
     pub fn chain_id(&self) -> u64 {
@@ -242,6 +242,36 @@ impl<N: Network> ClientFork<N> {
         self.provider().debug_code_by_hash(code_hash, block_id).await
     }
 
+    pub async fn debug_trace_block_by_hash(
+        &self,
+        block_hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, TransportError> {
+        if let Some(traces) = self.storage_read().geth_block_traces.get(&block_hash).cloned() {
+            return Ok(traces);
+        }
+
+        let trace_results = self.provider().debug_trace_block_by_hash(block_hash, opts).await?;
+
+        let mut storage = self.storage_write();
+        storage.geth_block_traces.insert(block_hash, trace_results.clone());
+
+        Ok(trace_results)
+    }
+
+    pub async fn debug_trace_block_by_number(
+        &self,
+        number: u64,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, TransportError> {
+        if let Ok(Some(block)) = self.provider().get_block_by_number(number.into()).await {
+            let block_hash = block.header().hash();
+            return self.debug_trace_block_by_hash(block_hash, opts).await;
+        }
+
+        self.provider().debug_trace_block_by_number(number.into(), opts).await
+    }
+
     pub async fn trace_block(&self, number: u64) -> Result<Vec<Trace>, TransportError> {
         if let Some(traces) = self.storage_read().block_traces.get(&number).cloned() {
             return Ok(traces);
@@ -269,7 +299,7 @@ impl<N: Network> ClientFork<N> {
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     pub async fn reset(
         &self,
-        url: Option<String>,
+        urls: Vec<String>,
         block_number: impl Into<BlockId>,
     ) -> Result<(), BlockchainError> {
         let block_number = block_number.into();
@@ -277,12 +307,12 @@ impl<N: Network> ClientFork<N> {
             self.database
                 .write()
                 .await
-                .maybe_reset(url.clone(), block_number)
+                .maybe_reset(urls.clone(), block_number)
                 .map_err(BlockchainError::Internal)?;
         }
 
-        if let Some(url) = url {
-            self.config.write().update_url(url)?;
+        if !urls.is_empty() {
+            self.config.write().update_urls(urls)?;
             let override_chain_id = self.config.read().override_chain_id;
             let chain_id = if let Some(chain_id) = override_chain_id {
                 chain_id
@@ -442,8 +472,10 @@ impl<N: Network> ClientFork<N> {
         &self,
         hash: B256,
     ) -> Result<Option<N::BlockResponse>, TransportError> {
-        if let Some(block) = self.storage_read().blocks.get(&hash).cloned() {
-            return Ok(Some(self.convert_to_full_block(block)));
+        if let Some(block) = self.storage_read().blocks.get(&hash).cloned()
+            && let Some(block) = self.convert_to_full_block(block)
+        {
+            return Ok(Some(block));
         }
         self.fetch_full_block(hash).await
     }
@@ -479,8 +511,9 @@ impl<N: Network> ClientFork<N> {
             .get(&block_number)
             .copied()
             .and_then(|hash| self.storage_read().blocks.get(&hash).cloned())
+            && let Some(block) = self.convert_to_full_block(block)
         {
-            return Ok(Some(self.convert_to_full_block(block)));
+            return Ok(Some(block));
         }
 
         self.fetch_full_block(block_number).await
@@ -509,15 +542,15 @@ impl<N: Network> ClientFork<N> {
     }
 
     /// Converts a block of hashes into a full block
-    fn convert_to_full_block(&self, mut block: N::BlockResponse) -> N::BlockResponse {
+    fn convert_to_full_block(&self, mut block: N::BlockResponse) -> Option<N::BlockResponse> {
         let storage = self.storage.read();
         let transactions = block
             .transactions()
             .hashes()
-            .filter_map(|hash| storage.transactions.get(&hash).cloned())
-            .collect();
+            .map(|hash| storage.transactions.get(&hash).cloned())
+            .collect::<Option<Vec<_>>>()?;
         *block.transactions_mut() = BlockTransactions::Full(transactions);
-        block
+        Some(block)
     }
 }
 
@@ -626,7 +659,10 @@ impl ClientFork {
 /// Contains all fork metadata
 #[derive(Clone, Debug)]
 pub struct ClientForkConfig<N: Network = AnyNetwork> {
-    pub eth_rpc_url: String,
+    /// All fork URLs. The first entry is the primary endpoint.
+    /// When multiple URLs are present, requests are distributed using
+    /// round-robin load balancing with retry-based failover.
+    pub fork_urls: Vec<String>,
     /// The block number of the forked block
     pub block_number: u64,
     /// The hash of the forked block
@@ -652,6 +688,8 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub backoff: Duration,
     /// available CUPS
     pub compute_units_per_second: u64,
+    /// Headers to include with RPC requests
+    pub headers: Vec<String>,
     /// total difficulty of the chain until this block
     pub total_difficulty: U256,
     /// Transactions to force include in the forked chain
@@ -659,27 +697,40 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
 }
 
 impl<N: Network> ClientForkConfig<N> {
-    /// Updates the provider URL
+    /// Returns the primary RPC URL (first entry in `fork_urls`).
+    pub fn eth_rpc_url(&self) -> Option<&str> {
+        self.fork_urls.first().map(|s| s.as_str())
+    }
+
+    /// Updates the provider URLs
     ///
     /// # Errors
     ///
     /// This will fail if no new provider could be established (erroneous URL)
-    fn update_url(&mut self, url: String) -> Result<(), BlockchainError> {
-        // let interval = self.provider.get_interval();
-        self.provider = Arc::new(
-            ProviderBuilder::<N>::new(url.as_str())
-                .timeout(self.timeout)
-                // .timeout_retry(self.retries)
-                .max_retry(self.retries)
-                .initial_backoff(self.backoff.as_millis() as u64)
-                .compute_units_per_second(self.compute_units_per_second)
-                .build()
-                .map_err(|e| BlockchainError::InvalidUrl(format!("{url}: {e}")))?, /* .interval(interval), */
-        );
-        trace!(target: "fork", "Updated rpc url  {}", url);
-        self.eth_rpc_url = url;
+    fn update_urls(&mut self, urls: Vec<String>) -> Result<(), BlockchainError> {
+        let primary = urls.first().ok_or_else(|| {
+            BlockchainError::InvalidUrl("at least one fork URL required".to_string())
+        })?;
+
+        let builder = ProviderBuilder::<N>::new(primary.as_str())
+            .timeout(self.timeout)
+            .max_retry(self.retries)
+            .initial_backoff(self.backoff.as_millis() as u64)
+            .compute_units_per_second(self.compute_units_per_second)
+            .headers(self.headers.clone());
+
+        self.provider = Arc::new(if urls.len() > 1 {
+            builder
+                .build_fallback(urls.clone())
+                .map_err(|e| BlockchainError::InvalidUrl(format!("{primary}: {e}")))?
+        } else {
+            builder.build().map_err(|e| BlockchainError::InvalidUrl(format!("{primary}: {e}")))?
+        });
+        trace!(target: "fork", "Updated fork urls: {:?}", urls);
+        self.fork_urls = urls;
         Ok(())
     }
+
     /// Updates the block forked off `(block number, block hash, timestamp)`
     pub fn update_block(
         &mut self,
@@ -711,6 +762,7 @@ pub struct ForkedStorage<N: Network = AnyNetwork> {
     pub transaction_traces: FbHashMap<32, Vec<Trace>>,
     pub logs: HashMap<Filter, Vec<Log>>,
     pub geth_transaction_traces: FbHashMap<32, GethTrace>,
+    pub geth_block_traces: FbHashMap<32, Vec<TraceResult>>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub block_receipts: HashMap<u64, Vec<FoundryTxReceipt>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
@@ -727,6 +779,7 @@ impl<N: Network> Default for ForkedStorage<N> {
             transaction_traces: Default::default(),
             logs: Default::default(),
             geth_transaction_traces: Default::default(),
+            geth_block_traces: Default::default(),
             block_traces: Default::default(),
             block_receipts: Default::default(),
             code_at: Default::default(),

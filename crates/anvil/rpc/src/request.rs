@@ -84,7 +84,7 @@ impl From<RequestParams> for serde_json::Value {
     }
 }
 
-fn no_params() -> RequestParams {
+const fn no_params() -> RequestParams {
     RequestParams::None
 }
 
@@ -113,7 +113,7 @@ impl fmt::Display for Id {
     }
 }
 
-fn null_id() -> Id {
+const fn null_id() -> Id {
     Id::Null
 }
 

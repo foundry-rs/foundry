@@ -29,7 +29,7 @@ pub struct SolMacroGen {
 }
 
 impl SolMacroGen {
-    pub fn new(path: PathBuf, name: String) -> Self {
+    pub const fn new(path: PathBuf, name: String) -> Self {
         Self { path, name, expansion: None }
     }
 
@@ -53,7 +53,7 @@ pub struct MultiSolMacroGen {
 }
 
 impl MultiSolMacroGen {
-    pub fn new(instances: Vec<SolMacroGen>) -> Self {
+    pub const fn new(instances: Vec<SolMacroGen>) -> Self {
         Self { instances }
     }
 

@@ -22,7 +22,6 @@ use foundry_evm_core::{
         BLS12_MAP_FP2_TO_G2, BLS12_PAIRING_CHECK, EC_ADD, EC_MUL, EC_PAIRING, EC_RECOVER, IDENTITY,
         MOD_EXP, P256_VERIFY, POINT_EVALUATION, RIPEMD_160, SHA_256,
     },
-    tempo::{ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, THETA_USD_ADDRESS},
 };
 use itertools::Itertools;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
@@ -84,7 +83,7 @@ impl CallTraceDecoderBuilder {
 
     /// Sets the verbosity level of the decoder.
     #[inline]
-    pub fn with_verbosity(mut self, level: u8) -> Self {
+    pub const fn with_verbosity(mut self, level: u8) -> Self {
         self.decoder.verbosity = level;
         self
     }
@@ -98,14 +97,14 @@ impl CallTraceDecoderBuilder {
 
     /// Sets the signature identifier for events and functions.
     #[inline]
-    pub fn with_label_disabled(mut self, disable_alias: bool) -> Self {
+    pub const fn with_label_disabled(mut self, disable_alias: bool) -> Self {
         self.decoder.disable_labels = disable_alias;
         self
     }
 
     /// Sets the chain ID for network-specific precompile detection.
     #[inline]
-    pub fn with_chain_id(mut self, chain_id: Option<u64>) -> Self {
+    pub const fn with_chain_id(mut self, chain_id: Option<u64>) -> Self {
         self.decoder.chain_id = chain_id;
         self
     }
@@ -220,9 +219,6 @@ impl CallTraceDecoder {
                 (VALIDATOR_CONFIG_ADDRESS, "ValidatorConfig".to_string()),
                 (ACCOUNT_KEYCHAIN_ADDRESS, "AccountKeychain".to_string()),
                 (PATH_USD_ADDRESS, "PathUSD".to_string()),
-                (ALPHA_USD_ADDRESS, "AlphaUSD".to_string()),
-                (BETA_USD_ADDRESS, "BetaUSD".to_string()),
-                (THETA_USD_ADDRESS, "ThetaUSD".to_string()),
             ]),
             receive_contracts: Default::default(),
             fallback_contracts: Default::default(),
@@ -362,7 +358,7 @@ impl CallTraceDecoder {
         self.revert_decoder.push_error(error);
     }
 
-    pub fn without_label(&mut self, disable: bool) {
+    pub const fn without_label(&mut self, disable: bool) {
         self.disable_labels = disable;
     }
 

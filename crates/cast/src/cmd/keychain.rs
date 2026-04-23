@@ -1,9 +1,9 @@
 use alloy_ens::NameOrAddress;
 use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, U256, hex, keccak256};
-use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
+use alloy_provider::ProviderBuilder as AlloyProviderBuilder;
 use alloy_signer::Signer;
-use alloy_sol_types::{SolCall, sol};
+use alloy_sol_types::SolCall;
 use chrono::DateTime;
 use clap::Parser;
 use eyre::Result;
@@ -12,63 +12,26 @@ use foundry_cli::{
     utils::LoadConfig,
 };
 use foundry_common::{
-    FoundryTransactionBuilder,
     provider::ProviderBuilder,
     shell,
     tempo::{self, KeyType, KeysFile, WalletType, read_tempo_keys_file, tempo_keys_path},
 };
+use foundry_evm::hardfork::TempoHardfork;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_contracts::precompiles::{
     ACCOUNT_KEYCHAIN_ADDRESS, IAccountKeychain,
-    IAccountKeychain::{KeyInfo, SignatureType, TokenLimit},
+    IAccountKeychain::{
+        CallScope, KeyInfo, KeyRestrictions, LegacyTokenLimit, SelectorRule, SignatureType,
+        TokenLimit,
+    },
+    account_keychain::{authorizeKeyCall, legacyAuthorizeKeyCall},
 };
 use yansi::Paint;
 
-use crate::tx::{CastTxBuilder, CastTxSender, SendTxOpts};
-
-// Extended AccountKeychain ABI for functions not yet in the pinned tempo-contracts.
-// These types mirror the T3+ precompile interface.
-sol! {
-    #[derive(Debug)]
-    struct SelectorRule {
-        bytes4 selector;
-        address[] recipients;
-    }
-
-    #[derive(Debug)]
-    struct CallScope {
-        address target;
-        SelectorRule[] selectorRules;
-    }
-
-    #[derive(Debug)]
-    struct ExtTokenLimit {
-        address token;
-        uint256 amount;
-    }
-
-    #[derive(Debug)]
-    struct KeyRestrictions {
-        uint64 expiry;
-        bool enforceLimits;
-        ExtTokenLimit[] limits;
-        bool allowAnyCalls;
-        CallScope[] allowedCalls;
-    }
-
-    function authorizeKeyWithRestrictions(
-        address keyId,
-        uint8 signatureType,
-        KeyRestrictions calldata config
-    ) external;
-
-    function setAllowedCalls(
-        address keyId,
-        CallScope[] calldata scopes
-    ) external;
-
-    function removeAllowedCalls(address keyId, address target) external;
-}
+use crate::{
+    cmd::send::{cast_send, cast_send_with_access_key},
+    tx::{CastTxBuilder, SendTxOpts},
+};
 
 /// Tempo keychain management commands.
 ///
@@ -128,10 +91,10 @@ pub enum KeychainSubcommand {
         scope: Vec<CallScope>,
 
         /// Call scope restrictions as a JSON array.
-        /// Format: [{"target":"0x...","selectors":["transfer"]}] or
-        /// [{"target":"0x...","selectors":[{"selector":"transfer","recipients":["0x..."]}]}]
-        #[arg(long = "scopes", value_parser = parse_scopes_json, conflicts_with = "scope")]
-        scopes_json: Option<Vec<CallScope>>,
+        /// Format: `[{"target":"0x...","selectors":["transfer"]}]` or
+        /// `[{"target":"0x...","selectors":[{"selector":"transfer","recipients":["0x..."]}]}]`
+        #[arg(long = "scopes", value_parser = parse_scopes_json_wrapped, conflicts_with = "scope")]
+        scopes_json: Option<ScopesJson>,
 
         #[command(flatten)]
         tx: TransactionOpts,
@@ -231,7 +194,7 @@ fn parse_signature_type(s: &str) -> Result<SignatureType, String> {
     }
 }
 
-fn signature_type_name(t: &SignatureType) -> &'static str {
+const fn signature_type_name(t: &SignatureType) -> &'static str {
     match t {
         SignatureType::Secp256k1 => "secp256k1",
         SignatureType::P256 => "p256",
@@ -240,7 +203,7 @@ fn signature_type_name(t: &SignatureType) -> &'static str {
     }
 }
 
-fn key_type_name(t: &KeyType) -> &'static str {
+const fn key_type_name(t: &KeyType) -> &'static str {
     match t {
         KeyType::Secp256k1 => "secp256k1",
         KeyType::P256 => "p256",
@@ -248,7 +211,7 @@ fn key_type_name(t: &KeyType) -> &'static str {
     }
 }
 
-fn wallet_type_name(t: &WalletType) -> &'static str {
+const fn wallet_type_name(t: &WalletType) -> &'static str {
     match t {
         WalletType::Local => "local",
         WalletType::Passkey => "passkey",
@@ -264,7 +227,7 @@ fn parse_limit(s: &str) -> Result<TokenLimit, String> {
         token_str.parse().map_err(|e| format!("invalid token address '{token_str}': {e}"))?;
     let amount: U256 =
         amount_str.parse().map_err(|e| format!("invalid amount '{amount_str}': {e}"))?;
-    Ok(TokenLimit { token, amount })
+    Ok(TokenLimit { token, amount, period: 0 })
 }
 
 /// Parse a `--scope TARGET[:SELECTORS[@RECIPIENTS]]` flag value.
@@ -329,8 +292,12 @@ fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
     Ok(rules)
 }
 
-/// Parse a selector string: either a 4-byte hex (`0xd09de08a`) or a function name
-/// (computed as the first 4 bytes of keccak256 of `name()`).
+/// Parse a selector string: a 4-byte hex (`0xd09de08a`), a full signature
+/// (`transfer(address,uint256)`), or a well-known TIP-20 function name shorthand.
+///
+/// Recognized shorthands: `transfer`, `approve`, `transferFrom`, `transferWithMemo`,
+/// `transferFromWithMemo`. These resolve to the standard ERC20/TIP-20 signatures.
+/// Unknown names without parentheses are hashed as `name()`.
 fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
     let s = s.trim();
     if s.starts_with("0x") || s.starts_with("0X") {
@@ -343,7 +310,21 @@ fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
         arr.copy_from_slice(&bytes);
         Ok(arr)
     } else {
-        let sig = if s.contains('(') { s.to_string() } else { format!("{s}()") };
+        // Expand well-known TIP-20 shorthands to full signatures.
+        let sig = if s.contains('(') {
+            s.to_string()
+        } else {
+            match s {
+                "transfer" => "transfer(address,uint256)".to_string(),
+                "approve" => "approve(address,uint256)".to_string(),
+                "transferFrom" => "transferFrom(address,address,uint256)".to_string(),
+                "transferWithMemo" => "transferWithMemo(address,uint256,bytes32)".to_string(),
+                "transferFromWithMemo" => {
+                    "transferFromWithMemo(address,address,uint256,bytes32)".to_string()
+                }
+                _ => format!("{s}()"),
+            }
+        };
         let hash = keccak256(sig.as_bytes());
         let mut arr = [0u8; 4];
         arr.copy_from_slice(&hash[..4]);
@@ -364,7 +345,15 @@ struct JsonCallScope {
 #[serde(untagged)]
 enum JsonSelectorEntry {
     Name(String),
-    WithRecipients { selector: String, recipients: Vec<Address> },
+    WithRecipients(JsonSelectorWithRecipients),
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JsonSelectorWithRecipients {
+    selector: String,
+    #[serde(default)]
+    recipients: Vec<Address>,
 }
 
 /// Parse `--scopes` JSON flag value.
@@ -381,9 +370,7 @@ fn parse_scopes_json(s: &str) -> Result<Vec<CallScope>, String> {
                 for sel_entry in sels {
                     let (selector_str, recipients) = match sel_entry {
                         JsonSelectorEntry::Name(name) => (name, vec![]),
-                        JsonSelectorEntry::WithRecipients { selector, recipients } => {
-                            (selector, recipients)
-                        }
+                        JsonSelectorEntry::WithRecipients(r) => (r.selector, r.recipients),
                     };
                     let selector = parse_selector_bytes(&selector_str)
                         .map_err(|e| format!("in --scopes JSON: {e}"))?;
@@ -396,6 +383,15 @@ fn parse_scopes_json(s: &str) -> Result<Vec<CallScope>, String> {
     }
 
     Ok(scopes)
+}
+
+/// Newtype wrapper for parsed `--scopes` JSON so clap can treat it as a single value.
+#[derive(Debug, Clone)]
+pub struct ScopesJson(Vec<CallScope>);
+
+/// Parse `--scopes` JSON flag value into the newtype wrapper.
+fn parse_scopes_json_wrapped(s: &str) -> Result<ScopesJson, String> {
+    parse_scopes_json(s).map(ScopesJson)
 }
 
 impl KeychainSubcommand {
@@ -417,8 +413,11 @@ impl KeychainSubcommand {
                 tx,
                 send_tx,
             } => {
-                let all_scopes =
-                    if let Some(json_scopes) = scopes_json { json_scopes } else { scope };
+                let all_scopes = if let Some(ScopesJson(json_scopes)) = scopes_json {
+                    json_scopes
+                } else {
+                    scope
+                };
                 run_authorize(
                     key_address,
                     key_type,
@@ -529,15 +528,18 @@ async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) 
     sh_println!("Wallet:         {wallet_address}")?;
     sh_println!("Key:            {key_address}")?;
 
+    if info.isRevoked {
+        sh_println!("Status:         {} revoked", "✗".red())?;
+        return Ok(());
+    }
+
     if !provisioned {
         sh_println!("Status:         {} not provisioned", "✗".red())?;
         return Ok(());
     }
 
-    // Status line: combine provisioned + revoked into a single indicator.
-    if info.isRevoked {
-        sh_println!("Status:         {} revoked", "✗".red())?;
-    } else {
+    // Status line: active key.
+    {
         sh_println!("Status:         {} active", "✓".green())?;
     }
 
@@ -579,38 +581,32 @@ async fn run_authorize(
 ) -> Result<()> {
     let enforce = enforce_limits || !limits.is_empty();
 
-    let calldata = if allowed_calls.is_empty() {
-        // Use the legacy authorizeKey when no scopes are needed.
-        IAccountKeychain::authorizeKeyCall {
+    let config = send_tx.eth.load_config()?;
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+
+    let calldata = if provider.is_hardfork_active(TempoHardfork::T3).await? {
+        // T3+ authorizeKey(address,SignatureType,KeyRestrictions)
+        let restrictions = KeyRestrictions {
+            expiry,
+            enforceLimits: enforce,
+            limits,
+            allowAnyCalls: allowed_calls.is_empty(),
+            allowedCalls: allowed_calls,
+        };
+        authorizeKeyCall { keyId: key_address, signatureType: key_type, config: restrictions }
+            .abi_encode()
+    } else {
+        // Legacy (pre-T3) authorizeKey(address,SignatureType,uint64,bool,LegacyTokenLimit[])
+        let legacy_limits: Vec<LegacyTokenLimit> = limits
+            .into_iter()
+            .map(|l| LegacyTokenLimit { token: l.token, amount: l.amount })
+            .collect();
+        legacyAuthorizeKeyCall {
             keyId: key_address,
             signatureType: key_type,
             expiry,
             enforceLimits: enforce,
-            limits,
-        }
-        .abi_encode()
-    } else {
-        // Use the T3+ authorizeKey overload with KeyRestrictions when scopes are provided.
-        let sig_type_u8 = match key_type {
-            SignatureType::Secp256k1 => 0u8,
-            SignatureType::P256 => 1u8,
-            SignatureType::WebAuthn => 2u8,
-            _ => eyre::bail!("unknown signature type"),
-        };
-        let restrictions = KeyRestrictions {
-            expiry,
-            enforceLimits: enforce,
-            limits: limits
-                .into_iter()
-                .map(|l| ExtTokenLimit { token: l.token, amount: l.amount })
-                .collect(),
-            allowAnyCalls: false,
-            allowedCalls: allowed_calls,
-        };
-        authorizeKeyWithRestrictionsCall {
-            keyId: key_address,
-            signatureType: sig_type_u8,
-            config: restrictions,
+            limits: legacy_limits,
         }
         .abi_encode()
     };
@@ -638,8 +634,16 @@ async fn run_remaining_limit(
     let config = rpc.load_config()?;
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
 
-    let remaining: U256 =
-        provider.get_keychain_remaining_limit(wallet_address, key_address, token).await?;
+    let remaining: U256 = if provider.is_hardfork_active(TempoHardfork::T3).await? {
+        provider.get_keychain_remaining_limit(wallet_address, key_address, token).await?
+    } else {
+        // Pre-T3: use the legacy getRemainingLimit(address,address,address)
+        provider
+            .account_keychain()
+            .getRemainingLimit(wallet_address, key_address, token)
+            .call()
+            .await?
+    };
 
     if shell::is_json() {
         sh_println!("{}", serde_json::to_string(&remaining.to_string())?)?;
@@ -674,7 +678,8 @@ async fn run_set_scope(
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
 ) -> Result<()> {
-    let calldata = setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
+    let calldata =
+        IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
     send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
 
@@ -685,7 +690,8 @@ async fn run_remove_scope(
     tx_opts: TransactionOpts,
     send_tx: SendTxOpts,
 ) -> Result<()> {
-    let calldata = removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
+    let calldata =
+        IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
     send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
 
@@ -714,23 +720,19 @@ async fn send_keychain_tx(
         .await?;
 
     if let Some(ref ak) = tempo_access_key {
-        let signer = signer.as_ref().expect("signer required for access key");
-        let from = ak.wallet_address;
-        let (tx, _) = builder.build(from).await?;
-
-        let raw_tx = tx
-            .sign_with_access_key(
-                &provider,
-                signer,
-                ak.wallet_address,
-                ak.key_address,
-                ak.key_authorization.as_ref(),
-            )
-            .await?;
-
-        let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
-        let cast = CastTxSender::new(&provider);
-        cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await?;
+        let signer =
+            signer.as_ref().ok_or_else(|| eyre::eyre!("signer required for access key"))?;
+        let (tx, _) = builder.build(ak.wallet_address).await?;
+        cast_send_with_access_key(
+            &provider,
+            tx,
+            signer,
+            ak,
+            send_tx.cast_async,
+            send_tx.confirmations,
+            timeout,
+        )
+        .await?;
     } else {
         let signer = match signer {
             Some(s) => s,
@@ -744,10 +746,8 @@ async fn send_keychain_tx(
             .wallet(wallet)
             .connect_provider(&provider);
 
-        let cast = CastTxSender::new(provider);
-        let pending_tx = cast.send(tx).await?;
-        let tx_hash = *pending_tx.inner().tx_hash();
-        cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await?;
+        cast_send(provider, tx, send_tx.cast_async, send_tx.sync, send_tx.confirmations, timeout)
+            .await?;
     }
 
     Ok(())
@@ -837,4 +837,134 @@ fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
         "has_authorization": entry.key_authorization.is_some(),
         "limits": limits,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_parse_selector_bytes_named() {
+        let sel = parse_selector_bytes("transfer").unwrap();
+        assert_eq!(sel, keccak256(b"transfer(address,uint256)")[..4]);
+
+        let sel = parse_selector_bytes("approve").unwrap();
+        assert_eq!(sel, keccak256(b"approve(address,uint256)")[..4]);
+
+        let sel = parse_selector_bytes("transferWithMemo").unwrap();
+        assert_eq!(sel, keccak256(b"transferWithMemo(address,uint256,bytes32)")[..4]);
+    }
+
+    #[test]
+    fn test_parse_selector_bytes_hex() {
+        let sel = parse_selector_bytes("0xaabbccdd").unwrap();
+        assert_eq!(sel, [0xaa, 0xbb, 0xcc, 0xdd]);
+
+        let sel = parse_selector_bytes("0xd09de08a").unwrap();
+        assert_eq!(sel, [0xd0, 0x9d, 0xe0, 0x8a]);
+    }
+
+    #[test]
+    fn test_parse_selector_bytes_hex_invalid() {
+        assert!(parse_selector_bytes("0xaabb").is_err());
+        assert!(parse_selector_bytes("0xaabbccddee").is_err());
+        assert!(parse_selector_bytes("0xzzzzzzzz").is_err());
+    }
+
+    #[test]
+    fn test_parse_selector_bytes_full_signature() {
+        let sel = parse_selector_bytes("increment()").unwrap();
+        assert_eq!(sel, keccak256(b"increment()")[..4]);
+    }
+
+    #[test]
+    fn test_parse_selector_rules_simple() {
+        let rules = parse_selector_rules("transfer,approve").unwrap();
+        assert_eq!(rules.len(), 2);
+        assert!(rules[0].recipients.is_empty());
+        assert!(rules[1].recipients.is_empty());
+    }
+
+    #[test]
+    fn test_parse_selector_rules_with_recipient() {
+        let rules =
+            parse_selector_rules("transfer@0x1111111111111111111111111111111111111111").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].recipients.len(), 1);
+        assert_eq!(
+            rules[0].recipients[0],
+            Address::from_str("0x1111111111111111111111111111111111111111").unwrap()
+        );
+    }
+
+    #[test]
+    fn test_parse_selector_rules_hex_with_recipient() {
+        let rules =
+            parse_selector_rules("0xaabbccdd@0x1111111111111111111111111111111111111111").unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
+        assert_eq!(rules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_scope_target_only() {
+        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap();
+        assert_eq!(
+            scope.target,
+            Address::from_str("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap()
+        );
+        assert!(scope.selectorRules.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scope_with_selectors() {
+        let scope =
+            parse_scope("0x20c0000000000000000000000000000000000001:transfer,approve").unwrap();
+        assert_eq!(scope.selectorRules.len(), 2);
+        assert!(scope.selectorRules[0].recipients.is_empty());
+        assert!(scope.selectorRules[1].recipients.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scope_hex_selector() {
+        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xaabbccdd").unwrap();
+        assert_eq!(scope.selectorRules.len(), 1);
+        assert_eq!(scope.selectorRules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
+        assert!(scope.selectorRules[0].recipients.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scope_selector_with_recipient() {
+        let scope = parse_scope(
+            "0x20c0000000000000000000000000000000000001:transfer@0x1111111111111111111111111111111111111111",
+        )
+        .unwrap();
+        assert_eq!(scope.selectorRules.len(), 1);
+        assert_eq!(scope.selectorRules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_scopes_json_plain() {
+        let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":["transfer","approve"]},{"target":"0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D"}]"#;
+        let result = parse_scopes_json(json).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].selectorRules.len(), 2);
+        assert!(result[1].selectorRules.is_empty());
+    }
+
+    #[test]
+    fn test_parse_scopes_json_with_recipients() {
+        let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":[{"selector":"transfer","recipients":["0x1111111111111111111111111111111111111111"]}]}]"#;
+        let result = parse_scopes_json(json).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].selectorRules.len(), 1);
+        assert_eq!(result[0].selectorRules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_scopes_json_deny_unknown_fields() {
+        let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":[{"selector":"transfer","recipients":[],"bogus":true}]}]"#;
+        assert!(parse_scopes_json(json).is_err());
+    }
 }

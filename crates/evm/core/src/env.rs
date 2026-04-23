@@ -4,14 +4,12 @@ use alloy_consensus::Typed2718;
 pub use alloy_evm::EvmEnv;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
+use alloy_op_evm::OpTx;
 use alloy_primitives::{Address, B256, Bytes, U256};
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
 use op_revm::{
     OpTransaction,
-    transaction::{
-        OpTxTr,
-        deposit::{DEPOSIT_TRANSACTION_TYPE, DepositTransactionParts},
-    },
+    transaction::{OpTxTr, deposit::DEPOSIT_TRANSACTION_TYPE},
 };
 use revm::{
     Context, Database, Journal,
@@ -416,6 +414,94 @@ impl<TX: FoundryTransaction> FoundryTransaction for OpTransaction<TX> {
     }
 }
 
+impl FoundryTransaction for OpTx {
+    fn set_tx_type(&mut self, tx_type: u8) {
+        self.0.set_tx_type(tx_type);
+    }
+
+    fn set_caller(&mut self, caller: Address) {
+        self.0.set_caller(caller);
+    }
+
+    fn set_gas_limit(&mut self, gas_limit: u64) {
+        self.0.set_gas_limit(gas_limit);
+    }
+
+    fn set_gas_price(&mut self, gas_price: u128) {
+        self.0.set_gas_price(gas_price);
+    }
+
+    fn set_kind(&mut self, kind: TxKind) {
+        self.0.set_kind(kind);
+    }
+
+    fn set_value(&mut self, value: U256) {
+        self.0.set_value(value);
+    }
+
+    fn set_data(&mut self, data: Bytes) {
+        self.0.set_data(data);
+    }
+
+    fn set_nonce(&mut self, nonce: u64) {
+        self.0.set_nonce(nonce);
+    }
+
+    fn set_chain_id(&mut self, chain_id: Option<u64>) {
+        self.0.set_chain_id(chain_id);
+    }
+
+    fn set_access_list(&mut self, access_list: AccessList) {
+        self.0.set_access_list(access_list);
+    }
+
+    fn authorization_list_mut(
+        &mut self,
+    ) -> &mut Vec<Either<SignedAuthorization, RecoveredAuthorization>> {
+        self.0.authorization_list_mut()
+    }
+
+    fn set_gas_priority_fee(&mut self, gas_priority_fee: Option<u128>) {
+        self.0.set_gas_priority_fee(gas_priority_fee);
+    }
+
+    fn set_blob_hashes(&mut self, _blob_hashes: Vec<B256>) {}
+
+    fn set_max_fee_per_blob_gas(&mut self, _max_fee_per_blob_gas: u128) {}
+
+    fn enveloped_tx(&self) -> Option<&Bytes> {
+        FoundryTransaction::enveloped_tx(&self.0)
+    }
+
+    fn set_enveloped_tx(&mut self, bytes: Bytes) {
+        self.0.set_enveloped_tx(bytes);
+    }
+
+    fn source_hash(&self) -> Option<B256> {
+        FoundryTransaction::source_hash(&self.0)
+    }
+
+    fn set_source_hash(&mut self, source_hash: B256) {
+        self.0.set_source_hash(source_hash);
+    }
+
+    fn mint(&self) -> Option<u128> {
+        FoundryTransaction::mint(&self.0)
+    }
+
+    fn set_mint(&mut self, mint: u128) {
+        self.0.set_mint(mint);
+    }
+
+    fn is_system_transaction(&self) -> bool {
+        FoundryTransaction::is_system_transaction(&self.0)
+    }
+
+    fn set_system_transaction(&mut self, is_system_transaction: bool) {
+        self.0.set_system_transaction(is_system_transaction);
+    }
+}
+
 impl FoundryTransaction for TempoTxEnv {
     fn set_tx_type(&mut self, tx_type: u8) {
         self.inner.set_tx_type(tx_type);
@@ -601,14 +687,14 @@ impl FromAnyRpcTransaction for TxEnv {
     }
 }
 
-impl FromAnyRpcTransaction for OpTransaction<TxEnv> {
+impl FromAnyRpcTransaction for OpTx {
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self> {
         if let Some(envelope) = tx.as_envelope() {
-            return Ok(Self {
+            return Ok(Self(OpTransaction::<TxEnv> {
                 base: TxEnv::from_recovered_tx(envelope, tx.from()),
                 enveloped_tx: None,
                 deposit: Default::default(),
-            });
+            }));
         }
 
         // Handle OP deposit transactions from `Unknown` envelope variant.
@@ -620,13 +706,7 @@ impl FromAnyRpcTransaction for OpTransaction<TxEnv> {
             let deposit_tx: TxDeposit = fields
                 .deserialize_into()
                 .map_err(|e| eyre::eyre!("failed to deserialize deposit tx: {e}"))?;
-            let base = TxEnv::from_recovered_tx(&deposit_tx, tx.from());
-            let deposit = DepositTransactionParts {
-                source_hash: deposit_tx.source_hash,
-                mint: Some(deposit_tx.mint),
-                is_system_transaction: deposit_tx.is_system_transaction,
-            };
-            return Ok(Self { base, enveloped_tx: None, deposit });
+            return Ok(Self::from_recovered_tx(&deposit_tx, deposit_tx.from));
         }
 
         eyre::bail!("cannot convert unknown transaction type to OpTransaction")
@@ -669,6 +749,8 @@ impl FromAnyRpcTransaction for TempoTxEnv {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU64;
+
     use super::*;
     use alloy_consensus::{Sealed, Signed, TxEip1559, transaction::Recovered};
     use alloy_evm::{EthEvmFactory, EvmFactory};
@@ -713,7 +795,8 @@ mod tests {
 
     #[test]
     fn op_evm_foundry_context_ext_implementation() {
-        let mut evm = OpEvmFactory::default().create_evm(EmptyDB::default(), EvmEnv::default());
+        let mut evm =
+            OpEvmFactory::<OpTx>::default().create_evm(EmptyDB::default(), EvmEnv::default());
 
         // Test EVM Context Block mutation
         evm.ctx_mut().block_mut().set_number(U256::from(123));
@@ -804,7 +887,7 @@ mod tests {
         let any_tx = <AnyRpcTransaction as From<RpcTransaction>>::from(rpc_tx);
         let expected_base = TxEnv::from_any_rpc_transaction(&any_tx).unwrap();
 
-        let op_tx_env = OpTransaction::<TxEnv>::from_any_rpc_transaction(&any_tx).unwrap();
+        let op_tx_env = OpTx::from_any_rpc_transaction(&any_tx).unwrap();
         assert_eq!(op_tx_env.base, expected_base);
     }
 
@@ -855,7 +938,7 @@ mod tests {
         let json = serde_json::to_value(&op_rpc_tx).unwrap();
         let any_tx: AnyRpcTransaction = serde_json::from_value(json).unwrap();
 
-        let op_tx_env = OpTransaction::<TxEnv>::from_any_rpc_transaction(&any_tx).unwrap();
+        let op_tx_env = OpTx::from_any_rpc_transaction(&any_tx).unwrap();
         assert_eq!(op_tx_env.base.caller, from);
         assert_eq!(op_tx_env.base.kind, TxKind::Call(Address::with_last_byte(0xCC)));
         assert_eq!(op_tx_env.base.value, U256::from(200));
@@ -893,7 +976,7 @@ mod tests {
             gas_limit: 424242,
             fee_token,
             nonce_key: U256::from(4242),
-            valid_after: Some(1800000000),
+            valid_after: NonZeroU64::new(1800000000),
             ..Default::default()
         };
         let aa_signed = AASigned::new_unhashed(

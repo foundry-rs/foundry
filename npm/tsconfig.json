@@ -2,7 +2,6 @@
   "schema": "https://json.schemastore.org/tsconfig.json",
   "compilerOptions": {
     "strict": true,
-    "baseUrl": ".",
     "noEmit": true,
     "allowJs": true,
     "checkJs": true,

@@ -79,15 +79,15 @@ impl FromStr for FoundryHardfork {
 }
 
 impl FoundryHardfork {
-    pub fn ethereum(h: EthereumHardfork) -> Self {
+    pub const fn ethereum(h: EthereumHardfork) -> Self {
         Self::Ethereum(h)
     }
 
-    pub fn optimism(h: OpHardfork) -> Self {
+    pub const fn optimism(h: OpHardfork) -> Self {
         Self::Optimism(h)
     }
 
-    pub fn tempo(h: TempoHardfork) -> Self {
+    pub const fn tempo(h: TempoHardfork) -> Self {
         Self::Tempo(h)
     }
 
@@ -97,6 +97,17 @@ impl FoundryHardfork {
             Self::Ethereum(h) => format!("{h}"),
             Self::Optimism(h) => format!("{h}"),
             Self::Tempo(h) => format!("{h}"),
+        }
+    }
+
+    /// Returns the network namespace for this hardfork, or `None` for plain Ethereum.
+    ///
+    /// Mirrors the namespace prefix used in the `"network:hardfork"` serialization format.
+    pub const fn namespace(&self) -> Option<&'static str> {
+        match self {
+            Self::Ethereum(_) => None,
+            Self::Optimism(_) => Some("optimism"),
+            Self::Tempo(_) => Some("tempo"),
         }
     }
 

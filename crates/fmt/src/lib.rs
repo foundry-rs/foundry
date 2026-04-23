@@ -62,7 +62,7 @@ impl<T, E> DiagnosticsResult<T, E> {
     }
 
     /// Returns any result produced.
-    pub fn ok_ref(&self) -> Option<&T> {
+    pub const fn ok_ref(&self) -> Option<&T> {
         match self {
             Self::Ok(s) | Self::OkWithDiagnostics(s, _) | Self::ErrRecovered(s, _) => Some(s),
             Self::Err(_) => None,
@@ -70,7 +70,7 @@ impl<T, E> DiagnosticsResult<T, E> {
     }
 
     /// Returns any diagnostics emitted.
-    pub fn err_ref(&self) -> Option<&E> {
+    pub const fn err_ref(&self) -> Option<&E> {
         match self {
             Self::Ok(_) => None,
             Self::OkWithDiagnostics(_, d) | Self::ErrRecovered(_, d) | Self::Err(d) => Some(d),
@@ -78,12 +78,12 @@ impl<T, E> DiagnosticsResult<T, E> {
     }
 
     /// Returns `true` if the result is `Ok`.
-    pub fn is_ok(&self) -> bool {
+    pub const fn is_ok(&self) -> bool {
         matches!(self, Self::Ok(_) | Self::OkWithDiagnostics(_, _))
     }
 
     /// Returns `true` if the result is `Err`.
-    pub fn is_err(&self) -> bool {
+    pub const fn is_err(&self) -> bool {
         !self.is_ok()
     }
 }

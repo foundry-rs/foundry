@@ -31,7 +31,7 @@ use self::serde_helpers::*;
 
 /// Wrapper type that ensures the type is named `params`
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
-pub struct Params<T: Default> {
+pub struct Params<T> {
     #[serde(default)]
     pub params: T,
 }
@@ -317,6 +317,14 @@ pub enum EthRequest {
     /// reth's `debug_dbGet` endpoint
     #[serde(rename = "debug_dbGet")]
     DebugDbGet(String),
+
+    /// geth's `debug_traceBlockByHash` endpoint
+    #[serde(rename = "debug_traceBlockByHash")]
+    DebugTraceBlockByHash(B256, #[serde(default)] GethDebugTracingOptions),
+
+    /// geth's `debug_traceBlockByNumber` endpoint
+    #[serde(rename = "debug_traceBlockByNumber")]
+    DebugTraceBlockByNumber(BlockNumber, #[serde(default)] GethDebugTracingOptions),
 
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[serde(rename = "trace_transaction", with = "sequence")]

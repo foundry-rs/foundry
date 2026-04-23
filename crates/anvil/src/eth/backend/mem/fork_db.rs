@@ -156,8 +156,8 @@ impl<N: Network> MaybeFullDatabase for ForkDbStateSnapshot<N> {
 }
 
 impl<N: Network> MaybeForkedDatabase for ForkedDatabase<N> {
-    fn maybe_reset(&mut self, url: Option<String>, block_number: BlockId) -> Result<(), String> {
-        self.reset(url, block_number)
+    fn maybe_reset(&mut self, urls: Vec<String>, block_number: BlockId) -> Result<(), String> {
+        self.reset(urls, block_number)
     }
 
     fn maybe_flush_cache(&self) -> Result<(), String> {

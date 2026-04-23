@@ -243,11 +243,12 @@ impl<'ast> State<'_, 'ast> {
         self.print_inside_parens(|state| {
             let span = get_span(&values[0]);
             state.s.cbox(state.ind);
-            let mut skip_break = true;
-            if state.peek_comment_before(span.hi()).is_some() {
+            let skip_break = if state.peek_comment_before(span.hi()).is_some() {
                 state.hardbreak();
-                skip_break = false;
-            }
+                false
+            } else {
+                true
+            };
 
             state.print_comments(span.lo(), CommentConfig::skip_ws().mixed_prev_space());
             print(state, &values[0]);
@@ -657,14 +658,15 @@ impl<'ast> State<'_, 'ast> {
             print(self, stmt);
 
             let is_disabled = self.inline_config.is_disabled(get_block_span(stmt));
-            let mut next_enabled = false;
-            let mut next_lo = None;
-            if !is_last {
+            let (next_enabled, next_lo) = if is_last {
+                (false, None)
+            } else {
                 let next_span = get_block_span(&block[i + 1]);
-                next_enabled = !self.inline_config.is_disabled(next_span);
-                next_lo =
-                    self.peek_comment_before(next_span.lo()).is_none().then_some(next_span.lo());
-            }
+                (
+                    !self.inline_config.is_disabled(next_span),
+                    self.peek_comment_before(next_span.lo()).is_none().then_some(next_span.lo()),
+                )
+            };
 
             // when this stmt and the next one are enabled, break normally (except if last stmt)
             if !is_disabled
@@ -760,10 +762,7 @@ impl<'ast> State<'_, 'ast> {
         if has_braces {
             self.word("{");
         }
-        let mut offset = 0;
-        if let BlockFormat::NoBraces(Some(off)) = block_format {
-            offset = off;
-        }
+        let offset = if let BlockFormat::NoBraces(Some(off)) = block_format { off } else { 0 };
         self.print_comments(
             pos_hi,
             self.cmnt_config().offset(offset).mixed_no_break().mixed_prev_space().mixed_post_nbsp(),
@@ -825,27 +824,27 @@ impl Default for ListFormat {
 
 impl ListFormat {
     // -- GETTER METHODS -------------------------------------------------------
-    pub(crate) fn prev_symbol(&self) -> Option<&'static str> {
+    pub(crate) const fn prev_symbol(&self) -> Option<&'static str> {
         if let ListFormatKind::Yul { sym_prev, .. } = self.kind { sym_prev } else { None }
     }
 
-    pub(crate) fn post_symbol(&self) -> Option<&'static str> {
+    pub(crate) const fn post_symbol(&self) -> Option<&'static str> {
         if let ListFormatKind::Yul { sym_post, .. } = self.kind { sym_post } else { None }
     }
 
-    pub(crate) fn is_consistent(&self) -> bool {
+    pub(crate) const fn is_consistent(&self) -> bool {
         matches!(self.kind, ListFormatKind::Consistent)
     }
 
-    pub(crate) fn is_compact(&self) -> bool {
+    pub(crate) const fn is_compact(&self) -> bool {
         matches!(self.kind, ListFormatKind::Compact)
     }
 
-    pub(crate) fn is_inline(&self) -> bool {
+    pub(crate) const fn is_inline(&self) -> bool {
         matches!(self.kind, ListFormatKind::Inline)
     }
 
-    pub(crate) fn breaks_with_comments(&self) -> bool {
+    pub(crate) const fn breaks_with_comments(&self) -> bool {
         self.breaks_cmnts
     }
 
@@ -881,35 +880,35 @@ impl ListFormat {
         }
     }
 
-    pub(crate) fn without_ind(mut self, without: bool) -> Self {
+    pub(crate) const fn without_ind(mut self, without: bool) -> Self {
         if !matches!(self.kind, ListFormatKind::Inline) {
             self.no_ind = without;
         }
         self
     }
 
-    pub(crate) fn break_single(mut self, value: bool) -> Self {
+    pub(crate) const fn break_single(mut self, value: bool) -> Self {
         if !matches!(self.kind, ListFormatKind::Inline) {
             self.break_single = value;
         }
         self
     }
 
-    pub(crate) fn break_cmnts(mut self) -> Self {
+    pub(crate) const fn break_cmnts(mut self) -> Self {
         if !matches!(self.kind, ListFormatKind::Inline) {
             self.breaks_cmnts = true;
         }
         self
     }
 
-    pub(crate) fn with_space(mut self) -> Self {
+    pub(crate) const fn with_space(mut self) -> Self {
         if !matches!(self.kind, ListFormatKind::Inline) {
             self.with_space = true;
         }
         self
     }
 
-    pub(crate) fn with_delimiters(mut self, with: bool) -> Self {
+    pub(crate) const fn with_delimiters(mut self, with: bool) -> Self {
         if matches!(self.kind, ListFormatKind::Compact | ListFormatKind::Consistent) {
             self.with_delimiters = with;
         }
@@ -948,14 +947,14 @@ pub(crate) enum BlockFormat {
 }
 
 impl BlockFormat {
-    pub(crate) fn with_braces(&self) -> bool {
+    pub(crate) const fn with_braces(&self) -> bool {
         !matches!(self, Self::NoBraces(_))
     }
-    pub(crate) fn breaks(&self) -> bool {
+    pub(crate) const fn breaks(&self) -> bool {
         matches!(self, Self::NoBraces(None))
     }
 
-    pub(crate) fn attempt_single_line(&self) -> bool {
+    pub(crate) const fn attempt_single_line(&self) -> bool {
         matches!(self, Self::Compact(_))
     }
 }

@@ -231,8 +231,8 @@ impl GasReport {
             Cell::new("# Calls").fg(Color::Cyan),
         ]);
 
-        contract.functions.iter().for_each(|(fname, sigs)| {
-            sigs.iter().for_each(|(sig, gas_info)| {
+        for (fname, sigs) in &contract.functions {
+            for (sig, gas_info) in sigs {
                 // Show function signature if overloaded else display function name.
                 let display_name =
                     if sigs.len() == 1 { fname.clone() } else { sig.replace(':', "") };
@@ -253,8 +253,8 @@ impl GasReport {
                         .set_alignment(CellAlignment::Right),
                     Cell::new(gas_info.calls.to_string()).set_alignment(CellAlignment::Right),
                 ]);
-            })
-        });
+            }
+        }
 
         table
     }

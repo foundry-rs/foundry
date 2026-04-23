@@ -132,10 +132,14 @@ impl Fuzzer {
         call.caller = tx.sender;
         call.target_address = tx.call_details.target;
         call.bytecode_address = tx.call_details.target;
+        let target = ecx
+            .journal_mut()
+            .load_account_with_code(tx.call_details.target)
+            .expect("failed to load account");
         // Clear known_bytecode to force REVM to load bytecode from the new target.
         // Without this, REVM uses cached bytecode from the original target (e.g., empty
         // bytecode for EOA), causing the call to short-circuit before executing any code.
-        call.known_bytecode = None;
+        call.known_bytecode = (target.info.code_hash, target.info.code.clone().unwrap_or_default());
         // Clear value since ETH was already transferred above
         call.value = CallValue::Transfer(alloy_primitives::U256::ZERO);
 

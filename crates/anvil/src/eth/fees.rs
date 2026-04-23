@@ -84,7 +84,7 @@ impl FeeManager {
     }
 
     /// Returns the base fee params used for EIP-1559 calculations
-    pub fn base_fee_params(&self) -> BaseFeeParams {
+    pub const fn base_fee_params(&self) -> BaseFeeParams {
         self.base_fee_params
     }
 
@@ -93,11 +93,11 @@ impl FeeManager {
     }
 
     /// Returns true for post London
-    pub fn is_eip1559(&self) -> bool {
+    pub const fn is_eip1559(&self) -> bool {
         (self.spec_id as u8) >= (SpecId::LONDON as u8)
     }
 
-    pub fn is_eip4844(&self) -> bool {
+    pub const fn is_eip4844(&self) -> bool {
         (self.spec_id as u8) >= (SpecId::CANCUN as u8)
     }
 
@@ -110,7 +110,7 @@ impl FeeManager {
         if self.is_eip1559() { *self.base_fee.read() } else { 0 }
     }
 
-    pub fn is_min_priority_fee_enforced(&self) -> bool {
+    pub const fn is_min_priority_fee_enforced(&self) -> bool {
         self.is_min_priority_fee_enforced
     }
 
@@ -210,7 +210,7 @@ impl<N: Network> FeeHistoryService<N>
 where
     N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
 {
-    pub fn new(
+    pub const fn new(
         blob_params: BlobParams,
         new_blocks: NewBlockNotifications,
         cache: FeeHistoryCache,
@@ -226,7 +226,7 @@ where
     }
 
     /// Returns the configured history limit
-    pub fn fee_history_limit(&self) -> u64 {
+    pub const fn fee_history_limit(&self) -> u64 {
         self.fee_history_limit
     }
 
@@ -392,7 +392,7 @@ pub struct FeeDetails {
 
 impl FeeDetails {
     /// All values zero
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Self {
             gas_price: Some(0),
             max_fee_per_gas: Some(0),
@@ -402,7 +402,7 @@ impl FeeDetails {
     }
 
     /// If neither `gas_price` nor `max_fee_per_gas` is `Some`, this will set both to `0`
-    pub fn or_zero_fees(self) -> Self {
+    pub const fn or_zero_fees(self) -> Self {
         let Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas } =
             self;
 
@@ -415,7 +415,7 @@ impl FeeDetails {
     }
 
     /// Turns this type into a tuple
-    pub fn split(self) -> (Option<u128>, Option<u128>, Option<u128>, Option<u128>) {
+    pub const fn split(self) -> (Option<u128>, Option<u128>, Option<u128>, Option<u128>) {
         let Self { gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas } =
             self;
         (gas_price, max_fee_per_gas, max_priority_fee_per_gas, max_fee_per_blob_gas)

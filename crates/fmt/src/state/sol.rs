@@ -699,16 +699,17 @@ impl<'ast> State<'_, 'ast> {
                 for cmnt in inner_cmnts.into_iter().rev() {
                     self.comments.push_front(cmnt);
                 }
-                let mut enabled = false;
-                if !self.handle_span(span, false) {
+                let enabled = if self.handle_span(span, false) {
+                    false
+                } else {
                     if !self.is_bol_or_only_ind() {
                         self.space();
                     }
                     self.ibox(0);
                     print_fn(self);
                     self.cursor.advance_to(span.hi(), true);
-                    enabled = true;
-                }
+                    true
+                };
                 // Print subsequent comments.
                 for cmnt in post_cmnts {
                     let Some(cmnt) = self.handle_comment(cmnt, false) else {
@@ -1566,14 +1567,15 @@ impl<'ast> State<'_, 'ast> {
                 }
 
                 // Trailing comment handling.
-                let mut is_trailing = false;
-                if let Some(style) = self.print_comments(
+                let is_trailing = if let Some(style) = self.print_comments(
                     span.hi(),
                     CommentConfig::skip_ws().mixed_no_break().mixed_prev_space(),
                 ) {
                     skip_break = true;
-                    is_trailing = style.is_trailing();
-                }
+                    style.is_trailing()
+                } else {
+                    false
+                };
 
                 // Adjust indentation and line breaks.
                 match (skip_break, end.is_some()) {
@@ -2678,20 +2680,20 @@ enum MemberOrCallArgs {
 }
 
 impl MemberOrCallArgs {
-    fn size(&self) -> usize {
+    const fn size(&self) -> usize {
         match self {
             Self::CallArgs(size, ..) | Self::Member(size) => *size,
         }
     }
 
-    fn member_size(&self) -> usize {
+    const fn member_size(&self) -> usize {
         match self {
             Self::CallArgs(..) => 0,
             Self::Member(size) => *size,
         }
     }
 
-    fn has_comments(&self) -> bool {
+    const fn has_comments(&self) -> bool {
         matches!(self, Self::CallArgs(.., true))
     }
 }
@@ -2834,7 +2836,7 @@ impl<'ast> AttributeCommentMapper<'ast> {
     }
 }
 
-fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
+const fn stmt_needs_semi(stmt: &ast::StmtKind<'_>) -> bool {
     match stmt {
         ast::StmtKind::Assembly { .. }
         | ast::StmtKind::Block { .. }
@@ -2879,7 +2881,7 @@ fn item_needs_iso(item: &ast::ItemKind<'_>) -> bool {
     }
 }
 
-fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_binary_expr(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Binary(..))
 }
 
@@ -2899,7 +2901,7 @@ fn has_complex_successor(expr_kind: &ast::ExprKind<'_>, left: bool) -> bool {
     }
 }
 
-fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
     matches!(expr_kind, ast::ExprKind::Call(..))
 }
 
@@ -2907,7 +2909,7 @@ fn is_call(expr_kind: &ast::ExprKind<'_>) -> bool {
 /// Used to determine if `.field` after such a call should avoid breaking.
 /// E.g., `_lzSend({_dstEid: x, ...}).guid` → true (named args call)
 /// E.g., `someFunc(a, b).field` → false (positional args)
-fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
+const fn is_call_with_named_args(expr_kind: &ast::ExprKind<'_>) -> bool {
     if let ast::ExprKind::Call(_, args) = expr_kind {
         matches!(args.kind, ast::CallArgsKind::Named(_))
     } else {

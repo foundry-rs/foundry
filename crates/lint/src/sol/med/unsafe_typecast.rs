@@ -134,7 +134,7 @@ fn infer_source_types(
 }
 
 /// Checks if a type cast from source_type to target_type is unsafe.
-fn is_unsafe_elementary_typecast(
+const fn is_unsafe_elementary_typecast(
     source_type: &ElementaryType,
     target_type: &ElementaryType,
 ) -> bool {

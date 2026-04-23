@@ -39,8 +39,9 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, ReceiptResponse, TransactionBuilder,
-    TransactionBuilder4844, TransactionResponse, eip2718::Decodable2718,
+    AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, NetworkTransactionBuilder,
+    ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TransactionResponse,
+    eip2718::Decodable2718,
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
@@ -57,7 +58,7 @@ use alloy_rpc_types::{
     state::{AccountOverride, EvmOverrides, StateOverridesBuilder},
     trace::{
         filter::TraceFilter,
-        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
+        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
@@ -75,7 +76,10 @@ use anvil_core::{
     types::{ReorgOptions, TransactionData},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use foundry_common::provider::ProviderBuilder;
+use foundry_common::{
+    provider::ProviderBuilder,
+    version::{COMMIT_SHA, SEMVER_VERSION},
+};
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
@@ -412,7 +416,7 @@ impl<N: Network> EthApi<N> {
                     let config = fork.config.read();
 
                     NodeForkConfig {
-                        fork_url: Some(config.eth_rpc_url.clone()),
+                        fork_url: config.eth_rpc_url().map(|s| s.to_string()),
                         fork_block_number: Some(config.block_number),
                         fork_retry_backoff: Some(config.backoff.as_millis()),
                     }
@@ -431,6 +435,8 @@ impl<N: Network> EthApi<N> {
 
         Ok(Metadata {
             client_version: CLIENT_VERSION.to_string(),
+            client_semver: Some(SEMVER_VERSION.to_string()),
+            client_commit_sha: Some(COMMIT_SHA.to_string()),
             chain_id: self.backend.chain_id().to::<u64>(),
             latest_block_hash: self.backend.best_hash(),
             latest_block_number: self.backend.best_number(),
@@ -477,6 +483,10 @@ impl<N: Network> EthApi<N> {
     /// Sets the specific timestamp and returns the number of seconds between the given timestamp
     /// and the current time.
     ///
+    /// The `timestamp` is in seconds. The `evm_setTime` JSON-RPC method accepts both seconds and
+    /// milliseconds (values above 1e12 are treated as milliseconds); the RPC handler normalises
+    /// the input to seconds before calling this function.
+    ///
     /// Handler for RPC call: `evm_setTime`
     pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
         node_info!("evm_setTime");
@@ -485,7 +495,7 @@ impl<N: Network> EthApi<N> {
 
         // number of seconds between the given timestamp and the current time.
         let offset = timestamp.saturating_sub(now);
-        Ok(Duration::from_millis(offset).as_secs())
+        Ok(offset)
     }
 
     /// Set the next block gas limit
@@ -517,7 +527,7 @@ impl<N: Network> EthApi<N> {
     /// Sets the backend rpc url
     ///
     /// Handler for ETH RPC call: `anvil_setRpcUrl`
-    pub fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
+    pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
         if let Some(fork) = self.backend.get_fork() {
             let mut config = fork.config.write();
@@ -533,9 +543,11 @@ impl<N: Network> EthApi<N> {
                 )?, // .interval(interval),
             );
             config.provider = new_provider;
-            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url, url);
-            config.eth_rpc_url = url;
+            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url().unwrap_or("none"), url);
+            config.fork_urls = vec![url.clone()];
         }
+        // Keep node_config in sync so anvil_reset(None) uses the updated URL
+        self.backend.node_config.write().await.fork_urls = vec![url];
         Ok(())
     }
 
@@ -625,6 +637,7 @@ impl<N: Network> EthApi<N> {
     }
 
     /// Handler for RPC call: `anvil_getBlobByHash`
+    #[allow(clippy::large_stack_frames)]
     pub fn anvil_get_blob_by_versioned_hash(
         &self,
         hash: B256,
@@ -1480,6 +1493,7 @@ impl EthApi<FoundryNetwork> {
     }
 
     /// Executes the [EthRequest] and returns an RPC [ResponseResult].
+    #[allow(clippy::large_stack_frames)]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
         let response = match request.clone() {
@@ -1659,6 +1673,12 @@ impl EthApi<FoundryNetwork> {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
             }
             EthRequest::DebugDbGet(key) => self.debug_db_get(key).await.to_rpc_result(),
+            EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
+                self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
+            }
+            EthRequest::DebugTraceBlockByNumber(block_number, opts) => {
+                self.debug_trace_block_by_number(block_number, opts).await.to_rpc_result()
+            }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
             EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
@@ -1753,7 +1773,15 @@ impl EthApi<FoundryNetwork> {
                         "The timestamp is too big",
                     ));
                 }
-                let time = timestamp.to::<u64>();
+                // evm_setTime accepts either seconds or milliseconds for Ganache compatibility.
+                // Timestamps above 1e12 are interpreted as milliseconds and converted to
+                // seconds; below that threshold they are treated as seconds directly.
+                let raw = timestamp.to::<u64>();
+                let time = if raw > 1_000_000_000_000 {
+                    Duration::from_millis(raw).as_secs()
+                } else {
+                    raw
+                };
                 self.evm_set_time(time).to_rpc_result()
             }
             EthRequest::EvmSetBlockGasLimit(gas_limit) => {
@@ -1771,7 +1799,7 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EvmMineDetailed(mine) => {
                 self.evm_mine_detailed(mine.and_then(|p| p.params)).await.to_rpc_result()
             }
-            EthRequest::SetRpcUrl(url) => self.anvil_set_rpc_url(url).to_rpc_result(),
+            EthRequest::SetRpcUrl(url) => self.anvil_set_rpc_url(url).await.to_rpc_result(),
             EthRequest::EthSendUnsignedTransaction(tx) => {
                 self.eth_send_unsigned_transaction(*tx).await.to_rpc_result()
             }
@@ -2728,6 +2756,30 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<GethTrace> {
         node_info!("debug_traceTransaction");
         self.backend.debug_trace_transaction(tx_hash, opts).await
+    }
+
+    /// Returns traces for all transactions in a block by hash.
+    ///
+    /// Handler for RPC call: `debug_traceBlockByHash`
+    pub async fn debug_trace_block_by_hash(
+        &self,
+        block_hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        node_info!("debug_traceBlockByHash");
+        self.backend.debug_trace_block_by_hash(block_hash, opts).await
+    }
+
+    /// Returns traces for all transactions in a block by number.
+    ///
+    /// Handler for RPC call: `debug_traceBlockByNumber`
+    pub async fn debug_trace_block_by_number(
+        &self,
+        block_number: BlockNumber,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        node_info!("debug_traceBlockByNumber");
+        self.backend.debug_trace_block_by_number(block_number, opts).await
     }
 
     /// Returns traces for the transaction for geth's tracing endpoint

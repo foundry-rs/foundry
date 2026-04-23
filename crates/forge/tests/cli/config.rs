@@ -195,6 +195,8 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+sancov_edges = false
+sancov_trace_cmp = false
 failure_persist_dir = "cache/fuzz"
 show_logs = false
 
@@ -216,6 +218,8 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+sancov_edges = false
+sancov_trace_cmp = false
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
@@ -255,6 +259,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
+        hardfork: None,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
         gas_reports_include_tests: false,
@@ -1218,6 +1223,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "skip": [],
   "force": false,
   "evm_version": "osaka",
+  "hardfork": null,
   "gas_reports": [
     "*"
   ],
@@ -1276,6 +1282,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "sancov_edges": false,
+    "sancov_trace_cmp": false,
     "failure_persist_dir": "cache/fuzz",
     "show_logs": false,
     "timeout": null
@@ -1299,6 +1307,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "sancov_edges": false,
+    "sancov_trace_cmp": false,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,

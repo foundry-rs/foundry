@@ -13,7 +13,7 @@ pub struct ExtractConfigError {
 
 impl ExtractConfigError {
     /// Wraps the figment error.
-    pub fn new(error: figment::Error) -> Self {
+    pub const fn new(error: figment::Error) -> Self {
         Self { error }
     }
 }
@@ -152,7 +152,7 @@ impl SolidityErrorCode {
     /// The textual identifier for this error
     ///
     /// Returns `Err(code)` if unknown error
-    pub fn as_str(&self) -> Result<&'static str, u64> {
+    pub const fn as_str(&self) -> Result<&'static str, u64> {
         let s = match self {
             Self::SpdxLicenseNotProvided => "license",
             Self::VisibilityForConstructorIsIgnored => "constructor-visibility",

@@ -7,7 +7,9 @@ use crate::{
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::{BlockId, eip2718::Encodable2718};
-use alloy_network::{EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
+use alloy_network::{
+    EthereumWallet, Network, NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder,
+};
 use alloy_primitives::{
     Address, TxHash, TxKind, U256,
     map::{AddressHashMap, AddressHashSet},
@@ -493,8 +495,9 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                let estimate_via_rpc =
-                    has_different_gas_calc(sequence.chain) || self.args.skip_simulation;
+                let estimate_via_rpc = has_different_gas_calc(sequence.chain)
+                    || self.script_config.evm_opts.networks.is_tempo()
+                    || self.args.skip_simulation;
 
                 // We only wait for a transaction receipt before sending the next transaction, if
                 // there is more than one signer. There would be no way of assuring

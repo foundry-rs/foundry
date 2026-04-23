@@ -31,6 +31,7 @@ jobs:
       contents: read
       actions: read
       id-token: write
+    environment: release
     name: ${{ matrix.tool }}-${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ubuntu-latest
     strategy:
@@ -108,7 +109,7 @@ jobs:
       RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
@@ -126,7 +127,7 @@ jobs:
           ls -la "$ARTIFACT_DIR" || true
 
       - name: Download Release Assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           merge-multiple: true
           # Download all foundry artifacts from the triggering release run
@@ -137,12 +138,12 @@ jobs:
           run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
 
       - name: Setup Node (for npm publish auth)
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -151,9 +152,6 @@ jobs:
         id: release-version
         working-directory: ./npm
         env:
-          PROVENANCE: true
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_REGISTRY_URL: ${{ env.NPM_REGISTRY_URL }}
           ARTIFACT_DIR: ${{ steps.paths.outputs.artifact_dir }}
         run: |
@@ -224,8 +222,6 @@ jobs:
           PROVENANCE: true
           VERSION_NAME: ${{ steps.release-version.outputs.RELEASE_VERSION }}
           RELEASE_VERSION: ${{ steps.release-version.outputs.RELEASE_VERSION }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -245,26 +241,25 @@ jobs:
       contents: read
       actions: read
       id-token: write
+    environment: release
     needs: publish-arch
     name: Publish Meta Package
     runs-on: ubuntu-latest
     env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       RELEASE_VERSION: ${{ needs.publish-arch.outputs.RELEASE_VERSION }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: latest
 
       - name: Setup Node (for npm publish auth)
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
@@ -286,6 +281,4 @@ jobs:
           PROVENANCE: true
           VERSION_NAME: ${{ env.RELEASE_VERSION }}
           RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
-          NPM_TOKEN: ${{ env.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ env.NODE_AUTH_TOKEN }}
           NPM_REGISTRY_URL: ${{ env.NPM_REGISTRY_URL }}

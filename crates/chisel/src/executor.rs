@@ -1095,7 +1095,7 @@ impl Type {
 
     /// Returns whether this type is dynamic
     #[inline]
-    fn is_dynamic(&self) -> bool {
+    const fn is_dynamic(&self) -> bool {
         match self {
             // TODO: Note, this is not entirely correct. Fixed arrays of non-dynamic types are
             // not dynamic, nor are tuples of non-dynamic types.
@@ -1107,7 +1107,7 @@ impl Type {
 
     /// Returns whether this type is an array
     #[inline]
-    fn is_array(&self) -> bool {
+    const fn is_array(&self) -> bool {
         matches!(
             self,
             Self::Array(_)
@@ -1118,11 +1118,11 @@ impl Type {
 
     /// Returns whether this type is a dynamic array (can call push, pop)
     #[inline]
-    fn is_dynamic_array(&self) -> bool {
+    const fn is_dynamic_array(&self) -> bool {
         matches!(self, Self::Array(_) | Self::Builtin(DynSolType::Array(_)))
     }
 
-    fn is_fixed_bytes(&self) -> bool {
+    const fn is_fixed_bytes(&self) -> bool {
         matches!(self, Self::Builtin(DynSolType::FixedBytes(_)))
     }
 }

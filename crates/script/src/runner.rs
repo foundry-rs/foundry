@@ -29,7 +29,7 @@ pub struct ScriptRunner<FEN: FoundryEvmNetwork> {
 }
 
 impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
-    pub fn new(executor: Executor<FEN>, evm_opts: EvmOpts) -> Self {
+    pub const fn new(executor: Executor<FEN>, evm_opts: EvmOpts) -> Self {
         Self { executor, evm_opts }
     }
 
@@ -50,7 +50,9 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 self.executor.set_balance(self.evm_opts.sender, U256::MAX)?;
             }
 
-            if script_config.evm_opts.fork_url.is_none() {
+            if script_config.evm_opts.fork_url.is_none()
+                && !script_config.evm_opts.networks.is_tempo()
+            {
                 self.executor.deploy_create2_deployer()?;
             }
         }

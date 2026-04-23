@@ -89,7 +89,7 @@ pub struct GasSnapshotArgs {
 
 impl GasSnapshotArgs {
     /// Returns whether `GasSnapshotArgs` was configured with `--watch`
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.test.is_watch()
     }
 
@@ -181,7 +181,7 @@ enum DiffSortOrder {
 }
 
 impl GasSnapshotConfig {
-    fn is_in_gas_range(&self, gas_used: u64) -> bool {
+    const fn is_in_gas_range(&self, gas_used: u64) -> bool {
         if let Some(min) = self.min
             && gas_used < min
         {
@@ -355,7 +355,7 @@ impl GasSnapshotDiff {
     ///
     /// `> 0` if the source used more gas
     /// `< 0` if the target used more gas
-    fn gas_change(&self) -> i128 {
+    const fn gas_change(&self) -> i128 {
         self.source_gas_used.gas() as i128 - self.target_gas_used.gas() as i128
     }
 
