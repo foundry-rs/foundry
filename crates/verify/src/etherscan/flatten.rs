@@ -89,7 +89,7 @@ impl EtherscanFlattenedSource {
         if out.errors.iter().any(|e| e.is_error()) {
             let mut o = AggregatedCompilerOutput::<SolcCompiler>::default();
             o.extend(version, RawBuildInfo::new(&input, &out, false)?, "default", out);
-            let diags = o.diagnostics(&[], &[], Default::default());
+            let diags = o.diagnostics(&[], &[], &[], Default::default());
 
             eyre::bail!(
                 "\

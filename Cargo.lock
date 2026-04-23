@@ -4842,15 +4842,14 @@ dependencies = [
 
 [[package]]
 name = "foundry-block-explorers"
-version = "0.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff814624bb21bfe43b70fb736ab39527b405d04cdc94d90b7e182fba28b25ec7"
+version = "0.20.0"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=d6c92dfcb41be26fbc1de21221a5bfc6bdd93245#d6c92dfcb41be26fbc1de21221a5bfc6bdd93245"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
  "alloy-primitives",
  "foundry-compilers",
- "reqwest 0.12.28",
+ "reqwest 0.13.2",
  "semver 1.0.28",
  "serde",
  "serde_json",
@@ -5077,8 +5076,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.19.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e639f98fe54d1cc0011a4bdb2eb1d838b379c9f004991ae7555a4cc09e8da32a"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=d6c92dfcb41be26fbc1de21221a5bfc6bdd93245#d6c92dfcb41be26fbc1de21221a5bfc6bdd93245"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5088,7 +5086,7 @@ dependencies = [
  "foundry-compilers-artifacts",
  "foundry-compilers-core",
  "fs_extra",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "path-slash",
  "rand 0.9.4",
  "rayon",
@@ -5109,8 +5107,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.19.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93ec96df20055211f4e46b5a61fa479b2ea7d1ce0659818e0359afadfcded8d2"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=d6c92dfcb41be26fbc1de21221a5bfc6bdd93245#d6c92dfcb41be26fbc1de21221a5bfc6bdd93245"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5119,8 +5116,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.19.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8a206e475b5dd1a77dc33cd917cde4846148f5136729a24edb3a16ab431b90a"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=d6c92dfcb41be26fbc1de21221a5bfc6bdd93245#d6c92dfcb41be26fbc1de21221a5bfc6bdd93245"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5140,14 +5136,12 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.19.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f74883db8036522fa21d0853c21ac318e165ec88e141f1ef1d6f7b4dfa841ff7"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=d6c92dfcb41be26fbc1de21221a5bfc6bdd93245#d6c92dfcb41be26fbc1de21221a5bfc6bdd93245"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-core",
- "path-slash",
  "semver 1.0.28",
  "serde",
 ]
@@ -5155,8 +5149,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.19.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ab384daeaea5c33cad8c3c094a1eb6f98e70922e18380c660980c74c19e362b"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=d6c92dfcb41be26fbc1de21221a5bfc6bdd93245#d6c92dfcb41be26fbc1de21221a5bfc6bdd93245"
 dependencies = [
  "alloy-primitives",
  "cfg-if",

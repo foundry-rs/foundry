@@ -342,11 +342,6 @@ foundry-linking = { path = "crates/linking" }
 foundry-primitives = { path = "crates/primitives" }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.22.0", default-features = false }
-foundry-compilers = { version = "0.19.14", default-features = false, features = [
-    "rustls",
-    "svm-solc",
-] }
 foundry-fork-db = "0.25.0"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
@@ -356,6 +351,11 @@ svm = { package = "svm-rs", version = "0.5", default-features = false, features 
 
 ## foundry-core
 foundry-wallets = { git = "https://github.com/foundry-rs/foundry-core", rev = "d6c92dfcb41be26fbc1de21221a5bfc6bdd93245", default-features = false }
+foundry-compilers = { git = "https://github.com/foundry-rs/foundry-core", rev = "d6c92dfcb41be26fbc1de21221a5bfc6bdd93245", default-features = false, features = [
+    "rustls",
+    "svm-solc",
+] }
+foundry-block-explorers = { git = "https://github.com/foundry-rs/foundry-core", rev = "d6c92dfcb41be26fbc1de21221a5bfc6bdd93245", default-features = false }
 
 ## alloy
 alloy-consensus = { version = "2.0.1", default-features = false }
