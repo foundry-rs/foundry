@@ -1246,6 +1246,10 @@ impl Cheatcode for startDebugTraceRecordingCall {
             return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
 
+        if ccx.state.record_debug_steps_info.is_some() {
+            bail!("debug trace recording was already started");
+        }
+
         let mut info = RecordDebugStepInfo {
             // will be updated later
             start_node_idx: 0,

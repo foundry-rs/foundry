@@ -85,16 +85,14 @@ contract RecordDebugTraceTest is Test {
         for (uint256 i = 0; i < steps.length; i++) {
             Vm.DebugStep memory step = steps[i];
             if (
-                step.opcode == 0x52 /*MSTORE*/
-                    && step.stack[0] == testContract.memPtr() // MSTORE offset
+                step.opcode == 0x52 /*MSTORE*/ && step.stack[0] == testContract.memPtr() // MSTORE offset
                     && step.stack[1] == testContract.expectedValueInMemory() // MSTORE val
             ) {
                 mstoreCalled = true;
             }
 
             if (
-                step.opcode == 0x51 /*MLOAD*/
-                    && step.stack[0] == testContract.memPtr() // MLOAD offset
+                step.opcode == 0x51 /*MLOAD*/ && step.stack[0] == testContract.memPtr() // MLOAD offset
                     && step.memoryInput.length == 32 // MLOAD should always load 32 bytes
                     && uint256(bytes32(step.memoryInput)) == testContract.expectedValueInMemory() // MLOAD value
             ) {
@@ -161,5 +159,20 @@ contract RecordDebugTraceTest is Test {
             }
         }
         assertTrue(isOOG, "should OOG");
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testCannotRestartDebugTraceRecordingWhileActive() public {
+        MStoreAndMLoadCaller testContract = new MStoreAndMLoadCaller();
+
+        vm.startDebugTraceRecording();
+
+        vm.expectRevert("vm.startDebugTraceRecording: debug trace recording was already started");
+        vm.startDebugTraceRecording();
+
+        testContract.storeAndLoadValueFromMemory();
+
+        Vm.DebugStep[] memory steps = vm.stopAndReturnDebugTraceRecording();
+        assertGt(steps.length, 0, "first recording should remain active after failed restart");
     }
 }
