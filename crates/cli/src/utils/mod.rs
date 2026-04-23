@@ -30,6 +30,9 @@ pub use abi::*;
 mod allocator;
 pub use allocator::*;
 
+mod tempo;
+pub use tempo::*;
+
 // reexport all `foundry_config::utils`
 #[doc(hidden)]
 pub use foundry_config::utils::*;
@@ -126,8 +129,8 @@ where
 /// If the string represents an untagged amount (e.g. "100") then
 /// it is interpreted as wei.
 pub fn parse_ether_value(value: &str) -> Result<U256> {
-    Ok(if value.starts_with("0x") {
-        U256::from_str_radix(value, 16)?
+    Ok(if value.starts_with("0x") || value.starts_with("0X") {
+        U256::from_str(value)?
     } else {
         alloy_dyn_abi::DynSolType::coerce_str(&alloy_dyn_abi::DynSolType::Uint(256), value)?
             .as_uint()
@@ -370,16 +373,16 @@ impl<'a> Git<'a> {
             .map(drop)
     }
 
-    pub fn root(self, root: &Path) -> Git<'_> {
+    pub const fn root(self, root: &Path) -> Git<'_> {
         Git { root, ..self }
     }
 
-    pub fn quiet(self, quiet: bool) -> Self {
+    pub const fn quiet(self, quiet: bool) -> Self {
         Self { quiet, ..self }
     }
 
     /// True to perform shallow clones
-    pub fn shallow(self, shallow: bool) -> Self {
+    pub const fn shallow(self, shallow: bool) -> Self {
         Self { shallow, ..self }
     }
 
@@ -735,7 +738,7 @@ pub struct Submodule {
 }
 
 impl Submodule {
-    pub fn new(rev: String, path: PathBuf) -> Self {
+    pub const fn new(rev: String, path: PathBuf) -> Self {
         Self { rev, path }
     }
 
@@ -743,7 +746,7 @@ impl Submodule {
         &self.rev
     }
 
-    pub fn path(&self) -> &PathBuf {
+    pub const fn path(&self) -> &PathBuf {
         &self.path
     }
 }
@@ -768,11 +771,11 @@ impl FromStr for Submodule {
 pub struct Submodules(pub Vec<Submodule>);
 
 impl Submodules {
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.0.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
@@ -841,6 +844,16 @@ mod tests {
         assert!(!p.is_sol_test());
     }
 
+    #[test]
+    fn parse_ether_value_accepts_hex_prefixed_wei() {
+        assert_eq!(parse_ether_value("0x10").unwrap(), U256::from(16));
+        assert_eq!(parse_ether_value("0X10").unwrap(), U256::from(16));
+        assert_eq!(parse_ether_value("0x12").unwrap(), U256::from(0x12));
+        assert_eq!(parse_ether_value("0xff").unwrap(), U256::from(0xff));
+        assert_eq!(parse_ether_value("100").unwrap(), U256::from(100));
+        assert_eq!(parse_ether_value("1ether").unwrap(), U256::from(1000000000000000000u128));
+    }
+
     // loads .env from cwd and project dir, See [`find_project_root()`]
     #[test]
     fn can_load_dotenv() {
@@ -854,10 +867,10 @@ mod tests {
         let mut cwd_file = File::create(cwd_env).unwrap();
         let mut prj_file = File::create(nested.join(".env")).unwrap();
 
-        cwd_file.write_all("TESTCWDKEY=cwd_val".as_bytes()).unwrap();
+        cwd_file.write_all(b"TESTCWDKEY=cwd_val").unwrap();
         cwd_file.sync_all().unwrap();
 
-        prj_file.write_all("TESTPRJKEY=prj_val".as_bytes()).unwrap();
+        prj_file.write_all(b"TESTPRJKEY=prj_val").unwrap();
         prj_file.sync_all().unwrap();
 
         let cwd = env::current_dir().unwrap();

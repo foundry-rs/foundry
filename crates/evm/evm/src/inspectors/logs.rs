@@ -50,7 +50,9 @@ impl LogCollector {
 
     fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
         let decoded = console::hh::ConsoleCalls::abi_decode(data)?;
-        self.push_msg(&decoded.fmt(Default::default()));
+        for line in decoded.fmt(Default::default()).lines() {
+            self.push_msg(line);
+        }
         Ok(())
     }
 

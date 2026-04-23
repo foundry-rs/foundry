@@ -189,7 +189,7 @@ impl FoldedStackTraceBuilder {
     }
 
     /// Exit execution of a function call.
-    pub fn exit(&mut self) {
+    pub const fn exit(&mut self) {
         self.exits += 1;
     }
 

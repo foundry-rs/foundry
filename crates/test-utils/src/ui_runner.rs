@@ -116,7 +116,7 @@ fn config<'a>(
     }
 
     let stdout_filters: &[(&str, &str)] =
-        &[(&env!("CARGO_PKG_VERSION").replace(".", r"\."), "VERSION")];
+        &[(&env!("CARGO_PKG_VERSION").replace('.', r"\."), "VERSION")];
     for &(pattern, replacement) in stdout_filters {
         config.stdout_filter(pattern, replacement);
     }

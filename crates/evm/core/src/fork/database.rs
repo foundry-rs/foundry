@@ -56,22 +56,22 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
         }
     }
 
-    pub fn database(&self) -> &CacheDB<SharedBackend<N, B>> {
+    pub const fn database(&self) -> &CacheDB<SharedBackend<N, B>> {
         &self.cache_db
     }
 
-    pub fn database_mut(&mut self) -> &mut CacheDB<SharedBackend<N, B>> {
+    pub const fn database_mut(&mut self) -> &mut CacheDB<SharedBackend<N, B>> {
         &mut self.cache_db
     }
 
-    pub fn state_snapshots(&self) -> &Arc<Mutex<StateSnapshots<ForkDbStateSnapshot<N, B>>>> {
+    pub const fn state_snapshots(&self) -> &Arc<Mutex<StateSnapshots<ForkDbStateSnapshot<N, B>>>> {
         &self.state_snapshots
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     pub fn reset(
         &mut self,
-        _url: Option<String>,
+        _urls: Vec<String>,
         block_number: impl Into<BlockId>,
     ) -> Result<(), String> {
         self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
@@ -92,7 +92,7 @@ impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
     }
 
     /// Returns the database that holds the remote state
-    pub fn inner(&self) -> &BlockchainDb<B> {
+    pub const fn inner(&self) -> &BlockchainDb<B> {
         &self.db
     }
 

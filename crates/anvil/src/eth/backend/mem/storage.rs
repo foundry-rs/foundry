@@ -85,7 +85,7 @@ impl InMemoryBlockStates {
     }
 
     /// Configures no disk caching
-    pub fn memory_only(mut self) -> Self {
+    pub const fn memory_only(mut self) -> Self {
         self.max_on_disk_limit = 0;
         self
     }
@@ -112,7 +112,7 @@ impl InMemoryBlockStates {
     }
 
     /// Returns true if only memory caching is supported.
-    fn is_memory_only(&self) -> bool {
+    const fn is_memory_only(&self) -> bool {
         self.max_on_disk_limit == 0
     }
 
@@ -197,7 +197,7 @@ impl InMemoryBlockStates {
     }
 
     /// Sets the maximum number of stats we keep in memory
-    pub fn set_cache_limit(&mut self, limit: usize) {
+    pub const fn set_cache_limit(&mut self, limit: usize) {
         self.in_memory_limit = limit;
     }
 
@@ -209,6 +209,20 @@ impl InMemoryBlockStates {
         for on_disk in std::mem::take(&mut self.oldest_on_disk) {
             self.disk_cache.remove(on_disk)
         }
+    }
+
+    /// Removes states for the given block hashes.
+    ///
+    /// This is used during chain rollback to clean up states for blocks that are no longer part
+    /// of the canonical chain.
+    pub fn remove_block_states(&mut self, hashes: &[B256]) {
+        for hash in hashes {
+            self.states.remove(hash);
+            self.on_disk_states.remove(hash);
+            self.disk_cache.remove(*hash);
+        }
+        self.present.retain(|h| !hashes.contains(h));
+        self.oldest_on_disk.retain(|h| !hashes.contains(h));
     }
 
     /// Serialize all states to a list of serializable historical states
@@ -591,14 +605,15 @@ impl<N: Network> MinedTransaction<N> {
                     CallKind::Create2 => OperationType::OpCreate2,
                     _ => return None,
                 };
-                let mut from = node.trace.caller;
-                let mut to = node.trace.address;
-                let mut value = node.trace.value;
-                if node.is_selfdestruct() {
-                    from = node.trace.address;
-                    to = node.trace.selfdestruct_refund_target.unwrap_or_default();
-                    value = node.trace.selfdestruct_transferred_value.unwrap_or_default();
-                }
+                let (from, to, value) = if node.is_selfdestruct() {
+                    (
+                        node.trace.address,
+                        node.trace.selfdestruct_refund_target.unwrap_or_default(),
+                        node.trace.selfdestruct_transferred_value.unwrap_or_default(),
+                    )
+                } else {
+                    (node.trace.caller, node.trace.address, node.trace.value)
+                };
                 Some(InternalOperation { r#type, from, to, value })
             })
             .collect()
@@ -715,6 +730,62 @@ mod tests {
             let balance = (idx * 2) as u64;
             assert_eq!(acc.balance, U256::from(balance));
         }
+    }
+
+    #[test]
+    fn test_remove_block_states_on_rollback() {
+        let mut storage = InMemoryBlockStates::new(10, MAX_ON_DISK_HISTORY_LIMIT);
+
+        // Insert 5 states
+        let hashes: Vec<B256> = (0..5)
+            .map(|i| {
+                let hash = B256::from(U256::from(i));
+                let mut state = MemDb::default();
+                let addr = Address::from_word(hash);
+                state.insert_account(addr, AccountInfo::from_balance(U256::from(i * 100)));
+                storage.insert(hash, StateDb::new(state));
+                hash
+            })
+            .collect();
+
+        assert_eq!(storage.present.len(), 5);
+
+        // Simulate rollback: remove the last 3 blocks
+        let removed_hashes = &hashes[2..];
+        storage.remove_block_states(removed_hashes);
+
+        // Only the first 2 states should remain
+        assert_eq!(storage.present.len(), 2);
+        assert!(storage.get_state(&hashes[0]).is_some());
+        assert!(storage.get_state(&hashes[1]).is_some());
+        for h in removed_hashes {
+            assert!(storage.get_state(h).is_none());
+            assert!(!storage.present.contains(h));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_remove_block_states_cleans_disk_cache() {
+        // Use limit=1 to force states to disk
+        let mut storage = InMemoryBlockStates::new(1, MAX_ON_DISK_HISTORY_LIMIT);
+
+        let hash_a = B256::from(U256::from(1));
+        let hash_b = B256::from(U256::from(2));
+
+        storage.insert(hash_a, StateDb::new(MemDb::default()));
+        storage.insert(hash_b, StateDb::new(MemDb::default()));
+
+        // Wait for disk flush
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        assert!(storage.on_disk_states.contains_key(&hash_a));
+
+        // Remove hash_a (on disk)
+        storage.remove_block_states(&[hash_a]);
+
+        assert!(!storage.on_disk_states.contains_key(&hash_a));
+        assert!(!storage.oldest_on_disk.contains(&hash_a));
+        assert!(storage.get_on_disk_state(&hash_a).is_none());
     }
 
     // verifies that blocks and transactions in BlockchainStorage remain the same when dumped and

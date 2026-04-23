@@ -281,11 +281,11 @@ impl EtherscanVerificationProvider {
         builder = if let Some(api_url) = api_url {
             // we don't want any trailing slashes because this can cause cloudflare issues: <https://github.com/foundry-rs/foundry/pull/6079>
             let api_url = api_url.trim_end_matches('/');
-            let base_url = if !is_etherscan {
+            let base_url = if is_etherscan {
+                base_url.unwrap_or(api_url)
+            } else {
                 // If verifier is not Etherscan then set base url as api url without /api suffix.
                 api_url.strip_suffix("/api").unwrap_or(api_url)
-            } else {
-                base_url.unwrap_or(api_url)
             };
             builder.with_api_url(api_url)?.with_url(base_url)?
         } else {

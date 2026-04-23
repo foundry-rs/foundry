@@ -5,6 +5,7 @@ mod evm;
 mod global;
 mod network;
 mod rpc;
+mod rpc_common;
 mod tempo;
 mod transaction;
 
@@ -15,5 +16,6 @@ pub use evm::*;
 pub use global::*;
 pub use network::*;
 pub use rpc::*;
+pub use rpc_common::*;
 pub use tempo::*;
 pub use transaction::*;

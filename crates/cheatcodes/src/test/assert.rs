@@ -4,6 +4,7 @@ use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
     constants::CHEATCODE_ADDRESS,
+    decode::ASSERTION_FAILED_PREFIX,
     evm::FoundryEvmNetwork,
 };
 use itertools::Itertools;
@@ -29,7 +30,7 @@ enum AssertionKind {
 }
 
 impl AssertionKind {
-    fn inverse(self) -> Self {
+    const fn inverse(self) -> Self {
         match self {
             Self::Eq => Self::Ne,
             Self::Ne => Self::Eq,
@@ -40,7 +41,7 @@ impl AssertionKind {
         }
     }
 
-    fn to_str(self) -> &'static str {
+    const fn to_str(self) -> &'static str {
         match self {
             Self::Eq => "==",
             Self::Ne => "!=",
@@ -195,7 +196,7 @@ fn handle_assertion_result<FEN: FoundryEvmNetwork, E>(
     error_formatter: Option<&dyn Fn(&E) -> String>,
     error_msg: Option<&str>,
 ) -> Result {
-    let error_msg = error_msg.unwrap_or("assertion failed");
+    let error_msg = error_msg.unwrap_or(ASSERTION_FAILED_PREFIX);
     let msg = if let Some(error_formatter) = error_formatter {
         Cow::Owned(format!("{error_msg}: {}", error_formatter(&err)))
     } else {
@@ -450,11 +451,11 @@ impl_assertions! {
     (assertApproxEqRelDecimal_2Call, assertApproxEqRelDecimal_3Call),
 }
 
-fn assert_true(condition: bool) -> Result<(), ()> {
+const fn assert_true(condition: bool) -> Result<(), ()> {
     if condition { Ok(()) } else { Err(()) }
 }
 
-fn assert_false(condition: bool) -> Result<(), ()> {
+const fn assert_false(condition: bool) -> Result<(), ()> {
     assert_true(!condition)
 }
 
@@ -467,10 +468,10 @@ fn assert_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a
 }
 
 fn assert_not_eq<'a, T: PartialEq>(left: &'a T, right: &'a T) -> ComparisonResult<'a, T> {
-    if left != right {
-        Ok(())
-    } else {
+    if left == right {
         Err(ComparisonAssertionError { kind: AssertionKind::Ne, left, right })
+    } else {
+        Ok(())
     }
 }
 

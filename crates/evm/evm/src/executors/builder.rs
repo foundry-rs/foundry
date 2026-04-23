@@ -4,7 +4,6 @@ use foundry_evm_core::{
     evm::{BlockEnvFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
 };
 use revm::context::{Block, Transaction};
-use std::marker::PhantomData;
 
 /// The builder that allows to configure an evm [`Executor`] which a stack of optional
 /// [`revm::Inspector`]s, such as [`Cheatcodes`].
@@ -20,10 +19,9 @@ pub struct ExecutorBuilder<FEN: FoundryEvmNetwork> {
     stack: InspectorStackBuilder<BlockEnvFor<FEN>>,
     /// The gas limit.
     gas_limit: Option<u64>,
-    /// The spec.
-    spec: SpecFor<FEN>,
+    /// The spec override. When `None`, the spec from `EvmEnv::cfg_env` is preserved.
+    spec: Option<SpecFor<FEN>>,
     legacy_assertions: bool,
-    _network: PhantomData<FEN>,
 }
 
 impl<FEN: FoundryEvmNetwork> Default for ExecutorBuilder<FEN> {
@@ -32,9 +30,8 @@ impl<FEN: FoundryEvmNetwork> Default for ExecutorBuilder<FEN> {
         Self {
             stack: InspectorStackBuilder::new(),
             gas_limit: None,
-            spec: Default::default(),
+            spec: None,
             legacy_assertions: false,
-            _network: PhantomData,
         }
     }
 }
@@ -54,21 +51,27 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
 
     /// Sets the EVM spec to use.
     #[inline]
-    pub fn spec_id(mut self, spec: SpecFor<FEN>) -> Self {
-        self.spec = spec;
+    pub const fn spec_id(mut self, spec: SpecFor<FEN>) -> Self {
+        self.spec = Some(spec);
         self
+    }
+
+    /// Optionally sets the EVM spec. When `None`, the spec from `EvmEnv::cfg_env` is preserved.
+    #[inline]
+    pub const fn spec_id_opt(self, spec: Option<SpecFor<FEN>>) -> Self {
+        if let Some(spec) = spec { self.spec_id(spec) } else { self }
     }
 
     /// Sets the executor gas limit.
     #[inline]
-    pub fn gas_limit(mut self, gas_limit: u64) -> Self {
+    pub const fn gas_limit(mut self, gas_limit: u64) -> Self {
         self.gas_limit = Some(gas_limit);
         self
     }
 
     /// Sets the `legacy_assertions` flag.
     #[inline]
-    pub fn legacy_assertions(mut self, legacy_assertions: bool) -> Self {
+    pub const fn legacy_assertions(mut self, legacy_assertions: bool) -> Self {
         self.legacy_assertions = legacy_assertions;
         self
     }
@@ -89,7 +92,9 @@ impl<FEN: FoundryEvmNetwork> ExecutorBuilder<FEN> {
             stack.gas_price = Some(tx_env.gas_price());
         }
         let gas_limit = gas_limit.unwrap_or(evm_env.block_env.gas_limit());
-        evm_env.cfg_env.set_spec(spec);
+        if let Some(spec) = spec {
+            evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
+        }
         Executor::new(db, evm_env, tx_env, stack.build(), gas_limit, legacy_assertions)
     }
 }

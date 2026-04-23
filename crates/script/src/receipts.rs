@@ -1,26 +1,13 @@
 use alloy_chains::{Chain, NamedChain};
 use alloy_network::{Network, ReceiptResponse};
-use alloy_primitives::{Address, TxHash, U256, utils::format_units};
+use alloy_primitives::{TxHash, U256, utils::format_units};
 use alloy_provider::{
     PendingTransactionBuilder, PendingTransactionError, Provider, RootProvider, WatchTxError,
 };
-use alloy_rpc_types::TransactionReceipt;
 use eyre::{Result, eyre};
 use forge_script_sequence::ScriptSequence;
 use foundry_common::{retry, retry::RetryError, shell};
 use std::time::Duration;
-
-/// Helper trait providing `contract_address` setter for generic `ReceiptResponse`
-pub trait FoundryReceiptResponse {
-    /// Sets address of the created contract, or `None` if the transaction was not a deployment.
-    fn set_contract_address(&mut self, contract_address: Address);
-}
-
-impl FoundryReceiptResponse for TransactionReceipt {
-    fn set_contract_address(&mut self, contract_address: Address) {
-        self.contract_address = Some(contract_address);
-    }
-}
 
 /// Marker error type for pending receipts
 #[derive(Debug, thiserror::Error)]
@@ -40,7 +27,7 @@ pub enum TxStatus<R: ReceiptResponse> {
 
 impl<R: ReceiptResponse> From<R> for TxStatus<R> {
     fn from(receipt: R) -> Self {
-        if !receipt.status() { Self::Revert(receipt) } else { Self::Success(receipt) }
+        if receipt.status() { Self::Success(receipt) } else { Self::Revert(receipt) }
     }
 }
 
@@ -196,6 +183,7 @@ mod tests {
     use super::*;
     use alloy_network::Ethereum;
     use alloy_primitives::B256;
+    use alloy_rpc_types::TransactionReceipt;
     use std::collections::VecDeque;
 
     fn mock_receipt(tx_hash: B256, success: bool) -> TransactionReceipt {

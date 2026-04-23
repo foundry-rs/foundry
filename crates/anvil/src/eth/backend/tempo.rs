@@ -8,10 +8,7 @@
 //! uses the shared initialization logic from `foundry-evm-core`.
 
 use alloy_primitives::{Address, U256, address};
-use foundry_evm::core::tempo::{
-    ALPHA_USD_ADDRESS, BETA_USD_ADDRESS, PATH_USD_ADDRESS, THETA_USD_ADDRESS,
-    initialize_tempo_genesis,
-};
+use foundry_evm::core::tempo::{PATH_USD_ADDRESS, initialize_tempo_genesis};
 use revm::{
     context::journaled_state::JournalCheckpoint,
     state::{AccountInfo, Bytecode},
@@ -22,7 +19,8 @@ use tempo_precompiles::{
     TIP_FEE_MANAGER_ADDRESS,
     account_keychain::{
         AccountKeychain,
-        IAccountKeychain::{SignatureType, authorizeKeyCall},
+        IAccountKeychain::{KeyRestrictions, SignatureType},
+        authorizeKeyCall,
     },
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
@@ -38,9 +36,9 @@ const SENDER: Address = address!("0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38");
 const ADMIN: Address = address!("0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f");
 
 const PATH_USD: Address = PATH_USD_ADDRESS;
-const ALPHA_USD: Address = ALPHA_USD_ADDRESS;
-const BETA_USD: Address = BETA_USD_ADDRESS;
-const THETA_USD: Address = THETA_USD_ADDRESS;
+const ALPHA_USD: Address = address!("0x20C0000000000000000000000000000000000001");
+const BETA_USD: Address = address!("0x20C0000000000000000000000000000000000002");
+const THETA_USD: Address = address!("0x20C0000000000000000000000000000000000003");
 
 /// Storage provider adapter for Anvil's Db to work with Tempo precompiles.
 pub struct AnvilStorageProvider<'a> {
@@ -50,6 +48,7 @@ pub struct AnvilStorageProvider<'a> {
     block_number: u64,
     gas_used: u64,
     gas_refunded: i64,
+    reservoir: u64,
     transient: HashMap<(Address, U256), U256>,
     hardfork: TempoHardfork,
 }
@@ -69,6 +68,7 @@ impl<'a> AnvilStorageProvider<'a> {
             block_number,
             gas_used: 0,
             gas_refunded: 0,
+            reservoir: 0,
             transient: HashMap::new(),
             hardfork,
         }
@@ -173,6 +173,10 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
         self.gas_refunded
     }
 
+    fn reservoir(&self) -> u64 {
+        self.reservoir
+    }
+
     fn refund_gas(&mut self, gas: i64) {
         self.gas_refunded = self.gas_refunded.saturating_add(gas);
     }
@@ -242,9 +246,13 @@ pub fn initialize_tempo_precompiles(
                 authorizeKeyCall {
                     keyId: account, // key ID = account address for secp256k1
                     signatureType: SignatureType::Secp256k1,
-                    expiry: u64::MAX,     // never expires
-                    enforceLimits: false, // no spending limits
-                    limits: vec![],
+                    config: KeyRestrictions {
+                        expiry: u64::MAX,     // never expires
+                        enforceLimits: false, // no spending limits
+                        limits: vec![],
+                        allowAnyCalls: true,
+                        allowedCalls: vec![],
+                    },
                 },
             )?;
         }

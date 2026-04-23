@@ -19,7 +19,7 @@ mod tests {
         eth::EthEvmContext,
         precompiles::{DynPrecompile, PrecompilesMap},
     };
-    use alloy_op_evm::OpEvm;
+    use alloy_op_evm::{OpEvm, OpTx};
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
     use itertools::Itertools;
     use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
@@ -30,7 +30,7 @@ mod tests {
         handler::{EthPrecompiles, instructions::EthInstructions},
         inspector::NoOpInspector,
         interpreter::interpreter::EthInterpreter,
-        precompile::{PrecompileOutput, PrecompileSpecId, Precompiles},
+        precompile::{PrecompileOutput, PrecompileSpecId, PrecompileStatus, Precompiles},
         primitives::hardfork::SpecId,
     };
 
@@ -57,10 +57,11 @@ mod tests {
                 PRECOMPILE_ADDR,
                 DynPrecompile::from(|input: PrecompileInput<'_>| {
                     Ok(PrecompileOutput {
+                        status: PrecompileStatus::Success,
                         bytes: Bytes::copy_from_slice(input.data),
                         gas_used: 0,
-                        gas_refunded: 0,
-                        reverted: false,
+                        state_gas_used: 0,
+                        reservoir: input.reservoir,
                     })
                 }),
             )]
@@ -111,8 +112,7 @@ mod tests {
     fn create_op_evm(
         spec: SpecId,
         op_spec: OpSpecId,
-    ) -> (OpTransaction<TxEnv>, OpEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap>)
-    {
+    ) -> (OpTx, OpEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap, OpTx>) {
         let tx = OpTransaction::<TxEnv> {
             base: TxEnv {
                 kind: TxKind::Call(PRECOMPILE_ADDR),
@@ -155,7 +155,7 @@ mod tests {
             true,
         );
 
-        (tx, op_evm)
+        (OpTx(tx), op_evm)
     }
 
     #[test]

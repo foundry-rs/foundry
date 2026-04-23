@@ -16,7 +16,7 @@ pub struct ChiselState {
 impl ChiselState {
     /// Create a new Chisel state inspector.
     #[inline]
-    pub fn new(final_pc: usize) -> Self {
+    pub const fn new(final_pc: usize) -> Self {
         Self { final_pc, state: None }
     }
 }

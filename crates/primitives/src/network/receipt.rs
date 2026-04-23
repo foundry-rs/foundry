@@ -122,7 +122,7 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
                     inner: AnyReceiptEnvelope { inner: receipt_with_bloom, r#type },
                 },
             other,
-        } = receipt;
+        } = receipt.0;
 
         Ok(Self(WithOtherFields {
             inner: TransactionReceipt {

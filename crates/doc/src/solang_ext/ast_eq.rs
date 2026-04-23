@@ -100,10 +100,10 @@ where
     T: AstEq,
 {
     fn ast_eq(&self, other: &Self) -> bool {
-        if self.len() != other.len() {
-            false
-        } else {
+        if self.len() == other.len() {
             self.iter().zip(other.iter()).all(|(left, right)| left.ast_eq(right))
+        } else {
+            false
         }
     }
 }
