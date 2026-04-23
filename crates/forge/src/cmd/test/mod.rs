@@ -873,13 +873,13 @@ impl TestArgs {
                     fs::create_dir_all(&config.snapshots)?;
 
                     // Write gas snapshots to disk per group.
-                    gas_snapshots.iter().for_each(|(group, snapshots)| {
+                    for (group, snapshots) in &gas_snapshots {
                         fs::write_pretty_json_file(
                             &config.snapshots.join(format!("{group}.json")),
                             &snapshots,
                         )
                         .expect("Failed to write gas snapshots to disk");
-                    });
+                    }
                 }
             }
 
