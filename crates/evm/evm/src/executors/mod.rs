@@ -1316,7 +1316,6 @@ impl EarlyExit {
 mod tests {
     use super::*;
     use foundry_evm_core::constants::MAGIC_SKIP;
-    use foundry_evm_core::{backend::Backend, evm::EthEvmNetwork};
     use revm::{context::Cfg, primitives::hardfork::SpecId};
 
     #[test]
