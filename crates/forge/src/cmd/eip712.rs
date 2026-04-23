@@ -100,7 +100,7 @@ pub struct Resolver<'gcx> {
 
 impl<'gcx> Resolver<'gcx> {
     /// Constructs a new [`Resolver`] for the supplied [`Hir`] instance.
-    pub fn new(gcx: Gcx<'gcx>) -> Self {
+    pub const fn new(gcx: Gcx<'gcx>) -> Self {
         Self { gcx }
     }
 

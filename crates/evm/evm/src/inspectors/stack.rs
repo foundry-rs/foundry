@@ -11,11 +11,12 @@ use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, NestedEvmClosure
 use foundry_common::compile::Analysis;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
-    backend::{DatabaseError, JournaledState},
+    backend::{DatabaseError, DatabaseExt, JournaledState},
+    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
     env::FoundryContextExt,
     evm::{
-        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork, IntoNestedEvm,
-        NestedEvm, SpecFor, TxEnvFor, with_cloned_context,
+        BlockEnvFor, EthEvmNetwork, EvmEnvFor, FoundryContextFor, FoundryEvmFactory,
+        FoundryEvmNetwork, SpecFor, TxEnvFor, get_create2_factory_call_inputs, with_cloned_context,
     },
 };
 use foundry_evm_coverage::HitMaps;
@@ -28,11 +29,13 @@ use revm::{
         result::{EVMError, ExecutionResult, Output},
     },
     context_interface::CreateScheme,
+    handler::FrameResult,
     inspector::JournalExt,
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
-        Interpreter, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
+        InstructionResult, Interpreter, InterpreterResult, return_ok,
     },
+    primitives::KECCAK_EMPTY,
     state::{Account, AccountStatus},
 };
 use revm_inspectors::edge_cov::EdgeCovInspector;
@@ -129,7 +132,7 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
     /// Set the gas price.
     #[inline]
-    pub fn gas_price(mut self, gas_price: u128) -> Self {
+    pub const fn gas_price(mut self, gas_price: u128) -> Self {
         self.gas_price = Some(gas_price);
         self
     }
@@ -157,28 +160,28 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
 
     /// Set the Chisel inspector.
     #[inline]
-    pub fn chisel_state(mut self, final_pc: usize) -> Self {
+    pub const fn chisel_state(mut self, final_pc: usize) -> Self {
         self.chisel_state = Some(final_pc);
         self
     }
 
     /// Set the log collector, and whether to print the logs directly to stdout.
     #[inline]
-    pub fn logs(mut self, live_logs: bool) -> Self {
+    pub const fn logs(mut self, live_logs: bool) -> Self {
         self.logs = Some(live_logs);
         self
     }
 
     /// Set whether to collect line coverage information.
     #[inline]
-    pub fn line_coverage(mut self, yes: bool) -> Self {
+    pub const fn line_coverage(mut self, yes: bool) -> Self {
         self.line_coverage = Some(yes);
         self
     }
 
     /// Set whether to enable the trace printer.
     #[inline]
-    pub fn print(mut self, yes: bool) -> Self {
+    pub const fn print(mut self, yes: bool) -> Self {
         self.print = Some(yes);
         self
     }
@@ -196,20 +199,20 @@ impl<BLOCK: Clone> InspectorStackBuilder<BLOCK> {
     /// Set whether to enable the call isolation.
     /// For description of call isolation, see [`InspectorStack::enable_isolation`].
     #[inline]
-    pub fn enable_isolation(mut self, yes: bool) -> Self {
+    pub const fn enable_isolation(mut self, yes: bool) -> Self {
         self.enable_isolation = yes;
         self
     }
 
     /// Set networks with enabled features.
     #[inline]
-    pub fn networks(mut self, networks: NetworkConfigs) -> Self {
+    pub const fn networks(mut self, networks: NetworkConfigs) -> Self {
         self.networks = networks;
         self
     }
 
     #[inline]
-    pub fn create2_deployer(mut self, create2_deployer: Address) -> Self {
+    pub const fn create2_deployer(mut self, create2_deployer: Address) -> Self {
         self.create2_deployer = create2_deployer;
         self
     }
@@ -369,6 +372,10 @@ pub struct InspectorStackInner {
     pub tracer: Option<Box<TracingInspector>>,
 
     // FoundryInspectorExt and other internal data.
+    /// Whether to collect sancov edge coverage from instrumented native crates.
+    pub sancov_edges: bool,
+    /// Whether to capture sancov trace-cmp operands for dictionary injection.
+    pub sancov_trace_cmp: bool,
     pub enable_isolation: bool,
     pub networks: NetworkConfigs,
     pub create2_deployer: Address,
@@ -378,6 +385,12 @@ pub struct InspectorStackInner {
     pub top_frame_journal: AddressMap<Account>,
     /// Address that reverted the call, if any.
     pub reverter: Option<Address>,
+    /// LIFO stack tracking CREATE2 frames that were redirected to the CREATE2 factory.
+    /// Each entry records the journal depth at which the redirect occurred.
+    pub pending_create2_redirects: Vec<usize>,
+    /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
+    /// it goes through the normal inspector lifecycle (tracing, etc.).
+    pub pending_create2_error: Option<CreateOutcome>,
 }
 
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
@@ -391,16 +404,15 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     fn with_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
     ) -> Result<(), EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         with_cloned_context(ecx, |db, evm_env, journal_inner| {
-            let mut evm = FEN::EvmFactory::default()
-                .create_foundry_evm_with_inspector(db, evm_env, &mut inspector)
-                .into_nested_evm();
+            let mut evm =
+                FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, &mut inspector);
             *evm.journal_inner_mut() = journal_inner;
-            f(&mut evm)?;
+            f(&mut *evm)?;
             let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
             Ok((sub_evm_env, sub_inner))
@@ -410,48 +422,40 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
     fn with_fresh_nested_evm(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
-        db: &mut <<FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_> as ContextTr>::Db,
+        db: &mut <FoundryContextFor<'_, FEN> as ContextTr>::Db,
         evm_env: EvmEnvFor<FEN>,
         f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
     ) -> Result<EvmEnvFor<FEN>, EVMError<DatabaseError>> {
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
-        let mut evm = FEN::EvmFactory::default()
-            .create_foundry_evm_with_inspector(db, evm_env, &mut inspector)
-            .into_nested_evm();
-        f(&mut evm)?;
+        let mut evm =
+            FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, &mut inspector);
+        f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
 
     fn transact_on_db(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         fork_id: Option<U256>,
         transaction: B256,
     ) -> eyre::Result<()> {
         let evm_env = ecx.evm_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.db_journal_inner_mut();
-        FEN::EvmFactory::default().db_transact(
-            db,
-            fork_id,
-            transaction,
-            evm_env,
-            inner,
-            &mut inspector,
-        )
+        db.transact(fork_id, transaction, evm_env, inner, &mut inspector)
     }
 
     fn transact_from_tx_on_db(
         &mut self,
         cheats: &mut Cheatcodes<FEN>,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         tx_env: TxEnvFor<FEN>,
     ) -> eyre::Result<()> {
         let evm_env = ecx.evm_clone();
         let mut inspector = InspectorStackRefMut { cheatcodes: Some(cheats), inner: self };
         let (db, inner) = ecx.db_journal_inner_mut();
-        FEN::EvmFactory::default().db_transact_from_tx(db, tx_env, evm_env, inner, &mut inspector)
+        db.transact_from_tx(tx_env, evm_env, inner, &mut inspector)
     }
 
     fn console_log(&mut self, msg: &str) {
@@ -466,13 +470,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for InspectorStackInner {
 
     fn set_in_inner_context(&mut self, enabled: bool, original_origin: Option<Address>) {
         self.in_inner_context = enabled;
-        self.inner_context_data = if enabled {
-            Some(InnerContextData {
-                original_origin: original_origin.expect("origin required when enabling inner ctx"),
-            })
-        } else {
-            None
-        };
+        self.inner_context_data = enabled.then(|| InnerContextData {
+            original_origin: original_origin.expect("origin required when enabling inner ctx"),
+        });
     }
 }
 
@@ -546,15 +546,27 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.edge_coverage = yes.then(EdgeCovInspector::new).map(Into::into);
     }
 
+    /// Set whether to collect sancov edge coverage from instrumented native crates.
+    #[inline]
+    pub const fn collect_sancov_edges(&mut self, yes: bool) {
+        self.inner.sancov_edges = yes;
+    }
+
+    /// Set whether to capture sancov trace-cmp operands for dictionary injection.
+    #[inline]
+    pub const fn collect_sancov_trace_cmp(&mut self, yes: bool) {
+        self.inner.sancov_trace_cmp = yes;
+    }
+
     /// Set whether to enable call isolation.
     #[inline]
-    pub fn enable_isolation(&mut self, yes: bool) {
+    pub const fn enable_isolation(&mut self, yes: bool) {
         self.inner.enable_isolation = yes;
     }
 
     /// Set networks with enabled features.
     #[inline]
-    pub fn networks(&mut self, networks: NetworkConfigs) {
+    pub const fn networks(&mut self, networks: NetworkConfigs) {
         self.inner.networks = networks;
     }
 
@@ -677,7 +689,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
     fn do_call_end(
         &mut self,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
@@ -712,7 +724,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
     fn do_create_end(
         &mut self,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
@@ -736,7 +748,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
     fn transact_inner(
         &mut self,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         kind: TxKind,
         caller: Address,
         input: Bytes,
@@ -775,9 +787,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let res = self.with_inspector(|mut inspector| {
             let (res, nested_env) = {
                 let (db, journal) = ecx.db_journal_inner_mut();
-                let mut evm = FEN::EvmFactory::default()
-                    .create_foundry_evm_with_inspector(db, evm_env, &mut inspector)
-                    .into_nested_evm();
+                let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(
+                    db,
+                    evm_env,
+                    &mut inspector,
+                );
 
                 evm.journal_inner_mut().state = {
                     let mut state = journal.state.clone();
@@ -856,7 +870,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         let (result, address, output) = match res.result {
             ExecutionResult::Success { reason, gas: result_gas, logs: _, output } => {
                 gas.set_refund(result_gas.final_refunded() as i64);
-                let _ = gas.record_cost(result_gas.used());
+                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
                 let address = match output {
                     Output::Create(_, address) => address,
                     Output::Call(_) => None,
@@ -864,11 +878,11 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
                 (reason.into(), address, output.into_data())
             }
             ExecutionResult::Halt { reason, gas: result_gas, .. } => {
-                let _ = gas.record_cost(result_gas.used());
+                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
                 (InstructionResult::from(reason), None, Bytes::new())
             }
             ExecutionResult::Revert { gas: result_gas, output, .. } => {
-                let _ = gas.record_cost(result_gas.used());
+                let _ = gas.record_regular_cost(result_gas.tx_gas_used());
                 (InstructionResult::Revert, None, output)
             }
         };
@@ -884,22 +898,24 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             .map(|cheats| core::mem::replace(cheats, Cheatcodes::new(cheats.config.clone())));
         let mut inner = std::mem::take(self.inner);
 
+        // Save pending CREATE2 redirects so frame_end in the nested EVM doesn't consume them.
+        // These belong to the outer EVM's frame lifecycle and must be restored after.
+        let saved_create2_redirects = std::mem::take(&mut inner.pending_create2_redirects);
+
         let out = f(InspectorStackRefMut { cheatcodes: cheatcodes.as_mut(), inner: &mut inner });
 
         if let Some(cheats) = self.cheatcodes.as_deref_mut() {
             *cheats = cheatcodes.unwrap();
         }
 
+        inner.pending_create2_redirects = saved_create2_redirects;
         *self.inner = inner;
 
         out
     }
 
     /// Invoked at the beginning of a new top-level (0 depth) frame.
-    fn top_level_frame_start(
-        &mut self,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
-    ) {
+    fn top_level_frame_start(&mut self, ecx: &mut FoundryContextFor<'_, FEN>) {
         if self.enable_isolation {
             // If we're in isolation mode, we need to keep track of the state at the beginning of
             // the frame to be able to roll back on revert
@@ -910,7 +926,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     /// Invoked at the end of root frame.
     fn top_level_frame_end(
         &mut self,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         result: InstructionResult,
     ) {
         if !result.is_revert() {
@@ -940,7 +956,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     fn step_inlined(
         &mut self,
         interpreter: &mut Interpreter,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
         call_inspectors!(
             [
@@ -963,7 +979,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     fn step_end_inlined(
         &mut self,
         interpreter: &mut Interpreter,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
         call_inspectors!(
             [
@@ -980,13 +996,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
     }
 }
 
-impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>>
+impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
     for InspectorStackRefMut<'_, FEN>
 {
     fn initialize_interp(
         &mut self,
         interpreter: &mut Interpreter,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
         call_inspectors!(
             [
@@ -1000,28 +1016,16 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
         );
     }
 
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
-    ) {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.step_inlined(interpreter, ecx);
     }
 
-    fn step_end(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
-    ) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.step_end_inlined(interpreter, ecx);
     }
 
     #[allow(clippy::redundant_clone)]
-    fn log(
-        &mut self,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
-        log: Log,
-    ) {
+    fn log(&mut self, ecx: &mut FoundryContextFor<'_, FEN>, log: Log) {
         call_inspectors!(
             [&mut self.tracer, &mut self.log_collector, &mut self.cheatcodes, &mut self.printer],
             |inspector| inspector.log(ecx, log.clone()),
@@ -1032,7 +1036,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
     fn log_full(
         &mut self,
         interpreter: &mut Interpreter,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         log: Log,
     ) {
         call_inspectors!(
@@ -1041,9 +1045,97 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
         );
     }
 
+    fn frame_start(
+        &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        frame_input: &mut FrameInput,
+    ) -> Option<FrameResult> {
+        if let FrameInput::Create(inputs) = frame_input
+            && let CreateScheme::Create2 { salt } = inputs.scheme()
+            && self.should_use_create2_factory(ecx.journal().depth(), inputs)
+        {
+            let gas_limit = inputs.gas_limit();
+            let create2_deployer = self.create2_deployer();
+
+            // Validate deployer before rewriting.
+            let code_hash = ecx.journal_mut().load_account(create2_deployer).ok()?.info.code_hash;
+            if code_hash == KECCAK_EMPTY {
+                // Store the revert so `create` can return it inside the normal inspector
+                // lifecycle (avoids tracing mismatch from short-circuiting in frame_start).
+                self.inner.pending_create2_error = Some(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: Bytes::from(
+                            format!("missing CREATE2 deployer: {create2_deployer}").into_bytes(),
+                        ),
+                        gas: Gas::new(gas_limit),
+                    },
+                    address: None,
+                });
+                return None;
+            } else if code_hash != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
+                self.inner.pending_create2_error = Some(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "invalid CREATE2 deployer bytecode".into(),
+                        gas: Gas::new(gas_limit),
+                    },
+                    address: None,
+                });
+                return None;
+            }
+
+            let call_inputs =
+                get_create2_factory_call_inputs(salt, inputs, create2_deployer, ecx.journal_mut())
+                    .ok()?;
+
+            // Record the redirect depth *after* validation succeeds.
+            self.inner.pending_create2_redirects.push(ecx.journal().depth());
+
+            // Rewrite the frame input from Create to Call.
+            *frame_input = FrameInput::Call(Box::new(call_inputs));
+        }
+
+        None
+    }
+
+    fn frame_end(
+        &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        _frame_input: &FrameInput,
+        frame_result: &mut FrameResult,
+    ) {
+        let depth = ecx.journal().depth();
+        if self.inner.pending_create2_redirects.last().copied() != Some(depth) {
+            return;
+        }
+
+        self.inner.pending_create2_redirects.pop();
+
+        let FrameResult::Call(call) = frame_result else {
+            debug_assert!(false, "pending CREATE2 redirect ended with non-call result");
+            return;
+        };
+
+        let address = match call.instruction_result() {
+            return_ok!() => Address::try_from(call.output().as_ref())
+                .map_err(|_| {
+                    call.result = InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: "invalid CREATE2 factory output".into(),
+                        gas: Gas::new(call.result.gas.limit()),
+                    };
+                })
+                .ok(),
+            _ => None,
+        };
+
+        *frame_result = FrameResult::Create(CreateOutcome { result: call.result.clone(), address });
+    }
+
     fn call(
         &mut self,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         call: &mut CallInputs,
     ) -> Option<CallOutcome> {
         if self.in_inner_context && ecx.journal().depth() == 1 {
@@ -1085,7 +1177,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
                     .or_else(|| input_bytes.get(..4).and_then(|selector| mocks.get(selector)))
                 {
                     call.bytecode_address = *target;
-                    call.known_bytecode = None;
+
+                    let target = ecx
+                        .journal_mut()
+                        .load_account_with_code(*target)
+                        .expect("failed to load account");
+                    call.known_bytecode =
+                        (target.info.code_hash, target.info.code.clone().unwrap_or_default());
                 }
             }
 
@@ -1145,7 +1243,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
 
     fn call_end(
         &mut self,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
@@ -1164,7 +1262,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
 
     fn create(
         &mut self,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         create: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         if self.in_inner_context && ecx.journal().depth() == 1 {
@@ -1181,6 +1279,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
             [&mut self.tracer, &mut self.line_coverage, &mut self.cheatcodes],
             |inspector| inspector.create(ecx, create).map(Some),
         );
+
+        // If frame_start detected an invalid CREATE2 deployer, return the error here
+        // (after sub-inspectors have been notified) so tracing stays balanced.
+        if let Some(error) = self.inner.pending_create2_error.take() {
+            return Some(error);
+        }
 
         if !matches!(create.scheme(), CreateScheme::Create2 { .. })
             && self.enable_isolation
@@ -1203,7 +1307,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
 
     fn create_end(
         &mut self,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
@@ -1222,7 +1326,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
 
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         call_inspectors!([&mut self.printer], |inspector| {
-            Inspector::<<FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>>::selfdestruct(
+            Inspector::<FoundryContextFor<'_, FEN>>::selfdestruct(
                 inspector, contract, target, value,
             )
         });
@@ -1255,28 +1359,18 @@ impl<FEN: FoundryEvmNetwork> InspectorExt for InspectorStackRefMut<'_, FEN> {
     }
 }
 
-impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>>
-    for InspectorStack<FEN>
-{
-    fn step(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
-    ) {
+impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for InspectorStack<FEN> {
+    fn step(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.as_mut().step_inlined(interpreter, ecx)
     }
 
-    fn step_end(
-        &mut self,
-        interpreter: &mut Interpreter,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
-    ) {
+    fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
         self.as_mut().step_end_inlined(interpreter, ecx)
     }
 
     fn call(
         &mut self,
-        context: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        context: &mut FoundryContextFor<'_, FEN>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
         self.as_mut().call(context, inputs)
@@ -1284,7 +1378,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
 
     fn call_end(
         &mut self,
-        context: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        context: &mut FoundryContextFor<'_, FEN>,
         inputs: &CallInputs,
         outcome: &mut CallOutcome,
     ) {
@@ -1293,7 +1387,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
 
     fn create(
         &mut self,
-        context: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        context: &mut FoundryContextFor<'_, FEN>,
         create: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         self.as_mut().create(context, create)
@@ -1301,7 +1395,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
 
     fn create_end(
         &mut self,
-        context: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        context: &mut FoundryContextFor<'_, FEN>,
         call: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
@@ -1311,31 +1405,44 @@ impl<FEN: FoundryEvmNetwork> Inspector<<FEN::EvmFactory as FoundryEvmFactory>::F
     fn initialize_interp(
         &mut self,
         interpreter: &mut Interpreter,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
     ) {
         self.as_mut().initialize_interp(interpreter, ecx)
     }
 
-    fn log(
-        &mut self,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
-        log: Log,
-    ) {
+    fn log(&mut self, ecx: &mut FoundryContextFor<'_, FEN>, log: Log) {
         self.as_mut().log(ecx, log)
     }
 
     fn log_full(
         &mut self,
         interpreter: &mut Interpreter,
-        ecx: &mut <FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>,
+        ecx: &mut FoundryContextFor<'_, FEN>,
         log: Log,
     ) {
         self.as_mut().log_full(interpreter, ecx, log)
     }
 
+    fn frame_start(
+        &mut self,
+        context: &mut FoundryContextFor<'_, FEN>,
+        frame_input: &mut FrameInput,
+    ) -> Option<FrameResult> {
+        self.as_mut().frame_start(context, frame_input)
+    }
+
+    fn frame_end(
+        &mut self,
+        context: &mut FoundryContextFor<'_, FEN>,
+        frame_input: &FrameInput,
+        frame_result: &mut FrameResult,
+    ) {
+        self.as_mut().frame_end(context, frame_input, frame_result)
+    }
+
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         call_inspectors!([&mut self.inner.printer], |inspector| {
-            Inspector::<<FEN::EvmFactory as FoundryEvmFactory>::FoundryContext<'_>>::selfdestruct(
+            Inspector::<FoundryContextFor<'_, FEN>>::selfdestruct(
                 inspector, contract, target, value,
             )
         });

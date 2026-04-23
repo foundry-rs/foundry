@@ -1,7 +1,7 @@
 use super::ScriptResult;
 use crate::build::LinkedBuildData;
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_network::{Ethereum, Network, TransactionBuilder};
+use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, hex};
 use eyre::Result;
 use forge_script_sequence::TransactionWithMetadata;
@@ -146,7 +146,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
     /// Populates additional data from the transaction execution result.
     pub fn with_execution_result(
         mut self,
-        result: &ScriptResult<Ethereum>,
+        result: &ScriptResult<N>,
         gas_estimate_multiplier: u64,
         linked_build_data: &LinkedBuildData,
     ) -> Self {

@@ -73,6 +73,8 @@ pub enum BlockchainError {
     BlockOutOfRange(u64, u64),
     #[error("Resource not found")]
     BlockNotFound,
+    #[error("unknown block")]
+    UnknownBlock,
     /// Thrown when a requested transaction is not found
     #[error("transaction not found")]
     TransactionNotFound,
@@ -156,6 +158,7 @@ where
             },
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::Message(err),
+            EVMError::CustomAny(err) => Self::Message(err.to_string()),
         }
     }
 }
@@ -182,6 +185,25 @@ where
             },
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::Message(err),
+            EVMError::CustomAny(err) => Self::Message(err.to_string()),
+        }
+    }
+}
+
+impl<T> From<EVMError<T, alloy_op_evm::OpTxError>> for BlockchainError
+where
+    T: Into<Self>,
+{
+    fn from(err: EVMError<T, alloy_op_evm::OpTxError>) -> Self {
+        match err {
+            EVMError::Transaction(err) => {
+                let op_err: OpTransactionError = err.0;
+                EVMError::<T, OpTransactionError>::Transaction(op_err).into()
+            }
+            EVMError::Header(err) => EVMError::<T, OpTransactionError>::Header(err).into(),
+            EVMError::Database(err) => err.into(),
+            EVMError::Custom(err) => Self::Message(err),
+            EVMError::CustomAny(err) => Self::Message(err.to_string()),
         }
     }
 }
@@ -204,6 +226,7 @@ where
             },
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::Message(err),
+            EVMError::CustomAny(err) => Self::Message(err.to_string()),
         }
     }
 }
@@ -626,6 +649,11 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                 BlockchainError::FilterNotFound => RpcError {
                     code: ErrorCode::ServerError(-32000),
                     message: "filter not found".into(),
+                    data: None,
+                },
+                err @ BlockchainError::UnknownBlock => RpcError {
+                    code: ErrorCode::ServerError(-32000),
+                    message: err.to_string().into(),
                     data: None,
                 },
             }

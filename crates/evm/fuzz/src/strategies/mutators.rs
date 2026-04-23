@@ -485,7 +485,9 @@ fn apply_scale_to_bytes(bytes: &mut [u8], scale_factor: f64) -> Option<()> {
         let scaled = (byte_val + carry_down * 256.0) * scale_factor;
 
         if i == 0 && scaled >= 256.0 {
-            bytes.iter_mut().for_each(|b| *b = 0xFF);
+            for b in bytes.iter_mut() {
+                *b = 0xFF;
+            }
             return Some(());
         }
 
@@ -500,7 +502,9 @@ fn apply_scale_to_bytes(bytes: &mut [u8], scale_factor: f64) -> Option<()> {
             j -= 1;
             let new_val = bytes[j] as f64 + carry_up;
             if j == 0 && new_val >= 256.0 {
-                bytes.iter_mut().for_each(|b| *b = 0xFF);
+                for b in bytes.iter_mut() {
+                    *b = 0xFF;
+                }
                 return Some(());
             }
             bytes[j] = (new_val % 256.0).floor() as u8;

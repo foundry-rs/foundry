@@ -54,9 +54,9 @@ use alloy_evm::{
 };
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
-    ReceiptResponse, TransactionBuilder, UnknownTxEnvelope, UnknownTypedTransaction,
+    NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
 };
-use alloy_op_evm::OpEvmFactory;
+use alloy_op_evm::{OpEvmFactory, OpTx};
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
     map::{AddressMap, HashMap, HashSet},
@@ -119,7 +119,7 @@ use revm::{
     context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
-        result::{ExecutionResult, HaltReason, Output, ResultAndState},
+        result::{EVMError, ExecutionResult, HaltReason, Output, ResultAndState},
     },
     database::{CacheDB, DbAccount, WrapDatabaseRef},
     interpreter::InstructionResult,
@@ -141,7 +141,8 @@ use tempo_chainspec::hardfork::TempoHardfork;
 use tempo_evm::evm::TempoEvmFactory;
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 use tempo_revm::{
-    TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext, gas_params::tempo_gas_params,
+    TempoBatchCallEnv, TempoBlockEnv, TempoHaltReason, TempoTxEnv, evm::TempoContext,
+    gas_params::tempo_gas_params,
 };
 use tokio::sync::RwLock as AsyncRwLock;
 
@@ -182,7 +183,7 @@ impl<T> fmt::Debug for BlockRequest<T> {
 }
 
 impl<T> BlockRequest<T> {
-    pub fn block_number(&self) -> BlockNumber {
+    pub const fn block_number(&self) -> BlockNumber {
         match *self {
             Self::Pending(_) => BlockNumber::Pending,
             Self::Number(n) => BlockNumber::Number(n),
@@ -245,7 +246,7 @@ pub struct Backend<N: Network> {
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
     transaction_block_keeper: Option<usize>,
-    node_config: Arc<AsyncRwLock<NodeConfig>>,
+    pub(crate) node_config: Arc<AsyncRwLock<NodeConfig>>,
     /// Slots in an epoch
     slots_in_an_epoch: u64,
     /// Precompiles to inject to the EVM.
@@ -351,12 +352,12 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the `TimeManager` responsible for timestamps
-    pub fn time(&self) -> &TimeManager {
+    pub const fn time(&self) -> &TimeManager {
         &self.time
     }
 
     /// Returns the `CheatsManager` responsible for executing cheatcodes
-    pub fn cheats(&self) -> &CheatsManager {
+    pub const fn cheats(&self) -> &CheatsManager {
         &self.cheats
     }
 
@@ -368,12 +369,12 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the `FeeManager` that manages fee/pricings
-    pub fn fees(&self) -> &FeeManager {
+    pub const fn fees(&self) -> &FeeManager {
         &self.fees
     }
 
     /// The EVM environment data of the blockchain
-    pub fn evm_env(&self) -> &Arc<RwLock<EvmEnv>> {
+    pub const fn evm_env(&self) -> &Arc<RwLock<EvmEnv>> {
         &self.evm_env
     }
 
@@ -407,7 +408,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the genesis data for the Beacon API.
-    pub fn genesis_time(&self) -> u64 {
+    pub const fn genesis_time(&self) -> u64 {
         self.genesis.timestamp
     }
 
@@ -482,17 +483,17 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns true if op-stack deposits are active
-    pub fn is_optimism(&self) -> bool {
+    pub const fn is_optimism(&self) -> bool {
         self.networks.is_optimism()
     }
 
     /// Returns true if Tempo network mode is active
-    pub fn is_tempo(&self) -> bool {
+    pub const fn is_tempo(&self) -> bool {
         self.networks.is_tempo()
     }
 
     /// Returns the active hardfork.
-    pub fn hardfork(&self) -> FoundryHardfork {
+    pub const fn hardfork(&self) -> FoundryHardfork {
         self.hardfork
     }
 
@@ -581,7 +582,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if op-stack deposits are not active
-    pub fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
+    pub const fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
             return Ok(());
         }
@@ -589,11 +590,35 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if Tempo transactions are not active
-    pub fn ensure_tempo_active(&self) -> Result<(), BlockchainError> {
+    pub const fn ensure_tempo_active(&self) -> Result<(), BlockchainError> {
         if self.is_tempo() {
             return Ok(());
         }
         Err(BlockchainError::TempoTransactionUnsupported)
+    }
+
+    /// Builds the [`InspectorTxConfig`] from the backend's current settings.
+    fn inspector_tx_config(&self) -> InspectorTxConfig {
+        InspectorTxConfig {
+            print_traces: self.print_traces,
+            print_logs: self.print_logs,
+            enable_steps_tracing: self.enable_steps_tracing,
+            call_trace_decoder: self.call_trace_decoder.clone(),
+        }
+    }
+
+    /// Builds the [`PoolTxGasConfig`] from the given EVM environment.
+    fn pool_tx_gas_config(&self, evm_env: &EvmEnv) -> PoolTxGasConfig {
+        let spec_id = *evm_env.spec_id();
+        let is_cancun = spec_id >= SpecId::CANCUN;
+        let blob_params = self.blob_params();
+        PoolTxGasConfig {
+            disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
+            tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
+            tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
+            max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
+            is_cancun,
+        }
     }
 
     /// Returns the block gas limit
@@ -612,7 +637,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns whether the minimum suggested priority fee is enforced
-    pub fn is_min_priority_fee_enforced(&self) -> bool {
+    pub const fn is_min_priority_fee_enforced(&self) -> bool {
         self.fees.is_min_priority_fee_enforced()
     }
 
@@ -1127,7 +1152,13 @@ impl<N: Network> Backend<N> {
                 inspector,
             );
             self.inject_precompiles(evm.precompiles_mut());
-            let result = evm.transact(tx_env)?;
+            let result = evm.transact(OpTx(tx_env)).map_err(|e| match e {
+                EVMError::Database(db) => EVMError::Database(db),
+                EVMError::Header(h) => EVMError::Header(h),
+                EVMError::Custom(s) => EVMError::Custom(s),
+                EVMError::CustomAny(err) => EVMError::CustomAny(err),
+                EVMError::Transaction(t) => EVMError::Transaction(t),
+            })?;
             Ok(ResultAndState {
                 result: result.result.map_haltreason(|h| match h {
                     OpHaltReason::Base(eth) => eth,
@@ -1198,7 +1229,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let hardfork = TempoHardfork::from(evm_env.cfg_env.spec);
+        let hardfork = TempoHardfork::from(self.hardfork);
         let tempo_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
             TempoBlockEnv { inner: evm_env.block_env.clone(), timestamp_millis_part: 0 },
@@ -1241,28 +1272,35 @@ impl<N: Network> Backend<N> {
     {
         let inspector = self.build_mining_inspector();
 
+        macro_rules! run {
+            ($evm:expr) => {{
+                self.inject_precompiles($evm.precompiles_mut());
+                let mut executor = AnvilBlockExecutor::new($evm, parent_hash, spec_id);
+                executor.apply_pre_execution_changes().expect("pre-execution changes failed");
+                let pool_result = execute_pool_transactions(
+                    &mut executor,
+                    pool_transactions,
+                    gas_config,
+                    inspector_tx_config,
+                    self.cheats(),
+                    validator,
+                );
+                let (evm, block_result) = executor.finish().expect("executor finish failed");
+                drop(evm);
+                (pool_result, block_result)
+            }};
+        }
+
         if self.is_optimism() {
             let op_env = EvmEnv::new(
                 evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
                 evm_env.block_env.clone(),
             );
-            let mut evm = OpEvmFactory::default().create_evm_with_inspector(db, op_env, inspector);
-            self.inject_precompiles(evm.precompiles_mut());
-            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
-            executor.apply_pre_execution_changes().expect("pre-execution changes failed");
-            let pool_result = execute_pool_transactions(
-                &mut executor,
-                pool_transactions,
-                gas_config,
-                inspector_tx_config,
-                self.cheats(),
-                validator,
-            );
-            let (evm, block_result) = executor.finish().expect("executor finish failed");
-            drop(evm);
-            (pool_result, block_result)
+            let mut evm =
+                OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
+            run!(evm)
         } else if self.is_tempo() {
-            let hardfork = TempoHardfork::from(evm_env.cfg_env.spec);
+            let hardfork = TempoHardfork::from(self.hardfork);
             let tempo_env = EvmEnv::new(
                 evm_env
                     .cfg_env
@@ -1272,37 +1310,11 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
-            self.inject_precompiles(evm.precompiles_mut());
-            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
-            executor.apply_pre_execution_changes().expect("pre-execution changes failed");
-            let pool_result = execute_pool_transactions(
-                &mut executor,
-                pool_transactions,
-                gas_config,
-                inspector_tx_config,
-                self.cheats(),
-                validator,
-            );
-            let (evm, block_result) = executor.finish().expect("executor finish failed");
-            drop(evm);
-            (pool_result, block_result)
+            run!(evm)
         } else {
             let mut evm =
                 EthEvmFactory::default().create_evm_with_inspector(db, evm_env.clone(), inspector);
-            self.inject_precompiles(evm.precompiles_mut());
-            let mut executor = AnvilBlockExecutor::new(evm, parent_hash, spec_id);
-            executor.apply_pre_execution_changes().expect("pre-execution changes failed");
-            let pool_result = execute_pool_transactions(
-                &mut executor,
-                pool_transactions,
-                gas_config,
-                inspector_tx_config,
-                self.cheats(),
-                validator,
-            );
-            let (evm, block_result) = executor.finish().expect("executor finish failed");
-            drop(evm);
-            (pool_result, block_result)
+            run!(evm)
         }
     }
 
@@ -1379,11 +1391,7 @@ impl<N: Network> Backend<N> {
             gas_priority_fee: max_priority_fee_per_gas,
             max_fee_per_blob_gas: max_fee_per_blob_gas
                 .or_else(|| {
-                    if !blob_hashes.is_empty() {
-                        evm_env.block_env.blob_gasprice()
-                    } else {
-                        Some(0)
-                    }
+                    if blob_hashes.is_empty() { Some(0) } else { evm_env.block_env.blob_gasprice() }
                 })
                 .unwrap_or_default(),
             kind: match to {
@@ -1411,8 +1419,10 @@ impl<N: Network> Backend<N> {
             evm_env.cfg_env.disable_base_fee = true;
         }
 
-        // Deposit transaction?
-        if let Ok(deposit) = get_deposit_tx_parts(&other) {
+        // Deposit transaction? (only valid when op-stack deposits are active)
+        if self.ensure_op_deposits_active().is_ok()
+            && let Ok(deposit) = get_deposit_tx_parts(&other)
+        {
             tx_env.deposit = deposit;
         }
 
@@ -1428,20 +1438,60 @@ impl<N: Network> Backend<N> {
     ) -> Result<(InstructionResult, Option<Output>, u128, State), BlockchainError> {
         let mut inspector = self.build_inspector();
 
+        // Extract Tempo-specific fields before `build_call_env` consumes `other`.
+        let tempo_overrides = self.is_tempo().then(|| {
+            let fee_token =
+                request.other.get_deserialized::<Address>("feeToken").and_then(|r| r.ok());
+            let nonce_key = request
+                .other
+                .get_deserialized::<U256>("nonceKey")
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+            let valid_before = request
+                .other
+                .get_deserialized::<U256>("validBefore")
+                .and_then(|r| r.ok())
+                .map(|v| v.saturating_to::<u64>());
+            let valid_after = request
+                .other
+                .get_deserialized::<U256>("validAfter")
+                .and_then(|r| r.ok())
+                .map(|v| v.saturating_to::<u64>());
+            (fee_token, nonce_key, valid_before, valid_after)
+        });
+
         let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
+
         let ResultAndState { result, state } =
-            self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
-        let (exit_reason, gas_used, out) = match result {
-            ExecutionResult::Success { reason, gas, output, .. } => {
-                (reason.into(), gas.used(), Some(output))
-            }
-            ExecutionResult::Revert { gas, output, .. } => {
-                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
-            }
-            ExecutionResult::Halt { reason, gas, .. } => {
-                (reason.into_instruction_result(), gas.used(), None)
-            }
-        };
+            if let Some((fee_token, nonce_key, valid_before, valid_after)) = tempo_overrides {
+                use tempo_primitives::transaction::Call;
+
+                let base = tx_env.base;
+                let mut tempo_tx = TempoTxEnv::from(base.clone());
+                tempo_tx.fee_token = fee_token;
+
+                if !nonce_key.is_zero() || valid_before.is_some() || valid_after.is_some() {
+                    // For gas estimation we don't have a signed tx, so generate a
+                    // unique hash for expiring-nonce replay protection.  The nonce
+                    // manager needs a non-zero hash; the actual value doesn't matter
+                    // because the state is discarded after estimation.
+                    let estimation_hash = keccak256(base.data.as_ref());
+                    tempo_tx.tempo_tx_env = Some(Box::new(TempoBatchCallEnv {
+                        nonce_key,
+                        valid_before,
+                        valid_after,
+                        aa_calls: vec![Call { to: base.kind, value: base.value, input: base.data }],
+                        tx_hash: estimation_hash,
+                        expiring_nonce_hash: Some(estimation_hash),
+                        ..Default::default()
+                    }));
+                }
+                self.transact_tempo_with_inspector_ref(state, &evm_env, &mut inspector, tempo_tx)?
+            } else {
+                self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?
+            };
+
+        let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         inspector.print_logs();
 
         if self.print_traces {
@@ -1464,17 +1514,7 @@ impl<N: Network> Backend<N> {
         let (evm_env, tx_env) = self.build_call_env(request, fee_details, block_env);
         let ResultAndState { result, state: _ } =
             self.transact_with_inspector_ref(state, &evm_env, &mut inspector, tx_env)?;
-        let (exit_reason, gas_used, out) = match result {
-            ExecutionResult::Success { reason, gas, output, .. } => {
-                (reason.into(), gas.used(), Some(output))
-            }
-            ExecutionResult::Revert { gas, output, .. } => {
-                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
-            }
-            ExecutionResult::Halt { reason, gas, .. } => {
-                (reason.into_instruction_result(), gas.used(), None)
-            }
-        };
+        let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
         let access_list = inspector.access_list();
         Ok((exit_reason, out, gas_used, access_list))
     }
@@ -1813,6 +1853,7 @@ impl<N: Network> Backend<N> {
         }))
     }
 
+    #[allow(clippy::large_stack_frames)]
     pub fn get_blob_by_versioned_hash(&self, hash: B256) -> Result<Option<Blob>> {
         let storage = self.blockchain.storage.read();
         for block in storage.blocks.values() {
@@ -2038,6 +2079,7 @@ impl<N: Network> Backend<N> {
                     // we want to force the correct base fee for the next block during
                     // `setup_fork_db_config`
                     node_config.base_fee.take();
+                    node_config.fork_urls = vec![eth_rpc_url.clone()];
 
                     node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?
                 };
@@ -2060,7 +2102,9 @@ impl<N: Network> Backend<N> {
             let block_number =
                 forking.block_number.map(BlockNumber::from).unwrap_or(BlockNumber::Latest);
             // reset the fork entirely and reapply the genesis config
-            fork.reset(forking.json_rpc_url.clone(), block_number).await?;
+            let reset_urls =
+                forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
+            fork.reset(reset_urls, block_number).await?;
             let fork_block_number = fork.block_number();
             let fork_block = fork
                 .block_by_number(fork_block_number)
@@ -2074,7 +2118,8 @@ impl<N: Network> Backend<N> {
                     // If rpc url is unspecified, then update the fork with the new block number and
                     // existing rpc url, this updates the cache path
                     {
-                        let maybe_fork_url = { self.node_config.read().await.eth_rpc_url.clone() };
+                        let maybe_fork_url =
+                            { self.node_config.read().await.fork_urls.first().cloned() };
                         if let Some(fork_url) = maybe_fork_url {
                             self.reset_block_number(fork_url, fork_block_number).await?;
                         }
@@ -2151,7 +2196,7 @@ impl<N: Network> Backend<N> {
         }
 
         // Clear all storage and reinitialize with genesis
-        let base_fee = if self.fees.is_eip1559() { Some(self.fees.base_fee()) } else { None };
+        let base_fee = self.fees.is_eip1559().then(|| self.fees.base_fee());
         *self.blockchain.storage.write() = BlockchainStorage::new(
             &self.evm_env.read(),
             base_fee,
@@ -2188,6 +2233,8 @@ impl<N: Network> Backend<N> {
     ) -> Result<(), BlockchainError> {
         let mut node_config = self.node_config.write().await;
         node_config.fork_choice = Some(ForkChoice::Block(fork_block_number as i128));
+        // Update fork_urls so setup_fork_db_config uses the correct URL set
+        node_config.fork_urls = vec![fork_url.clone()];
 
         let mut evm_env = self.evm_env.read().clone();
         let (forked_db, client_fork_config) =
@@ -2266,17 +2313,7 @@ impl<N: Network> Backend<N> {
             tx.pending_transaction.transaction.as_ref(),
             *tx.pending_transaction.sender(),
         )?;
-        let (exit_reason, gas_used, out, logs) = match result {
-            ExecutionResult::Success { reason, gas, logs, output, .. } => {
-                (reason.into(), gas.used(), Some(output), logs)
-            }
-            ExecutionResult::Revert { gas, output, logs, .. } => {
-                (InstructionResult::Revert, gas.used(), Some(Output::Call(output)), logs)
-            }
-            ExecutionResult::Halt { reason, gas, logs, .. } => {
-                (reason.into_instruction_result(), gas.used(), None, logs)
-            }
-        };
+        let (exit_reason, gas_used, out, logs) = unpack_execution_result(result);
 
         inspector.print_logs();
 
@@ -2340,7 +2377,7 @@ where
             return Ok(fork.logs(&filter).await?);
         }
 
-        Ok(Vec::new())
+        Err(BlockchainError::UnknownBlock)
     }
 
     /// Returns the logs that match the filter in the given range of blocks
@@ -2354,12 +2391,12 @@ where
 
         // get the range that predates the fork if any
         if let Some(fork) = self.get_fork() {
-            let mut to_on_fork = to;
-
-            if !fork.predates_fork(to) {
+            let to_on_fork = if fork.predates_fork(to) {
+                to
+            } else {
                 // adjust the ranges
-                to_on_fork = fork.block_number();
-            }
+                fork.block_number()
+            };
 
             if fork.predates_fork_inclusive(from) {
                 // this data is only available on the forked client
@@ -2429,6 +2466,58 @@ where
         self.do_mine_block(pool_transactions).await
     }
 
+    /// Builds a [`BlockInfo`] from the EVM environment, execution results, and transactions.
+    fn build_block_info(
+        evm_env: &EvmEnv,
+        parent_hash: B256,
+        number: u64,
+        state_root: B256,
+        block_result: BlockExecutionResult<FoundryReceiptEnvelope>,
+        transactions: Vec<MaybeImpersonatedTransaction<FoundryTxEnvelope>>,
+        transaction_infos: Vec<TransactionInfo>,
+    ) -> BlockInfo<N> {
+        let spec_id = *evm_env.spec_id();
+        let is_shanghai = spec_id >= SpecId::SHANGHAI;
+        let is_cancun = spec_id >= SpecId::CANCUN;
+        let is_prague = spec_id >= SpecId::PRAGUE;
+
+        let receipts_root = calculate_receipt_root(&block_result.receipts);
+        let cumulative_blob_gas_used = is_cancun.then_some(block_result.blob_gas_used);
+        let bloom = block_result.receipts.iter().fold(Bloom::default(), |mut b, r| {
+            b.accrue_bloom(r.logs_bloom());
+            b
+        });
+
+        let header = Header {
+            parent_hash,
+            ommers_hash: Default::default(),
+            beneficiary: evm_env.block_env.beneficiary,
+            state_root,
+            transactions_root: Default::default(),
+            receipts_root,
+            logs_bloom: bloom,
+            difficulty: evm_env.block_env.difficulty,
+            number,
+            gas_limit: evm_env.block_env.gas_limit,
+            gas_used: block_result.gas_used,
+            timestamp: evm_env.block_env.timestamp.saturating_to(),
+            extra_data: Default::default(),
+            mix_hash: evm_env.block_env.prevrandao.unwrap_or_default(),
+            nonce: Default::default(),
+            base_fee_per_gas: (spec_id >= SpecId::LONDON).then_some(evm_env.block_env.basefee),
+            parent_beacon_block_root: is_cancun.then_some(Default::default()),
+            blob_gas_used: cumulative_blob_gas_used,
+            excess_blob_gas: if is_cancun { evm_env.block_env.blob_excess_gas() } else { None },
+            withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
+            requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
+            block_access_list_hash: None,
+            slot_number: None,
+        };
+
+        let block = create_block(header, transactions);
+        BlockInfo { block, transactions: transaction_infos, receipts: block_result.receipts }
+    }
+
     async fn do_mine_block(
         &self,
         pool_transactions: Vec<Arc<PoolTransaction<FoundryTxEnvelope>>>,
@@ -2483,35 +2572,9 @@ where
                 evm_env.block_env.timestamp = U256::from(self.time.next_timestamp());
 
                 let spec_id = *evm_env.spec_id();
-                let is_shanghai = spec_id >= SpecId::SHANGHAI;
-                let is_cancun = spec_id >= SpecId::CANCUN;
-                let is_prague = spec_id >= SpecId::PRAGUE;
-                let gas_limit = evm_env.block_env.gas_limit;
-                let difficulty = evm_env.block_env.difficulty;
-                let mix_hash = evm_env.block_env.prevrandao;
-                let beneficiary = evm_env.block_env.beneficiary;
-                let timestamp = evm_env.block_env.timestamp;
-                let base_fee =
-                    if spec_id >= SpecId::LONDON { Some(evm_env.block_env.basefee) } else { None };
-                let excess_blob_gas =
-                    if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
-                let blob_params = self.blob_params();
-
-                let inspector_tx_config = InspectorTxConfig {
-                    print_traces: self.print_traces,
-                    print_logs: self.print_logs,
-                    enable_steps_tracing: self.enable_steps_tracing,
-                    call_trace_decoder: self.call_trace_decoder.clone(),
-                };
-
-                let gas_config = PoolTxGasConfig {
-                    disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-                    tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-                    tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
-                    max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
-                    is_cancun,
-                };
+                let inspector_tx_config = self.inspector_tx_config();
+                let gas_config = self.pool_tx_gas_config(&evm_env);
 
                 let (pool_result, block_result) = self.execute_with_block_executor(
                     &mut **db,
@@ -2529,50 +2592,17 @@ where
                 let included = pool_result.included;
                 let invalid = pool_result.invalid;
                 let not_yet_valid = pool_result.not_yet_valid;
-                let transaction_infos = pool_result.tx_info;
-                let transactions = pool_result.txs;
 
                 let state_root = db.maybe_state_root().unwrap_or_default();
-
-                // 7. Build block header
-                let receipts_root = calculate_receipt_root(&block_result.receipts);
-                let cumulative_gas_used = block_result.gas_used;
-                let cumulative_blob_gas_used = is_cancun.then_some(block_result.blob_gas_used);
-                let bloom = block_result.receipts.iter().fold(Bloom::default(), |mut b, r| {
-                    b.accrue_bloom(r.logs_bloom());
-                    b
-                });
-
-                let header = Header {
-                    parent_hash: best_hash,
-                    ommers_hash: Default::default(),
-                    beneficiary,
+                let block_info = Self::build_block_info(
+                    &evm_env,
+                    best_hash,
+                    block_number,
                     state_root,
-                    transactions_root: Default::default(),
-                    receipts_root,
-                    logs_bloom: bloom,
-                    difficulty,
-                    number: block_number,
-                    gas_limit,
-                    gas_used: cumulative_gas_used,
-                    timestamp: timestamp.saturating_to(),
-                    extra_data: Default::default(),
-                    mix_hash: mix_hash.unwrap_or_default(),
-                    nonce: Default::default(),
-                    base_fee_per_gas: base_fee,
-                    parent_beacon_block_root: is_cancun.then_some(Default::default()),
-                    blob_gas_used: cumulative_blob_gas_used,
-                    excess_blob_gas,
-                    withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
-                    requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
-                };
-
-                let block = create_block(header, transactions);
-                let block_info: BlockInfo<N> = BlockInfo {
-                    block,
-                    transactions: transaction_infos,
-                    receipts: block_result.receipts,
-                };
+                    block_result,
+                    pool_result.txs,
+                    pool_result.tx_info,
+                );
 
                 // update the new blockhash in the db itself
                 let block_hash = block_info.block.header.hash_slow();
@@ -2740,34 +2770,9 @@ where
         let parent_hash = self.blockchain.storage.read().best_hash;
 
         let spec_id = *evm_env.spec_id();
-        let is_shanghai = spec_id >= SpecId::SHANGHAI;
-        let is_cancun = spec_id >= SpecId::CANCUN;
-        let is_prague = spec_id >= SpecId::PRAGUE;
-        let gas_limit = evm_env.block_env.gas_limit;
-        let difficulty = evm_env.block_env.difficulty;
-        let mix_hash = evm_env.block_env.prevrandao;
-        let beneficiary = evm_env.block_env.beneficiary;
-        let timestamp = evm_env.block_env.timestamp;
-        let base_fee =
-            if spec_id >= SpecId::LONDON { Some(evm_env.block_env.basefee) } else { None };
-        let excess_blob_gas = if is_cancun { evm_env.block_env.blob_excess_gas() } else { None };
 
-        let blob_params = self.blob_params();
-
-        let inspector_tx_config = InspectorTxConfig {
-            print_traces: self.print_traces,
-            print_logs: self.print_logs,
-            enable_steps_tracing: self.enable_steps_tracing,
-            call_trace_decoder: self.call_trace_decoder.clone(),
-        };
-
-        let gas_config = PoolTxGasConfig {
-            disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-            tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-            tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
-            max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
-            is_cancun,
-        };
+        let inspector_tx_config = self.inspector_tx_config();
+        let gas_config = self.pool_tx_gas_config(&evm_env);
 
         let (pool_result, block_result) = self.execute_with_block_executor(
             &mut cache_db,
@@ -2780,49 +2785,20 @@ where
             &|pending, account| self.validate_pool_transaction_for(pending, account, &evm_env),
         );
 
-        let transaction_infos = pool_result.tx_info;
-        let transactions = pool_result.txs;
-
         // Extract inner CacheDB (which implements MaybeFullDatabase)
         let cache_db = cache_db.0;
 
         let state_root = cache_db.maybe_state_root().unwrap_or_default();
-
-        let receipts_root = calculate_receipt_root(&block_result.receipts);
-        let cumulative_gas_used = block_result.gas_used;
-        let cumulative_blob_gas_used = is_cancun.then_some(block_result.blob_gas_used);
-        let bloom = block_result.receipts.iter().fold(Bloom::default(), |mut b, r| {
-            b.accrue_bloom(r.logs_bloom());
-            b
-        });
-
-        let header = Header {
+        let block_number = evm_env.block_env.number.saturating_to();
+        let block_info = Self::build_block_info(
+            &evm_env,
             parent_hash,
-            ommers_hash: Default::default(),
-            beneficiary,
+            block_number,
             state_root,
-            transactions_root: Default::default(),
-            receipts_root,
-            logs_bloom: bloom,
-            difficulty,
-            number: evm_env.block_env.number.saturating_to(),
-            gas_limit,
-            gas_used: cumulative_gas_used,
-            timestamp: timestamp.saturating_to(),
-            extra_data: Default::default(),
-            mix_hash: mix_hash.unwrap_or_default(),
-            nonce: Default::default(),
-            base_fee_per_gas: base_fee,
-            parent_beacon_block_root: is_cancun.then_some(Default::default()),
-            blob_gas_used: cumulative_blob_gas_used,
-            excess_blob_gas,
-            withdrawals_root: is_shanghai.then_some(EMPTY_WITHDRAWALS),
-            requests_hash: is_prague.then_some(EMPTY_REQUESTS_HASH),
-        };
-
-        let block = create_block(header, transactions);
-        let block_info =
-            BlockInfo { block, transactions: transaction_infos, receipts: block_result.receipts };
+            block_result,
+            pool_result.txs,
+            pool_result.tx_info,
+        );
 
         f(Box::new(cache_db), block_info)
     }
@@ -2948,7 +2924,7 @@ where
 
                             Ok(tracing_inspector
                                 .into_geth_builder()
-                                .geth_call_traces(call_config, result.gas_used())
+                                .geth_call_traces(call_config, result.tx_gas_used())
                                 .into())
                         }
                         GethDebugBuiltInTracerType::PreStateTracer => {
@@ -3005,7 +2981,7 @@ where
                             tx_env.clone(),
                         )?;
                         let res = inspector
-                            .json_result(result, &tx_env.into_tx_env(), &block, &cache_db)
+                            .json_result(result, &OpTx(tx_env).into_tx_env(), &block, &cache_db)
                             .map_err(|err| BlockchainError::Message(err.to_string()))?;
 
                         Ok(GethTrace::JS(res))
@@ -3022,17 +2998,7 @@ where
             let ResultAndState { result, state: _ } =
                 self.transact_with_inspector_ref(&cache_db, &evm_env, &mut inspector, tx_env)?;
 
-            let (exit_reason, gas_used, out) = match result {
-                ExecutionResult::Success { reason, gas, output, .. } => {
-                    (reason.into(), gas.used(), Some(output))
-                }
-                ExecutionResult::Revert { gas, output, .. } => {
-                    (InstructionResult::Revert, gas.used(), Some(Output::Call(output)))
-                }
-                ExecutionResult::Halt { reason, gas, .. } => {
-                    (reason.into_instruction_result(), gas.used(), None)
-                }
-            };
+            let (exit_reason, gas_used, out, _logs) = unpack_execution_result(result);
 
             let tracing_inspector = inspector.tracer.expect("tracer disappeared");
             let return_value = out.as_ref().map(|o| o.data()).cloned().unwrap_or_default();
@@ -3263,24 +3229,9 @@ where
             evm_env.block_env = block_env_from_header(&block.header);
 
             let spec_id = *evm_env.spec_id();
-            let is_cancun = spec_id >= SpecId::CANCUN;
 
-            let blob_params = self.blob_params();
-
-            let inspector_tx_config = InspectorTxConfig {
-                print_traces: self.print_traces,
-                print_logs: self.print_logs,
-                enable_steps_tracing: self.enable_steps_tracing,
-                call_trace_decoder: self.call_trace_decoder.clone(),
-            };
-
-            let gas_config = PoolTxGasConfig {
-                disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
-                tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-                tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
-                max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
-                is_cancun,
-            };
+            let inspector_tx_config = self.inspector_tx_config();
+            let gas_config = self.pool_tx_gas_config(&evm_env);
 
             self.execute_with_block_executor(
                 &mut cache_db,
@@ -3439,7 +3390,13 @@ where
 
         {
             // Unwind the storage back to the common ancestor first
-            self.blockchain.storage.write().unwind_to(common_block.header.number(), hash);
+            let removed_blocks =
+                self.blockchain.storage.write().unwind_to(common_block.header.number(), hash);
+
+            // Clean up in-memory and on-disk states for removed blocks
+            let removed_hashes: Vec<_> =
+                removed_blocks.iter().map(|b| b.header.hash_slow()).collect();
+            self.states.write().remove_block_states(&removed_hashes);
 
             // Set environment back to common block
             let mut env = self.evm_env.write();
@@ -3753,11 +3710,8 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
         let best_number = self.blockchain.storage.read().best_number;
         let blocks = self.blockchain.storage.read().serialized_blocks();
         let transactions = self.blockchain.storage.read().serialized_transactions();
-        let historical_states = if preserve_historical_states {
-            Some(self.states.write().serialized_states())
-        } else {
-            None
-        };
+        let historical_states =
+            preserve_historical_states.then(|| self.states.write().serialized_states());
 
         let state = self.db.read().await.dump_state(
             at,
@@ -3970,7 +3924,7 @@ impl Backend<FoundryNetwork> {
 
                     // commit the transaction
                     cache_db.commit(state);
-                    gas_used += result.gas_used();
+                    gas_used += result.tx_gas_used();
 
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
@@ -3994,7 +3948,8 @@ impl Backend<FoundryNetwork> {
                     let return_data = result.output().cloned().unwrap_or_default();
                     let sim_res = SimCallResult {
                         return_data,
-                        gas_used: result.gas_used(),
+                        gas_used: result.tx_gas_used(),
+                        max_used_gas: None,
                         status: result.is_success(),
                         error: result.is_success().not().then(|| {
                             alloy_rpc_types::simulate::SimulateError {
@@ -4146,7 +4101,7 @@ where
 
             // Reject if valid_before is expired or too close to current time (< 3 seconds)
             const AA_VALID_BEFORE_MIN_SECS: u64 = 3;
-            if let Some(valid_before) = tempo_tx.valid_before {
+            if let Some(valid_before) = tempo_tx.valid_before.map(|v| v.get()) {
                 let min_allowed = current_time.saturating_add(AA_VALID_BEFORE_MIN_SECS);
                 if valid_before <= min_allowed {
                     return Err(InvalidTransactionError::TempoValidBeforeExpired {
@@ -4159,7 +4114,7 @@ where
 
             // Reject if valid_after is too far in the future (> 1 hour)
             const AA_VALID_AFTER_MAX_SECS: u64 = 3600;
-            if let Some(valid_after) = tempo_tx.valid_after {
+            if let Some(valid_after) = tempo_tx.valid_after.map(|v| v.get()) {
                 let max_allowed = current_time.saturating_add(AA_VALID_AFTER_MAX_SECS);
                 if valid_after > max_allowed {
                     return Err(InvalidTransactionError::TempoValidAfterTooFar {
@@ -4399,6 +4354,15 @@ where
     }
 }
 
+/// Replaces the cached hash of a [`Signed`] transaction, preserving the inner tx and signature.
+fn rehash<T>(signed: Signed<T>, hash: B256) -> Signed<T>
+where
+    T: alloy_consensus::transaction::RlpEcdsaEncodableTx,
+{
+    let (t, sig, _) = signed.into_parts();
+    Signed::new_unchecked(t, sig, hash)
+}
+
 /// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
 pub fn transaction_build(
     tx_hash: Option<B256>,
@@ -4502,31 +4466,11 @@ pub fn transaction_build(
         .expect("non-standard transactions are handled above");
 
     let envelope = match eth_envelope {
-        TxEnvelope::Legacy(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(new_signed))
-        }
-        TxEnvelope::Eip1559(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(new_signed))
-        }
-        TxEnvelope::Eip2930(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(new_signed))
-        }
-        TxEnvelope::Eip4844(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(new_signed))
-        }
-        TxEnvelope::Eip7702(signed_tx) => {
-            let (t, sig, _) = signed_tx.into_parts();
-            let new_signed = Signed::new_unchecked(t, sig, hash);
-            AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(new_signed))
-        }
+        TxEnvelope::Legacy(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Legacy(rehash(s, hash))),
+        TxEnvelope::Eip1559(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip1559(rehash(s, hash))),
+        TxEnvelope::Eip2930(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip2930(rehash(s, hash))),
+        TxEnvelope::Eip4844(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip4844(rehash(s, hash))),
+        TxEnvelope::Eip7702(s) => AnyTxEnvelope::Ethereum(TxEnvelope::Eip7702(rehash(s, hash))),
     };
 
     let tx = Transaction {
@@ -4579,6 +4523,23 @@ pub fn is_arbitrum(chain_id: u64) -> bool {
         return chain.is_arbitrum();
     }
     false
+}
+
+/// Unpacks an [`ExecutionResult`] into its exit reason, gas used, output, and logs.
+fn unpack_execution_result<H: IntoInstructionResult>(
+    result: ExecutionResult<H>,
+) -> (InstructionResult, u64, Option<Output>, Vec<revm::primitives::Log>) {
+    match result {
+        ExecutionResult::Success { reason, gas, output, logs, .. } => {
+            (reason.into(), gas.tx_gas_used(), Some(output), logs)
+        }
+        ExecutionResult::Revert { gas, output, logs, .. } => {
+            (InstructionResult::Revert, gas.tx_gas_used(), Some(Output::Call(output)), logs)
+        }
+        ExecutionResult::Halt { reason, gas, logs, .. } => {
+            (reason.into_instruction_result(), gas.tx_gas_used(), None, logs)
+        }
+    }
 }
 
 /// Converts a halt reason into an [`InstructionResult`].

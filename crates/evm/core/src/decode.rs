@@ -13,6 +13,12 @@ use itertools::Itertools;
 use revm::interpreter::InstructionResult;
 use std::{fmt, sync::OnceLock};
 
+/// Stable user-facing fallback for empty revert payloads.
+pub const EMPTY_REVERT_DATA: &str = "<empty revert data>";
+
+/// Prefix used by Foundry assertion helpers in user-visible failure messages.
+pub const ASSERTION_FAILED_PREFIX: &str = "assertion failed";
+
 /// A skip reason.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SkipReason(pub Option<String>);
@@ -119,7 +125,7 @@ impl RevertDecoder {
     /// than user output.
     pub fn decode(&self, err: &[u8], status: Option<InstructionResult>) -> String {
         self.maybe_decode(err, status).unwrap_or_else(|| {
-            if err.is_empty() { "<empty revert data>".to_string() } else { trimmed_hex(err) }
+            if err.is_empty() { EMPTY_REVERT_DATA.to_string() } else { trimmed_hex(err) }
         })
     }
 
@@ -127,10 +133,6 @@ impl RevertDecoder {
     ///
     /// See [`decode`](Self::decode) for more information.
     pub fn maybe_decode(&self, err: &[u8], status: Option<InstructionResult>) -> Option<String> {
-        if let Some(reason) = SkipReason::decode(err) {
-            return Some(reason.to_string());
-        }
-
         // Solidity's `Error(string)` (handled separately in order to strip revert: prefix)
         if let Some(ContractError(Revert(revert))) = RevertReason::decode(err) {
             return Some(revert.reason);
@@ -273,5 +275,14 @@ mod tests {
             "756688fe00000000000000000000000000000000000000000000000000000000"
         );
         assert_eq!(decoder.decode(data, None), "ValidationFailed(0x756688fe)");
+    }
+
+    #[test]
+    fn maybe_decode_magic_skip_is_not_skip_marker() {
+        let decoder = RevertDecoder::new();
+        let reason = decoder.maybe_decode(crate::constants::MAGIC_SKIP, None).unwrap();
+
+        assert_eq!(reason, "FOUNDRY::SKIP");
+        assert!(SkipReason::decode_self(&reason).is_none());
     }
 }

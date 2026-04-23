@@ -8,9 +8,14 @@
 //! - `0x123::transfer(address,uint256):0x789,1000` - Contract call with signature
 //! - `0x123::0xabcdef` - Contract call with raw calldata
 
+use alloy_network::Network;
 use alloy_primitives::{Address, Bytes, U256, hex};
+use alloy_provider::Provider;
 use eyre::{Result, WrapErr, eyre};
+use foundry_cli::utils::parse_function_args;
+use foundry_config::Chain;
 use std::str::FromStr;
+use tempo_primitives::transaction::Call;
 
 /// A parsed call specification for batch transactions.
 #[derive(Debug, Clone)]
@@ -98,6 +103,35 @@ impl CallSpec {
 
         Ok(Self { to, value, sig, args, data })
     }
+
+    /// Resolves this spec into a [`Call`], encoding function arguments if needed.
+    /// `i` is the 0-based index of this call; displayed as `i + 1` in error messages.
+    pub async fn resolve<N: Network, P: Provider<N>>(
+        &self,
+        i: usize,
+        chain: Chain,
+        provider: &P,
+        etherscan_api_key: Option<&str>,
+    ) -> Result<Call> {
+        let input = if let Some(data) = &self.data {
+            data.clone()
+        } else if let Some(sig) = &self.sig {
+            let (encoded, _) = parse_function_args(
+                sig,
+                self.args.clone(),
+                Some(self.to),
+                chain,
+                provider,
+                etherscan_api_key,
+            )
+            .await
+            .map_err(|e| eyre!("Failed to encode call {}: {e}", i + 1))?;
+            Bytes::from(encoded)
+        } else {
+            Bytes::new()
+        };
+        Ok(Call { to: self.to.into(), value: self.value, input })
+    }
 }
 
 impl FromStr for CallSpec {
@@ -111,8 +145,8 @@ impl FromStr for CallSpec {
 /// Parse a value string that can be in ether notation (e.g., "0.1ether") or raw wei.
 fn parse_ether_or_wei(s: &str) -> Result<U256> {
     // Use alloy's DynSolType coercion which handles "1ether", "1gwei", "1000" etc.
-    if s.starts_with("0x") {
-        U256::from_str_radix(s, 16).map_err(|e| eyre!("Invalid hex value '{}': {}", s, e))
+    if s.starts_with("0x") || s.starts_with("0X") {
+        U256::from_str(s).map_err(|e| eyre!("Invalid hex value '{}': {}", s, e))
     } else {
         alloy_dyn_abi::DynSolType::coerce_str(&alloy_dyn_abi::DynSolType::Uint(256), s)
             .wrap_err_with(|| format!("Invalid value '{s}'"))?
@@ -144,6 +178,12 @@ mod tests {
         let spec = CallSpec::parse("0x1234567890123456789012345678901234567890:1ether").unwrap();
         assert_eq!(spec.value, parse_ether_or_wei("1ether").unwrap());
         assert!(spec.sig.is_none());
+    }
+
+    #[test]
+    fn test_parse_hex_value() {
+        assert_eq!(parse_ether_or_wei("0x10").unwrap(), U256::from(16));
+        assert_eq!(parse_ether_or_wei("0X10").unwrap(), U256::from(16));
     }
 
     #[test]

@@ -16,7 +16,7 @@ pub use revm::state::EvmState as StateChangeset;
 /// Hints to the compiler that this is a cold path, i.e. unlikely to be taken.
 #[cold]
 #[inline(always)]
-pub fn cold_path() {
+pub const fn cold_path() {
     // TODO: remove `#[cold]` and call `std::hint::cold_path` once stable.
 }
 
@@ -49,7 +49,7 @@ pub fn apply_chain_and_block_specific_env_changes<
     block: &N::BlockResponse,
     configs: NetworkConfigs,
 ) {
-    use NamedChain::*;
+    use NamedChain::{BinanceSmartChain, BinanceSmartChainTestnet, Mainnet};
 
     if let Ok(chain) = NamedChain::try_from(evm_env.cfg_env.chain_id) {
         let block_number = block.header().number();

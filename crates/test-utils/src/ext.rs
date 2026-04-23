@@ -34,13 +34,13 @@ impl ExtTester {
     }
 
     /// Sets the path style.
-    pub fn style(mut self, style: PathStyle) -> Self {
+    pub const fn style(mut self, style: PathStyle) -> Self {
         self.style = style;
         self
     }
 
     /// Sets the fork block.
-    pub fn fork_block(mut self, fork_block: u64) -> Self {
+    pub const fn fork_block(mut self, fork_block: u64) -> Self {
         self.fork_block = Some(fork_block);
         self
     }
