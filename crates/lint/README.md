@@ -15,6 +15,8 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
+- **Low Severity:**
+  - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
 - **Informational / Style Guide:**
   - `pascal-case-struct`: Flags for struct names not adhering to `PascalCase`.
   - `mixed-case-function`: Flags for function names not adhering to `mixedCase`.
