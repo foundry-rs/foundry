@@ -1017,7 +1017,7 @@ async fn test_increase_time_by_zero() {
     // next-block timestamp, so wall-clock drift can cause the mined block to be
     // 1 s ahead.  Use `evm_set_next_block_timestamp` to deterministically keep
     // the same timestamp as the previous block.
-    api.evm_set_next_block_timestamp(init_timestamp).unwrap();
+api.evm_set_next_block_timestamp(init_timestamp).unwrap();
 
     api.mine_one().await;
 
