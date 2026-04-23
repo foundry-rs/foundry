@@ -4,7 +4,7 @@
 
 use crate::{
     DEFAULT_USER_AGENT, REQUEST_TIMEOUT,
-    provider::mpp::{transport::LazyMppHttpTransport, ws::MppWsConnect},
+    provider::mpp::{keys::discover_mpp_key, transport::LazyMppHttpTransport, ws::MppWsConnect},
 };
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_pubsub::{PubSubConnect, PubSubFrontend};
@@ -13,6 +13,7 @@ use alloy_transport::{
     Authorization, BoxTransport, TransportError, TransportErrorKind, TransportFut,
 };
 use alloy_transport_ipc::IpcConnect;
+use alloy_transport_ws::WsConnect;
 use reqwest::header::{HeaderName, HeaderValue};
 use std::{fmt, path::PathBuf, str::FromStr, sync::Arc};
 use thiserror::Error;
@@ -246,16 +247,33 @@ impl RuntimeTransport {
         Ok(InnerTransport::Http(LazyMppHttpTransport::lazy(client, self.url.clone())))
     }
 
-    /// Connects to a WS transport with automatic MPP payment handling.
+    /// Connects to a WS transport.
+    ///
+    /// When MPP keys are discoverable (via `TEMPO_PRIVATE_KEY` env var or the
+    /// Tempo wallet), uses [`MppWsConnect`] which performs an automatic MPP
+    /// challenge/credential handshake at connect time. Otherwise falls back to
+    /// alloy's plain [`WsConnect`] with zero overhead.
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
-        let mut ws = MppWsConnect::new(self.url.to_string());
-        if let Some(auth) = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok()) {
-            ws = ws.with_auth(auth);
-        }
-        let service = ws
-            .into_service()
-            .await
-            .map_err(|e| RuntimeTransportError::TransportError(e, self.url.to_string()))?;
+        let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
+
+        let service = if discover_mpp_key().is_some() {
+            let mut ws = MppWsConnect::new(self.url.to_string());
+            if let Some(auth) = auth {
+                ws = ws.with_auth(auth);
+            }
+            ws.into_service()
+                .await
+                .map_err(|e| RuntimeTransportError::TransportError(e, self.url.to_string()))?
+        } else {
+            let mut ws = WsConnect::new(self.url.to_string());
+            if let Some(auth) = auth {
+                ws = ws.with_auth(auth);
+            }
+            ws.into_service()
+                .await
+                .map_err(|e| RuntimeTransportError::TransportError(e, self.url.to_string()))?
+        };
+
         Ok(InnerTransport::Ws(service))
     }
 
