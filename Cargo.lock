@@ -5404,6 +5404,7 @@ dependencies = [
  "foundry-evm-hardforks",
  "revm",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -15,7 +15,7 @@ use alloy_op_hardforks::{OpChainHardforks, OpHardforks};
 use alloy_primitives::{Address, ChainId, map::AddressHashMap};
 use clap::Parser;
 use foundry_evm_hardforks::FoundryHardfork;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub mod celo;
@@ -59,91 +59,32 @@ impl From<ChainId> for NetworkVariant {
     }
 }
 
-#[derive(Clone, Debug, Default, Parser, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Parser, Serialize, Deserialize, Copy, PartialEq, Eq)]
 pub struct NetworkConfigs {
     /// Enable a specific network family.
     #[arg(help_heading = "Networks", long, short, num_args = 1, value_name = "NETWORK", value_enum, conflicts_with_all = ["celo", "optimism", "tempo"])]
     network: Option<NetworkVariant>,
     /// Enable Celo network features.
-    #[arg(help_heading = "Networks", long, conflicts_with_all = ["optimism", "tempo"])]
+    #[arg(help_heading = "Networks", long, conflicts_with_all = ["network", "optimism", "tempo"])]
     celo: bool,
     /// Enable Optimism network features (deprecated: use --network optimism).
-    #[arg(long, hide = true, conflicts_with_all = ["celo", "tempo"])]
+    #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "tempo"])]
+    // Skipped from configs (forge) as there is no feature to be added yet.
+    #[serde(skip)]
     optimism: bool,
     /// Enable Tempo network features (deprecated: use --network tempo).
-    #[arg(long, hide = true, conflicts_with_all = ["celo", "optimism"])]
+    #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "optimism"])]
+    #[serde(default)]
     tempo: bool,
     /// Whether to bypass prevrandao.
     #[arg(skip)]
+    #[serde(default)]
     bypass_prevrandao: bool,
 }
 
-/// Serialize with backward-compatible `optimism` / `tempo` boolean fields
-/// derived from the `network` field.
-impl Serialize for NetworkConfigs {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("NetworkConfigs", 4)?;
-        s.serialize_field("celo", &self.is_celo())?;
-        s.serialize_field("tempo", &self.is_tempo())?;
-        s.serialize_field("bypass_prevrandao", &self.bypass_prevrandao)?;
-        s.end()
-    }
-}
-
-/// Custom deserializer that supports both the new `network = "tempo"` format
-/// and legacy `tempo = true` / `optimism = true` boolean fields.
-impl<'de> Deserialize<'de> for NetworkConfigs {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        struct Raw {
-            #[serde(default)]
-            network: Option<NetworkVariant>,
-            #[serde(default)]
-            celo: bool,
-            #[serde(default)]
-            bypass_prevrandao: bool,
-            // Legacy boolean fields
-            #[serde(default)]
-            optimism: bool,
-            #[serde(default)]
-            tempo: bool,
-        }
-
-        let raw = Raw::deserialize(deserializer)?;
-
-        let network = match raw.network {
-            Some(n) => Some(n),
-            None if raw.tempo => Some(NetworkVariant::Tempo),
-            None if raw.optimism => Some(NetworkVariant::Optimism),
-            None => None,
-        };
-
-        Ok(Self {
-            network,
-            celo: raw.celo,
-            optimism: false,
-            tempo: false,
-            bypass_prevrandao: raw.bypass_prevrandao,
-        })
-    }
-}
-
 impl NetworkConfigs {
-    /// Resolves deprecated `--optimism`/`--tempo` flags into the `network` field.
-    pub const fn resolved(mut self) -> Self {
-        if self.network.is_none() {
-            if self.optimism {
-                self.network = Some(NetworkVariant::Optimism);
-            } else if self.tempo {
-                self.network = Some(NetworkVariant::Tempo);
-            }
-        }
-        self
-    }
-
     pub fn with_optimism() -> Self {
-        Self { network: Some(NetworkVariant::Optimism), ..Default::default() }
+        Self { network: Some(NetworkVariant::Optimism), optimism: true, ..Default::default() }
     }
 
     pub fn with_celo() -> Self {
@@ -151,7 +92,7 @@ impl NetworkConfigs {
     }
 
     pub fn with_tempo() -> Self {
-        Self { network: Some(NetworkVariant::Tempo), ..Default::default() }
+        Self { network: Some(NetworkVariant::Tempo), tempo: true, ..Default::default() }
     }
 
     pub fn is_optimism(&self) -> bool {
@@ -173,7 +114,7 @@ impl NetworkConfigs {
         } else if self.tempo {
             Some(NetworkVariant::Tempo)
         } else {
-            None
+            Some(NetworkVariant::Ethereum)
         })
     }
 
@@ -279,5 +220,102 @@ impl NetworkConfigs {
                 .insert(PRECOMPILE_ID_CELO_TRANSFER.name().to_string(), CELO_TRANSFER_ADDRESS);
         }
         precompiles
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Equivalence: new flag == legacy flag ---
+
+    #[test]
+    fn new_tempo_flag_equivalent_to_legacy() {
+        let via_new = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
+        let via_old = NetworkConfigs { tempo: true, ..Default::default() };
+        assert_eq!(via_new.is_tempo(), via_old.is_tempo());
+        assert_eq!(via_new.is_optimism(), via_old.is_optimism());
+        assert_eq!(via_new.active_network_name(), via_old.active_network_name());
+    }
+
+    #[test]
+    fn new_optimism_flag_equivalent_to_legacy() {
+        let via_new =
+            NetworkConfigs { network: Some(NetworkVariant::Optimism), ..Default::default() };
+        let via_old = NetworkConfigs { optimism: true, ..Default::default() };
+        assert_eq!(via_new.is_optimism(), via_old.is_optimism());
+        assert_eq!(via_new.is_tempo(), via_old.is_tempo());
+        assert_eq!(via_new.active_network_name(), via_old.active_network_name());
+    }
+
+    // --- resolved() / active_network_name ---
+
+    #[test]
+    fn active_network_name_tempo() {
+        let cfg = NetworkConfigs::with_tempo();
+        assert_eq!(cfg.active_network_name(), Some("tempo"));
+    }
+
+    #[test]
+    fn active_network_name_optimism() {
+        let cfg = NetworkConfigs::with_optimism();
+        assert_eq!(cfg.active_network_name(), Some("optimism"));
+    }
+
+    #[test]
+    fn active_network_name_default_is_none() {
+        assert_eq!(NetworkConfigs::default().active_network_name(), None);
+    }
+
+    // --- new flag takes precedence over legacy flag ---
+
+    #[test]
+    fn new_flag_wins_over_legacy_when_both_set() {
+        // --network optimism --tempo: network field wins
+        let cfg = NetworkConfigs {
+            network: Some(NetworkVariant::Optimism),
+            tempo: true,
+            ..Default::default()
+        };
+        assert!(cfg.is_optimism());
+        assert!(!cfg.is_tempo());
+    }
+
+    // --- Serde round-trip ---
+
+    #[test]
+    fn serde_roundtrip_tempo() {
+        let original = NetworkConfigs::with_tempo();
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: NetworkConfigs = serde_json::from_str(&json).unwrap();
+        assert!(restored.is_tempo());
+        assert!(!restored.is_optimism());
+    }
+
+    #[test]
+    fn serde_roundtrip_optimism() {
+        let original = NetworkConfigs::with_optimism();
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: NetworkConfigs = serde_json::from_str(&json).unwrap();
+        assert!(restored.is_optimism());
+        assert!(!restored.is_tempo());
+    }
+
+    #[test]
+    fn serde_legacy_tempo_bool_deserialized() {
+        // Old foundry.toml format: `tempo = true`
+        let json = r#"{"tempo": true, "celo": false, "bypass_prevrandao": false}"#;
+        let cfg: NetworkConfigs = serde_json::from_str(json).unwrap();
+        assert!(cfg.is_tempo());
+    }
+
+    #[test]
+    fn serde_new_network_field_deserialized() {
+        let json_tempo = r#"{"network": "tempo", "celo": false, "bypass_prevrandao": false}"#;
+        let cfg_tempo: NetworkConfigs = serde_json::from_str(json_tempo).unwrap();
+        assert!(cfg_tempo.is_tempo());
+        let json_optimism = r#"{"network": "optimism", "celo": false, "bypass_prevrandao": false}"#;
+        let cfg_optimism: NetworkConfigs = serde_json::from_str(json_optimism).unwrap();
+        assert!(cfg_optimism.is_optimism());
     }
 }
