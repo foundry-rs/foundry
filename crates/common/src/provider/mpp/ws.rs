@@ -22,7 +22,11 @@ use std::{io, time::Duration};
 use tokio::time::timeout;
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async,
-    tungstenite::{Message, client::IntoClientRequest},
+    tungstenite::{
+        Message,
+        client::IntoClientRequest,
+        http::{HeaderValue, header::AUTHORIZATION},
+    },
 };
 use tracing::debug;
 
@@ -249,10 +253,10 @@ impl PubSubConnect for MppWsConnect {
             self.url.as_str().into_client_request().map_err(TransportErrorKind::custom)?;
 
         if let Some(ref auth) = self.auth {
-            let mut auth_value = reqwest::header::HeaderValue::from_str(&auth.to_string())
-                .map_err(TransportErrorKind::custom)?;
+            let mut auth_value =
+                HeaderValue::from_str(&auth.to_string()).map_err(TransportErrorKind::custom)?;
             auth_value.set_sensitive(true);
-            request.headers_mut().insert(reqwest::header::AUTHORIZATION, auth_value);
+            request.headers_mut().insert(AUTHORIZATION, auth_value);
         }
 
         // Install the default rustls crypto provider (required by rustls 0.23+).
