@@ -122,6 +122,13 @@ pub struct FuzzCorpusConfig {
     pub corpus_min_size: usize,
     /// Whether to collect and display edge coverage metrics.
     pub show_edge_coverage: bool,
+    /// Whether to collect edge coverage from native Rust crates compiled with
+    /// SanitizerCoverage instrumentation (e.g. precompile implementations).
+    /// Requires building forge with a `RUSTC_WRAPPER` that injects sancov flags.
+    pub sancov_edges: bool,
+    /// Whether to capture comparison operands from sancov-instrumented crates
+    /// and inject them into the fuzz dictionary. Independent of `sancov_edges`.
+    pub sancov_trace_cmp: bool,
 }
 
 impl FuzzCorpusConfig {
@@ -131,9 +138,34 @@ impl FuzzCorpusConfig {
         }
     }
 
-    /// Whether edge coverage should be collected and displayed.
+    /// Whether any edge coverage (EVM or sancov) should be collected.
     pub const fn collect_edge_coverage(&self) -> bool {
-        self.corpus_dir.is_some() || self.show_edge_coverage
+        self.corpus_dir.is_some() || self.show_edge_coverage || self.sancov_edges
+    }
+
+    /// Whether the EVM `EdgeCovInspector` should be enabled.
+    ///
+    /// Disabled when sancov edge coverage is active — sancov provides the
+    /// coverage signal and EVM hits from the Solidity handler would dilute it.
+    /// Trace-cmp-only mode keeps EVM edges enabled since trace-cmp only
+    /// contributes dictionary entries, not edge coverage.
+    pub const fn collect_evm_edge_coverage(&self) -> bool {
+        !self.sancov_edges && (self.corpus_dir.is_some() || self.show_edge_coverage)
+    }
+
+    /// Whether sancov edge coverage collection is enabled.
+    pub const fn collect_sancov_edges(&self) -> bool {
+        self.sancov_edges
+    }
+
+    /// Whether sancov trace-cmp capture is enabled.
+    pub const fn collect_sancov_trace_cmp(&self) -> bool {
+        self.sancov_trace_cmp
+    }
+
+    /// Whether either sancov coverage mode is active.
+    pub const fn sancov_active(&self) -> bool {
+        self.sancov_edges || self.sancov_trace_cmp
     }
 
     /// Whether coverage guided fuzzing is enabled.
@@ -150,6 +182,8 @@ impl Default for FuzzCorpusConfig {
             corpus_min_mutations: 5,
             corpus_min_size: 0,
             show_edge_coverage: false,
+            sancov_edges: false,
+            sancov_trace_cmp: false,
         }
     }
 }

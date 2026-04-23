@@ -102,6 +102,7 @@ allow-git = [
     "https://github.com/alloy-rs/evm",
     "https://github.com/foundry-rs/compilers",
     "https://github.com/foundry-rs/foundry-fork-db",
+    "https://github.com/foundry-rs/foundry-core",
     "https://github.com/foundry-rs/optimism",
     "https://github.com/paradigmxyz/revm-inspectors",
     "https://github.com/paradigmxyz/solar",
@@ -110,6 +111,7 @@ allow-git = [
     "https://github.com/rust-cli/rexpect",
     # Tempo
     "https://github.com/tempoxyz/tempo",
+    "https://github.com/tempoxyz/mpp-rs",
     # Transitive dependency of Tempo
     "https://github.com/paradigmxyz/reth",
 ]

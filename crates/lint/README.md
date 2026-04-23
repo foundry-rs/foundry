@@ -13,6 +13,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `erc20-unchecked-transfer`: ERC20 `transfer` and `transferFrom` calls should check the return value.
 - **Medium Severity:**
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
+  - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
 - **Informational / Style Guide:**
   - `pascal-case-struct`: Flags for struct names not adhering to `PascalCase`.
@@ -75,4 +76,3 @@ Guidelines for contributing to `forge lint`:
 ### Developing a New Lint Rule
 
 Check the [dev docs](../../docs/dev/lintrules.md) for a full implementation guide.
-

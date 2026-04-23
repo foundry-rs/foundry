@@ -21,6 +21,7 @@ foundry-config.workspace = true
 foundry-evm-core.workspace = true
 foundry-evm-coverage.workspace = true
 foundry-evm-fuzz.workspace = true
+foundry-evm-sancov.workspace = true
 foundry-evm-hardforks.workspace = true
 foundry-evm-networks.workspace = true
 foundry-evm-traces.workspace = true
@@ -47,6 +48,7 @@ revm = { workspace = true, default-features = false, features = [
 ] }
 revm-inspectors.workspace = true
 tempo-precompiles.workspace = true
+tempo-primitives.workspace = true
 
 eyre.workspace = true
 parking_lot.workspace = true

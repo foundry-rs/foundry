@@ -737,7 +737,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // metrics (useful for benchmarking the fuzzer).
         executor
             .inspector_mut()
-            .collect_edge_coverage(invariant_config.corpus.collect_edge_coverage());
+            .collect_edge_coverage(invariant_config.corpus.collect_evm_edge_coverage());
+        executor
+            .inspector_mut()
+            .collect_sancov_edges(invariant_config.corpus.collect_sancov_edges());
+        executor
+            .inspector_mut()
+            .collect_sancov_trace_cmp(invariant_config.corpus.collect_sancov_trace_cmp());
         let mut config = invariant_config.clone();
         let (failure_dir, failure_file) = test_paths(
             &mut config.corpus,
@@ -775,7 +781,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         );
 
         // Try to replay recorded failure if any.
-        if let Some(mut call_sequence) =
+        if let Some(InvariantPersistedFailure { mut call_sequence, assertion_failure, .. }) =
             persisted_call_sequence(failure_file.as_path(), &current_settings)
         {
             // Create calls from failed sequence and check if invariant still broken.
@@ -803,6 +809,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 CheckSequenceOptions {
                     accumulate_warp_roll: invariant_config.has_delay(),
                     fail_on_revert: invariant_config.fail_on_revert,
+                    expect_assertion_failure: assertion_failure,
                     call_after_invariant: invariant_contract.call_after_invariant,
                     rd: Some(self.revert_decoder()),
                 },
@@ -826,6 +833,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     self.clone_executor(),
                     &txes,
                     None,
+                    assertion_failure,
                     None, // check mode
                     &invariant_contract,
                     &self.cr.mcr.known_contracts,
@@ -845,6 +853,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             failure_file.as_path(),
                             &call_sequence,
                             &current_settings,
+                            assertion_failure,
                         );
                     }
                     Ok(_) => {}
@@ -898,6 +907,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 self.clone_executor(),
                                 calls,
                                 Some(case_data.inner_sequence),
+                                case_data.assertion_failure,
                                 None, // check mode
                                 &invariant_contract,
                                 &self.cr.mcr.known_contracts,
@@ -916,6 +926,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                         failure_file.as_path(),
                                         &call_sequence,
                                         &current_settings,
+                                        case_data.assertion_failure,
                                     );
 
                                     let original_seq_len =
@@ -950,6 +961,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         self.clone_executor(),
                         &invariant_result.optimization_best_sequence,
                         None,
+                        false,
                         Some(best_value),
                         &invariant_contract,
                         &self.cr.mcr.known_contracts,
@@ -1042,7 +1054,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let mut executor = self.executor.into_owned();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
-        executor.inspector_mut().collect_edge_coverage(fuzz_config.corpus.collect_edge_coverage());
+        executor
+            .inspector_mut()
+            .collect_edge_coverage(fuzz_config.corpus.collect_evm_edge_coverage());
+        executor.inspector_mut().collect_sancov_edges(fuzz_config.corpus.collect_sancov_edges());
+        executor
+            .inspector_mut()
+            .collect_sancov_trace_cmp(fuzz_config.corpus.collect_sancov_trace_cmp());
         // Load persisted counterexample, if any.
         let persisted_failure =
             foundry_common::fs::read_json_file::<BaseCounterExample>(failure_file.as_path()).ok();
@@ -1194,6 +1212,9 @@ struct InvariantPersistedFailure {
     /// Invariant settings when the counterexample was generated.
     /// Used to determine if the counterexample is still valid.
     settings: InvariantSettings,
+    /// Whether the persisted failure came from a handler assertion instead of the invariant body.
+    #[serde(default)]
+    assertion_failure: bool,
 }
 
 /// Helper function to load failed call sequence from file.
@@ -1201,7 +1222,7 @@ struct InvariantPersistedFailure {
 fn persisted_call_sequence(
     path: &Path,
     current_settings: &InvariantSettings,
-) -> Option<Vec<BaseCounterExample>> {
+) -> Option<InvariantPersistedFailure> {
     foundry_common::fs::read_json_file::<InvariantPersistedFailure>(path).ok().and_then(
         |persisted_failure| {
             if let Some(diff) = persisted_failure.settings.diff(current_settings) {
@@ -1212,7 +1233,7 @@ fn persisted_call_sequence(
                 );
                 return None;
             }
-            Some(persisted_failure.call_sequence)
+            Some(persisted_failure)
         },
     )
 }
@@ -1239,6 +1260,7 @@ fn record_invariant_failure(
     failure_file: &Path,
     call_sequence: &[BaseCounterExample],
     settings: &InvariantSettings,
+    assertion_failure: bool,
 ) {
     if let Err(err) = foundry_common::fs::create_dir_all(failure_dir) {
         error!(%err, "Failed to create invariant failure dir");
@@ -1250,6 +1272,7 @@ fn record_invariant_failure(
         &InvariantPersistedFailure {
             call_sequence: call_sequence.to_owned(),
             settings: settings.clone(),
+            assertion_failure,
         },
     ) {
         error!(%err, "Failed to record call sequence");

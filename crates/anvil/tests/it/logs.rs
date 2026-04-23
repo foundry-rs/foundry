@@ -10,6 +10,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, Filter};
 use anvil::{NodeConfig, spawn};
 use futures::StreamExt;
+use std::str::FromStr;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn get_past_events() {
@@ -194,4 +195,21 @@ async fn watch_events() {
             .hash;
         assert_eq!(log.1.block_hash.unwrap(), hash);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_logs_unknown_block_hash_returns_error() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    let unknown_hash =
+        B256::from_str("0x0000000000000000000000000000000000000000000000000000000000000001")
+            .unwrap();
+    let filter = Filter::new().at_block_hash(unknown_hash);
+
+    let err = provider.get_logs(&filter).await.unwrap_err();
+    assert!(
+        err.to_string().contains("unknown block"),
+        "expected `unknown block` in error, got: {err}"
+    );
 }

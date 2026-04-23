@@ -246,7 +246,7 @@ pub struct Backend<N: Network> {
     prune_state_history_config: PruneStateHistoryConfig,
     /// max number of blocks with transactions in memory
     transaction_block_keeper: Option<usize>,
-    node_config: Arc<AsyncRwLock<NodeConfig>>,
+    pub(crate) node_config: Arc<AsyncRwLock<NodeConfig>>,
     /// Slots in an epoch
     slots_in_an_epoch: u64,
     /// Precompiles to inject to the EVM.
@@ -1156,6 +1156,7 @@ impl<N: Network> Backend<N> {
                 EVMError::Database(db) => EVMError::Database(db),
                 EVMError::Header(h) => EVMError::Header(h),
                 EVMError::Custom(s) => EVMError::Custom(s),
+                EVMError::CustomAny(err) => EVMError::CustomAny(err),
                 EVMError::Transaction(t) => EVMError::Transaction(t),
             })?;
             Ok(ResultAndState {
@@ -2078,6 +2079,7 @@ impl<N: Network> Backend<N> {
                     // we want to force the correct base fee for the next block during
                     // `setup_fork_db_config`
                     node_config.base_fee.take();
+                    node_config.fork_urls = vec![eth_rpc_url.clone()];
 
                     node_config.setup_fork_db_config(eth_rpc_url, &mut evm_env, &self.fees).await?
                 };
@@ -2100,7 +2102,9 @@ impl<N: Network> Backend<N> {
             let block_number =
                 forking.block_number.map(BlockNumber::from).unwrap_or(BlockNumber::Latest);
             // reset the fork entirely and reapply the genesis config
-            fork.reset(forking.json_rpc_url.clone(), block_number).await?;
+            let reset_urls =
+                forking.json_rpc_url.as_ref().map(|url| vec![url.clone()]).unwrap_or_default();
+            fork.reset(reset_urls, block_number).await?;
             let fork_block_number = fork.block_number();
             let fork_block = fork
                 .block_by_number(fork_block_number)
@@ -2114,7 +2118,8 @@ impl<N: Network> Backend<N> {
                     // If rpc url is unspecified, then update the fork with the new block number and
                     // existing rpc url, this updates the cache path
                     {
-                        let maybe_fork_url = { self.node_config.read().await.eth_rpc_url.clone() };
+                        let maybe_fork_url =
+                            { self.node_config.read().await.fork_urls.first().cloned() };
                         if let Some(fork_url) = maybe_fork_url {
                             self.reset_block_number(fork_url, fork_block_number).await?;
                         }
@@ -2228,6 +2233,8 @@ impl<N: Network> Backend<N> {
     ) -> Result<(), BlockchainError> {
         let mut node_config = self.node_config.write().await;
         node_config.fork_choice = Some(ForkChoice::Block(fork_block_number as i128));
+        // Update fork_urls so setup_fork_db_config uses the correct URL set
+        node_config.fork_urls = vec![fork_url.clone()];
 
         let mut evm_env = self.evm_env.read().clone();
         let (forked_db, client_fork_config) =
@@ -2370,7 +2377,7 @@ where
             return Ok(fork.logs(&filter).await?);
         }
 
-        Ok(Vec::new())
+        Err(BlockchainError::UnknownBlock)
     }
 
     /// Returns the logs that match the filter in the given range of blocks
@@ -2917,7 +2924,7 @@ where
 
                             Ok(tracing_inspector
                                 .into_geth_builder()
-                                .geth_call_traces(call_config, result.gas_used())
+                                .geth_call_traces(call_config, result.tx_gas_used())
                                 .into())
                         }
                         GethDebugBuiltInTracerType::PreStateTracer => {
@@ -3917,7 +3924,7 @@ impl Backend<FoundryNetwork> {
 
                     // commit the transaction
                     cache_db.commit(state);
-                    gas_used += result.gas_used();
+                    gas_used += result.tx_gas_used();
 
                     // create the transaction from a request
                     let from = request.from.unwrap_or_default();
@@ -3941,7 +3948,7 @@ impl Backend<FoundryNetwork> {
                     let return_data = result.output().cloned().unwrap_or_default();
                     let sim_res = SimCallResult {
                         return_data,
-                        gas_used: result.gas_used(),
+                        gas_used: result.tx_gas_used(),
                         max_used_gas: None,
                         status: result.is_success(),
                         error: result.is_success().not().then(|| {
@@ -4524,13 +4531,13 @@ fn unpack_execution_result<H: IntoInstructionResult>(
 ) -> (InstructionResult, u64, Option<Output>, Vec<revm::primitives::Log>) {
     match result {
         ExecutionResult::Success { reason, gas, output, logs, .. } => {
-            (reason.into(), gas.used(), Some(output), logs)
+            (reason.into(), gas.tx_gas_used(), Some(output), logs)
         }
         ExecutionResult::Revert { gas, output, logs, .. } => {
-            (InstructionResult::Revert, gas.used(), Some(Output::Call(output)), logs)
+            (InstructionResult::Revert, gas.tx_gas_used(), Some(Output::Call(output)), logs)
         }
         ExecutionResult::Halt { reason, gas, logs, .. } => {
-            (reason.into_instruction_result(), gas.used(), None, logs)
+            (reason.into_instruction_result(), gas.tx_gas_used(), None, logs)
         }
     }
 }

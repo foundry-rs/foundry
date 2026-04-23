@@ -101,6 +101,7 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     mut executor: Executor<FEN>,
     calls: &[BasicTxDetails],
     inner_sequence: Option<Vec<Option<BasicTxDetails>>>,
+    expect_assertion_failure: bool,
     target_value: Option<I256>,
     invariant_contract: &InvariantContract<'_>,
     known_contracts: &ContractsByArtifact,
@@ -123,7 +124,15 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
             early_exit,
         )?
     } else {
-        shrink_sequence(&config, invariant_contract, calls, &executor, progress, early_exit)?
+        shrink_sequence(
+            &config,
+            invariant_contract,
+            calls,
+            expect_assertion_failure,
+            &executor,
+            progress,
+            early_exit,
+        )?
     };
 
     if let Some(sequence) = inner_sequence {

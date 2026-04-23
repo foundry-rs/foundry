@@ -1,6 +1,7 @@
 //! Provider-related instantiation and usage utilities.
 
 pub mod curl_transport;
+pub mod mpp;
 pub mod runtime_transport;
 
 use crate::{
@@ -8,6 +9,7 @@ use crate::{
     provider::{curl_transport::CurlTransport, runtime_transport::RuntimeTransportBuilder},
 };
 use alloy_chains::NamedChain;
+use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_network::{Network, NetworkWallet};
 use alloy_provider::{
     Identity, ProviderBuilder as AlloyProviderBuilder, RootProvider,
@@ -15,7 +17,9 @@ use alloy_provider::{
     network::{AnyNetwork, EthereumWallet},
 };
 use alloy_rpc_client::ClientBuilder;
-use alloy_transport::{layers::RetryBackoffLayer, utils::guess_local_url};
+use alloy_transport::{
+    TransportError, TransportFut, layers::RetryBackoffLayer, utils::guess_local_url,
+};
 use eyre::{Result, WrapErr};
 use foundry_config::Config;
 use reqwest::Url;
@@ -24,8 +28,14 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    task::{Context, Poll},
     time::Duration,
 };
+use tower::Service;
 use url::ParseError;
 
 /// The assumed block time for unknown chains.
@@ -72,6 +82,56 @@ pub fn get_http_provider(builder: impl AsRef<str>) -> RetryProvider {
 #[inline]
 pub fn try_get_http_provider(builder: impl AsRef<str>) -> Result<RetryProvider> {
     ProviderBuilder::new(builder.as_ref()).build()
+}
+
+/// A round-robin transport that distributes requests across multiple transports.
+///
+/// Each request is sent to exactly one transport, rotating through the list.
+/// Failover on error is handled by the retry layer above this service.
+#[derive(Clone)]
+pub struct RoundRobinService<S> {
+    transports: Arc<Vec<S>>,
+    next: Arc<AtomicUsize>,
+}
+
+impl<S> RoundRobinService<S> {
+    /// Creates a new round-robin service from a non-empty list of transports.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `transports` is empty.
+    pub fn new(transports: Vec<S>) -> Self {
+        assert!(!transports.is_empty(), "RoundRobinService requires at least one transport");
+        Self { transports: Arc::new(transports), next: Arc::new(AtomicUsize::new(0)) }
+    }
+}
+
+impl<S> Service<RequestPacket> for RoundRobinService<S>
+where
+    S: Service<
+            RequestPacket,
+            Response = ResponsePacket,
+            Error = TransportError,
+            Future = TransportFut<'static>,
+        > + Clone
+        + Send
+        + Sync
+        + 'static,
+{
+    type Response = ResponsePacket;
+    type Error = TransportError;
+    type Future = TransportFut<'static>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: RequestPacket) -> Self::Future {
+        let transports = self.transports.clone();
+        let idx = self.next.fetch_add(1, Ordering::Relaxed) % transports.len();
+        let mut transport = transports[idx].clone();
+        transport.call(req)
+    }
 }
 
 /// Helper type to construct a `RetryProvider`
@@ -367,6 +427,73 @@ impl<N: Network> ProviderBuilder<N> {
 }
 
 impl<N: Network> ProviderBuilder<N> {
+    /// Constructs a `RetryProvider` backed by multiple URLs using round-robin load balancing.
+    ///
+    /// Each request is sent to exactly one transport, rotating through the list via
+    /// [`RoundRobinService`]. There is no health scoring or endpoint deprioritization.
+    /// On failure, the `RetryBackoffLayer` retries the request, which naturally hits
+    /// the next transport in the rotation.
+    pub fn build_fallback(self, urls: Vec<String>) -> Result<RetryProvider<N>> {
+        let Self {
+            chain,
+            max_retry,
+            initial_backoff,
+            timeout,
+            compute_units_per_second,
+            jwt,
+            headers,
+            accept_invalid_certs,
+            no_proxy,
+            curl_mode,
+            ..
+        } = self;
+
+        eyre::ensure!(!urls.is_empty(), "at least one fork URL is required");
+        eyre::ensure!(!curl_mode, "curl mode is not supported with multiple fork URLs");
+
+        // Build a RuntimeTransport for each URL, using the same URL normalization
+        // as ProviderBuilder::new() (handles localhost:port, raw socket addrs, IPC paths)
+        let mut parsed_urls = Vec::with_capacity(urls.len());
+        let transports: Vec<_> = urls
+            .iter()
+            .map(|url_str| {
+                let builder = Self::new(url_str);
+                let url = builder.url?;
+                parsed_urls.push(url.clone());
+                Ok(RuntimeTransportBuilder::new(url)
+                    .with_timeout(timeout)
+                    .with_headers(headers.clone())
+                    .with_jwt(jwt.clone())
+                    .accept_invalid_certs(accept_invalid_certs)
+                    .no_proxy(no_proxy)
+                    .build())
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let round_robin = RoundRobinService::new(transports);
+
+        let retry_layer =
+            RetryBackoffLayer::new(max_retry, initial_backoff, compute_units_per_second);
+        // Use normalized/parsed URLs for local detection, consistent with build()
+        let is_local = parsed_urls.iter().all(|url| guess_local_url(url.as_str()));
+        let client = ClientBuilder::default().layer(retry_layer).transport(round_robin, is_local);
+
+        if !is_local {
+            client.set_poll_interval(
+                chain
+                    .average_blocktime_hint()
+                    .map(|hint| hint.min(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME))
+                    .unwrap_or(DEFAULT_UNKNOWN_CHAIN_BLOCK_TIME)
+                    .mul_f32(POLL_INTERVAL_BLOCK_TIME_SCALE_FACTOR),
+            );
+        }
+
+        let provider =
+            AlloyProviderBuilder::<_, _, N>::default().connect_provider(RootProvider::new(client));
+
+        Ok(provider)
+    }
+
     /// Constructs the `RetryProvider` with a wallet.
     pub fn build_with_wallet<W: NetworkWallet<N> + Clone>(
         self,

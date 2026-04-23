@@ -30,6 +30,7 @@ serde_json.workspace = true
 chrono.workspace = true
 revm.workspace = true
 yansi.workspace = true
+comfy-table.workspace = true
 
 # Tempo
 tempo-alloy.workspace = true
