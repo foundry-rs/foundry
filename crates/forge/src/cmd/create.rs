@@ -21,6 +21,7 @@ use foundry_common::{
     fmt::parse_tokens,
     provider::ProviderBuilder,
     shell,
+    tempo::TEMPO_BROWSER_GAS_BUFFER,
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
@@ -433,7 +434,16 @@ impl CreateArgs {
         }
 
         if self.tx.gas_limit.is_none() {
-            deployer.tx.set_gas_limit(provider.estimate_gas(deployer.tx.clone()).await?);
+            let mut estimated = provider.estimate_gas(deployer.tx.clone()).await?;
+
+            // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
+            // costs more gas for signature verification on Tempo chains. Add a
+            // conservative buffer since we can't determine the signature type beforehand.
+            if browser_signer.is_some() && chain.is_tempo() {
+                estimated += TEMPO_BROWSER_GAS_BUFFER;
+            }
+
+            deployer.tx.set_gas_limit(estimated);
         }
 
         if is_legacy {

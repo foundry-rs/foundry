@@ -20,7 +20,7 @@ use alloy_rpc_types::{
     FeeHistory, Filter, Log,
     simulate::{SimulatePayload, SimulatedBlock},
     trace::{
-        geth::{GethDebugTracingOptions, GethTrace},
+        geth::{GethDebugTracingOptions, GethTrace, TraceResult},
         parity::{LocalizedTransactionTrace as Trace, TraceResultsWithTransactionHash, TraceType},
     },
 };
@@ -240,6 +240,36 @@ impl<N: Network> ClientFork<N> {
         block_id: Option<BlockId>,
     ) -> Result<Option<Bytes>, TransportError> {
         self.provider().debug_code_by_hash(code_hash, block_id).await
+    }
+
+    pub async fn debug_trace_block_by_hash(
+        &self,
+        block_hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, TransportError> {
+        if let Some(traces) = self.storage_read().geth_block_traces.get(&block_hash).cloned() {
+            return Ok(traces);
+        }
+
+        let trace_results = self.provider().debug_trace_block_by_hash(block_hash, opts).await?;
+
+        let mut storage = self.storage_write();
+        storage.geth_block_traces.insert(block_hash, trace_results.clone());
+
+        Ok(trace_results)
+    }
+
+    pub async fn debug_trace_block_by_number(
+        &self,
+        number: u64,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>, TransportError> {
+        if let Ok(Some(block)) = self.provider().get_block_by_number(number.into()).await {
+            let block_hash = block.header().hash();
+            return self.debug_trace_block_by_hash(block_hash, opts).await;
+        }
+
+        self.provider().debug_trace_block_by_number(number.into(), opts).await
     }
 
     pub async fn trace_block(&self, number: u64) -> Result<Vec<Trace>, TransportError> {
@@ -732,6 +762,7 @@ pub struct ForkedStorage<N: Network = AnyNetwork> {
     pub transaction_traces: FbHashMap<32, Vec<Trace>>,
     pub logs: HashMap<Filter, Vec<Log>>,
     pub geth_transaction_traces: FbHashMap<32, GethTrace>,
+    pub geth_block_traces: FbHashMap<32, Vec<TraceResult>>,
     pub block_traces: HashMap<u64, Vec<Trace>>,
     pub block_receipts: HashMap<u64, Vec<FoundryTxReceipt>>,
     pub code_at: HashMap<(Address, u64), Bytes>,
@@ -748,6 +779,7 @@ impl<N: Network> Default for ForkedStorage<N> {
             transaction_traces: Default::default(),
             logs: Default::default(),
             geth_transaction_traces: Default::default(),
+            geth_block_traces: Default::default(),
             block_traces: Default::default(),
             block_receipts: Default::default(),
             code_at: Default::default(),
