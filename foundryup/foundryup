@@ -40,6 +40,7 @@ main() {
       -P|--pr)          shift; FOUNDRYUP_PR=$1;;
       -C|--commit)      shift; FOUNDRYUP_COMMIT=$1;;
       -j|--jobs)        shift; FOUNDRYUP_JOBS=$1;;
+      -n|--network)     shift; FOUNDRYUP_NETWORK=$1;;
       -f|--force)       FOUNDRYUP_IGNORE_VERIFICATION=true;;
       --arch)           shift; FOUNDRYUP_ARCH=$1;;
       --platform)       shift; FOUNDRYUP_PLATFORM=$1;;
@@ -99,6 +100,10 @@ main() {
 
     say "done"
     exit 0
+  fi
+
+  if [[ -n "$FOUNDRYUP_NETWORK" ]]; then
+    warn "--network is ignored; installing the regular Foundry release"
   fi
 
   FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
@@ -396,6 +401,7 @@ OPTIONS:
     -r, --repo      Build and install from a remote GitHub repo (uses default branch if no other options are set)
     -p, --path      Build and install a local repository
     -j, --jobs      Number of CPUs to use for building Foundry (default: all CPUs)
+    -n, --network   Ignored; installs the regular Foundry release
     -f, --force     Skip SHA verification for downloaded binaries (INSECURE - use with caution)
     --arch          Install a specific architecture (supports amd64 and arm64)
     --platform      Install a specific platform (supports win32, linux, darwin and alpine)
