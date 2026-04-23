@@ -398,6 +398,13 @@ pub struct CastTxBuilder<N: Network, P, S> {
     state: S,
 }
 
+impl<N: Network, P, S> CastTxBuilder<N, P, S> {
+    /// Returns the resolved chain for this builder.
+    pub const fn chain(&self) -> Chain {
+        self.chain
+    }
+}
+
 impl<N: Network, P: Provider<N>> CastTxBuilder<N, P, InitState>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
