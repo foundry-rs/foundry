@@ -267,7 +267,7 @@ impl RuntimeTransport {
     async fn connect_ws(&self) -> Result<InnerTransport, RuntimeTransportError> {
         let auth = self.jwt.as_ref().and_then(|jwt| build_auth(jwt.clone()).ok());
 
-        let service = if is_known_mpp_endpoint(&self.url) || discover_mpp_key().is_some() {
+        let service = if is_known_mpp_endpoint(&self.url) && discover_mpp_key().is_some() {
             let mut ws = MppWsConnect::new(self.url.to_string());
             if let Some(auth) = auth {
                 ws = ws.with_auth(auth);
