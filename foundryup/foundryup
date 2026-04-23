@@ -103,7 +103,7 @@ main() {
   fi
 
   if [[ -n "$FOUNDRYUP_NETWORK" ]]; then
-    warn "--network is ignored; installing the regular Foundry release"
+    warn "--network is deprecated and ignored; installing the regular Foundry release"
   fi
 
   FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
