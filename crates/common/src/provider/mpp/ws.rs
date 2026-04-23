@@ -17,6 +17,7 @@ use mpp::{
     },
     protocol::core::{PaymentChallenge, format_authorization},
 };
+use rustls::crypto::{CryptoProvider, aws_lc_rs};
 use std::{io, time::Duration};
 use tokio::time::timeout;
 use tokio_tungstenite::{
@@ -253,6 +254,9 @@ impl PubSubConnect for MppWsConnect {
             auth_value.set_sensitive(true);
             request.headers_mut().insert(reqwest::header::AUTHORIZATION, auth_value);
         }
+
+        // Install the default rustls crypto provider (required by rustls 0.23+).
+        let _ = CryptoProvider::install_default(aws_lc_rs::default_provider());
 
         let (mut socket, _) = connect_async(request).await.map_err(TransportErrorKind::custom)?;
 

@@ -5033,6 +5033,7 @@ dependencies = [
  "regex",
  "reqwest 0.13.2",
  "revm",
+ "rustls",
  "semver 1.0.28",
  "serde",
  "serde_json",
