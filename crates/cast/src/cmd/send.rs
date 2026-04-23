@@ -13,6 +13,7 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
+    tempo::TEMPO_BROWSER_GAS_BUFFER,
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use tempo_alloy::TempoNetwork;
@@ -258,7 +259,18 @@ impl SendTxArgs {
         // Case 2:
         // Browser wallet signs and sends the transaction in one step.
         } else if let Some(browser) = browser {
-            let (tx_request, _) = builder.build(browser.address()).await?;
+            let chain = builder.chain();
+            let (mut tx_request, _) = builder.build(browser.address()).await?;
+
+            // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
+            // costs more gas for signature verification on Tempo chains. Add a
+            // conservative buffer since we can't determine the signature type beforehand.
+            if chain.is_tempo()
+                && let Some(gas) = tx_request.gas_limit()
+            {
+                tx_request.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
+            }
+
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
 
             let cast = CastTxSender::new(&provider);
