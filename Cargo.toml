@@ -488,6 +488,7 @@ tempfile = "3.23"
 tokio = "1"
 toml = "0.9"
 toml_edit = "0.24"
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 tower = "0.5"
 tower-http = "0.6"
 tracing = "0.1"
@@ -509,10 +510,11 @@ flate2 = "1.1"
 ethereum_ssz = "0.10"
 
 # Tempo
-mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "310c9a1f3fe485fa9c7a877fd4da6b7a6ab34815", default-features = false, features = [
+mpp = { git = "https://github.com/tempoxyz/mpp-rs", rev = "554d20112eb014bd223d54de7f152ca59b2aa4fd", default-features = false, features = [
     "tempo",
     "client",
     "reqwest-rustls-tls",
+    "ws",
 ] }
 tempo-chainspec = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9", default-features = false }
 tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "bb08bb9", default-features = false, features = [

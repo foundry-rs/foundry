@@ -64,7 +64,7 @@ pub struct LazySessionProvider {
 }
 
 impl LazySessionProvider {
-    fn new(origin: String) -> Self {
+    pub(super) fn new(origin: String) -> Self {
         let pay_lock = {
             let global = GLOBAL_PAY_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
             global
@@ -89,13 +89,13 @@ impl LazySessionProvider {
         }
     }
 
-    fn flush_pending(&self) {
+    pub(super) fn flush_pending(&self) {
         if let Some(p) = self.inner.lock().unwrap().as_ref() {
             p.flush_pending();
         }
     }
 
-    fn rollback_pending(&self) {
+    pub(super) fn rollback_pending(&self) {
         if let Some(p) = self.inner.lock().unwrap().as_ref() {
             p.rollback_pending();
         }
@@ -107,7 +107,7 @@ impl LazySessionProvider {
         }
     }
 
-    fn get_or_init(&self, opts: DiscoverOptions) -> TransportResult<SessionProvider> {
+    pub(super) fn get_or_init(&self, opts: DiscoverOptions) -> TransportResult<SessionProvider> {
         let mut guard = self.inner.lock().unwrap();
         if let Some(ref provider) = *guard {
             return Ok(provider.clone());
@@ -527,7 +527,7 @@ where
 }
 
 /// Extract `(chainId, currency)` from a parsed MPP challenge.
-fn extract_challenge_chain_and_currency(
+pub(super) fn extract_challenge_chain_and_currency(
     c: &mpp::protocol::core::PaymentChallenge,
 ) -> (Option<u64>, Option<String>) {
     if c.method.as_str() == "tempo" {
