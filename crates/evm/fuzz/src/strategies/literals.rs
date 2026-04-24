@@ -57,9 +57,14 @@ impl LiteralsDictionary {
         Self { maps }
     }
 
-    /// Returns a reference to the `LiteralMaps`.
+    /// Returns a reference to the `LiteralMaps`, blocking until ready.
     pub fn get(&self) -> &LiteralMaps {
         self.maps.wait()
+    }
+
+    /// Returns a reference to the `LiteralMaps` if already initialized, without blocking.
+    pub fn try_get(&self) -> Option<&LiteralMaps> {
+        self.maps.get()
     }
 
     /// Test-only helper to seed the dictionary with literal values.

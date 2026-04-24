@@ -67,6 +67,10 @@ impl EvmFuzzState {
         dictionary.insert_db_values(accs);
         if let Some(literals) = literals {
             dictionary.literal_values = literals.clone();
+            // Block once here to merge all AST literals into `sample_values`.
+            // This ensures literals are always available during fuzzing without
+            // needing to touch the OnceLock on the per-iteration hot path.
+            dictionary.seed_samples();
         }
 
         Self {
@@ -226,14 +230,31 @@ impl FuzzDictionary {
         self.insert_value(B256::ZERO);
     }
 
-    /// Seeds `sample_values` with all words from the [`LiteralsDictionary`].
-    /// Should only be called once per dictionary lifetime.
-    #[cold]
+    /// Seeds `sample_values` with all words from the [`LiteralsDictionary`], blocking until ready.
+    /// Called once during `EvmFuzzState::new` so the per-iteration hot path never touches
+    /// the `OnceLock`.
     fn seed_samples(&mut self) {
+        if self.samples_seeded {
+            return;
+        }
         trace!("seeding `sample_values` from literal dictionary");
         self.sample_values
             .extend(self.literal_values.get().words.iter().map(|(k, v)| (k.clone(), v.clone())));
         self.samples_seeded = true;
+    }
+
+    /// Non-blocking variant: seeds `sample_values` only if literals are already available.
+    /// Used by write-path methods that may be called before `seed_samples`.
+    fn try_seed_samples(&mut self) {
+        if self.samples_seeded {
+            return;
+        }
+        if let Some(maps) = self.literal_values.try_get() {
+            trace!("seeding `sample_values` from literal dictionary (non-blocking)");
+            self.sample_values
+                .extend(maps.words.iter().map(|(k, v)| (k.clone(), v.clone())));
+            self.samples_seeded = true;
+        }
     }
 
     /// Insert values from initial db state into fuzz dictionary.
@@ -407,9 +428,7 @@ impl FuzzDictionary {
             && slot_info.decode(value).is_some()
         {
             trace!(?slot_info, "inserting typed storage value");
-            if !self.samples_seeded {
-                self.seed_samples();
-            }
+            self.try_seed_samples();
             self.sample_values.entry(slot_info.slot_type.dyn_sol_type).or_default().insert(value);
         } else {
             self.insert_value_u256(value.into());
@@ -453,9 +472,7 @@ impl FuzzDictionary {
     /// Insert a typed trace-cmp value into the `sample_values` map.
     /// Maps sancov width to `DynSolType` buckets and promotes to larger types.
     fn insert_typed_cmp_value(&mut self, width: u8, value: B256) {
-        if !self.samples_seeded {
-            self.seed_samples();
-        }
+        self.try_seed_samples();
 
         const MAX_TYPED_CMP_PER_BUCKET: usize = 1024;
 
@@ -503,9 +520,7 @@ impl FuzzDictionary {
         sample_values: impl IntoIterator<Item = DynSolValue>,
         limit: u32,
     ) {
-        if !self.samples_seeded {
-            self.seed_samples();
-        }
+        self.try_seed_samples();
         for sample in sample_values {
             if let (Some(sample_type), Some(sample_value)) = (sample.as_type(), sample.as_word()) {
                 if let Some(values) = self.sample_values.get_mut(&sample_type) {
@@ -534,27 +549,26 @@ impl FuzzDictionary {
         self.state_values.is_empty()
     }
 
-    /// Returns sample values for a given type, checking both runtime samples and literals.
+    /// Returns sample values for a given type.
     ///
-    /// Before `seed_samples()` is called, checks both `literal_values` and `sample_values`
-    /// separately. After seeding, all literal values are merged into `sample_values`.
+    /// After `seed_samples()` is called in `EvmFuzzState::new`, all AST literals are
+    /// merged into `sample_values`, so this is just a single hash-map lookup with no
+    /// `OnceLock` access on the hot path.
     #[inline]
     pub fn samples(&self, param_type: &DynSolType) -> Option<&B256IndexSet> {
-        // If not seeded yet, return literals
-        if !self.samples_seeded {
-            return self.literal_values.get().words.get(param_type);
-        }
-
         self.sample_values.get(param_type)
     }
 
-    /// Returns the collected literal strings, triggering initialization if needed.
+    /// Returns the collected literal strings.
+    ///
+    /// After `seed_samples()` has been called, the `OnceLock` is already initialized
+    /// so `get()` returns immediately without blocking.
     #[inline]
     pub fn ast_strings(&self) -> &IndexSet<String> {
         &self.literal_values.get().strings
     }
 
-    /// Returns the collected literal bytes (hex strings), triggering initialization if needed.
+    /// Returns the collected literal bytes (hex strings).
     #[inline]
     pub fn ast_bytes(&self) -> &IndexSet<Bytes> {
         &self.literal_values.get().bytes
@@ -586,5 +600,7 @@ impl FuzzDictionary {
     /// Test-only helper to seed the dictionary with literal values.
     pub(crate) fn seed_literals(&mut self, map: super::LiteralMaps) {
         self.literal_values.set(map);
+        self.samples_seeded = false;
+        self.seed_samples();
     }
 }
