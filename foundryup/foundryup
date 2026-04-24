@@ -3,7 +3,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.7.0"
+FOUNDRYUP_INSTALLER_VERSION="1.8.0"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -110,15 +110,28 @@ main() {
 
   # Install by downloading binaries
   if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
-    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-stable}
-    FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-latest}
 
     # Normalize versions (handle channels, versions without v prefix)
-    if [[ "$FOUNDRYUP_VERSION" =~ ^nightly ]]; then
+    if [[ "$FOUNDRYUP_VERSION" == "latest" || "$FOUNDRYUP_VERSION" == "stable" ]]; then
+      # Resolve to the latest release (non-prerelease) via the GitHub API
+      say "resolving latest release..."
+      FOUNDRYUP_TAG=$(resolve_latest_release "$FOUNDRYUP_REPO" "latest")
+      FOUNDRYUP_VERSION="$FOUNDRYUP_TAG"
+    elif [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
+      # Resolve to the latest nightly (prerelease) release via the GitHub API
+      say "resolving latest nightly release..."
+      FOUNDRYUP_TAG=$(resolve_latest_release "$FOUNDRYUP_REPO" "nightly")
+      FOUNDRYUP_VERSION="nightly"
+    elif [[ "$FOUNDRYUP_VERSION" =~ ^nightly- ]]; then
+      # Specific nightly tag (e.g. nightly-abc123...)
+      FOUNDRYUP_TAG="$FOUNDRYUP_VERSION"
       FOUNDRYUP_VERSION="nightly"
     elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
       # Add v prefix
       FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
+      FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
+    else
       FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
     fi
 
@@ -383,7 +396,7 @@ The installer for Foundry.
 
 Update or revert to a specific Foundry version with ease.
 
-By default, the latest stable version is installed from built binaries.
+By default, the latest version is installed from built binaries.
 
 USAGE:
     foundryup <OPTIONS>
@@ -392,7 +405,7 @@ OPTIONS:
     -h, --help      Print help information
     -v, --version   Print the version of foundryup
     -U, --update    Update foundryup to the latest version
-    -i, --install   Install a specific version from built binaries
+    -i, --install   Install a specific version (latest, nightly, nightly-<SHA>, or v1.2.3)
     -l, --list      List versions installed from built binaries
     -u, --use       Use a specific installed version from built binaries
     -b, --branch    Build and install a specific branch
@@ -516,6 +529,50 @@ err() {
 
 tolower() {
   echo "$1" | awk '{print tolower($0)}'
+}
+
+# Resolves the latest release tag from the GitHub API.
+# $1: repo (e.g. "foundry-rs/foundry")
+# $2: channel ("latest" or "nightly")
+#
+# For "latest": returns the tag of the latest non-prerelease release (e.g. "v1.6.0")
+# For "nightly": returns the tag of the latest prerelease release (e.g. "nightly-abc123...")
+resolve_latest_release() {
+  local repo="$1"
+  local channel="$2"
+  local api_url="https://api.github.com/repos/${repo}/releases?per_page=50"
+  local tmp
+  tmp="$(mktemp 2>/dev/null)" || err "failed to create temp file"
+
+  if check_cmd curl; then
+    curl -fsSL "$api_url" -o "$tmp" || err "failed to fetch releases from GitHub API"
+  else
+    wget -qO "$tmp" "$api_url" || err "failed to fetch releases from GitHub API"
+  fi
+
+  local tag_name=""
+  if [[ "$channel" == "nightly" ]]; then
+    # Find the first prerelease whose tag starts with "nightly-"
+    tag_name=$(awk '
+      /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
+      /"prerelease"[[:space:]]*:[[:space:]]*true/ { if (tag ~ /^nightly-/) { print tag; exit } }
+    ' "$tmp")
+  else
+    # Find the first non-prerelease, non-draft release (i.e. stable)
+    tag_name=$(awk '
+      /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
+      /"draft"[[:space:]]*:[[:space:]]*true/ { tag="" }
+      /"prerelease"[[:space:]]*:[[:space:]]*false/ { if (tag ~ /^v[0-9]/) { print tag; exit } }
+    ' "$tmp")
+  fi
+
+  rm -f "$tmp"
+
+  if [ -z "$tag_name" ]; then
+    err "could not find a ${channel} release for ${repo}"
+  fi
+
+  printf '%s' "$tag_name"
 }
 
 compute_sha256() {

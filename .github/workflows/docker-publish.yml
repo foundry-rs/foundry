@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        default: nightly
+        default: nightly-dev
         description: The tag we're building for
         type: string
   workflow_call:
@@ -58,9 +58,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      # Creates an additional 'latest' or 'nightly' tag
-      # If the job is triggered via cron schedule, tag nightly and nightly-{SHA}
-      # If the job is triggered via workflow dispatch and on a master branch, tag branch and latest
+      # Creates Docker tags for each release type
+      # If the job is triggered via cron schedule, tag nightly-{SHORT_SHA}
+      # If the job is triggered via workflow dispatch and on a master branch, tag as branch name
+      # If the job is triggered via a version tag push, tag v{major}, v{major}.{minor}, and v{major}.{minor}.{patch}
       # Otherwise, just tag as the branch name
       - name: Finalize Docker Metadata
         id: docker_tagging
@@ -71,10 +72,10 @@ jobs:
 
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
             printf "cron trigger, assigning nightly tag\n"
-            printf "docker_tags=%s/%s:nightly,%s/%s:nightly-%s\n" "$REGISTRY" "$IMAGE" "$REGISTRY" "$IMAGE" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            printf "docker_tags=%s/%s:nightly-%s\n" "$REGISTRY" "$IMAGE" "${GITHUB_SHA:0:8}" >> "$GITHUB_OUTPUT"
           elif [[ "${GITHUB_REF##*/}" == "main" ]] || [[ "${GITHUB_REF##*/}" == "master" ]]; then
-            printf "manual trigger from master/main branch, assigning latest tag\n"
-            printf "docker_tags=%s/%s:%s,%s/%s:latest\n" "$REGISTRY" "$IMAGE" "${GITHUB_REF##*/}" "$REGISTRY" "$IMAGE" >> "$GITHUB_OUTPUT"
+            printf "manual trigger from master/main branch, assigning branch tag\n"
+            printf "docker_tags=%s/%s:%s\n" "$REGISTRY" "$IMAGE" "${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
           elif [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             MAJOR="v${BASH_REMATCH[1]}"
             MINOR="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"

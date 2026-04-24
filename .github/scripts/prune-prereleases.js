@@ -30,8 +30,7 @@ module.exports = async ({ github, context }) => {
     let nightlies = releases.filter(
         release =>
             // Only consider releases tagged `nightly-${SHA}` for deletion
-            release.tag_name.includes("nightly") &&
-            release.tag_name !== "nightly"
+            release.tag_name.startsWith("nightly-")
     );
 
     // Pruning rules:

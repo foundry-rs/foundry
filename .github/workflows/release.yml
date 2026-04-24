@@ -5,9 +5,6 @@ permissions: {}
 on:
   push:
     tags:
-      - "stable"
-      - "rc"
-      - "rc-*"
       - "v*.*.*"
   schedule:
     - cron: "0 6 * * *"
@@ -20,8 +17,6 @@ env:
   # Keep in sync with `docker-publish.yml`.
   RUST_PROFILE: dist
   RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
-
-  LAST_STABLE_VERSION: "v1.5.1"
 
 jobs:
   prepare:
@@ -71,7 +66,6 @@ jobs:
         uses: mikepenz/release-changelog-builder-action@bcae7115752d4ed746ff92feb666574428a79415 # v6.2
         with:
           configuration: "./.github/changelog.json"
-          fromTag: ${{ env.IS_NIGHTLY == 'true' && 'nightly' || env.STABLE_VERSION }}
           toTag: ${{ steps.release_info.outputs.tag_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -290,21 +284,6 @@ jobs:
             ${{ steps.artifacts.outputs.foundry_attestation }}
             ${{ steps.man.outputs.foundry_man }}
 
-      # If this is a nightly release, it also updates the release
-      # tagged `nightly` for compatibility with `foundryup`
-      - name: Update nightly release
-        if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
-        with:
-          name: "Nightly"
-          tag_name: "nightly"
-          prerelease: true
-          body: ${{ needs.prepare.outputs.changelog }}
-          files: |
-            ${{ steps.artifacts.outputs.file_name }}
-            ${{ steps.artifacts.outputs.foundry_attestation }}
-            ${{ steps.man.outputs.foundry_man }}
-
   cleanup:
     name: Release cleanup
     runs-on: ubuntu-latest
@@ -317,15 +296,6 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
-      # Moves the `nightly` tag to `HEAD`
-      - name: Move nightly tag
-        if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const moveTag = require('./.github/scripts/move-tag.js')
-            await moveTag({ github, context }, 'nightly')
 
       - name: Delete old nightlies
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
