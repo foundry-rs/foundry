@@ -53,6 +53,10 @@ contract BlockTimestamp {
         return 0;
     }
 
+    function timestampInCallArg() public view returns (bool) {
+        return foo(block.timestamp) > 0; //~WARN: usage of `block.timestamp` in a comparison may be manipulated by validators
+    }
+
     // SHOULD PASS:
 
     function assignOnly() public view returns (uint256) {
@@ -70,6 +74,10 @@ contract BlockTimestamp {
 
     function arithmetic() public view returns (uint256) {
         return block.timestamp + 100;
+    }
+
+    function foo(uint256 x) internal pure returns (uint256) {
+        return x;
     }
 
     event Timestamp(uint256 ts);

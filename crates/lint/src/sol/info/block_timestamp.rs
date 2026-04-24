@@ -62,7 +62,9 @@ fn contains_block_timestamp(expr: &Expr<'_>) -> bool {
                 false
             }
         }),
-        ExprKind::Call(callee, _) => contains_block_timestamp(callee),
+        ExprKind::Call(callee, args) => {
+            contains_block_timestamp(callee) || args.exprs().any(|e| contains_block_timestamp(e))
+        }
         _ => false,
     }
 }
