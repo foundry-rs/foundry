@@ -348,7 +348,7 @@ foundry-compilers = { version = "0.20.0", default-features = false, features = [
     "rustls",
     "svm-solc",
 ] }
-foundry-fork-db = "0.25.0"
+foundry-fork-db = "0.26.0"
 solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
@@ -604,7 +604,7 @@ alloy-op-evm = { git = "https://github.com/ethereum-optimism/optimism", rev = "4
 alloy-op-hardforks = { git = "https://github.com/ethereum-optimism/optimism", rev = "42f5117c2e7de0614cd3b96f274d0a3078f9701c" }
 
 ## foundry-fork-db
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "2f90eb86d4549fa15a8cc2d99bfc1039bc083977" }
+# foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "2f90eb86d4549fa15a8cc2d99bfc1039bc083977" }
 
 ## tempo — unify crates.io versions (pulled by mpp) with git rev
 tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "1e5a82dff207e2cbd6cecdcfb8ff3cd2e39baa69" }
