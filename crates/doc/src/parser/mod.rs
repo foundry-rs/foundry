@@ -213,7 +213,7 @@ impl Parser {
         EnumSource { name: enm.name.to_string(), variants }
     }
 
-    /// Parse doc comments from solar's [DocComments] into our [Comments] type.
+    /// Parse doc comments from solar's [ast::DocComments] into our [Comments] type.
     fn parse_docs(docs: &ast::DocComments<'_>) -> Comments {
         if docs.is_empty() {
             return Comments::default();
