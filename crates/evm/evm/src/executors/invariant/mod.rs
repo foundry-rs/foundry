@@ -11,7 +11,7 @@ use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{
     TestFunctionExt,
     contracts::{ContractsByAddress, ContractsByArtifact},
-    sh_println,
+    sh_eprintln, sh_println,
 };
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
@@ -175,7 +175,7 @@ impl InvariantFailureMetrics {
             "target": target,
             "reason": reason,
         });
-        let _ = sh_println!("{}", serde_json::to_string(&event).unwrap_or_default());
+        let _ = sh_eprintln!("{}", serde_json::to_string(&event).unwrap_or_default());
     }
 }
 
