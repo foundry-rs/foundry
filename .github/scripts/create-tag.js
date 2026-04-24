@@ -5,7 +5,6 @@ module.exports = async ({ github, context }, tagName) => {
             repo: context.repo.repo,
             ref: `refs/tags/${tagName}`,
             sha: context.sha,
-            force: true,
         });
     } catch (err) {
         console.error(`Failed to create tag: ${tagName}`);

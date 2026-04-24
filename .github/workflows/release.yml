@@ -284,31 +284,11 @@ jobs:
             ${{ steps.artifacts.outputs.foundry_attestation }}
             ${{ steps.man.outputs.foundry_man }}
 
-  cleanup:
-    name: Release cleanup
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: write
-    needs: release
-    if: always()
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Delete old nightlies
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
-            await prunePrereleases({github, context})
-
   # If any of the jobs fail, this will create a high-priority issue to signal so.
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [prepare, release-docker, release, cleanup]
+    needs: [prepare, release-docker, release]
     if: failure()
     permissions:
       contents: read
