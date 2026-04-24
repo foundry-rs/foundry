@@ -715,9 +715,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             if let Some(progress) = progress {
                 // If running with progress then increment completed runs.
                 progress.inc(1);
-                // Display current best value and/or corpus metrics in progress bar.
+                // Display current best value, corpus metrics, and failure counts.
                 let best = invariant_test.test_data.optimization_best_value;
-                if edge_coverage_enabled || best.is_some() {
+                let broken = invariant_test.test_data.failures.errors.len();
+                let total_invariants = invariant_contract.invariant_fns.len();
+                if edge_coverage_enabled || best.is_some() || broken > 0 {
                     let mut msg = String::new();
                     if let Some(best) = best {
                         msg.push_str(&format!("best: {best}"));
@@ -727,6 +729,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             msg.push_str(", ");
                         }
                         msg.push_str(&format!("{}", &corpus_manager.metrics));
+                    }
+                    if broken > 0 {
+                        if !msg.is_empty() {
+                            msg.push_str(", ");
+                        }
+                        msg.push_str(&format!("❌ {broken}/{total_invariants} broken"));
                     }
                     progress.set_message(msg);
                 }
