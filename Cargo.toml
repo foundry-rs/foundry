@@ -589,7 +589,7 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 ## alloy-evm
 # alloy-evm = { git = "https://github.com/paradigmxyz/evm.git", rev = "04d8e4a" }
 
-## reth-core — Bytecode::new_analyzed is unsafe in patched revm
+## reth-core
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth-core", rev = "6b12498" }
 reth-codecs = { git = "https://github.com/paradigmxyz/reth-core", rev = "6b12498" }
 reth-codecs-derive = { git = "https://github.com/paradigmxyz/reth-core", rev = "6b12498" }
