@@ -31,8 +31,8 @@ interface IERC20Correct is IERC20 {
     function totalSupply() external view returns (uint256);
 }
 
-// SHOULD PASS: Unrelated interface with correct ERC20-like signatures
-interface ITokenLikeCorrect {
+// SHOULD PASS: Interface named IERC20 with correct function signatures
+interface IERC20NamedCorrect {
     function transfer(address to, uint256 value) external returns (bool);
     function balanceOf(address account) external view returns (uint256);
 }

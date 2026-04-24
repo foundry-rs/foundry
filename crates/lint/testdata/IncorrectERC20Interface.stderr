@@ -41,8 +41,8 @@ LL │ interface IERC20Correct is IERC20 {
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/IncorrectERC20Interface.sol:LL:CC
    │
-LL │ interface ITokenLikeCorrect {
-   │           ━━━━━━━━━━━━━━━━━
+LL │ interface IERC20NamedCorrect {
+   │           ━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
 
