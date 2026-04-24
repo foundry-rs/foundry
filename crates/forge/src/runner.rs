@@ -29,7 +29,7 @@ use foundry_evm::{
     },
     fuzz::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
-        invariant::{InvariantContract, InvariantSettings},
+        invariant::{InvariantContract, InvariantSettings, is_optimization_invariant},
         strategies::EvmFuzzState,
     },
     revm::primitives::hardfork::SpecId,
@@ -779,6 +779,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &self.cr.mcr.known_contracts,
         );
         // Filter out additional invariants to test if we already have a persisted failure.
+        // Optimization mode only tracks the primary invariant's return value, so secondary
+        // boolean invariants are excluded to avoid silently skipping them.
+        let is_optimization = is_optimization_invariant(func);
         let invariant_contract = InvariantContract::new(
             self.address,
             self.cr.name,
@@ -787,7 +790,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 .into_iter()
                 .filter(|(invariant_fn, _)| {
                     *invariant_fn == func
-                        || (invariant_config.continuous_run
+                        || (!is_optimization
+                            && invariant_config.continuous_run
                             && !canonicalized(failure_dir.join(invariant_fn.name.clone())).exists())
                 })
                 .collect(),
