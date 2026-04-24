@@ -4,9 +4,16 @@ use crate::utils::http_provider_with_signer;
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, U64, U256, uint};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockId, TransactionRequest};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
+use anvil::{
+    NodeConfig,
+    eth::{
+        error::{BlockchainError, FeeHistoryError},
+        fees::INITIAL_BASE_FEE,
+    },
+    spawn,
+};
 
 const GAS_TRANSFER: u64 = 21_000;
 
@@ -215,6 +222,36 @@ async fn test_can_use_fee_history() {
         assert_eq!(latest_block.header.base_fee_per_gas.unwrap(), latest_fee_history_fee);
         assert_eq!(latest_fee_history_fee, next_base_fee as u64);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_state_refreshes_fee_history_cache() {
+    let source_base_fee = 50u64;
+    let target_base_fee = 1_000u64;
+
+    let (source_api, _) = spawn(NodeConfig::test().with_base_fee(Some(source_base_fee))).await;
+    let state = source_api.anvil_dump_state(None).await.unwrap();
+
+    let (target_api, _) = spawn(NodeConfig::test().with_base_fee(Some(target_base_fee))).await;
+    let before =
+        target_api.fee_history(U256::from(1), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+    assert_eq!(before.base_fee_per_gas.first().copied(), Some(target_base_fee as u128));
+
+    assert!(target_api.anvil_load_state(state).await.unwrap());
+
+    let after =
+        target_api.fee_history(U256::from(1), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+    assert_eq!(after.base_fee_per_gas.first().copied(), Some(source_base_fee as u128));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_fee_history_errors_on_cache_miss() {
+    let (api, _) = spawn(NodeConfig::test()).await;
+
+    let err =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Number(1), vec![]).await.unwrap_err();
+
+    assert!(matches!(err, BlockchainError::FeeHistory(FeeHistoryError::InvalidBlockRange)));
 }
 
 #[tokio::test(flavor = "multi_thread")]

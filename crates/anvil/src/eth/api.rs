@@ -15,7 +15,7 @@ use crate::{
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
-        fees::{FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE},
+        fees::{FeeDetails, FeeHistoryCache, FeeHistoryService, MIN_SUGGESTED_PRIORITY_FEE},
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
@@ -30,11 +30,13 @@ use crate::{
     mem::transaction_build,
 };
 use alloy_consensus::{
-    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, transaction::Recovered,
+    Blob, BlockHeader, Transaction, TrieAccount, TxEip4844Variant, TxReceipt,
+    transaction::Recovered,
 };
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::Encodable2718,
+    eip7840::BlobParams,
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
@@ -87,7 +89,10 @@ use foundry_primitives::{
 };
 use futures::{
     StreamExt, TryFutureExt,
-    channel::{mpsc::Receiver, oneshot},
+    channel::{
+        mpsc::{Receiver, unbounded},
+        oneshot,
+    },
 };
 use parking_lot::RwLock;
 use revm::{
@@ -95,7 +100,7 @@ use revm::{
     context_interface::{block::BlobExcessGasAndPrice, result::Output},
     database::CacheDB,
     interpreter::{InstructionResult, return_ok, return_revert},
-    primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
+    primitives::{eip7702::PER_EMPTY_ACCOUNT_COST, hardfork::SpecId},
 };
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -605,6 +610,35 @@ impl<N: Network> EthApi<N> {
         *self.instance_id.write() = B256::random();
     }
 
+    /// Rebuilds fee history cache entries from the current local chain context.
+    fn rebuild_fee_history_cache(&self)
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
+        self.fee_history_cache.lock().clear();
+
+        let (_, new_blocks) = unbounded();
+        let fee_history_service = FeeHistoryService::new(
+            match self.backend.spec_id() {
+                SpecId::OSAKA => BlobParams::osaka(),
+                SpecId::PRAGUE => BlobParams::prague(),
+                _ => BlobParams::cancun(),
+            },
+            new_blocks,
+            self.fee_history_cache.clone(),
+            self.storage_info(),
+        );
+
+        let best_number = self.backend.best_number();
+        let oldest_number = best_number.saturating_sub(self.fee_history_limit.saturating_sub(1));
+
+        for block_number in oldest_number..=best_number {
+            if let Some(header) = self.backend.get_block(block_number).map(|block| block.header) {
+                fee_history_service.insert_cache_entry_for_block(header.hash_slow(), &header);
+            }
+        }
+    }
+
     /// Returns the first signer that can sign for the given address
     #[expect(clippy::borrowed_box)]
     pub fn get_signer(&self, address: Address) -> Option<&Box<dyn Signer<N>>> {
@@ -679,6 +713,7 @@ impl<N: Network> EthApi<N> {
             // Reset to a fresh in-memory state
             self.backend.reset_to_in_mem().await?;
         }
+        self.fee_history_cache.lock().clear();
         // Clear pending transactions since they reference the old chain state.
         self.pool.clear();
         Ok(())
@@ -1153,24 +1188,26 @@ impl<N: Network> EthApi<N> {
             // iter over the requested block range
             for n in lowest..=highest {
                 // <https://eips.ethereum.org/EIPS/eip-1559>
-                if let Some(block) = fee_history.get(&n) {
-                    response.base_fee_per_gas.push(block.base_fee);
-                    response.base_fee_per_blob_gas.push(block.base_fee_per_blob_gas.unwrap_or(0));
-                    response.blob_gas_used_ratio.push(block.blob_gas_used_ratio);
-                    response.gas_used_ratio.push(block.gas_used_ratio);
+                let Some(block) = fee_history.get(&n) else {
+                    return Err(FeeHistoryError::InvalidBlockRange.into());
+                };
 
-                    // requested percentiles
-                    if !reward_percentiles.is_empty() {
-                        let mut block_rewards = Vec::new();
-                        let resolution_per_percentile: f64 = 2.0;
-                        for p in &reward_percentiles {
-                            let p = p.clamp(0.0, 100.0);
-                            let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
-                            let reward = block.rewards.get(index as usize).map_or(0, |r| *r);
-                            block_rewards.push(reward);
-                        }
-                        rewards.push(block_rewards);
+                response.base_fee_per_gas.push(block.base_fee);
+                response.base_fee_per_blob_gas.push(block.base_fee_per_blob_gas.unwrap_or(0));
+                response.blob_gas_used_ratio.push(block.blob_gas_used_ratio);
+                response.gas_used_ratio.push(block.gas_used_ratio);
+
+                // requested percentiles
+                if !reward_percentiles.is_empty() {
+                    let mut block_rewards = Vec::new();
+                    let resolution_per_percentile: f64 = 2.0;
+                    for p in &reward_percentiles {
+                        let p = p.clamp(0.0, 100.0);
+                        let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
+                        let reward = block.rewards.get(index as usize).map_or(0, |r| *r);
+                        block_rewards.push(reward);
                     }
+                    rewards.push(block_rewards);
                 }
             }
         }
@@ -1294,7 +1331,11 @@ impl EthApi<FoundryNetwork> {
     /// Handler for RPC call: `anvil_loadState`
     pub async fn anvil_load_state(&self, buf: Bytes) -> Result<bool> {
         node_info!("anvil_loadState");
-        self.backend.load_state_bytes(buf).await
+        let loaded = self.backend.load_state_bytes(buf).await?;
+        if loaded {
+            self.rebuild_fee_history_cache();
+        }
+        Ok(loaded)
     }
 
     async fn block_request(
