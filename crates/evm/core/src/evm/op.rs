@@ -1,24 +1,14 @@
-use std::ops::{Deref, DerefMut};
-
-use alloy_evm::{Evm, EvmEnv, precompiles::PrecompilesMap};
-use alloy_op_evm::{OpEvmFactory, OpTx};
-use alloy_primitives::{Address, Bytes};
+use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
+use alloy_op_evm::{OpEvm, OpEvmContext, OpEvmFactory, OpTx};
 use foundry_fork_db::DatabaseError;
-use op_revm::{
-    L1BlockInfo, OpEvm, OpHaltReason, OpSpecId, OpTransaction, OpTransactionError,
-    handler::OpHandler, precompiles::OpPrecompiles,
-};
+use op_revm::{OpEvm as RevmEvm, OpHaltReason, OpSpecId, OpTransactionError, handler::OpHandler};
 use revm::{
-    Context, Journal, MainContext,
     context::{
-        BlockEnv, CfgEnv, ContextTr, LocalContextTr,
-        result::{
-            EVMError, ExecResultAndState, ExecutionResult, HaltReason, InvalidTransaction,
-            ResultAndState,
-        },
+        BlockEnv, ContextTr, LocalContextTr,
+        result::{EVMError, HaltReason, ResultAndState},
     },
     handler::{EthFrame, EvmTr, FrameResult, Handler, instructions::EthInstructions},
-    inspector::{InspectorEvmTr, InspectorHandler},
+    inspector::InspectorHandler,
     interpreter::{
         FrameInput, SharedMemory, interpreter::EthInterpreter, interpreter_action::FrameInit,
     },
@@ -30,32 +20,21 @@ use crate::{
     evm::{FoundryEvmFactory, NestedEvm},
 };
 
-// Modified revm's OpContext with `OpTx`
-pub type OpContext<DB> = Context<BlockEnv, OpTx, CfgEnv<OpSpecId>, DB, Journal<DB>, L1BlockInfo>;
-
 type OpEvmHandler<'db, I> =
     OpHandler<OpRevmEvm<'db, I>, EVMError<DatabaseError, OpTransactionError>, EthFrame>;
 
-pub type OpRevmEvm<'db, I> = op_revm::OpEvm<
-    OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>,
+pub type OpRevmEvm<'db, I> = RevmEvm<
+    OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFactory>>,
     I,
-    EthInstructions<EthInterpreter, OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>,
+    EthInstructions<EthInterpreter, OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>,
     PrecompilesMap,
 >;
 
-/// Wraps [`op_revm::OpEvm`] and routes execution through [`OpHandler`].
-/// It uses foundry's custom [`OpContext`] as op-revm's one is not compatible with [`OpTx`].
-pub struct OpFoundryEvm<
-    'db,
-    I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>,
-> {
-    pub inner: OpRevmEvm<'db, I>,
-}
-
 impl FoundryEvmFactory for OpEvmFactory {
-    type FoundryContext<'db> = OpContext<&'db mut dyn DatabaseExt<Self>>;
+    type FoundryContext<'db> = OpEvmContext<&'db mut dyn DatabaseExt<Self>>;
 
-    type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> = OpFoundryEvm<'db, I>;
+    type FoundryEvm<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>> =
+        OpEvm<&'db mut dyn DatabaseExt<Self>, I, Self::Precompiles>;
 
     fn create_foundry_evm_with_inspector<'db, I: FoundryInspectorExt<Self::FoundryContext<'db>>>(
         &self,
@@ -63,23 +42,10 @@ impl FoundryEvmFactory for OpEvmFactory {
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: I,
     ) -> Self::FoundryEvm<'db, I> {
-        let spec_id = *evm_env.spec_id();
-        let inner = Context::mainnet()
-            .with_tx(OpTx(OpTransaction::builder().build_fill()))
-            .with_cfg(CfgEnv::new_with_spec(OpSpecId::BEDROCK))
-            .with_chain(L1BlockInfo::default())
-            .with_db(db)
-            .with_block(evm_env.block_env)
-            .with_cfg(evm_env.cfg_env);
-        let mut inner = OpEvm::new(inner, inspector).with_precompiles(PrecompilesMap::from_static(
-            OpPrecompiles::new_with_spec(spec_id).precompiles(),
-        ));
-        inner.ctx_mut().cfg.tx_chain_id_check = true;
-
-        let mut evm: OpFoundryEvm<'_, I> = OpFoundryEvm { inner };
-        let networks = Evm::inspector(&evm).get_networks();
-        networks.inject_precompiles(evm.precompiles_mut());
-        evm
+        let mut op_evm = Self::default().create_evm_with_inspector(db, evm_env, inspector);
+        op_evm.cfg.tx_chain_id_check = true;
+        op_evm.inspector().get_networks().inject_precompiles(op_evm.precompiles_mut());
+        op_evm
     }
 
     fn create_foundry_nested_evm<'db>(
@@ -88,107 +54,7 @@ impl FoundryEvmFactory for OpEvmFactory {
         evm_env: EvmEnv<Self::Spec, Self::BlockEnv>,
         inspector: &'db mut dyn FoundryInspectorExt<Self::FoundryContext<'db>>,
     ) -> Box<dyn NestedEvm<Spec = OpSpecId, Block = BlockEnv, Tx = OpTx> + 'db> {
-        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).inner)
-    }
-}
-
-impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>> Evm
-    for OpFoundryEvm<'db, I>
-{
-    type Precompiles = PrecompilesMap;
-    type Inspector = I;
-    type DB = &'db mut dyn DatabaseExt<OpEvmFactory>;
-    type Error = EVMError<DatabaseError>;
-    type HaltReason = OpHaltReason;
-    type Spec = OpSpecId;
-    type Tx = OpTx;
-    type BlockEnv = BlockEnv;
-
-    fn block(&self) -> &BlockEnv {
-        &self.inner.ctx_ref().block
-    }
-
-    fn chain_id(&self) -> u64 {
-        self.inner.ctx_ref().cfg.chain_id
-    }
-
-    fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
-        let (ctx, _, precompiles, _, inspector) = self.inner.all_inspector();
-        (&ctx.journaled_state.database, inspector, precompiles)
-    }
-
-    fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
-        let (ctx, _, precompiles, _, inspector) = self.inner.all_mut_inspector();
-        (&mut ctx.journaled_state.database, inspector, precompiles)
-    }
-
-    fn set_inspector_enabled(&mut self, _enabled: bool) {
-        unimplemented!("OpFoundryEvm is always inspecting")
-    }
-
-    fn transact_raw(
-        &mut self,
-        tx: Self::Tx,
-    ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        self.inner.ctx().set_tx(tx);
-
-        let mut handler = OpEvmHandler::<I>::new();
-        // Convert OpTransactionError to InvalidTransaction due to missing InvalidTxError impl
-        let result = handler.inspect_run(&mut self.inner).map_err(|e| match e {
-            EVMError::Transaction(tx_error) => EVMError::Transaction(match tx_error {
-                OpTransactionError::Base(invalid_transaction) => invalid_transaction,
-                OpTransactionError::DepositSystemTxPostRegolith => {
-                    InvalidTransaction::Str("DepositSystemTxPostRegolith".into())
-                }
-                OpTransactionError::HaltedDepositPostRegolith => {
-                    InvalidTransaction::Str("HaltedDepositPostRegolith".into())
-                }
-                OpTransactionError::MissingEnvelopedTx => {
-                    InvalidTransaction::Str("MissingEnvelopedTx".into())
-                }
-            }),
-            EVMError::Header(invalid_header) => EVMError::Header(invalid_header),
-            EVMError::Database(db_error) => EVMError::Database(db_error),
-            EVMError::Custom(custom_error) => EVMError::Custom(custom_error),
-            EVMError::CustomAny(custom_any_error) => EVMError::CustomAny(custom_any_error),
-        })?;
-
-        Ok(ResultAndState::new(result, self.inner.ctx_ref().journaled_state.inner.state.clone()))
-    }
-
-    fn transact_system_call(
-        &mut self,
-        _caller: Address,
-        _contract: Address,
-        _data: Bytes,
-    ) -> Result<ExecResultAndState<ExecutionResult<Self::HaltReason>>, Self::Error> {
-        unimplemented!()
-    }
-
-    fn finish(self) -> (Self::DB, EvmEnv<Self::Spec>)
-    where
-        Self: Sized,
-    {
-        let Context { block: block_env, cfg: cfg_env, journaled_state, .. } = self.inner.0.ctx;
-        (journaled_state.database, EvmEnv { block_env, cfg_env })
-    }
-}
-
-impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>> Deref
-    for OpFoundryEvm<'db, I>
-{
-    type Target = OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner.0.ctx
-    }
-}
-
-impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>> DerefMut
-    for OpFoundryEvm<'db, I>
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner.0.ctx
+        Box::new(self.create_foundry_evm_with_inspector(db, evm_env, inspector).into_inner())
     }
 }
 
@@ -203,7 +69,7 @@ fn map_op_error(e: EVMError<DatabaseError, OpTransactionError>) -> EVMError<Data
     }
 }
 
-impl<'db, I: FoundryInspectorExt<OpContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>> NestedEvm
+impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFactory>>>> NestedEvm
     for OpRevmEvm<'db, I>
 {
     type Spec = OpSpecId;

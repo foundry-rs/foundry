@@ -18,7 +18,7 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
-use op_alloy_consensus::{OpTxEnvelope, TxDeposit};
+use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
 use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
 use tempo_alloy::{
@@ -472,6 +472,20 @@ input                {}",
     }
 }
 
+impl UIfmt for TxPostExec {
+    fn pretty(&self) -> String {
+        format!(
+            "
+blockNumber          {}
+gasRefundEntries     {:?}
+input                {}",
+            self.payload.block_number.pretty(),
+            self.payload.gas_refund_entries,
+            self.input.pretty(),
+        )
+    }
+}
+
 impl UIfmt for Call {
     fn pretty(&self) -> String {
         format!(
@@ -600,6 +614,7 @@ impl UIfmt for OpTxEnvelope {
             Self::Eip1559(tx) => tx.pretty(),
             Self::Eip7702(tx) => tx.pretty(),
             Self::Deposit(tx) => tx.pretty(),
+            Self::PostExec(tx) => tx.pretty(),
         }
     }
 }

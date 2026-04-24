@@ -759,8 +759,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             identified_contracts,
             &self.cr.mcr.known_contracts,
         );
-        let invariant_contract =
-            InvariantContract::new(self.address, func, call_after_invariant, &self.cr.contract.abi);
+        let invariant_contract = InvariantContract::new(
+            self.address,
+            self.cr.name,
+            func,
+            call_after_invariant,
+            &self.cr.contract.abi,
+        );
         let show_solidity = invariant_config.show_solidity;
 
         // Compute current invariant settings for failure validation.

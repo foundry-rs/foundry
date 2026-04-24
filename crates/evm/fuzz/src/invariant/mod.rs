@@ -264,6 +264,8 @@ impl TargetedContract {
 pub struct InvariantContract<'a> {
     /// Address of the test contract.
     pub address: Address,
+    /// Name of the test contract.
+    pub name: &'a str,
     /// Invariant function present in the test contract.
     pub invariant_function: &'a Function,
     /// If true, `afterInvariant` function is called after each invariant run.
@@ -276,11 +278,12 @@ impl<'a> InvariantContract<'a> {
     /// Creates a new invariant contract.
     pub const fn new(
         address: Address,
+        name: &'a str,
         invariant_function: &'a Function,
         call_after_invariant: bool,
         abi: &'a JsonAbi,
     ) -> Self {
-        Self { address, invariant_function, call_after_invariant, abi }
+        Self { address, name, invariant_function, call_after_invariant, abi }
     }
 
     /// Returns true if this is an optimization mode invariant (returns int256).

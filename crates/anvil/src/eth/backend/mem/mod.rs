@@ -57,7 +57,7 @@ use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
     NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
 };
-use alloy_op_evm::{OpEvmFactory, OpTx};
+use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
     map::{AddressMap, HashMap, HashSet},
@@ -114,7 +114,7 @@ use foundry_primitives::{
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
-use op_revm::{OpContext, OpHaltReason, OpSpecId, OpTransaction};
+use op_revm::{OpHaltReason, OpSpecId, OpTransaction};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
@@ -1144,7 +1144,7 @@ impl<N: Network> Backend<N> {
     where
         DB: DatabaseRef + ?Sized,
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>
+            + Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>
             + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
@@ -1204,7 +1204,7 @@ impl<N: Network> Backend<N> {
     where
         DB: DatabaseRef + ?Sized,
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<OpContext<WrapDatabaseRef<&'db DB>>>
+            + Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>
             + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
@@ -3188,7 +3188,7 @@ where
     ) -> Result<T, BlockchainError>
     where
         for<'a> I: Inspector<EthEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
-            + Inspector<OpContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
+            + Inspector<OpEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
             + Inspector<TempoContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
             + 'a,
         for<'a> F:

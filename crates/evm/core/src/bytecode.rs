@@ -62,6 +62,7 @@ impl<'a> Iterator for InstIter<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|&opcode| {
+            // SAFETY: OpCode wraps a u8, unknown opcodes are valid to construct.
             let opcode = unsafe { OpCode::new_unchecked(opcode) };
             let len = imm_len(opcode.get()) as usize;
             let (immediate, rest) = self.iter.as_slice().split_at_checked(len).unwrap_or_default();

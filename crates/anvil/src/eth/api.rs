@@ -3566,6 +3566,9 @@ impl EthApi<FoundryNetwork> {
             FoundryTxEnvelope::Eip4844(_) => self.backend.ensure_eip4844_active(),
             FoundryTxEnvelope::Eip7702(_) => self.backend.ensure_eip7702_active(),
             FoundryTxEnvelope::Deposit(_) => self.backend.ensure_op_deposits_active(),
+            FoundryTxEnvelope::PostExec(_) => Err(BlockchainError::InvalidTransactionRequest(
+                "not implemented for post-exec tx".to_string(),
+            )),
             FoundryTxEnvelope::Legacy(_) => Ok(()),
             FoundryTxEnvelope::Tempo(_) => self.backend.ensure_tempo_active(),
         }
