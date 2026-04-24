@@ -559,9 +559,10 @@ resolve_latest_release() {
 
   local tag_name=""
   if [[ "$channel" == "nightly" ]]; then
-    # Find the first prerelease whose tag starts with "nightly-"
+    # Find the first non-draft prerelease whose tag starts with "nightly-"
     tag_name=$(awk '
       /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
+      /"draft"[[:space:]]*:[[:space:]]*true/ { tag="" }
       /"prerelease"[[:space:]]*:[[:space:]]*true/ { if (tag ~ /^nightly-/) { print tag; exit } }
     ' "$tmp")
   else

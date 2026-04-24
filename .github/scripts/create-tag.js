@@ -7,7 +7,10 @@ module.exports = async ({ github, context }, tagName) => {
             sha: context.sha,
         });
     } catch (err) {
-        console.error(`Failed to create tag: ${tagName}`);
-        console.error(err);
+        if (err.status === 422 && String(err.message).includes("Reference already exists")) {
+            console.log(`Tag already exists: ${tagName}`);
+            return;
+        }
+        throw err;
     }
 };
