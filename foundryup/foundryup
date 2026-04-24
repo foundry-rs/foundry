@@ -540,9 +540,17 @@ tolower() {
 resolve_latest_release() {
   local repo="$1"
   local channel="$2"
-  local api_url="https://api.github.com/repos/${repo}/releases?per_page=50"
   local tmp
   tmp="$(mktemp 2>/dev/null)" || err "failed to create temp file"
+
+  if [[ "$channel" == "nightly" ]]; then
+    # The latest nightly is always the most recent prerelease, so the first page is sufficient.
+    local api_url="https://api.github.com/repos/${repo}/releases?per_page=50"
+  else
+    # Use the dedicated /releases/latest endpoint which always returns the latest
+    # non-prerelease, non-draft release regardless of how many prereleases exist.
+    local api_url="https://api.github.com/repos/${repo}/releases/latest"
+  fi
 
   if check_cmd curl; then
     curl -fsSL "$api_url" -o "$tmp" || err "failed to fetch releases from GitHub API"
@@ -558,11 +566,9 @@ resolve_latest_release() {
       /"prerelease"[[:space:]]*:[[:space:]]*true/ { if (tag ~ /^nightly-/) { print tag; exit } }
     ' "$tmp")
   else
-    # Find the first non-prerelease, non-draft release (i.e. stable)
+    # Extract the tag_name from the single release object
     tag_name=$(awk '
-      /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
-      /"draft"[[:space:]]*:[[:space:]]*true/ { tag="" }
-      /"prerelease"[[:space:]]*:[[:space:]]*false/ { if (tag ~ /^v[0-9]/) { print tag; exit } }
+      /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); print; exit }
     ' "$tmp")
   fi
 
