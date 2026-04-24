@@ -283,11 +283,6 @@ impl InvariantTest {
         self.test_data.failures.reverts
     }
 
-    /// Whether invariant test has errors or not.
-    fn has_errors(&self, invariant: &Function) -> bool {
-        self.test_data.failures.has_failure(invariant)
-    }
-
     /// Set invariant test error.
     fn set_error(&mut self, invariant: &Function, error: InvariantFuzzError) {
         self.test_data.failures.record_failure(invariant, error);

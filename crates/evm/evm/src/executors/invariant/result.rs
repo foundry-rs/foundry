@@ -274,11 +274,10 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
                 (is_assert_failure || *fail_on_revert)
                     && !invariant_test.test_data.failures.has_failure(invariant)
             })
-            .map(|(invariant, fail_on_revert)| (invariant.name.clone(), *fail_on_revert))
             .collect();
 
         if !failing_invariants.is_empty() {
-            let case_data = FailedInvariantCaseData::new(
+            let base = FailedInvariantCaseData::new(
                 invariant_contract,
                 invariant_config.shrink_run_limit,
                 invariant_config.fail_on_revert,
@@ -288,26 +287,11 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
                 &[],
             )
             .with_assertion_failure(is_assert_failure);
-            invariant_test.test_data.failures.revert_reason = Some(case_data.revert_reason.clone());
+            invariant_test.test_data.failures.revert_reason = Some(base.revert_reason.clone());
 
-            // Record failure for each matching invariant.
-            // The first gets the full case_data; the rest get clones.
-            let mut first = true;
-            for (inv_name, fail_on_revert) in &failing_invariants {
-                let invariant = invariant_contract
-                    .invariant_fns
-                    .iter()
-                    .find(|(f, _)| f.name == *inv_name)
-                    .map(|(f, _)| *f)
-                    .unwrap();
-                let data = if first {
-                    first = false;
-                    case_data.clone()
-                } else {
-                    let mut d = case_data.clone();
-                    d.fail_on_revert = *fail_on_revert;
-                    d
-                };
+            for (invariant, fail_on_revert) in failing_invariants {
+                let mut data = base.clone();
+                data.fail_on_revert = *fail_on_revert;
                 invariant_test.test_data.failures.record_failure(
                     invariant,
                     if is_assert_failure {
