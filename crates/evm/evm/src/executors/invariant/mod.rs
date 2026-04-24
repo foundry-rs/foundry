@@ -689,7 +689,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
             if invariant_contract.call_after_invariant
-                && !invariant_test.has_errors(invariant_contract.invariant_fn)
+                && invariant_test.test_data.failures.errors.is_empty()
             {
                 let success = assert_after_invariant(
                     &invariant_contract,
@@ -828,7 +828,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &[],
             &mut failures,
         )?;
-        if let Some(error) = failures.get_failure(invariant_contract.invariant_fn) {
+        if let Some(error) = failures.errors.values().next() {
             return Err(eyre!(error.revert_reason().unwrap_or_default()));
         }
 
