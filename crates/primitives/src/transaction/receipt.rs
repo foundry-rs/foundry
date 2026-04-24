@@ -8,7 +8,9 @@ use alloy_network::eip2718::{
 use alloy_primitives::{Bloom, Log, TxHash, logs_bloom};
 use alloy_rlp::{BufMut, Decodable, Encodable, Header, bytes};
 use alloy_rpc_types::{BlockNumHash, trace::otterscan::OtsReceipt};
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom};
+use op_alloy_consensus::{
+    DEPOSIT_TX_TYPE_ID, OpDepositReceipt, OpDepositReceiptWithBloom, POST_EXEC_TX_TYPE_ID,
+};
 use serde::{Deserialize, Serialize};
 use tempo_primitives::TEMPO_TX_TYPE_ID;
 
@@ -27,6 +29,8 @@ pub enum FoundryReceiptEnvelope<T = Log> {
     Eip4844(ReceiptWithBloom<Receipt<T>>),
     #[serde(rename = "0x4", alias = "0x04")]
     Eip7702(ReceiptWithBloom<Receipt<T>>),
+    #[serde(rename = "0x7D", alias = "0x7d")]
+    PostExec(ReceiptWithBloom<Receipt<T>>),
     #[serde(rename = "0x7E", alias = "0x7e")]
     Deposit(OpDepositReceiptWithBloom<T>),
     #[serde(rename = "0x76")]
@@ -62,6 +66,9 @@ impl FoundryReceiptEnvelope<alloy_rpc_types::Log> {
             }
             FoundryTxType::Eip7702 => {
                 Self::Eip7702(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
+            }
+            FoundryTxType::PostExec => {
+                Self::PostExec(ReceiptWithBloom { receipt: inner_receipt, logs_bloom })
             }
             FoundryTxType::Deposit => {
                 let inner = OpDepositReceiptWithBloom {
@@ -125,6 +132,7 @@ impl<T> FoundryReceiptEnvelope<T> {
             Self::Eip1559(_) => FoundryTxType::Eip1559,
             Self::Eip4844(_) => FoundryTxType::Eip4844,
             Self::Eip7702(_) => FoundryTxType::Eip7702,
+            Self::PostExec(_) => FoundryTxType::PostExec,
             Self::Deposit(_) => FoundryTxType::Deposit,
             Self::Tempo(_) => FoundryTxType::Tempo,
         }
@@ -150,6 +158,7 @@ impl<T> FoundryReceiptEnvelope<T> {
             Self::Eip1559(r) => FoundryReceiptEnvelope::Eip1559(r.map_logs(f)),
             Self::Eip4844(r) => FoundryReceiptEnvelope::Eip4844(r.map_logs(f)),
             Self::Eip7702(r) => FoundryReceiptEnvelope::Eip7702(r.map_logs(f)),
+            Self::PostExec(r) => FoundryReceiptEnvelope::PostExec(r.map_logs(f)),
             Self::Deposit(r) => FoundryReceiptEnvelope::Deposit(r.map_receipt(|r| r.map_logs(f))),
             Self::Tempo(r) => FoundryReceiptEnvelope::Tempo(r.map_logs(f)),
         }
@@ -173,6 +182,7 @@ impl<T> FoundryReceiptEnvelope<T> {
             Self::Eip1559(t) => &t.logs_bloom,
             Self::Eip4844(t) => &t.logs_bloom,
             Self::Eip7702(t) => &t.logs_bloom,
+            Self::PostExec(t) => &t.logs_bloom,
             Self::Deposit(t) => &t.logs_bloom,
             Self::Tempo(t) => &t.logs_bloom,
         }
@@ -212,6 +222,7 @@ impl<T> FoundryReceiptEnvelope<T> {
             | Self::Eip1559(t)
             | Self::Eip4844(t)
             | Self::Eip7702(t)
+            | Self::PostExec(t)
             | Self::Tempo(t) => t.receipt,
             Self::Deposit(t) => t.receipt.into_inner(),
         }
@@ -225,6 +236,7 @@ impl<T> FoundryReceiptEnvelope<T> {
             | Self::Eip1559(t)
             | Self::Eip4844(t)
             | Self::Eip7702(t)
+            | Self::PostExec(t)
             | Self::Tempo(t) => &t.receipt,
             Self::Deposit(t) => &t.receipt.inner,
         }
@@ -275,6 +287,7 @@ impl Encodable for FoundryReceiptEnvelope {
                     Self::Eip1559(r) => r.length() + 1,
                     Self::Eip4844(r) => r.length() + 1,
                     Self::Eip7702(r) => r.length() + 1,
+                    Self::PostExec(r) => r.length() + 1,
                     Self::Deposit(r) => r.length() + 1,
                     Self::Tempo(r) => r.length() + 1,
                     _ => unreachable!("receipt already matched"),
@@ -299,6 +312,11 @@ impl Encodable for FoundryReceiptEnvelope {
                     Self::Eip7702(r) => {
                         Header { list: true, payload_length: payload_len }.encode(out);
                         EIP7702_TX_TYPE_ID.encode(out);
+                        r.encode(out);
+                    }
+                    Self::PostExec(r) => {
+                        Header { list: true, payload_length: payload_len }.encode(out);
+                        POST_EXEC_TX_TYPE_ID.encode(out);
                         r.encode(out);
                     }
                     Self::Deposit(r) => {
@@ -353,6 +371,10 @@ impl Decodable for FoundryReceiptEnvelope {
                     buf.advance(1);
                     <ReceiptWithBloom as Decodable>::decode(buf)
                         .map(FoundryReceiptEnvelope::Eip7702)
+                } else if receipt_type == POST_EXEC_TX_TYPE_ID {
+                    buf.advance(1);
+                    <ReceiptWithBloom as Decodable>::decode(buf)
+                        .map(FoundryReceiptEnvelope::PostExec)
                 } else if receipt_type == DEPOSIT_TX_TYPE_ID {
                     buf.advance(1);
                     <OpDepositReceiptWithBloom as Decodable>::decode(buf)
@@ -382,6 +404,7 @@ impl Typed2718 for FoundryReceiptEnvelope {
             Self::Eip1559(_) => EIP1559_TX_TYPE_ID,
             Self::Eip4844(_) => EIP4844_TX_TYPE_ID,
             Self::Eip7702(_) => EIP7702_TX_TYPE_ID,
+            Self::PostExec(_) => POST_EXEC_TX_TYPE_ID,
             Self::Deposit(_) => DEPOSIT_TX_TYPE_ID,
             Self::Tempo(_) => TEMPO_TX_TYPE_ID,
         }
@@ -396,6 +419,7 @@ impl Encodable2718 for FoundryReceiptEnvelope {
             Self::Eip1559(r) => 1 + r.length(),
             Self::Eip4844(r) => 1 + r.length(),
             Self::Eip7702(r) => 1 + r.length(),
+            Self::PostExec(r) => 1 + r.length(),
             Self::Deposit(r) => 1 + r.length(),
             Self::Tempo(r) => 1 + r.length(),
         }
@@ -411,6 +435,7 @@ impl Encodable2718 for FoundryReceiptEnvelope {
             | Self::Eip1559(r)
             | Self::Eip4844(r)
             | Self::Eip7702(r)
+            | Self::PostExec(r)
             | Self::Tempo(r) => r.encode(out),
             Self::Deposit(r) => r.encode(out),
         }
@@ -424,6 +449,9 @@ impl Decodable2718 for FoundryReceiptEnvelope {
         }
         if ty == TEMPO_TX_TYPE_ID {
             return Ok(Self::Tempo(ReceiptWithBloom::decode(buf)?));
+        }
+        if ty == POST_EXEC_TX_TYPE_ID {
+            return Ok(Self::PostExec(ReceiptWithBloom::decode(buf)?));
         }
         match ReceiptEnvelope::typed_decode(ty, buf)? {
             ReceiptEnvelope::Eip2930(tx) => Ok(Self::Eip2930(tx)),
