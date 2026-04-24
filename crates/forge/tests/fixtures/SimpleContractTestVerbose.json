@@ -5,6 +5,7 @@
       "test()": {
         "status": "Success",
         "reason": null,
+        "other_failures": [],
         "counterexample": null,
         "logs": [
           {

@@ -278,7 +278,7 @@ pub struct InvariantContract<'a> {
 
 impl<'a> InvariantContract<'a> {
     /// Creates a new invariant contract.
-    pub fn new(
+    pub const fn new(
         address: Address,
         name: &'a str,
         invariant_fn: &'a Function,

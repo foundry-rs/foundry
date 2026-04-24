@@ -421,6 +421,9 @@ pub struct TestResult {
     /// still be successful (i.e self.success == true) when it's expected to fail.
     pub reason: Option<String>,
 
+    /// This field will be populated if there are additional invariant broken besides the main one.
+    pub other_failures: Vec<String>,
+
     /// Minimal reproduction test case for failing test
     pub counterexample: Option<CounterExample>,
 
@@ -526,6 +529,12 @@ impl fmt::Display for TestResult {
                     }
                 } else {
                     s.push(']');
+                }
+                if !self.other_failures.is_empty() {
+                    writeln!(s).unwrap();
+                    for failure in &self.other_failures {
+                        writeln!(s, "{failure}").unwrap();
+                    }
                 }
                 s.red().wrap().fmt(f)
             }
@@ -730,6 +739,7 @@ impl TestResult {
         gas_report_traces: Vec<Vec<CallTraceArena>>,
         success: bool,
         reason: Option<String>,
+        other_failures: Vec<String>,
         counterexample: Option<CounterExample>,
         cases: Vec<FuzzedCases>,
         reverts: usize,
@@ -752,6 +762,7 @@ impl TestResult {
             TestStatus::Failure
         };
         self.reason = reason;
+        self.other_failures = other_failures;
         self.counterexample = counterexample;
         self.gas_report_traces = gas_report_traces;
     }

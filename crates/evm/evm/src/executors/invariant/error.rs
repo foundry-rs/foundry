@@ -2,7 +2,6 @@ use super::InvariantContract;
 use crate::executors::RawCallResult;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes};
-use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     decode::{ASSERTION_FAILED_PREFIX, EMPTY_REVERT_DATA, RevertDecoder},
     evm::FoundryEvmNetwork,

@@ -51,20 +51,6 @@ pub struct InvariantFuzzTestResult {
     pub optimization_best_sequence: Vec<BasicTxDetails>,
 }
 
-/// Enriched results of an invariant run check.
-///
-/// Contains the success condition and call results of the last run
-pub(crate) struct RichInvariantResults<FEN: FoundryEvmNetwork> {
-    pub(crate) can_continue: bool,
-    pub(crate) call_result: Option<RawCallResult<FEN>>,
-}
-
-impl<FEN: FoundryEvmNetwork> RichInvariantResults<FEN> {
-    pub(crate) const fn new(can_continue: bool, call_result: Option<RawCallResult<FEN>>) -> Self {
-        Self { can_continue, call_result }
-    }
-}
-
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.
 /// Either returns the call result if successful, or nothing if there was an error.
@@ -165,9 +151,8 @@ pub(crate) fn assert_invariants<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
-) -> Result<Option<RawCallResult<FEN>>> {
+) -> Result<()> {
     let inner_sequence = invariant_inner_sequence(executor);
-    let mut primary_result = None;
 
     for (invariant, fail_on_revert) in &invariant_contract.invariant_fns {
         // We only care about invariants which we haven't broken yet.
@@ -193,20 +178,16 @@ pub(crate) fn assert_invariants<FEN: FoundryEvmNetwork>(
                     &inner_sequence,
                 )),
             );
-        } else if invariant.name == invariant_contract.invariant_fn.name {
-            primary_result = Some(call_result);
         }
     }
 
-    if invariant_failures.can_continue(invariant_contract.invariant_fns.len()) {
-        Ok(primary_result)
-    } else {
-        Ok(None)
-    }
+    Ok(())
 }
 
 /// Helper function to initialize invariant inner sequence.
-fn invariant_inner_sequence<FEN: FoundryEvmNetwork>(executor: &Executor<FEN>) -> Vec<Option<BasicTxDetails>> {
+fn invariant_inner_sequence<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+) -> Vec<Option<BasicTxDetails>> {
     let mut seq = vec![];
     if let Some(fuzzer) = &executor.inspector().fuzzer
         && let Some(call_generator) = &fuzzer.call_generator
@@ -223,13 +204,12 @@ fn invariant_inner_sequence<FEN: FoundryEvmNetwork>(executor: &Executor<FEN>) ->
 /// For check mode, asserts the invariant and fails if broken.
 pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'_>,
-    invariant_test: &mut InvariantTest<FEN>,
+    invariant_test: &mut InvariantTest,
     invariant_run: &mut InvariantTestRun<FEN>,
     invariant_config: &InvariantConfig,
     call_result: RawCallResult<FEN>,
     state_changeset: &StateChangeset,
-) -> Result<RichInvariantResults<FEN>> {
-    let mut call_results = None;
+) -> Result<bool> {
     let is_optimization = invariant_contract.is_optimization();
 
     let handlers_succeeded = || {
@@ -242,8 +222,6 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
             )
         })
     };
-
-    let failures = &mut invariant_test.test_data.failures;
 
     if !call_result.reverted && handlers_succeeded() {
         if let Some(traces) = call_result.traces {
@@ -269,29 +247,37 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
                     invariant_run.optimization_prefix_len = invariant_run.inputs.len();
                 }
             }
-            call_results = Some(inv_result);
         } else {
             // Check mode: assert invariants and fail if broken.
-            call_results = assert_invariants(
+            assert_invariants(
                 invariant_contract,
                 invariant_config,
                 &invariant_test.targeted_contracts,
                 &invariant_run.executor,
                 &invariant_run.inputs,
-                failures,
+                &mut invariant_test.test_data.failures,
             )?;
-            if call_results.is_none() {
-                return Ok(RichInvariantResults::new(false, None));
-            }
         }
     } else {
         let is_assert_failure = did_fail_on_assert(&call_result, state_changeset);
+        let reverted = call_result.reverted;
 
-        if call_result.reverted {
-            failures.reverts += 1;
+        if reverted {
+            invariant_test.test_data.failures.reverts += 1;
         }
 
-        if is_assert_failure || (call_result.reverted && invariant_config.fail_on_revert) {
+        // Collect which invariants should be marked as failed due to this revert/assertion.
+        let failing_invariants: Vec<_> = invariant_contract
+            .invariant_fns
+            .iter()
+            .filter(|(invariant, fail_on_revert)| {
+                (is_assert_failure || *fail_on_revert)
+                    && !invariant_test.test_data.failures.has_failure(invariant)
+            })
+            .map(|(invariant, fail_on_revert)| (invariant.name.clone(), *fail_on_revert))
+            .collect();
+
+        if !failing_invariants.is_empty() {
             let case_data = FailedInvariantCaseData::new(
                 invariant_contract,
                 invariant_config.shrink_run_limit,
@@ -302,18 +288,38 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
                 &[],
             )
             .with_assertion_failure(is_assert_failure);
-            failures.revert_reason = Some(case_data.revert_reason.clone());
-            failures.record_failure(
-                invariant_contract.invariant_fn,
-                if is_assert_failure {
-                    InvariantFuzzError::BrokenInvariant(case_data)
-                } else {
-                    InvariantFuzzError::Revert(case_data)
-                },
-            );
+            invariant_test.test_data.failures.revert_reason = Some(case_data.revert_reason.clone());
 
-            return Ok(RichInvariantResults::new(false, None));
-        } else if call_result.reverted && !is_optimization && !invariant_config.has_delay() {
+            // Record failure for each matching invariant.
+            // The first gets the full case_data; the rest get clones.
+            let mut first = true;
+            for (inv_name, fail_on_revert) in &failing_invariants {
+                let invariant = invariant_contract
+                    .invariant_fns
+                    .iter()
+                    .find(|(f, _)| f.name == *inv_name)
+                    .map(|(f, _)| *f)
+                    .unwrap();
+                let data = if first {
+                    first = false;
+                    case_data.clone()
+                } else {
+                    let mut d = case_data.clone();
+                    d.fail_on_revert = *fail_on_revert;
+                    d
+                };
+                invariant_test.test_data.failures.record_failure(
+                    invariant,
+                    if is_assert_failure {
+                        InvariantFuzzError::BrokenInvariant(data)
+                    } else {
+                        InvariantFuzzError::Revert(data)
+                    },
+                );
+            }
+        }
+
+        if reverted && !is_optimization && !invariant_config.has_delay() {
             // If we don't fail test on revert then remove the reverted call from inputs.
             // Delay-enabled campaigns keep reverted calls so shrinking can preserve their
             // warp/roll contribution when building the final counterexample.
@@ -321,17 +327,14 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
         }
     }
 
-    Ok(RichInvariantResults::new(
-        failures.can_continue(invariant_contract.invariant_fns.len()),
-        call_results,
-    ))
+    Ok(invariant_test.test_data.failures.can_continue(invariant_contract.invariant_fns.len()))
 }
 
 /// Given the executor state, asserts conditions within `afterInvariant` function.
 /// If call fails then the invariant test is considered failed.
 pub(crate) fn assert_after_invariant<FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'_>,
-    invariant_test: &mut InvariantTest<FEN>,
+    invariant_test: &mut InvariantTest,
     invariant_run: &InvariantTestRun<FEN>,
     invariant_config: &InvariantConfig,
 ) -> Result<bool> {
