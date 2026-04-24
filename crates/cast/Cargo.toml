@@ -28,7 +28,8 @@ foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-debugger.workspace = true
 foundry-evm.workspace = true
-foundry-wallets.workspace = true
+foundry-evm-networks.workspace = true
+foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 forge-fmt.workspace = true
 
 alloy-chains.workspace = true
@@ -99,8 +100,8 @@ anvil.workspace = true
 foundry-test-utils.workspace = true
 
 [features]
-default = ["jemalloc"]
-asm-keccak = ["alloy-primitives/asm-keccak"]
+default = ["jemalloc", "asm-keccak"]
+asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]

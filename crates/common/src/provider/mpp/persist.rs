@@ -1,243 +1,241 @@
 //! Persistent channel storage for MPP sessions.
 //!
-//! Stores open payment channel state in a JSON file at
-//! `$TEMPO_HOME/foundry/channels.json` (default: `~/.tempo/foundry/channels.json`).
+//! Stores open payment channel state in a SQLite database at
+//! `$TEMPO_HOME/channels.db` (default: `~/.tempo/channels.db`).
 //! This allows channel reuse across process invocations, avoiding the cost of
 //! opening a new on-chain channel for every `cast` / `forge` command.
 
 use alloy_primitives::{Address, B256};
+use foundry_wallets::{Channel, ChannelDb};
 use mpp::client::channel_ops::ChannelEntry;
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    sync::OnceLock,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tracing::{debug, warn};
 
 use crate::tempo::tempo_home;
 
-/// Relative path from Tempo home to the Foundry channels file.
-const CHANNELS_PATH: &str = "foundry/channels.json";
+/// Process-wide database handle.
+fn global_db() -> Option<&'static ChannelDb> {
+    static DB: OnceLock<Option<ChannelDb>> = OnceLock::new();
+    DB.get_or_init(|| {
+        let path = tempo_home()?.join("channels.db");
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Some(old) =
+            tempo_home().map(|h| h.join("foundry/channels.json")).filter(|p| p.exists())
+        {
+            warn!(
+                ?old,
+                "found old channels.json — this file is no longer used; channels will be re-opened"
+            );
+        }
 
-/// Current schema version.
-const SCHEMA_VERSION: u64 = 2;
-
-/// On-disk representation of the channel store.
-#[derive(Debug, Serialize, Deserialize)]
-struct ChannelStore {
-    version: u64,
-    #[serde(default)]
-    channels: HashMap<String, PersistedChannel>,
+        match ChannelDb::open(&path) {
+            Ok(db) => {
+                debug!(?path, "opened channel database");
+                Some(db)
+            }
+            Err(e) => {
+                warn!(?path, %e, "failed to open channel database");
+                None
+            }
+        }
+    })
+    .as_ref()
 }
 
-impl Default for ChannelStore {
-    fn default() -> Self {
-        Self { version: SCHEMA_VERSION, channels: HashMap::new() }
+/// Reconstruct the composite HashMap key from a persisted `Channel`.
+///
+/// Mirrors `SessionProvider::channel_key()` in session.rs.
+fn channel_key_from_persisted(ch: &Channel) -> String {
+    let origin_hash = &alloy_primitives::keccak256(ch.origin.as_bytes()).to_string()[..18];
+    format!(
+        "{}:{}:{}:{}:{}:{}:{}",
+        origin_hash,
+        ch.chain_id,
+        ch.payer,
+        ch.authorized_signer,
+        ch.payee,
+        ch.token,
+        ch.escrow_contract
+    )
+    .to_lowercase()
+}
+
+/// Whether a channel can still be used (active and not fully spent).
+fn is_usable(ch: &Channel) -> bool {
+    if ch.state != "active" {
+        return false;
+    }
+    let cumulative: u128 = ch.cumulative_amount.parse().unwrap_or(u128::MAX);
+    let deposit: u128 = ch.deposit.parse().unwrap_or(0);
+    cumulative < deposit
+}
+
+/// Convert a persisted `Channel` to a `ChannelEntry`.
+pub fn to_channel_entry(ch: &Channel) -> Option<ChannelEntry> {
+    let channel_id: B256 = ch.channel_id.parse().ok()?;
+    let salt: B256 = ch.salt.parse().ok()?;
+    let escrow_contract: Address = ch.escrow_contract.parse().ok()?;
+    let cumulative_amount: u128 = ch.cumulative_amount.parse().ok()?;
+
+    Some(ChannelEntry {
+        channel_id,
+        salt,
+        cumulative_amount,
+        escrow_contract,
+        chain_id: ch.chain_id as u64,
+        opened: ch.state == "active",
+    })
+}
+
+/// Create a `Channel` from a `ChannelEntry` with metadata.
+pub fn from_channel_entry(
+    entry: &ChannelEntry,
+    deposit: u128,
+    origin: &str,
+    payer: &Address,
+    payee: &Address,
+    token: &Address,
+    authorized_signer: &Address,
+) -> Channel {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+
+    Channel {
+        channel_id: entry.channel_id.to_string(),
+        version: 1,
+        origin: origin.to_string(),
+        request_url: String::new(),
+        chain_id: entry.chain_id as i64,
+        escrow_contract: entry.escrow_contract.to_string(),
+        token: token.to_string(),
+        payee: payee.to_string(),
+        payer: payer.to_string(),
+        authorized_signer: authorized_signer.to_string(),
+        salt: entry.salt.to_string(),
+        deposit: deposit.to_string(),
+        cumulative_amount: entry.cumulative_amount.to_string(),
+        challenge_echo: String::new(),
+        state: if entry.opened { "active" } else { "closed" }.to_string(),
+        close_requested_at: 0,
+        grace_ready_at: 0,
+        created_at: now,
+        last_used_at: now,
     }
 }
 
-/// A persisted channel entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersistedChannel {
-    pub channel_id: String,
-    pub salt: String,
-    pub escrow_contract: String,
-    pub chain_id: u64,
-    pub cumulative_amount: String,
-    pub deposit: String,
-    pub status: String,
-    pub origin: String,
-    pub created_at: u64,
-    pub last_used_at: u64,
-}
+/// Load channels from database, evicting spent/inactive entries.
+pub fn load_channels() -> HashMap<String, Channel> {
+    let Some(db) = global_db() else {
+        return HashMap::new();
+    };
 
-impl PersistedChannel {
-    /// Convert to an mpp `ChannelEntry` for use in the session provider.
-    pub fn to_channel_entry(&self) -> Option<ChannelEntry> {
-        let channel_id: B256 = self.channel_id.parse().ok()?;
-        let salt: B256 = self.salt.parse().ok()?;
-        let escrow_contract: Address = self.escrow_contract.parse().ok()?;
-        let cumulative_amount: u128 = self.cumulative_amount.parse().ok()?;
+    let channels = match db.load() {
+        Ok(channels) => channels,
+        Err(e) => {
+            warn!(%e, "failed to load channels from database");
+            return HashMap::new();
+        }
+    };
 
-        Some(ChannelEntry {
-            channel_id,
-            salt,
-            cumulative_amount,
-            escrow_contract,
-            chain_id: self.chain_id,
-            opened: self.status == "active",
+    let usable: HashMap<String, Channel> = channels
+        .into_iter()
+        .filter(is_usable)
+        .map(|ch| {
+            let key = channel_key_from_persisted(&ch);
+            (key, ch)
         })
-    }
-
-    /// Create from a `ChannelEntry` with metadata.
-    pub fn from_channel_entry(entry: &ChannelEntry, deposit: u128, origin: &str) -> Self {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-
-        Self {
-            channel_id: entry.channel_id.to_string(),
-            salt: entry.salt.to_string(),
-            escrow_contract: entry.escrow_contract.to_string(),
-            chain_id: entry.chain_id,
-            cumulative_amount: entry.cumulative_amount.to_string(),
-            deposit: deposit.to_string(),
-            status: if entry.opened { "active" } else { "closed" }.to_string(),
-            origin: origin.to_string(),
-            created_at: now,
-            last_used_at: now,
-        }
-    }
-
-    /// Whether this channel can still be used (active and not fully spent).
-    fn is_usable(&self) -> bool {
-        if self.status != "active" {
-            return false;
-        }
-        let cumulative: u128 = self.cumulative_amount.parse().unwrap_or(u128::MAX);
-        let deposit: u128 = self.deposit.parse().unwrap_or(0);
-        cumulative < deposit
-    }
-}
-
-/// Returns the path to the channels file.
-fn channels_path() -> Option<PathBuf> {
-    tempo_home().map(|home| home.join(CHANNELS_PATH))
-}
-
-/// Load channels from disk, evicting spent/inactive entries.
-pub fn load_channels() -> HashMap<String, PersistedChannel> {
-    let Some(path) = channels_path().filter(|p| p.exists()) else {
-        return HashMap::new();
-    };
-
-    let Ok(contents) = std::fs::read_to_string(&path).inspect_err(|e| {
-        warn!(?path, %e, "failed to read channels file");
-    }) else {
-        return HashMap::new();
-    };
-
-    let Ok(store) = serde_json::from_str::<ChannelStore>(&contents).inspect_err(|e| {
-        warn!(?path, %e, "failed to parse channels file, starting fresh");
-    }) else {
-        return HashMap::new();
-    };
-
-    if store.version != SCHEMA_VERSION {
-        warn!(
-            version = store.version,
-            expected = SCHEMA_VERSION,
-            "channels file version mismatch, starting fresh"
-        );
-        return HashMap::new();
-    }
-
-    // Evict spent/inactive entries
-    let usable: HashMap<String, PersistedChannel> =
-        store.channels.into_iter().filter(|(_, ch)| ch.is_usable()).collect();
+        .collect();
 
     debug!(count = usable.len(), "loaded persisted MPP channels");
     usable
 }
 
-/// Save channels to disk.
-pub fn save_channels(channels: &HashMap<String, PersistedChannel>) {
-    let Some(path) = channels_path() else {
+/// Save channels to database.
+pub fn save_channels(channels: &HashMap<String, Channel>) {
+    let Some(db) = global_db() else {
         return;
     };
 
-    if let Some(parent) = path.parent()
-        && let Err(e) = std::fs::create_dir_all(parent)
-    {
-        warn!(?path, %e, "failed to create channels directory");
-        return;
-    }
-
-    let store = ChannelStore { version: SCHEMA_VERSION, channels: channels.clone() };
-
-    match serde_json::to_string_pretty(&store) {
-        Ok(json) => {
-            if let Err(e) = std::fs::write(&path, json) {
-                warn!(?path, %e, "failed to write channels file");
-            } else {
-                debug!(?path, count = channels.len(), "saved MPP channels");
-            }
+    for ch in channels.values() {
+        if let Err(e) = db.upsert(ch) {
+            warn!(%e, channel_id = %ch.channel_id, "failed to save channel");
         }
-        Err(e) => warn!(%e, "failed to serialize channels"),
+    }
+    debug!(count = channels.len(), "saved MPP channels");
+}
+
+/// Delete a channel from the database by its channel ID.
+pub fn delete_channel_from_db(channel_id: &str) {
+    let Some(db) = global_db() else {
+        return;
+    };
+    if let Err(e) = db.delete(channel_id) {
+        warn!(%e, channel_id, "failed to delete channel from database");
     }
 }
 
 /// Look up a usable persisted channel by key.
-pub fn find_channel(
-    channels: &HashMap<String, PersistedChannel>,
-    key: &str,
-) -> Option<ChannelEntry> {
-    channels.get(key).filter(|ch| ch.is_usable()).and_then(|ch| ch.to_channel_entry())
+pub fn find_channel(channels: &HashMap<String, Channel>, key: &str) -> Option<ChannelEntry> {
+    channels.get(key).filter(|ch| is_usable(ch)).and_then(to_channel_entry)
 }
 
-/// Insert or update a channel entry in memory only (no disk write).
-///
-/// Use [`upsert_channel`] when you want to persist immediately, or call
-/// [`save_channels`] separately after this.
+/// Insert or update a channel entry in memory only (no DB write).
 pub fn upsert_channel_in_memory(
-    channels: &mut HashMap<String, PersistedChannel>,
+    channels: &mut HashMap<String, Channel>,
     key: &str,
     entry: &ChannelEntry,
-    deposit: u128,
-    origin: &str,
 ) {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
 
     if let Some(existing) = channels.get_mut(key) {
         existing.cumulative_amount = entry.cumulative_amount.to_string();
         existing.last_used_at = now;
-        existing.status = if entry.opened { "active" } else { "closed" }.to_string();
+        existing.state = if entry.opened { "active" } else { "closed" }.to_string();
     } else {
-        channels
-            .insert(key.to_string(), PersistedChannel::from_channel_entry(entry, deposit, origin));
+        warn!(key, "upsert_channel_in_memory called for unknown channel");
     }
-}
-
-/// Insert or update a channel entry and save to disk.
-///
-/// When updating an existing entry, `deposit` is ignored (preserved from the
-/// original open). When inserting a new entry, `deposit` is recorded.
-pub fn upsert_channel(
-    channels: &mut HashMap<String, PersistedChannel>,
-    key: &str,
-    entry: &ChannelEntry,
-    deposit: u128,
-    origin: &str,
-) {
-    upsert_channel_in_memory(channels, key, entry, deposit, origin);
-    save_channels(channels);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn test_channel(status: &str, cumulative: &str, deposit: &str) -> PersistedChannel {
-        PersistedChannel {
+    fn test_channel(state: &str, cumulative: &str, deposit: &str) -> Channel {
+        Channel {
             channel_id: format!("0x{}", "ab".repeat(32)),
-            salt: format!("0x{}", "cd".repeat(32)),
-            escrow_contract: "0xe1c4d3dce17bc111181ddf716f75bae49e61a336".to_string(),
-            chain_id: 42431,
-            cumulative_amount: cumulative.to_string(),
-            deposit: deposit.to_string(),
-            status: status.to_string(),
+            version: 1,
             origin: "https://rpc.mpp.moderato.tempo.xyz".to_string(),
+            request_url: String::new(),
+            chain_id: 42431,
+            escrow_contract: "0xe1c4d3dce17bc111181ddf716f75bae49e61a336".to_string(),
+            token: "0x20c0000000000000000000000000000000000000".to_string(),
+            payee: "0x3333333333333333333333333333333333333333".to_string(),
+            payer: "0x1111111111111111111111111111111111111111".to_string(),
+            authorized_signer: "0x1111111111111111111111111111111111111111".to_string(),
+            salt: format!("0x{}", "cd".repeat(32)),
+            deposit: deposit.to_string(),
+            cumulative_amount: cumulative.to_string(),
+            challenge_echo: String::new(),
+            state: state.to_string(),
+            close_requested_at: 0,
+            grace_ready_at: 0,
             created_at: 1000,
             last_used_at: 1000,
         }
     }
 
     #[test]
-    fn is_usable() {
-        assert!(test_channel("active", "5000", "100000").is_usable());
-        assert!(!test_channel("active", "100000", "100000").is_usable());
-        assert!(!test_channel("active", "200000", "100000").is_usable());
-        assert!(!test_channel("closed", "0", "100000").is_usable());
-        assert!(!test_channel("closing", "0", "100000").is_usable());
+    fn usable() {
+        assert!(is_usable(&test_channel("active", "5000", "100000")));
+        assert!(!is_usable(&test_channel("active", "100000", "100000")));
+        assert!(!is_usable(&test_channel("active", "200000", "100000")));
+        assert!(!is_usable(&test_channel("closed", "0", "100000")));
+        assert!(!is_usable(&test_channel("closing", "0", "100000")));
     }
 
     #[test]
@@ -251,8 +249,12 @@ mod tests {
             opened: true,
         };
 
-        let persisted = PersistedChannel::from_channel_entry(&entry, 100_000, "https://rpc.test");
-        let restored = persisted.to_channel_entry().expect("should parse back");
+        let payer = Address::random();
+        let payee = Address::random();
+        let token = Address::random();
+        let persisted =
+            from_channel_entry(&entry, 100_000, "https://rpc.test", &payer, &payee, &token, &payer);
+        let restored = to_channel_entry(&persisted).expect("should parse back");
 
         assert_eq!(restored.channel_id, entry.channel_id);
         assert_eq!(restored.salt, entry.salt);
@@ -260,46 +262,6 @@ mod tests {
         assert_eq!(restored.escrow_contract, entry.escrow_contract);
         assert_eq!(restored.chain_id, entry.chain_id);
         assert!(restored.opened);
-    }
-
-    #[test]
-    fn load_evicts_and_handles_edge_cases() {
-        let dir = tempfile::tempdir().unwrap();
-        let foundry_dir = dir.path().join("foundry");
-        std::fs::create_dir_all(&foundry_dir).unwrap();
-
-        let store = ChannelStore {
-            version: SCHEMA_VERSION,
-            channels: HashMap::from([
-                ("active".into(), test_channel("active", "1000", "100000")),
-                ("spent".into(), test_channel("active", "100000", "100000")),
-                ("closed".into(), test_channel("closed", "0", "100000")),
-            ]),
-        };
-        let json = serde_json::to_string(&store).unwrap();
-        std::fs::write(foundry_dir.join("channels.json"), &json).unwrap();
-
-        unsafe { std::env::set_var("TEMPO_HOME", dir.path()) };
-        let loaded = load_channels();
-        unsafe { std::env::remove_var("TEMPO_HOME") };
-
-        assert_eq!(loaded.len(), 1);
-        assert!(loaded.contains_key("active"));
-    }
-
-    #[test]
-    fn load_missing_and_wrong_version() {
-        let dir = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("TEMPO_HOME", dir.path()) };
-        assert!(load_channels().is_empty());
-
-        let foundry_dir = dir.path().join("foundry");
-        std::fs::create_dir_all(&foundry_dir).unwrap();
-        std::fs::write(foundry_dir.join("channels.json"), r#"{"version": 999, "channels": {}}"#)
-            .unwrap();
-        assert!(load_channels().is_empty());
-
-        unsafe { std::env::remove_var("TEMPO_HOME") };
     }
 
     #[test]
@@ -311,35 +273,5 @@ mod tests {
         assert!(find_channel(&channels, "usable").is_some());
         assert!(find_channel(&channels, "spent").is_none());
         assert!(find_channel(&channels, "missing").is_none());
-    }
-
-    #[test]
-    fn upsert_inserts_and_updates() {
-        let dir = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("TEMPO_HOME", dir.path()) };
-
-        let mut channels = HashMap::new();
-        let entry = ChannelEntry {
-            channel_id: B256::random(),
-            salt: B256::random(),
-            cumulative_amount: 1000,
-            escrow_contract: Address::random(),
-            chain_id: 42431,
-            opened: true,
-        };
-
-        upsert_channel(&mut channels, "key1", &entry, 100_000, "https://rpc.test");
-        assert_eq!(channels["key1"].cumulative_amount, "1000");
-        assert_eq!(channels["key1"].deposit, "100000");
-        let created_at = channels["key1"].created_at;
-
-        let mut updated = entry.clone();
-        updated.cumulative_amount = 5000;
-        upsert_channel(&mut channels, "key1", &updated, 0, "https://rpc.test");
-        assert_eq!(channels["key1"].cumulative_amount, "5000");
-        assert_eq!(channels["key1"].deposit, "100000");
-        assert_eq!(channels["key1"].created_at, created_at);
-
-        unsafe { std::env::remove_var("TEMPO_HOME") };
     }
 }

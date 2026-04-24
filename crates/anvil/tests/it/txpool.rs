@@ -55,6 +55,74 @@ async fn geth_txpool() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn geth_txpool_separates_queued_transactions() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let account = accounts[0].address();
+    let recipient = accounts[1].address();
+    let gas_price = 221435145689u128;
+
+    let pending_value = U256::from(42);
+    let pending_tx = TransactionRequest::default()
+        .with_to(recipient)
+        .with_from(account)
+        .with_value(pending_value)
+        .with_gas_price(gas_price)
+        .with_nonce(0);
+    let pending_tx = WithOtherFields::new(pending_tx);
+
+    let queued_value = U256::from(84);
+    let queued_tx = TransactionRequest::default()
+        .with_to(recipient)
+        .with_from(account)
+        .with_value(queued_value)
+        .with_gas_price(gas_price)
+        .with_nonce(2);
+    let queued_tx = WithOtherFields::new(queued_tx);
+
+    let _ = provider.send_transaction(pending_tx).await.unwrap();
+    let _ = provider.send_transaction(queued_tx).await.unwrap();
+
+    let status = provider.txpool_status().await.unwrap();
+    assert_eq!(status.pending, 1);
+    assert_eq!(status.queued, 1);
+
+    let inspect = provider.txpool_inspect().await.unwrap();
+    let pending = inspect.pending.get(&account).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert!(!pending.contains_key("2"));
+    let pending_summary = pending.get("0").unwrap();
+    assert_eq!(pending_summary.gas_price, gas_price);
+    assert_eq!(pending_summary.value, pending_value);
+    assert_eq!(pending_summary.gas, 21000);
+    assert_eq!(pending_summary.to.unwrap(), recipient);
+
+    let queued = inspect.queued.get(&account).unwrap();
+    assert_eq!(queued.len(), 1);
+    assert!(!queued.contains_key("0"));
+    let queued_summary = queued.get("2").unwrap();
+    assert_eq!(queued_summary.gas_price, gas_price);
+    assert_eq!(queued_summary.value, queued_value);
+    assert_eq!(queued_summary.gas, 21000);
+    assert_eq!(queued_summary.to.unwrap(), recipient);
+
+    let content = provider.txpool_content().await.unwrap();
+    let pending = content.pending.get(&account).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert!(pending.contains_key("0"));
+    assert!(!pending.contains_key("2"));
+
+    let queued = content.queued.get(&account).unwrap();
+    assert_eq!(queued.len(), 1);
+    assert!(queued.contains_key("2"));
+    assert!(!queued.contains_key("0"));
+}
+
 // Cf. https://github.com/foundry-rs/foundry/issues/11239
 #[tokio::test(flavor = "multi_thread")]
 async fn accepts_spend_after_funding_when_pool_checks_disabled() {

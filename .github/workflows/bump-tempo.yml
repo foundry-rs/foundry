@@ -34,15 +34,22 @@ jobs:
         run: |
           BRANCH_NAME="deps/bump-tempo-${LATEST_REV:0:7}"
 
+          # Skip if a PR already exists for this branch
+          EXISTING_PR=$(gh pr list --head "$BRANCH_NAME" --state open --json number --jq '.[0].number')
+          if [[ -n "$EXISTING_PR" ]]; then
+            echo "PR #${EXISTING_PR} already exists for ${BRANCH_NAME}, skipping."
+            exit 0
+          fi
+
           # Configure git
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Create and push branch
+          # Create and push branch (force-push in case a stale branch exists from a prior failed run)
           git checkout -b "$BRANCH_NAME"
           git add Cargo.toml Cargo.lock
           git commit -m "chore(deps): bump tempo dependencies to ${LATEST_REV:0:7}"
-          git push origin "$BRANCH_NAME"
+          git push --force-with-lease origin "$BRANCH_NAME"
 
           # Create PR
           gh pr create \

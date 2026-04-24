@@ -61,7 +61,7 @@ jobs:
           printf '%s\n' "$GITHUB_WORKSPACE/.foundry/bin" >> "$GITHUB_PATH"
 
       - name: Build benchmark binary
-        run: cargo build --release --bin foundry-bench
+        run: cargo build --locked --release --bin foundry-bench
 
       - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0

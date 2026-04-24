@@ -394,8 +394,16 @@ pub struct CastTxBuilder<N: Network, P, S> {
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
+    etherscan_api_url: Option<String>,
     access_list: Option<Option<AccessList>>,
     state: S,
+}
+
+impl<N: Network, P, S> CastTxBuilder<N, P, S> {
+    /// Returns the resolved chain for this builder.
+    pub const fn chain(&self) -> Chain {
+        self.chain
+    }
 }
 
 impl<N: Network, P: Provider<N>> CastTxBuilder<N, P, InitState>
@@ -408,7 +416,9 @@ where
         let mut tx = N::TransactionRequest::default();
 
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
+        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
+        let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
+        let etherscan_api_url = etherscan_config.map(|c| c.api_url);
         // mark it as legacy if requested or the chain is legacy and no 7702 is provided.
         let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_empty());
 
@@ -424,6 +434,7 @@ where
             fill: true,
             chain,
             etherscan_api_key,
+            etherscan_api_url,
             auth: tx_opts.auth,
             access_list: tx_opts.access_list,
             state: InitState,
@@ -442,6 +453,7 @@ where
             fill: self.fill,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
+            etherscan_api_url: self.etherscan_api_url,
             auth: self.auth,
             access_list: self.access_list,
             state: ToState { to },
@@ -470,6 +482,7 @@ where
                 self.chain,
                 &self.provider,
                 self.etherscan_api_key.as_deref(),
+                self.etherscan_api_url.as_deref(),
             )
             .await?
         } else {
@@ -503,6 +516,7 @@ where
             fill: self.fill,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
+            etherscan_api_url: self.etherscan_api_url,
             auth: self.auth,
             access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },

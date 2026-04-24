@@ -178,11 +178,8 @@ impl Provider for EvmArgs {
 
         // Only insert network flags when explicitly set via CLI to avoid overriding
         // values from foundry.toml (NetworkConfigs is flattened in Config).
-        if self.networks.is_tempo() {
-            dict.insert("tempo".to_string(), true.into());
-        }
-        if self.networks.is_optimism() {
-            dict.insert("optimism".to_string(), true.into());
+        if let Some(name) = self.networks.active_network_name() {
+            dict.insert("network".to_string(), name.into());
         }
         if self.networks.is_celo() {
             dict.insert("celo".to_string(), true.into());

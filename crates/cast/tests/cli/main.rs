@@ -4995,6 +4995,55 @@ casttest!(cast_decode_tx_invalid, |_prj, cmd| {
     cmd.args(["decode-tx", "0xinvalid"]).assert_failure();
 });
 
+// Test that `--network tempo` and `-n tempo` (short form) produce identical output for decode-tx.
+// Uses a known Tempo mainnet transaction.
+casttest!(cast_decode_tx_network_flag_short_and_long_equivalent, |_prj, cmd| {
+    let tx = "0x76f8cf82a5bf1485059682f018830494e5f85ef85c9420c0000000000000000000007d9cc57068833ea780b84440c10f190000000000000000000000008a871f4189067637cfc4cc1500abd6244bf1df740000000000000000000000000000000000000000000000000000000005f5e100c08082057e80809420c000000000000000000000000000000000000080c0b841eb100c4cbd96903bf9e97968c0982670bb90fc191ee4544c7ff32d44e901dbea3f6fbdd58255051135c2fe1aa81583a270d96009cbe375f4605ef15971273a4f1b";
+
+    let via_long = cmd
+        .args(["decode-tx", "--network", "tempo", tx])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let via_short = cmd
+        .cast_fuse()
+        .args(["decode-tx", "-n", "tempo", tx])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    assert_eq!(via_long, via_short, "--network tempo and -n tempo should produce same output");
+});
+
+// Test that `--network optimism` and `-n optimism` produce identical output for decode-tx.
+// Uses a known OP-stack deposit transaction (same tx as tx_raw_opstack_deposit test).
+casttest!(cast_decode_tx_network_optimism_short_and_long_equivalent, |_prj, cmd| {
+    let tx = "0x7ef90207a0cbde10ec697aff886f95d2514bab434e455620627b9bb8ba33baaaa4d537d62794d45955f4de64f1840e5686e64278da901e263031944200000000000000000000000000000000000007872386f26fc10000872386f26fc1000083096c4980b901a4d764ad0b0001000000000000000000000000000000000000000000000000000000065132000000000000000000000000fd0bf71f60660e2f608ed56e1659c450eb1131200000000000000000000000004200000000000000000000000000000000000010000000000000000000000000000000000000000000000000002386f26fc1000000000000000000000000000000000000000000000000000000000000000493e000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000a41635f5fd000000000000000000000000ca11bde05977b3631167028862be2a173976ca110000000000000000000000005703b26fe5a7be820db1bf34c901a79da1a46ba4000000000000000000000000000000000000000000000000002386f26fc100000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+
+    let via_long = cmd
+        .args(["decode-tx", "--network", "optimism", tx])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let via_short = cmd
+        .cast_fuse()
+        .args(["decode-tx", "-n", "optimism", tx])
+        .assert_success()
+        .get_output()
+        .stdout
+        .clone();
+
+    assert_eq!(
+        via_long, via_short,
+        "--network optimism and -n optimism should produce same output"
+    );
+});
+
 // Test that `cast run --evm-version` correctly updates gas parameters for historical blocks.
 // Mainnet tx 0xb856d9...d05d9647 is a Homestead-era tx (block 1,625,693).
 // EXP gas pricing differs between Homestead (10 gas/byte) and Spurious Dragon+ (50 gas/byte).

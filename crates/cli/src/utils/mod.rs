@@ -129,8 +129,8 @@ where
 /// If the string represents an untagged amount (e.g. "100") then
 /// it is interpreted as wei.
 pub fn parse_ether_value(value: &str) -> Result<U256> {
-    Ok(if value.starts_with("0x") {
-        U256::from_str_radix(value, 16)?
+    Ok(if value.starts_with("0x") || value.starts_with("0X") {
+        U256::from_str(value)?
     } else {
         alloy_dyn_abi::DynSolType::coerce_str(&alloy_dyn_abi::DynSolType::Uint(256), value)?
             .as_uint()
@@ -227,8 +227,10 @@ pub async fn fetch_abi_from_etherscan(
     config: &foundry_config::Config,
 ) -> Result<Vec<(JsonAbi, String)>> {
     let chain = config.chain.unwrap_or_default();
-    let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-    let client = foundry_block_explorers::Client::new(chain, api_key)?;
+    let client = config
+        .get_etherscan_config_with_chain(Some(chain))?
+        .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
+        .into_client()?;
     let source = client.contract_source_code(address).await?;
     source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }
@@ -842,6 +844,16 @@ mod tests {
         assert!(p.is_sol());
         let p = Path::new("contracts/Greeter.sol");
         assert!(!p.is_sol_test());
+    }
+
+    #[test]
+    fn parse_ether_value_accepts_hex_prefixed_wei() {
+        assert_eq!(parse_ether_value("0x10").unwrap(), U256::from(16));
+        assert_eq!(parse_ether_value("0X10").unwrap(), U256::from(16));
+        assert_eq!(parse_ether_value("0x12").unwrap(), U256::from(0x12));
+        assert_eq!(parse_ether_value("0xff").unwrap(), U256::from(0xff));
+        assert_eq!(parse_ether_value("100").unwrap(), U256::from(100));
+        assert_eq!(parse_ether_value("1ether").unwrap(), U256::from(1000000000000000000u128));
     }
 
     // loads .env from cwd and project dir, See [`find_project_root()`]
