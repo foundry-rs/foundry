@@ -411,12 +411,12 @@ op-alloy-flz = "0.13.1"
 
 ## alloy-evm
 alloy-evm = "0.33.2"
-alloy-op-evm = "0.30.0"
+alloy-op-evm = "0.31.0"
 
 # revm
 revm = { version = "38.0.0", default-features = false }
 revm-inspectors = { version = "0.39.0", features = ["serde"] }
-op-revm = { version = "18.0.0", default-features = false }
+op-revm = { version = "19.0.0", default-features = false }
 
 ## cli
 anstream = "0.6"
@@ -593,19 +593,16 @@ reth-codecs = { git = "https://github.com/paradigmxyz/reth-core", rev = "6b12498
 reth-codecs-derive = { git = "https://github.com/paradigmxyz/reth-core", rev = "6b12498" }
 reth-zstd-compressors = { git = "https://github.com/paradigmxyz/reth-core", rev = "6b12498" }
 
-## op-alloy / alloy-op-evm
-op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", branch = "rusowsky/revm-38" }
-op-alloy-network = { git = "https://github.com/foundry-rs/optimism", branch = "rusowsky/revm-38" }
-op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", branch = "rusowsky/revm-38" }
-op-alloy = { git = "https://github.com/foundry-rs/optimism", branch = "rusowsky/revm-38" }
-alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", branch = "rusowsky/revm-38" }
-alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "rusowsky/revm-38" }
-
-## revm 38 (crates.io) + op-revm (git, bumped to revm 38)
-op-revm = { git = "https://github.com/foundry-rs/op-revm", branch = "rusowsky/revm-38" }
+## op-revm / op-alloy / alloy-op-evm
+op-revm = { git = "https://github.com/ethereum-optimism/optimism", rev = "42f5117c2e7de0614cd3b96f274d0a3078f9701c" }
+op-alloy-consensus = { git = "https://github.com/ethereum-optimism/optimism", rev = "42f5117c2e7de0614cd3b96f274d0a3078f9701c" }
+op-alloy-network = { git = "https://github.com/ethereum-optimism/optimism", rev = "42f5117c2e7de0614cd3b96f274d0a3078f9701c" }
+op-alloy-rpc-types = { git = "https://github.com/ethereum-optimism/optimism", rev = "42f5117c2e7de0614cd3b96f274d0a3078f9701c" }
+alloy-op-evm = { git = "https://github.com/ethereum-optimism/optimism", rev = "42f5117c2e7de0614cd3b96f274d0a3078f9701c" }
+alloy-op-hardforks = { git = "https://github.com/ethereum-optimism/optimism", rev = "42f5117c2e7de0614cd3b96f274d0a3078f9701c" }
 
 ## foundry-fork-db
-foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-fork-db", branch = "rusowsky/revm-38" }
+foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "2f90eb86d4549fa15a8cc2d99bfc1039bc083977" }
 
 ## tempo — unify crates.io versions (pulled by mpp) with git rev
 tempo-primitives = { git = "https://github.com/tempoxyz/tempo", rev = "c095527" }
