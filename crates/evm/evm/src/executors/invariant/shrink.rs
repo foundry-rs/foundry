@@ -135,7 +135,7 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     reset_shrink_progress(config, progress);
 
     let target_address = invariant_contract.address;
-    let calldata: Bytes = invariant_contract.invariant_fn.selector().to_vec().into();
+    let calldata: Bytes = invariant_contract.primary_invariant_fn.selector().to_vec().into();
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
     let (_, success) = call_invariant_function(executor, target_address, calldata.clone())?;
@@ -388,7 +388,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     reset_shrink_progress(config, progress);
 
     let target_address = invariant_contract.address;
-    let calldata: Bytes = invariant_contract.invariant_fn.selector().to_vec().into();
+    let calldata: Bytes = invariant_contract.primary_invariant_fn.selector().to_vec().into();
 
     // Special case: check if target value is achieved with 0 calls.
     if check_sequence_value(executor.clone(), calls, vec![], target_address, calldata.clone())?

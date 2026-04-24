@@ -438,7 +438,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         early_exit: &EarlyExit,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
-        if !invariant_contract.invariant_fn.inputs.is_empty() {
+        if !invariant_contract.primary_invariant_fn.inputs.is_empty() {
             return Err(eyre!("Invariant test function should have no inputs"));
         }
 
@@ -518,7 +518,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     current_run.rejects += 1;
                     if current_run.rejects > self.config.max_assume_rejects {
                         invariant_test.set_error(
-                            invariant_contract.invariant_fn,
+                            invariant_contract.primary_invariant_fn,
                             InvariantFuzzError::MaxAssumeRejects(self.config.max_assume_rejects),
                         );
                         break 'stop;
@@ -616,7 +616,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             invariant_test.test_data.failures.revert_reason =
                                 Some(case_data.revert_reason.clone());
                             invariant_test.set_error(
-                                invariant_contract.invariant_fn,
+                                invariant_contract.primary_invariant_fn,
                                 if assertion_failure {
                                     InvariantFuzzError::BrokenInvariant(case_data)
                                 } else {
@@ -652,7 +652,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             .and_then(|e| e.revert_reason())
                             .unwrap_or_default();
                         failure_metrics.record_failure(
-                            &invariant_contract.invariant_fn.name,
+                            &invariant_contract.primary_invariant_fn.name,
                             invariant_contract.name,
                             &reason,
                         );
@@ -703,7 +703,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         .and_then(|e| e.revert_reason())
                         .unwrap_or_default();
                     failure_metrics.record_failure(
-                        &invariant_contract.invariant_fn.name,
+                        &invariant_contract.primary_invariant_fn.name,
                         invariant_contract.name,
                         &reason,
                     );
@@ -736,7 +736,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 // Display corpus metrics inline as JSON.
                 let metrics = build_invariant_progress_json(
                     SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-                    &invariant_contract.invariant_fn.name,
+                    &invariant_contract.primary_invariant_fn.name,
                     &corpus_manager.metrics,
                     invariant_test.test_data.optimization_best_value,
                     throughput,
@@ -823,7 +823,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &[],
             &mut failures,
         )?;
-        if let Some(error) = failures.errors.values().next() {
+        // Prefer primary invariant's error; fall back to first recorded error.
+        if let Some(error) = failures
+            .get_failure(invariant_contract.primary_invariant_fn)
+            .or_else(|| failures.errors.values().next())
+        {
             return Err(eyre!(error.revert_reason().unwrap_or_default()));
         }
 

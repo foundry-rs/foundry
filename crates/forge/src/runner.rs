@@ -842,7 +842,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &txes,
                 (0..min(txes.len(), invariant_config.depth as usize)).collect(),
                 invariant_contract.address,
-                invariant_contract.invariant_fn.selector().to_vec().into(),
+                invariant_contract.primary_invariant_fn.selector().to_vec().into(),
                 CheckSequenceOptions {
                     accumulate_warp_roll: invariant_config.has_delay(),
                     fail_on_revert: invariant_config.fail_on_revert,
@@ -901,7 +901,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
                 self.result.invariant_replay_fail(
                     replayed_entirely,
-                    &invariant_contract.invariant_fn.name,
+                    &invariant_contract.primary_invariant_fn.name,
                     replay_reason,
                     call_sequence,
                 );
@@ -929,7 +929,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let success = invariant_result.errors.is_empty();
         let reason = invariant_result
             .errors
-            .get(&invariant_contract.invariant_fn.name)
+            .get(&invariant_contract.primary_invariant_fn.name)
             .and_then(|err| err.revert_reason());
         let mut other_failures = vec![];
 
@@ -983,7 +983,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         } else {
             // Check if primary invariant was broken and replay error.
-            if let Some(error) = invariant_result.errors.get(&invariant_contract.invariant_fn.name)
+            if let Some(error) =
+                invariant_result.errors.get(&invariant_contract.primary_invariant_fn.name)
                 && let InvariantFuzzError::BrokenInvariant(case_data)
                 | InvariantFuzzError::Revert(case_data) = error
                 && let TestError::Fail(_, ref calls) = case_data.test_error
@@ -1034,7 +1035,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
             // Generate counterexamples for other broken invariants.
             for (invariant, _) in &invariant_contract.invariant_fns {
-                if invariant.name == invariant_contract.invariant_fn.name {
+                if invariant.name == invariant_contract.primary_invariant_fn.name {
                     continue;
                 }
 

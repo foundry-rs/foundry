@@ -43,6 +43,7 @@ impl InvariantFailures {
     }
 
     pub fn can_continue(&self, invariants: usize) -> bool {
+        debug_assert!(invariants > 0, "invariant_fns must not be empty");
         self.errors.len() < invariants
     }
 }
@@ -121,7 +122,7 @@ impl FailedInvariantCaseData {
                 revert_reason
             };
 
-        let func = invariant_contract.invariant_fn;
+        let func = invariant_contract.primary_invariant_fn;
         debug_assert!(func.inputs.is_empty());
         let origin = func.name.as_str();
         Self {

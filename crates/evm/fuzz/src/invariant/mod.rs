@@ -267,7 +267,7 @@ pub struct InvariantContract<'a> {
     /// Name of the test contract.
     pub name: &'a str,
     /// Invariant function present in the test contract.
-    pub invariant_fn: &'a Function,
+    pub primary_invariant_fn: &'a Function,
     /// All invariant functions present in the test contract and their fail on revert config.
     pub invariant_fns: Vec<(&'a Function, bool)>,
     /// If true, `afterInvariant` function is called after each invariant run.
@@ -281,17 +281,17 @@ impl<'a> InvariantContract<'a> {
     pub const fn new(
         address: Address,
         name: &'a str,
-        invariant_fn: &'a Function,
+        primary_invariant_fn: &'a Function,
         invariant_fns: Vec<(&'a Function, bool)>,
         call_after_invariant: bool,
         abi: &'a JsonAbi,
     ) -> Self {
-        Self { address, name, invariant_fn, invariant_fns, call_after_invariant, abi }
+        Self { address, name, primary_invariant_fn, invariant_fns, call_after_invariant, abi }
     }
 
     /// Returns true if this is an optimization mode invariant (returns int256).
     pub fn is_optimization(&self) -> bool {
-        is_optimization_invariant(self.invariant_fn)
+        is_optimization_invariant(self.primary_invariant_fn)
     }
 }
 

@@ -69,7 +69,7 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     let (invariant_result, invariant_success) = call_invariant_function(
         &executor,
         invariant_contract.address,
-        invariant_contract.invariant_fn.abi_encode_input(&[])?.into(),
+        invariant_contract.primary_invariant_fn.abi_encode_input(&[])?.into(),
     )?;
     traces.push((TraceKind::Execution, invariant_result.traces.clone().unwrap()));
     logs.extend(invariant_result.logs);

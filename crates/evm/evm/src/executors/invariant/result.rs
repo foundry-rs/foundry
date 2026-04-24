@@ -220,7 +220,7 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
             let (inv_result, success) = call_invariant_function(
                 &invariant_run.executor,
                 invariant_contract.address,
-                invariant_contract.invariant_fn.abi_encode_input(&[])?.into(),
+                invariant_contract.primary_invariant_fn.abi_encode_input(&[])?.into(),
             )?;
             if success
                 && inv_result.result.len() >= 32
@@ -323,7 +323,7 @@ pub(crate) fn assert_after_invariant<FEN: FoundryEvmNetwork>(
             &[],
         );
         invariant_test.set_error(
-            invariant_contract.invariant_fn,
+            invariant_contract.primary_invariant_fn,
             InvariantFuzzError::BrokenInvariant(case_data),
         );
     }
