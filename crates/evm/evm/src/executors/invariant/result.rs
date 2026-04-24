@@ -62,27 +62,14 @@ pub(crate) fn invariant_preflight_check<FEN: FoundryEvmNetwork>(
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
 ) -> Result<()> {
-    let inner_sequence = invariant_inner_sequence(executor);
-    let (call_result, success) = call_invariant_function(
+    assert_invariants(
+        invariant_contract,
+        invariant_config,
+        targeted_contracts,
         executor,
-        invariant_contract.address,
-        invariant_contract.invariant_fn.abi_encode_input(&[])?.into(),
-    )?;
-    if !success {
-        invariant_failures.record_failure(
-            invariant_contract.invariant_fn,
-            InvariantFuzzError::BrokenInvariant(FailedInvariantCaseData::new(
-                invariant_contract,
-                invariant_config.shrink_run_limit,
-                invariant_config.fail_on_revert,
-                targeted_contracts,
-                calldata,
-                call_result,
-                &inner_sequence,
-            )),
-        );
-    }
-    Ok(())
+        calldata,
+        invariant_failures,
+    )
 }
 
 /// Returns true if this call failed due to a Solidity assertion:
