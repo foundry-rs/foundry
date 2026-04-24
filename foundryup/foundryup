@@ -545,10 +545,9 @@ resolve_latest_release() {
 
   if [[ "$channel" == "nightly" ]]; then
     # The latest nightly is always the most recent prerelease, so the first page is sufficient.
-    local api_url="https://api.github.com/repos/${repo}/releases?per_page=50"
+    local api_url="https://api.github.com/repos/${repo}/releases?per_page=10"
   else
-    # Use the dedicated /releases/latest endpoint which always returns the latest
-    # non-prerelease, non-draft release regardless of how many prereleases exist.
+    # /releases/latest returns the latest non-prerelease, non-draft release.
     local api_url="https://api.github.com/repos/${repo}/releases/latest"
   fi
 
