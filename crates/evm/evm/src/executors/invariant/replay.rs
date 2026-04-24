@@ -4,7 +4,7 @@ use crate::executors::{
     invariant::shrink::{shrink_sequence, shrink_sequence_value},
 };
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{I256, Log, U256, map::HashMap};
+use alloy_primitives::{I256, Log, map::HashMap};
 use eyre::Result;
 use foundry_common::{ContractsByAddress, ContractsByArtifact};
 use foundry_config::InvariantConfig;
@@ -105,12 +105,10 @@ pub fn generate_counterexample<FEN: FoundryEvmNetwork>(
     let mut counterexample_sequence = vec![];
 
     for tx in inputs {
-        let call_result = executor.transact_raw(
-            tx.sender,
-            tx.call_details.target,
-            tx.call_details.calldata.clone(),
-            U256::ZERO,
-        )?;
+        let mut call_result = execute_tx(&mut executor, tx)?;
+
+        // Commit state changes to persist across calls in the sequence.
+        executor.commit(&mut call_result);
 
         ided_contracts
             .extend(load_contracts(call_result.traces.iter().map(|a| &a.arena), known_contracts));
