@@ -194,13 +194,17 @@ fn build_invariant_progress_json<M: Serialize>(
     failure_metrics: &InvariantFailureMetrics,
     elapsed: Duration,
 ) -> serde_json::Value {
+    let mut metrics = serde_json::to_value(corpus_metrics).unwrap_or_default();
+    if let Some(obj) = metrics.as_object_mut() {
+        obj.insert("failures".to_string(), json!(failure_metrics.failures));
+        obj.insert("unique_failures".to_string(), json!(failure_metrics.unique_failures.len()));
+    }
+
     let mut payload = json!({
         "timestamp": timestamp_secs,
         "event": "pulse",
         "invariant": invariant_name,
-        "metrics": corpus_metrics,
-        "failures": failure_metrics.failures,
-        "unique_failures": failure_metrics.unique_failures.len(),
+        "metrics": metrics,
         "total_txs": throughput.total_txs,
         "total_gas": throughput.total_gas,
         "tx_per_sec": throughput.tx_per_sec(elapsed),
@@ -1393,8 +1397,8 @@ mod tests {
             Duration::from_secs(1),
         );
 
-        assert_eq!(payload["failures"], json!(3));
-        assert_eq!(payload["unique_failures"], json!(2));
+        assert_eq!(payload["metrics"]["failures"], json!(3));
+        assert_eq!(payload["metrics"]["unique_failures"], json!(2));
     }
 
     #[test]
