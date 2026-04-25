@@ -168,6 +168,7 @@ impl<FEN: FoundryEvmNetwork> PreExecutionState<FEN> {
             setup_result.traces.extend(script_result.traces);
             setup_result.labeled_addresses.extend(script_result.labeled_addresses);
             setup_result.returned = script_result.returned;
+            setup_result.exit_reason = script_result.exit_reason;
             setup_result.breakpoints = script_result.breakpoints;
 
             match (&mut setup_result.transactions, script_result.transactions) {
@@ -422,7 +423,11 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         if !self.execution_result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                &self.execution_artifacts.decoder.revert_decoder.decode(&result.returned[..], None)
+                &self
+                    .execution_artifacts
+                    .decoder
+                    .revert_decoder
+                    .decode(&result.returned[..], result.exit_reason)
             ));
         }
 
@@ -505,7 +510,11 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
         if !result.success {
             return Err(eyre::eyre!(
                 "script failed: {}",
-                &self.execution_artifacts.decoder.revert_decoder.decode(&result.returned[..], None)
+                &self
+                    .execution_artifacts
+                    .decoder
+                    .revert_decoder
+                    .decode(&result.returned[..], result.exit_reason)
             ));
         }
 

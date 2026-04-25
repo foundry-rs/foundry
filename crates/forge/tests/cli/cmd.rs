@@ -962,6 +962,25 @@ forgetest!(can_execute_test_and_script_with_default_tempo_config, |prj, cmd| {
         .assert_success();
 });
 
+// checks that `forge test --tempo` and `forge test -n tempo` are equivalent
+forgetest!(network_flag_tempo_equivalent_to_legacy_tempo, |prj, cmd| {
+    prj.wipe();
+    cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success();
+
+    // --network tempo (new flag)
+    cmd.forge_fuse()
+        .args(["test", "--network", "tempo"])
+        .arg("--root")
+        .arg(prj.root())
+        .assert_success();
+
+    // -n tempo (short form)
+    cmd.forge_fuse().args(["test", "-n", "tempo"]).arg("--root").arg(prj.root()).assert_success();
+
+    // --tempo (legacy flag)
+    cmd.forge_fuse().args(["test", "--tempo"]).arg("--root").arg(prj.root()).assert_success();
+});
+
 // checks that clone works with raw src containing `node_modules`
 // <https://github.com/foundry-rs/foundry/issues/10115>
 forgetest!(flaky_can_clone_with_node_modules, |prj, cmd| {
@@ -1522,6 +1541,51 @@ Warning: SPDX license identifier not provided in source file. Before publishing,
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]]);
+});
+
+// test that `forge build` ignores error codes only from matching path prefixes
+forgetest!(can_compile_without_warnings_ignored_error_codes_from, |prj, cmd| {
+    let contract = r"
+pragma solidity *;
+contract A {}
+    ";
+    prj.add_raw_source("A", contract);
+    prj.add_raw_test("A", contract);
+
+    // suppressed for both src and test
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![];
+        config.ignored_error_codes_from = vec![
+            (std::path::PathBuf::from("src"), vec![SolidityErrorCode::SpdxLicenseNotProvided]),
+            (std::path::PathBuf::from("test"), vec![SolidityErrorCode::SpdxLicenseNotProvided]),
+        ];
+    });
+
+    cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
+    // suppressed only for test, src warning still shows
+    prj.update_config(|config| {
+        config.ignored_error_codes_from = vec![(
+            std::path::PathBuf::from("test"),
+            vec![SolidityErrorCode::SpdxLicenseNotProvided],
+        )];
+    });
+
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+[FILE]
+
 
 "#]]);
 });
@@ -2929,7 +2993,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 +=====================================================================================================================+
 | Deployment Cost                                                | Deployment Size |       |        |       |         |
 |----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
-|                                                         132471 |             396 |       |        |       |         |
+|                                                         132459 |             396 |       |        |       |         |
 |----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
 |                                                                |                 |       |        |       |         |
 |----------------------------------------------------------------+-----------------+-------+--------+-------+---------|

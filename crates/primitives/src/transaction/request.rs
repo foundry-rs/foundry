@@ -6,7 +6,7 @@ use alloy_network::{
 use alloy_primitives::{Address, B256, ChainId, TxKind, U256};
 use alloy_rpc_types::{AccessList, TransactionInputKind, TransactionRequest};
 use alloy_serde::{OtherFields, WithOtherFields};
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit};
 use op_revm::transaction::deposit::DepositTransactionParts;
 use serde::{Deserialize, Serialize};
 use tempo_alloy::rpc::TempoTransactionRequest;
@@ -69,6 +69,9 @@ impl FoundryTransactionRequest {
     pub fn preferred_type(&self) -> FoundryTxType {
         match self {
             Self::Ethereum(tx) => tx.preferred_type().into(),
+            Self::Op(tx) if tx.inner.transaction_type == Some(POST_EXEC_TX_TYPE_ID) => {
+                FoundryTxType::PostExec
+            }
             Self::Op(_) => FoundryTxType::Deposit,
             Self::Tempo(_) => FoundryTxType::Tempo,
         }
@@ -121,6 +124,7 @@ impl FoundryTransactionRequest {
             FoundryTxType::Eip4844 => self.complete_4844(),
             FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
             FoundryTxType::Deposit => self.complete_deposit(),
+            FoundryTxType::PostExec => Err(vec!["not implemented for post-exec tx"]),
             FoundryTxType::Tempo => self.complete_tempo(),
         } {
             Err((pref, missing))
@@ -242,6 +246,7 @@ impl From<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest {
             }
             Self::Tempo(Box::new(tempo_tx_req))
         } else if tx.transaction_type == Some(DEPOSIT_TX_TYPE_ID)
+            || tx.transaction_type == Some(POST_EXEC_TX_TYPE_ID)
             || get_deposit_tx_parts(&tx.other).is_ok()
         {
             Self::Op(tx)
@@ -267,6 +272,11 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
                 ]);
                 WithOtherFields { inner: Into::<TransactionRequest>::into(tx), other }.into()
             }
+            FoundryTypedTx::PostExec(tx) => WithOtherFields {
+                inner: Into::<TransactionRequest>::into(tx),
+                other: OtherFields::default(),
+            }
+            .into(),
             FoundryTypedTx::Tempo(tx) => {
                 let mut other = OtherFields::default();
                 if let Some(fee_token) = tx.fee_token {
@@ -428,6 +438,7 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
             FoundryTxType::Eip4844 => self.as_ref().complete_4844(),
             FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
             FoundryTxType::Deposit => self.complete_deposit(),
+            FoundryTxType::PostExec => Err(vec!["not implemented for post-exec tx"]),
             FoundryTxType::Tempo => self.complete_tempo(),
         }
     }
@@ -455,6 +466,7 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
             FoundryTxType::Eip4844 => self.as_ref().complete_4844().ok(),
             FoundryTxType::Eip7702 => self.as_ref().complete_7702().ok(),
             FoundryTxType::Deposit => self.complete_deposit().ok(),
+            FoundryTxType::PostExec => self.complete_type(pref).ok(),
             FoundryTxType::Tempo => self.complete_tempo().ok(),
         }?;
         Some(pref)

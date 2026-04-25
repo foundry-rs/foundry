@@ -57,6 +57,7 @@ use foundry_evm::{
         cheatcodes::{BroadcastableTransactions, Wallets},
     },
     opts::EvmOpts,
+    revm::interpreter::InstructionResult,
     traces::{TraceMode, Traces},
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -637,6 +638,8 @@ pub struct ScriptResult<N: Network> {
     #[serde(skip)]
     pub transactions: Option<BroadcastableTransactions<N>>,
     pub returned: Bytes,
+    #[serde(skip)]
+    pub exit_reason: Option<InstructionResult>,
     pub address: Option<Address>,
     #[serde(skip)]
     pub breakpoints: Breakpoints,
@@ -652,6 +655,7 @@ impl<N: Network> Default for ScriptResult<N> {
             labeled_addresses: Default::default(),
             transactions: Default::default(),
             returned: Default::default(),
+            exit_reason: Default::default(),
             address: Default::default(),
             breakpoints: Default::default(),
         }

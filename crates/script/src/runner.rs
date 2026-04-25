@@ -275,7 +275,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 value.unwrap_or(U256::ZERO),
                 None,
             );
-            let (address, RawCallResult { gas_used, logs, traces, .. }) = match res {
+            let (address, RawCallResult { gas_used, logs, traces, exit_reason, .. }) = match res {
                 Ok(DeployResult { address, raw }) => (address, raw),
                 Err(EvmError::Execution(err)) => {
                     let ExecutionErr { raw, reason } = *err;
@@ -294,6 +294,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 traces: traces
                     .map(|traces| vec![(TraceKind::Execution, traces)])
                     .unwrap_or_default(),
+                exit_reason,
                 address: Some(address),
                 ..Default::default()
             })
@@ -348,7 +349,9 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             }
         }
 
-        let RawCallResult { result, reverted, logs, traces, labels, transactions, .. } = res;
+        let RawCallResult {
+            result, reverted, logs, traces, labels, transactions, exit_reason, ..
+        } = res;
         let breakpoints = res.cheatcodes.map(|cheats| cheats.breakpoints).unwrap_or_default();
 
         Ok(ScriptResult {
@@ -365,6 +368,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                 .unwrap_or_default(),
             labeled_addresses: labels,
             transactions,
+            exit_reason,
             address: None,
             breakpoints,
         })

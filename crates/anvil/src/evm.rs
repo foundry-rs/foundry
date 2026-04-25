@@ -15,14 +15,14 @@ mod tests {
 
     use crate::PrecompileFactory;
     use alloy_evm::{
-        EthEvm, Evm,
+        EthEvm, Evm, EvmEnv, EvmFactory,
         eth::EthEvmContext,
         precompiles::{DynPrecompile, PrecompilesMap},
     };
-    use alloy_op_evm::{OpEvm, OpTx};
+    use alloy_op_evm::{OpEvm, OpEvmFactory, OpTx};
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
     use itertools::Itertools;
-    use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
+    use op_revm::{OpSpecId, OpTransaction};
     use revm::{
         Journal,
         context::{BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv},
@@ -60,6 +60,7 @@ mod tests {
                         status: PrecompileStatus::Success,
                         bytes: Bytes::copy_from_slice(input.data),
                         gas_used: 0,
+                        gas_refunded: 0,
                         state_gas_used: 0,
                         reservoir: input.reservoir,
                     })
@@ -110,52 +111,30 @@ mod tests {
 
     /// Creates a new OP EVM instance.
     fn create_op_evm(
-        spec: SpecId,
+        _spec: SpecId,
         op_spec: OpSpecId,
     ) -> (OpTx, OpEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap, OpTx>) {
-        let tx = OpTransaction::<TxEnv> {
+        let tx = OpTx(OpTransaction::<TxEnv> {
             base: TxEnv {
                 kind: TxKind::Call(PRECOMPILE_ADDR),
                 data: PAYLOAD.into(),
                 ..Default::default()
             },
             ..Default::default()
-        };
+        });
 
-        let mut chain = L1BlockInfo::default();
-
-        if op_spec == OpSpecId::ISTHMUS {
-            chain.operator_fee_constant = Some(U256::from(0));
-            chain.operator_fee_scalar = Some(U256::from(0));
-        }
-
-        let op_cfg: CfgEnv<OpSpecId> = CfgEnv::new_with_spec(op_spec);
-        let op_evm_context = OpContext {
-            journaled_state: {
-                let mut journal = Journal::new(EmptyDB::default());
-                journal.set_spec_id(spec);
-                journal
-            },
-            block: BlockEnv::default(),
-            cfg: op_cfg.clone(),
-            tx: tx.clone(),
-            chain,
-            local: LocalContext::default(),
-            error: Ok(()),
-        };
-
-        let op_precompiles = OpPrecompiles::new_with_spec(op_cfg.spec).precompiles();
-        let op_evm = OpEvm::new(
-            op_revm::OpEvm(RevmEvm::new_with_inspector(
-                op_evm_context,
-                NoOpInspector,
-                EthInstructions::<EthInterpreter, OpContext<EmptyDB>>::new_mainnet_with_spec(spec),
-                PrecompilesMap::from_static(op_precompiles),
-            )),
-            true,
+        let mut evm = OpEvmFactory::<OpTx>::default().create_evm_with_inspector(
+            EmptyDB::default(),
+            EvmEnv::new(CfgEnv::new_with_spec(op_spec), BlockEnv::default()),
+            NoOpInspector,
         );
 
-        (OpTx(tx), op_evm)
+        if op_spec == OpSpecId::ISTHMUS {
+            evm.ctx_mut().chain.operator_fee_constant = Some(U256::ZERO);
+            evm.ctx_mut().chain.operator_fee_scalar = Some(U256::ZERO);
+        }
+
+        (tx, evm)
     }
 
     #[test]

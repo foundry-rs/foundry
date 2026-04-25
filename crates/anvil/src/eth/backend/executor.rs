@@ -70,6 +70,7 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
             FoundryTxType::Deposit => {
                 unreachable!("deposit receipts are built in commit_transaction")
             }
+            FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
         }
     }

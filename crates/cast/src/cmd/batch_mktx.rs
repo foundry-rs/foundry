@@ -72,12 +72,22 @@ impl BatchMakeTxArgs {
 
         // Get chain for parsing function args
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
+        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
+        let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
+        let etherscan_api_url = etherscan_config.map(|c| c.api_url);
 
         let mut tempo_calls = Vec::with_capacity(call_specs.len());
         for (i, spec) in call_specs.iter().enumerate() {
-            tempo_calls
-                .push(spec.resolve(i, chain, &provider, etherscan_api_key.as_deref()).await?);
+            tempo_calls.push(
+                spec.resolve(
+                    i,
+                    chain,
+                    &provider,
+                    etherscan_api_key.as_deref(),
+                    etherscan_api_url.as_deref(),
+                )
+                .await?,
+            );
         }
 
         sh_println!("Building batch transaction with {} call(s)...", tempo_calls.len())?;

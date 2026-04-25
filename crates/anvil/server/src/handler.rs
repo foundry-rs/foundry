@@ -7,6 +7,8 @@ use anvil_rpc::{
 use axum::{
     Json,
     extract::{State, rejection::JsonRejection},
+    http::StatusCode,
+    response::{IntoResponse, Response as AxumResponse},
 };
 use futures::{FutureExt, future};
 
@@ -15,16 +17,18 @@ use futures::{FutureExt, future};
 pub async fn handle<Http: RpcHandler, Ws>(
     State((handler, _)): State<(Http, Ws)>,
     request: Result<Json<Request>, JsonRejection>,
-) -> Json<Response> {
-    Json(match request {
+) -> AxumResponse {
+    match request {
         Ok(Json(req)) => handle_request(req, handler)
             .await
-            .unwrap_or_else(|| Response::error(RpcError::invalid_request())),
+            .map(Json)
+            .map(IntoResponse::into_response)
+            .unwrap_or_else(|| StatusCode::NO_CONTENT.into_response()),
         Err(err) => {
             warn!(target: "rpc", ?err, "invalid request");
-            Response::error(RpcError::invalid_request())
+            Json(Response::error(RpcError::invalid_request())).into_response()
         }
-    })
+    }
 }
 
 /// Handle the JSON-RPC [Request]
@@ -44,6 +48,9 @@ pub async fn handle_request<Handler: RpcHandler>(
     match req {
         Request::Single(call) => handle_call(call, handler).await.map(Response::Single),
         Request::Batch(calls) => {
+            if calls.is_empty() {
+                return Some(Response::error(RpcError::invalid_request()));
+            }
             future::join_all(calls.into_iter().map(move |call| handle_call(call, handler.clone())))
                 .map(responses_as_batch)
                 .await
@@ -66,5 +73,74 @@ async fn handle_call<Handler: RpcHandler>(call: RpcCall, handler: Handler) -> Op
             warn!(target: "rpc", ?id,  "invalid rpc call");
             Some(RpcResponse::invalid_request(id))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anvil_rpc::{
+        request::{RequestParams, RpcNotification, Version},
+        response::ResponseResult,
+    };
+    use axum::body::to_bytes;
+    use std::{
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+
+    #[derive(Clone)]
+    struct TestHandler;
+
+    #[async_trait::async_trait]
+    impl RpcHandler for TestHandler {
+        type Request = serde_json::Value;
+
+        async fn on_request(&self, request: Self::Request) -> ResponseResult {
+            ResponseResult::success(request)
+        }
+    }
+
+    fn notification() -> RpcCall {
+        RpcCall::Notification(RpcNotification {
+            jsonrpc: Some(Version::V2),
+            method: "eth_subscribe".to_owned(),
+            params: RequestParams::None,
+        })
+    }
+
+    fn run_ready<F: Future>(future: F) -> F::Output {
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        let mut future = pin!(future);
+        match future.as_mut().poll(&mut cx) {
+            Poll::Ready(output) => output,
+            Poll::Pending => panic!("future unexpectedly pending"),
+        }
+    }
+
+    #[test]
+    fn empty_batch_returns_invalid_request() {
+        let response = run_ready(handle_request(Request::Batch(vec![]), TestHandler));
+
+        assert_eq!(response, Some(Response::error(RpcError::invalid_request())));
+    }
+
+    #[test]
+    fn notification_only_batch_returns_no_response() {
+        let response = run_ready(handle_request(Request::Batch(vec![notification()]), TestHandler));
+
+        assert_eq!(response, None);
+    }
+
+    #[test]
+    fn http_notification_only_batch_returns_no_content() {
+        let response = run_ready(handle(
+            State((TestHandler, ())),
+            Ok(Json(Request::Batch(vec![notification()]))),
+        ));
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(run_ready(to_bytes(response.into_body(), usize::MAX)).unwrap().is_empty());
     }
 }

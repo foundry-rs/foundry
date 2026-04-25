@@ -112,6 +112,7 @@ impl CallSpec {
         chain: Chain,
         provider: &P,
         etherscan_api_key: Option<&str>,
+        etherscan_api_url: Option<&str>,
     ) -> Result<Call> {
         let input = if let Some(data) = &self.data {
             data.clone()
@@ -123,6 +124,7 @@ impl CallSpec {
                 chain,
                 provider,
                 etherscan_api_key,
+                etherscan_api_url,
             )
             .await
             .map_err(|e| eyre!("Failed to encode call {}: {e}", i + 1))?;

@@ -1,6 +1,6 @@
 use alloy_consensus::{
-    Sealed, Signed, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope, TxLegacy, TxType,
-    Typed2718,
+    Sealed, Signed, Transaction as _, TransactionEnvelope, TxEip1559, TxEip2930, TxEnvelope,
+    TxLegacy, TxType, Typed2718,
     crypto::RecoveryError,
     transaction::{
         SignerRecoverable, TxEip7702, TxHashRef,
@@ -12,7 +12,10 @@ use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
 use alloy_op_evm::OpTx;
 use alloy_primitives::{Address, B256, Bytes, TxHash};
 use alloy_rpc_types::ConversionError;
-use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait, TxDeposit};
+use op_alloy_consensus::{
+    DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait, POST_EXEC_TX_TYPE_ID, TxDeposit,
+    TxPostExec,
+};
 use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 use revm::context::TxEnv;
 use tempo_primitives::{AASigned, TempoTransaction};
@@ -56,6 +59,9 @@ pub enum FoundryTxEnvelope {
     /// See <https://docs.optimism.io/op-stack/bridging/deposit-flow>.
     #[envelope(ty = 126)]
     Deposit(Sealed<TxDeposit>),
+    /// OP stack post-execution synthetic transaction.
+    #[envelope(ty = 0x7D)]
+    PostExec(Sealed<TxPostExec>),
     /// Tempo transaction type.
     ///
     /// See <https://docs.tempo.xyz/protocol/transactions>.
@@ -75,6 +81,7 @@ impl FoundryTxEnvelope {
             Self::Eip4844(tx) => Ok(TxEnvelope::Eip4844(tx)),
             Self::Eip7702(tx) => Ok(TxEnvelope::Eip7702(tx)),
             Self::Deposit(_) => Err(self),
+            Self::PostExec(_) => Err(self),
             Self::Tempo(_) => Err(self),
         }
     }
@@ -103,6 +110,7 @@ impl FoundryTxEnvelope {
             Self::Eip4844(t) => *t.hash(),
             Self::Eip7702(t) => *t.hash(),
             Self::Deposit(t) => t.tx_hash(),
+            Self::PostExec(t) => t.tx_hash(),
             Self::Tempo(t) => *t.hash(),
         }
     }
@@ -121,6 +129,7 @@ impl FoundryTxEnvelope {
             Self::Eip4844(tx) => tx.recover_signer()?,
             Self::Eip7702(tx) => tx.recover_signer()?,
             Self::Deposit(tx) => tx.from,
+            Self::PostExec(tx) => tx.inner().signer_address(),
             Self::Tempo(tx) => tx.signature().recover_signer(&tx.signature_hash())?,
         })
     }
@@ -135,6 +144,7 @@ impl TxHashRef for FoundryTxEnvelope {
             Self::Eip4844(t) => t.hash(),
             Self::Eip7702(t) => t.hash(),
             Self::Deposit(t) => t.hash_ref(),
+            Self::PostExec(t) => t.hash_ref(),
             Self::Tempo(t) => t.hash(),
         }
     }
@@ -160,6 +170,10 @@ impl OpTransactionTrait for FoundryTxEnvelope {
             Self::Deposit(tx) => Some(tx),
             _ => None,
         }
+    }
+
+    fn as_post_exec(&self) -> Option<&Sealed<TxPostExec>> {
+        if let Self::PostExec(tx) = self { Some(tx) } else { None }
     }
 }
 
@@ -191,6 +205,7 @@ impl From<op_alloy_consensus::OpTxEnvelope> for FoundryTxEnvelope {
             op_alloy_consensus::OpTxEnvelope::Eip1559(tx) => Self::Eip1559(tx),
             op_alloy_consensus::OpTxEnvelope::Eip7702(tx) => Self::Eip7702(tx),
             op_alloy_consensus::OpTxEnvelope::Deposit(tx) => Self::Deposit(tx),
+            op_alloy_consensus::OpTxEnvelope::PostExec(tx) => Self::PostExec(tx),
         }
     }
 }
@@ -233,7 +248,18 @@ impl TryFrom<AnyRpcTransaction> for FoundryTxEnvelope {
                         })?;
 
                     return Ok(Self::Deposit(Sealed::new(deposit_tx)));
-                };
+                }
+
+                if tx.ty() == POST_EXEC_TX_TYPE_ID {
+                    let post_exec_tx =
+                        tx.inner.fields.deserialize_into::<TxPostExec>().map_err(|e| {
+                            ConversionError::Custom(format!(
+                                "Failed to deserialize post-exec tx: {e}"
+                            ))
+                        })?;
+
+                    return Ok(Self::PostExec(Sealed::new(post_exec_tx)));
+                }
 
                 let tx_type = tx.ty();
                 Err(ConversionError::Custom(format!("Unknown transaction type: 0x{tx_type:02X}")))
@@ -258,6 +284,16 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TxEnv {
                     gas_limit: tx.gas_limit,
                     kind: tx.to,
                     value: tx.value,
+                    data: tx.input.clone(),
+                    ..Default::default()
+                }
+            }
+            FoundryTxEnvelope::PostExec(sealed_tx) => {
+                let tx = sealed_tx.inner();
+                Self {
+                    tx_type: tx.ty(),
+                    caller,
+                    kind: tx.kind(),
                     data: tx.input.clone(),
                     ..Default::default()
                 }
@@ -308,6 +344,17 @@ impl FromRecoveredTx<FoundryTxEnvelope> for OpTransaction<TxEnv> {
                 };
                 Self { base, enveloped_tx: None, deposit }
             }
+            FoundryTxEnvelope::PostExec(sealed_tx) => {
+                let tx = sealed_tx.inner();
+                let base = TxEnv {
+                    tx_type: tx.ty(),
+                    caller,
+                    kind: tx.kind(),
+                    data: tx.input.clone(),
+                    ..Default::default()
+                };
+                Self { base, enveloped_tx: None, deposit: Default::default() }
+            }
             FoundryTxEnvelope::Tempo(_) => unreachable!("Tempo tx in Optimism context"),
         }
     }
@@ -338,6 +385,7 @@ impl FromRecoveredTx<FoundryTxEnvelope> for TempoTxEnv {
                 Self::from(TxEnv::from_recovered_tx(signed_tx, caller))
             }
             FoundryTxEnvelope::Deposit(_) => unreachable!("Deposit tx in Tempo context"),
+            FoundryTxEnvelope::PostExec(_) => unreachable!("Post-exec tx in Tempo context"),
             FoundryTxEnvelope::Tempo(aa_signed) => Self::from_recovered_tx(aa_signed, caller),
         }
     }
@@ -402,6 +450,17 @@ impl FromTxWithEncoded<FoundryTxEnvelope> for OpTransaction<TxEnv> {
                 };
                 Self { base, enveloped_tx: Some(encoded), deposit }
             }
+            FoundryTxEnvelope::PostExec(sealed_tx) => {
+                let tx = sealed_tx.inner();
+                let base = TxEnv {
+                    tx_type: tx.ty(),
+                    caller,
+                    kind: tx.kind(),
+                    data: tx.input.clone(),
+                    ..Default::default()
+                };
+                Self { base, enveloped_tx: Some(encoded), deposit: Default::default() }
+            }
             FoundryTxEnvelope::Tempo(_) => unreachable!("Tempo tx in Optimism context"),
         }
     }
@@ -416,6 +475,7 @@ impl std::fmt::Display for FoundryTxType {
             Self::Eip4844 => write!(f, "eip4844"),
             Self::Eip7702 => write!(f, "eip7702"),
             Self::Deposit => write!(f, "deposit"),
+            Self::PostExec => write!(f, "post-exec"),
             Self::Tempo => write!(f, "tempo"),
         }
     }
@@ -442,6 +502,7 @@ impl From<FoundryTxEnvelope> for FoundryTypedTx {
             FoundryTxEnvelope::Eip4844(signed_tx) => Self::Eip4844(signed_tx.strip_signature()),
             FoundryTxEnvelope::Eip7702(signed_tx) => Self::Eip7702(signed_tx.strip_signature()),
             FoundryTxEnvelope::Deposit(sealed_tx) => Self::Deposit(sealed_tx.into_inner()),
+            FoundryTxEnvelope::PostExec(sealed_tx) => Self::PostExec(sealed_tx.into_inner()),
             FoundryTxEnvelope::Tempo(signed_tx) => Self::Tempo(signed_tx.strip_signature()),
         }
     }

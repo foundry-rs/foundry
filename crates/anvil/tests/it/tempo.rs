@@ -21,6 +21,7 @@ use alloy_sol_types::sol;
 use anvil::{NodeConfig, spawn};
 use foundry_evm::core::tempo::{PATH_USD_ADDRESS, TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS};
 use tempo_alloy::primitives::TempoTxEnvelope;
+use tempo_precompiles::{DEFAULT_FEE_TOKEN, TIP_FEE_MANAGER_ADDRESS};
 use tempo_primitives::{
     AASigned, TempoSignature, TempoTransaction,
     transaction::{Call, PrimitiveSignature},
@@ -33,6 +34,23 @@ const THETA_USD: Address = address!("0x20C0000000000000000000000000000000000003"
 
 /// Gas limit for TIP20 transfer calls (precompile interactions need more gas).
 const TIP20_TRANSFER_GAS: u64 = 300_000;
+
+sol! {
+    #[sol(rpc)]
+    interface IFeeManagerRpc {
+        function userTokens(address user) external view returns (address);
+        function validatorTokens(address validator) external view returns (address);
+
+        struct Pool {
+            uint128 reserveUserToken;
+            uint128 reserveValidatorToken;
+        }
+
+        function getPool(address userToken, address validatorToken) external view returns (Pool memory);
+        function getPoolId(address userToken, address validatorToken) external pure returns (bytes32);
+        function totalSupply(bytes32 poolId) external view returns (uint256);
+    }
+}
 
 sol! {
     #[sol(rpc)]
@@ -2653,4 +2671,109 @@ async fn test_legacy_transaction() {
         recipient_balance_before + transfer_amount,
         "Recipient should receive transfer amount"
     );
+}
+
+// ============================================================================
+// TipFeeManager RPC Methods
+// ============================================================================
+
+/// `anvil_setFeeToken` sets the fee token for a user address, readable via `userTokens`.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_fee_token() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let user = Address::random();
+    let fee_manager = IFeeManagerRpc::new(TIP_FEE_MANAGER_ADDRESS, &provider);
+
+    // Before: user has no token set (returns zero address)
+    let token_before = fee_manager.userTokens(user).call().await.unwrap();
+    assert_eq!(token_before, Address::ZERO, "User should have no fee token initially");
+
+    // Set user fee token to ALPHA_USD
+    api.anvil_set_fee_token(user, ALPHA_USD).await.unwrap();
+
+    // After: userTokens returns the configured token
+    let token_after = fee_manager.userTokens(user).call().await.unwrap();
+    assert_eq!(token_after, ALPHA_USD, "User fee token should be set to ALPHA_USD");
+}
+
+/// `anvil_setFeeToken` returns an error when Tempo mode is not active.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_fee_token_non_tempo_fails() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let result = api.anvil_set_fee_token(Address::random(), ALPHA_USD).await;
+    assert!(result.is_err(), "anvil_setFeeToken should fail outside of Tempo mode");
+}
+
+/// `anvil_setValidatorFeeToken` sets the fee token for a validator, readable via `validatorTokens`.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_validator_fee_token() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let validator = Address::random();
+    let fee_manager = IFeeManagerRpc::new(TIP_FEE_MANAGER_ADDRESS, &provider);
+
+    // Before: validator has no token set (returns zero address)
+    let token_before = fee_manager.validatorTokens(validator).call().await.unwrap();
+    assert_eq!(token_before, DEFAULT_FEE_TOKEN, "Validator should have no fee token initially");
+
+    // Set validator fee token to BETA_USD
+    api.anvil_set_validator_fee_token(validator, BETA_USD).await.unwrap();
+
+    // After: validatorTokens returns the configured token
+    let token_after = fee_manager.validatorTokens(validator).call().await.unwrap();
+    assert_eq!(token_after, BETA_USD, "Validator fee token should be set to BETA_USD");
+}
+
+/// `anvil_setValidatorFeeToken` returns an error when Tempo mode is not active.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_validator_fee_token_non_tempo_fails() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let result = api.anvil_set_validator_fee_token(Address::random(), BETA_USD).await;
+    assert!(result.is_err(), "anvil_setValidatorFeeToken should fail outside of Tempo mode");
+}
+
+/// `anvil_setFeeAmmLiquidity` mints AMM liquidity for a token pair,
+/// verifiable via `getPool` (non-zero reserves) and `totalSupply` (non-zero LP supply).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_fee_amm_liquidity() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    let fee_manager = IFeeManagerRpc::new(TIP_FEE_MANAGER_ADDRESS, &provider);
+
+    // Genesis pre-seeds all pairs between fee tokens; record current state before adding more
+    let pool_before = fee_manager.getPool(PATH_USD, ALPHA_USD).call().await.unwrap();
+    let pool_id = fee_manager.getPoolId(PATH_USD, ALPHA_USD).call().await.unwrap();
+    let lp_supply_before = fee_manager.totalSupply(pool_id).call().await.unwrap();
+
+    let amount = U256::from(1_000_000u64);
+    api.anvil_set_fee_amm_liquidity(PATH_USD, ALPHA_USD, amount).await.unwrap();
+
+    // After minting: reserves and LP supply should have increased
+    let pool_after = fee_manager.getPool(PATH_USD, ALPHA_USD).call().await.unwrap();
+    let lp_supply_after = fee_manager.totalSupply(pool_id).call().await.unwrap();
+
+    assert!(
+        pool_after.reserveValidatorToken > pool_before.reserveValidatorToken,
+        "Validator token reserve should increase after minting liquidity"
+    );
+    assert!(
+        lp_supply_after > lp_supply_before,
+        "LP token total supply should increase after minting liquidity"
+    );
+}
+
+/// `anvil_setFeeAmmLiquidity` returns an error when Tempo mode is not active.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_anvil_set_fee_amm_liquidity_non_tempo_fails() {
+    let (api, _handle) = spawn(NodeConfig::test()).await;
+
+    let result =
+        api.anvil_set_fee_amm_liquidity(PATH_USD, ALPHA_USD, U256::from(1_000_000u64)).await;
+    assert!(result.is_err(), "anvil_setFeeAmmLiquidity should fail outside of Tempo mode");
 }

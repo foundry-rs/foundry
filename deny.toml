@@ -100,10 +100,7 @@ unknown-git = "deny"
 allow-git = [
     "https://github.com/alloy-rs/alloy",
     "https://github.com/alloy-rs/evm",
-    "https://github.com/foundry-rs/compilers",
-    "https://github.com/foundry-rs/foundry-fork-db",
     "https://github.com/foundry-rs/foundry-core",
-    "https://github.com/foundry-rs/optimism",
     "https://github.com/paradigmxyz/revm-inspectors",
     "https://github.com/paradigmxyz/solar",
     "https://github.com/bluealloy/revm",
@@ -114,4 +111,7 @@ allow-git = [
     "https://github.com/tempoxyz/mpp-rs",
     # Transitive dependency of Tempo
     "https://github.com/paradigmxyz/reth",
+    "https://github.com/paradigmxyz/reth-core",
+    # Temporary: upstream OP crates until release is published.
+    "https://github.com/ethereum-optimism/optimism",
 ]
