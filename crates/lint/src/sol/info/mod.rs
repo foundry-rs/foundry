@@ -27,6 +27,9 @@ use block_timestamp::BLOCK_TIMESTAMP;
 mod interface_naming;
 use interface_naming::{INTERFACE_FILE_NAMING, INTERFACE_NAMING};
 
+mod missing_zero_check;
+use missing_zero_check::MISSING_ZERO_CHECK;
+
 register_lints!(
     (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
     (MixedCaseVariable, early, (MIXED_CASE_VARIABLE)),
@@ -38,4 +41,5 @@ register_lints!(
     (MultiContractFile, early, (MULTI_CONTRACT_FILE)),
     (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING)),
     (BlockTimestamp, early, (BLOCK_TIMESTAMP)),
+    (MissingZeroCheck, late, (MISSING_ZERO_CHECK)),
 );
