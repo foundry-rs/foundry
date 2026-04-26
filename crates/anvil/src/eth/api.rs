@@ -2150,7 +2150,7 @@ impl EthApi<FoundryNetwork> {
         // delegate the call.
         if let BlockRequest::Number(number) = block_request
             && let Some(fork) = self.get_fork()
-            && fork.predates_fork_inclusive(number)
+            && fork.predates_fork(number)
         {
             return Ok(fork.get_proof(address, keys, Some(number.into())).await?);
         }
