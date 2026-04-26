@@ -108,6 +108,7 @@ impl ListArgs {
         list_senders!(list_opts.trezors(), "Trezor");
         list_senders!(list_opts.aws_signers(), "AWS");
         list_senders!(list_opts.gcp_signers(), "GCP");
+        list_senders!(async { list_opts.turnkey_signers() }, "Turnkey");
 
         Ok(())
     }
