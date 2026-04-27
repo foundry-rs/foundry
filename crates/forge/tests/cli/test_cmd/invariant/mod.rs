@@ -1406,9 +1406,17 @@ Suite assert_all: 4/5 invariants broken
 
     // Re-running the same target replays cond3's persisted counterexample and exits without
     // running a fresh campaign — only the primary block, no secondary [FAIL]s, no
-    // persisted-failures footer, no `Suite assert_all` roll-up.
-    cmd.forge_fuse().args(["test", "--mt", "invariant_cond3"]).assert_failure().stdout_eq(str![[
-        r#"
+    // persisted-failures footer, no `Suite assert_all` roll-up. A stderr warning calls out
+    // the three secondaries that were skipped because they already have persisted failures
+    // (cond1, cond2, cond5) so users aren't surprised they're missing from the report.
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_cond3"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Warning: test/CounterTest.t.sol:CounterTest: 3 invariant(s) skipped due to persisted failures: invariant_cond1, invariant_cond2, invariant_cond5. Run `forge clean` or delete files in [..]/cache/invariant/failures/CounterTest to re-include.
+...
+"#]])
+        .stdout_eq(str![[r#"
 No files changed, compilation skipped
 ...
 Ran 1 test for test/CounterTest.t.sol:CounterTest
@@ -1417,8 +1425,7 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 ...
  invariant_cond3() (runs: 1, calls: 1, reverts: [..])
 ...
-"#
-    ]]);
+"#]]);
 });
 
 // Verifies that when `assert_all` is on but only the primary invariant breaks, the secondary

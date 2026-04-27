@@ -805,6 +805,30 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 );
             }
         }
+        // Warn when secondaries are dropped because they already have persisted failures from a
+        // previous campaign. Symmetric with the primary's persisted-replay warning so users
+        // aren't surprised when fewer invariants appear in the report than their contract
+        // defines (Echidna/Medusa never skip properties between runs).
+        if !is_optimization && invariant_config.assert_all {
+            let persisted_skipped: Vec<&str> = invariants
+                .iter()
+                .filter(|(invariant_fn, _)| {
+                    *invariant_fn != func
+                        && canonicalized(failure_dir.join(invariant_fn.name.clone())).exists()
+                })
+                .map(|(invariant_fn, _)| invariant_fn.name.as_str())
+                .collect();
+            if !persisted_skipped.is_empty() {
+                let _ = sh_warn!(
+                    "{}: {} invariant(s) skipped due to persisted failures: {}. \
+                     Run `forge clean` or delete files in {} to re-include.",
+                    self.cr.name,
+                    persisted_skipped.len(),
+                    persisted_skipped.join(", "),
+                    failure_dir.display(),
+                );
+            }
+        }
         let invariant_contract = InvariantContract::new(
             self.address,
             self.cr.name,
