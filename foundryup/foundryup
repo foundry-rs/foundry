@@ -14,8 +14,6 @@ FOUNDRY_BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/HEAD/found
 FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 FOUNDRYUP_JOBS=""
 FOUNDRYUP_IGNORE_VERIFICATION=false
-FOUNDRYUP_RESOLVE_RESPONSE=""
-FOUNDRYUP_RESOLVE_TAG=""
 
 BINS=(forge cast anvil chisel)
 HASH_NAMES=()
@@ -117,13 +115,27 @@ main() {
     # Normalize versions (handle channels, versions without v prefix)
     if [[ "$FOUNDRYUP_VERSION" == "latest" || "$FOUNDRYUP_VERSION" == "stable" ]]; then
       # Resolve to the latest release (non-prerelease) via the GitHub API
-      say "resolving latest release..."
-      FOUNDRYUP_TAG=$(resolve_latest_release "$FOUNDRYUP_REPO" "latest")
+      say "fetching latest release from ${FOUNDRYUP_REPO}..."
+      FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases/latest" | awk '
+        /"tag_name"[[:space:]]*:/ && !found { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); print; found=1 }
+      ')
+      if [ -z "$FOUNDRYUP_TAG" ]; then
+        err "could not find a latest release for ${FOUNDRYUP_REPO}"
+      fi
+      say "resolved release tag: ${FOUNDRYUP_TAG}"
       FOUNDRYUP_VERSION="$FOUNDRYUP_TAG"
     elif [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
       # Resolve to the latest nightly (prerelease) release via the GitHub API
-      say "resolving latest nightly release..."
-      FOUNDRYUP_TAG=$(resolve_latest_release "$FOUNDRYUP_REPO" "nightly")
+      say "fetching latest nightly releases from ${FOUNDRYUP_REPO}..."
+      FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases?per_page=10" | awk '
+        /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
+        /"draft"[[:space:]]*:[[:space:]]*true/ { tag="" }
+        /"prerelease"[[:space:]]*:[[:space:]]*true/ && !found { if (tag ~ /^nightly-/) { print tag; found=1 } }
+      ')
+      if [ -z "$FOUNDRYUP_TAG" ]; then
+        err "could not find a nightly release for ${FOUNDRYUP_REPO}"
+      fi
+      say "resolved nightly release tag: ${FOUNDRYUP_TAG}"
       FOUNDRYUP_VERSION="nightly"
     elif [[ "$FOUNDRYUP_VERSION" =~ ^nightly- ]]; then
       # Specific nightly tag (e.g. nightly-abc123...)
@@ -533,46 +545,6 @@ tolower() {
   echo "$1" | awk '{print tolower($0)}'
 }
 
-# Resolves the latest release tag from the GitHub API.
-# $1: repo (e.g. "foundry-rs/foundry")
-# $2: channel ("latest" or "nightly")
-#
-# For "latest": returns the tag of the latest non-prerelease release (e.g. "v1.6.0")
-# For "nightly": returns the tag of the latest prerelease release (e.g. "nightly-abc123...")
-resolve_latest_release() {
-  if [[ "$2" == "nightly" ]]; then
-    # The latest nightly is always the most recent prerelease, so the first page is sufficient.
-    if check_cmd curl; then
-      FOUNDRYUP_RESOLVE_RESPONSE=$(curl -fsSL "https://api.github.com/repos/${1}/releases?per_page=10") || err "failed to fetch releases from GitHub API"
-    else
-      FOUNDRYUP_RESOLVE_RESPONSE=$(wget -qO- "https://api.github.com/repos/${1}/releases?per_page=10") || err "failed to fetch releases from GitHub API"
-    fi
-    # Find the first non-draft prerelease whose tag starts with "nightly-"
-    FOUNDRYUP_RESOLVE_TAG=$(printf '%s' "$FOUNDRYUP_RESOLVE_RESPONSE" | awk '
-      /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
-      /"draft"[[:space:]]*:[[:space:]]*true/ { tag="" }
-      /"prerelease"[[:space:]]*:[[:space:]]*true/ { if (tag ~ /^nightly-/) { print tag; exit } }
-    ')
-  else
-    # /releases/latest returns the latest non-prerelease, non-draft release.
-    if check_cmd curl; then
-      FOUNDRYUP_RESOLVE_RESPONSE=$(curl -fsSL "https://api.github.com/repos/${1}/releases/latest") || err "failed to fetch releases from GitHub API"
-    else
-      FOUNDRYUP_RESOLVE_RESPONSE=$(wget -qO- "https://api.github.com/repos/${1}/releases/latest") || err "failed to fetch releases from GitHub API"
-    fi
-    # Extract the tag_name from the single release object
-    FOUNDRYUP_RESOLVE_TAG=$(printf '%s' "$FOUNDRYUP_RESOLVE_RESPONSE" | awk '
-      /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); print; exit }
-    ')
-  fi
-
-  if [ -z "$FOUNDRYUP_RESOLVE_TAG" ]; then
-    err "could not find a ${2} release for ${1}"
-  fi
-
-  printf '%s' "$FOUNDRYUP_RESOLVE_TAG"
-}
-
 compute_sha256() {
   if check_cmd sha256sum; then
     # Use sed to strip leading backslash (sha256sum on Windows/Git Bash outputs \ prefix for binary files)
@@ -629,11 +601,7 @@ detect_platform_arch() {
 check_installer_up_to_date() {
   say "checking if foundryup is up to date..."
 
-  if check_cmd curl; then
-    remote_version=$(curl -fsSL "$FOUNDRY_BIN_URL" | grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2)
-  else
-    remote_version=$(wget -qO- "$FOUNDRY_BIN_URL" | grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2)
-  fi
+  remote_version=$(fetch "$FOUNDRY_BIN_URL" | grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2)
 
   if [ -z "$remote_version" ]; then
     warn "Could not determine remote foundryup version. Skipping version check."
@@ -705,6 +673,15 @@ check_bins_in_use() {
 # will immediately terminate with an error showing the failing command.
 ensure() {
   if ! "$@"; then err "command failed: $*"; fi
+}
+
+# Silently fetches $1 to stdout
+fetch() {
+  if check_cmd curl; then
+    curl -fsSL "$1"
+  else
+    wget -qO- "$1"
+  fi
 }
 
 # Downloads $1 into $2 or stdout

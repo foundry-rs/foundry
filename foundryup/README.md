@@ -18,6 +18,12 @@ To install the **latest** version:
 foundryup
 ```
 
+Or alternatively:
+
+```sh
+foundryup -i latest
+```
+
 To install the latest **nightly** version:
 
 ```sh
