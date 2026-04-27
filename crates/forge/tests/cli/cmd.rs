@@ -3016,7 +3016,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/FallbackWithCalldataTest.sol:CounterWithFallback",
     "deployment": {
-      "gas": 132471,
+      "gas": 132459,
       "size": 396
     },
     "functions": {
