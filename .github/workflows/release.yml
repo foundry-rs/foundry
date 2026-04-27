@@ -45,6 +45,10 @@ jobs:
           else
             printf 'tag_name=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
             printf 'release_name=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            # Find the previous stable release tag (v*.*.*) for changelog generation,
+            # skipping the current tag so we diff from the last stable release.
+            PREV_STABLE=$(git tag -l 'v*.*.*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -n1)
+            printf 'from_tag=%s\n' "$PREV_STABLE" >> "$GITHUB_OUTPUT"
           fi
 
       # Creates a `nightly-SHA` tag for this specific nightly
@@ -66,6 +70,7 @@ jobs:
         uses: mikepenz/release-changelog-builder-action@bcae7115752d4ed746ff92feb666574428a79415 # v6.2
         with:
           configuration: "./.github/changelog.json"
+          fromTag: ${{ steps.release_info.outputs.from_tag || '' }}
           toTag: ${{ steps.release_info.outputs.tag_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
