@@ -805,6 +805,24 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 );
             }
         }
+        // Compute current invariant settings up front so secondary persisted-failure handling
+        // can use the same compatibility check as the primary replay path below.
+        let current_settings = match evm.compute_settings(self.address) {
+            Ok(s) => s,
+            Err(e) => {
+                self.result.invariant_setup_fail(e);
+                return self.result;
+            }
+        };
+        // A secondary's persisted failure is only honored when its embedded settings still
+        // match the current run; stale caches fall back to a fresh campaign.
+        let secondary_has_compatible_persisted = |invariant_fn: &Function| {
+            persisted_call_sequence(
+                canonicalized(failure_dir.join(invariant_fn.name.clone())).as_path(),
+                &current_settings,
+            )
+            .is_some()
+        };
         // Warn when secondaries are dropped because they already have persisted failures from a
         // previous campaign. Symmetric with the primary's persisted-replay warning so users
         // aren't surprised when fewer invariants appear in the report than their contract
@@ -813,8 +831,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let persisted_skipped: Vec<&str> = invariants
                 .iter()
                 .filter(|(invariant_fn, _)| {
-                    *invariant_fn != func
-                        && canonicalized(failure_dir.join(invariant_fn.name.clone())).exists()
+                    *invariant_fn != func && secondary_has_compatible_persisted(invariant_fn)
                 })
                 .map(|(invariant_fn, _)| invariant_fn.name.as_str())
                 .collect();
@@ -839,22 +856,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     *invariant_fn == func
                         || (!is_optimization
                             && invariant_config.assert_all
-                            && !canonicalized(failure_dir.join(invariant_fn.name.clone())).exists())
+                            && !secondary_has_compatible_persisted(invariant_fn))
                 })
                 .collect(),
             call_after_invariant,
             &self.cr.contract.abi,
         );
         let show_solidity = invariant_config.show_solidity;
-
-        // Compute current invariant settings for failure validation.
-        let current_settings = match evm.compute_settings(self.address) {
-            Ok(s) => s,
-            Err(e) => {
-                self.result.invariant_setup_fail(e);
-                return self.result;
-            }
-        };
 
         let progress = start_fuzz_progress(
             self.cr.progress,
@@ -1108,9 +1116,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
                 // Skip invariants whose counterexample is already persisted from a prior run
                 // (those were filtered out of the live campaign earlier; `errors` won't contain
-                // them, but the dir check is a belt-and-braces safety net).
+                // them, but the dir check is a belt-and-braces safety net). Use the same
+                // settings-aware compatibility check as the filter so a stale persisted cache
+                // doesn't suppress a freshly-broken secondary.
                 let persisted_failure = canonicalized(failure_dir.join(invariant.name.clone()));
-                if !persisted_failure.exists()
+                if !secondary_has_compatible_persisted(invariant)
                     && let Some(error) = invariant_result.errors.get(&invariant.name)
                     && let InvariantFuzzError::BrokenInvariant(case_data)
                     | InvariantFuzzError::Revert(case_data) = error

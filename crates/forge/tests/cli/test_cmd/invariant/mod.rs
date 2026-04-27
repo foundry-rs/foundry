@@ -1610,3 +1610,71 @@ contract AfterInvariantTest is Test {
 ...
 "#]]);
 });
+
+// Verifies a stale persisted secondary failure (settings have changed since it was written) is
+// not silently dropped from an `assert_all` campaign — the secondary is re-evaluated instead.
+forgetest_init!(assert_all_secondary_persisted_revalidates_on_settings_change, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 50;
+        config.invariant.assert_all = true;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "StaleSecondaryTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract StaleSecondaryTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    function invariant_first() public view {
+        require(counter.cond() < 2, "first broken");
+    }
+
+    function invariant_second() public view {
+        require(counter.cond() < 3, "second broken");
+    }
+}
+   "#,
+    );
+
+    // First run: both invariants break and persist their counterexamples under the current
+    // settings (fail_on_revert = false).
+    cmd.args(["test", "--mt", "invariant_first"]).assert_failure();
+
+    // Flip a tracked InvariantSettings field so the persisted secondary cache is now stale.
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+    });
+
+    // Re-run targeting the same primary. With the fix, the stale secondary cache is rejected
+    // and `invariant_second` is re-evaluated — the suite roll-up shows 2/2 broken. With the
+    // bug, the bare `.exists()` check filtered the secondary out and only the primary block
+    // would render (no roll-up).
+    cmd.forge_fuse().args(["test", "--mt", "invariant_first"]).assert_failure().stdout_eq(str![[
+        r#"
+...
+Suite assert_all: 2/2 invariants broken
+...
+"#
+    ]]);
+});
