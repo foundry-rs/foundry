@@ -1318,11 +1318,11 @@ contract CheckIntervalInlineTest is Test {
     ]]);
 });
 
-forgetest_init!(continous_run, |prj, cmd| {
+forgetest_init!(assert_all, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 10;
         config.invariant.depth = 100;
-        config.invariant.continuous_run = true;
+        config.invariant.assert_all = true;
     });
     prj.add_source(
         "Counter.sol",

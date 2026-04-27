@@ -791,7 +791,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 .filter(|(invariant_fn, _)| {
                     *invariant_fn == func
                         || (!is_optimization
-                            && invariant_config.continuous_run
+                            && invariant_config.assert_all
                             && !canonicalized(failure_dir.join(invariant_fn.name.clone())).exists())
                 })
                 .collect(),

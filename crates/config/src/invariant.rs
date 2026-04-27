@@ -49,8 +49,10 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
-    /// Continue invariant run until all invariants declared in current test suite breaks.
-    pub continuous_run: bool,
+    /// Assert every invariant declared in the current test suite, continuing the campaign after
+    /// the first failure until all invariants have been broken (or normal limits are hit).
+    /// When `false`, the campaign aborts on the first broken invariant (legacy behavior).
+    pub assert_all: bool,
 }
 
 impl Default for InvariantConfig {
@@ -72,7 +74,7 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
-            continuous_run: false,
+            assert_all: true,
         }
     }
 }
