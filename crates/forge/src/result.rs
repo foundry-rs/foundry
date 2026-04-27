@@ -534,11 +534,16 @@ impl fmt::Display for TestResult {
             }
             TestStatus::Failure => {
                 // Primary "broke" when we have a top-level reason or counterexample. Under
-                // `assert_all` the test can fail purely via secondaries; in that case we skip
-                // the primary `[FAIL...]` header (would otherwise render hollow `[FAIL]`).
+                // `assert_all`, the test can fail purely via secondaries; in that case we
+                // skip the primary `[FAIL...]` header (would otherwise render hollow
+                // `[FAIL]`). For all other failure types (DS-style, plain unit, single
+                // invariant) we keep the original `[FAIL]`/`[FAIL: ...]` header.
                 let primary_broke = self.reason.is_some() || self.counterexample.is_some();
+                let render_primary_header = primary_broke
+                    || self.assert_all_invariant_count.is_none()
+                    || self.other_failures.is_empty();
                 let mut s = String::new();
-                if primary_broke {
+                if render_primary_header {
                     s.push_str("[FAIL");
                     if let Some(reason) = &self.reason {
                         write!(s, ": {reason}").unwrap();
@@ -572,7 +577,7 @@ impl fmt::Display for TestResult {
                     && total > 1
                 {
                     let broken = usize::from(primary_broke) + self.other_failures.len();
-                    let prefix = if primary_broke { "\n" } else { "" };
+                    let prefix = if render_primary_header { "\n" } else { "" };
                     writeln!(s, "{prefix}Suite assert_all: {broken}/{total} invariants broken")
                         .unwrap();
                 }
