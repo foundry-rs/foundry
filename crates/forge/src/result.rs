@@ -533,12 +533,16 @@ impl fmt::Display for TestResult {
                 s.yellow().fmt(f)
             }
             TestStatus::Failure => {
-                let mut s = String::from("[FAIL");
-                if self.reason.is_some() || self.counterexample.is_some() {
+                // Primary "broke" when we have a top-level reason or counterexample. Under
+                // `assert_all` the test can fail purely via secondaries; in that case we skip
+                // the primary `[FAIL...]` header (would otherwise render hollow `[FAIL]`).
+                let primary_broke = self.reason.is_some() || self.counterexample.is_some();
+                let mut s = String::new();
+                if primary_broke {
+                    s.push_str("[FAIL");
                     if let Some(reason) = &self.reason {
                         write!(s, ": {reason}").unwrap();
                     }
-
                     if let Some(counterexample) = &self.counterexample {
                         match counterexample {
                             CounterExample::Single(ex) => {
@@ -560,19 +564,17 @@ impl fmt::Display for TestResult {
                     } else {
                         s.push(']');
                     }
-                } else {
-                    s.push(']');
                 }
                 // Suite-level roll-up: when `assert_all` exercised more than one invariant in
                 // this campaign, print a single `Suite assert_all: <broken>/<total> invariants
-                // broken` line above the per-invariant blocks. Gives a glanceable health
-                // summary for CI logs without scrolling. The primary counts as 1 broken when
-                // we're in this Failure branch.
+                // broken` line above the per-invariant blocks.
                 if let Some(total) = self.assert_all_invariant_count
                     && total > 1
                 {
-                    let broken = 1 + self.other_failures.len();
-                    writeln!(s, "\nSuite assert_all: {broken}/{total} invariants broken").unwrap();
+                    let broken = usize::from(primary_broke) + self.other_failures.len();
+                    let prefix = if primary_broke { "\n" } else { "" };
+                    writeln!(s, "{prefix}Suite assert_all: {broken}/{total} invariants broken")
+                        .unwrap();
                 }
                 if !self.other_failures.is_empty() {
                     if self.assert_all_invariant_count.is_none() {

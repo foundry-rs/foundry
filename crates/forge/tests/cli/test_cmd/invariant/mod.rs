@@ -1678,3 +1678,59 @@ Suite assert_all: 2/2 invariants broken
 "#
     ]]);
 });
+
+// Verifies that when the selected primary invariant passes but a secondary fails under
+// `assert_all`, the report doesn't render a hollow `[FAIL]` header for the primary and the
+// suite roll-up counts only the actually-broken invariants.
+forgetest_init!(assert_all_secondary_only_failure_no_hollow_fail, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 50;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "SecondaryOnlyTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract SecondaryOnlyTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    // Selected primary; never breaks.
+    function invariant_safe() public view {
+        require(counter.cond() < 1000000, "safe broken");
+    }
+
+    // Secondary; breaks within the first run.
+    function invariant_breakable() public view {
+        require(counter.cond() < 2, "breakable broken");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_safe"]).assert_failure().stdout_eq(str![[r#"
+...
+Suite assert_all: 1/2 invariants broken
+[FAIL: breakable broken] invariant_breakable
+...
+"#]]);
+});
