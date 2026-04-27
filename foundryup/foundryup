@@ -118,7 +118,7 @@ main() {
       say "fetching latest release from ${FOUNDRYUP_REPO}..."
       FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases/latest" | awk '
         /"tag_name"[[:space:]]*:/ && !found { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); print; found=1 }
-      ')
+      ') || err "failed to fetch releases from GitHub API"
       if [ -z "$FOUNDRYUP_TAG" ]; then
         err "could not find a latest release for ${FOUNDRYUP_REPO}"
       fi
@@ -131,7 +131,7 @@ main() {
         /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
         /"draft"[[:space:]]*:[[:space:]]*true/ { tag="" }
         /"prerelease"[[:space:]]*:[[:space:]]*true/ && !found { if (tag ~ /^nightly-/) { print tag; found=1 } }
-      ')
+      ') || err "failed to fetch releases from GitHub API"
       if [ -z "$FOUNDRYUP_TAG" ]; then
         err "could not find a nightly release for ${FOUNDRYUP_REPO}"
       fi
@@ -601,7 +601,7 @@ detect_platform_arch() {
 check_installer_up_to_date() {
   say "checking if foundryup is up to date..."
 
-  remote_version=$(fetch "$FOUNDRY_BIN_URL" | grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2)
+  remote_version=$(fetch "$FOUNDRY_BIN_URL" | grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2 || true)
 
   if [ -z "$remote_version" ]; then
     warn "Could not determine remote foundryup version. Skipping version check."
