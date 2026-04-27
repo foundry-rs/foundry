@@ -42,6 +42,10 @@ jobs:
           if [[ ${IS_NIGHTLY} == 'true' ]]; then
             printf 'tag_name=%s\n' "nightly-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
             printf 'release_name=%s\n' "Nightly ($(date '+%Y-%m-%d'))" >> "$GITHUB_OUTPUT"
+            # Find the previous nightly tag for changelog generation,
+            # sorted by tag creation date (most recent first).
+            PREV_NIGHTLY=$(git tag -l 'nightly-*' --sort=-creatordate | head -n1)
+            printf 'from_tag=%s\n' "$PREV_NIGHTLY" >> "$GITHUB_OUTPUT"
           else
             printf 'tag_name=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
             printf 'release_name=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
