@@ -17,7 +17,7 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  mpp-e2e:
+  mpp-check:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 60
     permissions:
