@@ -180,6 +180,23 @@ impl InvariantFailureMetrics {
     }
 }
 
+/// Returns the (name, reason) of the first broken invariant in declaration order. Falls back
+/// to the primary's name with an empty reason if `failures.errors` is somehow empty.
+fn first_broken_event<'a>(
+    invariant_contract: &'a InvariantContract<'_>,
+    failures: &InvariantFailures,
+) -> (&'a str, String) {
+    invariant_contract
+        .invariant_fns
+        .iter()
+        .find_map(|(f, _)| {
+            failures
+                .get_failure(f)
+                .map(|e| (f.name.as_str(), e.revert_reason().unwrap_or_default()))
+        })
+        .unwrap_or((invariant_contract.primary_invariant_fn.name.as_str(), String::new()))
+}
+
 /// Builds the machine-readable invariant progress payload emitted during a
 /// campaign.
 ///
@@ -646,19 +663,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     }
                     // If test cannot continue then stop current run and exit test suite.
                     if !result {
-                        let reason = invariant_test
-                            .test_data
-                            .failures
-                            .errors
-                            .values()
-                            .next()
-                            .and_then(|e| e.revert_reason())
-                            .unwrap_or_default();
-                        failure_metrics.record_failure(
-                            &invariant_contract.primary_invariant_fn.name,
-                            invariant_contract.name,
-                            &reason,
+                        // Attribute the failure event to the first invariant in declaration
+                        // order whose entry is in `failures.errors`. Avoids the nondeterminism
+                        // of `errors.values().next()` (HashMap RandomState) and keeps the
+                        // event's `invariant` and `reason` fields self-consistent.
+                        let (name, reason) = first_broken_event(
+                            &invariant_contract,
+                            &invariant_test.test_data.failures,
                         );
+                        failure_metrics.record_failure(name, invariant_contract.name, &reason);
                         break 'stop;
                     }
                     current_run.depth += 1;
@@ -699,19 +712,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 )
                 .map_err(|_| eyre!("Failed to call afterInvariant"))?;
                 if !success {
-                    let reason = invariant_test
-                        .test_data
-                        .failures
-                        .errors
-                        .values()
-                        .next()
-                        .and_then(|e| e.revert_reason())
-                        .unwrap_or_default();
-                    failure_metrics.record_failure(
-                        &invariant_contract.primary_invariant_fn.name,
-                        invariant_contract.name,
-                        &reason,
-                    );
+                    // Same as the in-run failure path above: attribute to the first broken
+                    // invariant in declaration order so the event is deterministic.
+                    let (name, reason) =
+                        first_broken_event(&invariant_contract, &invariant_test.test_data.failures);
+                    failure_metrics.record_failure(name, invariant_contract.name, &reason);
                 }
             }
 
@@ -836,10 +841,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &[],
             &mut failures,
         )?;
-        // Prefer primary invariant's error; fall back to first recorded error.
-        if let Some(error) = failures
-            .get_failure(invariant_contract.primary_invariant_fn)
-            .or_else(|| failures.errors.values().next())
+        // Prefer primary invariant's error; fall back to the first broken invariant in
+        // declaration order (deterministic, unlike HashMap iteration).
+        if let Some(error) =
+            failures.get_failure(invariant_contract.primary_invariant_fn).or_else(|| {
+                invariant_contract.invariant_fns.iter().find_map(|(f, _)| failures.get_failure(f))
+            })
         {
             return Err(eyre!(error.revert_reason().unwrap_or_default()));
         }

@@ -1734,3 +1734,63 @@ Suite assert_all: 1/2 invariants broken
 ...
 "#]]);
 });
+
+// Verifies the structured JSON failure event emitted at campaign end attributes the broken
+// invariant in declaration order (deterministic) instead of using arbitrary HashMap iteration.
+forgetest_init!(assert_all_failure_event_uses_declaration_order, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 5;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "FailureEventTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract FailureEventTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    // Declaration-order: a, b, c. All break on the same call.
+    function invariant_a() public view {
+        require(counter.cond() < 1, "a broken");
+    }
+
+    function invariant_b() public view {
+        require(counter.cond() < 1, "b broken");
+    }
+
+    function invariant_c() public view {
+        require(counter.cond() < 1, "c broken");
+    }
+}
+   "#,
+    );
+
+    // Primary is `invariant_c`, but the failure event must name `invariant_a` (first declared
+    // broken invariant) with its matching reason — not whichever entry HashMap iteration
+    // surfaces.
+    cmd.args(["test", "--mt", "invariant_c"]).assert_failure().stderr_eq(str![[r#"
+...
+{"timestamp":[..],"event":"failure","invariant":"invariant_a","target":"test/FailureEventTest.t.sol:FailureEventTest","reason":"a broken"}
+...
+"#]]);
+});
