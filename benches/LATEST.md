@@ -1,6 +1,6 @@
 # Foundry Benchmark Results
 
-**Date**: 2025-10-02 12:14:23
+**Date**: 2026-04-24 23:10:24
 
 ## Repositories Tested
 
@@ -8,66 +8,67 @@
 2. [Vectorized/solady](https://github.com/Vectorized/solady)
 3. [Uniswap/v4-core](https://github.com/Uniswap/v4-core)
 4. [sparkdotfi/spark-psm](https://github.com/sparkdotfi/spark-psm)
+5. [aave/aave-v4](https://github.com/aave/aave-v4)
 
 ## Foundry Versions
 
-- **v1.3.6**: forge Version: 1.3.6-v1.3.6 (d241588 2025-09-16)
-- **v1.4.0-rc1**: forge Version: 1.4.0-v1.4.0-rc1 (bd0e4a7 2025-10-01)
+- **v1.5.1**: forge Version: 1.5.1-v1.5.1 (b0a9dd9 2025-12-19)
+- **nightly**: forge Version: 1.6.0-nightly (a249f5c 2026-04-24)
 
 ## Forge Test
 
-| Repository           | v1.3.6  | v1.4.0-rc1 |
-| -------------------- | ------- | ---------- |
-| ithacaxyz-account    | 3.17 s  | 2.94 s     |
-| solady               | 2.28 s  | 2.10 s     |
-| Uniswap-v4-core      | 7.27 s  | 6.13 s     |
-| sparkdotfi-spark-psm | 43.04 s | 44.08 s    |
+| Repository           | v1.5.1   | nightly  |
+| -------------------- | -------- | -------- |
+| vectorized-solady    | 1.46 s   | 1.38 s   |
+| aave-aave-v4         | 4m 14.2s | 3m 29.1s |
 
 ## Forge Fuzz Test
 
-| Repository           | v1.3.6 | v1.4.0-rc1 |
-| -------------------- | ------ | ---------- |
-| ithacaxyz-account    | 3.18 s | 3.02 s     |
-| solady               | 2.39 s | 2.24 s     |
-| Uniswap-v4-core      | 6.84 s | 6.20 s     |
-| sparkdotfi-spark-psm | 3.07 s | 2.72 s     |
+| Repository           | v1.5.1    | nightly  |
+| -------------------- | --------- | -------- |
+| ithacaxyz-account    | 2.81 s    | 1.59 s   |
+| vectorized-solady    | 1.40 s    | 1.34 s   |
+| Uniswap-v4-core      | 3.01 s    | 2.87 s   |
+| sparkdotfi-spark-psm | 2.04 s    | 1.87 s   |
+| aave-aave-v4         | 3m 46.0s  | 3m 17.3s |
 
 ## Forge Test (Isolated)
 
-| Repository           | v1.3.6  | v1.4.0-rc1 |
-| -------------------- | ------- | ---------- |
-| solady               | 2.26 s  | 2.41 s     |
-| Uniswap-v4-core      | 7.22 s  | 7.71 s     |
-| sparkdotfi-spark-psm | 45.53 s | 50.49 s    |
+| Repository           | v1.5.1   | nightly  |
+| -------------------- | -------- | -------- |
+| Uniswap-v4-core      | 3.50 s   | 3.48 s.  |
+| aave-aave-v4         | 4m 14.0s | 3m 53.4s |
 
 ## Forge Build (No Cache)
 
-| Repository           | v1.3.6  | v1.4.0-rc1 |
-| -------------------- | ------- | ---------- |
-| ithacaxyz-account    | 9.16 s  | 9.08 s     |
-| solady               | 14.62 s | 14.69 s    |
-| Uniswap-v4-core      | 2m 3.8s | 2m 5.3s    |
-| sparkdotfi-spark-psm | 13.17 s | 13.14 s    |
+| Repository           | v1.5.1   | nightly  |
+| -------------------- | -------- | -------- |
+| ithacaxyz-account    | 26.06 s  | 26.61 s  |
+| vectorized-solady    | 14.20 s  | 14.26 s  |
+| Uniswap-v4-core      | 2m 1.3s  | 2m 5.0s  |
+| sparkdotfi-spark-psm | 15.16 s  | 15.30 s  |
+| aave-aave-v4         | 3m 37.0s | 3m 35.1s |
 
 ## Forge Build (With Cache)
 
-| Repository           | v1.3.6  | v1.4.0-rc1 |
-| -------------------- | ------- | ---------- |
-| ithacaxyz-account    | 0.156 s | 0.113 s    |
-| solady               | 0.089 s | 0.094 s    |
-| Uniswap-v4-core      | 0.133 s | 0.127 s    |
-| sparkdotfi-spark-psm | 0.173 s | 0.131 s    |
+| Repository           | v1.5.1  | nightly |
+| -------------------- | ------- | ------- |
+| ithacaxyz-account    | 0.167 s | 0.201 s |
+| vectorized-solady    | 0.099 s | 0.098 s |
+| Uniswap-v4-core      | 0.139 s | 0.140 s |
+| sparkdotfi-spark-psm | 0.168 s | 0.173 s |
+| aave-aave-v4         | 0.370 s | 0.357 s |
 
 ## Forge Coverage
 
-| Repository           | v1.3.6   | v1.4.0-rc1 |
-| -------------------- | -------- | ---------- |
-| ithacaxyz-account    | 14.91 s  | 13.34 s    |
-| Uniswap-v4-core      | 1m 34.8s | 1m 30.3s   |
-| sparkdotfi-spark-psm | 3m 49.3s | 3m 40.2s   |
+| Repository           | v1.5.1    | nightly    |
+| -------------------- | --------- | ---------- |
+| Uniswap-v4-core      | 1m 13.9s  | 1m 10.3s   |
+| sparkdotfi-spark-psm | 2m 54.7s  | 2m 50.0s   |
+| aave-aave-v4         | 11m 20.8s | 10m 58.7s  |
 
 ## System Information
 
 - **OS**: macos
-- **CPU**: 8
-- **Rustc**: rustc 1.90.0-nightly (3014e79f9 2025-07-15)
+- **CPU**: 12
+- **Rustc**: rustc 1.95.0 (59807616e 2026-04-14)
