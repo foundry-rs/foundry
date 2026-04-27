@@ -1392,6 +1392,7 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 invariant_cond1: condition 1 met
 invariant_cond2: condition 2 met
 invariant_cond5: EvmError: Revert
+3 invariant failures persisted to cache/invariant/failures/CounterTest — rerun to shrink
  invariant_cond3() (runs: 10, calls: 1000, reverts: [..])
 ...
 

@@ -873,6 +873,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     assertion_failure,
                     None, // check mode
                     &invariant_contract,
+                    invariant_contract.primary_invariant_fn,
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
                     &mut self.result.logs,
@@ -932,6 +933,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .get(&invariant_contract.primary_invariant_fn.name)
             .and_then(|err| err.revert_reason());
         let mut other_failures = vec![];
+        let mut any_secondary_persisted = false;
 
         if success {
             if let Some(best_value) = invariant_result.optimization_best_value {
@@ -944,6 +946,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     false,
                     Some(best_value),
                     &invariant_contract,
+                    invariant_contract.primary_invariant_fn,
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
                     &mut self.result.logs,
@@ -968,6 +971,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 // Standard check mode: replay last run for traces.
                 if let Err(err) = replay_run(
                     &invariant_contract,
+                    invariant_contract.primary_invariant_fn,
                     self.clone_executor(),
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
@@ -997,6 +1001,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     case_data.assertion_failure,
                     None, // check mode
                     &invariant_contract,
+                    invariant_contract.primary_invariant_fn,
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
                     &mut self.result.logs,
@@ -1068,6 +1073,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 &current_settings,
                                 false,
                             );
+                            any_secondary_persisted = true;
                         }
                         Err(err) => {
                             error!(%err, "Failed to generate and record invariant counterexample");
@@ -1077,11 +1083,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
 
+        let invariant_failure_dir = any_secondary_persisted.then(|| failure_dir.clone());
         self.result.invariant_result(
             invariant_result.gas_report_traces,
             success,
             reason,
             other_failures,
+            invariant_failure_dir,
             counterexample,
             invariant_result.cases,
             invariant_result.reverts,

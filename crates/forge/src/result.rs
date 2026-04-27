@@ -424,6 +424,11 @@ pub struct TestResult {
     /// This field will be populated if there are additional invariant broken besides the main one.
     pub other_failures: Vec<String>,
 
+    /// Directory where invariant failure counterexamples have been persisted (set when one or more
+    /// secondary invariant failures were written, so users can locate persisted counterexamples).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invariant_failure_dir: Option<std::path::PathBuf>,
+
     /// Minimal reproduction test case for failing test
     pub counterexample: Option<CounterExample>,
 
@@ -534,6 +539,15 @@ impl fmt::Display for TestResult {
                     writeln!(s).unwrap();
                     for failure in &self.other_failures {
                         writeln!(s, "{failure}").unwrap();
+                    }
+                    if let Some(dir) = &self.invariant_failure_dir {
+                        writeln!(
+                            s,
+                            "{} invariant failures persisted to {} — rerun to shrink",
+                            self.other_failures.len(),
+                            dir.display()
+                        )
+                        .unwrap();
                     }
                 }
                 s.red().wrap().fmt(f)
@@ -740,6 +754,7 @@ impl TestResult {
         success: bool,
         reason: Option<String>,
         other_failures: Vec<String>,
+        invariant_failure_dir: Option<std::path::PathBuf>,
         counterexample: Option<CounterExample>,
         cases: Vec<FuzzedCases>,
         reverts: usize,
@@ -763,6 +778,7 @@ impl TestResult {
         };
         self.reason = reason;
         self.other_failures = other_failures;
+        self.invariant_failure_dir = invariant_failure_dir;
         self.counterexample = counterexample;
         self.gas_report_traces = gas_report_traces;
     }
