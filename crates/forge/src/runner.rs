@@ -6,7 +6,7 @@ use crate::{
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
-    result::{InvariantOtherFailure, SuiteResult, TestResult, TestSetup},
+    result::{InvariantSecondaryFailure, SuiteResult, TestResult, TestSetup},
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -988,7 +988,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .errors
             .get(&invariant_contract.primary_invariant_fn.name)
             .and_then(|err| err.revert_reason());
-        let mut other_failures = vec![];
+        let mut invariant_secondary_failures = vec![];
         let mut any_secondary_persisted = false;
 
         if success {
@@ -1192,7 +1192,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             }
                         }
                     };
-                    other_failures.push(InvariantOtherFailure {
+                    invariant_secondary_failures.push(InvariantSecondaryFailure {
                         name: invariant.name.clone(),
                         reason: error.revert_reason().unwrap_or_default(),
                         counterexample: secondary_counterexample,
@@ -1213,7 +1213,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_result.gas_report_traces,
             success,
             reason,
-            other_failures,
+            invariant_secondary_failures,
             invariant_failure_dir,
             assert_all_invariant_count,
             counterexample,

@@ -413,7 +413,7 @@ impl TestStatus {
 /// Carries everything needed to render the failure on its own (matching how the primary is
 /// displayed) and to point users at the persisted counterexample for re-running.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct InvariantOtherFailure {
+pub struct InvariantSecondaryFailure {
     /// Invariant function name (e.g. `invariant_cond3`).
     pub name: String,
     /// Revert reason or assertion failure message.
@@ -443,7 +443,8 @@ pub struct TestResult {
     ///
     /// Each entry carries the invariant's name, the failure reason, an optional counterexample,
     /// and the path where the counterexample has been persisted for shrinking on a subsequent run.
-    pub other_failures: Vec<InvariantOtherFailure>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invariant_secondary_failures: Vec<InvariantSecondaryFailure>,
 
     /// Directory where invariant failure counterexamples have been persisted (set when one or more
     /// secondary invariant failures were written, so users can locate persisted counterexamples).
@@ -541,7 +542,7 @@ impl fmt::Display for TestResult {
                 let primary_broke = self.reason.is_some() || self.counterexample.is_some();
                 let render_primary_header = primary_broke
                     || self.assert_all_invariant_count.is_none()
-                    || self.other_failures.is_empty();
+                    || self.invariant_secondary_failures.is_empty();
                 let mut s = String::new();
                 if render_primary_header {
                     s.push_str("[FAIL");
@@ -576,16 +577,17 @@ impl fmt::Display for TestResult {
                 if let Some(total) = self.assert_all_invariant_count
                     && total > 1
                 {
-                    let broken = usize::from(primary_broke) + self.other_failures.len();
+                    let broken =
+                        usize::from(primary_broke) + self.invariant_secondary_failures.len();
                     let prefix = if render_primary_header { "\n" } else { "" };
                     writeln!(s, "{prefix}Suite assert_all: {broken}/{total} invariants broken")
                         .unwrap();
                 }
-                if !self.other_failures.is_empty() {
+                if !self.invariant_secondary_failures.is_empty() {
                     if self.assert_all_invariant_count.is_none() {
                         writeln!(s).unwrap();
                     }
-                    for failure in &self.other_failures {
+                    for failure in &self.invariant_secondary_failures {
                         // If we have a (shrunk) counterexample, render the secondary the same
                         // way the primary is rendered: `[FAIL: reason]\n\t[Sequence] ...`.
                         // Otherwise fall back to the terse `name: reason` one-liner so the
@@ -612,7 +614,7 @@ impl fmt::Display for TestResult {
                         writeln!(
                             s,
                             "{} invariant failures persisted to {} — rerun to shrink",
-                            self.other_failures.len(),
+                            self.invariant_secondary_failures.len(),
                             dir.display()
                         )
                         .unwrap();
@@ -821,7 +823,7 @@ impl TestResult {
         gas_report_traces: Vec<Vec<CallTraceArena>>,
         success: bool,
         reason: Option<String>,
-        other_failures: Vec<InvariantOtherFailure>,
+        invariant_secondary_failures: Vec<InvariantSecondaryFailure>,
         invariant_failure_dir: Option<std::path::PathBuf>,
         assert_all_invariant_count: Option<usize>,
         counterexample: Option<CounterExample>,
@@ -846,7 +848,7 @@ impl TestResult {
             TestStatus::Failure
         };
         self.reason = reason;
-        self.other_failures = other_failures;
+        self.invariant_secondary_failures = invariant_secondary_failures;
         self.invariant_failure_dir = invariant_failure_dir;
         self.assert_all_invariant_count = assert_all_invariant_count;
         self.counterexample = counterexample;
