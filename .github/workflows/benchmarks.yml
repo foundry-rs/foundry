@@ -109,7 +109,7 @@ jobs:
           VERSIONS: ${{ github.event.inputs.versions || 'stable,nightly' }}
           REPOS: ${{ github.event.inputs.repos || env.TEST_REPOS }}
         run: |
-          ./target/release/foundry-bench --output-dir ./benches --force-install --verbose \
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions "$VERSIONS" \
             --repos "$REPOS" \
             --benchmarks forge_test,forge_fuzz_test \
@@ -121,7 +121,7 @@ jobs:
           VERSIONS: ${{ github.event.inputs.versions || 'stable,nightly' }}
           REPOS: ${{ github.event.inputs.repos || env.ISOLATE_TEST_REPOS }}
         run: |
-          ./target/release/foundry-bench --output-dir ./benches --force-install --verbose \
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions "$VERSIONS" \
             --repos "$REPOS" \
             --benchmarks forge_isolate_test \
@@ -133,7 +133,7 @@ jobs:
           VERSIONS: ${{ github.event.inputs.versions || 'stable,nightly' }}
           REPOS: ${{ github.event.inputs.repos || env.BUILD_REPOS }}
         run: |
-          ./target/release/foundry-bench --output-dir ./benches --force-install --verbose \
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions "$VERSIONS" \
             --repos "$REPOS" \
             --benchmarks forge_build_no_cache,forge_build_with_cache \
@@ -145,7 +145,7 @@ jobs:
           VERSIONS: ${{ github.event.inputs.versions || 'stable,nightly' }}
           REPOS: ${{ github.event.inputs.repos || env.COVERAGE_REPOS }}
         run: |
-          ./target/release/foundry-bench --output-dir ./benches --force-install --verbose \
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions "$VERSIONS" \
             --repos "$REPOS" \
             --benchmarks forge_coverage \
