@@ -24,7 +24,7 @@ use foundry_evm::{
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceOptions, InvariantExecutor, InvariantFuzzError, check_sequence,
-            generate_counterexample, replay_error, replay_run,
+            replay_error, replay_run,
         },
     },
     fuzz::{
@@ -749,7 +749,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         };
 
         let runner = self.invariant_runner();
-        let invariant_config = &self.config.invariant;
+        let invariant_config = self.config.invariant.clone();
+        let invariant_config = &invariant_config;
 
         let mut executor = self.clone_executor();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
@@ -1038,14 +1039,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
             }
 
-            // Generate counterexamples for other broken invariants.
+            // Shrink each broken non-primary invariant in turn so users get a ready-to-debug
+            // counterexample for every failure in a single run. Loop is serial; on Ctrl+C we
+            // still record every known secondary failure (without shrinking or persisting), so
+            // the final report matches what the live progress bar showed.
             for (invariant, _) in &invariant_contract.invariant_fns {
                 if invariant.name == invariant_contract.primary_invariant_fn.name {
                     continue;
                 }
 
-                // Generate counterexamples for broken invariant, if there is no failure persisted
-                // already.
+                // Skip invariants whose counterexample is already persisted from a prior run
+                // (those were filtered out of the live campaign earlier; `errors` won't contain
+                // them, but the dir check is a belt-and-braces safety net).
                 let persisted_failure = canonicalized(failure_dir.join(invariant.name.clone()));
                 if !persisted_failure.exists()
                     && let Some(error) = invariant_result.errors.get(&invariant.name)
@@ -1053,28 +1058,67 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     | InvariantFuzzError::Revert(case_data) = error
                     && let TestError::Fail(_, ref calls) = case_data.test_error
                 {
-                    let secondary_counterexample = match generate_counterexample(
-                        self.clone_executor(),
-                        &self.cr.mcr.known_contracts,
-                        identified_contracts.clone(),
-                        calls,
-                        show_solidity,
-                    ) {
-                        Ok(call_sequence) if !call_sequence.is_empty() => {
-                            record_invariant_failure(
-                                failure_dir.as_path(),
-                                persisted_failure.as_path(),
-                                &call_sequence,
-                                &current_settings,
-                                false,
-                            );
-                            any_secondary_persisted = true;
-                            None::<CounterExample>
-                        }
-                        Ok(_) => None,
-                        Err(err) => {
-                            error!(%err, "Failed to generate and record invariant counterexample");
-                            None
+                    let original_seq_len = calls.len();
+                    // On Ctrl+C: skip the (potentially long) replay+shrink, but still persist
+                    // the un-shrunk sequence so the next run targeting this invariant picks it
+                    // up and shrinks from the saved counterexample. The current run's output
+                    // still gets a terse `name: reason` line via the no-counterexample path.
+                    let secondary_counterexample = if self.tcfg.early_exit.should_stop() {
+                        let unshrunk_sequence = calls
+                            .iter()
+                            .map(|tx| {
+                                BaseCounterExample::from_invariant_call(
+                                    tx,
+                                    identified_contracts,
+                                    None,
+                                    invariant_config.show_solidity,
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        record_invariant_failure(
+                            failure_dir.as_path(),
+                            persisted_failure.as_path(),
+                            &unshrunk_sequence,
+                            &current_settings,
+                            case_data.assertion_failure,
+                        );
+                        any_secondary_persisted = true;
+                        None
+                    } else {
+                        match replay_error(
+                            invariant_config.clone(),
+                            self.clone_executor(),
+                            calls,
+                            Some(case_data.inner_sequence.clone()),
+                            case_data.assertion_failure,
+                            None, // check mode
+                            &invariant_contract,
+                            invariant,
+                            &self.cr.mcr.known_contracts,
+                            identified_contracts.clone(),
+                            &mut self.result.logs,
+                            &mut self.result.traces,
+                            &mut self.result.line_coverage,
+                            &mut self.result.deprecated_cheatcodes,
+                            progress.as_ref(),
+                            &self.tcfg.early_exit,
+                        ) {
+                            Ok(call_sequence) if !call_sequence.is_empty() => {
+                                record_invariant_failure(
+                                    failure_dir.as_path(),
+                                    persisted_failure.as_path(),
+                                    &call_sequence,
+                                    &current_settings,
+                                    case_data.assertion_failure,
+                                );
+                                any_secondary_persisted = true;
+                                Some(CounterExample::Sequence(original_seq_len, call_sequence))
+                            }
+                            Ok(_) => None,
+                            Err(err) => {
+                                error!(%err, "Failed to replay invariant error");
+                                None
+                            }
                         }
                     };
                     other_failures.push(InvariantOtherFailure {

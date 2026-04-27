@@ -1388,13 +1388,108 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 [FAIL: condition 3 met]
 	[Sequence] (original: 5, shrunk: 5)
 ...
-
-invariant_cond1: condition 1 met
-invariant_cond2: condition 2 met
-invariant_cond5: EvmError: Revert
+[FAIL: condition 1 met] invariant_cond1
+	[Sequence] (original: [..], shrunk: [..])
+...
+[FAIL: condition 2 met] invariant_cond2
+	[Sequence] (original: [..], shrunk: [..])
+...
+[FAIL: EvmError: Revert] invariant_cond5
+	[Sequence] (original: [..], shrunk: [..])
+...
 3 invariant failures persisted to cache/invariant/failures/CounterTest — rerun to shrink
- invariant_cond3() (runs: 10, calls: 1000, reverts: [..])
 ...
 
 "#]]);
+
+    // Re-running the same target should skip secondaries that already have persisted failures
+    // (cond1, cond2, cond5) — only the primary cond3 is replayed from its persisted failure,
+    // no secondary `[FAIL]` blocks are produced and no persisted-failures footer is printed.
+    cmd.forge_fuse().args(["test", "--mt", "invariant_cond3"]).assert_failure().stdout_eq(str![[
+        r#"
+No files changed, compilation skipped
+...
+Ran 1 test for test/CounterTest.t.sol:CounterTest
+[FAIL: condition 3 met]
+	[Sequence] (original: 5, shrunk: 5)
+...
+ invariant_cond3() (runs: 1, calls: 1, reverts: [..])
+...
+"#
+    ]]);
+});
+
+// Verifies that when `assert_all` is on but only the primary invariant breaks, the secondary
+// path stays empty: no `[FAIL: ...] <name>` blocks for the passing invariants and no
+// persisted-failures footer.
+forgetest_init!(assert_all_only_primary, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 50;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "CounterTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function invariant_breakable() public view {
+        require(counter.cond() < 3, "primary broken");
+    }
+
+    function invariant_safe() public view {
+        require(counter.cond() < 1000000, "should never break");
+    }
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--mt", "invariant_breakable"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+
+    // Primary failure must be reported with a shrunk sequence.
+    assert!(stdout.contains("[FAIL: primary broken]"), "primary failure header missing:\n{stdout}");
+    assert!(
+        stdout.contains("[Sequence] (original:"),
+        "shrunk sequence missing for primary:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(" invariant_breakable()"),
+        "primary invariant summary missing:\n{stdout}"
+    );
+
+    // Secondary invariants that never break must not produce any output blocks.
+    assert!(
+        !stdout.contains("invariant_safe"),
+        "secondary invariant should not appear when it never broke:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("[FAIL: should never break]"),
+        "no secondary [FAIL] block should be rendered:\n{stdout}"
+    );
+    // No persisted-failures footer should be printed when no secondary failed.
+    assert!(
+        !stdout.contains("invariant failures persisted"),
+        "no persisted failures footer should appear when only primary breaks:\n{stdout}"
+    );
 });

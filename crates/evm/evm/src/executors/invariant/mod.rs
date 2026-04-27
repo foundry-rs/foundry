@@ -50,7 +50,7 @@ pub use error::{InvariantFailures, InvariantFuzzError};
 use foundry_evm_coverage::HitMaps;
 
 mod replay;
-pub use replay::{generate_counterexample, replay_error, replay_run};
+pub use replay::{replay_error, replay_run};
 
 mod result;
 pub use result::InvariantFuzzTestResult;

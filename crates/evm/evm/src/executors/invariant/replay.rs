@@ -93,39 +93,6 @@ pub fn replay_run<FEN: FoundryEvmNetwork>(
     Ok(counterexample_sequence)
 }
 
-pub fn generate_counterexample<FEN: FoundryEvmNetwork>(
-    mut executor: Executor<FEN>,
-    known_contracts: &ContractsByArtifact,
-    mut ided_contracts: ContractsByAddress,
-    inputs: &[BasicTxDetails],
-    show_solidity: bool,
-) -> Result<Vec<BaseCounterExample>> {
-    if executor.inspector().tracer.is_none() {
-        executor.set_tracing(TraceMode::Call);
-    }
-
-    let mut counterexample_sequence = vec![];
-
-    for tx in inputs {
-        let mut call_result = execute_tx(&mut executor, tx)?;
-
-        // Commit state changes to persist across calls in the sequence.
-        executor.commit(&mut call_result);
-
-        ided_contracts
-            .extend(load_contracts(call_result.traces.iter().map(|a| &a.arena), known_contracts));
-
-        counterexample_sequence.push(BaseCounterExample::from_invariant_call(
-            tx,
-            &ided_contracts,
-            call_result.traces,
-            show_solidity,
-        ));
-    }
-
-    Ok(counterexample_sequence)
-}
-
 /// Replays and shrinks a call sequence, collecting logs and traces.
 ///
 /// For check mode (target_value=None): shrinks to find shortest failing sequence.
