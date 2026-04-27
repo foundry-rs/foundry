@@ -286,6 +286,8 @@ pub struct BlockchainStorage<N: Network> {
     pub best_number: u64,
     /// genesis hash of the chain
     pub genesis_hash: B256,
+    /// genesis block number of the chain
+    pub genesis_number: u64,
     /// Mapping from the transaction hash to a tuple containing the transaction as well as the
     /// transaction receipt
     pub transactions: B256HashMap<MinedTransaction<N>>,
@@ -337,6 +339,7 @@ impl<N: Network> BlockchainStorage<N> {
             best_hash,
             best_number,
             genesis_hash,
+            genesis_number,
             transactions: Default::default(),
             total_difficulty: Default::default(),
         }
@@ -352,6 +355,7 @@ impl<N: Network> BlockchainStorage<N> {
             best_hash: block_hash,
             best_number: block_number,
             genesis_hash: Default::default(),
+            genesis_number: 0,
             transactions: Default::default(),
             total_difficulty,
         }
@@ -388,6 +392,7 @@ impl<N: Network> BlockchainStorage<N> {
             best_hash: Default::default(),
             best_number: Default::default(),
             genesis_hash: Default::default(),
+            genesis_number: Default::default(),
             transactions: Default::default(),
             total_difficulty: Default::default(),
         }
@@ -424,10 +429,11 @@ impl<N: Network> BlockchainStorage<N> {
             self.blocks.insert(block_hash, block);
             self.hashes.insert(block_number, block_hash);
 
-            // Update genesis_hash if we are loading block 0, so that Finalized/Safe/Earliest
-            // block tag lookups return the correct hash.
+            // Update genesis_hash if we are loading the genesis block, so that
+            // Finalized/Safe/Earliest block tag lookups return the correct hash. The genesis
+            // number can be non-zero when configured via `--block-number`.
             // See: https://github.com/foundry-rs/foundry/issues/12645
-            if block_number == 0 {
+            if block_number == self.genesis_number {
                 self.genesis_hash = block_hash;
             }
         }
