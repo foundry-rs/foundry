@@ -77,6 +77,8 @@ pub const NODE_PORT: u16 = 8545;
 pub const CHAIN_ID: u64 = 31337;
 /// The default gas limit for all transactions
 pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
+/// The default number of slots in an epoch used for safe/finalized block tags.
+pub const DEFAULT_SLOTS_IN_AN_EPOCH: u64 = 32;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
 
@@ -507,7 +509,7 @@ impl Default for NodeConfig {
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
             disable_pool_balance_checks: false,
-            slots_in_an_epoch: 32,
+            slots_in_an_epoch: DEFAULT_SLOTS_IN_AN_EPOCH,
             memory_limit: None,
             precompile_factory: None,
             networks: Default::default(),

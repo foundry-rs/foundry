@@ -1,13 +1,16 @@
 //! In-memory blockchain storage
-use crate::eth::{
-    backend::{
-        db::{
-            MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
-            SerializableTransaction, StateDb,
+use crate::{
+    config::DEFAULT_SLOTS_IN_AN_EPOCH,
+    eth::{
+        backend::{
+            db::{
+                MaybeFullDatabase, SerializableBlock, SerializableHistoricalStates,
+                SerializableTransaction, StateDb,
+            },
+            mem::cache::DiskStateCache,
         },
-        mem::cache::DiskStateCache,
+        pool::transactions::PoolTransaction,
     },
-    pool::transactions::PoolTransaction,
 };
 use alloy_consensus::{BlockHeader, Header, constants::EMPTY_WITHDRAWALS};
 use alloy_eips::eip7685::EMPTY_REQUESTS_HASH;
@@ -435,7 +438,15 @@ impl<N: Network> BlockchainStorage<N> {
 
     /// Returns the hash for [BlockNumberOrTag]
     pub fn hash(&self, number: BlockNumberOrTag) -> Option<B256> {
-        let slots_in_an_epoch = 32;
+        self.hash_with_slots_in_an_epoch(number, DEFAULT_SLOTS_IN_AN_EPOCH)
+    }
+
+    /// Returns the hash for [BlockNumberOrTag] using the configured slots in an epoch.
+    pub fn hash_with_slots_in_an_epoch(
+        &self,
+        number: BlockNumberOrTag,
+        slots_in_an_epoch: u64,
+    ) -> Option<B256> {
         match number {
             BlockNumberOrTag::Latest => Some(self.best_hash),
             BlockNumberOrTag::Earliest => Some(self.genesis_hash),
@@ -510,9 +521,16 @@ impl<N: Network> Blockchain<N> {
 
     /// returns the header hash of given block
     pub fn hash(&self, id: BlockId) -> Option<B256> {
+        self.hash_with_slots_in_an_epoch(id, DEFAULT_SLOTS_IN_AN_EPOCH)
+    }
+
+    /// returns the header hash of given block using the configured slots in an epoch.
+    pub fn hash_with_slots_in_an_epoch(&self, id: BlockId, slots_in_an_epoch: u64) -> Option<B256> {
         match id {
             BlockId::Hash(h) => Some(h.block_hash),
-            BlockId::Number(num) => self.storage.read().hash(num),
+            BlockId::Number(num) => {
+                self.storage.read().hash_with_slots_in_an_epoch(num, slots_in_an_epoch)
+            }
         }
     }
 
