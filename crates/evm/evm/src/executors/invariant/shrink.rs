@@ -49,15 +49,26 @@ impl CallSequenceShrinker {
 /// Callers (e.g. `replay_error`) are responsible for invoking this before each shrink so the
 /// bar's length and message reflect the invariant currently being shrunk. Multi-invariant
 /// campaigns can call this once per invariant to display per-target progress.
+///
+/// `position` is `Some((current, total))` when more than one invariant needs shrinking in the
+/// same campaign; the bar then reads `[i/N] Shrink: <label>` so users can see how many
+/// shrinkers are left in the queue.
 pub(crate) fn reset_shrink_progress(
     config: &InvariantConfig,
     progress: Option<&ProgressBar>,
     label: &str,
+    position: Option<(usize, usize)>,
 ) {
     if let Some(progress) = progress {
         progress.set_length(config.shrink_run_limit as u64);
         progress.reset();
-        progress.set_message(format!(" Shrink: {label}"));
+        let message = match position {
+            Some((current, total)) if total > 1 => {
+                format!(" [{current}/{total}] Shrink: {label}")
+            }
+            _ => format!(" Shrink: {label}"),
+        };
+        progress.set_message(message);
     }
 }
 

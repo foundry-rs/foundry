@@ -783,6 +783,28 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Optimization mode only tracks the primary invariant's return value, so secondary
         // boolean invariants are excluded to avoid silently skipping them.
         let is_optimization = is_optimization_invariant(func);
+        // When the primary is an optimization invariant and the user has assert_all on, warn
+        // them once that secondary boolean invariants in the same contract are being skipped
+        // — assert_all has no effect under optimization mode, so silently dropping them would
+        // be a footgun.
+        if is_optimization && invariant_config.assert_all {
+            let dropped: Vec<&str> = invariants
+                .iter()
+                .filter(|(invariant_fn, _)| *invariant_fn != func)
+                .map(|(invariant_fn, _)| invariant_fn.name.as_str())
+                .collect();
+            if !dropped.is_empty() {
+                let _ = sh_warn!(
+                    "{}: assert_all is on but {} is an optimization invariant; \
+                     {} boolean invariant(s) skipped: {}. \
+                     Move them to a separate contract to run them.",
+                    self.cr.name,
+                    func.name,
+                    dropped.len(),
+                    dropped.join(", "),
+                );
+            }
+        }
         let invariant_contract = InvariantContract::new(
             self.address,
             self.cr.name,
@@ -883,6 +905,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &mut self.result.deprecated_cheatcodes,
                     progress.as_ref(),
                     &self.tcfg.early_exit,
+                    None, // single-invariant replay path; no [i/N] counter
                 ) {
                     Ok(replayed_call_sequence) if !replayed_call_sequence.is_empty() => {
                         call_sequence = replayed_call_sequence;
@@ -956,6 +979,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &mut self.result.deprecated_cheatcodes,
                     progress.as_ref(),
                     &self.tcfg.early_exit,
+                    None, // optimization mode is single-invariant; no [i/N] counter
                 ) {
                     Ok(best_sequence) if !best_sequence.is_empty() => {
                         counterexample = Some(CounterExample::Sequence(
@@ -987,6 +1011,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 }
             }
         } else {
+            // Total broken invariants in this campaign — used to decorate the shrink progress
+            // bar with `[i/N]` so users see how many shrinkers are queued behind the current
+            // one. `errors` keys cover both the primary and any broken secondaries.
+            let total_broken = invariant_result.errors.len();
             // Check if primary invariant was broken and replay error.
             if let Some(error) =
                 invariant_result.errors.get(&invariant_contract.primary_invariant_fn.name)
@@ -1011,6 +1039,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &mut self.result.deprecated_cheatcodes,
                     progress.as_ref(),
                     &self.tcfg.early_exit,
+                    Some((1, total_broken)),
                 ) {
                     Ok(call_sequence) if !call_sequence.is_empty() => {
                         // Persist error in invariant failure dir.
@@ -1043,6 +1072,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             // counterexample for every failure in a single run. Loop is serial; on Ctrl+C we
             // still record every known secondary failure (without shrinking or persisting), so
             // the final report matches what the live progress bar showed.
+            //
+            // `next_position` tracks where this invariant sits in the broken queue (primary is
+            // 1, secondaries follow). Only incremented when a secondary is actually shrunk so
+            // the bar's `[i/N]` counter matches user-visible progress.
+            let mut next_position = 2usize;
             for (invariant, _) in &invariant_contract.invariant_fns {
                 if invariant.name == invariant_contract.primary_invariant_fn.name {
                     continue;
@@ -1085,6 +1119,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         any_secondary_persisted = true;
                         None
                     } else {
+                        let position = next_position;
+                        next_position += 1;
                         match replay_error(
                             invariant_config.clone(),
                             self.clone_executor(),
@@ -1102,6 +1138,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &mut self.result.deprecated_cheatcodes,
                             progress.as_ref(),
                             &self.tcfg.early_exit,
+                            Some((position, total_broken)),
                         ) {
                             Ok(call_sequence) if !call_sequence.is_empty() => {
                                 record_invariant_failure(
@@ -1132,12 +1169,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         let invariant_failure_dir = any_secondary_persisted.then(|| failure_dir.clone());
+        // Only attach a suite-level roll-up when `assert_all` actually exercised >1 invariant.
+        // Single-invariant runs (no assert_all, or filter-narrowed to one) get the legacy
+        // single-block render with no roll-up line.
+        let assert_all_invariant_count = (invariant_config.assert_all
+            && invariant_contract.invariant_fns.len() > 1)
+            .then_some(invariant_contract.invariant_fns.len());
         self.result.invariant_result(
             invariant_result.gas_report_traces,
             success,
             reason,
             other_failures,
             invariant_failure_dir,
+            assert_all_invariant_count,
             counterexample,
             invariant_result.cases,
             invariant_result.reverts,

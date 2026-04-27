@@ -115,10 +115,12 @@ pub fn replay_error<FEN: FoundryEvmNetwork>(
     deprecated_cheatcodes: &mut HashMap<&'static str, Option<&'static str>>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
+    position: Option<(usize, usize)>,
 ) -> Result<Vec<BaseCounterExample>> {
     // Reset progress bar for this invariant's shrink phase. Multi-invariant runs call this once
-    // per target so the bar's message reflects which invariant is currently being shrunk.
-    reset_shrink_progress(&config, progress, &target_invariant.name);
+    // per target so the bar's message reflects which invariant is currently being shrunk and
+    // (when more than one invariant needs shrinking) the `[i/N]` counter shows queue depth.
+    reset_shrink_progress(&config, progress, &target_invariant.name, position);
 
     let calls = if let Some(target) = target_value {
         shrink_sequence_value(

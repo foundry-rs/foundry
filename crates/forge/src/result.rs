@@ -450,6 +450,13 @@ pub struct TestResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invariant_failure_dir: Option<std::path::PathBuf>,
 
+    /// Total number of invariants exercised in this `assert_all` run (primary + secondaries that
+    /// were not skipped by persisted-failure filtering). When `Some(n)` the test report renders
+    /// a `Suite assert_all: <broken>/<n> invariants broken` summary so users get an at-a-glance
+    /// health line without counting `[FAIL]` blocks. `None` for non-`assert_all` campaigns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assert_all_invariant_count: Option<usize>,
+
     /// Minimal reproduction test case for failing test
     pub counterexample: Option<CounterExample>,
 
@@ -556,8 +563,21 @@ impl fmt::Display for TestResult {
                 } else {
                     s.push(']');
                 }
+                // Suite-level roll-up: when `assert_all` exercised more than one invariant in
+                // this campaign, print a single `Suite assert_all: <broken>/<total> invariants
+                // broken` line above the per-invariant blocks. Gives a glanceable health
+                // summary for CI logs without scrolling. The primary counts as 1 broken when
+                // we're in this Failure branch.
+                if let Some(total) = self.assert_all_invariant_count
+                    && total > 1
+                {
+                    let broken = 1 + self.other_failures.len();
+                    writeln!(s, "\nSuite assert_all: {broken}/{total} invariants broken").unwrap();
+                }
                 if !self.other_failures.is_empty() {
-                    writeln!(s).unwrap();
+                    if self.assert_all_invariant_count.is_none() {
+                        writeln!(s).unwrap();
+                    }
                     for failure in &self.other_failures {
                         // If we have a (shrunk) counterexample, render the secondary the same
                         // way the primary is rendered: `[FAIL: reason]\n\t[Sequence] ...`.
@@ -796,6 +816,7 @@ impl TestResult {
         reason: Option<String>,
         other_failures: Vec<InvariantOtherFailure>,
         invariant_failure_dir: Option<std::path::PathBuf>,
+        assert_all_invariant_count: Option<usize>,
         counterexample: Option<CounterExample>,
         cases: Vec<FuzzedCases>,
         reverts: usize,
@@ -820,6 +841,7 @@ impl TestResult {
         self.reason = reason;
         self.other_failures = other_failures;
         self.invariant_failure_dir = invariant_failure_dir;
+        self.assert_all_invariant_count = assert_all_invariant_count;
         self.counterexample = counterexample;
         self.gas_report_traces = gas_report_traces;
     }

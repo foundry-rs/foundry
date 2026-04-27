@@ -1388,6 +1388,8 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 [FAIL: condition 3 met]
 	[Sequence] (original: 5, shrunk: 5)
 ...
+
+Suite assert_all: 4/5 invariants broken
 [FAIL: condition 1 met] invariant_cond1
 	[Sequence] (original: [..], shrunk: [..])
 ...
@@ -1402,9 +1404,9 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 
 "#]]);
 
-    // Re-running the same target should skip secondaries that already have persisted failures
-    // (cond1, cond2, cond5) — only the primary cond3 is replayed from its persisted failure,
-    // no secondary `[FAIL]` blocks are produced and no persisted-failures footer is printed.
+    // Re-running the same target replays cond3's persisted counterexample and exits without
+    // running a fresh campaign — only the primary block, no secondary [FAIL]s, no
+    // persisted-failures footer, no `Suite assert_all` roll-up.
     cmd.forge_fuse().args(["test", "--mt", "invariant_cond3"]).assert_failure().stdout_eq(str![[
         r#"
 No files changed, compilation skipped
@@ -1464,32 +1466,81 @@ contract CounterTest is Test {
    "#,
     );
 
-    let output = cmd.args(["test", "--mt", "invariant_breakable"]).assert_failure();
-    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    // Only the primary breaks: a single [FAIL] block, the suite roll-up shows 1/2, and the
+    // never-broken `invariant_safe` produces no output.
+    cmd.args(["test", "--mt", "invariant_breakable"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/CounterTest.t.sol:CounterTest
+[FAIL: primary broken]
+	[Sequence] (original: [..], shrunk: [..])
+...
 
-    // Primary failure must be reported with a shrunk sequence.
-    assert!(stdout.contains("[FAIL: primary broken]"), "primary failure header missing:\n{stdout}");
-    assert!(
-        stdout.contains("[Sequence] (original:"),
-        "shrunk sequence missing for primary:\n{stdout}"
+Suite assert_all: 1/2 invariants broken
+...
+ invariant_breakable() (runs: [..], calls: [..], reverts: [..])
+...
+"#]]);
+});
+
+// Verifies the startup warning fired by `assert_all + optimization mode`: when the primary
+// invariant returns int256 (optimization target) the campaign loop can't also evaluate boolean
+// invariants, so they are silently dropped. Without the warning users wouldn't realize their
+// other `invariant_*` properties never ran.
+forgetest_init!(assert_all_optimization_mode_warning, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 5;
+        // assert_all defaults to true post-rename, but make it explicit for the test's intent.
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "OptHandler.sol",
+        r#"
+contract OptHandler {
+    uint256 public x;
+    function bump(uint256 v) public { x += v % 100; }
+}
+   "#,
     );
-    assert!(
-        stdout.contains(" invariant_breakable()"),
-        "primary invariant summary missing:\n{stdout}"
+    prj.add_test(
+        "OptTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {OptHandler} from "../src/OptHandler.sol";
+
+contract OptTest is Test {
+    OptHandler h;
+    function setUp() public { h = new OptHandler(); targetContract(address(h)); }
+
+    /// @notice Optimization invariant — primary maximizes int256.
+    function invariant_maximize() public view returns (int256) {
+        return int256(h.x());
+    }
+
+    function invariant_boolean_one() public view {
+        require(h.x() < 1000000, "should not exceed 1M");
+    }
+
+    function invariant_boolean_two() public view {
+        require(h.x() != 42, "magic value not allowed");
+    }
+}
+   "#,
     );
 
-    // Secondary invariants that never break must not produce any output blocks.
-    assert!(
-        !stdout.contains("invariant_safe"),
-        "secondary invariant should not appear when it never broke:\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("[FAIL: should never break]"),
-        "no secondary [FAIL] block should be rendered:\n{stdout}"
-    );
-    // No persisted-failures footer should be printed when no secondary failed.
-    assert!(
-        !stdout.contains("invariant failures persisted"),
-        "no persisted failures footer should appear when only primary breaks:\n{stdout}"
-    );
+    cmd.args(["test", "--mt", "invariant_maximize"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+...
+Warning: test/OptTest.t.sol:OptTest: assert_all is on but invariant_maximize is an optimization invariant; 2 boolean invariant(s) skipped: invariant_boolean_one, invariant_boolean_two. Move them to a separate contract to run them.
+...
+"#]])
+        .stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] [..]
+...
+ invariant_maximize() (best: [..], runs: 1, calls: 5)
+...
+"#]]);
 });
