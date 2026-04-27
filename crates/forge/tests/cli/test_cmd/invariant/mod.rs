@@ -1551,3 +1551,62 @@ Warning: test/OptTest.t.sol:OptTest: assert_all is on but invariant_maximize is 
 ...
 "#]]);
 });
+
+// Verifies that under `assert_all` the `afterInvariant` hook keeps running on later runs even
+// after an earlier invariant has already broken.
+forgetest_init!(assert_all_after_invariant_runs_after_earlier_failure, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 20;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "AfterInvariantTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract AfterInvariantTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    // Breaks early in run 1.
+    function invariant_first() public view {
+        require(counter.cond() < 2, "first broken");
+    }
+
+    // Never breaks; keeps the campaign alive past run 1.
+    function invariant_second() public view {
+        require(counter.cond() < 1000000, "second broken");
+    }
+
+    // Always reverts; only reached on later runs if the hook isn't gated campaign-wide.
+    function afterInvariant() public pure {
+        require(false, "after_invariant_marker");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_first"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: after_invariant_marker]
+...
+"#]]);
+});

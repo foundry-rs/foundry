@@ -464,6 +464,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let edge_coverage_enabled = self.config.corpus.collect_edge_coverage();
 
         'stop: while continue_campaign(runs) {
+            // Per-run failure count snapshot used to gate `afterInvariant` below.
+            let failures_before_run = invariant_test.test_data.failures.errors.len();
+
             let initial_seq = corpus_manager.new_inputs(
                 &mut invariant_test.test_data.branch_runner,
                 &invariant_test.fuzz_state,
@@ -682,9 +685,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 optimization,
             );
 
-            // Call `afterInvariant` only if it is declared and test didn't fail already.
+            // Call `afterInvariant` only if declared and the current run produced no new
+            // failure. Under `assert_all` the campaign keeps running after earlier failures,
+            // but the hook must still execute on subsequent runs.
             if invariant_contract.call_after_invariant
-                && invariant_test.test_data.failures.errors.is_empty()
+                && invariant_test.test_data.failures.errors.len() == failures_before_run
             {
                 let success = assert_after_invariant(
                     &invariant_contract,
