@@ -15,10 +15,10 @@ on:
         type: string
         default: "stable,nightly"
       repos:
-        description: "Comma-separated repos to benchmark. Each entry: org/repo[:rev][ <extra args>] (e.g. vectorized/solady:v0.1.26 --nmc BrokenTest)"
+        description: "Comma-separated repos to benchmark. Each entry: org/repo[:rev][ <extra args>] (e.g. vectorized/solady:v0.1.26 --nmc BrokenTest). Leave empty to use the per-benchmark default repo lists."
         required: false
         type: string
-        default: "ithacaxyz/account:v0.3.2,vectorized/solady:v0.1.22"
+        default: ""
 
 env:
   # Repos to benchmark per step. Each comma-separated entry has the form
