@@ -69,6 +69,7 @@ ignored_error_codes = [
     "transfer-deprecated",
     "natspec-memory-safe-assembly-deprecated",
 ]
+ignored_error_codes_from = []
 ignored_warnings_from = []
 deny = "never"
 test_failures_file = "cache/test-failures"
@@ -344,6 +345,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),
         ],
         ignored_error_codes: vec![],
+        ignored_error_codes_from: vec![],
         ignored_file_paths: vec![],
         deny: foundry_config::DenyLevel::Never,
         deny_warnings: false,
@@ -1253,6 +1255,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "transfer-deprecated",
     "natspec-memory-safe-assembly-deprecated"
   ],
+  "ignored_error_codes_from": [],
   "ignored_warnings_from": [],
   "deny": "never",
   "match_test": null,
