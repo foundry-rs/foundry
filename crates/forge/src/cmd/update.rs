@@ -126,7 +126,7 @@ impl UpdateArgs {
             let name = dep_id.name();
 
             // Fetch and checkout the latest commit from the remote branch
-            git.fetch_and_checkout_branch(path, name)?;
+            git.fetch_and_checkout_branch(&submodule_path, name)?;
 
             // Now get the updated revision after syncing with origin
             let (updated_rev, _) = git.current_rev_branch(&submodule_path)?;
