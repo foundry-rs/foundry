@@ -529,6 +529,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 if corpus_manager.merge_edge_coverage(&mut call_result) {
                     current_run.new_coverage = true;
                 }
+                // Hoist inner calls from the trace whose (target, selector) is allowed
+                // into the corpus pool, so the mutator can reuse harness-clamped inputs
+                // as top-level calls.
+                corpus_manager.hoist_trace_calls(
+                    call_result.traces.as_ref(),
+                    tx,
+                    &invariant_test.targeted_contracts,
+                );
 
                 if discarded {
                     current_run.inputs.pop();
