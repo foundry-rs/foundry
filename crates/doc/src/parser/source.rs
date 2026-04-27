@@ -63,6 +63,21 @@ pub struct FunctionSource {
     pub returns: Vec<ParamInfo>,
 }
 
+impl FunctionSource {
+    /// Get the signature of the function, including parameter types.
+    pub fn signature(&self) -> String {
+        let name = self.name.as_deref().unwrap_or(&self.kind);
+        if self.params.is_empty() {
+            return name.to_string();
+        }
+        format!(
+            "{}({})",
+            name,
+            self.params.iter().map(|p| p.ty.as_str()).collect::<Vec<_>>().join(",")
+        )
+    }
+}
+
 /// Variable attribute relevant for doc generation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VariableAttr {
@@ -150,17 +165,7 @@ impl ParseSource {
     /// Get the signature of the source (for functions, includes parameter types).
     pub fn signature(&self) -> String {
         match self {
-            Self::Function(f) => {
-                let name = f.name.as_deref().unwrap_or(&f.kind);
-                if f.params.is_empty() {
-                    return name.to_string();
-                }
-                format!(
-                    "{}({})",
-                    name,
-                    f.params.iter().map(|p| p.ty.as_str()).collect::<Vec<_>>().join(",")
-                )
-            }
+            Self::Function(f) => f.signature(),
             _ => self.ident(),
         }
     }

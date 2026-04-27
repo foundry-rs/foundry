@@ -315,15 +315,7 @@ impl Document {
         code: &str,
     ) -> Result<(), std::fmt::Error> {
         let func_name = func.name.as_deref().unwrap_or(&func.kind).to_string();
-        let func_sign = if func.params.is_empty() {
-            func_name.clone()
-        } else {
-            format!(
-                "{}({})",
-                func_name,
-                func.params.iter().map(|p| p.ty.as_str()).collect::<Vec<_>>().join(",")
-            )
-        };
+        let func_sign = func.signature();
         let comments =
             comments.merge_inheritdoc(&func_sign, read_context!(self, INHERITDOC_ID, Inheritdoc));
 
