@@ -2,7 +2,7 @@
 # MPP (Machine Payments Protocol) end-to-end test script
 #
 # Prerequisites:
-#   - Tempo wallet configured: `tempo wallet login`
+#   - Either `TEMPO_PRIVATE_KEY` is set, or Tempo wallet is configured: `tempo wallet login`
 #   - Wallet funded with TEMPO on moderato testnet
 #   - Foundry binaries built: `cargo build --bin cast --bin forge --bin anvil --bin chisel`
 #
@@ -50,13 +50,15 @@ if ! command -v "$CHISEL" &>/dev/null; then
   exit 1
 fi
 
-# Discover wallet address from keys.toml
 KEYS_FILE="${TEMPO_HOME:-$HOME/.tempo}/wallet/keys.toml"
-if [ ! -f "$KEYS_FILE" ]; then
-  echo "ERROR: Tempo wallet not configured. Run: tempo wallet login"
+if [ -n "${TEMPO_PRIVATE_KEY:-}" ]; then
+  WALLET=$("$CAST" wallet address --private-key "$TEMPO_PRIVATE_KEY")
+elif [ -f "$KEYS_FILE" ]; then
+  WALLET=$(grep -m1 'wallet_address' "$KEYS_FILE" | sed 's/.*= *"\(.*\)"/\1/')
+else
+  echo "ERROR: Set TEMPO_PRIVATE_KEY or configure Tempo wallet with: tempo wallet login"
   exit 1
 fi
-WALLET=$(grep -m1 'wallet_address' "$KEYS_FILE" | sed 's/.*= *"\(.*\)"/\1/')
 echo "Wallet: $WALLET"
 echo "RPC:    $RPC_MPP"
 echo ""
