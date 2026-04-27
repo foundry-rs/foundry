@@ -1545,6 +1545,51 @@ Compiler run successful!
 "#]]);
 });
 
+// test that `forge build` ignores error codes only from matching path prefixes
+forgetest!(can_compile_without_warnings_ignored_error_codes_from, |prj, cmd| {
+    let contract = r"
+pragma solidity *;
+contract A {}
+    ";
+    prj.add_raw_source("A", contract);
+    prj.add_raw_test("A", contract);
+
+    // suppressed for both src and test
+    prj.update_config(|config| {
+        config.ignored_error_codes = vec![];
+        config.ignored_error_codes_from = vec![
+            (std::path::PathBuf::from("src"), vec![SolidityErrorCode::SpdxLicenseNotProvided]),
+            (std::path::PathBuf::from("test"), vec![SolidityErrorCode::SpdxLicenseNotProvided]),
+        ];
+    });
+
+    cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+"#]]);
+
+    // suppressed only for test, src warning still shows
+    prj.update_config(|config| {
+        config.ignored_error_codes_from = vec![(
+            std::path::PathBuf::from("test"),
+            vec![SolidityErrorCode::SpdxLicenseNotProvided],
+        )];
+    });
+
+    cmd.forge_fuse().args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (1878): SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+Warning: SPDX license identifier not provided in source file. Before publishing, consider adding a comment containing "SPDX-License-Identifier: <SPDX-License>" to each source file. Use "SPDX-License-Identifier: UNLICENSED" for non-open-source code. Please see https://spdx.org for more information.
+[FILE]
+
+
+"#]]);
+});
+
 // test that a failing `forge build` does not impact followup builds
 forgetest!(can_build_after_failure, |prj, cmd| {
     prj.insert_ds_test();
@@ -2971,7 +3016,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/FallbackWithCalldataTest.sol:CounterWithFallback",
     "deployment": {
-      "gas": 132471,
+      "gas": 132459,
       "size": 396
     },
     "functions": {

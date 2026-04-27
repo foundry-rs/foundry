@@ -316,6 +316,8 @@ pub struct Config {
     pub etherscan: EtherscanConfigs,
     /// List of solidity error codes to always silence in the compiler output.
     pub ignored_error_codes: Vec<SolidityErrorCode>,
+    /// List of (path prefix, solidity error codes) to silence in the compiler output.
+    pub ignored_error_codes_from: Vec<(PathBuf, Vec<SolidityErrorCode>)>,
     /// List of file paths to ignore.
     #[serde(rename = "ignored_warnings_from")]
     pub ignored_file_paths: Vec<PathBuf>,
@@ -1235,6 +1237,10 @@ impl Config {
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
         let settings = self.compiler_settings()?;
         let paths = self.project_paths();
+
+        // Strip "./" prefix for consistent path matching
+        let parse_path = |path: &PathBuf| path.strip_prefix("./").unwrap_or(path).to_path_buf();
+
         let mut builder = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .additional_settings(self.additional_settings(&settings))
@@ -1242,15 +1248,10 @@ impl Config {
             .settings(settings)
             .paths(paths)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
-            .ignore_paths(
-                self.ignored_file_paths
-                    .iter()
-                    .map(|path| {
-                        // Strip "./" prefix for consistent path matching
-                        path.strip_prefix("./").unwrap_or(path).to_path_buf()
-                    })
-                    .collect::<Vec<_>>(),
-            )
+            .ignore_error_codes_from(self.ignored_error_codes_from.iter().map(|(path, codes)| {
+                (parse_path(path), codes.iter().copied().map(Into::into).collect())
+            }))
+            .ignore_paths(self.ignored_file_paths.iter().map(parse_path).collect())
             .set_compiler_severity_filter(if self.deny.warnings() {
                 Severity::Warning
             } else {
@@ -2716,6 +2717,7 @@ impl Default for Config {
                 SolidityErrorCode::TransferDeprecated,
                 SolidityErrorCode::NatspecMemorySafeAssemblyDeprecated,
             ],
+            ignored_error_codes_from: vec![],
             ignored_file_paths: vec![],
             deny: DenyLevel::Never,
             deny_warnings: false,
