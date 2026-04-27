@@ -36,7 +36,7 @@ env:
   RUSTC_WRAPPER: "sccache"
 
 jobs:
-  sanity-check:
+  tempo-check:
     runs-on: depot-ubuntu-latest
     timeout-minutes: 60
     permissions:
