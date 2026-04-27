@@ -1,0 +1,96 @@
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp > deadline;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp != 0;
+   │                ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp <= deadline;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp >= deadline;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp < deadline;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return deadline > block.timestamp;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return block.timestamp + 1 > deadline;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return (block.timestamp / 3600) == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         require(block.timestamp > deadline);
+   │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         if (block.timestamp > deadline) {
+   │             ━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+   ╭▸ ROOT/testdata/BlockTimestamp.sol:LL:CC
+   │
+LL │         return foo(block.timestamp) > 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#block-timestamp
+
