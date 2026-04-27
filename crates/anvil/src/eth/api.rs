@@ -1354,51 +1354,8 @@ impl EthApi<FoundryNetwork> {
         state: &dyn DatabaseRef,
         block_env: BlockEnv,
     ) -> Result<u128> {
-        let fees = FeeDetails::new(
-            request.gas_price,
-            request.max_fee_per_gas,
-            request.max_priority_fee_per_gas,
-            request.max_fee_per_blob_gas,
-        )?
-        .or_zero_fees();
-
-        // get the highest possible gas limit, either the request's set value or the currently
-        // configured gas limit
-        let mut highest_gas_limit = request.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
-
-        // Tempo AA transactions pay fees in ERC-20 tokens, not ETH
-        let is_tempo_tx = request.other.get("feeToken").is_some_and(|v| !v.is_null());
-
-        let gas_price = fees.gas_price.unwrap_or_default();
-        let available_funds = if !is_tempo_tx && let Some(from) = request.from {
-            Some(self.backend.get_balance_with_state(state, from)?)
-        } else {
-            None
-        };
-        if let Some(available_funds) = available_funds.as_ref() {
-            if let Some(value) = request.value
-                && value > *available_funds
-            {
-                return Err(InvalidTransactionError::InsufficientFunds.into());
-            }
-        }
-
-        // If we have non-zero gas price, cap gas limit by sender balance.
-        // Skip this check for Tempo transactions which pay with fee tokens, not ETH.
-        if gas_price > 0
-            && let Some(mut available_funds) = available_funds
-        {
-            if let Some(value) = request.value {
-                // safe: value < available_funds
-                available_funds -= value;
-            }
-            // amount of gas the sender can afford with the `gas_price`
-            let allowance = available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
-            highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
-        }
-
         // If the request is a simple native token transfer we can optimize
-        // after affordability checks. We assume it's a transfer if we have no input data.
+        // We assume it's a transfer if we have no input data.
         // Skip this optimization for Tempo mode since native ETH transfers are not allowed
         // and Tempo AA transactions have higher intrinsic gas costs (~46k).
         if !self.backend.is_tempo() {
@@ -1418,6 +1375,41 @@ impl EthApi<FoundryNetwork> {
             {
                 return Ok(MIN_TRANSACTION_GAS);
             }
+        }
+
+        let fees = FeeDetails::new(
+            request.gas_price,
+            request.max_fee_per_gas,
+            request.max_priority_fee_per_gas,
+            request.max_fee_per_blob_gas,
+        )?
+        .or_zero_fees();
+
+        // get the highest possible gas limit, either the request's set value or the currently
+        // configured gas limit
+        let mut highest_gas_limit = request.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
+
+        // Tempo AA transactions pay fees in ERC-20 tokens, not ETH
+        let is_tempo_tx = request.other.get("feeToken").is_some_and(|v| !v.is_null());
+
+        let gas_price = fees.gas_price.unwrap_or_default();
+        // If we have non-zero gas price, cap gas limit by sender balance.
+        // Skip this check for Tempo transactions which pay with fee tokens, not ETH.
+        if gas_price > 0
+            && !is_tempo_tx
+            && let Some(from) = request.from
+        {
+            let mut available_funds = self.backend.get_balance_with_state(state, from)?;
+            if let Some(value) = request.value {
+                if value > available_funds {
+                    return Err(InvalidTransactionError::InsufficientFunds.into());
+                }
+                // safe: value < available_funds
+                available_funds -= value;
+            }
+            // amount of gas the sender can afford with the `gas_price`
+            let allowance = available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
+            highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
         }
 
         let mut call_to_estimate = request.clone();

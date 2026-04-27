@@ -3551,7 +3551,10 @@ where
                                     |_, _, inspector, _, _| {
                                         inspector
                                             .geth_builder()
-                                            .geth_call_traces(call_config, tx.info.gas_used)
+                                            .geth_call_traces(
+                                                call_config,
+                                                tx.receipt.cumulative_gas_used(),
+                                            )
                                             .into()
                                     },
                                 )?;
@@ -3597,7 +3600,11 @@ where
 
         // default structlog tracer
         Ok(GethTraceBuilder::new(tx.info.traces.clone())
-            .geth_traces(tx.info.gas_used, tx.info.out.clone().unwrap_or_default(), config)
+            .geth_traces(
+                tx.receipt.cumulative_gas_used(),
+                tx.info.out.clone().unwrap_or_default(),
+                config,
+            )
             .into())
     }
 
@@ -4207,12 +4214,6 @@ fn get_pool_transactions_nonce(
     if let Some(highest_nonce) = pool_transactions
         .iter()
         .filter(|tx| *tx.pending_transaction.sender() == address)
-        .filter(|tx| {
-            !matches!(
-                tx.pending_transaction.transaction.as_ref(),
-                FoundryTxEnvelope::Tempo(aa_tx) if !aa_tx.tx().nonce_key.is_zero()
-            )
-        })
         .map(|tx| tx.pending_transaction.nonce())
         .max()
     {
