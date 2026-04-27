@@ -13,8 +13,8 @@ use mpp::{
         parse_www_authenticate_all,
     },
 };
-use reqwest::header::HeaderMap;
 use reqwest::StatusCode;
+use reqwest::header::HeaderMap;
 use std::{
     collections::HashMap,
     fmt,
@@ -44,17 +44,13 @@ fn default_deposit() -> u128 {
 }
 
 fn format_http_diagnostics(headers: &HeaderMap) -> String {
-    const DIAGNOSTIC_HEADERS: &[&str] = &[
-        "x-request-id",
-        "cf-ray",
-        "server",
-        "report-to",
-        "nel",
-    ];
+    const DIAGNOSTIC_HEADERS: &[&str] = &["x-request-id", "cf-ray", "server", "report-to", "nel"];
 
     let pairs: Vec<String> = DIAGNOSTIC_HEADERS
         .iter()
-        .filter_map(|name| headers.get(*name).and_then(|value| value.to_str().ok().map(|v| (*name, v))))
+        .filter_map(|name| {
+            headers.get(*name).and_then(|value| value.to_str().ok().map(|v| (*name, v)))
+        })
         .map(|(name, value)| format!("{name}: {value}"))
         .collect();
 
@@ -393,7 +389,7 @@ where
             self.provider.rollback_pending();
             return Err(TransportErrorKind::http_error(
                 StatusCode::PAYMENT_REQUIRED.as_u16(),
-                format!("{}{}", retry_text, diagnostics),
+                format!("{retry_text}{diagnostics}"),
             ));
         }
 
@@ -490,12 +486,10 @@ where
             .collect();
 
         if www_auth_values.is_empty() {
-            return Err(TransportErrorKind::custom(std::io::Error::other(
-                format!(
-                    "402 response missing WWW-Authenticate header{}",
-                    format_http_diagnostics(resp.headers())
-                ),
-            )));
+            return Err(TransportErrorKind::custom(std::io::Error::other(format!(
+                "402 response missing WWW-Authenticate header{}",
+                format_http_diagnostics(resp.headers())
+            ))));
         }
 
         let challenges: Vec<_> = parse_www_authenticate_all(www_auth_values)
@@ -545,7 +539,7 @@ where
         if !status.is_success() {
             return Err(TransportErrorKind::http_error(
                 status.as_u16(),
-                format!("{}{}", String::from_utf8_lossy(&body), diagnostics),
+                format!("{}{diagnostics}", String::from_utf8_lossy(&body)),
             ));
         }
 
