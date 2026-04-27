@@ -14,6 +14,8 @@ FOUNDRY_BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/HEAD/found
 FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 FOUNDRYUP_JOBS=""
 FOUNDRYUP_IGNORE_VERIFICATION=false
+FOUNDRYUP_RESOLVE_RESPONSE=""
+FOUNDRYUP_RESOLVE_TAG=""
 
 BINS=(forge cast anvil chisel)
 HASH_NAMES=()
@@ -538,47 +540,37 @@ tolower() {
 # For "latest": returns the tag of the latest non-prerelease release (e.g. "v1.6.0")
 # For "nightly": returns the tag of the latest prerelease release (e.g. "nightly-abc123...")
 resolve_latest_release() {
-  local repo="$1"
-  local channel="$2"
-  local tmp
-  tmp="$(mktemp 2>/dev/null)" || err "failed to create temp file"
-
-  if [[ "$channel" == "nightly" ]]; then
+  if [[ "$2" == "nightly" ]]; then
     # The latest nightly is always the most recent prerelease, so the first page is sufficient.
-    local api_url="https://api.github.com/repos/${repo}/releases?per_page=10"
-  else
-    # /releases/latest returns the latest non-prerelease, non-draft release.
-    local api_url="https://api.github.com/repos/${repo}/releases/latest"
-  fi
-
-  if check_cmd curl; then
-    curl -fsSL "$api_url" -o "$tmp" || err "failed to fetch releases from GitHub API"
-  else
-    wget -qO "$tmp" "$api_url" || err "failed to fetch releases from GitHub API"
-  fi
-
-  local tag_name=""
-  if [[ "$channel" == "nightly" ]]; then
+    if check_cmd curl; then
+      FOUNDRYUP_RESOLVE_RESPONSE=$(curl -fsSL "https://api.github.com/repos/${1}/releases?per_page=10") || err "failed to fetch releases from GitHub API"
+    else
+      FOUNDRYUP_RESOLVE_RESPONSE=$(wget -qO- "https://api.github.com/repos/${1}/releases?per_page=10") || err "failed to fetch releases from GitHub API"
+    fi
     # Find the first non-draft prerelease whose tag starts with "nightly-"
-    tag_name=$(awk '
+    FOUNDRYUP_RESOLVE_TAG=$(printf '%s' "$FOUNDRYUP_RESOLVE_RESPONSE" | awk '
       /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
       /"draft"[[:space:]]*:[[:space:]]*true/ { tag="" }
       /"prerelease"[[:space:]]*:[[:space:]]*true/ { if (tag ~ /^nightly-/) { print tag; exit } }
-    ' "$tmp")
+    ')
   else
+    # /releases/latest returns the latest non-prerelease, non-draft release.
+    if check_cmd curl; then
+      FOUNDRYUP_RESOLVE_RESPONSE=$(curl -fsSL "https://api.github.com/repos/${1}/releases/latest") || err "failed to fetch releases from GitHub API"
+    else
+      FOUNDRYUP_RESOLVE_RESPONSE=$(wget -qO- "https://api.github.com/repos/${1}/releases/latest") || err "failed to fetch releases from GitHub API"
+    fi
     # Extract the tag_name from the single release object
-    tag_name=$(awk '
+    FOUNDRYUP_RESOLVE_TAG=$(printf '%s' "$FOUNDRYUP_RESOLVE_RESPONSE" | awk '
       /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); print; exit }
-    ' "$tmp")
+    ')
   fi
 
-  rm -f "$tmp"
-
-  if [ -z "$tag_name" ]; then
-    err "could not find a ${channel} release for ${repo}"
+  if [ -z "$FOUNDRYUP_RESOLVE_TAG" ]; then
+    err "could not find a ${2} release for ${1}"
   fi
 
-  printf '%s' "$tag_name"
+  printf '%s' "$FOUNDRYUP_RESOLVE_TAG"
 }
 
 compute_sha256() {
