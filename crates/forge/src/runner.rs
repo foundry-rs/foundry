@@ -733,6 +733,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let invariant_config = &self.config.invariant;
 
         let mut executor = self.clone_executor();
+        // Enable tracing for coverage-guided runs so the corpus manager can hoist
+        // allowed inner calls from traces and seed from sibling unit tests.
+        if invariant_config.corpus.is_coverage_guided()
+            && executor.inspector().tracer.is_none()
+        {
+            executor.set_tracing(TraceMode::Call);
+        }
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
         // metrics (useful for benchmarking the fuzzer).
         executor

@@ -55,7 +55,7 @@ impl ArtifactFilters {
 /// clashing.
 ///
 /// `address(0)` is excluded by default.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct SenderFilters {
     pub targeted: Vec<Address>,
     pub excluded: Vec<Address>,

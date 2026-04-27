@@ -37,17 +37,17 @@
 use crate::executors::{Executor, RawCallResult, invariant::execute_tx};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Bytes, I256};
+use alloy_primitives::{Address, Bytes, I256, U256};
 use eyre::{Result, eyre};
-use foundry_common::sh_warn;
+use foundry_common::{TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
-use foundry_evm_core::evm::FoundryEvmNetwork;
+use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork};
 use foundry_evm_fuzz::{
     BasicTxDetails, CallDetails,
-    invariant::FuzzRunIdentifiedContracts,
+    invariant::{FuzzRunIdentifiedContracts, InvariantContract, SenderFilters, TargetedContracts},
     strategies::{EvmFuzzState, mutate_param_value},
 };
-use foundry_evm_traces::SparsedTraceArena;
+use foundry_evm_traces::{CallTraceArena, SparsedTraceArena, TraceMode};
 use proptest::{
     prelude::{Just, Rng, Strategy},
     prop_oneof,
@@ -813,6 +813,101 @@ impl WorkerCorpus {
         }
     }
 
+    /// Seeds the corpus with sequences derived from sibling unit tests in the
+    /// invariant test contract. Each unit test (zero-input `test*` function) is run
+    /// against a clone of `executor`; depth-1 calls from the test's trace whose
+    /// `(target, selector)` is in the allowed set become a single corpus entry.
+    ///
+    /// The intent is to seed coverage-guided fuzzing with the call sequences a
+    /// developer has already chosen by hand, instead of having the mutator stumble
+    /// onto them from random generation.
+    ///
+    /// Returns the number of seed sequences actually added (i.e. tests whose trace
+    /// produced at least one allowed depth-1 call).
+    pub fn seed_from_test_traces<FEN: FoundryEvmNetwork>(
+        &mut self,
+        invariant_contract: &InvariantContract<'_>,
+        targeted_contracts: &FuzzRunIdentifiedContracts,
+        sender_filters: &SenderFilters,
+        executor: &Executor<FEN>,
+    ) -> Result<usize> {
+        if !self.config.is_coverage_guided() {
+            return Ok(0);
+        }
+
+        // Pick a sender that the harness will accept as a top-level caller. Prefer a
+        // configured `targetSender`; otherwise fall back to foundry's default fuzz caller.
+        let sender = sender_filters.targeted.first().copied().unwrap_or(CALLER);
+        let worker_corpus_dir = self.worker_dir.as_ref().map(|d| d.join(CORPUS_DIR));
+        let targets = targeted_contracts.targets.lock();
+        let mut added = 0;
+
+        for func in invariant_contract.abi.functions() {
+            if !func.is_unit_test() {
+                continue;
+            }
+            // Defensive: skip the invariant function itself even if it somehow classifies
+            // as a unit test (e.g. when using `invariant_*` naming on a no-input function).
+            if func.selector() == invariant_contract.invariant_function.selector() {
+                continue;
+            }
+
+            let calldata = match func.abi_encode_input(&[]) {
+                Ok(c) => Bytes::from(c),
+                Err(_) => continue,
+            };
+
+            // Run on a clone so seeding never mutates the campaign's setup state.
+            let mut exec = executor.clone();
+            if exec.inspector().tracer.is_none() {
+                exec.set_tracing(TraceMode::Call);
+            }
+
+            let raw = match exec.call_raw(
+                sender,
+                invariant_contract.address,
+                calldata,
+                U256::ZERO,
+            ) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            if raw.reverted {
+                continue;
+            }
+            let Some(traces) = raw.traces.as_ref() else {
+                continue;
+            };
+
+            let seq = extract_top_level_sequence(&traces.arena, sender, &targets);
+            if seq.is_empty() {
+                continue;
+            }
+
+            let entry = CorpusEntry::new(seq);
+            debug!(
+                target: "corpus",
+                test = %func.name,
+                seq_len = entry.tx_seq.len(),
+                "seeded corpus from test trace"
+            );
+
+            if let Some(dir) = &worker_corpus_dir
+                && let Err(err) = entry.write_to_disk_in(dir, self.config.corpus_gzip)
+            {
+                debug!(target: "corpus", %err, "failed to persist seed entry to disk");
+            }
+
+            let new_index = self.in_memory_corpus.len();
+            self.new_entry_indices.push(new_index);
+            self.metrics.corpus_count += 1;
+            self.in_memory_corpus.push(entry);
+            added += 1;
+        }
+
+        Ok(added)
+    }
+
     /// Returns the next call to be used in call sequence.
     /// If coverage guided fuzzing is not configured or if previous input was discarded then this is
     /// a new tx from strategy.
@@ -1209,6 +1304,40 @@ impl WorkerCorpus {
     }
 }
 
+/// Walks a call trace and extracts depth-1 calls (direct children of the root)
+/// whose `(target, selector)` is in `targets`. Returned sequence is in execution order.
+///
+/// "Depth-1" here means calls made directly from the root call of the trace —
+/// in the test-seeding flow, that's the test function calling out to other contracts.
+fn extract_top_level_sequence(
+    arena: &CallTraceArena,
+    sender: Address,
+    targets: &TargetedContracts,
+) -> Vec<BasicTxDetails> {
+    let mut seq = Vec::new();
+    for node in arena.nodes() {
+        let Some(parent) = node.parent else { continue };
+        if parent != 0 {
+            continue;
+        }
+        let calldata = &node.trace.data;
+        if calldata.len() < 4 {
+            continue;
+        }
+        let tx = BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender,
+            call_details: CallDetails { target: node.trace.address, calldata: calldata.clone() },
+        };
+        if !targets.can_replay(&tx) {
+            continue;
+        }
+        seq.push(tx);
+    }
+    seq
+}
+
 fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
     let dir = match std::fs::read_dir(path) {
         Ok(dir) => dir,
@@ -1285,7 +1414,6 @@ fn parse_corpus_filename(name: &str) -> Result<(Uuid, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Address;
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -1555,5 +1683,98 @@ mod tests {
         // Re-hoisting the same trace must not duplicate entries.
         manager.hoist_trace_calls(Some(&traces), &parent_tx, &targeted_contracts);
         assert_eq!(manager.hoisted_pool.len(), 1, "duplicate (target, calldata) must be deduped");
+    }
+
+    #[test]
+    fn extract_top_level_sequence_takes_only_depth_one_allowed_calls() {
+        use alloy_json_abi::{Function, JsonAbi};
+        use foundry_evm_fuzz::invariant::{TargetedContract, TargetedContracts};
+        use foundry_evm_traces::CallTraceArena;
+        use revm_inspectors::tracing::types::{CallTrace, CallTraceNode};
+
+        let target = Address::from([0x42; 20]);
+        let other = Address::from([0x43; 20]);
+
+        // Targets allow both `foo(uint256)` and `bar()` on `target`.
+        let foo = Function::parse("foo(uint256)").unwrap();
+        let bar = Function::parse("bar()").unwrap();
+        let foo_sel = foo.selector();
+        let bar_sel = bar.selector();
+        let mut abi = JsonAbi::new();
+        abi.functions.insert("foo".to_string(), vec![foo]);
+        abi.functions.insert("bar".to_string(), vec![bar]);
+
+        let mut targets = TargetedContracts::new();
+        targets.inner.insert(target, TargetedContract::new("Test".to_string(), abi));
+
+        // Build a synthetic test trace:
+        //   root (test contract)
+        //     ├─ child 1: target.foo(...)        ← depth-1, allowed → keep
+        //     │     └─ child 2: target.bar()     ← depth-2, allowed → drop (not depth-1)
+        //     ├─ child 3: other.foo(...)         ← depth-1, wrong target → drop
+        //     └─ child 4: target.bar()           ← depth-1, allowed → keep
+        let mut arena = CallTraceArena::default();
+        {
+            let nodes = arena.nodes_mut();
+            nodes.clear();
+
+            let test_contract = Address::from([0x99; 20]);
+            let root =
+                CallTraceNode { idx: 0, parent: None, children: vec![1, 3, 4], ..Default::default() };
+            let mut root = root;
+            root.trace = CallTrace { address: test_contract, ..Default::default() };
+            nodes.push(root);
+
+            let mut foo_calldata = vec![0u8; 36];
+            foo_calldata[..4].copy_from_slice(&foo_sel[..]);
+            let bar_calldata = bar_sel.to_vec();
+
+            // child 1: depth-1 allowed call (target, foo)
+            let mut n1 =
+                CallTraceNode { idx: 1, parent: Some(0), children: vec![2], ..Default::default() };
+            n1.trace = CallTrace {
+                address: target,
+                data: Bytes::from(foo_calldata.clone()),
+                ..Default::default()
+            };
+            nodes.push(n1);
+
+            // child 2: depth-2 (parent is node 1, not root) — must be ignored
+            let mut n2 = CallTraceNode { idx: 2, parent: Some(1), ..Default::default() };
+            n2.trace = CallTrace {
+                address: target,
+                data: Bytes::from(bar_calldata.clone()),
+                ..Default::default()
+            };
+            nodes.push(n2);
+
+            // child 3: depth-1 but wrong target — must be filtered
+            let mut n3 = CallTraceNode { idx: 3, parent: Some(0), ..Default::default() };
+            n3.trace = CallTrace {
+                address: other,
+                data: Bytes::from(foo_calldata),
+                ..Default::default()
+            };
+            nodes.push(n3);
+
+            // child 4: depth-1 allowed (target, bar)
+            let mut n4 = CallTraceNode { idx: 4, parent: Some(0), ..Default::default() };
+            n4.trace = CallTrace {
+                address: target,
+                data: Bytes::from(bar_calldata),
+                ..Default::default()
+            };
+            nodes.push(n4);
+        }
+
+        let sender = Address::from([0xaa; 20]);
+        let seq = extract_top_level_sequence(&arena, sender, &targets);
+
+        assert_eq!(seq.len(), 2, "should keep only depth-1 allowed calls");
+        assert_eq!(seq[0].sender, sender);
+        assert_eq!(seq[0].call_details.target, target);
+        assert_eq!(&seq[0].call_details.calldata[..4], &foo_sel[..]);
+        assert_eq!(seq[1].call_details.target, target);
+        assert_eq!(&seq[1].call_details.calldata[..4], &bar_sel[..]);
     }
 }
