@@ -42,16 +42,16 @@ impl<'hir> LateLintPass<'hir> for MissingZeroCheck {
 
         let mut a = Analyzer::new(hir, &params);
 
-        for stmt in body.stmts {
-            let _ = a.visit_stmt(stmt);
-        }
-
         for m in func.modifiers {
             collect_modifier_guards(hir, m, &params, &mut a.guarded);
         }
 
+        for stmt in body.stmts {
+            let _ = a.visit_stmt(stmt);
+        }
+
         for &p in &params {
-            if a.sinks.contains(&p) && !a.guarded.contains(&p) {
+            if a.sinks.contains(&p) {
                 ctx.emit(&MISSING_ZERO_CHECK, hir.variable(p).span);
             }
         }
@@ -234,7 +234,7 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 return ControlFlow::Continue(());
             }
 
-            // `<addr>.call/.delegatecall/.staticcall/.transfer/.send(..)`: receiver is the sink.
+            // `<addr>.call/.delegatecall/.transfer/.send(..)`: receiver is the sink.
             ExprKind::Call(callee, args, _) => {
                 if let Some(receiver) = address_call_receiver(callee) {
                     self.sink_depth += 1;
@@ -275,7 +275,11 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                             self.guarded.extend(srcs.iter().copied());
                         }
                         if self.sink_depth > 0 {
-                            self.sinks.extend(srcs.iter().copied());
+                            for &src in srcs {
+                                if !self.guarded.contains(&src) {
+                                    self.sinks.insert(src);
+                                }
+                            }
                         }
                     }
                 }
@@ -301,7 +305,7 @@ fn is_require_or_assert(callee: &hir::Expr<'_>) -> bool {
     false
 }
 
-/// If `callee` is `<receiver>.{call,delegatecall,staticcall,transfer,send}` (with or without
+/// If `callee` is `<receiver>.{call,delegatecall,transfer,send}` (with or without
 /// call options), returns the `<receiver>` expression.
 fn address_call_receiver<'hir>(callee: &'hir hir::Expr<'hir>) -> Option<&'hir hir::Expr<'hir>> {
     // `addr.call{value: x}(..)` lowers as `Call(Member(receiver, "call"), ..)` — peel an
@@ -313,12 +317,7 @@ fn address_call_receiver<'hir>(callee: &'hir hir::Expr<'hir>) -> Option<&'hir hi
     let target = if matches!(inner.kind, ExprKind::Member(..)) { inner } else { callee };
     if let ExprKind::Member(receiver, name) = &target.kind {
         let n = name.name;
-        if n == kw::Call
-            || n == kw::Delegatecall
-            || n == kw::Staticcall
-            || n == sym::transfer
-            || n == sym::send
-        {
+        if n == kw::Call || n == kw::Delegatecall || n == sym::transfer || n == sym::send {
             return Some(receiver);
         }
     }

@@ -86,10 +86,6 @@ contract MissingZeroCheck {
         owner = a;
     }
 
-    function addrIdentity(address x) internal pure returns (address) {
-        return x;
-    }
-
     function delegateCallSink(address a) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
         (bool ok,) = a.delegatecall("");
         require(ok);
@@ -104,15 +100,15 @@ contract MissingZeroCheck {
         require(ok);
     }
 
-    function staticCallOnly(address a) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
-        (bool ok,) = a.staticcall("");
-        require(ok);
-    }
-
     function multiHopTaint(address a) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
         address x = a;
         address y = x;
         owner = y;
+    }
+
+    function guardAfterSink(address a) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        owner = a;
+        require(a != address(0));
     }
 
     // SHOULD PASS:
@@ -181,5 +177,14 @@ contract MissingZeroCheck {
 
     function noSinkJustPassthrough(address a) external returns (address) {
         return a;
+    }
+
+    function addrIdentity(address x) internal pure returns (address) {
+        return x;
+    }
+
+    function staticCallOnly(address a) external {
+        (bool ok,) = a.staticcall("");
+        require(ok);
     }
 }
