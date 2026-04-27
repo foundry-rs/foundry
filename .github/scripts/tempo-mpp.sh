@@ -28,7 +28,9 @@ else
   ANVIL="anvil"
   CHISEL="chisel"
 fi
-export MPP_DEPOSIT=100000
+export MPP_DEPOSIT="${MPP_DEPOSIT:-100000}"
+TEMPO_AUTO_FUND="${TEMPO_AUTO_FUND:-0}"
+TEMPO_AUTO_FUND_ATTEMPTS="${TEMPO_AUTO_FUND_ATTEMPTS:-3}"
 MIN_BALANCE="${MPP_MIN_BALANCE:-$((MPP_DEPOSIT + 50000))}"
 RPC_MPP="https://rpc.mpp.moderato.tempo.xyz"
 RPC="https://rpc.moderato.tempo.xyz"
@@ -63,12 +65,28 @@ fi
 echo "Wallet: $WALLET"
 echo "RPC:    $RPC_MPP"
 echo ""
+WALLET_LOWER=$(printf '%s' "$WALLET" | tr '[:upper:]' '[:lower:]')
 
 # 1. Check balance before
 echo "=== 1. Balance BEFORE ==="
 BEFORE=$("$CAST" erc20 balance "$TOKEN" "$WALLET" --rpc-url "$RPC")
 echo "$BEFORE"
 BEFORE_RAW=$(echo "$BEFORE" | awk '{print $1}')
+
+if [ "$BEFORE_RAW" -lt "$MIN_BALANCE" ] && [ "$TEMPO_AUTO_FUND" = "1" ]; then
+  echo "Balance below threshold, requesting faucet funds for $WALLET_LOWER"
+  ATTEMPT=0
+  while [ "$BEFORE_RAW" -lt "$MIN_BALANCE" ] && [ "$ATTEMPT" -lt "$TEMPO_AUTO_FUND_ATTEMPTS" ]; do
+    ATTEMPT=$((ATTEMPT + 1))
+    echo "Faucet attempt $ATTEMPT/$TEMPO_AUTO_FUND_ATTEMPTS"
+    "$CAST" rpc tempo_fundAddress "$WALLET_LOWER" --rpc-url "$RPC" >/dev/null
+    sleep 2
+    BEFORE=$("$CAST" erc20 balance "$TOKEN" "$WALLET" --rpc-url "$RPC")
+    echo "$BEFORE"
+    BEFORE_RAW=$(echo "$BEFORE" | awk '{print $1}')
+  done
+fi
+
 if [ "$BEFORE_RAW" -lt "$MIN_BALANCE" ]; then
   echo "ERROR: Wallet balance too low for MPP e2e. Need at least $MIN_BALANCE units of $TOKEN, got $BEFORE_RAW. Refill the CI wallet."
   exit 1
