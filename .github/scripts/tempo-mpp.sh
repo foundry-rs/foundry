@@ -29,6 +29,7 @@ else
   CHISEL="chisel"
 fi
 export MPP_DEPOSIT=100000
+MIN_BALANCE="${MPP_MIN_BALANCE:-$((MPP_DEPOSIT + 50000))}"
 RPC_MPP="https://rpc.mpp.moderato.tempo.xyz"
 RPC="https://rpc.moderato.tempo.xyz"
 TOKEN="0x20c0000000000000000000000000000000000000"  # TEMPO TIP-20
@@ -67,6 +68,11 @@ echo ""
 echo "=== 1. Balance BEFORE ==="
 BEFORE=$("$CAST" erc20 balance "$TOKEN" "$WALLET" --rpc-url "$RPC")
 echo "$BEFORE"
+BEFORE_RAW=$(echo "$BEFORE" | awk '{print $1}')
+if [ "$BEFORE_RAW" -lt "$MIN_BALANCE" ]; then
+  echo "ERROR: Wallet balance too low for MPP e2e. Need at least $MIN_BALANCE units of $TOKEN, got $BEFORE_RAW. Refill the CI wallet."
+  exit 1
+fi
 
 # 2. Call block-number through MPP-gated endpoint
 echo ""
@@ -85,7 +91,6 @@ echo "=== 3. Balance AFTER ==="
 AFTER=$("$CAST" erc20 balance "$TOKEN" "$WALLET" --rpc-url "$RPC")
 echo "$AFTER"
 
-BEFORE_RAW=$(echo "$BEFORE" | awk '{print $1}')
 AFTER_RAW=$(echo "$AFTER" | awk '{print $1}')
 SPENT=$((BEFORE_RAW - AFTER_RAW))
 echo "Spent: $SPENT units (channel deposit + gas)"

@@ -45,7 +45,7 @@ jobs:
           TEMPO_PRIVATE_KEY: ${{ secrets.TEMPO_PRIVATE_KEY }}
           TEMPO_KEYS_TOML_B64: ${{ secrets.TEMPO_KEYS_TOML_B64 }}
           MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
-          MPP_DEPOSIT: "1000000"
+          MPP_DEPOSIT: "100000"
         run: |
           if [ -n "${TEMPO_PRIVATE_KEY:-}" ]; then
             echo "::notice::Using TEMPO_PRIVATE_KEY for MPP e2e"
