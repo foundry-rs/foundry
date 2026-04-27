@@ -6,7 +6,7 @@ use crate::{
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
-    result::{SuiteResult, TestResult, TestSetup},
+    result::{InvariantOtherFailure, SuiteResult, TestResult, TestSetup},
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -1053,19 +1053,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     | InvariantFuzzError::Revert(case_data) = error
                     && let TestError::Fail(_, ref calls) = case_data.test_error
                 {
-                    other_failures.push(format!(
-                        "{}: {}",
-                        invariant.name,
-                        error.revert_reason().unwrap_or_default()
-                    ));
-                    match generate_counterexample(
+                    let secondary_counterexample = match generate_counterexample(
                         self.clone_executor(),
                         &self.cr.mcr.known_contracts,
                         identified_contracts.clone(),
                         calls,
                         show_solidity,
                     ) {
-                        Ok(call_sequence) => {
+                        Ok(call_sequence) if !call_sequence.is_empty() => {
                             record_invariant_failure(
                                 failure_dir.as_path(),
                                 persisted_failure.as_path(),
@@ -1074,11 +1069,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                 false,
                             );
                             any_secondary_persisted = true;
+                            None::<CounterExample>
                         }
+                        Ok(_) => None,
                         Err(err) => {
                             error!(%err, "Failed to generate and record invariant counterexample");
+                            None
                         }
-                    }
+                    };
+                    other_failures.push(InvariantOtherFailure {
+                        name: invariant.name.clone(),
+                        reason: error.revert_reason().unwrap_or_default(),
+                        counterexample: secondary_counterexample,
+                        persisted_path: persisted_failure.clone(),
+                    });
                 }
             }
         }

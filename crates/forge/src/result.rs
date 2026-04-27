@@ -408,6 +408,23 @@ impl TestStatus {
     }
 }
 
+/// A non-primary invariant that broke during an `assert_all` campaign.
+///
+/// Carries everything needed to render the failure on its own (matching how the primary is
+/// displayed) and to point users at the persisted counterexample for re-running.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InvariantOtherFailure {
+    /// Invariant function name (e.g. `invariant_cond3`).
+    pub name: String,
+    /// Revert reason or assertion failure message.
+    pub reason: String,
+    /// Counterexample sequence, when one is available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counterexample: Option<CounterExample>,
+    /// Path where the counterexample was persisted for re-running and shrinking.
+    pub persisted_path: std::path::PathBuf,
+}
+
 /// The result of an executed test.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TestResult {
@@ -421,8 +438,12 @@ pub struct TestResult {
     /// still be successful (i.e self.success == true) when it's expected to fail.
     pub reason: Option<String>,
 
-    /// This field will be populated if there are additional invariant broken besides the main one.
-    pub other_failures: Vec<String>,
+    /// Additional broken invariants beyond the primary (the one matched by `--mt`, or the only
+    /// one if no filter was applied).
+    ///
+    /// Each entry carries the invariant's name, the failure reason, an optional counterexample,
+    /// and the path where the counterexample has been persisted for shrinking on a subsequent run.
+    pub other_failures: Vec<InvariantOtherFailure>,
 
     /// Directory where invariant failure counterexamples have been persisted (set when one or more
     /// secondary invariant failures were written, so users can locate persisted counterexamples).
@@ -538,7 +559,27 @@ impl fmt::Display for TestResult {
                 if !self.other_failures.is_empty() {
                     writeln!(s).unwrap();
                     for failure in &self.other_failures {
-                        writeln!(s, "{failure}").unwrap();
+                        // If we have a (shrunk) counterexample, render the secondary the same
+                        // way the primary is rendered: `[FAIL: reason]\n\t[Sequence] ...`.
+                        // Otherwise fall back to the terse `name: reason` one-liner so the
+                        // structure is preserved for tools while keeping output compact.
+                        if let Some(CounterExample::Sequence(original, sequence)) =
+                            &failure.counterexample
+                        {
+                            writeln!(
+                                s,
+                                "[FAIL: {}] {}\n\t[Sequence] (original: {original}, shrunk: {})",
+                                failure.reason,
+                                failure.name,
+                                sequence.len()
+                            )
+                            .unwrap();
+                            for ex in sequence {
+                                writeln!(s, "{ex}").unwrap();
+                            }
+                        } else {
+                            writeln!(s, "{}: {}", failure.name, failure.reason).unwrap();
+                        }
                     }
                     if let Some(dir) = &self.invariant_failure_dir {
                         writeln!(
@@ -753,7 +794,7 @@ impl TestResult {
         gas_report_traces: Vec<Vec<CallTraceArena>>,
         success: bool,
         reason: Option<String>,
-        other_failures: Vec<String>,
+        other_failures: Vec<InvariantOtherFailure>,
         invariant_failure_dir: Option<std::path::PathBuf>,
         counterexample: Option<CounterExample>,
         cases: Vec<FuzzedCases>,
