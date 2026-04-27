@@ -1,0 +1,55 @@
+name: CI MPP
+
+permissions: {}
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  mpp-check:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      # Checkout the repository
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        with:
+          toolchain: stable
+
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+
+      # Build and install binaries
+      - name: Build and install Foundry binaries
+        run: |
+          cargo build --profile dev --locked -p forge -p cast -p anvil -p chisel
+          echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
+
+      - name: Run MPP e2e test
+        env:
+          TEMPO_KEYS_TOML_B64: ${{ secrets.TEMPO_KEYS_TOML_B64 }}
+          MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
+          MPP_DEPOSIT: "1000000"
+        run: |
+          if [ -z "${TEMPO_KEYS_TOML_B64:-}" ]; then
+            echo "::warning::TEMPO_KEYS_TOML_B64 secret not set, skipping MPP e2e"
+            exit 0
+          fi
+          mkdir -p ~/.tempo/wallet
+          echo "$TEMPO_KEYS_TOML_B64" | tr -d '[:space:]' | base64 -d > ~/.tempo/wallet/keys.toml
+          ./.github/scripts/tempo-mpp.sh "$(which cast | xargs dirname)"
