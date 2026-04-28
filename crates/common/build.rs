@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let sha_short = &sha[..10];
 
     let tag_name = try_env_var("TAG_NAME").unwrap_or_else(|| String::from("dev"));
-    let version = release_version(&env_var("CARGO_PKG_VERSION"), &tag_name);
+    let version = release_version(&env_var("CARGO_PKG_VERSION"), &tag_name, &sha);
     let is_nightly = tag_name.starts_with("nightly");
 
     if is_nightly {
@@ -84,9 +84,13 @@ fn env_var(name: &str) -> String {
     try_env_var(name).unwrap()
 }
 
-fn release_version(pkg_version: &str, tag_name: &str) -> String {
+fn release_version(pkg_version: &str, tag_name: &str, sha: &str) -> String {
     if let Some(version) = tag_name.strip_prefix('v') {
         return version.to_owned();
+    }
+
+    if tag_name == "nightly" {
+        return format!("{pkg_version}-nightly-{sha}");
     }
 
     format!("{pkg_version}-{tag_name}")

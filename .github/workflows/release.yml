@@ -205,7 +205,7 @@ jobs:
 
       - name: Build binaries
         env:
-          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+          TAG_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
           SVM_TARGET_PLATFORM: ${{ matrix.svm_target_platform }}
           PLATFORM_NAME: ${{ matrix.platform }}
           TARGET: ${{ matrix.target }}
