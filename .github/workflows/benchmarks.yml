@@ -58,9 +58,12 @@ env:
 jobs:
   run-benchmarks:
     name: Run All Benchmarks
-    runs-on: depot-ubuntu-24.04-32
+    runs-on: foundry-runner
+    # This job runs untrusted third-party builds (foundryup installs, forge
+    # against external repos, etc.) so it must NOT have a write-scoped token.
+    # All git operations are deferred to the publish-results job.
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -154,11 +157,9 @@ jobs:
       - name: Combine benchmark results
         run: ./.github/scripts/combine-benchmarks.sh benches
 
-      - name: Commit and read benchmark results
+      - name: Read benchmark results
         id: benchmark_results
-        env:
-          GITHUB_HEAD_REF: ${{ github.head_ref }}
-        run: ./.github/scripts/commit-and-read-benchmarks.sh benches "${{ github.event_name }}" "${{ github.repository }}"
+        run: ./.github/scripts/read-benchmark-results.sh benches
 
       - name: Upload benchmark results as artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -172,21 +173,21 @@ jobs:
             benches/LATEST.md
 
     outputs:
-      branch_name: ${{ steps.benchmark_results.outputs.branch_name }}
       pr_comment: ${{ steps.benchmark_results.outputs.pr_comment }}
 
   publish-results:
     name: Publish Results
     needs: run-benchmarks
     runs-on: ubuntu-latest
+    # All git writes happen here, on a clean ubuntu-latest runner that has
+    # never executed third-party benchmark code.
     permissions:
       contents: write
       pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
+        # persist-credentials defaults to true so we can push.
 
       - name: Download benchmark results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -194,19 +195,22 @@ jobs:
           name: benchmark-results
           path: benches/
 
-      - name: Push branch for manual runs
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          git push origin "${{ needs.run-benchmarks.outputs.branch_name }}"
-          echo "Pushed branch: ${{ needs.run-benchmarks.outputs.branch_name }}"
+      - name: Commit benchmark results
+        id: commit_results
+        env:
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: ./.github/scripts/commit-benchmark-results.sh benches "${{ github.event_name }}" "${{ github.repository }}"
 
       - name: Create PR for manual runs
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && steps.commit_results.outputs.committed == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          BRANCH_NAME: ${{ steps.commit_results.outputs.branch_name }}
+          PR_COMMENT: ${{ needs.run-benchmarks.outputs.pr_comment }}
         with:
           script: |
-            const branchName = '${{ needs.run-benchmarks.outputs.branch_name }}';
-            const prComment = `${{ needs.run-benchmarks.outputs.pr_comment }}`;
+            const branchName = process.env.BRANCH_NAME;
+            const prComment = process.env.PR_COMMENT;
 
             // Create the pull request
             const { data: pr } = await github.rest.pulls.create({
@@ -231,10 +235,12 @@ jobs:
       - name: Comment on PR
         if: github.event.inputs.pr_number != '' || github.event_name == 'pull_request'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_COMMENT: ${{ needs.run-benchmarks.outputs.pr_comment }}
         with:
           script: |
             const prNumber = ${{ github.event.inputs.pr_number || github.event.pull_request.number }};
-            const prComment = `${{ needs.run-benchmarks.outputs.pr_comment }}`;
+            const prComment = process.env.PR_COMMENT;
 
             const comment = `${prComment}
 
