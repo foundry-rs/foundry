@@ -43,16 +43,16 @@ impl<'hir> LateLintPass<'hir> for UnusedStateVariables {
             return;
         }
 
-        // Walk all function/constructor/fallback/receive bodies to collect
-        // every variable that is referenced anywhere in this contract.
+        // Walk the full contract — functions (including modifier call args, parameters, returns,
+        // and bodies) and state variable initializers — to collect every variable referenced
+        // anywhere in this contract.
         let mut collector = UsedVarCollector { hir, used: HashSet::new() };
         for func_id in contract.all_functions() {
-            let func = hir.function(func_id);
-            if let Some(body) = &func.body {
-                for stmt in body.iter() {
-                    let _ = collector.visit_stmt(stmt);
-                }
-            }
+            let _ = collector.visit_nested_function(func_id);
+        }
+        // State variables can reference other state variables in their initializers.
+        for var_id in contract.variables() {
+            let _ = collector.visit_nested_var(var_id);
         }
 
         // Report any state variable that was never referenced.

@@ -9,6 +9,14 @@ LL │     uint256 unused;
 note[unused-state-variables]: state variable is never used
    ╭▸ ROOT/testdata/UnusedStateVariables.sol:LL:CC
    │
+LL │     uint256 unused;
+   │     ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-state-variables
+
+note[unused-state-variables]: state variable is never used
+   ╭▸ ROOT/testdata/UnusedStateVariables.sol:LL:CC
+   │
 LL │     uint256 firstUnused;
    │     ━━━━━━━━━━━━━━━━━━━━
    │

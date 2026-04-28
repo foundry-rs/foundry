@@ -28,6 +28,19 @@ contract UnusedVars {
     }
 }
 
+// State variables used only as modifier call arguments must not be flagged.
+contract UsedInModifierArg {
+    uint256 limit;
+    uint256 unused; //~NOTE: state variable is never used
+
+    modifier limitedBy(uint256 max) {
+        require(msg.value <= max);
+        _;
+    }
+
+    function foo() external payable limitedBy(limit) {}
+}
+
 contract MultiUnused {
     uint256 firstUnused; //~NOTE: state variable is never used
     uint256 secondUnused; //~NOTE: state variable is never used
