@@ -852,9 +852,9 @@ impl Config {
             // so users are informed when an unknown profile (e.g. via `FOUNDRY_PROFILE`) is
             // selected; the silent fallback is reserved for nested lib configs.
             if strict_profile {
-                config.warnings.push(Warning::UnknownProfile {
-                    profile: selected_profile.to_string(),
-                });
+                config
+                    .warnings
+                    .push(Warning::UnknownProfile { profile: selected_profile.to_string() });
             }
             config.profile = Self::DEFAULT_PROFILE;
         }
