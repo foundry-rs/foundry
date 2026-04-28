@@ -9,7 +9,6 @@ use alloy_rpc_types::{Authorization, BlockNumberOrTag, Index, TransactionRequest
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::NodeConfig;
-use eyre::{WrapErr, ensure, eyre};
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
@@ -19,9 +18,8 @@ use foundry_test_utils::{
     str,
     util::OutputExt,
 };
-use serde::Deserialize;
 use serde_json::json;
-use std::{env, fs, path::Path, str::FromStr};
+use std::{fs, path::Path, str::FromStr};
 
 #[macro_use]
 extern crate foundry_test_utils;
