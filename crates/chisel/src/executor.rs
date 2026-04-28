@@ -199,20 +199,23 @@ impl SessionSource {
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
-        let (evm_env, tx_env) = self.config.evm_opts.env().await?;
+        let (evm_env, tx_env, fork_block) = self.config.evm_opts.env().await?;
 
         let backend = match self.config.backend.clone() {
             Some(backend) => backend,
             None => {
-                let fork =
-                    self.config.evm_opts.get_fork(&self.config.foundry_config, evm_env.clone());
+                let fork = self.config.evm_opts.get_fork(
+                    &self.config.foundry_config,
+                    evm_env.cfg_env.chain_id,
+                    fork_block,
+                );
                 let backend = Backend::spawn(fork)?;
                 self.config.backend = Some(backend.clone());
                 backend
             }
         };
 
-        let executor = ExecutorBuilder::new()
+        let executor = ExecutorBuilder::default()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.foundry_config.live_logs)
@@ -222,6 +225,7 @@ impl SessionSource {
                         CheatsConfig::new(
                             &self.config.foundry_config,
                             self.config.evm_opts.clone(),
+                            None,
                             None,
                             None,
                         )
@@ -545,9 +549,8 @@ impl Type {
             pt::Expression::Multiply(_, lhs, rhs) |
             pt::Expression::Divide(_, lhs, rhs) => {
                 match (Self::ethabi(lhs, None), Self::ethabi(rhs, None)) {
-                    (Some(DynSolType::Int(_)), Some(DynSolType::Int(_))) |
-                    (Some(DynSolType::Int(_)), Some(DynSolType::Uint(_))) |
-                    (Some(DynSolType::Uint(_)), Some(DynSolType::Int(_))) => {
+                    (Some(DynSolType::Int(_) | DynSolType::Uint(_)), Some(DynSolType::Int(_))) |
+(Some(DynSolType::Int(_)), Some(DynSolType::Uint(_))) => {
                         Some(Self::Builtin(DynSolType::Int(256)))
                     }
                     _ => {
@@ -818,7 +821,7 @@ impl Type {
         custom_type: &mut Vec<String>,
         contract_name: Option<String>,
     ) -> Result<Option<DynSolType>> {
-        if let Some("this") | Some("super") = custom_type.last().map(String::as_str) {
+        if let Some("this" | "super") = custom_type.last().map(String::as_str) {
             custom_type.pop();
         }
         if custom_type.is_empty() {
@@ -955,7 +958,7 @@ impl Type {
                     Ok(None)
                 }
             }
-            ty => Ok(Self::ethabi(ty, intermediate)),
+            other_expr => Ok(Self::ethabi(other_expr, intermediate)),
         };
         // re-run everything with the resolved variable in case we're accessing a builtin member
         // for example array or bytes length etc
@@ -1077,12 +1080,12 @@ impl Type {
         match self {
             Self::Array(inner) | Self::FixedArray(inner, _) | Self::ArrayIndex(inner, _) => {
                 match inner.try_as_ethabi(intermediate) {
-                    Some(DynSolType::Array(inner)) | Some(DynSolType::FixedArray(inner, _)) => {
+                    Some(DynSolType::Array(inner) | DynSolType::FixedArray(inner, _)) => {
                         Some(*inner)
                     }
-                    Some(DynSolType::Bytes)
-                    | Some(DynSolType::String)
-                    | Some(DynSolType::FixedBytes(_)) => Some(DynSolType::FixedBytes(1)),
+                    Some(DynSolType::Bytes | DynSolType::String | DynSolType::FixedBytes(_)) => {
+                        Some(DynSolType::FixedBytes(1))
+                    }
                     ty => ty,
                 }
             }
@@ -1092,7 +1095,7 @@ impl Type {
 
     /// Returns whether this type is dynamic
     #[inline]
-    fn is_dynamic(&self) -> bool {
+    const fn is_dynamic(&self) -> bool {
         match self {
             // TODO: Note, this is not entirely correct. Fixed arrays of non-dynamic types are
             // not dynamic, nor are tuples of non-dynamic types.
@@ -1104,23 +1107,22 @@ impl Type {
 
     /// Returns whether this type is an array
     #[inline]
-    fn is_array(&self) -> bool {
+    const fn is_array(&self) -> bool {
         matches!(
             self,
             Self::Array(_)
                 | Self::FixedArray(_, _)
-                | Self::Builtin(DynSolType::Array(_))
-                | Self::Builtin(DynSolType::FixedArray(_, _))
+                | Self::Builtin(DynSolType::Array(_) | DynSolType::FixedArray(_, _))
         )
     }
 
     /// Returns whether this type is a dynamic array (can call push, pop)
     #[inline]
-    fn is_dynamic_array(&self) -> bool {
+    const fn is_dynamic_array(&self) -> bool {
         matches!(self, Self::Array(_) | Self::Builtin(DynSolType::Array(_)))
     }
 
-    fn is_fixed_bytes(&self) -> bool {
+    const fn is_fixed_bytes(&self) -> bool {
         matches!(self, Self::Builtin(DynSolType::FixedBytes(_)))
     }
 }
@@ -1139,7 +1141,7 @@ fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option
         _ => None,
     });
     match vis {
-        Some(pt::Visibility::External(_)) | Some(pt::Visibility::Public(_)) => {
+        Some(pt::Visibility::External(_) | pt::Visibility::Public(_)) => {
             match custom_type.first().unwrap().as_str() {
                 "address" => Some(DynSolType::Address),
                 "selector" => Some(DynSolType::FixedBytes(4)),
@@ -1603,7 +1605,7 @@ mod tests {
         T: AsRef<str> + std::fmt::Display + 'a,
         I: IntoIterator<Item = &'a (T, DynSolType)> + 'a,
     {
-        for (input, expected) in input.into_iter() {
+        for (input, expected) in input {
             let input = input.as_ref();
             let ty = get_type_ethabi(s, input, true);
             assert_eq!(ty.as_ref(), Some(expected), "\n{input}");

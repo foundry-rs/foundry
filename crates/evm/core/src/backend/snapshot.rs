@@ -2,7 +2,7 @@ use super::JournaledState;
 use alloy_evm::EvmEnv;
 use alloy_primitives::{
     B256, U256,
-    map::{AddressHashMap, HashMap},
+    map::{AddressHashMap, U256Map},
 };
 use revm::state::AccountInfo;
 use serde::{Deserialize, Serialize};
@@ -11,23 +11,23 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct StateSnapshot {
     pub accounts: AddressHashMap<AccountInfo>,
-    pub storage: AddressHashMap<HashMap<U256, U256>>,
-    pub block_hashes: HashMap<U256, B256>,
+    pub storage: AddressHashMap<U256Map<U256>>,
+    pub block_hashes: U256Map<B256>,
 }
 
 /// Represents a state snapshot taken during evm execution
 #[derive(Clone, Debug)]
-pub struct BackendStateSnapshot<T> {
+pub struct BackendStateSnapshot<T, SPEC, BLOCK> {
     pub db: T,
     /// The journaled_state state at a specific point
     pub journaled_state: JournaledState,
     /// Contains the evm env at the time of the snapshot
-    pub snap_evm_env: EvmEnv,
+    pub snap_evm_env: EvmEnv<SPEC, BLOCK>,
 }
 
-impl<T> BackendStateSnapshot<T> {
+impl<T, SPEC, BLOCK> BackendStateSnapshot<T, SPEC, BLOCK> {
     /// Takes a new state snapshot.
-    pub fn new(db: T, journaled_state: JournaledState, evm_env: EvmEnv) -> Self {
+    pub const fn new(db: T, journaled_state: JournaledState, evm_env: EvmEnv<SPEC, BLOCK>) -> Self {
         Self { db, journaled_state, snap_evm_env: evm_env }
     }
 
@@ -57,7 +57,7 @@ pub enum RevertStateSnapshotAction {
 
 impl RevertStateSnapshotAction {
     /// Returns `true` if the action is to keep the state snapshot.
-    pub fn is_keep(&self) -> bool {
+    pub const fn is_keep(&self) -> bool {
         matches!(self, Self::RevertKeep)
     }
 }

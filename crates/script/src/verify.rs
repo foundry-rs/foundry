@@ -1,7 +1,6 @@
 use crate::{
     ScriptArgs, ScriptConfig,
     build::LinkedBuildData,
-    receipts::FoundryReceiptResponse,
     sequence::{ScriptSequenceKind, get_commit_hash},
 };
 use alloy_network::{Network, ReceiptResponse};
@@ -10,32 +9,23 @@ use eyre::{Result, eyre};
 use forge_script_sequence::{AdditionalContract, ScriptSequence};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs, provider::VerificationProviderType};
 use foundry_cli::opts::{EtherscanOpts, ProjectPathOpts};
-use foundry_common::ContractsByArtifact;
+use foundry_common::{ContractsByArtifact, FoundryReceiptResponse};
 use foundry_compilers::{Project, artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Chain, Config};
+use foundry_evm::core::evm::FoundryEvmNetwork;
 use semver::Version;
-use serde::{Deserialize, Serialize};
 
 /// State after we have broadcasted the script.
 /// It is assumed that at this point [BroadcastedState::sequence] contains receipts for all
 /// broadcasted transactions.
-pub struct BroadcastedState<N: Network>
-where
-    N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
-    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
-{
+pub struct BroadcastedState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<FEN>,
     pub build_data: LinkedBuildData,
-    pub sequence: ScriptSequenceKind<N>,
+    pub sequence: ScriptSequenceKind<FEN::Network>,
 }
 
-impl<N: Network> BroadcastedState<N>
-where
-    N::TxEnvelope: for<'d> Deserialize<'d> + Serialize,
-    N::TransactionRequest: for<'d> Deserialize<'d> + Serialize,
-    N::ReceiptResponse: FoundryReceiptResponse,
-{
+impl<FEN: FoundryEvmNetwork> BroadcastedState<FEN> {
     pub async fn verify(self) -> Result<()> {
         let Self { args, script_config, build_data, mut sequence, .. } = self;
 
@@ -48,7 +38,7 @@ where
         );
 
         for sequence in sequence.sequences_mut() {
-            verify_contracts(sequence, &script_config.config, verify.clone()).await?;
+            verify_contracts::<FEN>(sequence, &script_config.config, verify.clone()).await?;
         }
 
         Ok(())
@@ -88,7 +78,7 @@ impl VerifyBundle {
             cache_path: Some(project.paths.cache.clone()),
             lib_paths: project.paths.libraries.clone(),
             hardhat: config.profile == Config::HARDHAT_PROFILE,
-            config_path: if config_path.exists() { Some(config_path) } else { None },
+            config_path: config_path.exists().then_some(config_path),
         };
 
         let via_ir = config.via_ir;
@@ -176,7 +166,7 @@ impl VerifyBundle {
                     evm_version: Some(evm_version),
                     show_standard_json_input: false,
                     guess_constructor_args: false,
-                    compilation_profile: Some(artifact.profile.to_string()),
+                    compilation_profile: Some(artifact.profile.clone()),
                     language: None,
                     creation_transaction_hash: None,
                 };
@@ -190,8 +180,8 @@ impl VerifyBundle {
 
 /// Given the broadcast log, it matches transactions with receipts, and tries to verify any
 /// created contract on etherscan.
-async fn verify_contracts<N: Network<ReceiptResponse: FoundryReceiptResponse>>(
-    sequence: &mut ScriptSequence<N>,
+async fn verify_contracts<FEN: FoundryEvmNetwork>(
+    sequence: &mut ScriptSequence<FEN::Network>,
     config: &Config,
     mut verify: VerifyBundle,
 ) -> Result<()> {
@@ -211,14 +201,14 @@ async fn verify_contracts<N: Network<ReceiptResponse: FoundryReceiptResponse>>(
 
         for (receipt, tx) in sequence.receipts.iter_mut().zip(sequence.transactions.iter()) {
             // create2 hash offset
-            let mut offset = 0;
-
-            if tx.is_create2()
+            let offset = if tx.is_create2()
                 && let Some(contract_address) = tx.contract_address
             {
                 receipt.set_contract_address(contract_address);
-                offset = 32;
-            }
+                32
+            } else {
+                0
+            };
 
             // Verify contract created directly from the transaction
             if let (Some(address), Some(data)) = (receipt.contract_address(), tx.tx().input()) {

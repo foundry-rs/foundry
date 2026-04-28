@@ -16,13 +16,16 @@ pub extern crate foundry_cheatcodes_spec as spec;
 extern crate tracing;
 
 use alloy_primitives::Address;
-use foundry_evm_core::backend::DatabaseExt;
+use foundry_evm_core::{
+    backend::DatabaseExt,
+    evm::{FoundryContextFor, FoundryEvmNetwork},
+};
 use revm::context::{ContextTr, JournalTr};
 
 pub use Vm::ForgeContext;
 pub use config::CheatsConfig;
 pub use error::{Error, ErrorKind, Result};
-pub use foundry_evm_core::{EthCheatCtx, evm::NestedEvmClosure};
+pub use foundry_evm_core::evm::NestedEvmClosure;
 pub use inspector::{
     BroadcastableTransaction, BroadcastableTransactions, Cheatcodes, CheatcodesExecutor,
 };
@@ -68,7 +71,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     /// Applies this cheatcode to the given state.
     ///
     /// Implement this function if you don't need access to the EVM data.
-    fn apply(&self, state: &mut Cheatcodes) -> Result {
+    fn apply<FEN: FoundryEvmNetwork>(&self, state: &mut Cheatcodes<FEN>) -> Result {
         let _ = state;
         unimplemented!("{}", Self::CHEATCODE.func.id)
     }
@@ -77,7 +80,7 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     ///
     /// Implement this function if you need access to the EVM data.
     #[inline(always)]
-    fn apply_stateful<CTX: EthCheatCtx>(&self, ccx: &mut CheatsCtxt<'_, CTX>) -> Result {
+    fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         self.apply(ccx.state)
     }
 
@@ -85,10 +88,10 @@ pub(crate) trait Cheatcode: CheatcodeDef {
     ///
     /// Implement this function if you need access to the executor.
     #[inline(always)]
-    fn apply_full<CTX: EthCheatCtx>(
+    fn apply_full<FEN: FoundryEvmNetwork>(
         &self,
-        ccx: &mut CheatsCtxt<'_, CTX>,
-        executor: &mut dyn CheatcodesExecutor<CTX>,
+        ccx: &mut CheatsCtxt<'_, '_, FEN>,
+        executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
         let _ = executor;
         self.apply_stateful(ccx)
@@ -96,19 +99,19 @@ pub(crate) trait Cheatcode: CheatcodeDef {
 }
 
 /// The cheatcode context.
-pub struct CheatsCtxt<'a, CTX> {
+pub struct CheatsCtxt<'a, 'db, FEN: FoundryEvmNetwork + 'db> {
     /// The cheatcodes inspector state.
-    pub(crate) state: &'a mut Cheatcodes,
+    pub(crate) state: &'a mut Cheatcodes<FEN>,
     /// The EVM context.
-    pub(crate) ecx: &'a mut CTX,
+    pub(crate) ecx: &'a mut FoundryContextFor<'db, FEN>,
     /// The original `msg.sender`.
     pub(crate) caller: Address,
     /// Gas limit of the current cheatcode call.
     pub(crate) gas_limit: u64,
 }
 
-impl<CTX> std::ops::Deref for CheatsCtxt<'_, CTX> {
-    type Target = CTX;
+impl<'a, 'db, FEN: FoundryEvmNetwork> std::ops::Deref for CheatsCtxt<'a, 'db, FEN> {
+    type Target = FoundryContextFor<'db, FEN>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -116,14 +119,14 @@ impl<CTX> std::ops::Deref for CheatsCtxt<'_, CTX> {
     }
 }
 
-impl<CTX> std::ops::DerefMut for CheatsCtxt<'_, CTX> {
+impl<'db, FEN: FoundryEvmNetwork> std::ops::DerefMut for CheatsCtxt<'_, 'db, FEN> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.ecx
     }
 }
 
-impl<CTX: ContextTr> CheatsCtxt<'_, CTX> {
+impl<FEN: FoundryEvmNetwork> CheatsCtxt<'_, '_, FEN> {
     pub(crate) fn ensure_not_precompile(&self, address: &Address) -> Result<()> {
         if self.is_precompile(address) { Err(precompile_error(address)) } else { Ok(()) }
     }

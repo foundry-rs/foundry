@@ -133,6 +133,9 @@ impl Signer<foundry_primitives::FoundryNetwork> for DevSigner {
             FoundryTypedTx::Deposit(_) => {
                 unreachable!("op deposit txs should not be signed")
             }
+            FoundryTypedTx::PostExec(_) => {
+                unreachable!("op post-exec txs should not be signed")
+            }
             FoundryTypedTx::Tempo(mut t) => {
                 let sig = signer.sign_transaction_sync(&mut t)?;
                 FoundryTxEnvelope::Tempo(t.into_signed(sig.into()))
@@ -154,6 +157,9 @@ pub fn build_impersonated(typed_tx: FoundryTypedTx) -> FoundryTxEnvelope {
         FoundryTypedTx::Eip7702(tx) => FoundryTxEnvelope::Eip7702(tx.into_signed(signature)),
         FoundryTypedTx::Eip4844(tx) => FoundryTxEnvelope::Eip4844(tx.into_signed(signature)),
         FoundryTypedTx::Deposit(tx) => FoundryTxEnvelope::Deposit(Sealed::new(tx)),
+        FoundryTypedTx::PostExec(_) => {
+            unreachable!("op post-exec txs should not be impersonated")
+        }
         FoundryTypedTx::Tempo(tx) => {
             let tempo_sig: TempoSignature = signature.into();
             FoundryTxEnvelope::Tempo(tx.into_signed(tempo_sig))

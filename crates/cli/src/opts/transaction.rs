@@ -7,7 +7,7 @@ use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, U64, U256, hex};
 use alloy_rlp::Decodable;
 use clap::Parser;
-use foundry_primitives::FoundryTransactionBuilder;
+use foundry_common::FoundryTransactionBuilder;
 
 /// CLI helper to parse a EIP-7702 authorization list.
 /// Can be either a hex-encoded signed authorization or an address.

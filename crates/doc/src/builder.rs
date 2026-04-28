@@ -65,7 +65,7 @@ impl DocBuilder {
     }
 
     /// Set `should_build` flag on the builder
-    pub fn with_should_build(mut self, should_build: bool) -> Self {
+    pub const fn with_should_build(mut self, should_build: bool) -> Self {
         self.should_build = should_build;
         self
     }
@@ -146,13 +146,12 @@ impl DocBuilder {
                                 if from_library {
                                     // Ignore failures for library files
                                     return Ok(files);
-                                } else {
-                                    return Err(eyre::eyre!(
-                                        "Failed to parse Solidity code for {}\nDebug info: {:?}",
-                                        path.display(),
-                                        err
-                                    ));
                                 }
+                                return Err(eyre::eyre!(
+                                    "Failed to parse Solidity code for {}\nDebug info: {:?}",
+                                    path.display(),
+                                    err
+                                ));
                             }
                         };
 
@@ -394,7 +393,7 @@ impl DocBuilder {
                 Some(self.config.book.clone())
             } else {
                 let book_path = self.config.book.join("book.toml");
-                if book_path.is_file() { Some(book_path) } else { None }
+                book_path.is_file().then_some(book_path)
             }
         };
 

@@ -18,6 +18,7 @@ foundry-cheatcodes-spec.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
 foundry-evm-abi.workspace = true
+foundry-evm-hardforks.workspace = true
 foundry-evm-networks.workspace = true
 
 alloy-chains.workspace = true
@@ -25,7 +26,6 @@ alloy-dyn-abi = { workspace = true, features = ["arbitrary", "eip712"] }
 alloy-evm = { workspace = true, features = ["rpc"] }
 alloy-genesis.workspace = true
 alloy-hardforks.workspace = true
-alloy-op-hardforks.workspace = true
 alloy-json-abi.workspace = true
 alloy-primitives = { workspace = true, features = [
     "serde",
@@ -36,8 +36,10 @@ alloy-primitives = { workspace = true, features = [
 alloy-provider.workspace = true
 alloy-network.workspace = true
 alloy-consensus.workspace = true
-alloy-rpc-types.workspace = true
+alloy-op-evm.workspace = true
+alloy-rpc-types = { workspace = true, features = ["anvil"] }
 alloy-sol-types.workspace = true
+alloy-rlp.workspace = true
 foundry-fork-db.workspace = true
 
 revm = { workspace = true, features = [
@@ -52,8 +54,14 @@ revm = { workspace = true, features = [
     "blst",
 ] }
 revm-inspectors.workspace = true
+op-alloy-consensus = { workspace = true, features = ["k256"] }
+op-alloy-network.workspace = true
 op-revm.workspace = true
-alloy-op-evm.workspace = true
+tempo-revm.workspace = true
+tempo-alloy.workspace = true
+tempo-contracts.workspace = true
+tempo-evm.workspace = true
+tempo-precompiles.workspace = true
 
 auto_impl.workspace = true
 eyre.workspace = true
@@ -68,4 +76,8 @@ tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+alloy-serde.workspace = true
+op-alloy-consensus.workspace = true
+op-alloy-rpc-types.workspace = true
+anvil.workspace = true
 foundry-test-utils.workspace = true

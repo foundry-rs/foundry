@@ -147,9 +147,12 @@ impl CloneArgs {
         // step 1. get the metadata from client based on source type
         let (meta, explorer_name, sourcify_client) = match source {
             SourceExplorer::Etherscan => {
-                let etherscan_api_key =
-                    config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-                let client = Client::new(chain, etherscan_api_key.clone())?;
+                let client = config
+                    .get_etherscan_config_with_chain(Some(chain))?
+                    .ok_or_else(|| {
+                        eyre::eyre!("No Etherscan API key configured for chain {chain}")
+                    })?
+                    .into_client()?;
                 sh_println!("Downloading the source code of {address} from Etherscan...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
                 (meta, "Etherscan", None)
@@ -177,13 +180,15 @@ impl CloneArgs {
 
         match source {
             SourceExplorer::Etherscan => {
-                let etherscan_api_key =
-                    config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-                let client = Client::new(chain, etherscan_api_key.clone())?;
-                if etherscan_api_key.is_empty() {
+                let etherscan_config =
+                    config.get_etherscan_config_with_chain(Some(chain))?.ok_or_else(|| {
+                        eyre::eyre!("No Etherscan API key configured for chain {chain}")
+                    })?;
+                if etherscan_config.key.is_empty() {
                     sh_warn!("Waiting for 5 seconds to avoid rate limit...")?;
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
+                let client = etherscan_config.into_client()?;
                 Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
             }
             SourceExplorer::Sourcify => {
@@ -256,7 +261,7 @@ impl CloneArgs {
         let (main_file, main_artifact) = find_main_contract(&compile_output, &meta.contract_name)?;
         let main_file = main_file.strip_prefix(root)?.to_path_buf();
         let storage_layout =
-            main_artifact.storage_layout.to_owned().expect("storage layout not found");
+            main_artifact.storage_layout.clone().expect("storage layout not found");
 
         // dump the metadata to the root directory
         let creation_tx = client.contract_creation_data(address).await?;
@@ -1016,8 +1021,8 @@ mod tests {
         contract_name: &str,
         stripped_creation_code: &str,
     ) {
-        compiled.compiled_contracts_by_compiler_version().iter().for_each(|(_, contracts)| {
-            contracts.iter().for_each(|(name, contract)| {
+        for contracts in compiled.compiled_contracts_by_compiler_version().values() {
+            for (name, contract) in contracts {
                 if name == contract_name {
                     let compiled_creation_code =
                         contract.bin_ref().expect("creation code not found");
@@ -1027,8 +1032,8 @@ mod tests {
                         "inconsistent creation code"
                     );
                 }
-            });
-        });
+            }
+        }
     }
 
     fn mock_etherscan(address: Address) -> impl super::ExplorerClient {
@@ -1149,7 +1154,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_clone_contract_with_relative_import() {
+    async fn flaky_test_clone_contract_with_relative_import() {
         let address = "0x3a23F943181408EAC424116Af7b7790c94Cb97a5".parse().unwrap();
         one_test_case(address, false).await
     }

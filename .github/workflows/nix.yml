@@ -19,8 +19,8 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: DeterminateSystems/determinate-nix-action@131015bad844610e5e6300f8a143bf625d3e74f4 # v3
-      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/determinate-nix-action@32cb6a5ae30bb0dfc996fa7baf8bf1ed28442fa4 # v3.17.3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
       - uses: DeterminateSystems/update-flake-lock@e80a657d7603606be0c69b117cfdc240f1e6af88 # main
@@ -38,8 +38,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: DeterminateSystems/determinate-nix-action@131015bad844610e5e6300f8a143bf625d3e74f4 # v3
-      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/determinate-nix-action@32cb6a5ae30bb0dfc996fa7baf8bf1ed28442fa4 # v3.17.3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 

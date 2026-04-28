@@ -4,7 +4,7 @@ use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U256, hex};
+use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U64, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind};
 use alloy_signer::Signer;
@@ -12,14 +12,14 @@ use alloy_transport::TransportError;
 use clap::Args;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    opts::{CliAuthorizationList, EthereumOpts, TransactionOpts},
+    opts::{CliAuthorizationList, EthereumOpts, TempoOpts, TransactionOpts},
     utils::{self, parse_function_args},
 };
 use foundry_common::{
-    TransactionReceiptWithRevertReason, fmt::*, get_pretty_receipt_w_reason_attr, shell,
+    FoundryTransactionBuilder, TransactionReceiptWithRevertReason, fmt::*,
+    get_pretty_receipt_w_reason_attr, shell,
 };
 use foundry_config::{Chain, Config};
-use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
@@ -55,6 +55,55 @@ pub struct SendTxOpts {
     /// Browser wallet options
     #[command(flatten)]
     pub browser: BrowserWalletOpts,
+}
+
+/// Transaction options shared across cast commands that submit on-chain transactions.
+#[derive(Debug, Clone, Args)]
+#[command(next_help_heading = "Transaction options")]
+pub struct TxParams {
+    /// Gas limit for the transaction.
+    #[arg(long, env = "ETH_GAS_LIMIT")]
+    pub gas_limit: Option<U256>,
+
+    /// Gas price for legacy transactions, or max fee per gas for EIP1559 transactions.
+    #[arg(long, env = "ETH_GAS_PRICE")]
+    pub gas_price: Option<U256>,
+
+    /// Max priority fee per gas for EIP1559 transactions.
+    #[arg(long, env = "ETH_PRIORITY_GAS_PRICE")]
+    pub priority_gas_price: Option<U256>,
+
+    /// Nonce for the transaction.
+    #[arg(long)]
+    pub nonce: Option<U64>,
+
+    #[command(flatten)]
+    pub tempo: TempoOpts,
+}
+
+impl TxParams {
+    pub(crate) fn apply<N: Network>(&self, tx: &mut N::TransactionRequest, legacy: bool)
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        if let Some(gas_limit) = self.gas_limit {
+            tx.set_gas_limit(gas_limit.to());
+        }
+
+        if let Some(gas_price) = self.gas_price {
+            if legacy {
+                tx.set_gas_price(gas_price.to());
+            } else {
+                tx.set_max_fee_per_gas(gas_price.to());
+            }
+        }
+
+        if !legacy && let Some(priority_fee) = self.priority_gas_price {
+            tx.set_max_priority_fee_per_gas(priority_fee.to());
+        }
+
+        self.tempo.apply::<N>(tx, self.nonce.map(|n| n.to()));
+    }
 }
 
 /// Different sender kinds used by [`CastTxBuilder`].
@@ -171,7 +220,7 @@ where
     N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
 {
     /// Creates a new Cast instance responsible for sending transactions.
-    pub fn new(provider: P) -> Self {
+    pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
     }
 
@@ -291,13 +340,12 @@ where
                     // try to poll for it
                     if cast_async {
                         eyre::bail!("tx not found: {:?}", tx_hash)
-                    } else {
-                        PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
-                            .with_required_confirmations(confs)
-                            .with_timeout(timeout.map(Duration::from_secs))
-                            .get_receipt()
-                            .await?
                     }
+                    PendingTransactionBuilder::<N>::new(self.provider.root().clone(), tx_hash)
+                        .with_required_confirmations(confs)
+                        .with_timeout(timeout.map(Duration::from_secs))
+                        .get_receipt()
+                        .await?
                 }
             },
             revert_reason: None,
@@ -334,7 +382,7 @@ where
 #[derive(Debug)]
 pub struct CastTxBuilder<N: Network, P, S> {
     provider: P,
-    tx: N::TransactionRequest,
+    pub(crate) tx: N::TransactionRequest,
     /// Whether the transaction should be sent as a legacy transaction.
     legacy: bool,
     blob: bool,
@@ -346,8 +394,16 @@ pub struct CastTxBuilder<N: Network, P, S> {
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
+    etherscan_api_url: Option<String>,
     access_list: Option<Option<AccessList>>,
     state: S,
+}
+
+impl<N: Network, P, S> CastTxBuilder<N, P, S> {
+    /// Returns the resolved chain for this builder.
+    pub const fn chain(&self) -> Chain {
+        self.chain
+    }
 }
 
 impl<N: Network, P: Provider<N>> CastTxBuilder<N, P, InitState>
@@ -360,7 +416,9 @@ where
         let mut tx = N::TransactionRequest::default();
 
         let chain = utils::get_chain(config.chain, &provider).await?;
-        let etherscan_api_key = config.get_etherscan_api_key(Some(chain));
+        let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
+        let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
+        let etherscan_api_url = etherscan_config.map(|c| c.api_url);
         // mark it as legacy if requested or the chain is legacy and no 7702 is provided.
         let legacy = tx_opts.legacy || (chain.is_legacy() && tx_opts.auth.is_empty());
 
@@ -376,6 +434,7 @@ where
             fill: true,
             chain,
             etherscan_api_key,
+            etherscan_api_url,
             auth: tx_opts.auth,
             access_list: tx_opts.access_list,
             state: InitState,
@@ -394,6 +453,7 @@ where
             fill: self.fill,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
+            etherscan_api_url: self.etherscan_api_url,
             auth: self.auth,
             access_list: self.access_list,
             state: ToState { to },
@@ -422,6 +482,7 @@ where
                 self.chain,
                 &self.provider,
                 self.etherscan_api_key.as_deref(),
+                self.etherscan_api_url.as_deref(),
             )
             .await?
         } else {
@@ -455,6 +516,7 @@ where
             fill: self.fill,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
+            etherscan_api_url: self.etherscan_api_url,
             auth: self.auth,
             access_list: self.access_list,
             state: InputState { kind: self.state.to.into(), input, func },
@@ -484,6 +546,11 @@ where
         // prepare
         let sender = sender.into();
         self.prepare(&sender);
+
+        // For batch transactions with calls, clear `to` and `value` so the node correctly
+        // identifies this as an AA batch transaction. The `calls` field determines the actual
+        // targets. If `to` is set, `build_aa()` would add a spurious extra call.
+        self.tx.clear_batch_to();
 
         // resolve
         let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
@@ -664,7 +731,7 @@ where
 
     /// Skips gas, fee and nonce filling. Use for read-only calls
     /// (eth_call, eth_estimateGas, eth_createAccessList).
-    pub fn raw(mut self) -> Self {
+    pub const fn raw(mut self) -> Self {
         self.fill = false;
         self
     }

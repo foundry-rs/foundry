@@ -17,8 +17,8 @@ use foundry_compilers::{
 };
 use foundry_config::{Config, InlineConfig};
 use foundry_evm::{
-    EvmEnv,
     backend::Backend,
+    core::evm::{EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     decode::RevertDecoder,
     executors::{EarlyExit, Executor, ExecutorBuilder},
     fork::CreateFork,
@@ -27,13 +27,13 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
-use foundry_evm_networks::NetworkConfigs;
+
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
-use revm::{context::TxEnv, primitives::hardfork::SpecId};
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
+    ops::{Deref, DerefMut},
     path::Path,
     sync::{Arc, mpsc},
     time::Instant,
@@ -50,7 +50,7 @@ pub type DeployableContracts = BTreeMap<ArtifactId, TestContract>;
 /// A multi contract runner receives a set of contracts deployed in an EVM instance and proceeds
 /// to run all test functions in these contracts.
 #[derive(Clone, Debug)]
-pub struct MultiContractRunner {
+pub struct MultiContractRunner<FEN: FoundryEvmNetwork> {
     /// Mapping of contract name to JsonAbi, creation bytecode and library bytecode which
     /// needs to be deployed & linked against
     pub contracts: DeployableContracts,
@@ -71,24 +71,24 @@ pub struct MultiContractRunner {
     pub fork: Option<CreateFork>,
 
     /// The base configuration for the test runner.
-    pub tcfg: TestRunnerConfig,
+    pub tcfg: TestRunnerConfig<FEN>,
 }
 
-impl std::ops::Deref for MultiContractRunner {
-    type Target = TestRunnerConfig;
+impl<FEN: FoundryEvmNetwork> Deref for MultiContractRunner<FEN> {
+    type Target = TestRunnerConfig<FEN>;
 
     fn deref(&self) -> &Self::Target {
         &self.tcfg
     }
 }
 
-impl std::ops::DerefMut for MultiContractRunner {
+impl<FEN: FoundryEvmNetwork> DerefMut for MultiContractRunner<FEN> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.tcfg
     }
 }
 
-impl MultiContractRunner {
+impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
     /// Returns an iterator over all contracts that match the filter.
     pub fn matching_contracts<'a: 'b, 'b>(
         &'a self,
@@ -222,9 +222,9 @@ impl MultiContractRunner {
 
             tests_progress.inner.lock().clear();
 
-            results.iter().for_each(|result| {
+            for result in &results {
                 let _ = tx.send(result.to_owned());
-            });
+            }
         } else {
             contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = tokio_handle.enter();
@@ -240,17 +240,17 @@ impl MultiContractRunner {
         &self,
         artifact_id: &ArtifactId,
         contract: &TestContract,
-        db: &Backend,
+        db: &Backend<FEN>,
         filter: &dyn TestFilter,
         tokio_handle: &tokio::runtime::Handle,
         progress: Option<&TestsProgress>,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
-        let mut span_name = identifier.as_str();
-
-        if !enabled!(tracing::Level::TRACE) {
-            span_name = get_contract_name(&identifier);
-        }
+        let span_name = if enabled!(tracing::Level::TRACE) {
+            identifier.as_str()
+        } else {
+            get_contract_name(&identifier)
+        };
         let span = debug_span!("suite", name = %span_name);
         let span_local = span.clone();
         let _guard = span_local.enter();
@@ -284,7 +284,7 @@ impl MultiContractRunner {
 ///
 /// This is modified after instantiation through inline config.
 #[derive(Clone, Debug)]
-pub struct TestRunnerConfig {
+pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     /// Project config.
     pub config: Arc<Config>,
     /// Inline configuration.
@@ -293,11 +293,11 @@ pub struct TestRunnerConfig {
     /// EVM configuration.
     pub evm_opts: EvmOpts,
     /// EVM environment.
-    pub evm_env: EvmEnv,
+    pub evm_env: EvmEnvFor<FEN>,
     /// Transaction environment.
-    pub tx_env: TxEnv,
+    pub tx_env: TxEnvFor<FEN>,
     /// EVM version.
-    pub spec_id: SpecId,
+    pub spec_id: SpecFor<FEN>,
     /// The address which will be used to deploy the initial contracts and send all transactions.
     pub sender: Address,
 
@@ -309,13 +309,11 @@ pub struct TestRunnerConfig {
     pub decode_internal: InternalTraceMode,
     /// Whether to enable call isolation.
     pub isolation: bool,
-    /// Networks with enabled features.
-    pub networks: NetworkConfigs,
     /// Whether to exit early on test failure or if test run interrupted.
     pub early_exit: EarlyExit,
 }
 
-impl TestRunnerConfig {
+impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
     /// Reconfigures all fields using the given `config`.
     /// This is for example used to override the configuration with inline config.
     pub fn reconfigure_with(&mut self, config: Arc<Config>) {
@@ -323,7 +321,7 @@ impl TestRunnerConfig {
 
         self.spec_id = config.evm_spec_id();
         self.sender = config.sender;
-        self.networks = config.networks;
+        self.evm_opts.networks = config.networks;
         self.isolation = config.isolate;
 
         // Specific to Forge, not present in config.
@@ -340,7 +338,7 @@ impl TestRunnerConfig {
     }
 
     /// Configures the given executor with this configuration.
-    pub fn configure_executor(&self, executor: &mut Executor) {
+    pub fn configure_executor(&self, executor: &mut Executor<FEN>) {
         // TODO: See above
 
         let inspector = executor.inspector_mut();
@@ -352,7 +350,7 @@ impl TestRunnerConfig {
         inspector.tracing(self.trace_mode());
         inspector.collect_line_coverage(self.line_coverage);
         inspector.enable_isolation(self.isolation);
-        inspector.networks(self.networks);
+        inspector.networks(self.evm_opts.networks);
         // inspector.set_create2_deployer(self.evm_opts.create2_deployer);
 
         // executor.env_mut().clone_from(&self.env);
@@ -367,15 +365,16 @@ impl TestRunnerConfig {
         known_contracts: ContractsByArtifact,
         analysis: Arc<solar::sema::Compiler>,
         artifact_id: &ArtifactId,
-        db: Backend,
-    ) -> Executor {
+        db: Backend<FEN>,
+    ) -> Executor<FEN> {
         let cheats_config = Arc::new(CheatsConfig::new(
             &self.config,
             self.evm_opts.clone(),
             Some(known_contracts),
             Some(artifact_id.clone()),
+            None,
         ));
-        ExecutorBuilder::new()
+        ExecutorBuilder::default()
             .inspectors(|stack| {
                 stack
                     .logs(self.config.live_logs)
@@ -383,7 +382,7 @@ impl TestRunnerConfig {
                     .trace_mode(self.trace_mode())
                     .line_coverage(self.line_coverage)
                     .enable_isolation(self.isolation)
-                    .networks(self.networks)
+                    .networks(self.evm_opts.networks)
                     .create2_deployer(self.evm_opts.create2_deployer)
                     .set_analysis(analysis)
             })
@@ -410,8 +409,6 @@ pub struct MultiContractRunnerBuilder {
     pub sender: Option<Address>,
     /// The initial balance for each one of the deployed smart contracts
     pub initial_balance: U256,
-    /// The EVM spec to use
-    pub evm_spec: Option<SpecId>,
     /// The fork to use at launch
     pub fork: Option<CreateFork>,
     /// Project config.
@@ -424,8 +421,6 @@ pub struct MultiContractRunnerBuilder {
     pub decode_internal: InternalTraceMode,
     /// Whether to enable call isolation
     pub isolation: bool,
-    /// Networks with enabled features.
-    pub networks: NetworkConfigs,
     /// Whether to exit early on test failure.
     pub fail_fast: bool,
 }
@@ -436,29 +431,22 @@ impl MultiContractRunnerBuilder {
             config,
             sender: Default::default(),
             initial_balance: Default::default(),
-            evm_spec: Default::default(),
             fork: Default::default(),
             line_coverage: Default::default(),
             debug: Default::default(),
             isolation: Default::default(),
             decode_internal: Default::default(),
-            networks: Default::default(),
             fail_fast: false,
         }
     }
 
-    pub fn sender(mut self, sender: Address) -> Self {
+    pub const fn sender(mut self, sender: Address) -> Self {
         self.sender = Some(sender);
         self
     }
 
-    pub fn initial_balance(mut self, initial_balance: U256) -> Self {
+    pub const fn initial_balance(mut self, initial_balance: U256) -> Self {
         self.initial_balance = initial_balance;
-        self
-    }
-
-    pub fn evm_spec(mut self, spec: SpecId) -> Self {
-        self.evm_spec = Some(spec);
         self
     }
 
@@ -467,45 +455,40 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn set_coverage(mut self, enable: bool) -> Self {
+    pub const fn set_coverage(mut self, enable: bool) -> Self {
         self.line_coverage = enable;
         self
     }
 
-    pub fn set_debug(mut self, enable: bool) -> Self {
+    pub const fn set_debug(mut self, enable: bool) -> Self {
         self.debug = enable;
         self
     }
 
-    pub fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
+    pub const fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
         self.decode_internal = mode;
         self
     }
 
-    pub fn fail_fast(mut self, fail_fast: bool) -> Self {
+    pub const fn fail_fast(mut self, fail_fast: bool) -> Self {
         self.fail_fast = fail_fast;
         self
     }
 
-    pub fn enable_isolation(mut self, enable: bool) -> Self {
+    pub const fn enable_isolation(mut self, enable: bool) -> Self {
         self.isolation = enable;
-        self
-    }
-
-    pub fn networks(mut self, networks: NetworkConfigs) -> Self {
-        self.networks = networks;
         self
     }
 
     /// Given an EVM, proceeds to return a runner which is able to execute all tests
     /// against that evm
-    pub fn build<C: Compiler<CompilerContract = Contract>>(
+    pub fn build<FEN: FoundryEvmNetwork, C: Compiler<CompilerContract = Contract>>(
         self,
         output: &ProjectCompileOutput,
-        evm_env: EvmEnv,
-        tx_env: TxEnv,
+        evm_env: EvmEnvFor<FEN>,
+        tx_env: TxEnvFor<FEN>,
         evm_opts: EvmOpts,
-    ) -> Result<MultiContractRunner> {
+    ) -> Result<MultiContractRunner<FEN>> {
         let root = &self.config.root;
         let contracts = output
             .artifact_ids()
@@ -568,8 +551,7 @@ impl MultiContractRunnerBuilder {
         dcx.set_flags_mut(|f| f.track_diagnostics = false);
 
         // Populate solar's global context by parsing and lowering the sources.
-        let files: Vec<_> =
-            output.output().sources.as_ref().keys().map(|path| path.to_path_buf()).collect();
+        let files: Vec<_> = output.output().sources.as_ref().keys().cloned().collect();
 
         analysis.enter_mut(|compiler| -> Result<()> {
             let mut pcx = compiler.parse();
@@ -604,14 +586,13 @@ impl MultiContractRunnerBuilder {
                 evm_opts,
                 evm_env,
                 tx_env,
-                spec_id: self.evm_spec.unwrap_or_else(|| self.config.evm_spec_id()),
+                spec_id: self.config.evm_spec_id(),
                 sender: self.sender.unwrap_or(self.config.sender),
                 line_coverage: self.line_coverage,
                 debug: self.debug,
                 decode_internal: self.decode_internal,
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
-                networks: self.networks,
                 early_exit: EarlyExit::new(self.fail_fast),
                 config: self.config,
             },

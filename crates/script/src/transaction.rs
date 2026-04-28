@@ -146,7 +146,7 @@ impl<N: Network> ScriptTransactionBuilder<N> {
     /// Populates additional data from the transaction execution result.
     pub fn with_execution_result(
         mut self,
-        result: &ScriptResult,
+        result: &ScriptResult<N>,
         gas_estimate_multiplier: u64,
         linked_build_data: &LinkedBuildData,
     ) -> Self {

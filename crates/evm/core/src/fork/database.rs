@@ -5,14 +5,16 @@ use crate::{
     state_snapshot::StateSnapshots,
 };
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, U256, map::HashMap};
+use alloy_primitives::{Address, B256, U256};
 use alloy_rpc_types::BlockId;
-use foundry_fork_db::{BlockchainDb, DatabaseError, SharedBackend};
+use foundry_fork_db::{BlockchainDb, DatabaseError, ForkBlockEnv, SharedBackend};
 use parking_lot::Mutex;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
+    context::BlockEnv,
     database::{CacheDB, DatabaseRef},
+    primitives::AddressMap,
     state::{Account, AccountInfo},
 };
 use std::sync::Arc;
@@ -24,28 +26,28 @@ use std::sync::Arc;
 /// This database uses the `backend` for read and the `db` for write operations. But note the
 /// `backend` will also write (missing) data to the `db` in the background
 #[derive(Clone, Debug)]
-pub struct ForkedDatabase<N: Network> {
+pub struct ForkedDatabase<N: Network, B: ForkBlockEnv = BlockEnv> {
     /// Responsible for fetching missing data.
     ///
     /// This is responsible for getting data.
-    backend: SharedBackend<N>,
+    backend: SharedBackend<N, B>,
     /// Cached Database layer, ensures that changes are not written to the database that
     /// exclusively stores the state of the remote client.
     ///
     /// This separates Read/Write operations
     ///   - reads from the `SharedBackend as DatabaseRef` writes to the internal cache storage.
-    cache_db: CacheDB<SharedBackend<N>>,
+    cache_db: CacheDB<SharedBackend<N, B>>,
     /// Contains all the data already fetched.
     ///
     /// This exclusively stores the _unchanged_ remote client state.
-    db: BlockchainDb,
+    db: BlockchainDb<B>,
     /// Holds the state snapshots of a blockchain.
-    state_snapshots: Arc<Mutex<StateSnapshots<ForkDbStateSnapshot<N>>>>,
+    state_snapshots: Arc<Mutex<StateSnapshots<ForkDbStateSnapshot<N, B>>>>,
 }
 
-impl<N: Network> ForkedDatabase<N> {
+impl<N: Network, B: ForkBlockEnv> ForkedDatabase<N, B> {
     /// Creates a new instance of this DB
-    pub fn new(backend: SharedBackend<N>, db: BlockchainDb) -> Self {
+    pub fn new(backend: SharedBackend<N, B>, db: BlockchainDb<B>) -> Self {
         Self {
             cache_db: CacheDB::new(backend.clone()),
             backend,
@@ -54,22 +56,22 @@ impl<N: Network> ForkedDatabase<N> {
         }
     }
 
-    pub fn database(&self) -> &CacheDB<SharedBackend<N>> {
+    pub const fn database(&self) -> &CacheDB<SharedBackend<N, B>> {
         &self.cache_db
     }
 
-    pub fn database_mut(&mut self) -> &mut CacheDB<SharedBackend<N>> {
+    pub const fn database_mut(&mut self) -> &mut CacheDB<SharedBackend<N, B>> {
         &mut self.cache_db
     }
 
-    pub fn state_snapshots(&self) -> &Arc<Mutex<StateSnapshots<ForkDbStateSnapshot<N>>>> {
+    pub const fn state_snapshots(&self) -> &Arc<Mutex<StateSnapshots<ForkDbStateSnapshot<N, B>>>> {
         &self.state_snapshots
     }
 
     /// Reset the fork to a fresh forked state, and optionally update the fork config
     pub fn reset(
         &mut self,
-        _url: Option<String>,
+        _urls: Vec<String>,
         block_number: impl Into<BlockId>,
     ) -> Result<(), String> {
         self.backend.set_pinned_block(block_number).map_err(|err| err.to_string())?;
@@ -90,11 +92,11 @@ impl<N: Network> ForkedDatabase<N> {
     }
 
     /// Returns the database that holds the remote state
-    pub fn inner(&self) -> &BlockchainDb {
+    pub const fn inner(&self) -> &BlockchainDb<B> {
         &self.db
     }
 
-    pub fn create_state_snapshot(&self) -> ForkDbStateSnapshot<N> {
+    pub fn create_state_snapshot(&self) -> ForkDbStateSnapshot<N, B> {
         let db = self.db.db();
         let state_snapshot = StateSnapshot {
             accounts: db.accounts.read().clone(),
@@ -151,7 +153,7 @@ impl<N: Network> ForkedDatabase<N> {
     }
 }
 
-impl<N: Network> Database for ForkedDatabase<N> {
+impl<N: Network, B: ForkBlockEnv> Database for ForkedDatabase<N, B> {
     type Error = DatabaseError;
 
     fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -174,7 +176,7 @@ impl<N: Network> Database for ForkedDatabase<N> {
     }
 }
 
-impl<N: Network> DatabaseRef for ForkedDatabase<N> {
+impl<N: Network, B: ForkBlockEnv> DatabaseRef for ForkedDatabase<N, B> {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -194,8 +196,8 @@ impl<N: Network> DatabaseRef for ForkedDatabase<N> {
     }
 }
 
-impl<N: Network> DatabaseCommit for ForkedDatabase<N> {
-    fn commit(&mut self, changes: HashMap<Address, Account>) {
+impl<N: Network, B: ForkBlockEnv> DatabaseCommit for ForkedDatabase<N, B> {
+    fn commit(&mut self, changes: AddressMap<Account>) {
         self.database_mut().commit(changes)
     }
 }
@@ -204,12 +206,12 @@ impl<N: Network> DatabaseCommit for ForkedDatabase<N> {
 ///
 /// This mimics `revm::CacheDB`
 #[derive(Clone, Debug)]
-pub struct ForkDbStateSnapshot<N: Network> {
-    pub local: CacheDB<SharedBackend<N>>,
+pub struct ForkDbStateSnapshot<N: Network, B: ForkBlockEnv = BlockEnv> {
+    pub local: CacheDB<SharedBackend<N, B>>,
     pub state_snapshot: StateSnapshot,
 }
 
-impl<N: Network> ForkDbStateSnapshot<N> {
+impl<N: Network, B: ForkBlockEnv> ForkDbStateSnapshot<N, B> {
     fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
         self.local
             .cache
@@ -223,7 +225,7 @@ impl<N: Network> ForkDbStateSnapshot<N> {
 // This `DatabaseRef` implementation works similar to `CacheDB` which prioritizes modified elements,
 // and uses another db as fallback
 // We prioritize stored changed accounts/storage
-impl<N: Network> DatabaseRef for ForkDbStateSnapshot<N> {
+impl<N: Network, B: ForkBlockEnv> DatabaseRef for ForkDbStateSnapshot<N, B> {
     type Error = DatabaseError;
 
     fn basic_ref(&self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
@@ -280,7 +282,7 @@ mod tests {
     async fn fork_db_insert_basic_default() {
         let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
         let provider = get_http_provider(rpc.clone());
-        let meta = BlockchainDbMeta::new(Default::default(), rpc);
+        let meta = BlockchainDbMeta::new(BlockEnv::default(), rpc);
 
         let db = BlockchainDb::new(meta, None);
 

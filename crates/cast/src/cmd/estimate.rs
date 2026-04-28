@@ -1,6 +1,6 @@
 use crate::tx::{CastTxBuilder, SenderKind};
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, Network};
+use alloy_network::{Ethereum, Network};
 use alloy_primitives::U256;
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
@@ -10,8 +10,7 @@ use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
     utils::{LoadConfig, parse_ether_value},
 };
-use foundry_common::provider::ProviderBuilder;
-use foundry_primitives::FoundryTransactionBuilder;
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use foundry_wallets::WalletOpts;
 use std::str::FromStr;
 use tempo_alloy::TempoNetwork;
@@ -85,7 +84,7 @@ impl EstimateArgs {
         if self.tx.tempo.is_tempo() {
             self.run_with_network::<TempoNetwork>().await
         } else {
-            self.run_with_network::<AnyNetwork>().await
+            self.run_with_network::<Ethereum>().await
         }
     }
 

@@ -310,7 +310,7 @@ impl Drop for NodeHandle {
 
 impl NodeHandle {
     /// The [NodeConfig] the node was launched with.
-    pub fn config(&self) -> &NodeConfig {
+    pub const fn config(&self) -> &NodeConfig {
         &self.config
     }
 
@@ -387,7 +387,7 @@ impl NodeHandle {
     }
 
     /// Native token balance of every genesis account in the genesis block.
-    pub fn genesis_balance(&self) -> U256 {
+    pub const fn genesis_balance(&self) -> U256 {
         self.config.genesis_balance
     }
 
@@ -397,14 +397,14 @@ impl NodeHandle {
     }
 
     /// Returns the shutdown signal.
-    pub fn shutdown_signal(&self) -> &Option<Signal> {
+    pub const fn shutdown_signal(&self) -> &Option<Signal> {
         &self._signal
     }
 
     /// Returns mutable access to the shutdown signal.
     ///
     /// This can be used to extract the Signal.
-    pub fn shutdown_signal_mut(&mut self) -> &mut Option<Signal> {
+    pub const fn shutdown_signal_mut(&mut self) -> &mut Option<Signal> {
         &mut self._signal
     }
 
@@ -423,7 +423,7 @@ impl NodeHandle {
     ///
     /// # }
     /// ```
-    pub fn task_manager(&self) -> &TaskManager {
+    pub const fn task_manager(&self) -> &TaskManager {
         &self.task_manager
     }
 }
@@ -438,9 +438,8 @@ impl Future for NodeHandle {
         if let Some(mut ipc) = pin.ipc_task.take() {
             if let Poll::Ready(res) = ipc.poll_unpin(cx) {
                 return Poll::Ready(res.map(|()| Ok(())));
-            } else {
-                pin.ipc_task = Some(ipc);
             }
+            pin.ipc_task = Some(ipc);
         }
 
         // poll the node service task
@@ -466,15 +465,15 @@ pub fn init_tracing() -> LoggingManager {
     let manager = LoggingManager::default();
 
     let _ = if let Ok(rust_log_val) = std::env::var("RUST_LOG")
-        && !rust_log_val.contains("=")
+        && !rust_log_val.contains('=')
     {
         // Mutate the given filter to include `node` logs if it is not already present.
         // This prevents the unexpected behaviour of not seeing any node logs if a RUST_LOG
         // is already present that doesn't set it.
-        let rust_log_val = if !rust_log_val.contains("node") {
-            format!("{rust_log_val},node=info")
-        } else {
+        let rust_log_val = if rust_log_val.contains("node") {
             rust_log_val
+        } else {
+            format!("{rust_log_val},node=info")
         };
 
         let env_filter: EnvFilter =

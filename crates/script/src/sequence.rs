@@ -3,10 +3,9 @@ use alloy_network::Network;
 use eyre::Result;
 use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cli::utils::Git;
-use foundry_common::fmt::UIfmt;
+use foundry_common::{FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_compilers::ArtifactId;
 use foundry_config::Config;
-use foundry_primitives::FoundryTransactionBuilder;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::{Error, Write},

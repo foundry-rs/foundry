@@ -191,12 +191,20 @@ impl TraceIdentifier for ExternalIdentifier {
                         .map(|metadata| self.identify_from_metadata(address, metadata));
                     match self.contracts.entry(address) {
                         Entry::Occupied(mut occupied_entry) => {
-                            // Override if:
-                            // - new is from Etherscan and old is not
-                            // - new is Some and old is None, meaning verified only in one source
-                            if !matches!(occupied_entry.get().0, FetcherKind::Etherscan)
-                                || value.1.is_none()
-                            {
+                            let old = occupied_entry.get();
+                            // Only override when the new result is strictly better:
+                            // - new has metadata and old doesn't, OR
+                            // - both have metadata but new is from Etherscan and old is not.
+                            // Never downgrade a successful lookup to None.
+                            let should_replace = match (&old.1, &value.1) {
+                                (None, Some(_)) => true,
+                                (Some(_), None) => false,
+                                _ => {
+                                    matches!(value.0, FetcherKind::Etherscan)
+                                        && !matches!(old.0, FetcherKind::Etherscan)
+                                }
+                            };
+                            if should_replace {
                                 occupied_entry.insert(value);
                             }
                         }
@@ -317,6 +325,8 @@ impl Stream for ExternalFetcher {
                         }
                         Err(err) => {
                             warn!(target: "evm::traces::external", ?err, "could not get info");
+                            // Cache the failure so we don't re-fetch on subsequent arenas.
+                            return Poll::Ready(Some((addr, (pin.fetcher.kind(), None))));
                         }
                     }
                 }
@@ -350,7 +360,7 @@ struct EtherscanFetcher {
 }
 
 impl EtherscanFetcher {
-    fn new(client: foundry_block_explorers::Client) -> Self {
+    const fn new(client: foundry_block_explorers::Client) -> Self {
         Self { client, invalid_api_key: AtomicBool::new(false) }
     }
 }

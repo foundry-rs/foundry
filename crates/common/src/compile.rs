@@ -89,14 +89,14 @@ impl ProjectCompiler {
 
     /// Sets whether to print contract names.
     #[inline]
-    pub fn print_names(mut self, yes: bool) -> Self {
+    pub const fn print_names(mut self, yes: bool) -> Self {
         self.print_names = Some(yes);
         self
     }
 
     /// Sets whether to print contract sizes.
     #[inline]
-    pub fn print_sizes(mut self, yes: bool) -> Self {
+    pub const fn print_sizes(mut self, yes: bool) -> Self {
         self.print_sizes = Some(yes);
         self
     }
@@ -104,21 +104,21 @@ impl ProjectCompiler {
     /// Sets whether to print anything at all. Overrides other `print` options.
     #[inline]
     #[doc(alias = "silent")]
-    pub fn quiet(mut self, yes: bool) -> Self {
+    pub const fn quiet(mut self, yes: bool) -> Self {
         self.quiet = Some(yes);
         self
     }
 
     /// Sets whether to bail on compiler errors.
     #[inline]
-    pub fn bail(mut self, yes: bool) -> Self {
+    pub const fn bail(mut self, yes: bool) -> Self {
         self.bail = Some(yes);
         self
     }
 
     /// Sets whether to ignore EIP-3860 initcode size limits.
     #[inline]
-    pub fn ignore_eip_3860(mut self, yes: bool) -> Self {
+    pub const fn ignore_eip_3860(mut self, yes: bool) -> Self {
         self.ignore_eip_3860 = yes;
         self
     }
@@ -132,7 +132,7 @@ impl ProjectCompiler {
 
     /// Sets if tests should be dynamically linked.
     #[inline]
-    pub fn dynamic_test_linking(mut self, preprocess: bool) -> Self {
+    pub const fn dynamic_test_linking(mut self, preprocess: bool) -> Self {
         self.dynamic_test_linking = preprocess;
         self
     }
@@ -163,10 +163,10 @@ impl ProjectCompiler {
         let files = std::mem::take(&mut self.files);
         let preprocess = self.dynamic_test_linking;
         self.compile_with(|| {
-            let sources = if !files.is_empty() {
-                Source::read_all(files)?
-            } else {
+            let sources = if files.is_empty() {
                 project.paths.read_input_files()?
+            } else {
+                Source::read_all(files)?
             };
 
             let mut compiler =
@@ -591,7 +591,7 @@ impl PathOrContractInfo {
     /// Returns the path to the contract file if provided.
     pub fn path(&self) -> Option<PathBuf> {
         match self {
-            Self::Path(path) => Some(path.to_path_buf()),
+            Self::Path(path) => Some(path.clone()),
             Self::ContractInfo(info) => info.path.as_ref().map(PathBuf::from),
         }
     }

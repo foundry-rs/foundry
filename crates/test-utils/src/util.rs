@@ -146,9 +146,7 @@ pub fn get_compiled(project: &mut Project) -> ProjectCompileOutput {
     out = project.compile().unwrap();
     test_debug!("compiled {}", lock_file_path.display());
 
-    if out.has_compiler_errors() {
-        panic!("Compiled with errors:\n{out}");
-    }
+    assert!(!out.has_compiler_errors(), "Compiled with errors:\n{out}");
 
     if let Some(write) = &mut write {
         write.write_all(crate::fd_lock::LOCK_TOKEN).unwrap();
@@ -176,7 +174,7 @@ pub fn get_vyper() -> Vyper {
         let path = VYPER.as_path();
         let mut file = File::create(path).unwrap();
         if let Err(e) = file.try_lock() {
-            if let fs::TryLockError::WouldBlock = e {
+            if matches!(e, fs::TryLockError::WouldBlock) {
                 file.lock().unwrap();
                 assert!(path.exists());
                 return Vyper::new(path).unwrap();

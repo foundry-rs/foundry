@@ -1,5 +1,8 @@
 use crate::{eth::subscription::SubscriptionId, types::ReorgOptions};
-use alloy_primitives::{Address, B64, B256, Bytes, TxHash, U256, map::HashSet};
+use alloy_primitives::{
+    Address, B64, B256, Bytes, TxHash, U256,
+    map::{HashMap, HashSet},
+};
 use alloy_rpc_types::{
     BlockId, BlockNumberOrTag as BlockNumber, BlockOverrides, Filter, Index,
     anvil::{Forking, MineOptions},
@@ -28,7 +31,7 @@ use self::serde_helpers::*;
 
 /// Wrapper type that ensures the type is named `params`
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
-pub struct Params<T: Default> {
+pub struct Params<T> {
     #[serde(default)]
     pub params: T,
 }
@@ -91,6 +94,10 @@ pub enum EthRequest {
 
     #[serde(rename = "eth_getStorageAt")]
     EthGetStorageAt(Address, U256, Option<BlockId>),
+
+    /// Returns storage values for multiple accounts and slots in a single call.
+    #[serde(rename = "eth_getStorageValues")]
+    EthGetStorageValues(HashMap<Address, Vec<B256>>, Option<BlockId>),
 
     #[serde(rename = "eth_getBlockByHash")]
     EthGetBlockByHash(B256, bool),
@@ -310,6 +317,14 @@ pub enum EthRequest {
     /// reth's `debug_dbGet` endpoint
     #[serde(rename = "debug_dbGet")]
     DebugDbGet(String),
+
+    /// geth's `debug_traceBlockByHash` endpoint
+    #[serde(rename = "debug_traceBlockByHash")]
+    DebugTraceBlockByHash(B256, #[serde(default)] GethDebugTracingOptions),
+
+    /// geth's `debug_traceBlockByNumber` endpoint
+    #[serde(rename = "debug_traceBlockByNumber")]
+    DebugTraceBlockByNumber(BlockNumber, #[serde(default)] GethDebugTracingOptions),
 
     /// Trace transaction endpoint for parity's `trace_transaction`
     #[serde(rename = "trace_transaction", with = "sequence")]
@@ -709,6 +724,26 @@ pub enum EthRequest {
     /// Rollback the chain
     #[serde(rename = "anvil_rollback", with = "sequence")]
     Rollback(Option<u64>),
+
+    /// Sets the fee token for a user (Tempo-only)
+    #[serde(rename = "anvil_setFeeToken")]
+    SetFeeToken(Address, Address),
+
+    /// Sets the fee token for a validator (Tempo-only)
+    #[serde(rename = "anvil_setValidatorFeeToken")]
+    SetValidatorFeeToken(Address, Address),
+
+    /// Mints FeeAMM liquidity for a token pair (Tempo-only)
+    #[serde(rename = "anvil_setFeeAmmLiquidity")]
+    SetFeeAmmLiquidity(
+        /// user_token
+        Address,
+        /// validator_token
+        Address,
+        /// amount
+        #[serde(deserialize_with = "deserialize_number")]
+        U256,
+    ),
 }
 
 /// Represents ethereum JSON-RPC API

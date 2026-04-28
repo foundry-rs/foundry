@@ -68,7 +68,7 @@ impl ChiselSession {
         &self.project
     }
 
-    pub fn is_repl(&self) -> bool {
+    pub const fn is_repl(&self) -> bool {
         self.is_repl
     }
 

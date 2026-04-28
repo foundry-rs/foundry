@@ -6,7 +6,7 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, Network, TransactionBuilder};
+use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, map::HashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -20,6 +20,7 @@ use foundry_cli::{
     utils::{LoadConfig, TraceResult, parse_ether_value},
 };
 use foundry_common::{
+    FoundryTransactionBuilder,
     abi::{encode_function_args, get_func},
     provider::{ProviderBuilder, curl_transport::generate_curl_command},
     sh_println, shell,
@@ -33,17 +34,17 @@ use foundry_config::{
     },
 };
 use foundry_evm::{
+    core::{
+        FoundryBlock, FoundryTransaction,
+        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork},
+    },
     executors::TracingExecutor,
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
-use foundry_primitives::FoundryTransactionBuilder;
 use foundry_wallets::WalletOpts;
-use itertools::Either;
 use regex::Regex;
-use revm::context::TransactionType;
 use std::{str::FromStr, sync::LazyLock};
-use tempo_alloy::TempoNetwork;
 
 // matches override pattern <address>:<slot>:<value>
 // e.g. 0x123:0x1:0x1234
@@ -221,15 +222,23 @@ impl CallArgs {
             return self.run_curl().await;
         }
         if self.tx.tempo.is_tempo() {
-            self.run_with_network::<TempoNetwork>().await
+            self.run_with_network::<TempoEvmNetwork>().await
         } else {
-            self.run_with_network::<AnyNetwork>().await
+            let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
+            let mut evm_opts = figment.extract::<EvmOpts>()?;
+            evm_opts.infer_network_from_fork().await;
+
+            if evm_opts.networks.is_optimism() {
+                self.run_with_network::<OpEvmNetwork>().await
+            } else {
+                self.run_with_network::<EthEvmNetwork>().await
+            }
         }
     }
 
-    pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
+    pub async fn run_with_network<FEN: FoundryEvmNetwork>(self) -> Result<()>
     where
-        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        <FEN::Network as Network>::TransactionRequest: FoundryTransactionBuilder<FEN::Network>,
     {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
@@ -260,7 +269,7 @@ impl CallArgs {
             sig = Some(data);
         }
 
-        let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+        let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
         let sender = SenderKind::from_wallet_opts(wallet).await?;
         let from = sender.address();
 
@@ -299,20 +308,20 @@ impl CallArgs {
 
             let create2_deployer = evm_opts.create2_deployer;
             let (mut evm_env, tx_env, fork, chain, networks) =
-                TracingExecutor::get_fork_material(&mut config, evm_opts).await?;
+                TracingExecutor::<FEN>::get_fork_material(&mut config, evm_opts).await?;
 
             // modify settings that usually set in eth_call
             evm_env.cfg_env.disable_block_gas_limit = true;
             evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
-            evm_env.block_env.gas_limit = u64::MAX;
+            evm_env.block_env.set_gas_limit(u64::MAX);
 
             // Apply the block overrides.
             if let Some(block_overrides) = block_overrides {
                 if let Some(number) = block_overrides.number {
-                    evm_env.block_env.number = number.to();
+                    evm_env.block_env.set_number(number.to());
                 }
                 if let Some(time) = block_overrides.time {
-                    evm_env.block_env.timestamp = U256::from(time);
+                    evm_env.block_env.set_timestamp(U256::from(time));
                 }
             }
 
@@ -324,7 +333,7 @@ impl CallArgs {
                     InternalTraceMode::None
                 })
                 .with_state_changes(shell::verbosity() > 4);
-            let mut executor = TracingExecutor::new(
+            let mut executor = TracingExecutor::<FEN>::new(
                 (evm_env, tx_env),
                 fork,
                 evm_version,
@@ -341,43 +350,37 @@ impl CallArgs {
 
             // Set transaction options with --trace
             if let Some(gas_limit) = tx.gas_limit() {
-                env_tx.gas_limit = gas_limit;
+                env_tx.set_gas_limit(gas_limit);
             }
 
             if let Some(gas_price) = tx.gas_price() {
-                env_tx.gas_price = gas_price;
+                env_tx.set_gas_price(gas_price);
             }
 
             if let Some(max_fee_per_gas) = tx.max_fee_per_gas() {
-                env_tx.gas_price = max_fee_per_gas;
+                env_tx.set_gas_price(max_fee_per_gas);
             }
 
             if let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas() {
-                env_tx.gas_priority_fee = Some(max_priority_fee_per_gas);
+                env_tx.set_gas_priority_fee(Some(max_priority_fee_per_gas));
             }
 
             if let Some(max_fee_per_blob_gas) = tx.max_fee_per_blob_gas() {
-                env_tx.max_fee_per_blob_gas = max_fee_per_blob_gas;
+                env_tx.set_max_fee_per_blob_gas(max_fee_per_blob_gas);
             }
 
             if let Some(nonce) = tx.nonce() {
-                env_tx.nonce = nonce;
+                env_tx.set_nonce(nonce);
             }
 
-            env_tx.tx_type = tx.output_tx_type().into();
+            env_tx.set_tx_type(tx.output_tx_type().into());
 
             if let Some(access_list) = tx.access_list().cloned() {
-                env_tx.access_list = access_list;
-
-                if env_tx.tx_type == TransactionType::Legacy as u8 {
-                    env_tx.tx_type = TransactionType::Eip2930 as u8;
-                }
+                env_tx.set_access_list(access_list);
             }
 
             if let Some(auth) = tx.authorization_list().cloned() {
-                env_tx.authorization_list = auth.into_iter().map(Either::Left).collect();
-
-                env_tx.tx_type = TransactionType::Eip7702 as u8;
+                env_tx.set_signed_authorization(auth);
             }
 
             let trace = match tx_kind {

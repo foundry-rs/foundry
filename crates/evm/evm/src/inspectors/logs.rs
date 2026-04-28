@@ -2,16 +2,12 @@ use alloy_primitives::Log;
 use alloy_sol_types::{SolEvent, SolInterface, SolValue};
 use foundry_common::{ErrorExt, fmt::ConsoleFmt, sh_println};
 use foundry_evm_core::{
-    FoundryInspectorExt, abi::console, constants::HARDHAT_CONSOLE_ADDRESS,
-    decode::decode_console_log,
+    InspectorExt, abi::console, constants::HARDHAT_CONSOLE_ADDRESS, decode::decode_console_log,
 };
 use revm::{
     Inspector,
     context::ContextTr,
-    interpreter::{
-        CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult,
-        interpreter::EthInterpreter,
-    },
+    interpreter::{CallInputs, CallOutcome, Gas, InstructionResult, InterpreterResult},
 };
 
 /// An inspector that collects logs during execution.
@@ -34,10 +30,11 @@ impl LogCollector {
     }
 
     #[cold]
-    fn do_hardhat_log<CTX>(&mut self, context: &mut CTX, inputs: &CallInputs) -> Option<CallOutcome>
-    where
-        CTX: ContextTr,
-    {
+    fn do_hardhat_log<CTX: ContextTr>(
+        &mut self,
+        context: &mut CTX,
+        inputs: &CallInputs,
+    ) -> Option<CallOutcome> {
         if let Err(err) = self.hardhat_log(&inputs.input.bytes(context)) {
             let result = InstructionResult::Revert;
             let output = err.abi_encode_revert();
@@ -53,7 +50,9 @@ impl LogCollector {
 
     fn hardhat_log(&mut self, data: &[u8]) -> alloy_sol_types::Result<()> {
         let decoded = console::hh::ConsoleCalls::abi_decode(data)?;
-        self.push_msg(&decoded.fmt(Default::default()));
+        for line in decoded.fmt(Default::default()).lines() {
+            self.push_msg(line);
+        }
         Ok(())
     }
 
@@ -81,10 +80,7 @@ impl LogCollector {
     }
 }
 
-impl<CTX> Inspector<CTX, EthInterpreter> for LogCollector
-where
-    CTX: ContextTr,
-{
+impl<CTX: ContextTr> Inspector<CTX> for LogCollector {
     fn log(&mut self, _context: &mut CTX, log: Log) {
         self.push_raw_log(log);
     }
@@ -97,7 +93,7 @@ where
     }
 }
 
-impl FoundryInspectorExt for LogCollector {
+impl InspectorExt for LogCollector {
     fn console_log(&mut self, msg: &str) {
         self.push_msg(msg);
     }

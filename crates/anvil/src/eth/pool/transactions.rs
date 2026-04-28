@@ -1,12 +1,16 @@
 use crate::eth::{error::PoolError, util::hex_fmt_many};
-use alloy_consensus::{Transaction, Typed2718};
+use alloy_consensus::{
+    Transaction, Typed2718,
+    crypto::RecoveryError,
+    transaction::{SignerRecoverable, TxHashRef},
+};
 use alloy_network::AnyRpcTransaction;
 use alloy_primitives::{
     Address, TxHash,
     map::{HashMap, HashSet},
 };
+use alloy_rlp::Encodable;
 use anvil_core::eth::transaction::PendingTransaction;
-use foundry_primitives::FoundryTxEnvelope;
 use parking_lot::RwLock;
 use std::{cmp::Ordering, collections::BTreeSet, fmt, str::FromStr, sync::Arc, time::Instant};
 
@@ -87,7 +91,7 @@ pub struct PoolTransaction<T> {
 // == impl PoolTransaction ==
 
 impl<T> PoolTransaction<T> {
-    pub fn new(transaction: PendingTransaction<T>) -> Self {
+    pub const fn new(transaction: PendingTransaction<T>) -> Self {
         Self {
             pending_transaction: transaction,
             requires: vec![],
@@ -97,7 +101,7 @@ impl<T> PoolTransaction<T> {
     }
 
     /// Returns the hash of this transaction
-    pub fn hash(&self) -> TxHash {
+    pub const fn hash(&self) -> TxHash {
         *self.pending_transaction.hash()
     }
 }
@@ -128,10 +132,15 @@ impl<T: fmt::Debug> fmt::Debug for PoolTransaction<T> {
     }
 }
 
-impl TryFrom<AnyRpcTransaction> for PoolTransaction<FoundryTxEnvelope> {
+impl<T> TryFrom<AnyRpcTransaction> for PoolTransaction<T>
+where
+    T: SignerRecoverable + TxHashRef + Encodable + TryFrom<AnyRpcTransaction>,
+    <T as TryFrom<AnyRpcTransaction>>::Error: Into<eyre::Error>,
+    RecoveryError: Into<eyre::Error>,
+{
     type Error = eyre::Error;
     fn try_from(value: AnyRpcTransaction) -> Result<Self, Self::Error> {
-        let typed_transaction = FoundryTxEnvelope::try_from(value)?;
+        let typed_transaction = T::try_from(value).map_err(Into::into)?;
         let pending_transaction = PendingTransaction::new(typed_transaction)?;
         Ok(Self {
             pending_transaction,
@@ -267,7 +276,7 @@ impl<T: Transaction> PendingTransactions<T> {
             .and_then(|hash| self.waiting_queue.get(hash))
         {
             // check if underpriced
-            if tx.transaction.max_fee_per_gas() < replace.transaction.max_fee_per_gas() {
+            if tx.transaction.max_fee_per_gas() <= replace.transaction.max_fee_per_gas() {
                 warn!(target: "txpool", "pending replacement transaction underpriced [{:?}]", tx.transaction.hash());
                 return Err(PoolError::ReplacementUnderpriced(tx.transaction.hash()));
             }
@@ -457,11 +466,11 @@ impl<T> ReadyTransactions<T> {
         self.ready_tx.read().get(hash).cloned()
     }
 
-    pub fn provided_markers(&self) -> &HashMap<TxMarker, TxHash> {
+    pub const fn provided_markers(&self) -> &HashMap<TxMarker, TxHash> {
         &self.provided_markers
     }
 
-    fn next_id(&mut self) -> u64 {
+    const fn next_id(&mut self) -> u64 {
         let id = self.id;
         self.id = self.id.wrapping_add(1);
         id
@@ -506,11 +515,7 @@ impl<T> ReadyTransactions<T> {
                         if let Some(idx) = tx2.unlocks.iter().position(|i| i == &hash) {
                             tx2.unlocks.swap_remove(idx);
                         }
-                        if tx2.unlocks.is_empty() {
-                            Some(tx2.transaction.transaction.provides.clone())
-                        } else {
-                            None
-                        }
+                        tx2.unlocks.is_empty().then(|| tx2.transaction.transaction.provides.clone())
                     };
 
                     // find previous transactions
@@ -684,9 +689,8 @@ impl<T: Transaction> ReadyTransactions<T> {
                     {
                         warn!(target: "txpool", "ready replacement transaction underpriced [{:?}]", tx.hash());
                         return Err(PoolError::ReplacementUnderpriced(tx.hash()));
-                    } else {
-                        trace!(target: "txpool", "replacing ready transaction [{:?}] with higher gas price [{:?}]", to_remove.transaction.transaction.hash(), tx.hash());
                     }
+                    trace!(target: "txpool", "replacing ready transaction [{:?}] with higher gas price [{:?}]", to_remove.transaction.transaction.hash(), tx.hash());
                 }
 
                 unlocked_tx.extend(to_remove.unlocks.iter().copied())

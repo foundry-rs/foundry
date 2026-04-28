@@ -23,7 +23,6 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1
         with:
           version: nightly
-          network: tempo
 
       - name: Show Forge version
         run: forge --version

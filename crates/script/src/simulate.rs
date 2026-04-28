@@ -10,7 +10,8 @@ use crate::{
     sequence::get_commit_hash,
 };
 use alloy_chains::NamedChain;
-use alloy_network::{Ethereum, Network, TransactionBuilder};
+use alloy_evm::revm::context::Block;
+use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, U256, map::HashMap, utils::format_units};
 use dialoguer::Confirm;
 use eyre::{Context, Result};
@@ -18,8 +19,10 @@ use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_different_gas_calc, now};
 use foundry_common::{ContractData, shell};
-use foundry_evm::traces::{decode_trace_arena, render_trace_arena};
-use foundry_primitives::FoundryTransactionBuilder;
+use foundry_evm::{
+    core::{FoundryBlock, evm::FoundryEvmNetwork},
+    traces::{decode_trace_arena, render_trace_arena},
+};
 use foundry_wallets::wallet_browser::signer::BrowserSigner;
 use futures::future::{join_all, try_join_all};
 use parking_lot::RwLock;
@@ -34,24 +37,24 @@ use std::{
 ///
 /// Can be either converted directly to [BundledState] or driven to it through
 /// [FilledTransactionsState].
-pub struct PreSimulationState {
+pub struct PreSimulationState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<FEN>,
     pub script_wallets: Wallets,
-    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
+    pub browser_wallet: Option<BrowserSigner<FEN::Network>>,
     pub build_data: LinkedBuildData,
     pub execution_data: ExecutionData,
-    pub execution_result: ScriptResult,
+    pub execution_result: ScriptResult<FEN::Network>,
     pub execution_artifacts: ExecutionArtifacts,
 }
 
-impl PreSimulationState {
+impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
     /// If simulation is enabled, simulates transactions against fork and fills gas estimation and
     /// metadata. Otherwise, metadata (e.g. additional contracts, created contract names) is
     /// left empty.
     ///
     /// Both modes will panic if any of the transactions have None for the `rpc` field.
-    pub async fn fill_metadata(self) -> Result<FilledTransactionsState> {
+    pub async fn fill_metadata(self) -> Result<FilledTransactionsState<FEN>> {
         let address_to_abi = self.build_address_to_abi_map();
 
         let mut transactions = self
@@ -103,13 +106,10 @@ impl PreSimulationState {
     /// transactions in those environments.
     ///
     /// Collects gas usage and metadata for each transaction.
-    pub async fn simulate_and_fill<N: Network>(
+    pub async fn simulate_and_fill(
         &self,
-        transactions: VecDeque<TransactionWithMetadata<N>>,
-    ) -> Result<VecDeque<TransactionWithMetadata<N>>>
-    where
-        N::TransactionRequest: FoundryTransactionBuilder<N>,
-    {
+        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+    ) -> Result<VecDeque<TransactionWithMetadata<FEN::Network>>> {
         trace!(target: "script", "executing onchain simulation");
 
         let runners = Arc::new(
@@ -147,7 +147,8 @@ impl PreSimulationState {
 
                 // Simulate mining the transaction if the user passes `--slow`.
                 if self.args.slow {
-                    runner.executor.evm_env_mut().block_env.number += U256::from(1);
+                    let block_number = runner.executor.evm_env().block_env.number() + U256::from(1);
+                    runner.executor.evm_env_mut().block_env.set_number(block_number);
                 }
 
                 let is_noop_tx = if let Some(to) = to {
@@ -234,12 +235,12 @@ impl PreSimulationState {
     }
 
     /// Build [ScriptRunner] forking given RPC for each RPC used in the script.
-    async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner)>> {
+    async fn build_runners(&self) -> Result<Vec<(String, ScriptRunner<FEN>)>> {
         let rpcs = self.execution_artifacts.rpc_data.total_rpcs.clone();
 
         if !shell::is_json() {
             let n = rpcs.len();
-            let s = if n != 1 { "s" } else { "" };
+            let s = if n == 1 { "" } else { "s" };
             sh_println!("\n## Setting up {n} EVM{s}.")?;
         }
 
@@ -256,23 +257,23 @@ impl PreSimulationState {
 /// At this point we have converted transactions collected during script execution to
 /// [TransactionWithMetadata] objects which contain additional metadata needed for broadcasting and
 /// verification.
-pub struct FilledTransactionsState {
+pub struct FilledTransactionsState<FEN: FoundryEvmNetwork> {
     pub args: ScriptArgs,
-    pub script_config: ScriptConfig,
+    pub script_config: ScriptConfig<FEN>,
     pub script_wallets: Wallets,
-    pub browser_wallet: Option<BrowserSigner<Ethereum>>,
+    pub browser_wallet: Option<BrowserSigner<FEN::Network>>,
     pub build_data: LinkedBuildData,
     pub execution_artifacts: ExecutionArtifacts,
-    pub transactions: VecDeque<TransactionWithMetadata<Ethereum>>,
+    pub transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
 }
 
-impl FilledTransactionsState {
+impl<FEN: FoundryEvmNetwork> FilledTransactionsState<FEN> {
     /// Bundles all transactions of the [`TransactionWithMetadata`] type in a list of
     /// [`ScriptSequence`]. List length will be higher than 1, if we're dealing with a multi
     /// chain deployment.
     ///
     /// Each transaction will be added with the correct transaction type and gas estimation.
-    pub async fn bundle(mut self) -> Result<BundledState<Ethereum>> {
+    pub async fn bundle(mut self) -> Result<BundledState<FEN>> {
         let is_multi_deployment = self.execution_artifacts.rpc_data.total_rpcs.len() > 1;
 
         if is_multi_deployment && !self.build_data.libraries.is_empty() {
@@ -283,7 +284,7 @@ impl FilledTransactionsState {
 
         // Batches sequence of transactions from different rpcs.
         let mut new_sequence = VecDeque::new();
-        let mut manager = ProvidersManager::default();
+        let mut manager = ProvidersManager::<FEN::Network>::default();
         let mut sequences = vec![];
 
         // Peeking is used to check if the next rpc url is different. If so, it creates a
@@ -291,7 +292,7 @@ impl FilledTransactionsState {
         let mut txes_iter = mem::take(&mut self.transactions).into_iter().peekable();
 
         while let Some(mut tx) = txes_iter.next() {
-            let tx_rpc = tx.rpc.to_owned();
+            let tx_rpc = tx.rpc.clone();
             let provider_info = manager.get_or_init_provider(&tx.rpc, self.args.legacy).await?;
 
             if let Some(tx) = tx.tx_mut().as_unsigned_mut() {
@@ -306,7 +307,7 @@ impl FilledTransactionsState {
                     // only estimate gas for unsigned transactions
                     if let Some(tx) = tx.as_unsigned_mut() {
                         trace!("estimating with different gas calculation");
-                        let gas = tx.gas.expect("gas is set by simulation.");
+                        let gas = tx.gas_limit().expect("gas is set by simulation.");
 
                         // We are trying to show the user an estimation of the total gas usage.
                         //
@@ -383,15 +384,7 @@ impl FilledTransactionsState {
                     .unwrap_or_else(|_| "[Could not calculate]".to_string());
                 let estimated_amount = estimated_amount_raw.trim_end_matches('0');
 
-                if !shell::is_json() {
-                    sh_println!("\n==========================")?;
-                    sh_println!("\nChain {}", provider_info.chain)?;
-
-                    sh_println!("\nEstimated gas price: {} gwei", estimated_gas_price)?;
-                    sh_println!("\nEstimated total gas used for script: {total_gas}")?;
-                    sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
-                    sh_println!("\n==========================")?;
-                } else {
+                if shell::is_json() {
                     sh_println!(
                         "{}",
                         serde_json::json!({
@@ -402,6 +395,14 @@ impl FilledTransactionsState {
                             "token_symbol": token_symbol,
                         })
                     )?;
+                } else {
+                    sh_println!("\n==========================")?;
+                    sh_println!("\nChain {}", provider_info.chain)?;
+
+                    sh_println!("\nEstimated gas price: {} gwei", estimated_gas_price)?;
+                    sh_println!("\nEstimated total gas used for script: {total_gas}")?;
+                    sh_println!("\nEstimated amount required: {estimated_amount} {token_symbol}")?;
+                    sh_println!("\n==========================")?;
                 }
             }
         }
@@ -433,14 +434,14 @@ impl FilledTransactionsState {
         &self,
         multi: bool,
         chain: u64,
-        transactions: VecDeque<TransactionWithMetadata<Ethereum>>,
-    ) -> Result<ScriptSequence<Ethereum>> {
+        transactions: VecDeque<TransactionWithMetadata<FEN::Network>>,
+    ) -> Result<ScriptSequence<FEN::Network>> {
         // Paths are set to None for multi-chain sequences parts, because they don't need to be
         // saved to a separate file.
         let paths = if multi {
             None
         } else {
-            Some(ScriptSequence::<Ethereum>::get_paths(
+            Some(ScriptSequence::<FEN::Network>::get_paths(
                 &self.script_config.config,
                 &self.args.sig,
                 &self.build_data.build_data.target,

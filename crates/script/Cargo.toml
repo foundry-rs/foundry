@@ -19,11 +19,12 @@ foundry-cli.workspace = true
 foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
+foundry-evm-networks.workspace = true
+alloy-evm.workspace = true
 foundry-debugger.workspace = true
 foundry-cheatcodes.workspace = true
-foundry-wallets.workspace = true
+foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 foundry-linking.workspace = true
-foundry-primitives.workspace = true
 forge-script-sequence.workspace = true
 
 serde.workspace = true
@@ -55,6 +56,9 @@ alloy-primitives.workspace = true
 alloy-eips.workspace = true
 alloy-consensus.workspace = true
 thiserror.workspace = true
+
+tempo-alloy.workspace = true
+tempo-primitives.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
