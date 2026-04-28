@@ -77,14 +77,6 @@ const COVERAGE_MAP_SIZE: usize = 65536;
 /// 4KiB is usually the minimum file size on popular file systems.
 const GZIP_THRESHOLD: usize = 4 * 1024;
 
-/// Maximum number of inner calls hoisted from execution traces that we keep in memory
-/// for reuse during input generation. Older entries are dropped FIFO once exceeded.
-const HOISTED_POOL_MAX: usize = 1024;
-
-/// Probability denominator: when the hoisted pool is non-empty, [`WorkerCorpus::new_tx`]
-/// returns a hoisted call instead of a strategy-generated one with probability 1/N.
-const HOISTED_POOL_DRAW_RATIO: u32 = 4;
-
 /// Possible mutation strategies to apply on a call sequence.
 #[derive(Debug, Clone)]
 enum MutationType {
@@ -292,11 +284,6 @@ pub struct WorkerCorpus {
     optimization_best_value: Option<I256>,
     /// Optimization mode: the call sequence that produced the best value.
     optimization_best_sequence: Vec<BasicTxDetails>,
-    /// Pool of inner calls hoisted from execution traces, filtered by allowed selectors.
-    /// [`Self::new_tx`] occasionally draws from this pool to seed the mutator with calls
-    /// that the harness already shaped (e.g. via clamping/`bound`) at deeper invocation
-    /// depths. Bounded by [`HOISTED_POOL_MAX`].
-    hoisted_pool: Vec<BasicTxDetails>,
 }
 
 impl WorkerCorpus {
@@ -437,7 +424,6 @@ impl WorkerCorpus {
             last_sync_metrics: Default::default(),
             optimization_best_value,
             optimization_best_sequence,
-            hoisted_pool: Vec::new(),
         })
     }
 
@@ -741,18 +727,7 @@ impl WorkerCorpus {
     }
 
     /// Generates single call from corpus strategy.
-    ///
-    /// When the [`Self::hoisted_pool`] is non-empty, with probability
-    /// `1 / HOISTED_POOL_DRAW_RATIO` returns a clone of a random hoisted call instead
-    /// of generating a fresh one. Hoisted calls are already filtered by allowed
-    /// selectors at insertion time, so they're safe to use as top-level inputs.
     pub fn new_tx(&self, test_runner: &mut TestRunner) -> Result<BasicTxDetails> {
-        if !self.hoisted_pool.is_empty()
-            && test_runner.rng().random_ratio(1, HOISTED_POOL_DRAW_RATIO)
-        {
-            let idx = test_runner.rng().random_range(0..self.hoisted_pool.len());
-            return Ok(self.hoisted_pool[idx].clone());
-        }
         Ok(self
             .tx_generator
             .new_tree(test_runner)
@@ -760,19 +735,21 @@ impl WorkerCorpus {
             .current())
     }
 
-    /// Adds inner calls whose `(target, selector)` is in the allowed selector list
-    /// to the hoisted pool. `observed` is typically the buffer drained from
-    /// [`Fuzzer::take_observed_calls`] after a tx executes.
+    /// Bundles inner calls whose `(target, selector)` is in the allowed selector list
+    /// into a single multi-tx corpus entry and adds it to the in-memory corpus.
+    /// `observed` is typically the buffer drained from
+    /// [`Fuzzer::take_observed_calls`] after a tx (or unit test) executes.
     ///
     /// The intent is to capture calls that the harness has already shaped via clamping
     /// or sequencing (e.g. values that survived a `bound(...)` modulus, or calls only
-    /// reachable after a specific setup). Hoisting them lets the fuzzer reuse those
-    /// well-formed inputs as top-level calls without paying for full `TracingInspector`
-    /// overhead — `Fuzzer` already runs in the inspector stack.
+    /// reachable after a specific setup). Treating the bundle as a normal corpus
+    /// entry — instead of a side pool — means it participates in mutation, eviction,
+    /// favoring, persistence, and inter-worker sync uniformly with all other entries.
     ///
     /// Skips entries with calldata shorter than a 4-byte selector and any call whose
     /// `(target, selector)` isn't in the allowed set per
-    /// [`TargetedContracts::can_replay`].
+    /// [`TargetedContracts::can_replay`]. If the resulting allowed sequence is empty,
+    /// no corpus entry is added.
     pub fn hoist_observed_calls(
         &mut self,
         observed: &[ObservedCall],
@@ -782,33 +759,46 @@ impl WorkerCorpus {
         if !self.config.is_coverage_guided() || observed.is_empty() {
             return;
         }
-        let targets = targeted_contracts.targets.lock();
-        for call in observed {
-            if call.calldata.len() < 4 {
-                continue;
+
+        let seq = {
+            let targets = targeted_contracts.targets.lock();
+            let mut seq = Vec::with_capacity(observed.len());
+            for call in observed {
+                if call.calldata.len() < 4 {
+                    continue;
+                }
+                let candidate = BasicTxDetails {
+                    warp: parent_tx.warp,
+                    roll: parent_tx.roll,
+                    sender: parent_tx.sender,
+                    call_details: CallDetails {
+                        target: call.target,
+                        calldata: call.calldata.clone(),
+                    },
+                };
+                if !targets.can_replay(&candidate) {
+                    continue;
+                }
+                seq.push(candidate);
             }
-            let candidate = BasicTxDetails {
-                warp: parent_tx.warp,
-                roll: parent_tx.roll,
-                sender: parent_tx.sender,
-                call_details: CallDetails {
-                    target: call.target,
-                    calldata: call.calldata.clone(),
-                },
-            };
-            if !targets.can_replay(&candidate) {
-                continue;
-            }
-            if self.hoisted_pool.iter().any(|tx| {
-                tx.call_details.target == call.target && tx.call_details.calldata == call.calldata
-            }) {
-                continue;
-            }
-            if self.hoisted_pool.len() >= HOISTED_POOL_MAX {
-                self.hoisted_pool.remove(0);
-            }
-            self.hoisted_pool.push(candidate);
+            seq
+        };
+
+        if seq.is_empty() {
+            return;
         }
+
+        let entry = CorpusEntry::new(seq);
+        if let Some(worker_dir) = &self.worker_dir {
+            let dir = worker_dir.join(CORPUS_DIR);
+            if let Err(err) = entry.write_to_disk_in(&dir, self.config.corpus_gzip) {
+                debug!(target: "corpus", %err, "failed to persist hoisted entry");
+            }
+        }
+        let new_index = self.in_memory_corpus.len();
+        self.new_entry_indices.push(new_index);
+        self.metrics.corpus_count += 1;
+        self.in_memory_corpus.push(entry);
     }
 
     /// Seeds the corpus with sequences derived from sibling unit tests in the
@@ -1493,7 +1483,6 @@ mod tests {
             last_sync_metrics: CorpusMetrics::default(),
             optimization_best_value: None,
             optimization_best_sequence: vec![],
-            hoisted_pool: vec![],
         };
 
         (manager, seed_uuid)
@@ -1604,7 +1593,6 @@ mod tests {
             last_sync_metrics: CorpusMetrics::default(),
             optimization_best_value: None,
             optimization_best_sequence: vec![],
-            hoisted_pool: vec![],
         };
 
         // First eviction should remove the non-favored one.
@@ -1621,7 +1609,7 @@ mod tests {
     }
 
     #[test]
-    fn hoist_observed_calls_filters_by_allowed_selectors() {
+    fn hoist_observed_calls_bundles_allowed_subcalls_into_one_corpus_entry() {
         use alloy_json_abi::{Function, JsonAbi};
         use foundry_evm_fuzz::invariant::{
             FuzzRunIdentifiedContracts, TargetedContract, TargetedContracts,
@@ -1630,49 +1618,96 @@ mod tests {
         let target = Address::from([0x42; 20]);
         let other = Address::from([0x43; 20]);
 
-        // `target` exposes `foo(uint256)` only.
+        // `target` exposes `foo(uint256)` and `bar()`.
         let foo = Function::parse("foo(uint256)").unwrap();
+        let bar = Function::parse("bar()").unwrap();
         let foo_selector = foo.selector();
+        let bar_selector = bar.selector();
         let mut abi = JsonAbi::new();
         abi.functions.insert("foo".to_string(), vec![foo]);
+        abi.functions.insert("bar".to_string(), vec![bar]);
 
         let mut targets = TargetedContracts::new();
         targets.inner.insert(target, TargetedContract::new("Test".to_string(), abi));
         let targeted_contracts = FuzzRunIdentifiedContracts::new(targets, false);
 
-        let mut allowed = vec![0u8; 36];
-        allowed[..4].copy_from_slice(&foo_selector[..]);
+        let mut foo_calldata = vec![0u8; 36];
+        foo_calldata[..4].copy_from_slice(&foo_selector[..]);
+        let bar_calldata = bar_selector.to_vec();
         let mut wrong_selector = vec![0u8; 36];
         wrong_selector[..4].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
 
         let observed = vec![
-            // Allowed (target, foo) — must be hoisted.
-            ObservedCall { depth: 1, target, calldata: Bytes::from(allowed.clone()) },
+            // Allowed (target, foo) — must be included.
+            ObservedCall { depth: 1, target, calldata: Bytes::from(foo_calldata.clone()) },
             // Wrong target — must be filtered.
-            ObservedCall { depth: 1, target: other, calldata: Bytes::from(allowed.clone()) },
+            ObservedCall { depth: 1, target: other, calldata: Bytes::from(foo_calldata.clone()) },
             // Right target, wrong selector — must be filtered.
             ObservedCall { depth: 2, target, calldata: Bytes::from(wrong_selector) },
             // Calldata < 4 bytes — must be filtered.
             ObservedCall { depth: 1, target, calldata: Bytes::from(vec![0u8; 3]) },
+            // Allowed (target, bar) at deeper depth — must still be included.
+            ObservedCall { depth: 3, target, calldata: Bytes::from(bar_calldata.clone()) },
         ];
 
         let parent_tx = basic_tx();
         let (mut manager, _) = new_manager_with_single_corpus();
-        assert!(manager.hoisted_pool.is_empty());
+        let initial_count = manager.in_memory_corpus.len();
 
         manager.hoist_observed_calls(&observed, &parent_tx, &targeted_contracts);
 
         assert_eq!(
-            manager.hoisted_pool.len(),
-            1,
-            "only the (target, foo) subcall should pass the allowed-selector filter"
+            manager.in_memory_corpus.len(),
+            initial_count + 1,
+            "one bundled corpus entry should be added per hoist invocation"
         );
-        assert_eq!(manager.hoisted_pool[0].call_details.target, target);
-        assert_eq!(&manager.hoisted_pool[0].call_details.calldata[..4], &foo_selector[..]);
+        let added = manager.in_memory_corpus.last().unwrap();
+        assert_eq!(
+            added.tx_seq.len(),
+            2,
+            "only the two allowed (target, foo)/(target, bar) sub-calls should pass the filter"
+        );
+        assert_eq!(added.tx_seq[0].call_details.target, target);
+        assert_eq!(&added.tx_seq[0].call_details.calldata[..4], &foo_selector[..]);
+        assert_eq!(added.tx_seq[1].call_details.target, target);
+        assert_eq!(&added.tx_seq[1].call_details.calldata[..4], &bar_selector[..]);
 
-        // Re-hoisting the same observations must not duplicate entries.
+        // Re-hoisting produces another entry — eviction handles long-term bloat,
+        // not per-call dedup.
         manager.hoist_observed_calls(&observed, &parent_tx, &targeted_contracts);
-        assert_eq!(manager.hoisted_pool.len(), 1, "duplicate (target, calldata) must be deduped");
+        assert_eq!(manager.in_memory_corpus.len(), initial_count + 2);
+    }
+
+    #[test]
+    fn hoist_observed_calls_skips_when_no_allowed_subcalls() {
+        use alloy_json_abi::JsonAbi;
+        use foundry_evm_fuzz::invariant::{
+            FuzzRunIdentifiedContracts, TargetedContract, TargetedContracts,
+        };
+
+        let target = Address::from([0x42; 20]);
+        let mut targets = TargetedContracts::new();
+        // Empty ABI -> nothing replayable on `target`.
+        targets.inner.insert(target, TargetedContract::new("Test".to_string(), JsonAbi::new()));
+        let targeted_contracts = FuzzRunIdentifiedContracts::new(targets, false);
+
+        let observed = vec![ObservedCall {
+            depth: 1,
+            target,
+            calldata: Bytes::from(vec![0xde, 0xad, 0xbe, 0xef, 0, 0, 0, 0]),
+        }];
+
+        let parent_tx = basic_tx();
+        let (mut manager, _) = new_manager_with_single_corpus();
+        let initial_count = manager.in_memory_corpus.len();
+
+        manager.hoist_observed_calls(&observed, &parent_tx, &targeted_contracts);
+
+        assert_eq!(
+            manager.in_memory_corpus.len(),
+            initial_count,
+            "must not push an empty corpus entry"
+        );
     }
 
     #[test]
