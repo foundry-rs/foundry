@@ -127,7 +127,7 @@ main() {
     elif [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
       # Resolve to the latest nightly (prerelease) release via the GitHub API
       say "fetching latest nightly releases from ${FOUNDRYUP_REPO}..."
-      FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases?per_page=10" | awk '
+      FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases" | awk '
         /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
         /"draft"[[:space:]]*:[[:space:]]*true/ { tag="" }
         /"prerelease"[[:space:]]*:[[:space:]]*true/ && !found { if (tag ~ /^nightly-/) { print tag; found=1 } }
