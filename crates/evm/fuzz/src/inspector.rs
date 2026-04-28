@@ -1,4 +1,5 @@
 use crate::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
+use alloy_primitives::{Address, Bytes};
 use foundry_common::mapping_slots::step as mapping_step;
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use revm::{
@@ -6,6 +7,18 @@ use revm::{
     context::{ContextTr, JournalTr, Transaction},
     interpreter::{CallInput, CallInputs, CallOutcome, CallScheme, CallValue, Interpreter},
 };
+
+/// A sub-call observed by the [`Fuzzer`] inspector.
+///
+/// `depth` is 1-indexed relative to the top-level call: depth 1 is a direct call
+/// from the top-level callee, depth 2 is a sub-sub-call, etc. The top-level call
+/// itself is never recorded.
+#[derive(Clone, Debug)]
+pub struct ObservedCall {
+    pub depth: u32,
+    pub target: Address,
+    pub calldata: Bytes,
+}
 
 /// An inspector that can fuzz and collect data for that effect.
 #[derive(Clone, Debug)]
@@ -16,6 +29,15 @@ pub struct Fuzzer {
     pub call_generator: Option<RandomCallGenerator>,
     /// If `collect` is set, we store the collected values in this fuzz dictionary.
     pub fuzz_state: EvmFuzzState,
+    /// When true, every sub-call (anything below the top-level call) is appended
+    /// to [`Self::observed_calls`]. Lets the corpus manager hoist allowed inner
+    /// calls without paying for full `TracingInspector` overhead.
+    pub record_calls: bool,
+    /// Sub-calls observed since the last drain. Append-only between drains.
+    pub observed_calls: Vec<ObservedCall>,
+    /// Current EVM call depth, maintained from `call`/`call_end` events.
+    /// 0 = no active call, 1 = inside top-level call, 2+ = inside sub-call.
+    call_depth: u32,
 }
 
 impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
@@ -36,6 +58,22 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
             self.override_call(ecx, inputs);
         }
 
+        self.call_depth = self.call_depth.saturating_add(1);
+
+        // Record sub-calls (anything below the top-level call) when enabled.
+        // `inputs` may have been rewritten by `override_call` above — record the
+        // post-override target/calldata since that's what actually executes.
+        if self.record_calls && self.call_depth > 1 {
+            let calldata = inputs.input.bytes(ecx);
+            if calldata.len() >= 4 {
+                self.observed_calls.push(ObservedCall {
+                    depth: self.call_depth - 1,
+                    target: inputs.target_address,
+                    calldata,
+                });
+            }
+        }
+
         // We only collect `stack` and `memory` data before and after calls.
         // this will be turned off on the next `step`
         self.collect = true;
@@ -51,6 +89,8 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
             }
         }
 
+        self.call_depth = self.call_depth.saturating_sub(1);
+
         // We only collect `stack` and `memory` data before and after calls.
         // this will be turned off on the next `step`
         self.collect = true;
@@ -58,6 +98,27 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
 }
 
 impl Fuzzer {
+    /// Constructs a new `Fuzzer` inspector. `record_calls` enables sub-call
+    /// buffering for use by coverage-guided corpus mutation; pass `false` to skip
+    /// the (small) per-call recording cost when the consumer doesn't need it.
+    pub fn new(fuzz_state: EvmFuzzState, record_calls: bool) -> Self {
+        Self {
+            collect: true,
+            call_generator: None,
+            fuzz_state,
+            record_calls,
+            observed_calls: Vec::new(),
+            call_depth: 0,
+        }
+    }
+
+    /// Returns the buffered sub-calls observed since the last drain, leaving the
+    /// internal buffer empty. Cheap (`mem::take`) — the corpus manager calls this
+    /// after every fuzzed tx.
+    pub fn take_observed_calls(&mut self) -> Vec<ObservedCall> {
+        std::mem::take(&mut self.observed_calls)
+    }
+
     /// Collects `stack` and `memory` values into the fuzz dictionary.
     #[cold]
     fn collect_data(&mut self, interpreter: &Interpreter) {

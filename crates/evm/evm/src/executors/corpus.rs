@@ -43,11 +43,10 @@ use foundry_common::{TestFunctionExt, sh_warn};
 use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{constants::CALLER, evm::FoundryEvmNetwork};
 use foundry_evm_fuzz::{
-    BasicTxDetails, CallDetails,
+    BasicTxDetails, CallDetails, ObservedCall,
     invariant::{FuzzRunIdentifiedContracts, InvariantContract, SenderFilters, TargetedContracts},
     strategies::{EvmFuzzState, mutate_param_value},
 };
-use foundry_evm_traces::{CallTraceArena, SparsedTraceArena, TraceMode};
 use proptest::{
     prelude::{Just, Rng, Strategy},
     prop_oneof,
@@ -761,48 +760,47 @@ impl WorkerCorpus {
             .current())
     }
 
-    /// Walks `traces` from a just-executed tx and adds inner calls whose
-    /// `(target, selector)` is in the allowed selector list to the hoisted pool.
+    /// Adds inner calls whose `(target, selector)` is in the allowed selector list
+    /// to the hoisted pool. `observed` is typically the buffer drained from
+    /// [`Fuzzer::take_observed_calls`] after a tx executes.
     ///
     /// The intent is to capture calls that the harness has already shaped via clamping
     /// or sequencing (e.g. values that survived a `bound(...)` modulus, or calls only
     /// reachable after a specific setup). Hoisting them lets the fuzzer reuse those
-    /// well-formed inputs as top-level calls.
+    /// well-formed inputs as top-level calls without paying for full `TracingInspector`
+    /// overhead — `Fuzzer` already runs in the inspector stack.
     ///
-    /// Skips the root call (which is `parent_tx` itself), entries with calldata shorter
-    /// than a 4-byte selector, and any call whose `(target, selector)` isn't in the
-    /// allowed set as determined by [`TargetedContracts::can_replay`].
-    pub fn hoist_trace_calls(
+    /// Skips entries with calldata shorter than a 4-byte selector and any call whose
+    /// `(target, selector)` isn't in the allowed set per
+    /// [`TargetedContracts::can_replay`].
+    pub fn hoist_observed_calls(
         &mut self,
-        traces: Option<&SparsedTraceArena>,
+        observed: &[ObservedCall],
         parent_tx: &BasicTxDetails,
         targeted_contracts: &FuzzRunIdentifiedContracts,
     ) {
-        if !self.config.is_coverage_guided() {
+        if !self.config.is_coverage_guided() || observed.is_empty() {
             return;
         }
-        let Some(traces) = traces else { return };
         let targets = targeted_contracts.targets.lock();
-        for node in traces.arena.nodes() {
-            if node.parent.is_none() {
-                continue;
-            }
-            let target = node.trace.address;
-            let calldata = &node.trace.data;
-            if calldata.len() < 4 {
+        for call in observed {
+            if call.calldata.len() < 4 {
                 continue;
             }
             let candidate = BasicTxDetails {
                 warp: parent_tx.warp,
                 roll: parent_tx.roll,
                 sender: parent_tx.sender,
-                call_details: CallDetails { target, calldata: calldata.clone() },
+                call_details: CallDetails {
+                    target: call.target,
+                    calldata: call.calldata.clone(),
+                },
             };
             if !targets.can_replay(&candidate) {
                 continue;
             }
             if self.hoisted_pool.iter().any(|tx| {
-                tx.call_details.target == target && tx.call_details.calldata == *calldata
+                tx.call_details.target == call.target && tx.call_details.calldata == call.calldata
             }) {
                 continue;
             }
@@ -815,15 +813,18 @@ impl WorkerCorpus {
 
     /// Seeds the corpus with sequences derived from sibling unit tests in the
     /// invariant test contract. Each unit test (zero-input `test*` function) is run
-    /// against a clone of `executor`; depth-1 calls from the test's trace whose
-    /// `(target, selector)` is in the allowed set become a single corpus entry.
+    /// against a clone of `executor`; depth-1 calls observed by the [`Fuzzer`]
+    /// inspector whose `(target, selector)` is in the allowed set become a single
+    /// corpus entry.
     ///
     /// The intent is to seed coverage-guided fuzzing with the call sequences a
     /// developer has already chosen by hand, instead of having the mutator stumble
     /// onto them from random generation.
     ///
-    /// Returns the number of seed sequences actually added (i.e. tests whose trace
-    /// produced at least one allowed depth-1 call).
+    /// Reuses the `Fuzzer` inspector's call buffer rather than spinning up a full
+    /// `TracingInspector` — the inspector is already in the stack.
+    ///
+    /// Returns the number of seed sequences actually added.
     pub fn seed_from_test_traces<FEN: FoundryEvmNetwork>(
         &mut self,
         invariant_contract: &InvariantContract<'_>,
@@ -858,9 +859,12 @@ impl WorkerCorpus {
             };
 
             // Run on a clone so seeding never mutates the campaign's setup state.
+            // Force the cloned Fuzzer to record sub-calls regardless of the campaign
+            // setting — we drain only this clone's buffer below.
             let mut exec = executor.clone();
-            if exec.inspector().tracer.is_none() {
-                exec.set_tracing(TraceMode::Call);
+            if let Some(fuzzer) = exec.inspector_mut().fuzzer.as_mut() {
+                fuzzer.record_calls = true;
+                let _ = fuzzer.take_observed_calls();
             }
 
             let raw = match exec.call_raw(
@@ -875,11 +879,14 @@ impl WorkerCorpus {
             if raw.reverted {
                 continue;
             }
-            let Some(traces) = raw.traces.as_ref() else {
-                continue;
-            };
 
-            let seq = extract_top_level_sequence(&traces.arena, sender, &targets);
+            let observed = exec
+                .inspector_mut()
+                .fuzzer
+                .as_mut()
+                .map(|f| f.take_observed_calls())
+                .unwrap_or_default();
+            let seq = sequence_from_observed(&observed, sender, &targets);
             if seq.is_empty() {
                 continue;
             }
@@ -1304,31 +1311,24 @@ impl WorkerCorpus {
     }
 }
 
-/// Walks a call trace and extracts depth-1 calls (direct children of the root)
-/// whose `(target, selector)` is in `targets`. Returned sequence is in execution order.
-///
-/// "Depth-1" here means calls made directly from the root call of the trace —
-/// in the test-seeding flow, that's the test function calling out to other contracts.
-fn extract_top_level_sequence(
-    arena: &CallTraceArena,
+/// Builds a corpus sequence from observed calls: keeps only `depth == 1` entries
+/// (direct calls from the test contract — the user-visible call sequence) whose
+/// `(target, selector)` is in `targets`. Returned sequence is in execution order.
+fn sequence_from_observed(
+    observed: &[ObservedCall],
     sender: Address,
     targets: &TargetedContracts,
 ) -> Vec<BasicTxDetails> {
     let mut seq = Vec::new();
-    for node in arena.nodes() {
-        let Some(parent) = node.parent else { continue };
-        if parent != 0 {
-            continue;
-        }
-        let calldata = &node.trace.data;
-        if calldata.len() < 4 {
+    for call in observed {
+        if call.depth != 1 || call.calldata.len() < 4 {
             continue;
         }
         let tx = BasicTxDetails {
             warp: None,
             roll: None,
             sender,
-            call_details: CallDetails { target: node.trace.address, calldata: calldata.clone() },
+            call_details: CallDetails { target: call.target, calldata: call.calldata.clone() },
         };
         if !targets.can_replay(&tx) {
             continue;
@@ -1598,13 +1598,11 @@ mod tests {
     }
 
     #[test]
-    fn hoist_trace_calls_filters_by_allowed_selectors() {
+    fn hoist_observed_calls_filters_by_allowed_selectors() {
         use alloy_json_abi::{Function, JsonAbi};
         use foundry_evm_fuzz::invariant::{
             FuzzRunIdentifiedContracts, TargetedContract, TargetedContracts,
         };
-        use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
-        use revm_inspectors::tracing::types::{CallTrace, CallTraceNode};
 
         let target = Address::from([0x42; 20]);
         let other = Address::from([0x43; 20]);
@@ -1619,58 +1617,27 @@ mod tests {
         targets.inner.insert(target, TargetedContract::new("Test".to_string(), abi));
         let targeted_contracts = FuzzRunIdentifiedContracts::new(targets, false);
 
-        // Build a small trace arena with one root + three subcalls.
-        let mut arena = CallTraceArena::default();
-        // CallTraceArena::default() seeds a single empty root node — replace it below.
-        {
-            let nodes = arena.nodes_mut();
-            nodes.clear();
+        let mut allowed = vec![0u8; 36];
+        allowed[..4].copy_from_slice(&foo_selector[..]);
+        let mut wrong_selector = vec![0u8; 36];
+        wrong_selector[..4].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
 
-            // Root node (parent: None) — must be skipped by the hoist.
-            let mut root = CallTraceNode { idx: 0, parent: None, ..Default::default() };
-            root.trace = CallTrace { address: target, ..Default::default() };
-            nodes.push(root);
-
-            let mut allowed = vec![0u8; 36];
-            allowed[..4].copy_from_slice(&foo_selector[..]);
-
-            // Child 1: allowed (target + foo selector).
-            let mut n1 = CallTraceNode { idx: 1, parent: Some(0), ..Default::default() };
-            n1.trace =
-                CallTrace { address: target, data: Bytes::from(allowed.clone()), ..Default::default() };
-            nodes.push(n1);
-
-            // Child 2: same selector but unknown target — must be filtered.
-            let mut n2 = CallTraceNode { idx: 2, parent: Some(0), ..Default::default() };
-            n2.trace =
-                CallTrace { address: other, data: Bytes::from(allowed.clone()), ..Default::default() };
-            nodes.push(n2);
-
-            // Child 3: allowed target but unknown selector — must be filtered.
-            let mut wrong = vec![0u8; 36];
-            wrong[..4].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
-            let mut n3 = CallTraceNode { idx: 3, parent: Some(0), ..Default::default() };
-            n3.trace =
-                CallTrace { address: target, data: Bytes::from(wrong), ..Default::default() };
-            nodes.push(n3);
-
-            // Child 4: target + selector valid, but calldata too short — must be filtered.
-            let mut n4 = CallTraceNode { idx: 4, parent: Some(0), ..Default::default() };
-            n4.trace = CallTrace {
-                address: target,
-                data: Bytes::from(vec![0u8; 3]),
-                ..Default::default()
-            };
-            nodes.push(n4);
-        }
-
-        let traces = SparsedTraceArena { arena, ignored: Default::default() };
+        let observed = vec![
+            // Allowed (target, foo) — must be hoisted.
+            ObservedCall { depth: 1, target, calldata: Bytes::from(allowed.clone()) },
+            // Wrong target — must be filtered.
+            ObservedCall { depth: 1, target: other, calldata: Bytes::from(allowed.clone()) },
+            // Right target, wrong selector — must be filtered.
+            ObservedCall { depth: 2, target, calldata: Bytes::from(wrong_selector) },
+            // Calldata < 4 bytes — must be filtered.
+            ObservedCall { depth: 1, target, calldata: Bytes::from(vec![0u8; 3]) },
+        ];
 
         let parent_tx = basic_tx();
         let (mut manager, _) = new_manager_with_single_corpus();
         assert!(manager.hoisted_pool.is_empty());
 
-        manager.hoist_trace_calls(Some(&traces), &parent_tx, &targeted_contracts);
+        manager.hoist_observed_calls(&observed, &parent_tx, &targeted_contracts);
 
         assert_eq!(
             manager.hoisted_pool.len(),
@@ -1680,17 +1647,15 @@ mod tests {
         assert_eq!(manager.hoisted_pool[0].call_details.target, target);
         assert_eq!(&manager.hoisted_pool[0].call_details.calldata[..4], &foo_selector[..]);
 
-        // Re-hoisting the same trace must not duplicate entries.
-        manager.hoist_trace_calls(Some(&traces), &parent_tx, &targeted_contracts);
+        // Re-hoisting the same observations must not duplicate entries.
+        manager.hoist_observed_calls(&observed, &parent_tx, &targeted_contracts);
         assert_eq!(manager.hoisted_pool.len(), 1, "duplicate (target, calldata) must be deduped");
     }
 
     #[test]
-    fn extract_top_level_sequence_takes_only_depth_one_allowed_calls() {
+    fn sequence_from_observed_takes_only_depth_one_allowed_calls() {
         use alloy_json_abi::{Function, JsonAbi};
         use foundry_evm_fuzz::invariant::{TargetedContract, TargetedContracts};
-        use foundry_evm_traces::CallTraceArena;
-        use revm_inspectors::tracing::types::{CallTrace, CallTraceNode};
 
         let target = Address::from([0x42; 20]);
         let other = Address::from([0x43; 20]);
@@ -1707,68 +1672,25 @@ mod tests {
         let mut targets = TargetedContracts::new();
         targets.inner.insert(target, TargetedContract::new("Test".to_string(), abi));
 
-        // Build a synthetic test trace:
-        //   root (test contract)
-        //     ├─ child 1: target.foo(...)        ← depth-1, allowed → keep
-        //     │     └─ child 2: target.bar()     ← depth-2, allowed → drop (not depth-1)
-        //     ├─ child 3: other.foo(...)         ← depth-1, wrong target → drop
-        //     └─ child 4: target.bar()           ← depth-1, allowed → keep
-        let mut arena = CallTraceArena::default();
-        {
-            let nodes = arena.nodes_mut();
-            nodes.clear();
+        let mut foo_calldata = vec![0u8; 36];
+        foo_calldata[..4].copy_from_slice(&foo_sel[..]);
+        let bar_calldata = bar_sel.to_vec();
 
-            let test_contract = Address::from([0x99; 20]);
-            let root =
-                CallTraceNode { idx: 0, parent: None, children: vec![1, 3, 4], ..Default::default() };
-            let mut root = root;
-            root.trace = CallTrace { address: test_contract, ..Default::default() };
-            nodes.push(root);
-
-            let mut foo_calldata = vec![0u8; 36];
-            foo_calldata[..4].copy_from_slice(&foo_sel[..]);
-            let bar_calldata = bar_sel.to_vec();
-
-            // child 1: depth-1 allowed call (target, foo)
-            let mut n1 =
-                CallTraceNode { idx: 1, parent: Some(0), children: vec![2], ..Default::default() };
-            n1.trace = CallTrace {
-                address: target,
-                data: Bytes::from(foo_calldata.clone()),
-                ..Default::default()
-            };
-            nodes.push(n1);
-
-            // child 2: depth-2 (parent is node 1, not root) — must be ignored
-            let mut n2 = CallTraceNode { idx: 2, parent: Some(1), ..Default::default() };
-            n2.trace = CallTrace {
-                address: target,
-                data: Bytes::from(bar_calldata.clone()),
-                ..Default::default()
-            };
-            nodes.push(n2);
-
-            // child 3: depth-1 but wrong target — must be filtered
-            let mut n3 = CallTraceNode { idx: 3, parent: Some(0), ..Default::default() };
-            n3.trace = CallTrace {
-                address: other,
-                data: Bytes::from(foo_calldata),
-                ..Default::default()
-            };
-            nodes.push(n3);
-
-            // child 4: depth-1 allowed (target, bar)
-            let mut n4 = CallTraceNode { idx: 4, parent: Some(0), ..Default::default() };
-            n4.trace = CallTrace {
-                address: target,
-                data: Bytes::from(bar_calldata),
-                ..Default::default()
-            };
-            nodes.push(n4);
-        }
+        // Simulates an observed trace shaped like:
+        //   test contract
+        //     ├─ depth 1: target.foo(...)          ← keep
+        //     │     └─ depth 2: target.bar()       ← drop (not depth-1)
+        //     ├─ depth 1: other.foo(...)           ← drop (wrong target)
+        //     └─ depth 1: target.bar()             ← keep
+        let observed = vec![
+            ObservedCall { depth: 1, target, calldata: Bytes::from(foo_calldata.clone()) },
+            ObservedCall { depth: 2, target, calldata: Bytes::from(bar_calldata.clone()) },
+            ObservedCall { depth: 1, target: other, calldata: Bytes::from(foo_calldata) },
+            ObservedCall { depth: 1, target, calldata: Bytes::from(bar_calldata) },
+        ];
 
         let sender = Address::from([0xaa; 20]);
-        let seq = extract_top_level_sequence(&arena, sender, &targets);
+        let seq = sequence_from_observed(&observed, sender, &targets);
 
         assert_eq!(seq.len(), 2, "should keep only depth-1 allowed calls");
         assert_eq!(seq[0].sender, sender);

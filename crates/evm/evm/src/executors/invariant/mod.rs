@@ -529,11 +529,19 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 if corpus_manager.merge_edge_coverage(&mut call_result) {
                     current_run.new_coverage = true;
                 }
-                // Hoist inner calls from the trace whose (target, selector) is allowed
-                // into the corpus pool, so the mutator can reuse harness-clamped inputs
-                // as top-level calls.
-                corpus_manager.hoist_trace_calls(
-                    call_result.traces.as_ref(),
+                // Drain sub-calls observed by the Fuzzer inspector and hoist any whose
+                // (target, selector) is allowed into the corpus pool — lets the mutator
+                // reuse harness-clamped inputs as top-level calls without paying for
+                // full trace recording.
+                let observed = current_run
+                    .executor
+                    .inspector_mut()
+                    .fuzzer
+                    .as_mut()
+                    .map(|f| f.take_observed_calls())
+                    .unwrap_or_default();
+                corpus_manager.hoist_observed_calls(
+                    &observed,
                     tx,
                     &invariant_test.targeted_contracts,
                 );
@@ -822,11 +830,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // Set up fuzzer WITHOUT call_generator initially.
         // We defer call_override until after the initial invariant check to avoid
         // injecting random calls during setup which would break the invariant assertion.
-        self.executor.inspector_mut().set_fuzzer(Fuzzer {
-            call_generator: None,
-            fuzz_state: fuzz_state.clone(),
-            collect: true,
-        });
+        self.executor.inspector_mut().set_fuzzer(Fuzzer::new(
+            fuzz_state.clone(),
+            self.config.corpus.is_coverage_guided(),
+        ));
 
         // Let's make sure the invariant is sound before actually starting the run:
         // We'll assert the invariant in its initial state, and if it fails, we'll
