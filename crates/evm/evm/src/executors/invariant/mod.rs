@@ -526,13 +526,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 // Collect line coverage from last fuzzed call.
                 invariant_test.merge_line_coverage(call_result.line_coverage.clone());
                 // Collect edge coverage and set the flag in the current run.
-                if corpus_manager.merge_edge_coverage(&mut call_result) {
+                let new_call_coverage = corpus_manager.merge_edge_coverage(&mut call_result);
+                if new_call_coverage {
                     current_run.new_coverage = true;
                 }
-                // Drain sub-calls observed by the Fuzzer inspector and hoist any whose
-                // (target, selector) is allowed into the corpus pool — lets the mutator
-                // reuse harness-clamped inputs as top-level calls without paying for
-                // full trace recording.
+                // Drain the Fuzzer's sub-call buffer every tx so it doesn't grow across
+                // the run, but only hoist into the pool when this tx produced new
+                // coverage — gates pool growth to "interesting" traces. The unit-test
+                // seeder hoists unconditionally; this gate is fuzzing-only.
                 let observed = current_run
                     .executor
                     .inspector_mut()
@@ -540,11 +541,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     .as_mut()
                     .map(|f| f.take_observed_calls())
                     .unwrap_or_default();
-                corpus_manager.hoist_observed_calls(
-                    &observed,
-                    tx,
-                    &invariant_test.targeted_contracts,
-                );
+                if new_call_coverage {
+                    corpus_manager.hoist_observed_calls(
+                        &observed,
+                        tx,
+                        &invariant_test.targeted_contracts,
+                    );
+                }
 
                 if discarded {
                     current_run.inputs.pop();

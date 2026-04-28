@@ -840,7 +840,6 @@ impl WorkerCorpus {
         // configured `targetSender`; otherwise fall back to foundry's default fuzz caller.
         let sender = sender_filters.targeted.first().copied().unwrap_or(CALLER);
         let worker_corpus_dir = self.worker_dir.as_ref().map(|d| d.join(CORPUS_DIR));
-        let targets = targeted_contracts.targets.lock();
         let mut added = 0;
 
         for func in invariant_contract.abi.functions() {
@@ -870,7 +869,7 @@ impl WorkerCorpus {
             let raw = match exec.call_raw(
                 sender,
                 invariant_contract.address,
-                calldata,
+                calldata.clone(),
                 U256::ZERO,
             ) {
                 Ok(r) => r,
@@ -886,7 +885,31 @@ impl WorkerCorpus {
                 .as_mut()
                 .map(|f| f.take_observed_calls())
                 .unwrap_or_default();
-            let seq = sequence_from_observed(&observed, sender, &targets);
+            if observed.is_empty() {
+                continue;
+            }
+
+            // Build the depth-1 corpus sequence for this test. Lock briefly so we don't
+            // deadlock with the unconditional hoist below (which also locks targets).
+            let seq = {
+                let targets = targeted_contracts.targets.lock();
+                sequence_from_observed(&observed, sender, &targets)
+            };
+
+            // Tests-derived calls are developer-curated, so always hoist every allowed
+            // sub-call into the pool (no coverage gate) — it gives the mutator more
+            // raw material than just the depth-1 sequence.
+            let synthetic_parent = BasicTxDetails {
+                warp: None,
+                roll: None,
+                sender,
+                call_details: CallDetails {
+                    target: invariant_contract.address,
+                    calldata: calldata.clone(),
+                },
+            };
+            self.hoist_observed_calls(&observed, &synthetic_parent, targeted_contracts);
+
             if seq.is_empty() {
                 continue;
             }
