@@ -20,8 +20,7 @@ struct ForkInfo {
 
 async fn check_fork_schedule(rpc_url: &str) -> eyre::Result<()> {
     let provider = ProviderBuilder::new().connect_http(rpc_url.parse()?);
-    let schedule: TempoForkSchedule =
-        provider.raw_request("tempo_forkSchedule".into(), ()).await?;
+    let schedule: TempoForkSchedule = provider.raw_request("tempo_forkSchedule".into(), ()).await?;
     for fork in &schedule.schedule {
         fork.name.parse::<TempoHardfork>()?;
     }
