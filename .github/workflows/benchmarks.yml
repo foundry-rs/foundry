@@ -58,10 +58,7 @@ env:
 jobs:
   run-benchmarks:
     name: Run All Benchmarks
-    runs-on: foundry-runner
-    # This job runs untrusted third-party builds (foundryup installs, forge
-    # against external repos, etc.) so it must NOT have a write-scoped token.
-    # All git operations are deferred to the publish-results job.
+    runs-on: depot-ubuntu-24.04-32
     permissions:
       contents: read
     steps:
