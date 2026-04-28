@@ -3,6 +3,7 @@ use foundry_test_utils::{
     TestCommand, TestProject,
     snapbox::{Data, IntoData},
 };
+use serde_json::Value;
 use std::path::Path;
 
 #[track_caller]
@@ -1865,6 +1866,91 @@ contract AContractTest is DSTest {
     let files = files_with_ext(prj.artifacts(), "json").collect::<Vec<_>>();
 
     assert!(files.is_empty());
+});
+
+forgetest!(attribution_report, |prj, cmd| {
+    prj.insert_ds_test();
+    prj.add_source(
+        "AContract.sol",
+        r#"
+contract AContract {
+    int public i;
+
+    function init() public {
+        i = 0;
+    }
+
+    function foo() public {
+        i = 1;
+    }
+
+    function bar() public {
+        i = 2;
+    }
+}
+    "#,
+    );
+
+    prj.add_source(
+        "AContractTest.sol",
+        r#"
+import "./test.sol";
+import {AContract} from "./AContract.sol";
+
+contract AContractTest is DSTest {
+    AContract a;
+
+    function setUp() public {
+        a = new AContract();
+        a.init();
+    }
+
+    function testFoo() public {
+        a.foo();
+    }
+
+    function testBar() public {
+        a.bar();
+    }
+}
+    "#,
+    );
+
+    cmd.arg("coverage").args(["--report=attribution"]).assert_success();
+
+    let attribution = prj.root().join("coverage-attribution.json");
+    assert!(attribution.exists(), "coverage attribution report was not created");
+
+    let json: Value = serde_json::from_str(&std::fs::read_to_string(attribution).unwrap()).unwrap();
+    let tests = json["tests"].as_array().unwrap();
+    assert_eq!(tests.len(), 2);
+
+    for test in tests {
+        assert_eq!(test["status"], "success");
+        assert_eq!(test["kind"], "unit");
+
+        let covered = test["covered"].as_array().unwrap();
+        assert!(
+            covered.iter().any(|item| item["source"] == "src/AContract.sol"
+                && item["kind"] == "function"
+                && item["function"] == "init"),
+            "setUp coverage should be attributed to each selected test"
+        );
+    }
+
+    let test_foo = tests.iter().find(|test| test["test"] == "testFoo()").unwrap();
+    assert!(test_foo["covered"].as_array().unwrap().iter().any(|item| {
+        item["source"] == "src/AContract.sol"
+            && item["kind"] == "function"
+            && item["function"] == "foo"
+    }));
+
+    let test_bar = tests.iter().find(|test| test["test"] == "testBar()").unwrap();
+    assert!(test_bar["covered"].as_array().unwrap().iter().any(|item| {
+        item["source"] == "src/AContract.sol"
+            && item["kind"] == "function"
+            && item["function"] == "bar"
+    }));
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10172>
