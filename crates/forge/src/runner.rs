@@ -6,7 +6,9 @@ use crate::{
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
-    result::{InvariantSecondaryFailure, SuiteResult, TestResult, TestSetup},
+    result::{
+        InvariantHandlerFailure, InvariantSecondaryFailure, SuiteResult, TestResult, TestSetup,
+    },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -983,7 +985,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.result.merge_coverages(invariant_result.line_coverage);
 
         let mut counterexample = None;
-        let success = invariant_result.errors.is_empty();
+        // Phase E: a campaign succeeds only when *no* invariant predicate broke AND no
+        // handler-side assertion bug was discovered. Handler failures are tracked separately
+        // (see `invariant_handler_failures`) but still mark the test as failed.
+        let success =
+            invariant_result.errors.is_empty() && invariant_result.handler_errors.is_empty();
         let reason = invariant_result
             .errors
             .get(&invariant_contract.primary_invariant_fn.name)
@@ -1209,6 +1215,60 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let assert_all_invariant_count = (invariant_config.assert_all
             && invariant_contract.invariant_fns.len() > 1)
             .then_some(invariant_contract.invariant_fns.len());
+
+        // Phase E: convert handler-side assertion bugs into render-ready entries. The name is
+        // a best-effort `Contract::function` resolved from `identified_contracts`, falling back
+        // to `0xreverter::0xselector` when the ABI is unavailable. We render them in their own
+        // `Suite handlers:` section so they do not get conflated with invariant failures.
+        let identified_contracts_ro = identified_contracts;
+        let invariant_handler_failures = invariant_result
+            .handler_errors
+            .iter()
+            // Stable order: by `(reverter, selector)` so the report is deterministic across
+            // runs even though the underlying map is a `HashMap`.
+            .sorted_by_key(|(key, _)| **key)
+            .map(|((reverter, selector), failure)| {
+                // Resolve a human-readable name when possible. We look up the reverter in the
+                // identified contracts map and try to find a function whose selector matches.
+                let resolved_name = identified_contracts_ro
+                    .get(reverter)
+                    .and_then(|(contract_name, abi)| {
+                        abi.functions()
+                            .find(|f| f.selector() == *selector)
+                            .map(|f| format!("{contract_name}::{}", f.name))
+                    })
+                    .unwrap_or_else(|| format!("{reverter}::{selector}"));
+
+                let counterexample_calls = failure
+                    .call_sequence
+                    .iter()
+                    .map(|tx| {
+                        BaseCounterExample::from_invariant_call(
+                            tx,
+                            identified_contracts_ro,
+                            None,
+                            invariant_config.show_solidity,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let counterexample = if counterexample_calls.is_empty() {
+                    None
+                } else {
+                    // Handler failures aren't shrunk, so original == shrunk == sequence length.
+                    let len = counterexample_calls.len();
+                    Some(CounterExample::Sequence(len, counterexample_calls))
+                };
+
+                InvariantHandlerFailure {
+                    name: resolved_name,
+                    reverter: *reverter,
+                    selector: *selector,
+                    reason: failure.revert_reason.clone(),
+                    counterexample,
+                }
+            })
+            .collect::<Vec<_>>();
+
         self.result.invariant_result(
             invariant_result.gas_report_traces,
             success,
@@ -1216,6 +1276,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_secondary_failures,
             invariant_failure_dir,
             assert_all_invariant_count,
+            invariant_handler_failures,
             counterexample,
             invariant_result.cases,
             invariant_result.reverts,

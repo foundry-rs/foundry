@@ -826,7 +826,7 @@ Ran 1 test for test/InvariantInnerContract.t.sol:InvariantInnerContract
 	[Sequence] (original: 2, shrunk: 2)
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Jesus][..] calldata=create_fren() args=[]
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Judas][..] calldata=betray() args=[]
- invariantHideJesus() (runs: 0, calls: 0, reverts: 1)
+ invariantHideJesus() (runs: 256, calls: 258, reverts: 125)
 ...
 "#]]);
     }
@@ -1521,7 +1521,8 @@ contract InvariantFailOnAssertPanic is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnAssertPanic.t.sol:InvariantFailOnAssertPanic
-[FAIL: panic: assertion failed (0x01)]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)][..]
 ...
  invariant_fail_on_assert_panic() ([RUNS])
 ...
@@ -1565,7 +1566,8 @@ contract InvariantIgnoreAssertWhenFlagOff is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantIgnoreAssertWhenFlagOff.t.sol:InvariantIgnoreAssertWhenFlagOff
-[FAIL: panic: assertion failed (0x01)]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)][..]
 ...
  invariant_assert_discarded() ([RUNS])
 ...
@@ -1693,14 +1695,16 @@ contract ReplayFailOnAssertTest is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantReplayFailOnAssert.t.sol:ReplayFailOnAssertTest
-[FAIL: panic: assertion failed (0x01)]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)][..]
 ...
 "#]]);
 
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantReplayFailOnAssert.t.sol:ReplayFailOnAssertTest
-[FAIL: panic: assertion failed (0x01)]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)][..]
 ...
 "#]]);
 });
@@ -1743,7 +1747,8 @@ contract InvariantFailOnVmAssertRevert is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnVmAssertRevert.t.sol:InvariantFailOnVmAssertRevert
-[FAIL: assertion failed: 1 != 2]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: assertion failed: 1 != 2][..]
 ...
  invariant_fail_on_vm_assert_revert() ([RUNS])
 ...
@@ -1788,7 +1793,8 @@ contract InvariantIgnoreVmAssertWhenFlagOff is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantIgnoreVmAssertWhenFlagOff.t.sol:InvariantIgnoreVmAssertWhenFlagOff
-[FAIL: assertion failed: 1 != 2]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: assertion failed: 1 != 2][..]
 ...
  invariant_vm_assert_discarded() ([RUNS])
 ...
@@ -1834,7 +1840,8 @@ contract InvariantFailOnVmAssertGlobalFlag is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnVmAssertGlobalFlag.t.sol:InvariantFailOnVmAssertGlobalFlag
-[FAIL: assertion failed]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: assertion failed][..]
 ...
  invariant_fail_on_vm_assert_global_flag() ([RUNS])
 ...
@@ -1880,7 +1887,8 @@ contract InvariantIgnoreVmAssertGlobalFlagWhenFlagOff is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantIgnoreVmAssertGlobalFlagWhenFlagOff.t.sol:InvariantIgnoreVmAssertGlobalFlagWhenFlagOff
-[FAIL: assertion failed]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: assertion failed][..]
 ...
  invariant_vm_assert_global_flag_discarded() ([RUNS])
 ...
@@ -2671,7 +2679,7 @@ contract InvariantWarp is Test {
 		vm.roll(block.number + 52068);
 		vm.prank([..]);
 		Roll(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
- invariant_roll() (runs: 0, calls: 0, reverts: 2)
+ invariant_roll() (runs: 256, calls: 258, reverts: 216)
 ...
 
 "#]]);
@@ -2684,7 +2692,7 @@ contract InvariantWarp is Test {
 		vm.warp(block.timestamp + 656868);
 		vm.prank(0x00000000000000000000000000000000000012d2);
 		Warp(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
- invariant_warp() (runs: 0, calls: 0, reverts: 2)
+ invariant_warp() (runs: 256, calls: 258, reverts: 222)
 ...
 
 "#

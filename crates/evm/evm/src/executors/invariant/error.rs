@@ -1,7 +1,7 @@
 use super::InvariantContract;
 use crate::executors::RawCallResult;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, Selector};
 use foundry_evm_core::{
     decode::{ASSERTION_FAILED_PREFIX, EMPTY_REVERT_DATA, RevertDecoder},
     evm::FoundryEvmNetwork,
@@ -9,6 +9,28 @@ use foundry_evm_core::{
 use foundry_evm_fuzz::{BasicTxDetails, Reason, invariant::FuzzRunIdentifiedContracts};
 use proptest::test_runner::TestError;
 use std::{collections::HashMap, fmt};
+
+/// Records a single handler-side assertion bug discovered during an invariant campaign.
+///
+/// Handler-side assertions (e.g. a `require`/`assert` inside a fuzzed handler that the campaign
+/// reaches with a malformed input) are bugs in their own right, but they are *not* invariant
+/// predicate violations. We record them once per `(reverter, selector)` so the campaign can keep
+/// running for the rest of the budget and surface deeper bugs without polluting the invariant
+/// `errors` map or stopping the run.
+#[derive(Clone, Debug)]
+pub struct HandlerAssertionFailure {
+    /// Address of the handler contract whose call asserted/reverted with an assertion.
+    pub reverter: Address,
+    /// 4-byte selector of the failing handler function.
+    pub selector: Selector,
+    /// Full call sequence leading up to (and including) the failing call.
+    pub call_sequence: Vec<BasicTxDetails>,
+    /// Decoded revert/assert reason.
+    pub revert_reason: String,
+    /// Always `true` for entries in this struct; mirrored for symmetry with
+    /// [`FailedInvariantCaseData::assertion_failure`].
+    pub assertion_failure: bool,
+}
 
 /// Stores information about failures and reverts of the invariant tests.
 #[derive(Clone, Default)]
@@ -19,6 +41,9 @@ pub struct InvariantFailures {
     pub revert_reason: Option<String>,
     /// Maps a broken invariant to its specific error.
     pub errors: HashMap<String, InvariantFuzzError>,
+    /// Handler-side assertion bugs discovered during the campaign, keyed by
+    /// `(reverter, selector)` so each unique handler bug is recorded once.
+    pub broken_handlers: HashMap<(Address, Selector), HandlerAssertionFailure>,
 }
 
 impl InvariantFailures {
@@ -45,6 +70,22 @@ impl InvariantFailures {
     pub fn can_continue(&self, invariants: usize) -> bool {
         debug_assert!(invariants > 0, "invariant_fns must not be empty");
         self.errors.len() < invariants
+    }
+
+    /// Records a handler-side assertion bug. The first occurrence for a given
+    /// `(reverter, selector)` wins; subsequent calls are no-ops to keep the report tidy.
+    pub fn record_handler_failure(
+        &mut self,
+        key: (Address, Selector),
+        failure: HandlerAssertionFailure,
+    ) {
+        self.broken_handlers.entry(key).or_insert(failure);
+    }
+
+    /// Returns true if a handler-side assertion bug has already been recorded for the given
+    /// target/selector pair.
+    pub fn has_handler_failure(&self, target: Address, selector: Selector) -> bool {
+        self.broken_handlers.contains_key(&(target, selector))
     }
 }
 

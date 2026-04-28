@@ -943,6 +943,12 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(should_exit_early_on_invariant_failure, |prj, cmd| {
+    // This test exercises the legacy "abort on first preflight failure" path. With the new
+    // `assert_all = true` default, preflight failures are recorded and the campaign keeps
+    // running for the full budget — opt back into the legacy behavior here.
+    prj.update_config(|config| {
+        config.invariant.assert_all = false;
+    });
     prj.add_test(
         "CounterInvariant.t.sol",
         r#"
