@@ -39,6 +39,15 @@ use itertools::Itertools;
 use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 use tempo_primitives::transaction::Call;
 
+fn pending_sequence_index(
+    already_broadcasted: usize,
+    batch_number: usize,
+    batch_size: usize,
+    batch_index: usize,
+) -> usize {
+    already_broadcasted + batch_number * batch_size + batch_index
+}
+
 pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
@@ -512,8 +521,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 // We send transactions and wait for receipts in batches of 100, since some networks
                 // cannot handle more than that.
                 let batch_size = if sequential_broadcast { 1 } else { 100 };
-                let mut index = already_broadcasted;
-
                 for (batch_number, batch) in transactions.chunks(batch_size).enumerate() {
                     seq_progress.inner.write().set_status(&format!(
                         "Sending transactions [{} - {}]",
@@ -522,9 +529,15 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     ));
 
                     if !batch.is_empty() {
-                        let pending_transactions =
-                            batch.iter().map(|(kind, is_fixed_gas_limit)| {
+                        let pending_transactions = batch.iter().enumerate().map(
+                            |(batch_index, (kind, is_fixed_gas_limit))| {
                                 let provider = provider.clone();
+                                let sequence_index = pending_sequence_index(
+                                    already_broadcasted,
+                                    batch_number,
+                                    batch_size,
+                                    batch_index,
+                                );
                                 async move {
                                     let res = kind
                                         .clone()
@@ -536,14 +549,15 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             self.args.gas_estimate_multiplier,
                                         )
                                         .await;
-                                    (res, kind, 0, None)
+                                    (res, sequence_index, kind, 0, None)
                                 }
                                 .boxed()
-                            });
+                            },
+                        );
 
                         let mut buffer = pending_transactions.collect::<FuturesUnordered<_>>();
 
-                        'send: while let Some((res, kind, attempt, original_res)) =
+                        'send: while let Some((res, sequence_index, kind, attempt, original_res)) =
                             buffer.next().await
                         {
                             if res.is_err() && attempt <= 3 {
@@ -558,7 +572,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     ));
                                     tokio::time::sleep(Duration::from_millis(1000 * attempt)).await;
                                     let r = kind.clone().send(provider).await;
-                                    (r, kind, attempt, original_res.or(Some(res)))
+                                    (r, sequence_index, kind, attempt, original_res.or(Some(res)))
                                 }));
 
                                 continue 'send;
@@ -574,14 +588,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     "Failed to send transaction".to_string()
                                 }
                             })?;
-                            sequence.add_pending(index, tx_hash);
+                            sequence.add_pending(sequence_index, tx_hash);
 
                             // Checkpoint save
                             self.sequence.save(true, false)?;
                             sequence = self.sequence.sequences_mut().get_mut(i).unwrap();
 
                             seq_progress.inner.write().tx_sent(tx_hash);
-                            index += 1;
                         }
 
                         // Checkpoint save
@@ -656,6 +669,49 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::Ethereum;
+    use alloy_primitives::B256;
+    use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
+    use std::collections::VecDeque;
+
+    #[test]
+    fn pending_hashes_keep_original_sequence_indices_when_completions_are_unordered() {
+        let mut sequence = ScriptSequence::<Ethereum> {
+            transactions: (0..4)
+                .map(|_| {
+                    TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::Unsigned(
+                        TransactionRequest::default(),
+                    ))
+                })
+                .collect::<VecDeque<_>>(),
+            ..Default::default()
+        };
+
+        let already_broadcasted = 1;
+        let batch_number = 0;
+        let batch_size = 100;
+        let completions = [
+            (2, B256::repeat_byte(0x22)),
+            (0, B256::repeat_byte(0x00)),
+            (1, B256::repeat_byte(0x11)),
+        ];
+
+        for (batch_index, tx_hash) in completions {
+            let sequence_index =
+                pending_sequence_index(already_broadcasted, batch_number, batch_size, batch_index);
+            sequence.add_pending(sequence_index, tx_hash);
+        }
+
+        assert_eq!(sequence.transactions[0].hash, None);
+        assert_eq!(sequence.transactions[1].hash, Some(B256::repeat_byte(0x00)));
+        assert_eq!(sequence.transactions[2].hash, Some(B256::repeat_byte(0x11)));
+        assert_eq!(sequence.transactions[3].hash, Some(B256::repeat_byte(0x22)));
     }
 }
 
