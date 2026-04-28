@@ -15,15 +15,44 @@ on:
         type: string
         default: "stable,nightly"
       repos:
-        description: "Comma-separated list of repos to benchmark (e.g., ithacaxyz/account:main,Vectorized/solady)"
+        description: "Comma-separated repos to benchmark. Each entry: org/repo[:rev][ <extra args>] (e.g. vectorized/solady:v0.1.26 --nmc BrokenTest). Leave empty to use the per-benchmark default repo lists."
         required: false
         type: string
-        default: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
+        default: ""
 
 env:
-  ITHACAXYZ_ACCOUNT: "ithacaxyz/account:v0.3.2"
-  VECTORIZED_SOLADY: "Vectorized/solady:v0.1.22"
-  DEFAULT_REPOS: "ithacaxyz/account:v0.3.2,Vectorized/solady:v0.1.22"
+  # Repos to benchmark per step. Each comma-separated entry has the form
+  #   org/repo[:rev][ <extra args>]
+  # where anything after the first whitespace is appended to every benchmark
+  # command for that repo (use this to skip a broken test contract via e.g.
+  # `--nmc BrokenTest`, so a single failing test does not fail the whole CI).
+  TEST_REPOS: >-
+    ithacaxyz/account:v0.5.7,
+    vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest|Base58Test',
+    aave/aave-v4:v0.5.11,
+    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
+    sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
+
+  ISOLATE_TEST_REPOS: >-
+    ithacaxyz/account:v0.5.7 --nmc SimulateExecuteTest,
+    vectorized/solady:v0.1.26 --nmc 'SafeTransferLibTest|LifebuoyTest|LibBitTest|Base58Test',
+    aave/aave-v4:v0.5.11,
+    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
+    sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
+
+  BUILD_REPOS: >-
+    ithacaxyz/account:v0.5.7,
+    vectorized/solady:v0.1.26,
+    aave/aave-v4:v0.5.11,
+    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75,
+    sparkdotfi/spark-psm:v1.0.0
+
+  COVERAGE_REPOS: >-
+    ithacaxyz/account:v0.5.7,
+    aave/aave-v4:v0.5.11,
+    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75,
+    sparkdotfi/spark-psm:v1.0.0
+
   RUSTC_WRAPPER: "sccache"
 
 jobs:
@@ -78,7 +107,7 @@ jobs:
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
           VERSIONS: ${{ github.event.inputs.versions || 'stable,nightly' }}
-          REPOS: ${{ github.event.inputs.repos || env.DEFAULT_REPOS }}
+          REPOS: ${{ github.event.inputs.repos || env.TEST_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions "$VERSIONS" \
@@ -90,7 +119,7 @@ jobs:
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
           VERSIONS: ${{ github.event.inputs.versions || 'stable,nightly' }}
-          REPOS: ${{ github.event.inputs.repos || env.VECTORIZED_SOLADY }}
+          REPOS: ${{ github.event.inputs.repos || env.ISOLATE_TEST_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions "$VERSIONS" \
@@ -102,7 +131,7 @@ jobs:
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
           VERSIONS: ${{ github.event.inputs.versions || 'stable,nightly' }}
-          REPOS: ${{ github.event.inputs.repos || env.DEFAULT_REPOS }}
+          REPOS: ${{ github.event.inputs.repos || env.BUILD_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions "$VERSIONS" \
@@ -114,10 +143,11 @@ jobs:
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
           VERSIONS: ${{ github.event.inputs.versions || 'stable,nightly' }}
+          REPOS: ${{ github.event.inputs.repos || env.COVERAGE_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions "$VERSIONS" \
-            --repos ${{ env.ITHACAXYZ_ACCOUNT }} \
+            --repos "$REPOS" \
             --benchmarks forge_coverage \
             --output-file forge_coverage_bench.md
 
