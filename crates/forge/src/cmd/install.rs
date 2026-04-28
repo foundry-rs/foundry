@@ -3,7 +3,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    utils::{CommandUtils, Git, LoadConfig},
+    utils::{Git, LoadConfig},
 };
 use foundry_common::fs;
 use foundry_config::{Config, impl_figment_convert_basic};
@@ -189,10 +189,7 @@ impl DependencyInstallOpts {
                         && dep_id.as_ref().is_some_and(|id| id.is_branch())
                     {
                         // always work with relative paths when directly modifying submodules
-                        git.cmd()
-                            .args(["submodule", "set-branch", "-b", tag_or_branch])
-                            .arg(rel_path)
-                            .exec()?;
+                        git.set_submodule_branch(rel_path, tag_or_branch)?;
 
                         let rev = git.get_rev(tag_or_branch, &path)?;
 
@@ -574,7 +571,7 @@ impl Installer<'_> {
 
     fn match_branch(self, tag: &str, path: &Path) -> Result<Option<String>> {
         // fetch remote branches and check for tag
-        let output = self.git.root(path).cmd().args(["branch", "-r"]).get_stdout_lossy()?;
+        let output = self.git.root(path).remote_branches()?;
 
         let mut candidates = output
             .lines()
