@@ -1489,6 +1489,63 @@ Suite assert_all: 1/2 invariants broken
 "#]]);
 });
 
+// Under `assert_all` + `fail_on_revert = false`, a handler `assert(false)` must still
+// fail the campaign and be attributed to every live invariant.
+forgetest_init!(assert_all_assertion_failure_breaks_all_live_invariants, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "AssertHandler.sol",
+        r#"
+contract AssertHandler {
+    uint256 public calls;
+
+    function alwaysAssert() external {
+        calls++;
+        assert(false);
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "AssertAllAssertTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {AssertHandler} from "../src/AssertHandler.sol";
+
+contract AssertAllAssertTest is Test {
+    AssertHandler handler;
+
+    function setUp() public {
+        handler = new AssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_a() public view {}
+
+    function invariant_b() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_a"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/AssertAllAssertTest.t.sol:AssertAllAssertTest
+[FAIL: panic: assertion failed (0x01)]
+	[Sequence] (original: [..], shrunk: [..])
+...
+
+Suite assert_all: 2/2 invariants broken
+[FAIL: panic: assertion failed (0x01)] invariant_b
+	[Sequence] (original: [..], shrunk: [..])
+...
+"#]]);
+});
+
 // Verifies the startup warning fired by `assert_all + optimization mode`: when the primary
 // invariant returns int256 (optimization target) the campaign loop can't also evaluate boolean
 // invariants, so they are silently dropped. Without the warning users wouldn't realize their
