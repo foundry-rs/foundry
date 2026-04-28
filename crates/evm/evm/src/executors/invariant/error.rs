@@ -28,7 +28,7 @@ pub struct HandlerAssertionFailure {
     /// Decoded revert/assert reason.
     pub revert_reason: String,
     /// Always `true` for entries in this struct; mirrored for symmetry with
-    /// [`FailedInvariantCaseData::assertion_failure`].
+    /// `FailedInvariantCaseData::assertion_failure`.
     pub assertion_failure: bool,
 }
 
