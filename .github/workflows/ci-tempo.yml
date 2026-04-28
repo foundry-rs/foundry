@@ -67,7 +67,7 @@ jobs:
         run: |
           cargo test --locked -p cast --test cli tempo_fork_schedule_parses_configured_rpcs -- --exact --nocapture
 
-      # TODO(upstream): re-enable when flaky devnet faucet is fixed
+      # TODO: re-enable once devnet is up and stable
       # - name: Run Tempo check on devnet
       #   if: |
       #     github.event_name == 'pull_request' ||
@@ -84,6 +84,7 @@ jobs:
       #       ./.github/scripts/tempo-deploy.sh
       #     fi
 
+      # TODO: re-enable once devnet is up and stable
       # - name: Run Tempo wallet tests on devnet
       #   if: |
       #     github.event_name == 'pull_request' ||
@@ -95,6 +96,7 @@ jobs:
 
       - name: Run Tempo check on testnet
         if: |
+          github.event_name == 'pull_request' ||
           github.event.inputs.network == 'testnet' ||
           github.event.inputs.network == 'all'
         env:
