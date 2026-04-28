@@ -4,10 +4,10 @@ use eyre::Result;
 use forge_doc::{
     ContractInheritance, Deployments, DocBuilder, GitSource, InferInlineHyperlinks, Inheritdoc,
 };
-use foundry_cli::opts::GH_REPO_PREFIX_REGEX;
+use foundry_cli::{opts::GH_REPO_PREFIX_REGEX, utils::Git};
 use foundry_common::compile::ProjectCompiler;
 use foundry_config::{Config, load_config_with_root};
-use std::{path::PathBuf, process::Command};
+use std::path::PathBuf;
 
 mod server;
 use server::Server;
@@ -78,23 +78,19 @@ impl DocArgs {
         if let Some(out) = self.out {
             doc_config.out = out;
         }
-        if doc_config.repository.is_none() {
-            // Attempt to read repo from git
-            if let Ok(output) = Command::new("git").args(["remote", "get-url", "origin"]).output()
-                && !output.stdout.is_empty()
-            {
-                let remote = String::from_utf8(output.stdout)?.trim().to_owned();
-                if let Some(captures) = GH_REPO_PREFIX_REGEX.captures(&remote) {
-                    let brand = captures.name("brand").unwrap().as_str();
-                    let tld = captures.name("tld").unwrap().as_str();
-                    let project = GH_REPO_PREFIX_REGEX.replace(&remote, "");
-                    doc_config.repository =
-                        Some(format!("https://{brand}.{tld}/{}", project.trim_end_matches(".git")));
-                }
-            }
+        // Attempt to read repo URL from git
+        if doc_config.repository.is_none()
+            && let Some(remote) = Git::new(root).remote_url("origin")
+            && let Some(captures) = GH_REPO_PREFIX_REGEX.captures(&remote)
+        {
+            let brand = captures.name("brand").unwrap().as_str();
+            let tld = captures.name("tld").unwrap().as_str();
+            let project = GH_REPO_PREFIX_REGEX.replace(&remote, "");
+            doc_config.repository =
+                Some(format!("https://{brand}.{tld}/{}", project.trim_end_matches(".git")));
         }
 
-        let commit = foundry_cli::utils::Git::new(root).commit_hash(false, "HEAD").ok();
+        let commit = Git::new(root).commit_hash(false, "HEAD").ok();
 
         let mut builder = DocBuilder::new(
             root.clone(),
