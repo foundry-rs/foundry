@@ -42,14 +42,19 @@ jobs:
 
       - name: Run MPP e2e test
         env:
+          TEMPO_PRIVATE_KEY: ${{ secrets.TEMPO_PRIVATE_KEY }}
           TEMPO_KEYS_TOML_B64: ${{ secrets.TEMPO_KEYS_TOML_B64 }}
           MPP_API_KEY: ${{ secrets.MPP_API_KEY }}
           MPP_DEPOSIT: "1000000"
+          TEMPO_AUTO_FUND: "1"
         run: |
-          if [ -z "${TEMPO_KEYS_TOML_B64:-}" ]; then
-            echo "::warning::TEMPO_KEYS_TOML_B64 secret not set, skipping MPP e2e"
+          if [ -n "${TEMPO_PRIVATE_KEY:-}" ]; then
+            echo "::notice::Using TEMPO_PRIVATE_KEY for MPP e2e"
+          elif [ -n "${TEMPO_KEYS_TOML_B64:-}" ]; then
+            mkdir -p ~/.tempo/wallet
+            echo "$TEMPO_KEYS_TOML_B64" | tr -d '[:space:]' | base64 -d > ~/.tempo/wallet/keys.toml
+          else
+            echo "::warning::TEMPO_PRIVATE_KEY or TEMPO_KEYS_TOML_B64 secret not set, skipping MPP e2e"
             exit 0
           fi
-          mkdir -p ~/.tempo/wallet
-          echo "$TEMPO_KEYS_TOML_B64" | tr -d '[:space:]' | base64 -d > ~/.tempo/wallet/keys.toml
           ./.github/scripts/tempo-mpp.sh "$(which cast | xargs dirname)"

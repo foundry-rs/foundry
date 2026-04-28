@@ -13,7 +13,7 @@ use mpp::{
         parse_www_authenticate_all,
     },
 };
-use reqwest::StatusCode;
+use reqwest::{StatusCode, header::HeaderMap};
 use std::{
     collections::HashMap,
     fmt,
@@ -40,6 +40,24 @@ const MPP_RETRY_TIMEOUT: Duration = Duration::from_secs(120);
 /// Resolve the deposit amount from `MPP_DEPOSIT` env var or the default.
 fn default_deposit() -> u128 {
     std::env::var("MPP_DEPOSIT").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_DEPOSIT)
+}
+
+fn format_http_diagnostics(headers: &HeaderMap) -> String {
+    const DIAGNOSTIC_HEADERS: &[&str] = &["x-request-id", "cf-ray", "server", "report-to", "nel"];
+
+    let pairs: Vec<String> = DIAGNOSTIC_HEADERS
+        .iter()
+        .filter_map(|name| {
+            headers.get(*name).and_then(|value| value.to_str().ok().map(|v| (*name, v)))
+        })
+        .map(|(name, value)| format!("{name}: {value}"))
+        .collect();
+
+    if pairs.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nHTTP diagnostics:\n{}", pairs.join("\n"))
+    }
 }
 
 /// Process-wide payment serialization locks, keyed by origin URL.
@@ -295,6 +313,7 @@ where
 
         // Retry 402 → handle specific recoverable errors before giving up.
         if retry_resp.status() == StatusCode::PAYMENT_REQUIRED {
+            let diagnostics = format_http_diagnostics(retry_resp.headers());
             let retry_body = retry_resp.bytes().await.map_err(TransportErrorKind::custom)?;
             let retry_text = String::from_utf8_lossy(&retry_body);
 
@@ -369,7 +388,7 @@ where
             self.provider.rollback_pending();
             return Err(TransportErrorKind::http_error(
                 StatusCode::PAYMENT_REQUIRED.as_u16(),
-                retry_text.into_owned(),
+                format!("{retry_text}{diagnostics}"),
             ));
         }
 
@@ -466,9 +485,10 @@ where
             .collect();
 
         if www_auth_values.is_empty() {
-            return Err(TransportErrorKind::custom(std::io::Error::other(
-                "402 response missing WWW-Authenticate header",
-            )));
+            return Err(TransportErrorKind::custom(std::io::Error::other(format!(
+                "402 response missing WWW-Authenticate header{}",
+                format_http_diagnostics(resp.headers())
+            ))));
         }
 
         let challenges: Vec<_> = parse_www_authenticate_all(www_auth_values)
@@ -505,6 +525,7 @@ where
     async fn handle_response(resp: reqwest::Response) -> TransportResult<ResponsePacket> {
         let status = resp.status();
         debug!(%status, "received response from MPP transport");
+        let diagnostics = format_http_diagnostics(resp.headers());
 
         let body = resp.bytes().await.map_err(TransportErrorKind::custom)?;
 
@@ -517,7 +538,7 @@ where
         if !status.is_success() {
             return Err(TransportErrorKind::http_error(
                 status.as_u16(),
-                String::from_utf8_lossy(&body).into_owned(),
+                format!("{}{diagnostics}", String::from_utf8_lossy(&body)),
             ));
         }
 
