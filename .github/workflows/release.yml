@@ -5,9 +5,6 @@ permissions: {}
 on:
   push:
     tags:
-      - "stable"
-      - "rc"
-      - "rc-*"
       - "v*.*.*"
   schedule:
     - cron: "0 6 * * *"
@@ -20,8 +17,6 @@ env:
   # Keep in sync with `docker-publish.yml`.
   RUST_PROFILE: dist
   RUST_FEATURES: aws-kms,gcp-kms,turnkey,cli,asm-keccak,js-tracer
-
-  LAST_STABLE_VERSION: "v1.5.1"
 
 jobs:
   prepare:
@@ -47,9 +42,17 @@ jobs:
           if [[ ${IS_NIGHTLY} == 'true' ]]; then
             printf 'tag_name=%s\n' "nightly-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
             printf 'release_name=%s\n' "Nightly ($(date '+%Y-%m-%d'))" >> "$GITHUB_OUTPUT"
+            # Find the previous nightly tag for changelog generation,
+            # sorted by tag creation date (most recent first).
+            PREV_NIGHTLY=$(git tag -l 'nightly-*' --sort=-creatordate | head -n1)
+            printf 'from_tag=%s\n' "$PREV_NIGHTLY" >> "$GITHUB_OUTPUT"
           else
             printf 'tag_name=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
             printf 'release_name=%s\n' "$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            # Find the previous stable release tag (v*.*.*) for changelog generation,
+            # skipping the current tag so we diff from the last stable release.
+            PREV_STABLE=$(git tag -l 'v*.*.*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -n1)
+            printf 'from_tag=%s\n' "$PREV_STABLE" >> "$GITHUB_OUTPUT"
           fi
 
       # Creates a `nightly-SHA` tag for this specific nightly
@@ -71,10 +74,43 @@ jobs:
         uses: mikepenz/release-changelog-builder-action@bcae7115752d4ed746ff92feb666574428a79415 # v6.2
         with:
           configuration: "./.github/changelog.json"
-          fromTag: ${{ env.IS_NIGHTLY == 'true' && 'nightly' || env.STABLE_VERSION }}
+          fromTag: ${{ steps.release_info.outputs.from_tag || '' }}
           toTag: ${{ steps.release_info.outputs.tag_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Create the GitHub release as a draft up-front so that all matrix jobs
+      # only upload assets to an existing draft. With immutable releases
+      # enabled, an immutable release is sealed when it is published, so all
+      # assets must be attached before that. Stable releases are then left as
+      # a draft for a maintainer to publish manually; nightlies are auto-
+      # published by the `publish-nightly` job at the end of the workflow.
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ steps.release_info.outputs.tag_name }}
+          RELEASE_NAME: ${{ steps.release_info.outputs.release_name }}
+          CHANGELOG: ${{ steps.build_changelog.outputs.changelog }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if release_json="$(gh release view "$TAG_NAME" --json isDraft 2>/dev/null)"; then
+            is_draft="$(printf '%s' "$release_json" | grep -o '"isDraft":[^,}]*' | cut -d: -f2 | tr -d ' ')"
+            if [[ "$is_draft" == "true" ]]; then
+              echo "Draft release $TAG_NAME already exists; reusing it."
+              exit 0
+            fi
+            echo "::error::Release $TAG_NAME is already published; cannot upload more assets to an immutable release."
+            exit 1
+          fi
+          notes_file="$(mktemp)"
+          printf '%s' "$CHANGELOG" > "$notes_file"
+          flags=(--draft --verify-tag --title "$RELEASE_NAME" --notes-file "$notes_file")
+          if [[ "$IS_NIGHTLY" == "true" ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$TAG_NAME" "${flags[@]}"
 
   release-docker:
     name: Release Docker
@@ -87,6 +123,10 @@ jobs:
     with:
       tag_name: ${{ needs.prepare.outputs.tag_name }}
 
+  # This job uploads assets to the draft release created in `prepare`.
+  # Stable releases stay as drafts for a maintainer to publish manually;
+  # nightlies are auto-published by the `publish-nightly` job below. Either
+  # way, GitHub's immutable-releases setting seals the release at publish.
   release:
     permissions:
       id-token: write
@@ -272,68 +312,50 @@ jobs:
           set -euo pipefail
           printf '%s\n' "$ATTESTATION_URL" > "$FOUNDRY_ATTESTATION"
 
-      # Creates the release for this specific version
-      - name: Create release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
-        with:
-          name: ${{ needs.prepare.outputs.release_name }}
-          tag_name: ${{ needs.prepare.outputs.tag_name }}
-          prerelease: ${{ env.IS_NIGHTLY == 'true' }}
-          body: ${{ needs.prepare.outputs.changelog }}
-          files: |
-            ${{ steps.artifacts.outputs.file_name }}
-            ${{ steps.artifacts.outputs.foundry_attestation }}
-            ${{ steps.man.outputs.foundry_man }}
+      # Upload assets to the draft release created in `prepare`. Stable
+      # releases stay as drafts after this workflow finishes; a maintainer
+      # publishes them manually. Nightlies are auto-published below.
+      - name: Upload assets to draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+          FILE_NAME: ${{ steps.artifacts.outputs.file_name }}
+          FOUNDRY_ATTESTATION: ${{ steps.artifacts.outputs.foundry_attestation }}
+          FOUNDRY_MAN: ${{ steps.man.outputs.foundry_man }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=("$FILE_NAME" "$FOUNDRY_ATTESTATION")
+          if [[ -n "${FOUNDRY_MAN:-}" ]]; then
+            files+=("$FOUNDRY_MAN")
+          fi
+          gh release upload "$TAG_NAME" "${files[@]}" --clobber
 
-      # If this is a nightly release, it also updates the release
-      # tagged `nightly` for compatibility with `foundryup`
-      - name: Update nightly release
-        if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
-        with:
-          name: "Nightly"
-          tag_name: "nightly"
-          prerelease: true
-          body: ${{ needs.prepare.outputs.changelog }}
-          files: |
-            ${{ steps.artifacts.outputs.file_name }}
-            ${{ steps.artifacts.outputs.foundry_attestation }}
-            ${{ steps.man.outputs.foundry_man }}
-
-  cleanup:
-    name: Release cleanup
+  # Auto-publish nightly releases once all assets have been uploaded so that
+  # foundryup and other consumers see them immediately. Stable releases are
+  # left as drafts for a maintainer to publish manually.
+  publish-nightly:
+    name: Publish nightly release
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    needs: [prepare, release-docker, release]
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     permissions:
       contents: write
-    needs: release
-    if: always()
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      # Moves the `nightly` tag to `HEAD`
-      - name: Move nightly tag
-        if: ${{ env.IS_NIGHTLY == 'true' }}
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const moveTag = require('./.github/scripts/move-tag.js')
-            await moveTag({ github, context }, 'nightly')
-
-      - name: Delete old nightlies
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
-            await prunePrereleases({github, context})
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
+        shell: bash
+        run: gh release edit "$TAG_NAME" --draft=false
 
   # If any of the jobs fail, this will create a high-priority issue to signal so.
   issue:
     name: Open an issue
     runs-on: ubuntu-latest
-    needs: [prepare, release-docker, release, cleanup]
+    needs: [prepare, release-docker, release, publish-nightly]
     if: failure()
     permissions:
       contents: read
