@@ -159,6 +159,8 @@ fn rate_per_sec(total: f64, elapsed: Duration) -> f64 {
 struct InvariantFailureMetrics {
     failures: u64,
     unique_failures: HashSet<String>,
+    /// Unique handler-side assertion bugs found so far.
+    broken_handlers: usize,
 }
 
 impl InvariantFailureMetrics {
@@ -203,7 +205,6 @@ fn first_broken_event<'a>(
 /// This keeps the existing corpus progress metrics together with cumulative and
 /// derived throughput fields so downstream benchmark tooling can consume a
 /// single JSON event shape.
-#[expect(clippy::too_many_arguments)]
 fn build_invariant_progress_json<M: Serialize>(
     timestamp_secs: u64,
     invariant_name: &str,
@@ -211,7 +212,6 @@ fn build_invariant_progress_json<M: Serialize>(
     optimization_best: Option<I256>,
     throughput: InvariantThroughputMetrics,
     failure_metrics: &InvariantFailureMetrics,
-    broken_handlers: usize,
     elapsed: Duration,
 ) -> serde_json::Value {
     let mut metrics = serde_json::to_value(corpus_metrics).unwrap_or_default();
@@ -222,7 +222,7 @@ fn build_invariant_progress_json<M: Serialize>(
         // can watch them accumulate without waiting for the campaign to finish. These are
         // distinct from invariant predicate violations (counted by `failures` above) and
         // are routed via `InvariantFailures::broken_handlers`.
-        obj.insert("broken_handlers".to_string(), json!(broken_handlers));
+        obj.insert("broken_handlers".to_string(), json!(failure_metrics.broken_handlers));
     }
 
     let mut payload = json!({
@@ -802,8 +802,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 let broken = invariant_test.test_data.failures.errors.len();
                 // Phase E: live count of unique handler-side assertion bugs so users see
                 // them accumulate during the campaign (separate from invariant predicate
-                // breaks tracked by `broken` above).
-                let handler_bugs = invariant_test.test_data.failures.broken_handlers.len();
+                // breaks tracked by `broken` above). Sync into `failure_metrics` so all
+                // campaign-level failure counters live in one struct.
+                failure_metrics.broken_handlers =
+                    invariant_test.test_data.failures.broken_handlers.len();
+                let handler_bugs = failure_metrics.broken_handlers;
                 let total_invariants = invariant_contract.invariant_fns.len();
                 if edge_coverage_enabled || best.is_some() || broken > 0 || handler_bugs > 0 {
                     let mut msg = String::new();
@@ -833,6 +836,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             } else if edge_coverage_enabled
                 && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
             {
+                // Sync handler-bug count snapshot into failure_metrics before emitting.
+                failure_metrics.broken_handlers =
+                    invariant_test.test_data.failures.broken_handlers.len();
                 // Display corpus metrics inline as JSON.
                 let metrics = build_invariant_progress_json(
                     SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
@@ -841,7 +847,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     invariant_test.test_data.optimization_best_value,
                     throughput,
                     &failure_metrics,
-                    invariant_test.test_data.failures.broken_handlers.len(),
                     campaign_start.elapsed(),
                 );
                 let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
@@ -1452,7 +1457,6 @@ mod tests {
             Some(I256::try_from(42).unwrap()),
             throughput,
             &InvariantFailureMetrics::default(),
-            0,
             Duration::from_secs(10),
         );
 
@@ -1479,7 +1483,6 @@ mod tests {
             None,
             throughput,
             &InvariantFailureMetrics::default(),
-            0,
             Duration::ZERO,
         );
 
@@ -1494,6 +1497,7 @@ mod tests {
         failure_metrics.record_failure("invariant_a", "TestContract", "revert");
         failure_metrics.record_failure("invariant_a", "TestContract", "revert");
         failure_metrics.record_failure("invariant_b", "TestContract", "assertion failed");
+        failure_metrics.broken_handlers = 7;
 
         let payload = build_invariant_progress_json(
             789,
@@ -1502,7 +1506,6 @@ mod tests {
             None,
             InvariantThroughputMetrics::default(),
             &failure_metrics,
-            7,
             Duration::from_secs(1),
         );
 
@@ -1529,5 +1532,6 @@ mod tests {
         let metrics = InvariantFailureMetrics::default();
         assert_eq!(metrics.failures, 0);
         assert!(metrics.unique_failures.is_empty());
+        assert_eq!(metrics.broken_handlers, 0);
     }
 }
