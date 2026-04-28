@@ -29,27 +29,27 @@ env:
   TEST_REPOS: >-
     ithacaxyz/account:v0.5.7,
     vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest|Base58Test',
-    aave/aave-v4:v0.5.11,
+    aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35,
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
     sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
 
   ISOLATE_TEST_REPOS: >-
     ithacaxyz/account:v0.5.7 --nmc SimulateExecuteTest,
     vectorized/solady:v0.1.26 --nmc 'SafeTransferLibTest|LifebuoyTest|LibBitTest|Base58Test',
-    aave/aave-v4:v0.5.11,
+    aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35,
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
     sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
 
   BUILD_REPOS: >-
     ithacaxyz/account:v0.5.7,
     vectorized/solady:v0.1.26,
-    aave/aave-v4:v0.5.11,
+    aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35,
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75,
     sparkdotfi/spark-psm:v1.0.0
 
   COVERAGE_REPOS: >-
     ithacaxyz/account:v0.5.7,
-    aave/aave-v4:v0.5.11,
+    aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35,
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75,
     sparkdotfi/spark-psm:v1.0.0
 
