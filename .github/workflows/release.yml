@@ -339,7 +339,7 @@ jobs:
     name: Publish nightly release
     runs-on: ubuntu-latest
     needs: [prepare, release-docker, release]
-    if: ${{ env.IS_NIGHTLY == 'true' }}
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     permissions:
       contents: write
     steps:
