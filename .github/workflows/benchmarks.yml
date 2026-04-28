@@ -114,6 +114,7 @@ jobs:
             --repos "$REPOS" \
             --benchmarks forge_test,forge_fuzz_test \
             --output-file forge_test_bench.md
+            --verbose
 
       - name: Run forge isolate test benchmarks
         env:
@@ -126,6 +127,7 @@ jobs:
             --repos "$REPOS" \
             --benchmarks forge_isolate_test \
             --output-file forge_isolate_test_bench.md
+            --verbose
 
       - name: Run forge build benchmarks
         env:
@@ -138,6 +140,7 @@ jobs:
             --repos "$REPOS" \
             --benchmarks forge_build_no_cache,forge_build_with_cache \
             --output-file forge_build_bench.md
+            --verbose
 
       - name: Run forge coverage benchmarks
         env:
@@ -150,6 +153,7 @@ jobs:
             --repos "$REPOS" \
             --benchmarks forge_coverage \
             --output-file forge_coverage_bench.md
+            --verbose
 
       - name: Combine benchmark results
         run: ./.github/scripts/combine-benchmarks.sh benches
