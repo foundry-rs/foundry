@@ -5062,6 +5062,7 @@ dependencies = [
  "foundry-common-fmt",
  "foundry-compilers",
  "foundry-config",
+ "foundry-evm-hardforks",
  "foundry-wallets",
  "futures",
  "itertools 0.14.0",

@@ -9,7 +9,7 @@ use alloy_rpc_types::{Authorization, BlockNumberOrTag, Index, TransactionRequest
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::NodeConfig;
-use foundry_evm::hardfork::TempoHardfork;
+use eyre::{WrapErr, ensure, eyre};
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
@@ -181,83 +181,6 @@ casttest!(block_raw, |_prj, cmd| {
         hash.to_string(),
         "0x49fd7f3b9ba5d67fa60197027f09454d4cac945e8f271edcc84c3fd5872446d3"
     );
-});
-
-casttest!(tempo_fork_schedule_parses_configured_rpcs, async |_prj, _cmd| {
-    #[derive(Debug, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct TempoForkSchedule {
-        schedule: Vec<ForkInfo>,
-        active: String,
-    }
-
-    #[derive(Debug, Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct ForkInfo {
-        name: String,
-        active: bool,
-    }
-
-    let endpoints: Vec<_> = [
-        ("mainnet", "TEMPO_MAINNET_RPC_URL"),
-        ("testnet", "TEMPO_TESTNET_RPC_URL"),
-        ("devnet", "TEMPO_DEVNET_RPC_URL"),
-    ]
-    .into_iter()
-    .filter_map(|(network, env_key)| {
-        env::var(env_key).ok().filter(|rpc| !rpc.is_empty()).map(|rpc| (network, env_key, rpc))
-    })
-    .collect();
-
-    if endpoints.is_empty() {
-        eprintln!(
-            "Skipping Tempo fork schedule compatibility test because no Tempo RPC env vars are set"
-        );
-        return;
-    }
-
-    for (network, env_key, rpc_url) in endpoints {
-        let provider = ProviderBuilder::new().connect_http(rpc_url.parse().unwrap());
-        let schedule: TempoForkSchedule = provider
-            .raw_request("tempo_forkSchedule".into(), ())
-            .await
-            .unwrap_or_else(|err| {
-                panic!(
-                    "failed to fetch tempo_forkSchedule from {network} ({env_key}) at {rpc_url}: {err}"
-                )
-            });
-
-        let active = schedule.active.parse::<TempoHardfork>().unwrap_or_else(|_| {
-            panic!(
-                "{network} ({env_key}) reported active hardfork '{}' which this Foundry pin does not recognize",
-                schedule.active,
-            )
-        });
-
-        let parsed_schedule: Vec<_> = schedule
-            .schedule
-            .iter()
-            .map(|fork| {
-                fork.name.parse::<TempoHardfork>().unwrap_or_else(|_| {
-                    panic!(
-                        "{network} ({env_key}) reported fork '{}' in tempo_forkSchedule which this Foundry pin does not recognize",
-                        fork.name,
-                    )
-                })
-            })
-            .collect();
-
-        assert!(
-            parsed_schedule.contains(&active),
-            "{network} ({env_key}) reported active hardfork '{}' that was not present in the parsed schedule",
-            schedule.active,
-        );
-        assert!(
-            schedule.schedule.iter().any(|fork| fork.active && fork.name == schedule.active),
-            "{network} ({env_key}) returned an inconsistent tempo_forkSchedule response: active='{}' was not marked active in the schedule",
-            schedule.active,
-        );
-    }
 });
 
 casttest!(block_raw_tempo, |_prj, cmd| {
