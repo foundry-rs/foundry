@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
+interface IExternal {
+    function ping() external;
+}
+
 contract MissingZeroCheck {
     address public owner;
     address payable public recipient;
@@ -111,6 +115,37 @@ contract MissingZeroCheck {
         require(a != address(0));
     }
 
+    function guardOnOneBranch(address a, bool flag) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        if (flag) {
+            require(a != address(0));
+        }
+        owner = a;
+    }
+
+    function guardInForLoop(address a, uint256 n) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        for (uint256 i = 0; i < n; i++) {
+            require(a != address(0));
+        }
+        owner = a;
+    }
+
+    function guardInWhileLoop(address a, bool flag) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        while (flag) {
+            require(a != address(0));
+            flag = false;
+        }
+        owner = a;
+    }
+
+    function guardInTryClause(address a, address payable target) external { //~WARN: address parameter is used in a state write or value transfer without a zero-address check
+        try IExternal(target).ping() {
+            require(a != address(0));
+        } catch {
+            require(a != address(0));
+        }
+        owner = a;
+    }
+
     // SHOULD PASS:
 
     function setOwnerGuarded(address newOwner) external {
@@ -186,5 +221,23 @@ contract MissingZeroCheck {
     function staticCallOnly(address a) external {
         (bool ok,) = a.staticcall("");
         require(ok);
+    }
+
+    // Symmetric guard on both branches: universally checked.
+    function guardOnBothBranches(address a, bool flag) external {
+        if (flag) {
+            require(a != address(0));
+        } else {
+            require(a != address(0));
+        }
+        owner = a;
+    }
+
+    // Inner zero-check guards `a` for the rest of the enclosing branch via early revert.
+    function nestedGuardWithRevert(address a, bool flag) external {
+        if (flag) {
+            if (a == address(0)) revert();
+            owner = a;
+        }
     }
 }

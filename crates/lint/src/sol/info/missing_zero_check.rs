@@ -194,9 +194,52 @@ impl<'hir> Visit<'hir> for Analyzer<'hir> {
                 self.guard_depth += 1;
                 let _ = self.visit_expr(cond);
                 self.guard_depth -= 1;
+
+                let baseline = self.guarded.clone();
                 let _ = self.visit_stmt(then);
-                if let Some(e) = else_ {
+                let then_added: HashSet<hir::VariableId> =
+                    self.guarded.difference(&baseline).copied().collect();
+                let then_exits = branch_always_exits(then);
+
+                let (else_added, else_exits) = if let Some(e) = else_ {
+                    self.guarded = baseline.clone();
                     let _ = self.visit_stmt(e);
+                    let added: HashSet<hir::VariableId> =
+                        self.guarded.difference(&baseline).copied().collect();
+                    (added, branch_always_exits(e))
+                } else {
+                    (HashSet::new(), false)
+                };
+
+                self.guarded = baseline;
+                let to_add: HashSet<hir::VariableId> = match (then_exits, else_exits) {
+                    (true, true) => then_added.union(&else_added).copied().collect(),
+                    (true, false) => else_added,
+                    (false, true) => then_added,
+                    (false, false) => then_added.intersection(&else_added).copied().collect(),
+                };
+                self.guarded.extend(to_add);
+
+                return ControlFlow::Continue(());
+            }
+            // Loop bodies may execute zero times, so guards inside must not persist.
+            StmtKind::Loop(block, _) => {
+                let baseline = self.guarded.clone();
+                for s in block.stmts {
+                    let _ = self.visit_stmt(s);
+                }
+                self.guarded = baseline;
+                return ControlFlow::Continue(());
+            }
+            // Each try/catch clause is taken on a single path; discard clause-local guards.
+            StmtKind::Try(t) => {
+                let _ = self.visit_expr(&t.expr);
+                for clause in t.clauses {
+                    let baseline = self.guarded.clone();
+                    for s in clause.block.stmts {
+                        let _ = self.visit_stmt(s);
+                    }
+                    self.guarded = baseline;
                 }
                 return ControlFlow::Continue(());
             }
@@ -322,6 +365,17 @@ fn address_call_receiver<'hir>(callee: &'hir hir::Expr<'hir>) -> Option<&'hir hi
         }
     }
     None
+}
+
+fn branch_always_exits(stmt: &hir::Stmt<'_>) -> bool {
+    match &stmt.kind {
+        StmtKind::Return(_) | StmtKind::Revert(_) => true,
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            block.stmts.last().is_some_and(branch_always_exits)
+        }
+        StmtKind::If(_, t, Some(e)) => branch_always_exits(t) && branch_always_exits(e),
+        _ => false,
+    }
 }
 
 fn is_address_state_var_lhs(hir: &hir::Hir<'_>, lhs: &hir::Expr<'_>) -> bool {
