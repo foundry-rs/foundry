@@ -59,34 +59,34 @@ jobs:
           cargo build --profile dev --locked -p forge -p cast -p anvil -p chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
-      # TODO(upstream): re-enable when flaky devnet faucet is fixed
-      # - name: Run Tempo check on devnet
-      #   if: |
-      #     github.event_name == 'pull_request' ||
-      #     github.event.inputs.network == 'devnet' ||
-      #     github.event.inputs.network == 'all'
-      #   env:
-      #     ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
-      #     SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
-      #   run: |
-      #     if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
-      #       ./.github/scripts/tempo-check.sh
-      #     fi
-      #     if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
-      #       ./.github/scripts/tempo-deploy.sh
-      #     fi
+      - name: Run Tempo check on devnet
+        if: |
+          github.event_name == 'pull_request' ||
+          github.event.inputs.network == 'devnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+          SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
+        run: |
+          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-check.sh
+          fi
+          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-deploy.sh
+          fi
 
-      # - name: Run Tempo wallet tests on devnet
-      #   if: |
-      #     github.event_name == 'pull_request' ||
-      #     github.event.inputs.network == 'devnet' ||
-      #     github.event.inputs.network == 'all'
-      #   env:
-      #     ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
-      #   run: ./.github/scripts/tempo-wallet.sh
+      - name: Run Tempo wallet tests on devnet
+        if: |
+          github.event_name == 'pull_request' ||
+          github.event.inputs.network == 'devnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+        run: ./.github/scripts/tempo-wallet.sh
 
       - name: Run Tempo check on testnet
         if: |
+          github.event_name == 'pull_request' ||
           github.event.inputs.network == 'testnet' ||
           github.event.inputs.network == 'all'
         env:
