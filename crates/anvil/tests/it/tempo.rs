@@ -793,8 +793,10 @@ async fn test_tempo_aa_valid_after_future() {
     let current_time = block.header.timestamp;
     let valid_after = current_time + 5;
     let valid_before = current_time + 60;
+    let transfer_amount = U256::from(50_000);
+    let recipient_balance_before = token.balanceOf(recipient).call().await.unwrap();
 
-    let transfer_call = token.transfer(recipient, U256::from(50_000));
+    let transfer_call = token.transfer(recipient, transfer_amount);
     let calldata: Bytes = transfer_call.calldata().clone();
 
     let tempo_tx = TempoTransaction {
@@ -824,14 +826,23 @@ async fn test_tempo_aa_valid_after_future() {
     envelope.encode_2718(&mut encoded);
 
     // Transaction enters pool but is not yet valid
-    let tx_hash = provider.send_raw_transaction(&encoded).await.unwrap();
+    let pending = provider.send_raw_transaction(&encoded).await.unwrap();
+    let tx_hash = *pending.tx_hash();
+
+    api.mine_one().await;
+    let receipt = provider.get_transaction_receipt(tx_hash).await.unwrap();
+    assert!(receipt.is_none(), "Transaction should not be mined before valid_after");
+    let recipient_balance = token.balanceOf(recipient).call().await.unwrap();
+    assert_eq!(recipient_balance, recipient_balance_before);
 
     // Advance time past valid_after
     api.evm_set_next_block_timestamp(valid_after + 1).unwrap();
     api.mine_one().await;
 
-    let receipt = tx_hash.get_receipt().await.unwrap();
+    let receipt = pending.get_receipt().await.unwrap();
     assert!(receipt.status(), "Transaction should succeed after valid_after time");
+    let recipient_balance = token.balanceOf(recipient).call().await.unwrap();
+    assert_eq!(recipient_balance, recipient_balance_before + transfer_amount);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -59,7 +59,7 @@ jobs:
           cargo build --profile dev --locked -p forge -p cast -p anvil -p chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
-      # TODO(upstream): re-enable when flaky devnet faucet is fixed
+      # TODO: re-enable once devnet is up and stable
       # - name: Run Tempo check on devnet
       #   if: |
       #     github.event_name == 'pull_request' ||
@@ -76,6 +76,7 @@ jobs:
       #       ./.github/scripts/tempo-deploy.sh
       #     fi
 
+      # TODO: re-enable once devnet is up and stable
       # - name: Run Tempo wallet tests on devnet
       #   if: |
       #     github.event_name == 'pull_request' ||
@@ -87,6 +88,7 @@ jobs:
 
       - name: Run Tempo check on testnet
         if: |
+          github.event_name == 'pull_request' ||
           github.event.inputs.network == 'testnet' ||
           github.event.inputs.network == 'all'
         env:
