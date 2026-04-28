@@ -15,15 +15,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let sha_short = &sha[..10];
 
     let tag_name = try_env_var("TAG_NAME").unwrap_or_else(|| String::from("dev"));
-    let is_nightly = tag_name.contains("nightly");
-    let version_suffix = if is_nightly { "nightly" } else { &tag_name };
+    let version = release_version(&env_var("CARGO_PKG_VERSION"), &tag_name);
+    let is_nightly = tag_name.starts_with("nightly");
 
     if is_nightly {
         println!("cargo:rustc-env=FOUNDRY_IS_NIGHTLY_VERSION=true");
     }
-
-    let pkg_version = env_var("CARGO_PKG_VERSION");
-    let version = format!("{pkg_version}-{version_suffix}");
 
     // `PROFILE` captures only release or debug. Get the actual name from the out directory.
     let out_dir = PathBuf::from(env_var("OUT_DIR"));
@@ -85,6 +82,14 @@ Build Profile: {profile}"
 
 fn env_var(name: &str) -> String {
     try_env_var(name).unwrap()
+}
+
+fn release_version(pkg_version: &str, tag_name: &str) -> String {
+    if let Some(version) = tag_name.strip_prefix('v') {
+        return version.to_owned();
+    }
+
+    format!("{pkg_version}-{tag_name}")
 }
 
 fn try_env_var(name: &str) -> Option<String> {

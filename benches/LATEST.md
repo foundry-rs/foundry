@@ -13,7 +13,7 @@
 ## Foundry Versions
 
 - **v1.5.1**: forge Version: 1.5.1-v1.5.1 (b0a9dd9 2025-12-19)
-- **nightly**: forge Version: 1.6.0-nightly (a249f5c 2026-04-24)
+- **nightly**: forge Version: 1.7.0-nightly-a249f5c (a249f5c 2026-04-24)
 
 ## Forge Test
 
