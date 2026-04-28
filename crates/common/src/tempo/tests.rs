@@ -8,8 +8,6 @@ use std::env;
 #[serde(rename_all = "camelCase")]
 struct TempoForkSchedule {
     schedule: Vec<ForkInfo>,
-    #[allow(dead_code)]
-    active: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,7 +46,9 @@ async fn test_fork_schedule_parses_configured_rpcs() -> eyre::Result<()> {
     }
 
     if !checked_any {
-        eprintln!("Missing Tempo RPC env vars. Skipping Tempo fork schedule compatibility test.");
+        let _ = crate::sh_eprintln!(
+            "Missing Tempo RPC env vars. Skipping Tempo fork schedule compatibility test."
+        );
     }
 
     Ok(())
