@@ -13,8 +13,7 @@ use mpp::{
         parse_www_authenticate_all,
     },
 };
-use reqwest::StatusCode;
-use reqwest::header::HeaderMap;
+use reqwest::{StatusCode, header::HeaderMap};
 use std::{
     collections::HashMap,
     fmt,
