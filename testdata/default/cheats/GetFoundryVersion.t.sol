@@ -106,19 +106,18 @@ contract GetFoundryVersionTest is Test {
         vm.parseUint(parts[2]);
     }
 
-    function testGetFoundryVersionBuildProfile() public view {
+    function testGetFoundryVersionBuildProfile() public {
         // The build profile must be either "debug" or "release".
         string[] memory plusSplit = vm.split(vm.getFoundryVersion(), "+");
         string[] memory metadataComponents = vm.split(plusSplit[1], ".");
         string memory buildType = metadataComponents[2];
         assertTrue(
-            keccak256(bytes(buildType)) == keccak256("debug")
-                || keccak256(bytes(buildType)) == keccak256("release"),
+            keccak256(bytes(buildType)) == keccak256("debug") || keccak256(bytes(buildType)) == keccak256("release"),
             "Build profile must be 'debug' or 'release'"
         );
     }
 
-    function testFoundryVersionCmpAndAtLeastAreConsistent() public view {
+    function testFoundryVersionCmpAndAtLeastAreConsistent() public {
         // `foundryVersionAtLeast(v)` must equal `foundryVersionCmp(v) >= 0` for any input.
         string[3] memory probes = ["0.0.1", _semverPrefix(), "99.0.0"];
         for (uint256 i = 0; i < probes.length; i++) {
