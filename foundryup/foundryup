@@ -3,7 +3,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.8.0"
+FOUNDRYUP_INSTALLER_VERSION="1.8.1"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -125,13 +125,21 @@ main() {
       say "resolved release tag: ${FOUNDRYUP_TAG}"
       FOUNDRYUP_VERSION="$FOUNDRYUP_TAG"
     elif [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
-      # Resolve to the latest nightly (prerelease) release via the GitHub API
+      # Resolve to the latest nightly (prerelease) release via the GitHub API.
+      # The GitHub API does not guarantee that releases are returned in
+      # chronological order, so we collect all matching nightlies along with
+      # their `published_at` timestamps and sort them ourselves.
       say "fetching latest nightly releases from ${FOUNDRYUP_REPO}..."
       FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases" | awk '
         /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
-        /"draft"[[:space:]]*:[[:space:]]*true/ { tag="" }
-        /"prerelease"[[:space:]]*:[[:space:]]*true/ && !found { if (tag ~ /^nightly-/) { print tag; found=1 } }
-      ') || err "failed to fetch releases from GitHub API"
+        /"published_at"[[:space:]]*:[[:space:]]*"/ {
+          pub=$0
+          gsub(/.*"published_at"[[:space:]]*:[[:space:]]*"/, "", pub)
+          gsub(/".*/, "", pub)
+          if (tag ~ /^nightly-/) print pub "\t" tag
+          tag=""
+        }
+      ' | sort -r | awk -F '\t' 'NR==1 { print $2 }') || err "failed to fetch releases from GitHub API"
       if [ -z "$FOUNDRYUP_TAG" ]; then
         err "could not find a nightly release for ${FOUNDRYUP_REPO}"
       fi
