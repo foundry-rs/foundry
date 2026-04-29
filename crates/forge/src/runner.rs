@@ -954,9 +954,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
 
-        // Replay any persisted handler-side assertion bugs from prior runs. Bugs that still
-        // reproduce are merged into the campaign's handler_errors after invariant_fuzz returns;
-        // stale files (no longer reproducing) are deleted in place.
+        // Replay any persisted handler-side assertion bugs from prior runs and feed the
+        // still-reproducing ones into the campaign so the live counter and JSON pulse
+        // stream surface them from the first emission. Stale files (no longer reproducing)
+        // are deleted in place.
         let persisted_handler_failures = replay_persisted_handler_failures(
             &failure_dir.join("handlers"),
             &current_settings,
@@ -964,12 +965,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &replay_ctx,
         );
 
-        let mut invariant_result = match evm.invariant_fuzz(
+        let invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
             self.build_fuzz_state(true),
             progress.as_ref(),
             &self.tcfg.early_exit,
+            persisted_handler_failures,
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -977,16 +979,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             }
         };
-        // Merge replayed-and-still-broken persisted handler bugs into the campaign result.
-        // Shortest-wins on collision so the better reproducer survives across runs.
-        for (fingerprint, failure) in persisted_handler_failures {
-            match invariant_result.handler_errors.get(&fingerprint) {
-                Some(existing) if existing.call_sequence.len() <= failure.call_sequence.len() => {}
-                _ => {
-                    invariant_result.handler_errors.insert(fingerprint, failure);
-                }
-            }
-        }
         // Merge coverage collected during invariant run with test setup coverage.
         self.result.merge_coverages(invariant_result.line_coverage);
 

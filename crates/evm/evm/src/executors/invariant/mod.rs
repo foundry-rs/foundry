@@ -6,7 +6,7 @@ use crate::{
     inspectors::Fuzzer,
 };
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, FixedBytes, I256, Selector, U256, map::AddressMap};
+use alloy_primitives::{Address, B256, Bytes, FixedBytes, I256, Selector, U256, map::AddressMap};
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{
@@ -453,6 +453,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     }
 
     /// Fuzzes any deployed contract and checks any broken invariant at `invariant_address`.
+    ///
+    /// `initial_handler_failures` pre-seeds the campaign's `broken_handlers` map with bugs
+    /// recovered from disk by the runner's persisted-failure replay step, so the live
+    /// progress bar and JSON pulse stream surface them from the first emission instead of
+    /// jumping at the final report.
     pub fn invariant_fuzz(
         &mut self,
         invariant_contract: InvariantContract<'_>,
@@ -460,14 +465,19 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         fuzz_state: EvmFuzzState,
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
+        initial_handler_failures: std::collections::HashMap<B256, HandlerAssertionFailure>,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.primary_invariant_fn.inputs.is_empty() {
             return Err(eyre!("Invariant test function should have no inputs"));
         }
 
-        let (mut invariant_test, mut corpus_manager) =
-            self.prepare_test(&invariant_contract, fuzz_fixtures, fuzz_state)?;
+        let (mut invariant_test, mut corpus_manager) = self.prepare_test(
+            &invariant_contract,
+            fuzz_fixtures,
+            fuzz_state,
+            initial_handler_failures,
+        )?;
 
         // Start timer for this invariant test.
         let mut runs = 0;
@@ -939,6 +949,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
+        initial_handler_failures: std::collections::HashMap<B256, HandlerAssertionFailure>,
     ) -> Result<(InvariantTest, WorkerCorpus)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
@@ -978,6 +989,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // already know if we can early exit the invariant run.
         // This does not count as a fuzz run. It will just register the revert.
         let mut failures = InvariantFailures::new();
+        // Seed the campaign with handler bugs recovered from disk so the live counter and
+        // JSON pulse stream surface them from the first emission.
+        failures.broken_handlers = initial_handler_failures;
         invariant_preflight_check(
             invariant_contract,
             &self.config,
