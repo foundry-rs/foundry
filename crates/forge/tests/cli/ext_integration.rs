@@ -1,7 +1,7 @@
 use foundry_test_utils::util::ExtTester;
 
 // Actively maintained tests
-// Last updated: June 19th 2025
+// Last updated: April 29th 2026
 
 // <https://github.com/foundry-rs/forge-std>
 #[test]
