@@ -4,13 +4,12 @@ use alloy_rpc_types::{BlockNumberOrTag, Filter};
 use eyre::Result;
 use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
 use foundry_common::provider::ProviderBuilder;
+use std::sync::LazyLock;
 use tempo_alloy::TempoNetwork;
 use tempo_primitives::TempoAddressExt;
 
-/// keccak256("Transfer(address,address,uint256)")
-fn transfer_topic() -> B256 {
-    keccak256(b"Transfer(address,address,uint256)")
-}
+static TRANSFER_TOPIC: LazyLock<B256> =
+    LazyLock::new(|| keccak256(b"Transfer(address,address,uint256)"));
 
 pub(super) async fn run(
     addr: Address,
@@ -36,7 +35,7 @@ pub(super) async fn run(
     let start = from_block.map(BlockNumberOrTag::Number).unwrap_or(BlockNumberOrTag::Latest);
 
     let mut filter =
-        Filter::new().event_signature(transfer_topic()).topic2(to_topic).from_block(start);
+        Filter::new().event_signature(*TRANSFER_TOPIC).topic2(to_topic).from_block(start);
 
     if let Some(tok) = token {
         filter = filter.address(tok);
@@ -44,7 +43,7 @@ pub(super) async fn run(
 
     sh_println!("Watching transfers to {addr}... (Ctrl-C to stop)")?;
 
-    // Fetch historical logs first
+    // Fetch logs from the requested start block (historical when from_block is set)
     let logs = provider.get_logs(&filter).await?;
     for log in &logs {
         print_transfer_log(log)?;

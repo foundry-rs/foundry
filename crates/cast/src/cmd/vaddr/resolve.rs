@@ -12,7 +12,9 @@ pub(super) async fn run(addr: Address, rpc: RpcOpts) -> Result<()> {
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
     let registry = IAddressRegistry::new(ADDRESS_REGISTRY_ADDRESS, &provider);
 
-    let decoded = registry.decodeVirtualAddress(addr).call().await?;
+    let decode_builder = registry.decodeVirtualAddress(addr);
+    let resolve_builder = registry.resolveVirtualAddress(addr);
+    let (decoded, master) = tokio::try_join!(decode_builder.call(), resolve_builder.call())?;
 
     if !decoded.isVirtual {
         sh_println!("{addr} is not a virtual address")?;
@@ -21,7 +23,7 @@ pub(super) async fn run(addr: Address, rpc: RpcOpts) -> Result<()> {
 
     let master_id = decoded.masterId;
     let user_tag = decoded.userTag;
-    let master: Address = registry.resolveVirtualAddress(addr).call().await?;
+    let master: Address = master;
 
     sh_println!("Virtual address: {addr}")?;
     sh_println!("Master ID:       0x{}", hex::encode(master_id))?;

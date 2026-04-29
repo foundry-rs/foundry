@@ -79,9 +79,14 @@ Master ID:         {}",
         output.master_id,
     )?;
 
+    const MAX_USER_TAG: u64 = 0x0000_FFFF_FFFF_FFFF;
     sh_println!("\nVirtual addresses:")?;
     for i in 0..count {
-        let raw = (tag + i as u64).to_be_bytes();
+        let tag_value = tag
+            .checked_add(i as u64)
+            .filter(|&t| t <= MAX_USER_TAG)
+            .ok_or_else(|| eyre::eyre!("tag overflow: tag + count exceeds the 6-byte user tag range (max {MAX_USER_TAG:#x})"))?;
+        let raw = tag_value.to_be_bytes();
         let user_tag = UserTag::new(raw[2..].try_into().expect("slice is 6 bytes"));
         let vaddr = Address::new_virtual(output.master_id, user_tag);
         sh_println!("  tag={user_tag}  {vaddr}")?;

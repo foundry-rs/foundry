@@ -7,22 +7,13 @@ use crate::{
 };
 use alloy_primitives::Address;
 use alloy_signer::Signer;
-use alloy_sol_types::sol;
 use eyre::Result;
 use foundry_cli::utils::{LoadConfig, get_chain};
 use foundry_common::provider::ProviderBuilder;
 use tempo_alloy::{
     TempoNetwork,
-    contracts::precompiles::{ADDRESS_REGISTRY_ADDRESS, IAddressRegistry},
+    contracts::precompiles::{ADDRESS_REGISTRY_ADDRESS, IAddressRegistry, ITIP20},
 };
-
-sol! {
-    #[sol(rpc)]
-    interface ITIP20 {
-        function balanceOf(address account) external view returns (uint256);
-        function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    }
-}
 
 pub(super) async fn run(
     addr: Address,
