@@ -65,23 +65,25 @@ impl HandlerAssertionFailure {
     }
 }
 
-/// Computes the edge-coverage fingerprint for a handler-side assertion call.
+/// Computes the edge-coverage fingerprint for a handler-side assertion call. `target` is
+/// the handler contract address whose call asserted/reverted (mirrors
+/// `HandlerAssertionFailure::reverter`).
 ///
 /// Prefers `pre_merge_edges_hash` (a hash of the call's edge coverage taken *before*
-/// `merge_edge_coverage` zeroes the buffer). Falls back to a `(reverter, selector)` hash
-/// so the dedup key is always defined and behavior degrades gracefully when edge coverage
+/// `merge_edge_coverage` zeroes the buffer). Falls back to a `(target, selector)` hash so
+/// the dedup key is always defined and behavior degrades gracefully when edge coverage
 /// collection is disabled.
 pub fn handler_edge_fingerprint(
     pre_merge_edges_hash: Option<B256>,
-    reverter: Address,
+    target: Address,
     selector: Selector,
 ) -> B256 {
     if let Some(hash) = pre_merge_edges_hash {
         return hash;
     }
-    // Fallback: stable hash of (reverter || selector). Preserves prior key-based dedup.
+    // Fallback: stable hash of (target || selector). Preserves prior key-based dedup.
     let mut buf = [0u8; 24];
-    buf[..20].copy_from_slice(reverter.as_slice());
+    buf[..20].copy_from_slice(target.as_slice());
     buf[20..].copy_from_slice(selector.as_slice());
     keccak256(buf)
 }

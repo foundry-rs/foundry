@@ -307,25 +307,38 @@ where
     FEN: FoundryEvmNetwork,
     F: FnMut(usize, RawCallResult<FEN>) -> eyre::Result<ReplayDecision<T, FEN>>,
 {
+    // Fast path: no warp/roll accumulation → iterate only kept indices (O(k)) and pass
+    // `&calls[idx]` directly to skip the per-call `BasicTxDetails` clone.
+    if !accumulate_warp_roll {
+        for &idx in sequence {
+            let call_result = execute_tx(executor, &calls[idx])?;
+            match on_call(idx, call_result)? {
+                ReplayDecision::Stop(val) => return Ok(Some(val)),
+                ReplayDecision::Continue(mut call_result) => {
+                    if !call_result.reverted {
+                        executor.commit(&mut call_result);
+                    }
+                }
+            }
+        }
+        return Ok(None);
+    }
+
+    // Accumulating path: must scan the full `calls` so warp/roll from skipped txs lands on
+    // the next kept tx as a concrete delta.
     let mut accumulated_warp = U256::ZERO;
     let mut accumulated_roll = U256::ZERO;
     let mut seq_iter = sequence.iter().peekable();
 
     for (idx, tx) in calls.iter().enumerate() {
-        if accumulate_warp_roll {
-            accumulated_warp += tx.warp.unwrap_or(U256::ZERO);
-            accumulated_roll += tx.roll.unwrap_or(U256::ZERO);
-        }
+        accumulated_warp += tx.warp.unwrap_or(U256::ZERO);
+        accumulated_roll += tx.roll.unwrap_or(U256::ZERO);
         if seq_iter.peek() != Some(&&idx) {
             continue;
         }
         seq_iter.next();
 
-        let executed = if accumulate_warp_roll {
-            apply_warp_roll(tx, accumulated_warp, accumulated_roll)
-        } else {
-            tx.clone()
-        };
+        let executed = apply_warp_roll(tx, accumulated_warp, accumulated_roll);
         let call_result = execute_tx(executor, &executed)?;
 
         match on_call(idx, call_result)? {
@@ -337,10 +350,8 @@ where
             }
         }
 
-        if accumulate_warp_roll {
-            accumulated_warp = U256::ZERO;
-            accumulated_roll = U256::ZERO;
-        }
+        accumulated_warp = U256::ZERO;
+        accumulated_roll = U256::ZERO;
     }
 
     Ok(None)

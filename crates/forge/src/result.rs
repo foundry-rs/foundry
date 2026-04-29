@@ -481,8 +481,11 @@ pub struct TestResult {
     pub assert_all_invariant_count: Option<usize>,
 
     /// Handler-side assertion bugs discovered during the campaign. Each entry is a unique
-    /// `(reverter, selector)` bug; the report renders a dedicated `Suite handlers:` section
-    /// listing them so they don't get conflated with invariant predicate violations.
+    /// edge-coverage fingerprint (Medusa/Echidna semantics: distinct paths to the same
+    /// `(reverter, selector)` are recorded as separate bugs). Falls back to a
+    /// `(reverter, selector)` hash when edge coverage is unavailable. The report renders a
+    /// dedicated `Suite handlers:` section listing them so they don't get conflated with
+    /// invariant predicate violations.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invariant_handler_failures: Vec<InvariantHandlerFailure>,
 
@@ -660,7 +663,7 @@ impl fmt::Display for TestResult {
                 // Phase E: handler-side assertion bug section. Distinct from invariant
                 // predicate violations (rendered above) — these are bugs *inside* a fuzzed
                 // handler function, surfaced as `Suite handlers: N assertion bug(s) found`
-                // followed by one `[FAIL: ...]` block per unique `(reverter, selector)`.
+                // followed by one `[FAIL: ...]` block per unique edge-coverage fingerprint.
                 if !self.invariant_handler_failures.is_empty() {
                     let prefix = if render_primary_header
                         || self.assert_all_invariant_count.is_some()

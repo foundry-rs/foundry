@@ -5,7 +5,7 @@ use super::{
 };
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{B256, I256, Selector};
+use alloy_primitives::{Address, B256, I256, Selector};
 use alloy_sol_types::{Panic, PanicKind, Revert, SolError, SolInterface};
 use eyre::Result;
 use foundry_config::InvariantConfig;
@@ -196,9 +196,9 @@ fn invariant_inner_sequence<FEN: FoundryEvmNetwork>(
 /// For optimization mode (int256 return), tracks the max value but never fails on invariant.
 /// For check mode, asserts the invariant and fails if broken.
 ///
-/// `tx` is the transaction whose call result is being evaluated; it is used to attribute
-/// handler-side assertion failures to a specific `(target, selector)` so they can be tracked
-/// independently from invariant predicate violations.
+/// `handler_target` / `handler_selector` identify the just-executed handler call; they are
+/// used to attribute handler-side assertion failures so they can be tracked independently
+/// from invariant predicate violations.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'_>,
@@ -207,7 +207,8 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
     invariant_config: &InvariantConfig,
     call_result: RawCallResult<FEN>,
     state_changeset: &StateChangeset,
-    tx: &BasicTxDetails,
+    handler_target: Address,
+    handler_selector: Selector,
     pre_merge_edges_hash: Option<B256>,
 ) -> Result<bool> {
     let is_optimization = invariant_contract.is_optimization();
@@ -272,13 +273,8 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
             // distinct paths to the same `(reverter, selector)` are recorded as separate bugs
             // (Medusa/Echidna semantics). On collision the shortest `call_sequence` wins, so
             // persisted reproducers stay minimal.
-            let target = tx.call_details.target;
-            let selector = tx
-                .call_details
-                .calldata
-                .get(..4)
-                .and_then(|s| Selector::try_from(s).ok())
-                .unwrap_or_default();
+            let target = handler_target;
+            let selector = handler_selector;
             let fingerprint = handler_edge_fingerprint(pre_merge_edges_hash, target, selector);
 
             // Skip building case data if we already have a strictly shorter repro for this

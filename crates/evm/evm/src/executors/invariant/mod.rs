@@ -533,22 +533,38 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     break 'stop;
                 }
 
-                // Clone the latest input so that `tx` does not borrow from `current_run.inputs`.
-                // This lets us pass `&tx` into `can_continue` alongside `&mut current_run`
-                // without conflicting borrows (`can_continue` needs the tx to attribute
-                // handler-side assertion failures to a specific `(target, selector)`).
-                let tx = current_run
-                    .inputs
-                    .last()
-                    .ok_or_else(|| eyre!("no input generated to call fuzzed target."))?
-                    .clone();
+                // Snapshot `(target, selector)` of the just-generated input so that we can
+                // pass them to `can_continue` later (alongside `&mut current_run`) without
+                // having to clone the whole `BasicTxDetails` (incl. calldata `Bytes`) on
+                // every fuzzed call. Helpers that need `&BasicTxDetails` borrow it directly
+                // from `current_run.inputs.last()` within a scoped expression.
+                let (handler_target, handler_selector) = {
+                    let last = current_run
+                        .inputs
+                        .last()
+                        .ok_or_else(|| eyre!("no input generated to call fuzzed target."))?;
+                    let sel_bytes: [u8; 4] = last
+                        .call_details
+                        .calldata
+                        .get(..4)
+                        .and_then(|s| s.try_into().ok())
+                        .unwrap_or_default();
+                    (last.call_details.target, Selector::from(sel_bytes))
+                };
 
                 // Execute call from the randomly generated sequence without committing state.
                 // State is committed only if call is not a magic assume.
-                let mut call_result = execute_tx(&mut current_run.executor, &tx)?;
+                let mut call_result = execute_tx(
+                    &mut current_run.executor,
+                    current_run.inputs.last().expect("checked above"),
+                )?;
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                 if self.config.show_metrics {
-                    invariant_test.record_metrics(&tx, call_result.reverted, discarded);
+                    invariant_test.record_metrics(
+                        current_run.inputs.last().expect("checked above"),
+                        call_result.reverted,
+                        discarded,
+                    );
                 }
 
                 // Collect line coverage from last fuzzed call.
@@ -595,7 +611,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         collect_data(
                             &invariant_test,
                             &mut state_changeset,
-                            &tx,
+                            current_run.inputs.last().expect("checked above"),
                             &call_result,
                             self.config.depth,
                         );
@@ -647,7 +663,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             &self.config,
                             call_result,
                             &state_changeset,
-                            &tx,
+                            handler_target,
+                            handler_selector,
                             pre_merge_edges_hash,
                         )
                         .map_err(|e| eyre!(e.to_string()))?
@@ -662,13 +679,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             // as separate bugs. Same routing as the `can_continue` path so the
                             // campaign keeps running for the full budget instead of attributing
                             // the assertion to the primary invariant.
-                            let target = tx.call_details.target;
-                            let selector = tx
-                                .call_details
-                                .calldata
-                                .get(..4)
-                                .and_then(|s| Selector::try_from(s).ok())
-                                .unwrap_or_default();
+                            let target = handler_target;
+                            let selector = handler_selector;
                             let call_reverted = call_result.reverted;
                             let fingerprint = error::handler_edge_fingerprint(
                                 pre_merge_edges_hash,
