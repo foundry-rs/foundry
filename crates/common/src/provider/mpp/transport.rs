@@ -17,6 +17,8 @@ use reqwest::{StatusCode, header::HeaderMap};
 use std::{
     collections::HashMap,
     fmt,
+    io::IsTerminal,
+    process::{Command, Stdio},
     sync::{Mutex, OnceLock},
     task,
     time::Duration,
@@ -42,6 +44,31 @@ fn default_deposit() -> u128 {
     std::env::var("MPP_DEPOSIT").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_DEPOSIT)
 }
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct FundingContext {
+    wallet_address: Option<alloy_primitives::Address>,
+    token: Option<String>,
+    chain_id: Option<u64>,
+}
+
+impl FundingContext {
+    fn token_line(&self) -> String {
+        self.token
+            .as_ref()
+            .map(|token| format!("Requested payment token: {token}\n\n"))
+            .unwrap_or_default()
+    }
+
+    fn network(&self) -> Option<&'static str> {
+        match self.chain_id {
+            // Tempo mainnet/testnet naming as understood by the Tempo wallet CLI.
+            Some(4217) => Some("tempo"),
+            Some(42431) => Some("moderato"),
+            _ => None,
+        }
+    }
+}
+
 fn format_http_diagnostics(headers: &HeaderMap) -> String {
     const DIAGNOSTIC_HEADERS: &[&str] = &["x-request-id", "cf-ray", "server", "report-to", "nel"];
 
@@ -57,6 +84,134 @@ fn format_http_diagnostics(headers: &HeaderMap) -> String {
         String::new()
     } else {
         format!("\n\nHTTP diagnostics:\n{}", pairs.join("\n"))
+    }
+}
+
+fn tempo_wallet_fund_help(ctx: &FundingContext) -> String {
+    let mut command = "tempo wallet fund".to_string();
+    if let Some(address) = ctx.wallet_address {
+        command.push_str(&format!(" --address {address}"));
+    }
+    if let Some(network) = ctx.network() {
+        command.push_str(&format!(" --network {network}"));
+    }
+
+    let mut no_browser = command.clone();
+    no_browser.push_str(" --no-browser");
+
+    format!(
+        "\n\nTempo wallet payment could not be funded for this paid RPC request.\n\n{}\
+         Fund the wallet, then rerun the command:\n  {command}\n\n\
+         If this CLI is running on a remote or headless host, use:\n  {no_browser}",
+        ctx.token_line()
+    )
+}
+
+fn can_run_interactive_tempo_fund() -> bool {
+    if let Ok(value) = std::env::var("FOUNDRY_MPP_AUTO_FUND") {
+        return value == "1" || value.eq_ignore_ascii_case("true");
+    }
+
+    if std::env::var_os("CI").is_some() {
+        return false;
+    }
+
+    std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
+}
+
+fn tempo_bin() -> String {
+    std::env::var("TEMPO_BIN").unwrap_or_else(|_| "tempo".to_string())
+}
+
+async fn run_interactive_tempo_fund(ctx: &FundingContext) -> TransportResult<bool> {
+    if !can_run_interactive_tempo_fund() {
+        return Ok(false);
+    }
+
+    let tempo = tempo_bin();
+    let mut args = vec!["wallet".to_string(), "fund".to_string()];
+    if let Some(address) = ctx.wallet_address {
+        args.push("--address".to_string());
+        args.push(address.to_string());
+    }
+    if let Some(network) = ctx.network() {
+        args.push("--network".to_string());
+        args.push(network.to_string());
+    }
+
+    eprintln!(
+        "Tempo wallet payment could not be funded for this paid RPC request.\n{}\
+         Opening Tempo wallet funding flow...\n",
+        ctx.token_line()
+    );
+
+    let status = tokio::task::spawn_blocking(move || {
+        Command::new(tempo)
+            .args(args)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+    })
+    .await
+    .map_err(|e| {
+        TransportErrorKind::custom(std::io::Error::other(format!(
+            "failed to join tempo wallet fund process: {e}"
+        )))
+    })?
+    .map_err(|e| {
+        TransportErrorKind::custom(std::io::Error::other(format!(
+            "failed to run `tempo wallet fund`: {e}{}",
+            tempo_wallet_fund_help(ctx)
+        )))
+    })?;
+
+    if status.success() {
+        Ok(true)
+    } else {
+        Err(TransportErrorKind::custom(std::io::Error::other(format!(
+            "`tempo wallet fund` exited with status {status}{}",
+            tempo_wallet_fund_help(ctx)
+        ))))
+    }
+}
+
+fn looks_like_tempo_funding_error(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("insufficient-balance")
+        || lower.contains("insufficientbalance")
+        || (lower.contains("insufficient") && lower.contains("balance"))
+        || lower.contains("transfer amount exceeds balance")
+        || lower.contains("insufficient funds")
+        || lower.contains("not enough funds")
+}
+
+fn should_suggest_tempo_fund(status: StatusCode, body: &[u8]) -> bool {
+    if status != StatusCode::PAYMENT_REQUIRED {
+        return false;
+    }
+
+    let body_text = String::from_utf8_lossy(body);
+    if looks_like_tempo_funding_error(&body_text) {
+        return true;
+    }
+
+    let Ok(problem) = serde_json::from_slice::<mpp::error::PaymentErrorDetails>(body) else {
+        return false;
+    };
+
+    looks_like_tempo_funding_error(&problem.problem_type)
+        || looks_like_tempo_funding_error(&problem.detail)
+        || (problem.problem_type.ends_with("/verification-failed")
+            && problem.detail == "Payment verification failed.")
+}
+
+fn format_mpp_payment_failure(error: impl fmt::Display, ctx: &FundingContext) -> String {
+    let message = error.to_string();
+    if looks_like_tempo_funding_error(&message) {
+        format!("MPP payment failed: {message}{}", tempo_wallet_fund_help(ctx))
+    } else {
+        format!("MPP payment failed: {message}")
     }
 }
 
@@ -138,6 +293,9 @@ impl LazySessionProvider {
                  To configure MPP, install the Tempo wallet CLI and create a key:\n\
                  \n  curl -sSL https://tempo.xyz/install.sh | bash\
                  \n  tempo wallet login\
+                 \n  tempo wallet fund\
+                 \n\nIf this CLI is running on a remote or headless host, use:\
+                 \n  tempo wallet fund --no-browser\
                  \n\nSee https://docs.tempo.xyz for more information.",
             ))
         })?;
@@ -247,12 +405,29 @@ where
         let _pay_guard = self.provider.lock_pay().await;
 
         let (resolved, challenge) = Self::select_challenge(&resp, &self.provider)?;
+        let funding_ctx = self.provider.funding_context(&challenge);
 
         debug!(id = %challenge.id, method = %challenge.method, intent = %challenge.intent, "received MPP 402 challenge, paying");
 
-        let credential = resolved.pay(&challenge).await.map_err(|e| {
-            TransportErrorKind::custom(std::io::Error::other(format!("MPP payment failed: {e}")))
-        })?;
+        let credential = match resolved.pay(&challenge).await {
+            Ok(credential) => credential,
+            Err(e) => {
+                let message = e.to_string();
+                if looks_like_tempo_funding_error(&message)
+                    && run_interactive_tempo_fund(&funding_ctx).await?
+                {
+                    resolved.pay(&challenge).await.map_err(|e| {
+                        TransportErrorKind::custom(std::io::Error::other(
+                            format_mpp_payment_failure(e, &funding_ctx),
+                        ))
+                    })?
+                } else {
+                    return Err(TransportErrorKind::custom(std::io::Error::other(
+                        format_mpp_payment_failure(message, &funding_ctx),
+                    )));
+                }
+            }
+        };
 
         let auth_header = format_authorization(&credential).map_err(|e| {
             TransportErrorKind::custom(std::io::Error::other(format!(
@@ -336,7 +511,14 @@ where
                     let final_resp =
                         self.pay_and_retry(&challenge, &resolved, &headers, &body).await?;
 
-                    let result = Self::handle_response(final_resp).await;
+                    let result = self
+                        .handle_response_or_retry_after_fund(
+                            final_resp,
+                            &headers,
+                            &body,
+                            &funding_ctx,
+                        )
+                        .await;
                     if result.is_ok() {
                         self.provider.flush_pending();
                     } else {
@@ -375,7 +557,9 @@ where
                 let final_resp =
                     self.pay_and_retry(&fresh_challenge, &resolved, &headers, &body).await?;
 
-                let result = Self::handle_response(final_resp).await;
+                let result = self
+                    .handle_response_or_retry_after_fund(final_resp, &headers, &body, &funding_ctx)
+                    .await;
                 if result.is_ok() {
                     self.provider.set_key_provisioned(true);
                     self.provider.flush_pending();
@@ -386,9 +570,33 @@ where
             }
 
             self.provider.rollback_pending();
+            if should_suggest_tempo_fund(StatusCode::PAYMENT_REQUIRED, &retry_body)
+                && run_interactive_tempo_fund(&funding_ctx).await?
+            {
+                let (resolved, fresh_challenge) =
+                    self.fetch_fresh_challenge(&headers, &body).await?;
+                let final_resp =
+                    self.pay_and_retry(&fresh_challenge, &resolved, &headers, &body).await?;
+
+                let result = self
+                    .handle_response_or_retry_after_fund(final_resp, &headers, &body, &funding_ctx)
+                    .await;
+                if result.is_ok() {
+                    self.provider.set_key_provisioned(true);
+                    self.provider.flush_pending();
+                } else {
+                    self.provider.rollback_pending();
+                }
+                return result;
+            }
+
+            let mut error_text = format!("{retry_text}{diagnostics}");
+            if should_suggest_tempo_fund(StatusCode::PAYMENT_REQUIRED, &retry_body) {
+                error_text.push_str(&tempo_wallet_fund_help(&funding_ctx));
+            }
             return Err(TransportErrorKind::http_error(
                 StatusCode::PAYMENT_REQUIRED.as_u16(),
-                format!("{retry_text}{diagnostics}"),
+                error_text,
             ));
         }
 
@@ -410,10 +618,27 @@ where
         headers: &reqwest::header::HeaderMap,
         body: &[u8],
     ) -> TransportResult<reqwest::Response> {
-        let credential = provider.pay(challenge).await.map_err(|e| {
-            self.provider.rollback_pending();
-            TransportErrorKind::custom(std::io::Error::other(format!("MPP payment failed: {e}")))
-        })?;
+        let funding_ctx = self.provider.funding_context(challenge);
+        let credential = match provider.pay(challenge).await {
+            Ok(credential) => credential,
+            Err(e) => {
+                self.provider.rollback_pending();
+                let message = e.to_string();
+                if looks_like_tempo_funding_error(&message)
+                    && run_interactive_tempo_fund(&funding_ctx).await?
+                {
+                    provider.pay(challenge).await.map_err(|e| {
+                        TransportErrorKind::custom(std::io::Error::other(
+                            format_mpp_payment_failure(e, &funding_ctx),
+                        ))
+                    })?
+                } else {
+                    return Err(TransportErrorKind::custom(std::io::Error::other(
+                        format_mpp_payment_failure(message, &funding_ctx),
+                    )));
+                }
+            }
+        };
 
         let auth_header = format_authorization(&credential).map_err(|e| {
             self.provider.rollback_pending();
@@ -435,6 +660,38 @@ where
                 self.provider.rollback_pending();
                 TransportErrorKind::custom(e)
             })
+    }
+
+    async fn handle_response_or_retry_after_fund(
+        &self,
+        resp: reqwest::Response,
+        headers: &reqwest::header::HeaderMap,
+        body: &[u8],
+        funding_ctx: &FundingContext,
+    ) -> TransportResult<ResponsePacket> {
+        if resp.status() != StatusCode::PAYMENT_REQUIRED {
+            return Self::handle_response(resp).await;
+        }
+
+        let diagnostics = format_http_diagnostics(resp.headers());
+        let status = resp.status();
+        let resp_body = resp.bytes().await.map_err(TransportErrorKind::custom)?;
+
+        if should_suggest_tempo_fund(status, &resp_body)
+            && run_interactive_tempo_fund(funding_ctx).await?
+        {
+            self.provider.rollback_pending();
+
+            let (resolved, fresh_challenge) = self.fetch_fresh_challenge(headers, body).await?;
+            let final_resp = self.pay_and_retry(&fresh_challenge, &resolved, headers, body).await?;
+            return Self::handle_response(final_resp).await;
+        }
+
+        let mut error_text = format!("{}{diagnostics}", String::from_utf8_lossy(&resp_body));
+        if should_suggest_tempo_fund(status, &resp_body) {
+            error_text.push_str(&tempo_wallet_fund_help(funding_ctx));
+        }
+        Err(TransportErrorKind::http_error(status.as_u16(), error_text))
     }
 
     /// Fetch a fresh 402 challenge from the server (unauthenticated request).
@@ -536,10 +793,11 @@ where
         }
 
         if !status.is_success() {
-            return Err(TransportErrorKind::http_error(
-                status.as_u16(),
-                format!("{}{diagnostics}", String::from_utf8_lossy(&body)),
-            ));
+            let mut body_text = format!("{}{diagnostics}", String::from_utf8_lossy(&body));
+            if should_suggest_tempo_fund(status, &body) {
+                body_text.push_str(&tempo_wallet_fund_help(&FundingContext::default()));
+            }
+            return Err(TransportErrorKind::http_error(status.as_u16(), body_text));
         }
 
         serde_json::from_slice(&body)
@@ -576,6 +834,20 @@ pub(crate) trait ResolveProvider {
     fn flush_pending(&self) {}
     fn rollback_pending(&self) {}
     fn commit_topup_and_track_voucher(&self) {}
+    fn funding_wallet_address(&self) -> Option<alloy_primitives::Address> {
+        None
+    }
+    fn funding_chain_id(&self) -> Option<u64> {
+        None
+    }
+    fn funding_context(&self, challenge: &mpp::protocol::core::PaymentChallenge) -> FundingContext {
+        let (challenge_chain_id, token) = extract_challenge_chain_and_currency(challenge);
+        FundingContext {
+            wallet_address: self.funding_wallet_address(),
+            token,
+            chain_id: challenge_chain_id.or_else(|| self.funding_chain_id()),
+        }
+    }
     /// Acquire the payment serialization lock. The returned guard must be held
     /// across the entire 402 → pay → retry → response cycle to prevent
     /// concurrent channel opens and colliding expiring-nonce transactions.
@@ -622,6 +894,12 @@ impl ResolveProvider for LazySessionProvider {
     }
     fn commit_topup_and_track_voucher(&self) {
         Self::commit_topup_and_track_voucher(self)
+    }
+    fn funding_wallet_address(&self) -> Option<alloy_primitives::Address> {
+        self.inner.lock().unwrap().as_ref().map(|p| p.funding_wallet_address())
+    }
+    fn funding_chain_id(&self) -> Option<u64> {
+        self.inner.lock().unwrap().as_ref().and_then(|p| p.key_chain_id())
     }
     fn lock_pay(&self) -> impl std::future::Future<Output = Option<OwnedMutexGuard<()>>> + Send {
         let lock = self.pay_lock.clone();
@@ -693,6 +971,26 @@ mod tests {
                     "test-source".to_string(),
                     serde_json::json!({"action": "voucher", "channelId": "0xtest", "cumulativeAmount": "1000", "signature": "0xtest"}),
                 ))
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct InsufficientBalanceProvider;
+
+    impl PaymentProvider for InsufficientBalanceProvider {
+        fn supports(&self, method: &str, intent: &str) -> bool {
+            method == "tempo" && (intent == "session" || intent == "charge")
+        }
+
+        fn pay(
+            &self,
+            _challenge: &PaymentChallenge,
+        ) -> impl std::future::Future<Output = Result<PaymentCredential, MppError>> + Send {
+            async {
+                Err(MppError::InsufficientBalance(Some(
+                    "wallet has 0 pathUSD but needs 100000".to_string(),
+                )))
             }
         }
     }
@@ -849,6 +1147,145 @@ mod tests {
             err.to_string().contains("WWW-Authenticate"),
             "expected WWW-Authenticate error, got: {err}"
         );
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_mpp_transport_payment_failure_suggests_tempo_wallet_fund() {
+        let (_, www_auth) = test_challenge();
+
+        let app = axum::Router::new().route(
+            "/",
+            post(move || {
+                let www_auth = www_auth.clone();
+                async move {
+                    (
+                        AxumStatusCode::PAYMENT_REQUIRED,
+                        [("www-authenticate", www_auth)],
+                        "Payment Required",
+                    )
+                }
+            }),
+        );
+
+        let (base_url, handle) = spawn_server(app).await;
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse(&base_url).unwrap(),
+            InsufficientBalanceProvider,
+        );
+
+        let err = tower::Service::call(&mut transport, test_request()).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Tempo wallet payment could not be funded"), "got: {msg}");
+        assert!(msg.contains("tempo wallet fund"), "got: {msg}");
+        assert!(msg.contains("--no-browser"), "got: {msg}");
+        assert!(msg.contains("Requested payment token: 0x20c0"), "got: {msg}");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_mpp_transport_retry_402_insufficient_balance_suggests_fund() {
+        let (_, www_auth) = test_challenge();
+
+        let app = axum::Router::new().route(
+            "/",
+            post(move |req: axum::http::Request<axum::body::Body>| {
+                let www_auth = www_auth.clone();
+                async move {
+                    if req.headers().get("authorization").is_some() {
+                        (
+                            AxumStatusCode::PAYMENT_REQUIRED,
+                            [("content-type", "application/problem+json")],
+                            serde_json::to_string(
+                                &mpp::error::PaymentErrorDetails::session("insufficient-balance")
+                                    .with_title("InsufficientBalanceError")
+                                    .with_detail(
+                                        "Insufficient pathUSD balance: have 0, need 100000",
+                                    ),
+                            )
+                            .unwrap(),
+                        )
+                            .into_response()
+                    } else {
+                        (
+                            AxumStatusCode::PAYMENT_REQUIRED,
+                            [("www-authenticate", www_auth)],
+                            "Payment Required".to_string(),
+                        )
+                            .into_response()
+                    }
+                }
+            }),
+        );
+
+        let (base_url, handle) = spawn_server(app).await;
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse(&base_url).unwrap(),
+            MockPaymentProvider,
+        );
+
+        let err = tower::Service::call(&mut transport, test_request()).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("InsufficientBalanceError"), "got: {msg}");
+        assert!(msg.contains("Tempo wallet payment could not be funded"), "got: {msg}");
+        assert!(msg.contains("tempo wallet fund"), "got: {msg}");
+        assert!(msg.contains("--no-browser"), "got: {msg}");
+        assert!(msg.contains("Requested payment token: 0x20c0"), "got: {msg}");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_mpp_transport_final_402_verification_failed_suggests_fund() {
+        let (_, www_auth) = test_challenge();
+
+        let app = axum::Router::new().route(
+            "/",
+            post(move |req: axum::http::Request<axum::body::Body>| {
+                let www_auth = www_auth.clone();
+                async move {
+                    if req.headers().get("authorization").is_some() {
+                        (
+                            AxumStatusCode::PAYMENT_REQUIRED,
+                            [("content-type", "application/problem+json")],
+                            serde_json::to_string(
+                                &mpp::error::PaymentErrorDetails::core("verification-failed")
+                                    .with_title("Verification Failed")
+                                    .with_detail("Payment verification failed."),
+                            )
+                            .unwrap(),
+                        )
+                            .into_response()
+                    } else {
+                        (
+                            AxumStatusCode::PAYMENT_REQUIRED,
+                            [("www-authenticate", www_auth)],
+                            "Payment Required".to_string(),
+                        )
+                            .into_response()
+                    }
+                }
+            }),
+        );
+
+        let (base_url, handle) = spawn_server(app).await;
+        let mut transport = MppHttpTransport::new(
+            reqwest::Client::new(),
+            Url::parse(&base_url).unwrap(),
+            MockPaymentProvider,
+        );
+
+        let err = tower::Service::call(&mut transport, test_request()).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Verification Failed"), "got: {msg}");
+        assert!(msg.contains("Tempo wallet payment could not be funded"), "got: {msg}");
+        assert!(msg.contains("tempo wallet fund"), "got: {msg}");
+        assert!(msg.contains("--no-browser"), "got: {msg}");
+        assert!(msg.contains("Requested payment token: 0x20c0"), "got: {msg}");
 
         handle.abort();
     }
