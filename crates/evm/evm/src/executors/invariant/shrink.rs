@@ -1,12 +1,14 @@
 use crate::executors::{
     EarlyExit, EvmError, Executor, RawCallResult,
     invariant::{
-        call_after_invariant_function, call_invariant_function, execute_tx,
+        call_after_invariant_function, call_invariant_function,
+        error::{handler_edge_fingerprint, snapshot_edge_fingerprint},
+        execute_tx,
         result::did_fail_on_assert,
     },
 };
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, I256, U256};
+use alloy_primitives::{Address, B256, Bytes, I256, Selector, U256};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
     FoundryBlock, constants::MAGIC_ASSUME, decode::RevertDecoder, evm::FoundryEvmNetwork,
@@ -65,6 +67,25 @@ enum ShrinkErrorPolicy {
 enum ReplayDecision<T, FEN: FoundryEvmNetwork> {
     Stop(T),
     Continue(RawCallResult<FEN>),
+}
+
+/// Options controlling how `check_sequence` evaluates a candidate call sequence.
+pub struct CheckSequenceOptions<'a> {
+    pub accumulate_warp_roll: bool,
+    pub fail_on_revert: bool,
+    pub expect_assertion_failure: bool,
+    pub call_after_invariant: bool,
+    pub rd: Option<&'a RevertDecoder>,
+}
+
+/// Result of a strict handler-bug replay: anchor asserts, no earlier call asserts, and the
+/// recomputed edge fingerprint identifies which path the assertion took.
+#[derive(Debug)]
+pub struct HandlerReplayOutcome {
+    pub anchor_asserted: bool,
+    pub revert_reason: Option<String>,
+    /// Normalized via `handler_edge_fingerprint` so callers can compare directly.
+    pub anchor_fingerprint: B256,
 }
 
 /// Resets the progress bar for shrinking.
@@ -427,14 +448,6 @@ fn finish_sequence_check<FEN: FoundryEvmNetwork>(
     Ok((success, true, None))
 }
 
-pub struct CheckSequenceOptions<'a> {
-    pub accumulate_warp_roll: bool,
-    pub fail_on_revert: bool,
-    pub expect_assertion_failure: bool,
-    pub call_after_invariant: bool,
-    pub rd: Option<&'a RevertDecoder>,
-}
-
 fn call_failure_reason<FEN: FoundryEvmNetwork>(
     call_result: RawCallResult<FEN>,
     rd: Option<&RevertDecoder>,
@@ -518,13 +531,75 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     Ok(build_shrunk_sequence(calls, &shrinker, true))
 }
 
-/// Shrinks a handler-side assertion bug's call sequence to the shortest prefix that still
-/// triggers the assertion on the anchor (last) call. The anchor is pinned and never
-/// dropped; intermediate calls that themselves assert are rejected so we don't promote a
-/// different finding.
+/// Replays a handler-bug sequence and returns whether the anchor still asserts on the same
+/// path. Rejects sequences with a pre-anchor assertion (would be a different bug).
+pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
+    mut executor: Executor<FEN>,
+    calls: &[BasicTxDetails],
+    sequence: Vec<usize>,
+    accumulate_warp_roll: bool,
+    rd: Option<&RevertDecoder>,
+) -> eyre::Result<HandlerReplayOutcome> {
+    let Some(&anchor_idx) = sequence.last() else {
+        return Ok(HandlerReplayOutcome {
+            anchor_asserted: false,
+            revert_reason: None,
+            anchor_fingerprint: B256::ZERO,
+        });
+    };
+
+    let outcome = replay_sequence(
+        &mut executor,
+        calls,
+        &sequence,
+        accumulate_warp_roll,
+        |idx, call_result| {
+            let asserted = did_fail_on_assert(&call_result, &call_result.state_changeset);
+            if idx == anchor_idx {
+                let snapshot = snapshot_edge_fingerprint(&call_result);
+                let anchor = &calls[anchor_idx];
+                let reverter = anchor.call_details.target;
+                let selector_bytes: [u8; 4] = anchor
+                    .call_details
+                    .calldata
+                    .get(..4)
+                    .and_then(|s| s.try_into().ok())
+                    .unwrap_or_default();
+                let selector = Selector::from(selector_bytes);
+                let fingerprint = handler_edge_fingerprint(snapshot, reverter, selector);
+                let reason =
+                    if asserted { assertion_failure_reason(call_result, rd) } else { None };
+                return Ok(ReplayDecision::Stop(HandlerReplayOutcome {
+                    anchor_asserted: asserted,
+                    revert_reason: reason,
+                    anchor_fingerprint: fingerprint,
+                }));
+            }
+            if asserted {
+                // Pre-anchor assertion = different bug; reject.
+                return Ok(ReplayDecision::Stop(HandlerReplayOutcome {
+                    anchor_asserted: false,
+                    revert_reason: None,
+                    anchor_fingerprint: B256::ZERO,
+                }));
+            }
+            Ok(ReplayDecision::Continue(call_result))
+        },
+    )?;
+
+    Ok(outcome.unwrap_or(HandlerReplayOutcome {
+        anchor_asserted: false,
+        revert_reason: None,
+        anchor_fingerprint: B256::ZERO,
+    }))
+}
+
+/// Shrinks a handler-bug sequence to the shortest prefix that still asserts on the anchor
+/// AND keeps the same edge fingerprint (so we don't change bug identity).
 pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
     config: &InvariantConfig,
     calls: &[BasicTxDetails],
+    expected_fingerprint: B256,
     executor: &Executor<FEN>,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
@@ -542,64 +617,41 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
         ShrinkErrorPolicy::RestoreRemoved,
         |idx| idx == anchor,
         |shrinker| {
-            handler_sequence_still_asserts(
+            handler_sequence_still_triggers_bug(
                 executor.clone(),
                 calls,
                 shrinker.current().collect(),
-                anchor,
                 accumulate_warp_roll,
+                expected_fingerprint,
             )
         },
     );
 
     let shrunk = build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll);
 
-    // Replay the shrunk sequence once more; fall back to the original on any failure so
-    // we never surface a non-reproducible counterexample.
-    let verified = handler_sequence_still_asserts(
+    // Verify shrunk repro; fall back to original on any failure.
+    let verified = handler_sequence_still_triggers_bug(
         executor.clone(),
         calls,
         shrinker.current().collect(),
-        anchor,
         accumulate_warp_roll,
+        expected_fingerprint,
     )
     .unwrap_or(false);
     if verified { Ok(shrunk) } else { Ok(calls.to_vec()) }
 }
 
-/// Returns true iff replaying `sequence` reaches the anchor with every prior call passing
-/// and the anchor itself asserting. Used as the shrink predicate by
-/// `shrink_handler_sequence`.
-fn handler_sequence_still_asserts<FEN: FoundryEvmNetwork>(
-    mut executor: Executor<FEN>,
+/// Shrink predicate: anchor asserts on the same path as the originally recorded bug.
+fn handler_sequence_still_triggers_bug<FEN: FoundryEvmNetwork>(
+    executor: Executor<FEN>,
     calls: &[BasicTxDetails],
     sequence: Vec<usize>,
-    anchor_idx: usize,
     accumulate_warp_roll: bool,
+    expected_fingerprint: B256,
 ) -> eyre::Result<bool> {
-    let len = sequence.len();
-    if len == 0 || sequence[len - 1] != anchor_idx {
-        return Ok(false);
-    }
-
-    let asserted = replay_sequence(
-        &mut executor,
-        calls,
-        &sequence,
-        accumulate_warp_roll,
-        |idx, call_result| {
-            let asserted = did_fail_on_assert(&call_result, &call_result.state_changeset);
-            if idx == anchor_idx {
-                return Ok(ReplayDecision::Stop(asserted));
-            }
-            if asserted {
-                // Intermediate assertion is a different bug; reject this candidate.
-                return Ok(ReplayDecision::Stop(false));
-            }
-            Ok(ReplayDecision::Continue(call_result))
-        },
-    )?;
-    Ok(asserted.unwrap_or(false))
+    let outcome =
+        replay_handler_failure_sequence(executor, calls, sequence, accumulate_warp_roll, None)?;
+    Ok(outcome.anchor_asserted && outcome.anchor_fingerprint == expected_fingerprint)
 }
 
 /// Executes a call sequence and returns the optimization value (int256) from the invariant

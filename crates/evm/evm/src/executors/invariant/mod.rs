@@ -56,7 +56,10 @@ mod result;
 pub use result::InvariantFuzzTestResult;
 
 mod shrink;
-pub use shrink::{CheckSequenceOptions, check_sequence, check_sequence_value};
+pub use shrink::{
+    CheckSequenceOptions, HandlerReplayOutcome, check_sequence, check_sequence_value,
+    replay_handler_failure_sequence,
+};
 
 sol! {
     interface IInvariantTest {
@@ -913,6 +916,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 match shrink::shrink_handler_sequence(
                     &self.config,
                     &failure.call_sequence,
+                    failure.edge_fingerprint,
                     &self.executor,
                     progress,
                     early_exit,

@@ -26,7 +26,7 @@ use foundry_evm::{
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
-            check_sequence, replay_error, replay_run,
+            check_sequence, replay_error, replay_handler_failure_sequence, replay_run,
         },
     },
     fuzz::{
@@ -1548,15 +1548,12 @@ fn persisted_call_sequence(
     )
 }
 
-/// Converts a persisted `BaseCounterExample` sequence into `BasicTxDetails` (applying
-/// `ctx.show_solidity` in place) and replays it via `check_sequence`.
-fn replay_persisted_call_sequence<FEN: FoundryEvmNetwork>(
+/// Converts a persisted counterexample to `BasicTxDetails`, setting `show_solidity` in place.
+fn base_counterexamples_to_txes(
     ctx: &ReplayContext<'_>,
-    executor: Executor<FEN>,
     call_sequence: &mut [BaseCounterExample],
-    expect_assertion_failure: bool,
-) -> (Vec<BasicTxDetails>, CheckSequenceResult) {
-    let txes = call_sequence
+) -> Vec<BasicTxDetails> {
+    call_sequence
         .iter_mut()
         .map(|seq| {
             seq.show_solidity = ctx.show_solidity;
@@ -1570,7 +1567,18 @@ fn replay_persisted_call_sequence<FEN: FoundryEvmNetwork>(
                 },
             }
         })
-        .collect::<Vec<BasicTxDetails>>();
+        .collect()
+}
+
+/// Converts a persisted `BaseCounterExample` sequence into `BasicTxDetails` (applying
+/// `ctx.show_solidity` in place) and replays it via `check_sequence`.
+fn replay_persisted_call_sequence<FEN: FoundryEvmNetwork>(
+    ctx: &ReplayContext<'_>,
+    executor: Executor<FEN>,
+    call_sequence: &mut [BaseCounterExample],
+    expect_assertion_failure: bool,
+) -> (Vec<BasicTxDetails>, CheckSequenceResult) {
+    let txes = base_counterexamples_to_txes(ctx, call_sequence);
     let result = check_sequence(
         executor,
         &txes,
@@ -1645,8 +1653,8 @@ fn record_handler_failure(
     record_invariant_failure(&handlers_dir, &file, call_sequence, settings, true);
 }
 
-/// Replays handler-side assertion bugs persisted under `<failure_dir>/handlers/*.json`.
-/// Returns those that still reproduce; deletes stale files; skips settings-incompatible files.
+/// Replays persisted handler-side assertion bugs. A file is kept only if the anchor still
+/// asserts on the same path (matching fingerprint); stale files are deleted in place.
 fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
     handlers_dir: &Path,
     current_settings: &InvariantSettings,
@@ -1664,7 +1672,7 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        let Some(edge_fingerprint) = path
+        let Some(expected_fingerprint) = path
             .file_stem()
             .and_then(|s| s.to_str())
             .filter(|_| path.extension().and_then(|s| s.to_str()) == Some("json"))
@@ -1680,22 +1688,34 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
             let _ = std::fs::remove_file(&path);
             continue;
         }
-        let (txes, replay) =
-            replay_persisted_call_sequence(ctx, executor.clone(), &mut call_sequence, true);
-        match replay {
-            Ok((success, _entirely, reason)) if !success => {
+        let txes = base_counterexamples_to_txes(ctx, &mut call_sequence);
+        let sequence: Vec<usize> =
+            (0..min(txes.len(), ctx.invariant_config.depth as usize)).collect();
+        let outcome = replay_handler_failure_sequence(
+            executor.clone(),
+            &txes,
+            sequence,
+            ctx.invariant_config.has_delay(),
+            Some(ctx.revert_decoder),
+        );
+        match outcome {
+            Ok(outcome)
+                if outcome.anchor_asserted
+                    && outcome.anchor_fingerprint == expected_fingerprint =>
+            {
                 let _ = sh_warn!(
                     "Replayed handler-side assertion bug from {path:?}. \nRun `forge clean` or remove file to ignore."
                 );
                 replayed.insert(
-                    edge_fingerprint,
+                    expected_fingerprint,
                     HandlerAssertionFailure::from_replayed_sequence(
                         txes,
-                        edge_fingerprint,
-                        reason.unwrap_or_default(),
+                        expected_fingerprint,
+                        outcome.revert_reason.unwrap_or_default(),
                     ),
                 );
             }
+            // Stale: anchor doesn't assert, earlier call asserts, or fingerprint changed.
             Ok(_) => {
                 let _ = std::fs::remove_file(&path);
             }
