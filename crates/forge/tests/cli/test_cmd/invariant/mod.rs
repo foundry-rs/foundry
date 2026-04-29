@@ -1548,11 +1548,9 @@ Suite handlers: 1 assertion bug(s) found
 "#]]);
 });
 
-// Handler-side assertion bugs are deduped by edge-coverage fingerprint of the asserting
-// call (not by `(reverter, selector)`), so distinct paths through the same selector are
-// surfaced as separate bugs. `corpus_dir` is set to enable AFL-style edge coverage
-// collection; without it the fingerprint falls back to `(reverter, selector)` and the four
-// branches collapse into a single bug.
+// Verifies edge-coverage dedup of handler-side assertion bugs (4 distinct paths to the
+// same selector → 4 bugs) and post-campaign shrinking (each bug's noop-prefixed sequence
+// shrinks to the asserting anchor call).
 forgetest_init!(handler_assertion_dedupes_by_edge_coverage, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
@@ -1567,8 +1565,10 @@ forgetest_init!(handler_assertion_dedupes_by_edge_coverage, |prj, cmd| {
 contract MultiPathHandler {
     uint256 public state;
 
-    // Four branches, all reach `assert(false)` via the same selector but along
-    // different code paths. With edge-coverage dedup each path becomes its own bug.
+    // Filler so fuzzing produces a prefix to shrink.
+    function noop() external {}
+
+    // Four branches, one selector — distinct edge fingerprints per path.
     function maybeAssert(uint8 path) external {
         if (path < 64) {
             state = 1;
@@ -1606,22 +1606,24 @@ contract MultiPathTest is Test {
    "#,
     );
 
+    // Seed pinned for stable shrink counts; concrete originals (2, 22, 11, 7) confirm
+    // shrinking actually fired. Update the snapshot if upstream RNG shifts the numbers.
     cmd.args(["test", "--mt", "invariant_ok", "--fuzz-seed", "119"]).assert_failure().stdout_eq(
         str![[r#"
 ...
 Suite handlers: 4 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
-	[Sequence] (original: 1, shrunk: 1)
-		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[3]
+	[Sequence] (original: 2, shrunk: 1)
+		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[2]
 [FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
-	[Sequence] (original: 1, shrunk: 1)
-		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[126]
+	[Sequence] (original: 22, shrunk: 1)
+		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[66]
 [FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
-	[Sequence] (original: 1, shrunk: 1)
-		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[164]
+	[Sequence] (original: 11, shrunk: 1)
+		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[148]
 [FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
-	[Sequence] (original: 1, shrunk: 1)
-		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[192]
+	[Sequence] (original: 7, shrunk: 1)
+		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[253]
 ...
 "#]],
     );

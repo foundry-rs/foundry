@@ -24,8 +24,12 @@ pub struct HandlerAssertionFailure {
     pub reverter: Address,
     /// 4-byte selector of the failing handler function.
     pub selector: Selector,
-    /// Full call sequence leading up to (and including) the failing call.
+    /// Full call sequence leading up to (and including) the failing call. After shrinking
+    /// this holds the minimal prefix that still triggers the anchor assertion.
     pub call_sequence: Vec<BasicTxDetails>,
+    /// Pre-shrink length of `call_sequence`, used by the renderer's
+    /// `(original: N, shrunk: M)` output.
+    pub original_sequence_len: usize,
     /// Decoded revert/assert reason.
     pub revert_reason: String,
     /// Always `true` for entries in this struct; mirrored for symmetry with
@@ -127,9 +131,7 @@ impl InvariantFailures {
         }
     }
 
-    /// Returns true if a handler-side assertion bug has already been recorded for the given
-    /// edge-coverage fingerprint. Callers that want to skip work when a fingerprint is already
-    /// known can check this first; pass [`handler_edge_fingerprint`] to compute the key.
+    /// Returns true if a handler bug has already been recorded for the given fingerprint.
     pub fn has_handler_failure(&self, fingerprint: B256) -> bool {
         self.broken_handlers.contains_key(&fingerprint)
     }

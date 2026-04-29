@@ -686,11 +686,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 let revert_reason = case_data.revert_reason.clone();
                                 invariant_test.test_data.failures.revert_reason =
                                     Some(revert_reason.clone());
+                                let call_sequence = current_run.inputs.clone();
+                                let original_sequence_len = call_sequence.len();
                                 invariant_test.test_data.failures.record_handler_failure(
                                     HandlerAssertionFailure {
                                         reverter: target,
                                         selector,
-                                        call_sequence: current_run.inputs.clone(),
+                                        call_sequence,
+                                        original_sequence_len,
                                         revert_reason,
                                         assertion_failure: true,
                                         edge_fingerprint: fingerprint,
@@ -880,7 +883,39 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         trace!(?fuzz_fixtures);
         invariant_test.fuzz_state.log_stats();
 
-        let result = invariant_test.test_data;
+        let mut result = invariant_test.test_data;
+
+        // Post-campaign: shrink each handler bug's call sequence to its minimal prefix.
+        if !result.failures.broken_handlers.is_empty() {
+            let total = result.failures.broken_handlers.len();
+            for (idx, (_fingerprint, failure)) in
+                result.failures.broken_handlers.iter_mut().enumerate()
+            {
+                if early_exit.should_stop() {
+                    break;
+                }
+                shrink::reset_shrink_progress(
+                    &self.config,
+                    progress,
+                    &format!("handler {:#x}::{}", failure.reverter, failure.selector),
+                    Some((idx + 1, total)),
+                );
+                match shrink::shrink_handler_sequence(
+                    &self.config,
+                    &failure.call_sequence,
+                    &self.executor,
+                    progress,
+                    early_exit,
+                ) {
+                    Ok(shrunk) if !shrunk.is_empty() => {
+                        failure.call_sequence = shrunk;
+                    }
+                    Ok(_) => {}
+                    Err(e) => trace!(target: "forge::test", "handler shrink failed: {e}"),
+                }
+            }
+        }
+
         Ok(InvariantFuzzTestResult {
             errors: result.failures.errors,
             handler_errors: result.failures.broken_handlers,

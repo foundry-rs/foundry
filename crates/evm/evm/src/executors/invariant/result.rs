@@ -303,10 +303,13 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
                 .with_assertion_failure(true);
                 let revert_reason = case_data.revert_reason;
                 invariant_test.test_data.failures.revert_reason = Some(revert_reason.clone());
+                let call_sequence = invariant_run.inputs.clone();
+                let original_sequence_len = call_sequence.len();
                 invariant_test.test_data.failures.record_handler_failure(HandlerAssertionFailure {
                     reverter: target,
                     selector,
-                    call_sequence: invariant_run.inputs.clone(),
+                    call_sequence,
+                    original_sequence_len,
                     revert_reason,
                     assertion_failure: true,
                     edge_fingerprint: fingerprint,

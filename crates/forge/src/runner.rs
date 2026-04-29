@@ -1271,9 +1271,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 let counterexample = if counterexample_calls.is_empty() {
                     None
                 } else {
-                    // Handler failures aren't shrunk, so original == shrunk == sequence length.
-                    let len = counterexample_calls.len();
-                    Some(CounterExample::Sequence(len, counterexample_calls))
+                    // Handler bugs are post-campaign shrunk; preserve the pre-shrink length so
+                    // the renderer surfaces both numbers, mirroring invariant counterexamples.
+                    Some(CounterExample::Sequence(
+                        failure.original_sequence_len,
+                        counterexample_calls,
+                    ))
                 };
 
                 InvariantHandlerFailure {

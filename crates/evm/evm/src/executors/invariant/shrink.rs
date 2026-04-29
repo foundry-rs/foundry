@@ -44,6 +44,29 @@ impl CallSequenceShrinker {
     }
 }
 
+/// Policy for how `run_shrink_loop` reacts when its predicate returns an error.
+#[derive(Clone, Copy)]
+enum ShrinkErrorPolicy {
+    /// Treat the error as "bug still present" and keep the just-removed call removed.
+    /// Matches legacy `shrink_sequence` behavior.
+    KeepRemoved,
+    /// Treat the error as "bug gone" and restore the just-removed call. Used by
+    /// `shrink_handler_sequence` so a replay error can never silently produce a shrunk
+    /// sequence that no longer reproduces the asserting anchor.
+    RestoreRemoved,
+}
+
+/// Per-call decision returned by callbacks driving `replay_sequence`.
+///
+/// `Continue` hands the call result back so the helper can auto-commit non-reverted
+/// calls; `Stop` short-circuits replay with a caller-defined value. The variant is large
+/// because `RawCallResult` is, but only one lives on the stack per call iteration.
+#[expect(clippy::large_enum_variant)]
+enum ReplayDecision<T, FEN: FoundryEvmNetwork> {
+    Stop(T),
+    Continue(RawCallResult<FEN>),
+}
+
 /// Resets the progress bar for shrinking.
 ///
 /// Callers (e.g. `replay_error`) are responsible for invoking this before each shrink so the
@@ -141,6 +164,59 @@ fn build_shrunk_sequence(
     result
 }
 
+/// Shared shrink loop driver. Tries to drop each call; `predicate` returns whether the
+/// candidate still triggers the bug. `skip_idx` pins positions that must not be dropped
+/// (e.g. the asserting anchor for handler bugs).
+fn run_shrink_loop<P, S>(
+    config: &InvariantConfig,
+    calls_len: usize,
+    progress: Option<&ProgressBar>,
+    early_exit: &EarlyExit,
+    error_policy: ShrinkErrorPolicy,
+    skip_idx: S,
+    mut predicate: P,
+) -> CallSequenceShrinker
+where
+    P: FnMut(&CallSequenceShrinker) -> eyre::Result<bool>,
+    S: Fn(usize) -> bool,
+{
+    let mut shrinker = CallSequenceShrinker::new(calls_len);
+    let mut call_idx = 0;
+
+    for _ in 0..config.shrink_run_limit {
+        if early_exit.should_stop() {
+            break;
+        }
+
+        // Pinned (e.g. anchor) or already-removed indices have nothing to drop.
+        if skip_idx(call_idx) || !shrinker.included_calls.test(call_idx) {
+            call_idx = shrinker.next_index(call_idx);
+            continue;
+        }
+
+        shrinker.included_calls.clear(call_idx);
+
+        let bug_still_present = match predicate(&shrinker) {
+            Ok(b) => b,
+            Err(_) => matches!(error_policy, ShrinkErrorPolicy::KeepRemoved),
+        };
+        if bug_still_present {
+            if shrinker.included_calls.count() == 1 {
+                break;
+            }
+        } else {
+            shrinker.included_calls.set(call_idx);
+        }
+
+        if let Some(progress) = progress {
+            progress.inc(1);
+        }
+        call_idx = shrinker.next_index(call_idx);
+    }
+
+    shrinker
+}
+
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     config: &InvariantConfig,
@@ -164,45 +240,89 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     }
 
     let accumulate_warp_roll = config.has_delay();
-    let mut call_idx = 0;
-    let mut shrinker = CallSequenceShrinker::new(calls.len());
-
-    for _ in 0..config.shrink_run_limit {
-        if early_exit.should_stop() {
-            break;
-        }
-
-        shrinker.included_calls.clear(call_idx);
-
-        match check_sequence(
-            executor.clone(),
-            calls,
-            shrinker.current().collect(),
-            target_address,
-            calldata.clone(),
-            CheckSequenceOptions {
-                accumulate_warp_roll,
-                fail_on_revert: config.fail_on_revert,
-                expect_assertion_failure,
-                call_after_invariant: invariant_contract.call_after_invariant,
-                rd: None,
-            },
-        ) {
-            // If candidate sequence still fails, shrink until shortest possible.
-            Ok((false, _, _)) if shrinker.included_calls.count() == 1 => break,
-            // Restore last removed call as it caused sequence to pass invariant.
-            Ok((true, _, _)) => shrinker.included_calls.set(call_idx),
-            _ => {}
-        }
-
-        if let Some(progress) = progress {
-            progress.inc(1);
-        }
-
-        call_idx = shrinker.next_index(call_idx);
-    }
+    let shrinker = run_shrink_loop(
+        config,
+        calls.len(),
+        progress,
+        early_exit,
+        // Preserve legacy invariant-shrink behavior: errors during candidate evaluation
+        // do not roll back the removal.
+        ShrinkErrorPolicy::KeepRemoved,
+        |_| false,
+        |shrinker| {
+            let (success, _, _) = check_sequence(
+                executor.clone(),
+                calls,
+                shrinker.current().collect(),
+                target_address,
+                calldata.clone(),
+                CheckSequenceOptions {
+                    accumulate_warp_roll,
+                    fail_on_revert: config.fail_on_revert,
+                    expect_assertion_failure,
+                    call_after_invariant: invariant_contract.call_after_invariant,
+                    rd: None,
+                },
+            )?;
+            // Bug still present iff the invariant predicate did not pass.
+            Ok(!success)
+        },
+    );
 
     Ok(build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll))
+}
+
+/// Replays `sequence` (indices into `calls`) against `executor`. When
+/// `accumulate_warp_roll` is set, warp/roll from skipped calls is folded into the next
+/// included call. `on_call` may stop early; otherwise non-reverted calls are committed.
+fn replay_sequence<FEN, T, F>(
+    executor: &mut Executor<FEN>,
+    calls: &[BasicTxDetails],
+    sequence: &[usize],
+    accumulate_warp_roll: bool,
+    mut on_call: F,
+) -> eyre::Result<Option<T>>
+where
+    FEN: FoundryEvmNetwork,
+    F: FnMut(usize, RawCallResult<FEN>) -> eyre::Result<ReplayDecision<T, FEN>>,
+{
+    let mut accumulated_warp = U256::ZERO;
+    let mut accumulated_roll = U256::ZERO;
+    let mut seq_iter = sequence.iter().peekable();
+
+    for (idx, tx) in calls.iter().enumerate() {
+        if accumulate_warp_roll {
+            accumulated_warp += tx.warp.unwrap_or(U256::ZERO);
+            accumulated_roll += tx.roll.unwrap_or(U256::ZERO);
+        }
+        if seq_iter.peek() != Some(&&idx) {
+            continue;
+        }
+        seq_iter.next();
+
+        let executed = if accumulate_warp_roll {
+            apply_warp_roll(tx, accumulated_warp, accumulated_roll)
+        } else {
+            tx.clone()
+        };
+        let call_result = execute_tx(executor, &executed)?;
+
+        match on_call(idx, call_result)? {
+            ReplayDecision::Stop(val) => return Ok(Some(val)),
+            ReplayDecision::Continue(mut call_result) => {
+                if !call_result.reverted {
+                    executor.commit(&mut call_result);
+                }
+            }
+        }
+
+        if accumulate_warp_roll {
+            accumulated_warp = U256::ZERO;
+            accumulated_roll = U256::ZERO;
+        }
+    }
+
+    Ok(None)
 }
 
 /// Checks if the given call sequence breaks the invariant.
@@ -215,21 +335,6 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
 /// When `options.accumulate_warp_roll` is enabled, warp/roll from removed calls is folded into the
 /// next kept call so the candidate sequence stays representable as a concrete counterexample.
 pub fn check_sequence<FEN: FoundryEvmNetwork>(
-    executor: Executor<FEN>,
-    calls: &[BasicTxDetails],
-    sequence: Vec<usize>,
-    test_address: Address,
-    calldata: Bytes,
-    options: CheckSequenceOptions<'_>,
-) -> eyre::Result<(bool, bool, Option<String>)> {
-    if options.accumulate_warp_roll {
-        check_sequence_with_accumulation(executor, calls, sequence, test_address, calldata, options)
-    } else {
-        check_sequence_simple(executor, calls, sequence, test_address, calldata, options)
-    }
-}
-
-fn check_sequence_simple<FEN: FoundryEvmNetwork>(
     mut executor: Executor<FEN>,
     calls: &[BasicTxDetails],
     sequence: Vec<usize>,
@@ -237,80 +342,40 @@ fn check_sequence_simple<FEN: FoundryEvmNetwork>(
     calldata: Bytes,
     options: CheckSequenceOptions<'_>,
 ) -> eyre::Result<(bool, bool, Option<String>)> {
-    // Apply the call sequence.
-    for call_index in sequence {
-        let tx = &calls[call_index];
-        let mut call_result = execute_tx(&mut executor, tx)?;
-        let assertion_failure = did_fail_on_assert(&call_result, &call_result.state_changeset);
-        // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed scenarios that
-        // are replayed with a modified version of test driver (that use new `vm.assume`
-        // cheatcodes).
-        if call_result.result.as_ref() != MAGIC_ASSUME {
-            if assertion_failure {
-                return Ok((false, false, assertion_failure_reason(call_result, options.rd)));
+    let early = replay_sequence(
+        &mut executor,
+        calls,
+        &sequence,
+        options.accumulate_warp_roll,
+        |_idx, call_result| {
+            // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed
+            // scenarios that are replayed with a modified version of test driver (that use
+            // new `vm.assume` cheatcodes).
+            if call_result.result.as_ref() == MAGIC_ASSUME {
+                return Ok(ReplayDecision::Continue(call_result));
             }
-
+            if did_fail_on_assert(&call_result, &call_result.state_changeset) {
+                return Ok(ReplayDecision::Stop((
+                    false,
+                    false,
+                    assertion_failure_reason(call_result, options.rd),
+                )));
+            }
             if call_result.reverted && options.fail_on_revert {
                 if options.expect_assertion_failure {
-                    return Ok((true, false, None));
+                    return Ok(ReplayDecision::Stop((true, false, None)));
                 }
-                return Ok((false, false, call_failure_reason(call_result, options.rd)));
+                return Ok(ReplayDecision::Stop((
+                    false,
+                    false,
+                    call_failure_reason(call_result, options.rd),
+                )));
             }
-        }
-
-        if !call_result.reverted {
-            executor.commit(&mut call_result);
-        }
-    }
-
-    finish_sequence_check(&executor, test_address, calldata, &options)
-}
-
-fn check_sequence_with_accumulation<FEN: FoundryEvmNetwork>(
-    mut executor: Executor<FEN>,
-    calls: &[BasicTxDetails],
-    sequence: Vec<usize>,
-    test_address: Address,
-    calldata: Bytes,
-    options: CheckSequenceOptions<'_>,
-) -> eyre::Result<(bool, bool, Option<String>)> {
-    let mut accumulated_warp = U256::ZERO;
-    let mut accumulated_roll = U256::ZERO;
-    let mut seq_iter = sequence.iter().peekable();
-
-    for (idx, tx) in calls.iter().enumerate() {
-        accumulated_warp += tx.warp.unwrap_or(U256::ZERO);
-        accumulated_roll += tx.roll.unwrap_or(U256::ZERO);
-
-        if seq_iter.peek() != Some(&&idx) {
-            continue;
-        }
-
-        seq_iter.next();
-
-        let tx_with_accumulated = apply_warp_roll(tx, accumulated_warp, accumulated_roll);
-        let mut call_result = execute_tx(&mut executor, &tx_with_accumulated)?;
-        let assertion_failure = did_fail_on_assert(&call_result, &call_result.state_changeset);
-
-        if call_result.result.as_ref() != MAGIC_ASSUME {
-            if assertion_failure {
-                return Ok((false, false, assertion_failure_reason(call_result, options.rd)));
-            }
-
-            if call_result.reverted && options.fail_on_revert {
-                if options.expect_assertion_failure {
-                    return Ok((true, false, None));
-                }
-                return Ok((false, false, call_failure_reason(call_result, options.rd)));
-            }
-        }
-
-        if !call_result.reverted {
-            executor.commit(&mut call_result);
-        }
-
-        accumulated_warp = U256::ZERO;
-        accumulated_roll = U256::ZERO;
+            Ok(ReplayDecision::Continue(call_result))
+        },
+    )?;
+    if let Some(result) = early {
+        return Ok(result);
     }
 
     // Unlike optimization mode we intentionally do not apply trailing warp/roll before the
@@ -451,6 +516,90 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     }
 
     Ok(build_shrunk_sequence(calls, &shrinker, true))
+}
+
+/// Shrinks a handler-side assertion bug's call sequence to the shortest prefix that still
+/// triggers the assertion on the anchor (last) call. The anchor is pinned and never
+/// dropped; intermediate calls that themselves assert are rejected so we don't promote a
+/// different finding.
+pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
+    config: &InvariantConfig,
+    calls: &[BasicTxDetails],
+    executor: &Executor<FEN>,
+    progress: Option<&ProgressBar>,
+    early_exit: &EarlyExit,
+) -> eyre::Result<Vec<BasicTxDetails>> {
+    if calls.is_empty() {
+        return Ok(vec![]);
+    }
+    let anchor = calls.len() - 1;
+    let accumulate_warp_roll = config.has_delay();
+    let shrinker = run_shrink_loop(
+        config,
+        calls.len(),
+        progress,
+        early_exit,
+        ShrinkErrorPolicy::RestoreRemoved,
+        |idx| idx == anchor,
+        |shrinker| {
+            handler_sequence_still_asserts(
+                executor.clone(),
+                calls,
+                shrinker.current().collect(),
+                anchor,
+                accumulate_warp_roll,
+            )
+        },
+    );
+
+    let shrunk = build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll);
+
+    // Replay the shrunk sequence once more; fall back to the original on any failure so
+    // we never surface a non-reproducible counterexample.
+    let verified = handler_sequence_still_asserts(
+        executor.clone(),
+        calls,
+        shrinker.current().collect(),
+        anchor,
+        accumulate_warp_roll,
+    )
+    .unwrap_or(false);
+    if verified { Ok(shrunk) } else { Ok(calls.to_vec()) }
+}
+
+/// Returns true iff replaying `sequence` reaches the anchor with every prior call passing
+/// and the anchor itself asserting. Used as the shrink predicate by
+/// `shrink_handler_sequence`.
+fn handler_sequence_still_asserts<FEN: FoundryEvmNetwork>(
+    mut executor: Executor<FEN>,
+    calls: &[BasicTxDetails],
+    sequence: Vec<usize>,
+    anchor_idx: usize,
+    accumulate_warp_roll: bool,
+) -> eyre::Result<bool> {
+    let len = sequence.len();
+    if len == 0 || sequence[len - 1] != anchor_idx {
+        return Ok(false);
+    }
+
+    let asserted = replay_sequence(
+        &mut executor,
+        calls,
+        &sequence,
+        accumulate_warp_roll,
+        |idx, call_result| {
+            let asserted = did_fail_on_assert(&call_result, &call_result.state_changeset);
+            if idx == anchor_idx {
+                return Ok(ReplayDecision::Stop(asserted));
+            }
+            if asserted {
+                // Intermediate assertion is a different bug; reject this candidate.
+                return Ok(ReplayDecision::Stop(false));
+            }
+            Ok(ReplayDecision::Continue(call_result))
+        },
+    )?;
+    Ok(asserted.unwrap_or(false))
 }
 
 /// Executes a call sequence and returns the optimization value (int256) from the invariant
