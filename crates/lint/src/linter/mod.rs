@@ -72,7 +72,11 @@ impl<'s, 'c> LintContext<'s, 'c> {
         Self { sess, with_description, with_json_emitter, config, active_lints }
     }
 
-    fn add_help<'a>(&self, diag: DiagBuilder<'a, ()>, help: &'static str) -> DiagBuilder<'a, ()> {
+    pub(crate) fn add_help<'a>(
+        &self,
+        diag: DiagBuilder<'a, ()>,
+        help: &'static str,
+    ) -> DiagBuilder<'a, ()> {
         // Avoid ANSI characters when using a JSON emitter
         if self.with_json_emitter { diag.help(help) } else { diag.help(hyperlink(help)) }
     }
