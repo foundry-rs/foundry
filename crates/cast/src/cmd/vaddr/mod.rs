@@ -50,6 +50,11 @@ pub enum VaddrSubcommand {
         #[arg(long, conflicts_with = "seed")]
         no_random: bool,
 
+        /// Mine and print the salt and derived virtual addresses without submitting the
+        /// registerVirtualMaster transaction.
+        #[arg(long)]
+        no_register: bool,
+
         #[command(flatten)]
         send_tx: SendTxOpts,
 
@@ -113,8 +118,31 @@ pub enum VaddrSubcommand {
 impl VaddrSubcommand {
     pub async fn run(self) -> eyre::Result<()> {
         match self {
-            Self::Create { owner, salt, tag, count, threads, seed, no_random, send_tx, tx } => {
-                create::run(owner, salt, tag, count, threads, seed, no_random, send_tx, tx).await?
+            Self::Create {
+                owner,
+                salt,
+                tag,
+                count,
+                threads,
+                seed,
+                no_random,
+                no_register,
+                send_tx,
+                tx,
+            } => {
+                create::run(
+                    owner,
+                    salt,
+                    tag,
+                    count,
+                    threads,
+                    seed,
+                    no_random,
+                    no_register,
+                    send_tx,
+                    tx,
+                )
+                .await?
             }
             Self::Resolve { addr, rpc } => resolve::run(addr, rpc).await?,
             Self::Watch { addr, token, from_block, rpc } => {

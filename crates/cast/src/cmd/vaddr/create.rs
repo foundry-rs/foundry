@@ -30,9 +30,15 @@ pub(super) async fn run(
     threads: Option<usize>,
     seed: Option<B256>,
     no_random: bool,
+    no_register: bool,
     send_tx: SendTxOpts,
     tx_opts: TxParams,
 ) -> Result<()> {
+    if count == 0 {
+        // no virtual addresses to compute
+        return Ok(());
+    }
+
     if !owner.is_valid_master() {
         eyre::bail!(
             "invalid owner address {owner}; see https://docs.tempo.xyz/protocol/tips/tip-1022"
@@ -90,6 +96,10 @@ Master ID:         {}",
         let user_tag = UserTag::new(raw[2..].try_into().expect("slice is 6 bytes"));
         let vaddr = Address::new_virtual(output.master_id, user_tag);
         sh_println!("  tag={user_tag}  {vaddr}")?;
+    }
+
+    if no_register {
+        return Ok(());
     }
 
     register(owner, output.salt, send_tx, tx_opts).await
