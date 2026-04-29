@@ -14,7 +14,7 @@ mod watch;
 /// that auto-forward TIP-20 deposits to a registered master wallet at the protocol level,
 /// with no on-chain sweep transaction required.
 ///
-/// See: https://docs.tempo.xyz/protocol/tips/tip-1022
+/// See: <https://docs.tempo.xyz/protocol/tips/tip-1022>
 #[derive(Debug, Parser, Clone)]
 pub enum VaddrSubcommand {
     /// Mine a TIP-1022 proof-of-work salt, register as a virtual address master, and print
