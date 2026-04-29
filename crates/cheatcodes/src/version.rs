@@ -20,7 +20,11 @@ impl Cheatcode for foundryVersionAtLeastCall {
 }
 
 fn foundry_version_cmp(version: &str) -> Result<Ordering> {
-    version_cmp(SEMVER_VERSION.split('-').next().unwrap(), version)
+    // Strip pre-release (e.g. `-nightly`, `-dev`) and build metadata
+    // (e.g. `+<sha_short>.<unix_timestamp>.<profile>`) from the current version
+    // so we compare on `MAJOR.MINOR.PATCH` only.
+    let current = SEMVER_VERSION.split(['-', '+']).next().unwrap();
+    version_cmp(current, version)
 }
 
 fn version_cmp(version_a: &str, version_b: &str) -> Result<Ordering> {
