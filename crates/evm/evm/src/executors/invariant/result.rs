@@ -1,11 +1,11 @@
 use super::{
     InvariantFailures, InvariantFuzzError, InvariantMetrics, InvariantTest, InvariantTestRun,
     call_after_invariant_function, call_invariant_function,
-    error::{FailedInvariantCaseData, HandlerAssertionFailure},
+    error::{FailedInvariantCaseData, HandlerAssertionFailure, handler_edge_fingerprint},
 };
 use crate::executors::{Executor, RawCallResult};
 use alloy_dyn_abi::JsonAbiExt;
-use alloy_primitives::{Address, I256, Selector};
+use alloy_primitives::{B256, I256, Selector};
 use alloy_sol_types::{Panic, PanicKind, Revert, SolError, SolInterface};
 use eyre::Result;
 use foundry_config::InvariantConfig;
@@ -30,10 +30,11 @@ use std::{borrow::Cow, collections::HashMap};
 pub struct InvariantFuzzTestResult {
     /// Errors recorded per invariant.
     pub errors: HashMap<String, InvariantFuzzError>,
-    /// Handler-side assertion bugs discovered during the campaign, keyed by
-    /// `(reverter, selector)`. These are bugs in fuzzed handler functions, distinct from
-    /// invariant predicate violations.
-    pub handler_errors: HashMap<(Address, Selector), HandlerAssertionFailure>,
+    /// Handler-side assertion bugs discovered during the campaign, keyed by edge-coverage
+    /// fingerprint of the asserting call. These are bugs in fuzzed handler functions,
+    /// distinct from invariant predicate violations; distinct edge fingerprints with the
+    /// same `(reverter, selector)` are surfaced as separate bugs.
+    pub handler_errors: HashMap<B256, HandlerAssertionFailure>,
     /// Every successful fuzz test case
     pub cases: Vec<FuzzedCases>,
     /// Number of reverted fuzz calls
@@ -198,6 +199,7 @@ fn invariant_inner_sequence<FEN: FoundryEvmNetwork>(
 /// `tx` is the transaction whose call result is being evaluated; it is used to attribute
 /// handler-side assertion failures to a specific `(target, selector)` so they can be tracked
 /// independently from invariant predicate violations.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
     invariant_contract: &InvariantContract<'_>,
     invariant_test: &mut InvariantTest,
@@ -206,6 +208,7 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
     call_result: RawCallResult<FEN>,
     state_changeset: &StateChangeset,
     tx: &BasicTxDetails,
+    pre_merge_edges_hash: Option<B256>,
 ) -> Result<bool> {
     let is_optimization = invariant_contract.is_optimization();
 
@@ -265,15 +268,10 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
 
         if is_assert_failure {
             // Handler-side assertion: a unique bug attributable to the *handler call*, not to
-            // any of the live `invariant_*` predicates. Record it once, keyed by
-            // `(target, selector)`, so the campaign can keep running for the full budget and
-            // surface deeper handler bugs without polluting the invariant errors map.
-            //
-            // Phase D: subsequent calls to a known-broken handler short-circuit here — the
-            // `record_handler_failure` insert is a no-op for an already-recorded key, so the
-            // call is effectively treated as a "soft" revert (counter incremented above,
-            // input optionally popped below) and contributes to state transitions without
-            // re-recording noise.
+            // any of the live `invariant_*` predicates. Dedup by edge-coverage fingerprint so
+            // distinct paths to the same `(reverter, selector)` are recorded as separate bugs
+            // (Medusa/Echidna semantics). On collision the shortest `call_sequence` wins, so
+            // persisted reproducers stay minimal.
             let target = tx.call_details.target;
             let selector = tx
                 .call_details
@@ -281,9 +279,18 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
                 .get(..4)
                 .and_then(|s| Selector::try_from(s).ok())
                 .unwrap_or_default();
-            let key = (target, selector);
+            let fingerprint = handler_edge_fingerprint(pre_merge_edges_hash, target, selector);
 
-            if !invariant_test.test_data.failures.has_handler_failure(target, selector) {
+            // Skip building case data if we already have a strictly shorter repro for this
+            // fingerprint — common when a handler asserts repeatedly along the same path.
+            let already_minimal = invariant_test
+                .test_data
+                .failures
+                .broken_handlers
+                .get(&fingerprint)
+                .is_some_and(|f| f.call_sequence.len() <= invariant_run.inputs.len());
+
+            if !already_minimal {
                 let case_data = FailedInvariantCaseData::new(
                     invariant_contract,
                     invariant_config.shrink_run_limit,
@@ -296,16 +303,14 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
                 .with_assertion_failure(true);
                 let revert_reason = case_data.revert_reason;
                 invariant_test.test_data.failures.revert_reason = Some(revert_reason.clone());
-                invariant_test.test_data.failures.record_handler_failure(
-                    key,
-                    HandlerAssertionFailure {
-                        reverter: target,
-                        selector,
-                        call_sequence: invariant_run.inputs.clone(),
-                        revert_reason,
-                        assertion_failure: true,
-                    },
-                );
+                invariant_test.test_data.failures.record_handler_failure(HandlerAssertionFailure {
+                    reverter: target,
+                    selector,
+                    call_sequence: invariant_run.inputs.clone(),
+                    revert_reason,
+                    assertion_failure: true,
+                    edge_fingerprint: fingerprint,
+                });
             }
 
             if reverted && !is_optimization && !invariant_config.has_delay() {

@@ -540,6 +540,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
                 // Collect line coverage from last fuzzed call.
                 invariant_test.merge_line_coverage(call_result.line_coverage.clone());
+                // Snapshot the per-call edge fingerprint *before* the corpus's merge zeroes
+                // the buffer. Only the asserting call's edges matter for dedup; we compute
+                // conditionally on `reverted` to avoid hashing on the hot non-revert path.
+                let pre_merge_edges_hash = if call_result.reverted {
+                    error::snapshot_edge_fingerprint(&call_result)
+                } else {
+                    None
+                };
                 // Collect edge coverage and set the flag in the current run.
                 if corpus_manager.merge_edge_coverage(&mut call_result) {
                     current_run.new_coverage = true;
@@ -627,6 +635,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             call_result,
                             &state_changeset,
                             &tx,
+                            pre_merge_edges_hash,
                         )
                         .map_err(|e| eyre!(e.to_string()))?
                     } else {
@@ -635,10 +644,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             invariant_test.test_data.failures.reverts += 1;
                         }
                         if assertion_failure {
-                            // Handler-side assertion: record once, keyed by the failing call's
-                            // `(target, selector)`. Same routing as the `can_continue` path so
-                            // the campaign keeps running for the full budget instead of
-                            // attributing the assertion to the primary invariant.
+                            // Handler-side assertion: dedup by edge-coverage fingerprint so
+                            // distinct paths to the same `(reverter, selector)` are recorded
+                            // as separate bugs. Same routing as the `can_continue` path so the
+                            // campaign keeps running for the full budget instead of attributing
+                            // the assertion to the primary invariant.
                             let target = tx.call_details.target;
                             let selector = tx
                                 .call_details
@@ -647,11 +657,22 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 .and_then(|s| Selector::try_from(s).ok())
                                 .unwrap_or_default();
                             let call_reverted = call_result.reverted;
-                            if !invariant_test
+                            let fingerprint = error::handler_edge_fingerprint(
+                                pre_merge_edges_hash,
+                                target,
+                                selector,
+                            );
+
+                            // Skip building case data if we already have a strictly shorter
+                            // repro for this fingerprint.
+                            let already_minimal = invariant_test
                                 .test_data
                                 .failures
-                                .has_handler_failure(target, selector)
-                            {
+                                .broken_handlers
+                                .get(&fingerprint)
+                                .is_some_and(|f| f.call_sequence.len() <= current_run.inputs.len());
+
+                            if !already_minimal {
                                 let case_data = error::FailedInvariantCaseData::new(
                                     &invariant_contract,
                                     self.config.shrink_run_limit,
@@ -666,13 +687,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 invariant_test.test_data.failures.revert_reason =
                                     Some(revert_reason.clone());
                                 invariant_test.test_data.failures.record_handler_failure(
-                                    (target, selector),
                                     HandlerAssertionFailure {
                                         reverter: target,
                                         selector,
                                         call_sequence: current_run.inputs.clone(),
                                         revert_reason,
                                         assertion_failure: true,
+                                        edge_fingerprint: fingerprint,
                                     },
                                 );
                             }

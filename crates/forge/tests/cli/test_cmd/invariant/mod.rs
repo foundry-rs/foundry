@@ -1548,6 +1548,85 @@ Suite handlers: 1 assertion bug(s) found
 "#]]);
 });
 
+// Handler-side assertion bugs are deduped by edge-coverage fingerprint of the asserting
+// call (not by `(reverter, selector)`), so distinct paths through the same selector are
+// surfaced as separate bugs. `corpus_dir` is set to enable AFL-style edge coverage
+// collection; without it the fingerprint falls back to `(reverter, selector)` and the four
+// branches collapse into a single bug.
+forgetest_init!(handler_assertion_dedupes_by_edge_coverage, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 200;
+        config.invariant.fail_on_revert = false;
+        config.invariant.assert_all = true;
+        config.invariant.corpus.corpus_dir = Some("inv_corpus".into());
+    });
+    prj.add_source(
+        "MultiPathHandler.sol",
+        r#"
+contract MultiPathHandler {
+    uint256 public state;
+
+    // Four branches, all reach `assert(false)` via the same selector but along
+    // different code paths. With edge-coverage dedup each path becomes its own bug.
+    function maybeAssert(uint8 path) external {
+        if (path < 64) {
+            state = 1;
+            assert(false);
+        } else if (path < 128) {
+            state = 2;
+            assert(false);
+        } else if (path < 192) {
+            state = 3;
+            assert(false);
+        } else {
+            state = 4;
+            assert(false);
+        }
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "MultiPathTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {MultiPathHandler} from "../src/MultiPathHandler.sol";
+
+contract MultiPathTest is Test {
+    MultiPathHandler handler;
+
+    function setUp() public {
+        handler = new MultiPathHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_ok", "--fuzz-seed", "119"]).assert_failure().stdout_eq(
+        str![[r#"
+...
+Suite handlers: 4 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[3]
+[FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[126]
+[FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[164]
+[FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[192]
+...
+"#]],
+    );
+});
+
 // Verifies the startup warning fired by `assert_all + optimization mode`: when the primary
 // invariant returns int256 (optimization target) the campaign loop can't also evaluate boolean
 // invariants, so they are silently dropped. Without the warning users wouldn't realize their

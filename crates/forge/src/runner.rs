@@ -1220,21 +1220,38 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // a best-effort `Contract::function` resolved from `identified_contracts`, falling back
         // to `0xreverter::0xselector` when the ABI is unavailable. We render them in their own
         // `Suite handlers:` section so they do not get conflated with invariant failures.
+        // The map is keyed by edge-coverage fingerprint; the human-meaningful
+        // `(reverter, selector)` lives on the `HandlerAssertionFailure` value. Sort by
+        // `(reverter, selector, fingerprint)` so duplicates of the same handler reached via
+        // different paths are grouped together and order is deterministic.
         let identified_contracts_ro = identified_contracts;
         let invariant_handler_failures = invariant_result
             .handler_errors
             .iter()
-            // Stable order: by `(reverter, selector)` so the report is deterministic across
-            // runs even though the underlying map is a `HashMap`.
-            .sorted_by_key(|(key, _)| **key)
-            .map(|((reverter, selector), failure)| {
+            .sorted_by(|(fa, a), (fb, b)| {
+                // Stable order across runs: group duplicates of the same handler together by
+                // `(reverter, selector)`, then disambiguate by the asserting call's calldata
+                // (so args=[N] differences sort identically across seeds), then fall back to
+                // the fingerprint for full determinism.
+                (a.reverter, a.selector)
+                    .cmp(&(b.reverter, b.selector))
+                    .then_with(|| {
+                        let ca = a.call_sequence.last().map(|tx| &tx.call_details.calldata);
+                        let cb = b.call_sequence.last().map(|tx| &tx.call_details.calldata);
+                        ca.cmp(&cb)
+                    })
+                    .then_with(|| fa.cmp(fb))
+            })
+            .map(|(_fingerprint, failure)| {
+                let reverter = failure.reverter;
+                let selector = failure.selector;
                 // Resolve a human-readable name when possible. We look up the reverter in the
                 // identified contracts map and try to find a function whose selector matches.
                 let resolved_name = identified_contracts_ro
-                    .get(reverter)
+                    .get(&reverter)
                     .and_then(|(contract_name, abi)| {
                         abi.functions()
-                            .find(|f| f.selector() == *selector)
+                            .find(|f| f.selector() == selector)
                             .map(|f| format!("{contract_name}::{}", f.name))
                     })
                     .unwrap_or_else(|| format!("{reverter}::{selector}"));
@@ -1261,8 +1278,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
                 InvariantHandlerFailure {
                     name: resolved_name,
-                    reverter: *reverter,
-                    selector: *selector,
+                    reverter,
+                    selector,
                     reason: failure.revert_reason.clone(),
                     counterexample,
                 }

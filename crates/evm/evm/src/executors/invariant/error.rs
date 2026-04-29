@@ -1,7 +1,7 @@
 use super::InvariantContract;
 use crate::executors::RawCallResult;
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, Selector};
+use alloy_primitives::{Address, B256, Bytes, Selector, keccak256};
 use foundry_evm_core::{
     decode::{ASSERTION_FAILED_PREFIX, EMPTY_REVERT_DATA, RevertDecoder},
     evm::FoundryEvmNetwork,
@@ -14,9 +14,10 @@ use std::{collections::HashMap, fmt};
 ///
 /// Handler-side assertions (e.g. a `require`/`assert` inside a fuzzed handler that the campaign
 /// reaches with a malformed input) are bugs in their own right, but they are *not* invariant
-/// predicate violations. We record them once per `(reverter, selector)` so the campaign can keep
-/// running for the rest of the budget and surface deeper bugs without polluting the invariant
-/// `errors` map or stopping the run.
+/// predicate violations. We dedup them by `edge_fingerprint` (a hash of the asserting call's
+/// edge coverage) so distinct paths to the same `(reverter, selector)` are surfaced as
+/// separate bugs (Medusa/Echidna semantics). When edge coverage is unavailable we fall back
+/// to a `(reverter, selector)` fingerprint so behavior degrades gracefully.
 #[derive(Clone, Debug)]
 pub struct HandlerAssertionFailure {
     /// Address of the handler contract whose call asserted/reverted with an assertion.
@@ -30,6 +31,43 @@ pub struct HandlerAssertionFailure {
     /// Always `true` for entries in this struct; mirrored for symmetry with
     /// `FailedInvariantCaseData::assertion_failure`.
     pub assertion_failure: bool,
+    /// Stable hash of the asserting call's edge coverage (or `(reverter, selector)` when
+    /// edge coverage is unavailable). Used as the dedup key in `InvariantFailures`.
+    pub edge_fingerprint: B256,
+}
+
+/// Computes the edge-coverage fingerprint for a handler-side assertion call.
+///
+/// Prefers `pre_merge_edges_hash` (a hash of the call's edge coverage taken *before*
+/// `merge_edge_coverage` zeroes the buffer). Falls back to a `(reverter, selector)` hash
+/// so the dedup key is always defined and behavior degrades gracefully when edge coverage
+/// collection is disabled.
+pub fn handler_edge_fingerprint(
+    pre_merge_edges_hash: Option<B256>,
+    reverter: Address,
+    selector: Selector,
+) -> B256 {
+    if let Some(hash) = pre_merge_edges_hash {
+        return hash;
+    }
+    // Fallback: stable hash of (reverter || selector). Preserves prior key-based dedup.
+    let mut buf = [0u8; 24];
+    buf[..20].copy_from_slice(reverter.as_slice());
+    buf[20..].copy_from_slice(selector.as_slice());
+    keccak256(buf)
+}
+
+/// Snapshots the asserting call's edge coverage as a stable hash *before* the corpus's
+/// `merge_edge_coverage` zeroes the buffer. Returns `None` when edge coverage is unavailable
+/// (e.g. corpus / coverage collection disabled).
+pub fn snapshot_edge_fingerprint<FEN: FoundryEvmNetwork>(
+    call_result: &RawCallResult<FEN>,
+) -> Option<B256> {
+    let edges = call_result.edge_coverage.as_deref()?;
+    if edges.is_empty() || edges.iter().all(|b| *b == 0) {
+        return None;
+    }
+    Some(keccak256(edges))
 }
 
 /// Stores information about failures and reverts of the invariant tests.
@@ -41,9 +79,11 @@ pub struct InvariantFailures {
     pub revert_reason: Option<String>,
     /// Maps a broken invariant to its specific error.
     pub errors: HashMap<String, InvariantFuzzError>,
-    /// Handler-side assertion bugs discovered during the campaign, keyed by
-    /// `(reverter, selector)` so each unique handler bug is recorded once.
-    pub broken_handlers: HashMap<(Address, Selector), HandlerAssertionFailure>,
+    /// Handler-side assertion bugs discovered during the campaign, keyed by edge-coverage
+    /// fingerprint of the asserting call (Medusa/Echidna semantics: distinct paths to the
+    /// same `(reverter, selector)` are distinct bugs). On collision, the entry with the
+    /// shortest `call_sequence` wins so persisted reproducers stay minimal.
+    pub broken_handlers: HashMap<B256, HandlerAssertionFailure>,
 }
 
 impl InvariantFailures {
@@ -72,20 +112,26 @@ impl InvariantFailures {
         self.errors.len() < invariants
     }
 
-    /// Records a handler-side assertion bug. The first occurrence for a given
-    /// `(reverter, selector)` wins; subsequent calls are no-ops to keep the report tidy.
-    pub fn record_handler_failure(
-        &mut self,
-        key: (Address, Selector),
-        failure: HandlerAssertionFailure,
-    ) {
-        self.broken_handlers.entry(key).or_insert(failure);
+    /// Records a handler-side assertion bug. Keyed by `failure.edge_fingerprint`, so distinct
+    /// paths to the same `(reverter, selector)` are recorded as separate bugs. On collision
+    /// the shortest `call_sequence` wins, giving us a smaller reproducer over time.
+    pub fn record_handler_failure(&mut self, failure: HandlerAssertionFailure) {
+        let key = failure.edge_fingerprint;
+        match self.broken_handlers.get(&key) {
+            Some(existing) if existing.call_sequence.len() <= failure.call_sequence.len() => {
+                // Existing repro is at least as short; keep it.
+            }
+            _ => {
+                self.broken_handlers.insert(key, failure);
+            }
+        }
     }
 
     /// Returns true if a handler-side assertion bug has already been recorded for the given
-    /// target/selector pair.
-    pub fn has_handler_failure(&self, target: Address, selector: Selector) -> bool {
-        self.broken_handlers.contains_key(&(target, selector))
+    /// edge-coverage fingerprint. Callers that want to skip work when a fingerprint is already
+    /// known can check this first; pass [`handler_edge_fingerprint`] to compute the key.
+    pub fn has_handler_failure(&self, fingerprint: B256) -> bool {
+        self.broken_handlers.contains_key(&fingerprint)
     }
 }
 
