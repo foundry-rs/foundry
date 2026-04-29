@@ -832,7 +832,8 @@ mod tests {
 
         // Build a serialized block at the configured genesis number.
         let header = Header { number: GENESIS_NUMBER, gas_limit: 123456, ..Default::default() };
-        let block = create_block(header, Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new());
+        let block =
+            create_block(header, Vec::<MaybeImpersonatedTransaction<FoundryTxEnvelope>>::new());
         let block_hash = block.header.hash_slow();
         let serialized_blocks: Vec<SerializableBlock> = vec![block.into()];
 
