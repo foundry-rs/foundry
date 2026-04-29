@@ -1629,6 +1629,96 @@ Suite handlers: 4 assertion bug(s) found
     );
 });
 
+// Verifies handler-side assertion bugs are persisted to
+// `<failure_persist_dir>/failures/<contract>/handlers/<fingerprint>.json`.
+forgetest_init!(handler_assertion_persisted_to_disk, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_source(
+        "AlwaysAssert.sol",
+        r#"
+contract AlwaysAssert {
+    function boom() external { assert(false); }
+}
+   "#,
+    );
+    prj.add_test(
+        "AlwaysAssertTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {AlwaysAssert} from "../src/AlwaysAssert.sol";
+
+contract AlwaysAssertTest is Test {
+    AlwaysAssert h;
+    function setUp() public { h = new AlwaysAssert(); targetContract(address(h)); }
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_ok"]).assert_failure();
+
+    let handlers_dir = prj
+        .root()
+        .join("cache")
+        .join("invariant")
+        .join("failures")
+        .join("AlwaysAssertTest")
+        .join("handlers");
+    assert!(handlers_dir.exists(), "handlers dir not created: {handlers_dir:?}");
+    let entries: Vec<_> = std::fs::read_dir(&handlers_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .collect();
+    assert!(!entries.is_empty(), "no handler failure files written");
+
+    // Re-run with `runs = 0` so the campaign cannot rediscover the bug; the failure must
+    // come from replaying the persisted file. Then prove the stale-file deletion path by
+    // pointing the test at a new contract (different selector → no match) and confirming
+    // the orphaned file is removed.
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_ok"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+...
+Warning: Replayed handler-side assertion bug from [..]
+...
+"#]]);
+
+    // Sanity check: persisted file is still there after a successful replay.
+    let entries_after: Vec<_> = std::fs::read_dir(&handlers_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .collect();
+    assert_eq!(entries_after.len(), entries.len(), "replayed file should be preserved");
+
+    // Replace the asserting handler with a no-op so the persisted sequence no longer
+    // reproduces. The replay step must delete the stale file in place.
+    prj.add_source(
+        "AlwaysAssert.sol",
+        r#"
+contract AlwaysAssert {
+    function boom() external {}
+}
+   "#,
+    );
+    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_success();
+    let entries_stale: Vec<_> = std::fs::read_dir(&handlers_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .collect();
+    assert!(entries_stale.is_empty(), "stale handler failure file should be deleted");
+});
+
 // Verifies the startup warning fired by `assert_all + optimization mode`: when the primary
 // invariant returns int256 (optimization target) the campaign loop can't also evaluate boolean
 // invariants, so they are silently dropped. Without the warning users wouldn't realize their

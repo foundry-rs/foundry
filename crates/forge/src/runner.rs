@@ -12,11 +12,11 @@ use crate::{
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, U256, address, map::HashMap};
+use alloy_primitives::{Address, B256, Bytes, U256, address, map::HashMap};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::{Config, FuzzCorpusConfig};
+use foundry_config::{Config, FuzzCorpusConfig, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     core::evm::FoundryEvmNetwork,
@@ -25,8 +25,8 @@ use foundry_evm::{
         CallResult, EvmError, Executor, ITest, RawCallResult,
         fuzz::FuzzedExecutor,
         invariant::{
-            CheckSequenceOptions, InvariantExecutor, InvariantFuzzError, check_sequence,
-            replay_error, replay_run,
+            CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
+            check_sequence, replay_error, replay_run,
         },
     },
     fuzz::{
@@ -47,6 +47,7 @@ use std::{
     collections::BTreeMap,
     ops::Deref,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
     time::Instant,
 };
@@ -874,40 +875,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_config.runs,
         );
 
+        let replay_ctx = ReplayContext {
+            invariant_contract: &invariant_contract,
+            invariant_config,
+            revert_decoder: self.revert_decoder(),
+            show_solidity,
+        };
+
         // Try to replay recorded failure if any.
         if let Some(InvariantPersistedFailure { mut call_sequence, assertion_failure, .. }) =
             persisted_call_sequence(failure_file.as_path(), &current_settings)
         {
-            // Create calls from failed sequence and check if invariant still broken.
-            let txes = call_sequence
-                .iter_mut()
-                .map(|seq| {
-                    seq.show_solidity = show_solidity;
-                    BasicTxDetails {
-                        warp: seq.warp,
-                        roll: seq.roll,
-                        sender: seq.sender.unwrap_or_default(),
-                        call_details: CallDetails {
-                            target: seq.addr.unwrap_or_default(),
-                            calldata: seq.calldata.clone(),
-                        },
-                    }
-                })
-                .collect::<Vec<BasicTxDetails>>();
-            if let Ok((success, replayed_entirely, replay_reason)) = check_sequence(
+            let (txes, replay) = replay_persisted_call_sequence(
+                &replay_ctx,
                 self.clone_executor(),
-                &txes,
-                (0..min(txes.len(), invariant_config.depth as usize)).collect(),
-                invariant_contract.address,
-                invariant_contract.primary_invariant_fn.selector().to_vec().into(),
-                CheckSequenceOptions {
-                    accumulate_warp_roll: invariant_config.has_delay(),
-                    fail_on_revert: invariant_config.fail_on_revert,
-                    expect_assertion_failure: assertion_failure,
-                    call_after_invariant: invariant_contract.call_after_invariant,
-                    rd: Some(self.revert_decoder()),
-                },
-            ) && !success
+                &mut call_sequence,
+                assertion_failure,
+            );
+            if let Ok((success, replayed_entirely, replay_reason)) = replay
+                && !success
             {
                 let warn = format!(
                     "Replayed invariant failure from {:?} file. \nRun `forge clean` or remove file to ignore failure and to continue invariant test campaign.",
@@ -968,7 +954,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
 
-        let invariant_result = match evm.invariant_fuzz(
+        // Replay any persisted handler-side assertion bugs from prior runs. Bugs that still
+        // reproduce are merged into the campaign's handler_errors after invariant_fuzz returns;
+        // stale files (no longer reproducing) are deleted in place.
+        let persisted_handler_failures = replay_persisted_handler_failures(
+            &failure_dir.join("handlers"),
+            &current_settings,
+            self.clone_executor(),
+            &replay_ctx,
+        );
+
+        let mut invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
             self.build_fuzz_state(true),
@@ -981,6 +977,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             }
         };
+        // Merge replayed-and-still-broken persisted handler bugs into the campaign result.
+        // Shortest-wins on collision so the better reproducer survives across runs.
+        for (fingerprint, failure) in persisted_handler_failures {
+            match invariant_result.handler_errors.get(&fingerprint) {
+                Some(existing)
+                    if existing.call_sequence.len() <= failure.call_sequence.len() => {}
+                _ => {
+                    invariant_result.handler_errors.insert(fingerprint, failure);
+                }
+            }
+        }
         // Merge coverage collected during invariant run with test setup coverage.
         self.result.merge_coverages(invariant_result.line_coverage);
 
@@ -1242,7 +1249,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     })
                     .then_with(|| fa.cmp(fb))
             })
-            .map(|(_fingerprint, failure)| {
+            .map(|(fingerprint, failure)| {
                 let reverter = failure.reverter;
                 let selector = failure.selector;
                 // Resolve a human-readable name when possible. We look up the reverter in the
@@ -1268,6 +1275,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         )
                     })
                     .collect::<Vec<_>>();
+
+                // Persist this bug to disk for replay on the next run. Skipped when there's
+                // nothing to record.
+                if !counterexample_calls.is_empty() {
+                    record_handler_failure(
+                        failure_dir.as_path(),
+                        *fingerprint,
+                        &counterexample_calls,
+                        &current_settings,
+                    );
+                }
+
                 let counterexample = if counterexample_calls.is_empty() {
                     None
                 } else {
@@ -1506,6 +1525,17 @@ struct InvariantPersistedFailure {
     assertion_failure: bool,
 }
 
+/// Mirrors `check_sequence`'s return: `(success, replayed_entirely, optional_reason)`.
+type CheckSequenceResult = eyre::Result<(bool, bool, Option<String>)>;
+
+/// Borrowed context shared by primary-invariant and handler-side replay helpers.
+struct ReplayContext<'a> {
+    invariant_contract: &'a InvariantContract<'a>,
+    invariant_config: &'a InvariantConfig,
+    revert_decoder: &'a RevertDecoder,
+    show_solidity: bool,
+}
+
 /// Helper function to load failed call sequence from file.
 /// Ignores failure if generated with different invariant settings than the current ones.
 fn persisted_call_sequence(
@@ -1525,6 +1555,46 @@ fn persisted_call_sequence(
             Some(persisted_failure)
         },
     )
+}
+
+/// Converts a persisted `BaseCounterExample` sequence into `BasicTxDetails` (applying
+/// `ctx.show_solidity` in place) and replays it via `check_sequence`.
+fn replay_persisted_call_sequence<FEN: FoundryEvmNetwork>(
+    ctx: &ReplayContext<'_>,
+    executor: Executor<FEN>,
+    call_sequence: &mut [BaseCounterExample],
+    expect_assertion_failure: bool,
+) -> (Vec<BasicTxDetails>, CheckSequenceResult) {
+    let txes = call_sequence
+        .iter_mut()
+        .map(|seq| {
+            seq.show_solidity = ctx.show_solidity;
+            BasicTxDetails {
+                warp: seq.warp,
+                roll: seq.roll,
+                sender: seq.sender.unwrap_or_default(),
+                call_details: CallDetails {
+                    target: seq.addr.unwrap_or_default(),
+                    calldata: seq.calldata.clone(),
+                },
+            }
+        })
+        .collect::<Vec<BasicTxDetails>>();
+    let result = check_sequence(
+        executor,
+        &txes,
+        (0..min(txes.len(), ctx.invariant_config.depth as usize)).collect(),
+        ctx.invariant_contract.address,
+        ctx.invariant_contract.primary_invariant_fn.selector().to_vec().into(),
+        CheckSequenceOptions {
+            accumulate_warp_roll: ctx.invariant_config.has_delay(),
+            fail_on_revert: ctx.invariant_config.fail_on_revert,
+            expect_assertion_failure,
+            call_after_invariant: ctx.invariant_contract.call_after_invariant,
+            rd: Some(ctx.revert_decoder),
+        },
+    );
+    (txes, result)
 }
 
 /// Helper function to set test corpus dir and to compose persisted failure paths.
@@ -1566,4 +1636,86 @@ fn record_invariant_failure(
     ) {
         error!(%err, "Failed to record call sequence");
     }
+}
+
+/// Persists a handler-side assertion bug under `<failure_dir>/handlers/<fingerprint>.json`.
+fn record_handler_failure(
+    failure_dir: &Path,
+    edge_fingerprint: B256,
+    call_sequence: &[BaseCounterExample],
+    settings: &InvariantSettings,
+) {
+    let handlers_dir = failure_dir.join("handlers");
+    if let Err(err) = foundry_common::fs::create_dir_all(&handlers_dir) {
+        error!(%err, "Failed to create handler failure dir");
+        return;
+    }
+    let file = handlers_dir.join(format!("{edge_fingerprint:x}.json"));
+    record_invariant_failure(&handlers_dir, &file, call_sequence, settings, true);
+}
+
+/// Replays handler-side assertion bugs persisted under `<failure_dir>/handlers/*.json`.
+/// Returns those that still reproduce; deletes stale files; skips settings-incompatible files.
+fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
+    handlers_dir: &Path,
+    current_settings: &InvariantSettings,
+    executor: Executor<FEN>,
+    ctx: &ReplayContext<'_>,
+) -> std::collections::HashMap<B256, HandlerAssertionFailure> {
+    let mut replayed = std::collections::HashMap::new();
+    let entries = match std::fs::read_dir(handlers_dir) {
+        Ok(e) => e,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return replayed,
+        Err(err) => {
+            error!(%err, "Failed to read handler failure dir");
+            return replayed;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(edge_fingerprint) = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .filter(|_| path.extension().and_then(|s| s.to_str()) == Some("json"))
+            .and_then(|stem| B256::from_str(&format!("0x{stem}")).ok())
+        else {
+            continue;
+        };
+        let Some(persisted) = persisted_call_sequence(&path, current_settings) else {
+            continue;
+        };
+        let mut call_sequence = persisted.call_sequence;
+        if call_sequence.is_empty() {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        }
+        let (txes, replay) = replay_persisted_call_sequence(
+            ctx,
+            executor.clone(),
+            &mut call_sequence,
+            true,
+        );
+        match replay {
+            Ok((success, _entirely, reason)) if !success => {
+                let _ = sh_warn!(
+                    "Replayed handler-side assertion bug from {path:?}. \nRun `forge clean` or remove file to ignore."
+                );
+                replayed.insert(
+                    edge_fingerprint,
+                    HandlerAssertionFailure::from_replayed_sequence(
+                        txes,
+                        edge_fingerprint,
+                        reason.unwrap_or_default(),
+                    ),
+                );
+            }
+            Ok(_) => {
+                let _ = std::fs::remove_file(&path);
+            }
+            Err(err) => {
+                error!(%err, "Failed to replay handler-side assertion bug");
+            }
+        }
+    }
+    replayed
 }
