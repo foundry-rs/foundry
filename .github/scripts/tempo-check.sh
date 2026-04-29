@@ -944,6 +944,10 @@ fund_and_wait "$VADDR_SENDER_ADDR"
 BAL_BEFORE=$(cast call --rpc-url "$ETH_RPC_URL" "$FEE_TOKEN" 'balanceOf(address)(uint256)' "$VADDR_MASTER_ADDR" | awk '{print $1}')
 echo "Master balance before: $BAL_BEFORE"
 
+# Capture the current block before the transfer so `cast vaddr watch` can
+# replay the Transfer log via --from-block.
+BLOCK_BEFORE_TRANSFER=$(cast block-number --rpc-url "$ETH_RPC_URL")
+
 AMOUNT=1000000
 cast send "$FEE_TOKEN" 'transfer(address,uint256)' "$VADDR" "$AMOUNT" \
 --rpc-url "$ETH_RPC_URL" --private-key "$VADDR_SENDER_PK"
@@ -957,3 +961,21 @@ echo "ERROR: master balance grew by $((BAL_AFTER - BAL_BEFORE)), expected $AMOUN
 exit 1
 fi
 echo "OK: transfer to virtual address auto-forwarded to master"
+
+echo -e "\n=== CAST VIRTUAL-ADDRESS: WATCH ==="
+# Tail incoming TIP-20 transfers to the virtual address. `cast vaddr watch`
+# polls indefinitely, so we cap it with `timeout`; the historical fetch via
+# --from-block emits the prior Transfer log immediately at startup.
+WATCH_OUT=$(timeout 5 cast vaddr watch "$VADDR" \
+  --token "$FEE_TOKEN" \
+  --from-block "$BLOCK_BEFORE_TRANSFER" \
+  --rpc-url "$ETH_RPC_URL" 2>&1 || true)
+echo "$WATCH_OUT"
+
+EXPECTED_PATTERN="token=$FEE_TOKEN from=$VADDR_SENDER_ADDR amount=$AMOUNT"
+echo "Expected pattern: $EXPECTED_PATTERN"
+if ! echo "$WATCH_OUT" | grep -iqF "$EXPECTED_PATTERN"; then
+  echo "ERROR: cast vaddr watch output did not contain expected '$EXPECTED_PATTERN'"
+  exit 1
+fi
+echo "OK: cast vaddr watch reported correct token/from/amount"
