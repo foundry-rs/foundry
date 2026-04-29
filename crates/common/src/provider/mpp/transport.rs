@@ -59,7 +59,7 @@ impl FundingContext {
             .unwrap_or_default()
     }
 
-    fn network(&self) -> Option<&'static str> {
+    const fn network(&self) -> Option<&'static str> {
         match self.chain_id {
             // Tempo mainnet/testnet naming as understood by the Tempo wallet CLI.
             Some(4217) => Some("tempo"),
@@ -139,7 +139,7 @@ async fn run_interactive_tempo_fund(ctx: &FundingContext) -> TransportResult<boo
         args.push(network.to_string());
     }
 
-    eprintln!(
+    let _ = crate::sh_eprintln!(
         "Tempo wallet payment could not be funded for this paid RPC request.\n{}\
          Opening Tempo wallet funding flow...\n",
         ctx.token_line()
