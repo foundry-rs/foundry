@@ -6,6 +6,8 @@ on:
   push:
     branches: [master]
   pull_request:
+  schedule:
+    - cron: "0 2 * * *" # Run daily at 2 AM UTC (offset from other nightlies)
   workflow_dispatch:
     inputs:
       network:
@@ -94,7 +96,7 @@ jobs:
 
       - name: Run Tempo check on testnet
         if: |
-          github.event_name == 'pull_request' ||
+          github.event_name == 'schedule' ||
           github.event.inputs.network == 'testnet' ||
           github.event.inputs.network == 'all'
         env:
@@ -111,6 +113,7 @@ jobs:
 
       - name: Run Tempo check on mainnet
         if: |
+          github.event_name == 'schedule' ||
           github.event.inputs.network == 'mainnet' ||
           github.event.inputs.network == 'all'
         env:
@@ -126,3 +129,25 @@ jobs:
           if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
             ./.github/scripts/tempo-deploy.sh
           fi
+
+  # If the nightly run fails, this will create an issue to signal so.
+  issue:
+    name: Open an issue
+    runs-on: ubuntu-latest
+    needs: [tempo-check]
+    if: failure() && github.event_name == 'schedule'
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2.9.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_URL: |
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          update_existing: true
+          filename: .github/TEMPO_NIGHTLY_FAILURE_TEMPLATE.md
