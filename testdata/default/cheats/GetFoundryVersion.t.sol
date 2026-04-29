@@ -106,15 +106,11 @@ contract GetFoundryVersionTest is Test {
         vm.parseUint(parts[2]);
     }
 
-    function testGetFoundryVersionBuildProfile() public {
-        // The build profile must be either "debug" or "release".
+    function testGetFoundryVersionBuildProfile() public view {
+        // The build profile must be present and non-empty (e.g. "debug", "release", "dist", …).
         string[] memory plusSplit = vm.split(vm.getFoundryVersion(), "+");
         string[] memory metadataComponents = vm.split(plusSplit[1], ".");
-        string memory buildType = metadataComponents[2];
-        assertTrue(
-            keccak256(bytes(buildType)) == keccak256("debug") || keccak256(bytes(buildType)) == keccak256("release"),
-            "Build profile must be 'debug' or 'release'"
-        );
+        require(bytes(metadataComponents[2]).length > 0, "Build profile is empty");
     }
 
     function testFoundryVersionCmpAndAtLeastAreConsistent() public {
