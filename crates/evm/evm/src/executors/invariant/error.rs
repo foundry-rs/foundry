@@ -50,12 +50,8 @@ impl HandlerAssertionFailure {
     ) -> Self {
         let last = call_sequence.last().expect("replayed sequence is non-empty");
         let reverter = last.call_details.target;
-        let selector_bytes: [u8; 4] = last
-            .call_details
-            .calldata
-            .get(..4)
-            .and_then(|s| s.try_into().ok())
-            .unwrap_or_default();
+        let selector_bytes: [u8; 4] =
+            last.call_details.calldata.get(..4).and_then(|s| s.try_into().ok()).unwrap_or_default();
         let original_sequence_len = call_sequence.len();
         Self {
             reverter,

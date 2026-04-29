@@ -1683,10 +1683,7 @@ contract AlwaysAssertTest is Test {
     prj.update_config(|config| {
         config.invariant.runs = 0;
     });
-    cmd.forge_fuse()
-        .args(["test", "--mt", "invariant_ok"])
-        .assert_failure()
-        .stderr_eq(str![[r#"
+    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure().stderr_eq(str![[r#"
 ...
 Warning: Replayed handler-side assertion bug from [..]
 ...

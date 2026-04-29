@@ -541,9 +541,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 // Collect line coverage from last fuzzed call.
                 invariant_test.merge_line_coverage(call_result.line_coverage.clone());
                 // Snapshot the per-call edge fingerprint *before* the corpus's merge zeroes
-                // the buffer. Only the asserting call's edges matter for dedup; we compute
-                // conditionally on `reverted` to avoid hashing on the hot non-revert path.
-                let pre_merge_edges_hash = if call_result.reverted {
+                // the buffer. The hash is only consumed when an assertion fired, so gate on
+                // `assertion_failure` rather than `reverted` to skip the keccak on every
+                // non-asserting reverted call (vm.assume, MAGIC_ASSUME, plain requires, ...).
+                let assertion_failure =
+                    !discarded && did_fail_on_assert(&call_result, &call_result.state_changeset);
+                let pre_merge_edges_hash = if assertion_failure {
                     error::snapshot_edge_fingerprint(&call_result)
                 } else {
                     None
@@ -564,9 +567,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         break 'stop;
                     }
                 } else {
-                    let assertion_failure =
-                        did_fail_on_assert(&call_result, &call_result.state_changeset);
-
                     // Commit executed call result.
                     current_run.executor.commit(&mut call_result);
 

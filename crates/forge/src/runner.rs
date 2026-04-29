@@ -981,8 +981,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Shortest-wins on collision so the better reproducer survives across runs.
         for (fingerprint, failure) in persisted_handler_failures {
             match invariant_result.handler_errors.get(&fingerprint) {
-                Some(existing)
-                    if existing.call_sequence.len() <= failure.call_sequence.len() => {}
+                Some(existing) if existing.call_sequence.len() <= failure.call_sequence.len() => {}
                 _ => {
                     invariant_result.handler_errors.insert(fingerprint, failure);
                 }
@@ -1689,12 +1688,8 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
             let _ = std::fs::remove_file(&path);
             continue;
         }
-        let (txes, replay) = replay_persisted_call_sequence(
-            ctx,
-            executor.clone(),
-            &mut call_sequence,
-            true,
-        );
+        let (txes, replay) =
+            replay_persisted_call_sequence(ctx, executor.clone(), &mut call_sequence, true);
         match replay {
             Ok((success, _entirely, reason)) if !success => {
                 let _ = sh_warn!(
