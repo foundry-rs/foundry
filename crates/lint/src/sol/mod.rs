@@ -40,12 +40,14 @@ pub mod codesize;
 pub mod gas;
 pub mod high;
 pub mod info;
+pub mod low;
 pub mod med;
 
 static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut lints = Vec::new();
     lints.extend_from_slice(high::REGISTERED_LINTS);
     lints.extend_from_slice(med::REGISTERED_LINTS);
+    lints.extend_from_slice(low::REGISTERED_LINTS);
     lints.extend_from_slice(info::REGISTERED_LINTS);
     lints.extend_from_slice(gas::REGISTERED_LINTS);
     lints.extend_from_slice(codesize::REGISTERED_LINTS);
@@ -133,6 +135,7 @@ impl<'a> SolidityLinter<'a> {
         let mut passes_and_lints = Vec::new();
         passes_and_lints.extend(high::create_early_lint_passes());
         passes_and_lints.extend(med::create_early_lint_passes());
+        passes_and_lints.extend(low::create_early_lint_passes());
         passes_and_lints.extend(info::create_early_lint_passes());
 
         // Do not apply 'gas' and 'codesize' severity rules on tests and scripts
@@ -184,6 +187,7 @@ impl<'a> SolidityLinter<'a> {
         let mut passes_and_lints = Vec::new();
         passes_and_lints.extend(high::create_late_lint_passes());
         passes_and_lints.extend(med::create_late_lint_passes());
+        passes_and_lints.extend(low::create_late_lint_passes());
         passes_and_lints.extend(info::create_late_lint_passes());
 
         // Do not apply 'gas' and 'codesize' severity rules on tests and scripts
@@ -400,6 +404,12 @@ impl<'a> TryFrom<&'a str> for SolLint {
         }
 
         for &lint in med::REGISTERED_LINTS {
+            if lint.id() == value {
+                return Ok(lint);
+            }
+        }
+
+        for &lint in low::REGISTERED_LINTS {
             if lint.id() == value {
                 return Ok(lint);
             }

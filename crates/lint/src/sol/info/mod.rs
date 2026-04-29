@@ -21,9 +21,6 @@ use unsafe_cheatcodes::UNSAFE_CHEATCODE_USAGE;
 mod multi_contract_file;
 use multi_contract_file::MULTI_CONTRACT_FILE;
 
-mod block_timestamp;
-use block_timestamp::BLOCK_TIMESTAMP;
-
 mod interface_naming;
 use interface_naming::{INTERFACE_FILE_NAMING, INTERFACE_NAMING};
 
@@ -37,5 +34,4 @@ register_lints!(
     (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE)),
     (MultiContractFile, early, (MULTI_CONTRACT_FILE)),
     (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING)),
-    (BlockTimestamp, early, (BLOCK_TIMESTAMP)),
 );

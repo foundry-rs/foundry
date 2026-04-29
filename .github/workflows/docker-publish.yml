@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        default: nightly
+        default: nightly-dev
         description: The tag we're building for
         type: string
   workflow_call:
@@ -58,10 +58,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
 
-      # Creates an additional 'latest' or 'nightly' tag
-      # If the job is triggered via cron schedule, tag nightly and nightly-{SHA}
-      # If the job is triggered via workflow dispatch and on a master branch, tag branch and latest
-      # Otherwise, just tag as the branch name
+      # Derive Docker tags from inputs.tag_name:
+      # - v{major}.{minor}.{patch}: tagged as :v1.2.3, :v1.2, :v1, and :latest
+      # - nightly-{SHA}: tagged as :nightly-{SHA} and :nightly
+      # - anything else: tagged as-is
       - name: Finalize Docker Metadata
         id: docker_tagging
         run: |
@@ -69,20 +69,17 @@ jobs:
           REGISTRY="${{ env.REGISTRY }}"
           IMAGE="${{ env.IMAGE_NAME }}"
 
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            printf "cron trigger, assigning nightly tag\n"
-            printf "docker_tags=%s/%s:nightly,%s/%s:nightly-%s\n" "$REGISTRY" "$IMAGE" "$REGISTRY" "$IMAGE" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
-          elif [[ "${GITHUB_REF##*/}" == "main" ]] || [[ "${GITHUB_REF##*/}" == "master" ]]; then
-            printf "manual trigger from master/main branch, assigning latest tag\n"
-            printf "docker_tags=%s/%s:%s,%s/%s:latest\n" "$REGISTRY" "$IMAGE" "${GITHUB_REF##*/}" "$REGISTRY" "$IMAGE" >> "$GITHUB_OUTPUT"
-          elif [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+          if [[ "$TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             MAJOR="v${BASH_REMATCH[1]}"
             MINOR="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-            printf "version tag release, assigning %s, %s, and %s tags\n" "$TAG" "$MINOR" "$MAJOR"
-            printf "docker_tags=%s/%s:%s,%s/%s:%s,%s/%s:%s\n" "$REGISTRY" "$IMAGE" "$TAG" "$REGISTRY" "$IMAGE" "$MINOR" "$REGISTRY" "$IMAGE" "$MAJOR" >> "$GITHUB_OUTPUT"
+            printf "version tag release, assigning %s, %s, %s, and latest tags\n" "$TAG" "$MINOR" "$MAJOR"
+            printf "docker_tags=%s/%s:%s,%s/%s:%s,%s/%s:%s,%s/%s:latest\n" "$REGISTRY" "$IMAGE" "$TAG" "$REGISTRY" "$IMAGE" "$MINOR" "$REGISTRY" "$IMAGE" "$MAJOR" "$REGISTRY" "$IMAGE" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" =~ ^nightly- ]]; then
+            printf "nightly release, assigning %s and nightly tags\n" "$TAG"
+            printf "docker_tags=%s/%s:%s,%s/%s:nightly\n" "$REGISTRY" "$IMAGE" "$TAG" "$REGISTRY" "$IMAGE" >> "$GITHUB_OUTPUT"
           else
-            printf "Neither scheduled nor manual release from main branch. Just tagging as branch name\n"
-            printf "docker_tags=%s/%s:%s\n" "$REGISTRY" "$IMAGE" "${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
+            printf "tagging as %s\n" "$TAG"
+            printf "docker_tags=%s/%s:%s\n" "$REGISTRY" "$IMAGE" "$TAG" >> "$GITHUB_OUTPUT"
           fi
 
       # Log docker metadata to explicitly know what is being pushed
