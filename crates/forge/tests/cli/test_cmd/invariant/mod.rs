@@ -1716,6 +1716,213 @@ contract AlwaysAssert {
     assert!(entries_stale.is_empty(), "stale handler failure file should be deleted");
 });
 
+// Verifies that two distinct handler contracts each producing an assertion bug in the same
+// campaign result in two independently persisted files (one per edge fingerprint) and that
+// both surface in the report.
+forgetest_init!(multi_handler_bugs_each_persist_independently, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 20;
+        config.invariant.fail_on_revert = false;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "HandlerA.sol",
+        r#"
+contract HandlerA {
+    function boomA() external { assert(false); }
+}
+   "#,
+    );
+    prj.add_source(
+        "HandlerB.sol",
+        r#"
+contract HandlerB {
+    function boomB() external { assert(false); }
+}
+   "#,
+    );
+    prj.add_test(
+        "MultiHandlerTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {HandlerA} from "../src/HandlerA.sol";
+import {HandlerB} from "../src/HandlerB.sol";
+
+contract MultiHandlerTest is Test {
+    HandlerA a;
+    HandlerB b;
+
+    function setUp() public {
+        a = new HandlerA();
+        b = new HandlerB();
+        targetContract(address(a));
+        targetContract(address(b));
+    }
+
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_ok"]).assert_failure().stdout_eq(str![[r#"
+...
+Suite handlers: 2 assertion bug(s) found
+...
+"#]]);
+
+    let handlers_dir = prj
+        .root()
+        .join("cache")
+        .join("invariant")
+        .join("failures")
+        .join("MultiHandlerTest")
+        .join("handlers");
+    let entries: Vec<_> = std::fs::read_dir(&handlers_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .collect();
+    assert_eq!(entries.len(), 2, "expected one persisted file per handler bug");
+});
+
+// Verifies that the persisted file holds the post-shrink sequence (not the raw discovered
+// one) and that replaying it is idempotent — the report shows `(original: 1, shrunk: 1)`
+// instead of growing back to the pre-shrink length.
+forgetest_init!(handler_bug_replay_is_idempotent_after_shrink, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 50;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_source(
+        "ShrinkableHandler.sol",
+        r#"
+contract ShrinkableHandler {
+    // Filler so the campaign produces a prefix that has to be shrunk away.
+    function noop() external {}
+    function boom() external { assert(false); }
+}
+   "#,
+    );
+    prj.add_test(
+        "ShrinkReplayTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {ShrinkableHandler} from "../src/ShrinkableHandler.sol";
+
+contract ShrinkReplayTest is Test {
+    ShrinkableHandler h;
+    function setUp() public { h = new ShrinkableHandler(); targetContract(address(h)); }
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_ok"]).assert_failure();
+
+    let handlers_dir = prj
+        .root()
+        .join("cache")
+        .join("invariant")
+        .join("failures")
+        .join("ShrinkReplayTest")
+        .join("handlers");
+    let file = std::fs::read_dir(&handlers_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .expect("persisted handler file");
+    let json: serde_json::Value =
+        serde_json::from_reader(std::fs::File::open(file.path()).unwrap()).unwrap();
+    let persisted_len = json["call_sequence"].as_array().unwrap().len();
+    assert_eq!(persisted_len, 1, "persisted file must hold the shrunk (anchor-only) sequence");
+
+    // Re-run with runs = 0 so the failure must come from replay; assert the rendered
+    // (original: N, shrunk: M) shows N == M == 1, proving replay is idempotent.
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure().stdout_eq(str![[r#"
+...
+Suite handlers: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)] src/ShrinkableHandler.sol:ShrinkableHandler::boom
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[..] calldata=boom() args=[]
+...
+"#]]);
+});
+
+// Verifies that when `InvariantSettings` change between runs (here: `depth`), the persisted
+// handler-bug file is skipped (warning emitted, no replay) and left in place so a future
+// run with the original settings can still pick it up.
+forgetest_init!(handler_persisted_failure_skipped_on_settings_change, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_source(
+        "AlwaysAssert.sol",
+        r#"
+contract AlwaysAssert {
+    function boom() external { assert(false); }
+}
+   "#,
+    );
+    prj.add_test(
+        "SettingsChangeTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {AlwaysAssert} from "../src/AlwaysAssert.sol";
+
+contract SettingsChangeTest is Test {
+    AlwaysAssert h;
+    function setUp() public { h = new AlwaysAssert(); targetContract(address(h)); }
+    function invariant_ok() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_ok"]).assert_failure();
+
+    let handlers_dir = prj
+        .root()
+        .join("cache")
+        .join("invariant")
+        .join("failures")
+        .join("SettingsChangeTest")
+        .join("handlers");
+    let entries_before: Vec<_> = std::fs::read_dir(&handlers_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .collect();
+    assert_eq!(entries_before.len(), 1, "expected one persisted handler file");
+
+    // Flip a tracked InvariantSettings field (`fail_on_revert`) so the persisted file is
+    // incompatible. Combined with runs = 0, no campaign runs and no replay fires, so the
+    // test must pass.
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+        config.invariant.runs = 0;
+    });
+    cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_success().stderr_eq(str![[r#"
+...
+Warning: Failure from [..] file was ignored because invariant test settings have changed: [..]
+...
+"#]]);
+
+    // Settings-mismatched files must be left intact (only stale-but-compatible files are
+    // deleted), so a future run with the original settings can still pick them up.
+    let entries_after: Vec<_> = std::fs::read_dir(&handlers_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .collect();
+    assert_eq!(entries_after.len(), 1, "settings-incompatible file should be preserved");
+});
+
 // Verifies the startup warning fired by `assert_all + optimization mode`: when the primary
 // invariant returns int256 (optimization target) the campaign loop can't also evaluate boolean
 // invariants, so they are silently dropped. Without the warning users wouldn't realize their
