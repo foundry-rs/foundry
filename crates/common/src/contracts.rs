@@ -383,16 +383,14 @@ impl ContractsByArtifact {
         &self,
         id: &str,
     ) -> Result<Option<ArtifactWithContractRef<'_>>> {
-        let contracts = self
-            .iter()
-            .filter(|(artifact, _)| artifact.name == id || artifact.identifier() == id)
-            .collect::<Vec<_>>();
-
-        if contracts.len() > 1 {
+        let mut iter =
+            self.iter().filter(|(artifact, _)| artifact.name == id || artifact.identifier() == id);
+        let first = iter.next();
+        if first.is_some() && iter.next().is_some() {
             eyre::bail!("{id} has more than one implementation.");
         }
 
-        Ok(contracts.first().copied())
+        Ok(first)
     }
 
     /// Finds abi by name or source path
