@@ -1,8 +1,8 @@
-use crate::{AsDoc, CommentTag, Comments, Deployment, Markdown, writer::traits::ParamLike};
-use itertools::Itertools;
-use solang_parser::pt::{
-    EnumDefinition, ErrorParameter, EventParameter, Parameter, VariableDeclaration,
+use crate::{
+    AsDoc, CommentTag, Comments, Deployment, EnumSource, Markdown, ParamInfo,
+    writer::traits::ParamLike,
 };
+use itertools::Itertools;
 use std::{
     fmt::{self, Display, Write},
     sync::LazyLock,
@@ -174,7 +174,7 @@ impl BufWriter {
 
             let row = [
                 Markdown::Code(param_name.unwrap_or("<none>")).as_doc()?,
-                Markdown::Code(&param.type_name()).as_doc()?,
+                Markdown::Code(param.type_name()).as_doc()?,
                 comment.unwrap_or_default().replace('\n', " "),
             ];
             self.write_piped(&row.join("|"))?;
@@ -189,7 +189,7 @@ impl BufWriter {
     /// Doesn't write anything if either params or comments are empty.
     pub fn try_write_properties_table(
         &mut self,
-        params: &[VariableDeclaration],
+        params: &[ParamInfo],
         comments: &Comments,
     ) -> fmt::Result {
         self.try_write_table(CommentTag::Param, params, comments, "Properties")
@@ -199,7 +199,7 @@ impl BufWriter {
     /// Doesn't write anything if either params or comments are empty.
     pub fn try_write_variant_table(
         &mut self,
-        params: &EnumDefinition,
+        params: &EnumSource,
         comments: &Comments,
     ) -> fmt::Result {
         let comments = comments.include_tags(&[CommentTag::Param]);
@@ -215,15 +215,15 @@ impl BufWriter {
         self.write_piped(&VARIANTS_TABLE_HEADERS.join("|"))?;
         self.write_piped(&VARIANTS_TABLE_SEPARATOR)?;
 
-        for value in &params.values {
-            let param_name = value.as_ref().map(|v| v.name.clone());
+        for variant in &params.variants {
+            let param_name = Some(variant.clone());
 
             let comment = param_name.as_ref().and_then(|name| {
                 comments.iter().find_map(|comment| comment.match_first_word(name))
             });
 
             let row = [
-                Markdown::Code(&param_name.unwrap_or("<none>".to_string())).as_doc()?,
+                Markdown::Code(variant.as_str()).as_doc()?,
                 comment.unwrap_or_default().replace('\n', " "),
             ];
             self.write_piped(&row.join("|"))?;
@@ -238,7 +238,7 @@ impl BufWriter {
     /// Doesn't write anything if either params or comments are empty.
     pub fn try_write_events_table(
         &mut self,
-        params: &[EventParameter],
+        params: &[ParamInfo],
         comments: &Comments,
     ) -> fmt::Result {
         self.try_write_table(CommentTag::Param, params, comments, "Parameters")
@@ -248,7 +248,7 @@ impl BufWriter {
     /// Doesn't write anything if either params or comments are empty.
     pub fn try_write_errors_table(
         &mut self,
-        params: &[ErrorParameter],
+        params: &[ParamInfo],
         comments: &Comments,
     ) -> fmt::Result {
         self.try_write_table(CommentTag::Param, params, comments, "Parameters")
@@ -259,7 +259,7 @@ impl BufWriter {
     pub fn try_write_param_table(
         &mut self,
         tag: CommentTag,
-        params: &[&Parameter],
+        params: &[ParamInfo],
         comments: &Comments,
     ) -> fmt::Result {
         let heading = match &tag {
