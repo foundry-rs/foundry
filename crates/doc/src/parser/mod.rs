@@ -99,12 +99,12 @@ impl Parser {
             }
             ast::ItemKind::Event(event) => {
                 let source = self.parse_event(event);
-                let mut code = self.extract_code(span);
+                let code = self.extract_code(span);
                 Some(ParseItem::new(ParseSource::Event(source)).with_comments(docs).with_code(code))
             }
             ast::ItemKind::Error(err) => {
                 let source = self.parse_error(err);
-                let mut code = self.extract_code(span);
+                let code = self.extract_code(span);
                 Some(ParseItem::new(ParseSource::Error(source)).with_comments(docs).with_code(code))
             }
             ast::ItemKind::Struct(strukt) => {
