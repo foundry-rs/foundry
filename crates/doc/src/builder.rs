@@ -1,6 +1,6 @@
 use crate::{
     AsDoc, BufWriter, Document, ParseItem, ParseSource, Parser, Preprocessor,
-    document::DocumentContent, helpers::merge_toml_table, solang_ext::Visitable,
+    document::DocumentContent, helpers::merge_toml_table,
 };
 use alloy_primitives::map::HashMap;
 use eyre::{Context, Result};
@@ -129,41 +129,27 @@ impl DocBuilder {
             let gcx = compiler.gcx();
             let documents = combined_sources
                 .par_iter()
-                .enumerate()
-                .map(|(i, (path, from_library))| {
+                .map(|(path, from_library)| {
                     let path = *path;
                     let from_library = *from_library;
                     let mut files = vec![];
 
                     // Read and parse source file
-                    if let Some((_, ast)) = gcx.get_ast_source(path)
-                        && let Some(source) =
-                            forge_fmt::format_ast(gcx, ast, self.fmt.clone().into())
+                    if let Some((_, ast_source)) = gcx.get_ast_source(path)
+                        && let Some(source_unit) = ast_source.ast.as_ref()
                     {
-                        let (mut source_unit, comments) = match solang_parser::parse(&source, i) {
-                            Ok(res) => res,
-                            Err(err) => {
-                                if from_library {
-                                    // Ignore failures for library files
-                                    return Ok(files);
-                                }
-                                return Err(eyre::eyre!(
-                                    "Failed to parse Solidity code for {}\nDebug info: {:?}",
-                                    path.display(),
-                                    err
-                                ));
-                            }
-                        };
+                        // Solar uses a global SourceMap: span BytePos values are global
+                        // offsets, not per-file offsets. Subtract file.start_pos so that
+                        // span-based indexing into the per-file source string is correct.
+                        let source = ast_source.file.src.to_string();
+                        let file_start = ast_source.file.start_pos.to_usize();
 
-                        // Visit the parse tree
-                        let mut doc = Parser::new(comments, source, self.fmt.tab_width);
-                        source_unit
-                            .visit(&mut doc)
-                            .map_err(|err| eyre::eyre!("Failed to parse source: {err}"))?;
+                        // Walk the solar AST directly
+                        let doc = Parser::new(source, file_start, self.fmt.tab_width);
+                        let all_items = doc.parse(source_unit);
 
                         // Split the parsed items on top-level constants and rest.
-                        let (items, consts): (Vec<ParseItem>, Vec<ParseItem>) = doc
-                            .items()
+                        let (items, consts): (Vec<ParseItem>, Vec<ParseItem>) = all_items
                             .into_iter()
                             .partition(|item| !matches!(item.source, ParseSource::Variable(_)));
 
