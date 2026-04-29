@@ -742,10 +742,11 @@ impl<'ast> State<'_, 'ast> {
         // 1. exactly matches the name of a base contract as declared in the `contract is`;
         // this does not account for inheritance;
         let is_contract_base = self.contract.is_some_and(|contract| {
+            let name = modifier.name.to_string();
             contract
                 .bases
                 .iter()
-                .any(|contract_base| contract_base.name.to_string() == modifier.name.to_string())
+                .any(|contract_base| contract_base.name.to_string() == name)
         });
         // 2. assume that title case names in constructors are bases.
         // LEGACY: constructors used to also be `function NameOfContract...`; not checked.
