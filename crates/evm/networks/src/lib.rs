@@ -59,28 +59,46 @@ impl From<ChainId> for NetworkVariant {
     }
 }
 
-#[derive(Clone, Debug, Default, Parser, Serialize, Deserialize, Copy, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Parser, Deserialize, Copy, PartialEq, Eq)]
 pub struct NetworkConfigs {
     /// Enable a specific network family.
     #[arg(help_heading = "Networks", long, short, num_args = 1, value_name = "NETWORK", value_enum, conflicts_with_all = ["celo", "optimism", "tempo"])]
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     network: Option<NetworkVariant>,
     /// Enable Celo network features.
     #[arg(help_heading = "Networks", long, conflicts_with_all = ["network", "optimism", "tempo"])]
     celo: bool,
     /// Enable Optimism network features (deprecated: use --network optimism).
     #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "tempo"])]
-    // Skipped from configs (forge) as there is no feature to be added yet.
-    #[serde(skip)]
+    // Deserialize-only legacy alias: accepted in foundry.toml but never serialized — the
+    // canonical form is `network = "optimism"`.
+    #[serde(default)]
     optimism: bool,
     /// Enable Tempo network features (deprecated: use --network tempo).
     #[arg(long, hide = true, conflicts_with_all = ["network", "celo", "optimism"])]
+    // Deserialize-only legacy alias: accepted in foundry.toml but never serialized — the
+    // canonical form is `network = "tempo"`.
     #[serde(default)]
     tempo: bool,
     /// Whether to bypass prevrandao.
     #[arg(skip)]
     #[serde(default)]
     bypass_prevrandao: bool,
+}
+
+// Custom `Serialize` impl: always emits the *resolved* network as the canonical
+// `network = "..."` field, and never emits the legacy `tempo` / `optimism` aliases. This avoids
+// confusing output like `network = "tempo"` next to `tempo = false`, and ensures `tempo = true`
+// in foundry.toml round-trips as `network = "tempo"`.
+impl Serialize for NetworkConfigs {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut s = serializer.serialize_struct("NetworkConfigs", 3)?;
+        s.serialize_field("network", &self.resolved_network())?;
+        s.serialize_field("celo", &self.celo)?;
+        s.serialize_field("bypass_prevrandao", &self.bypass_prevrandao)?;
+        s.end()
+    }
 }
 
 impl NetworkConfigs {
@@ -309,6 +327,17 @@ mod tests {
         let json = r#"{"tempo": true, "celo": false, "bypass_prevrandao": false}"#;
         let cfg: NetworkConfigs = serde_json::from_str(json).unwrap();
         assert!(cfg.is_tempo());
+    }
+
+    #[test]
+    fn serde_serializes_legacy_alias_as_canonical_network() {
+        // Legacy `tempo = true` should serialize as the canonical `network = "tempo"`,
+        // and the legacy `tempo` / `optimism` keys must not appear in the output.
+        let cfg = NetworkConfigs { tempo: true, ..Default::default() };
+        let json = serde_json::to_value(cfg).unwrap();
+        assert_eq!(json["network"], serde_json::json!("tempo"));
+        assert!(json.get("tempo").is_none(), "legacy `tempo` key should not be serialized");
+        assert!(json.get("optimism").is_none(), "legacy `optimism` key should not be serialized");
     }
 
     #[test]
