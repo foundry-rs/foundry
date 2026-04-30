@@ -12,7 +12,10 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, ContextCompat, Result};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
-    opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
+    opts::{
+        BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts,
+        tempo_lanes::{ResolvedLane, maybe_print_resolved_lane, resolve_lane},
+    },
     utils::{LoadConfig, find_contract_artifacts, read_constructor_args_file},
 };
 use foundry_common::{
@@ -203,6 +206,11 @@ impl CreateArgs {
             self.tx.tempo.key_id = Some(ak.key_address);
         }
 
+        // Resolve `--tempo.lane <name>` against the lanes file (default
+        // `<root>/tempo.lanes.toml`) and populate `self.tx.tempo.nonce_key` from the lane.
+        // Must happen before `self.deploy(...)` so `TempoOpts::apply` picks up the nonce_key.
+        let resolved_lane = resolve_lane(&mut self.tx.tempo, &config.root)?;
+
         // Whether to broadcast the transaction or not
         let dry_run = !self.broadcast;
 
@@ -223,6 +231,7 @@ impl CreateArgs {
                 dry_run,
                 None,
                 Some(browser),
+                resolved_lane,
             )
             .await
         } else if self.unlocked {
@@ -239,6 +248,7 @@ impl CreateArgs {
                 dry_run,
                 None,
                 None,
+                resolved_lane,
             )
             .await
         } else if let Some(ak) = access_key {
@@ -259,6 +269,7 @@ impl CreateArgs {
                 dry_run,
                 Some((signer, ak)),
                 None,
+                resolved_lane,
             )
             .await
         } else {
@@ -282,6 +293,7 @@ impl CreateArgs {
                 dry_run,
                 None,
                 None,
+                resolved_lane,
             )
             .await
         }
@@ -362,6 +374,7 @@ impl CreateArgs {
         dry_run: bool,
         tempo_keychain: Option<(WalletSigner, TempoAccessKeyConfig)>,
         browser_signer: Option<BrowserSigner<N>>,
+        resolved_lane: Option<ResolvedLane>,
     ) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
@@ -423,6 +436,8 @@ impl CreateArgs {
         if self.tx.nonce.is_none() && !self.tx.tempo.expiring_nonce {
             deployer.tx.set_nonce(provider.get_transaction_count(deployer_address).await?);
         }
+
+        maybe_print_resolved_lane(resolved_lane.as_ref(), deployer.tx.nonce().unwrap_or_default())?;
 
         // set access list if specified
         if let Some(access_list) = match self.tx.access_list {

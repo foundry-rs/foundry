@@ -9,14 +9,17 @@ use crate::{
 };
 use alloy_consensus::SignableTransaction;
 use alloy_eips::eip2718::Encodable2718;
-use alloy_network::{EthereumWallet, NetworkTransactionBuilder};
+use alloy_network::{EthereumWallet, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::Address;
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
-    opts::{EthereumOpts, TransactionOpts},
+    opts::{
+        EthereumOpts, TransactionOpts,
+        tempo_lanes::{maybe_print_resolved_lane, resolve_lane},
+    },
     utils::{self, LoadConfig},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
@@ -53,7 +56,7 @@ pub struct BatchMakeTxArgs {
 
 impl BatchMakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { calls, tx, eth, raw_unsigned, ethsign } = self;
+        let Self { calls, mut tx, eth, raw_unsigned, ethsign } = self;
         let has_nonce = tx.nonce.is_some();
 
         if calls.is_empty() {
@@ -62,6 +65,10 @@ impl BatchMakeTxArgs {
 
         let config = eth.load_config()?;
         let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+
+        // Resolve `--tempo.lane <name>` against the lanes file (default
+        // `<root>/tempo.lanes.toml`) and populate `tx.tempo.nonce_key` from the lane.
+        let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
 
         // Resolve signer to detect keychain mode
         let (signer, tempo_access_key) = eth.wallet.maybe_signer().await?;
@@ -117,6 +124,7 @@ impl BatchMakeTxArgs {
 
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
             let (tx, _) = tx_builder.build(from).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let raw_tx =
                 alloy_primitives::hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
             sh_println!("{raw_tx}")?;
@@ -125,6 +133,7 @@ impl BatchMakeTxArgs {
 
         if ethsign {
             let (tx, _) = tx_builder.build(config.sender).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let signed_tx = provider.sign_transaction(tx).await?;
             sh_println!("{signed_tx}")?;
             return Ok(());
@@ -138,6 +147,7 @@ impl BatchMakeTxArgs {
 
         let signed_tx = if let Some(ref access_key) = tempo_access_key {
             let (tx, _) = tx_builder.build(access_key.wallet_address).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let raw_tx = tx
                 .sign_with_access_key(
                     &provider,
@@ -151,6 +161,7 @@ impl BatchMakeTxArgs {
         } else {
             tx::validate_from_address(eth.wallet.from, Signer::address(&signer))?;
             let (tx, _) = tx_builder.build(&signer).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             let envelope = tx.build(&EthereumWallet::new(signer)).await?;
             alloy_primitives::hex::encode(envelope.encoded_2718())
         };

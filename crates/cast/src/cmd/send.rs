@@ -8,7 +8,13 @@ use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::{Result, eyre};
-use foundry_cli::{opts::TransactionOpts, utils::LoadConfig};
+use foundry_cli::{
+    opts::{
+        TransactionOpts,
+        tempo_lanes::{maybe_print_resolved_lane, resolve_lane},
+    },
+    utils::LoadConfig,
+};
 use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
@@ -183,6 +189,8 @@ impl SendTxArgs {
         let config = send_tx.eth.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
 
+        let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
+
         if let Some(interval) = send_tx.poll_interval {
             provider.client().set_poll_interval(Duration::from_secs(interval))
         }
@@ -245,11 +253,15 @@ impl SendTxArgs {
                 }
             }
 
-            let (tx, _) = builder.build(config.sender).await?;
+            let (tx_request, _) = builder.build(config.sender).await?;
+            maybe_print_resolved_lane(
+                resolved_lane.as_ref(),
+                tx_request.nonce().unwrap_or_default(),
+            )?;
 
             cast_send(
                 provider,
-                tx,
+                tx_request,
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -261,6 +273,10 @@ impl SendTxArgs {
         } else if let Some(browser) = browser {
             let chain = builder.chain();
             let (mut tx_request, _) = builder.build(browser.address()).await?;
+            maybe_print_resolved_lane(
+                resolved_lane.as_ref(),
+                tx_request.nonce().unwrap_or_default(),
+            )?;
 
             // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
             // costs more gas for signature verification on Tempo chains. Add a
@@ -284,6 +300,10 @@ impl SendTxArgs {
                 None => send_tx.eth.wallet.signer().await?,
             };
             let (tx_request, _) = builder.build(ak.wallet_address).await?;
+            maybe_print_resolved_lane(
+                resolved_lane.as_ref(),
+                tx_request.nonce().unwrap_or_default(),
+            )?;
             cast_send_with_access_key(
                 &provider,
                 tx_request,
@@ -308,6 +328,10 @@ impl SendTxArgs {
             tx::validate_from_address(send_tx.eth.wallet.from, from)?;
 
             let (mut tx_request, _) = builder.build(&signer).await?;
+            maybe_print_resolved_lane(
+                resolved_lane.as_ref(),
+                tx_request.nonce().unwrap_or_default(),
+            )?;
 
             // Apply sponsor signature after gas estimation so the estimate is
             // consistent with what `--tempo.print-sponsor-hash` computes.

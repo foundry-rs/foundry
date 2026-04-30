@@ -6,6 +6,7 @@ mod global;
 mod rpc;
 mod rpc_common;
 mod tempo;
+pub mod tempo_lanes;
 mod transaction;
 
 pub use build::*;

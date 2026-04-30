@@ -32,6 +32,8 @@ use crate::{
     cmd::send::{cast_send, cast_send_with_access_key},
     tx::{CastTxBuilder, SendTxOpts},
 };
+use alloy_network::TransactionBuilder;
+use foundry_cli::opts::tempo_lanes::{maybe_print_resolved_lane, resolve_lane};
 
 /// Tempo keychain management commands.
 ///
@@ -712,6 +714,10 @@ async fn send_keychain_tx(
         tx_opts.tempo.key_id = Some(ak.key_address);
     }
 
+    // Resolve `--tempo.lane <name>` against the lanes file (default
+    // `<root>/tempo.lanes.toml`) and populate `tx_opts.tempo.nonce_key` from the lane.
+    let resolved_lane = resolve_lane(&mut tx_opts.tempo, &config.root)?;
+
     let builder = CastTxBuilder::new(&provider, tx_opts, &config)
         .await?
         .with_to(Some(NameOrAddress::Address(ACCOUNT_KEYCHAIN_ADDRESS)))
@@ -723,6 +729,7 @@ async fn send_keychain_tx(
         let signer =
             signer.as_ref().ok_or_else(|| eyre::eyre!("signer required for access key"))?;
         let (tx, _) = builder.build(ak.wallet_address).await?;
+        maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
         cast_send_with_access_key(
             &provider,
             tx,
@@ -740,6 +747,7 @@ async fn send_keychain_tx(
         };
         let from = signer.address();
         let (tx, _) = builder.build(from).await?;
+        maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
 
         let wallet = EthereumWallet::from(signer);
         let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()

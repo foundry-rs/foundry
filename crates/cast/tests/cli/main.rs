@@ -1,6 +1,7 @@
 //! Contains various tests for checking cast commands
 
 use alloy_chains::NamedChain;
+use alloy_eips::Decodable2718;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionResponse};
 use alloy_primitives::{B256, Bytes, U256, address, b256, hex};
@@ -20,6 +21,7 @@ use foundry_test_utils::{
 };
 use serde_json::json;
 use std::{fs, path::Path, str::FromStr};
+use tempo_primitives::TempoTxEnvelope;
 
 #[macro_use]
 extern crate foundry_test_utils;
@@ -2053,6 +2055,55 @@ casttest!(mktx_ethsign, async |_prj, cmd| {
 
 "#
     ]]);
+});
+
+// tests that `cast mktx --tempo.lane <name>` resolves the lane against a `tempo.lanes.toml` file at
+// the project root, sets the corresponding `nonce_key` on the produced Tempo AA transaction.
+casttest!(mktx_tempo_lane_resolves_nonce_key, |prj, cmd| {
+    // Write a shared lanes file at the project root.
+    let lanes_path = prj.root().join("tempo.lanes.toml");
+    fs::write(&lanes_path, "deploy = 1\nops = 2\npayments = 42\n").unwrap();
+
+    let output = cmd
+        .current_dir(prj.root())
+        .args([
+            "mktx",
+            "--tempo.lane",
+            "payments",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--chain",
+            "1",
+            "--nonce",
+            "0",
+            "--gas-limit",
+            "21000",
+            "--gas-price",
+            "10000000000",
+            "--priority-gas-price",
+            "1000000000",
+            "0x0000000000000000000000000000000000000001",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+
+    // The resolved-lane breadcrumb is printed to stderr so it doesn't pollute stdout
+    // (which carries the raw signed transaction).
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("lane: payments (nonce_key=42, nonce=0)"),
+        "expected lane breadcrumb on stderr, got: {stderr}",
+    );
+
+    // Decode the produced signed Tempo AA transaction and verify it carries the
+    // resolved 2D nonce key.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let raw_hex = stdout.trim().trim_start_matches("0x");
+    let raw = hex::decode(raw_hex).expect("decode hex output");
+    let envelope = TempoTxEnvelope::decode_2718(&mut raw.as_slice()).expect("decode tempo tx");
+    assert!(envelope.is_aa(), "expected Tempo AA transaction, got: {envelope:?}");
+    assert_eq!(envelope.nonce_key(), Some(U256::from(42_u64)));
 });
 
 // tests that the raw encoded transaction is returned
