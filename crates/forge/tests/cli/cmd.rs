@@ -924,6 +924,10 @@ Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: N
         "foundry.toml should contain `network = \"tempo\"`, got:\n{foundry_toml}"
     );
     assert!(
+        foundry_toml.contains("eth_rpc_url = \"tempo\""),
+        "foundry.toml should contain `eth_rpc_url = \"tempo\"`, got:\n{foundry_toml}"
+    );
+    assert!(
         foundry_toml.contains("[rpc_endpoints]")
             && foundry_toml.contains("tempo = \"https://rpc.tempo.xyz/\"")
             && foundry_toml.contains("moderato = \"https://rpc.moderato.tempo.xyz/\""),
