@@ -6736,9 +6736,9 @@ mod tests {
 
             let cfg = Config::load().unwrap();
             assert!(
-                !cfg.warnings.iter().any(
-                    |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "tempo")
-                ),
+                !cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "tempo")),
                 "did not expect UnknownKey warning for `tempo`, got: {:?}",
                 cfg.warnings
             );
