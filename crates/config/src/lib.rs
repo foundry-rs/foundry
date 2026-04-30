@@ -2870,10 +2870,7 @@ impl BasicConfig {
         {
             table.insert("network".to_string(), toml::Value::String(network.clone()));
             if network == "tempo" {
-                table.insert(
-                    "eth_rpc_url".to_string(),
-                    toml::Value::String("tempo".to_string()),
-                );
+                table.insert("eth_rpc_url".to_string(), toml::Value::String("tempo".to_string()));
             }
         }
         let s = toml::to_string_pretty(&value)?;
