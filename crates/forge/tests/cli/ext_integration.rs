@@ -1,7 +1,7 @@
 use foundry_test_utils::util::ExtTester;
 
 // Actively maintained tests
-// Last updated: June 19th 2025
+// Last updated: April 29th 2026
 
 // <https://github.com/foundry-rs/forge-std>
 #[test]
@@ -17,7 +17,7 @@ fn forge_std() {
 #[test]
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn prb_math() {
-    ExtTester::new("PaulRBerg", "prb-math", "aad73cfc6cdc2c9b660199b5b1e9db391ea48640")
+    ExtTester::new("PaulRBerg", "prb-math", "82e5ed5561d0a1c43a3a59edbf4291c8de26479e")
         .install_command(&["bun", "install", "--prefer-offline"])
         // Try npm if bun fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
@@ -40,7 +40,7 @@ fn prb_proxy() {
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 fn sablier_v2_core() {
     let mut tester =
-        ExtTester::new("sablier-labs", "v2-core", "d85521f5615f6c19612ff250ee89c57b9afa6aa2")
+        ExtTester::new("sablier-labs", "v2-core", "8b6823c019ff7556ac9ad24cbb5ac62821854d2f")
             // Skip fork tests.
             .args(["--nmc", "Fork"])
             // Increase the gas limit: https://github.com/sablier-labs/v2-core/issues/956
@@ -65,7 +65,7 @@ fn sablier_v2_core() {
 #[test]
 fn solady() {
     let mut tester =
-        ExtTester::new("Vectorized", "solady", "cbcfe0009477aa329574f17e8db0a05703bb8bdd");
+        ExtTester::new("Vectorized", "solady", "90db92ce173856605d24a554969f2c67cadbc7e9");
 
     // This test expects the mover contract created via CREATE2 to be selfdestructed within the
     // same transaction. In isolation mode, each top-level call runs as a separate transaction
@@ -82,7 +82,7 @@ fn solady() {
 #[cfg_attr(windows, ignore = "Windows cannot find installed programs")]
 #[cfg(not(feature = "isolate-by-default"))]
 fn snekmate() {
-    ExtTester::new("pcaversaccio", "snekmate", "601031d244475b160a00f73053532528bf665cc3")
+    ExtTester::new("pcaversaccio", "snekmate", "1a54931129f2814cbbd7ddbafb4005707f8a5bf8")
         .install_command(&["pnpm", "install", "--prefer-offline"])
         // Try npm if pnpm fails / is not installed.
         .install_command(&["npm", "install", "--prefer-offline"])
@@ -92,7 +92,7 @@ fn snekmate() {
 // <https://github.com/mds1/multicall>
 #[test]
 fn mds1_multicall3() {
-    ExtTester::new("mds1", "multicall", "5f90062160aedb7c807fadca469ac783a0557b57").run();
+    ExtTester::new("mds1", "multicall", "b667d67ecfa5361a81e8f110234ce242613b0012").run();
 }
 
 // Legacy tests

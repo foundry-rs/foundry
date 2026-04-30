@@ -1,6 +1,5 @@
 use alloy_primitives::map::HashMap;
 use derive_more::{Deref, DerefMut, derive::Display};
-use solang_parser::doccomment::DocCommentTag;
 
 /// The natspec comment tag explaining the purpose of the comment.
 /// See: <https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags>.
@@ -70,10 +69,10 @@ impl Comment {
         Self { tag, value }
     }
 
-    /// Create new instance of [Comment] from [DocCommentTag]
+    /// Create new instance of [Comment] from a tag string and value,
     /// if it has a valid natspec tag.
-    pub fn from_doc_comment(value: DocCommentTag) -> Option<Self> {
-        CommentTag::from_str(&value.tag).map(|tag| Self { tag, value: value.value })
+    pub fn from_tag_and_value(tag: &str, value: String) -> Option<Self> {
+        CommentTag::from_str(tag).map(|tag| Self { tag, value })
     }
 
     /// Split the comment at first word.
@@ -145,9 +144,64 @@ impl Comments {
     }
 }
 
-impl From<Vec<DocCommentTag>> for Comments {
-    fn from(value: Vec<DocCommentTag>) -> Self {
-        Self(value.into_iter().filter_map(Comment::from_doc_comment).collect())
+impl Comments {
+    /// Parse natspec comments from raw doc comment lines.
+    ///
+    /// Each line should be the raw text content of a `///` or `/** */` doc comment
+    /// with the comment delimiters already stripped (as provided by solar's `DocComment::symbol`).
+    ///
+    /// Natspec tags start with `@` (e.g. `@notice`, `@dev`, `@param`).
+    /// Lines without a tag at the start are treated as continuations of the previous tag,
+    /// or as `@notice` if no previous tag exists.
+    pub fn from_doc_lines(lines: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
+        let mut comments = Vec::new();
+        let mut current_tag: Option<String> = None;
+        let mut current_value = String::new();
+
+        let flush = |tag: &Option<String>, value: &str, out: &mut Vec<Comment>| {
+            let value = value.trim();
+            if value.is_empty() && tag.is_none() {
+                return;
+            }
+            let tag_str = tag.as_deref().unwrap_or("notice");
+            // Filter out `@solidity` tags and empty tags
+            if tag_str.trim() == "solidity" || tag_str.trim().is_empty() {
+                return;
+            }
+            if let Some(c) = Comment::from_tag_and_value(tag_str, value.to_string()) {
+                out.push(c);
+            }
+        };
+
+        for raw_line in lines {
+            let raw = raw_line.as_ref();
+            // For block comments, process each line individually
+            for line in raw.lines() {
+                let trimmed = line.trim().trim_start_matches('*').trim();
+
+                if let Some(rest) = trimmed.strip_prefix('@') {
+                    // Flush previous
+                    flush(&current_tag, &current_value, &mut comments);
+                    // Parse new tag
+                    let (tag, value) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+                    current_tag = Some(tag.to_string());
+                    current_value = value.trim().to_string();
+                } else if !trimmed.is_empty() {
+                    // Continuation of current tag
+                    if current_value.is_empty() {
+                        current_value = trimmed.to_string();
+                    } else {
+                        current_value.push('\n');
+                        current_value.push_str(trimmed);
+                    }
+                }
+            }
+        }
+
+        // Flush last
+        flush(&current_tag, &current_value, &mut comments);
+
+        Self(comments)
     }
 }
 
