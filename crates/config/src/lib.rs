@@ -2868,13 +2868,23 @@ impl BasicConfig {
         if let Some(ref network) = self.network
             && let toml::Value::Table(ref mut table) = value
         {
-            table.insert(network.clone(), toml::Value::Boolean(true));
+            table.insert("network".to_string(), toml::Value::String(network.clone()));
         }
         let s = toml::to_string_pretty(&value)?;
+
+        let rpc_endpoints = if self.network.as_deref() == Some("tempo") {
+            "\n\
+[rpc_endpoints]\n\
+tempo = \"https://rpc.tempo.xyz/\"\n\
+moderato = \"https://rpc.moderato.tempo.xyz/\"\n"
+        } else {
+            ""
+        };
+
         Ok(format!(
             "\
 [profile.{}]
-{s}
+{s}{rpc_endpoints}
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n",
             self.profile
         ))
