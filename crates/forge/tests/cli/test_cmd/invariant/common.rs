@@ -2664,17 +2664,15 @@ contract InvariantWarp is Test {
 
 "#]]);
 
-    cmd.forge_fuse().args(["test", "--mt", "invariant_warp"]).assert_failure().stdout_eq(str![[
-        r#"
+    cmd.forge_fuse().args(["test", "--mt", "invariant_warp"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: max time]
 	[Sequence] (original: 3, shrunk: 1)
 		vm.warp(block.timestamp + 656868);
-		vm.prank(0x00000000000000000000000000000000000012d2);
+		vm.prank(0x00000000000000000000000000000000000012d1);
 		Warp(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
  invariant_warp() (runs: 0, calls: 0, reverts: 2)
 ...
 
-"#
-    ]]);
+"#]]);
 });
