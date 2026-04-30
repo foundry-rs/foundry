@@ -29,6 +29,9 @@ const SETTINGS_OVERRIDES_KEYS: &[&str] =
 /// causing the default serialization to produce an empty dict.
 const VYPER_KEYS: &[&str] = &["optimize", "path", "experimental_codegen"];
 
+/// Allowed keys for nested experimental config.
+const EXPERIMENTAL_KEYS: &[&str] = &["via_ssa_cfg"];
+
 /// Allowed keys for DocConfig.
 /// Required because DocConfig uses `skip_serializing_if = "Option::is_none"` on some fields
 /// (`repository`, `path`), whose defaults are `None` and thus excluded from serialization.
@@ -269,6 +272,8 @@ impl<P: Provider> WarningsProvider<P> {
             // so the default serialization produces an empty dict. Use explicit keys instead.
             let allowed_keys: BTreeSet<String> = if key == "vyper" {
                 VYPER_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if key == "experimental" {
+                EXPERIMENTAL_KEYS.iter().map(|s| s.to_string()).collect()
             } else if key == "doc" {
                 DOC_KEYS.iter().map(|s| s.to_string()).collect()
             } else {

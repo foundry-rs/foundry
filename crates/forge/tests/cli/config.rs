@@ -7,8 +7,8 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{
-    CompilationRestrictions, Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, InvariantConfig,
-    SettingsOverrides, SolcReq,
+    CompilationRestrictions, Config, ExperimentalConfig, FsPermissions, FuzzConfig,
+    FuzzCorpusConfig, InvariantConfig, SettingsOverrides, SolcReq,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -342,6 +342,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         deny: foundry_config::DenyLevel::Never,
         deny_warnings: false,
         via_ir: true,
+        experimental: ExperimentalConfig { via_ssa_cfg: Some(true) },
         ast: false,
         rpc_storage_caching: StorageCachingConfig {
             chains: CachedChains::None,

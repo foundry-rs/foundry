@@ -113,6 +113,9 @@ pub use invariant::InvariantConfig;
 mod inline;
 pub use inline::{InlineConfig, InlineConfigError, NatSpec};
 
+mod experimental;
+pub use experimental::ExperimentalConfig;
+
 pub mod soldeer;
 use soldeer::{SoldeerConfig, SoldeerDependencyConfig};
 
@@ -446,6 +449,9 @@ pub struct Config {
     /// If set to true, changes compilation pipeline to go through the Yul intermediate
     /// representation.
     pub via_ir: bool,
+    /// Experimental Solidity compiler configuration.
+    #[serde(default, skip_serializing_if = "ExperimentalConfig::is_empty")]
+    pub experimental: ExperimentalConfig,
     /// Whether to include the AST as JSON in the compiler output.
     pub ast: bool,
     /// RPC storage caching settings determines what chains and endpoints to cache
@@ -1772,8 +1778,10 @@ impl Config {
             settings = settings.with_ast();
         }
 
-        let cli_settings =
-            CliSettings { extra_args: self.extra_args.clone(), ..Default::default() };
+        let mut extra_args = self.extra_args.clone();
+        self.experimental.extend_solc_cli_args(&mut extra_args);
+
+        let cli_settings = CliSettings { extra_args, ..Default::default() };
 
         Ok(SolcSettings { settings, cli_settings })
     }
@@ -2614,6 +2622,7 @@ impl Default for Config {
             deny: DenyLevel::Never,
             deny_warnings: false,
             via_ir: false,
+            experimental: Default::default(),
             ast: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
@@ -5243,6 +5252,36 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_parse_experimental() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default.experimental]
+                via_ssa_cfg = true
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(config.experimental, ExperimentalConfig { via_ssa_cfg: Some(true) });
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_experimental_via_ssa_cfg_extends_solc_extra_args() {
+        let config = Config {
+            extra_args: vec!["--experimental".to_string()],
+            experimental: ExperimentalConfig { via_ssa_cfg: Some(true) },
+            ..Config::default()
+        };
+
+        let settings = config.solc_settings().unwrap();
+        assert_eq!(settings.cli_settings.extra_args, vec!["--experimental", "--via-ssa-cfg"]);
     }
 
     #[test]
