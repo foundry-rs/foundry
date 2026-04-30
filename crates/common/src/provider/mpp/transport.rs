@@ -4,6 +4,7 @@
 //! handling via the MPP protocol. When the RPC endpoint returns a 402 response,
 //! this transport automatically pays the challenge and retries the request.
 
+use alloy_chains::Chain;
 use alloy_json_rpc::{RequestPacket, ResponsePacket};
 use alloy_transport::{TransportError, TransportErrorKind, TransportFut, TransportResult};
 use mpp::{
@@ -51,7 +52,7 @@ fn default_deposit() -> u128 {
 pub(crate) struct FundingContext {
     wallet_address: Option<alloy_primitives::Address>,
     token: Option<String>,
-    chain_id: Option<u64>,
+    chain_id: Option<Chain>,
 }
 
 impl FundingContext {
@@ -62,13 +63,8 @@ impl FundingContext {
             .unwrap_or_default()
     }
 
-    const fn network(&self) -> Option<&'static str> {
-        match self.chain_id {
-            // Tempo mainnet/testnet naming as understood by the Tempo wallet CLI.
-            Some(4217) => Some("tempo"),
-            Some(42431) => Some("moderato"),
-            _ => None,
-        }
+    fn network(&self) -> Option<String> {
+        self.chain_id.filter(|chain| chain.is_tempo()).map(|chain| chain.to_string())
     }
 }
 
@@ -115,18 +111,17 @@ fn tempo_wallet_fund_help(ctx: &FundingContext) -> String {
 /// Policy (library-safe):
 /// - never run inside CI
 /// - never run unless both stdin and stderr are real terminals
-/// - `FOUNDRY_MPP_AUTO_FUND` is honored only as an *opt-out* (`0`/`false`/`off`); it must not
-///   bypass CI/TTY guards in shared transport code that may be embedded inside long-running RPC
-///   daemons.
+/// - `FOUNDRY_MPP_NO_AUTO_FUND` is honored as an opt-out; it must not bypass CI/TTY guards in
+///   shared transport code that may be embedded inside long-running RPC daemons.
 fn interactive_tempo_fund_allowed(
-    auto_fund: Option<&str>,
+    no_auto_fund: Option<&str>,
     in_ci: bool,
     stdin_is_terminal: bool,
     stderr_is_terminal: bool,
 ) -> bool {
-    if let Some(v) = auto_fund
-        && (v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off"))
-    {
+    if no_auto_fund.is_some_and(|v| {
+        !(v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off"))
+    }) {
         return false;
     }
 
@@ -143,7 +138,7 @@ fn can_run_interactive_tempo_fund() -> bool {
     }
 
     interactive_tempo_fund_allowed(
-        std::env::var("FOUNDRY_MPP_AUTO_FUND").ok().as_deref(),
+        std::env::var("FOUNDRY_MPP_NO_AUTO_FUND").ok().as_deref(),
         std::env::var_os("CI").is_some(),
         std::io::stdin().is_terminal(),
         std::io::stderr().is_terminal(),
@@ -167,7 +162,7 @@ async fn run_interactive_tempo_fund(ctx: &FundingContext) -> TransportResult<boo
     }
     if let Some(network) = ctx.network() {
         args.push("--network".to_string());
-        args.push(network.to_string());
+        args.push(network);
     }
 
     tracing::warn!(
@@ -594,12 +589,10 @@ where
                 }
             }
 
-            // Retry with key_authorization only on *explicit* key-provisioning
-            // signals. We deliberately do NOT trigger this on generic
-            // `verification-failed` errors, because those have many non-key
-            // causes (bad signature, replay, expired challenge, clock skew,
-            // ...). Misclassifying them would poison `key_provisioned=false`
-            // state and force fruitless re-provisioning attempts.
+            // Retry with key_authorization when the error explicitly indicates
+            // the access key is not provisioned on-chain, or when verification
+            // failed and the key appears provisioned (first-time provisioning
+            // where key_auth was stripped but not yet provisioned on-chain).
             //
             // We fetch a fresh challenge because the server may have consumed
             // the original challenge ID on first use.
@@ -607,10 +600,14 @@ where
                 || detail.contains("access key does not exist")
                 || detail.contains("key is not provisioned");
 
-            if needs_key_provisioning {
+            let needs_verification_retry = (problem_type.ends_with("/verification-failed")
+                || detail.contains("verification-failed"))
+                && self.provider.is_key_provisioned();
+
+            if needs_key_provisioning || needs_verification_retry {
                 debug!(
                     problem_type,
-                    "MPP 402 key not provisioned, retrying with key_authorization"
+                    "MPP 402 key not provisioned/verification-failed, retrying with key_authorization"
                 );
                 self.provider.set_key_provisioned(false);
                 self.provider.rollback_pending();
@@ -927,7 +924,6 @@ pub(crate) trait ResolveProvider {
     }
     fn resolve_for(&self, opts: DiscoverOptions) -> TransportResult<Self::Provider>;
     fn set_key_provisioned(&self, _provisioned: bool) {}
-    #[allow(dead_code)]
     fn is_key_provisioned(&self) -> bool {
         true
     }
@@ -946,7 +942,7 @@ pub(crate) trait ResolveProvider {
         FundingContext {
             wallet_address: self.funding_wallet_address(),
             token,
-            chain_id: challenge_chain_id.or_else(|| self.funding_chain_id()),
+            chain_id: challenge_chain_id.or_else(|| self.funding_chain_id()).map(Chain::from_id),
         }
     }
     /// Acquire the payment serialization lock. The returned guard must be held
@@ -1439,15 +1435,15 @@ mod tests {
         let ctx = FundingContext {
             wallet_address: Some("0x000000000000000000000000000000000000dEaD".parse().unwrap()),
             token: Some("0x20c0".to_string()),
-            chain_id: Some(42431),
+            chain_id: Some(Chain::from_id(42431)),
         };
         let help = tempo_wallet_fund_help(&ctx);
         assert!(help.contains("--address 0x"), "missing --address: {help}");
-        assert!(help.contains("--network moderato"), "missing --network: {help}");
+        assert!(help.contains("--network tempo-moderato"), "missing --network: {help}");
         assert!(help.contains("--no-browser"), "missing --no-browser: {help}");
         assert!(help.contains("Requested payment token: 0x20c0"), "missing token: {help}");
 
-        let mainnet = FundingContext { chain_id: Some(4217), ..ctx };
+        let mainnet = FundingContext { chain_id: Some(Chain::from_id(4217)), ..ctx };
         let help2 = tempo_wallet_fund_help(&mainnet);
         assert!(help2.contains("--network tempo"), "missing tempo network: {help2}");
     }
@@ -1456,12 +1452,12 @@ mod tests {
     fn auto_fund_policy_blocks_in_ci_and_non_tty() {
         assert!(!interactive_tempo_fund_allowed(Some("1"), true, true, true), "must not run in CI");
         assert!(
-            !interactive_tempo_fund_allowed(Some("0"), false, true, true),
-            "FOUNDRY_MPP_AUTO_FUND=0 must disable"
+            interactive_tempo_fund_allowed(Some("0"), false, true, true),
+            "FOUNDRY_MPP_NO_AUTO_FUND=0 must not disable"
         );
         assert!(
-            !interactive_tempo_fund_allowed(Some("false"), false, true, true),
-            "FOUNDRY_MPP_AUTO_FUND=false must disable"
+            interactive_tempo_fund_allowed(Some("false"), false, true, true),
+            "FOUNDRY_MPP_NO_AUTO_FUND=false must not disable"
         );
         assert!(
             !interactive_tempo_fund_allowed(None, false, false, true),
@@ -1471,7 +1467,9 @@ mod tests {
             !interactive_tempo_fund_allowed(None, false, true, false),
             "stderr must be a terminal"
         );
-        assert!(interactive_tempo_fund_allowed(Some("1"), false, true, true));
+        assert!(!interactive_tempo_fund_allowed(Some("1"), false, true, true));
+        assert!(!interactive_tempo_fund_allowed(Some("true"), false, true, true));
+        assert!(interactive_tempo_fund_allowed(None, false, true, true));
     }
 
     #[tokio::test]
