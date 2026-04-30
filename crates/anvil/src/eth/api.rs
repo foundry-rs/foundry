@@ -1363,29 +1363,6 @@ impl EthApi<FoundryNetwork> {
         state: &dyn DatabaseRef,
         block_env: BlockEnv,
     ) -> Result<u128> {
-        // If the request is a simple native token transfer we can optimize
-        // We assume it's a transfer if we have no input data.
-        // Skip this optimization for Tempo mode since native ETH transfers are not allowed
-        // and Tempo AA transactions have higher intrinsic gas costs (~46k).
-        if !self.backend.is_tempo() {
-            let to = request.to.as_ref().and_then(TxKind::to);
-
-            // check certain fields to see if the request could be a simple transfer
-            let maybe_transfer = (request.input.input().is_none()
-                || request.input.input().is_some_and(|data| data.is_empty()))
-                && request.authorization_list.is_none()
-                && request.access_list.is_none()
-                && request.blob_versioned_hashes.is_none();
-
-            if maybe_transfer
-                && let Some(to) = to
-                && let Ok(target_code) = self.backend.get_code_with_state(&state, *to)
-                && target_code.as_ref().is_empty()
-            {
-                return Ok(MIN_TRANSACTION_GAS);
-            }
-        }
-
         let fees = FeeDetails::new(
             request.gas_price,
             request.max_fee_per_gas,
@@ -1402,23 +1379,47 @@ impl EthApi<FoundryNetwork> {
         let is_tempo_tx = request.other.get("feeToken").is_some_and(|v| !v.is_null());
 
         let gas_price = fees.gas_price.unwrap_or_default();
-        // If we have non-zero gas price, cap gas limit by sender balance.
-        // Skip this check for Tempo transactions which pay with fee tokens, not ETH.
-        if gas_price > 0
-            && !is_tempo_tx
-            && let Some(from) = request.from
-        {
+        // Check transfer value before any fast path, and cap gas limit by sender balance when the
+        // request has a non-zero gas price.
+        if !is_tempo_tx && let Some(from) = request.from {
             let mut available_funds = self.backend.get_balance_with_state(state, from)?;
             if let Some(value) = request.value {
                 if value > available_funds {
                     return Err(InvalidTransactionError::InsufficientFunds.into());
                 }
-                // safe: value < available_funds
+                // safe: value <= available_funds
                 available_funds -= value;
             }
-            // amount of gas the sender can afford with the `gas_price`
-            let allowance = available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
-            highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
+            if gas_price > 0 {
+                // amount of gas the sender can afford with the `gas_price`
+                let allowance =
+                    available_funds.checked_div(U256::from(gas_price)).unwrap_or_default();
+                highest_gas_limit = std::cmp::min(highest_gas_limit, allowance.saturating_to());
+            }
+        }
+
+        // If the request is a simple native token transfer we can optimize
+        // We assume it's a transfer if we have no input data.
+        // Skip this optimization for Tempo mode since native ETH transfers are not allowed
+        // and Tempo AA transactions have higher intrinsic gas costs (~46k).
+        if !self.backend.is_tempo() {
+            let to = request.to.as_ref().and_then(TxKind::to);
+
+            // check certain fields to see if the request could be a simple transfer
+            let maybe_transfer = (request.input.input().is_none()
+                || request.input.input().is_some_and(|data| data.is_empty()))
+                && request.authorization_list.is_none()
+                && request.access_list.is_none()
+                && request.blob_versioned_hashes.is_none();
+
+            if maybe_transfer
+                && highest_gas_limit >= MIN_TRANSACTION_GAS
+                && let Some(to) = to
+                && let Ok(target_code) = self.backend.get_code_with_state(&state, *to)
+                && target_code.as_ref().is_empty()
+            {
+                return Ok(MIN_TRANSACTION_GAS);
+            }
         }
 
         let mut call_to_estimate = request.clone();

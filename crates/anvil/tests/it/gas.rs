@@ -259,3 +259,16 @@ async fn test_estimate_gas_empty_data() {
     assert!(gas_with_data > U256::from(GAS_TRANSFER));
     assert_eq!(gas_without_data, gas_with_empty_data);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_estimate_gas_simple_transfer_checks_funds() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let to = handle.dev_accounts().next().unwrap();
+    let from = Address::random();
+
+    let tx = TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+    let err =
+        api.estimate_gas(WithOtherFields::new(tx), None, Default::default()).await.unwrap_err();
+
+    assert!(err.to_string().contains("Insufficient funds for gas * price + value"));
+}
