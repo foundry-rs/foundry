@@ -59,6 +59,14 @@ jobs:
           cargo build --profile dev --locked -p forge -p cast -p anvil -p chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
+      - name: Check Tempo fork schedule compatibility
+        env:
+          TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+          TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+          TEMPO_DEVNET_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+        run: |
+          cargo test --locked -p foundry-common --lib tempo::tests::test_fork_schedule_parses_configured_rpcs -- --exact --nocapture
+
       # TODO: re-enable once devnet is up and stable
       # - name: Run Tempo check on devnet
       #   if: |
