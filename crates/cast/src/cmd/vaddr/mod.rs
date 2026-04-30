@@ -5,7 +5,6 @@ use foundry_cli::opts::RpcOpts;
 
 mod create;
 mod resolve;
-mod sweep;
 mod watch;
 
 /// TIP-1022 virtual address registry operations (Tempo).
@@ -91,28 +90,6 @@ pub enum VaddrSubcommand {
         #[command(flatten)]
         rpc: RpcOpts,
     },
-
-    /// Force-forward TIP-20 tokens from a virtual address to its registered master.
-    ///
-    /// Useful when tokens arrived at a virtual address outside the normal TIP-20 transfer
-    /// path (e.g., before T3 hardfork activation). Calls transferFrom(virtualAddr, master,
-    /// balance) signed by the master.
-    #[command(visible_alias = "s")]
-    Sweep {
-        /// The virtual address holding the tokens.
-        #[arg(value_name = "ADDRESS")]
-        addr: Address,
-
-        /// The TIP-20 token to sweep.
-        #[arg(long, value_name = "ADDRESS")]
-        token: Address,
-
-        #[command(flatten)]
-        send_tx: SendTxOpts,
-
-        #[command(flatten)]
-        tx: TxParams,
-    },
 }
 
 impl VaddrSubcommand {
@@ -147,9 +124,6 @@ impl VaddrSubcommand {
             Self::Resolve { addr, rpc } => resolve::run(addr, rpc).await?,
             Self::Watch { addr, token, from_block, rpc } => {
                 watch::run(addr, token, from_block, rpc).await?
-            }
-            Self::Sweep { addr, token, send_tx, tx } => {
-                sweep::run(addr, token, send_tx, tx).await?
             }
         }
         Ok(())
