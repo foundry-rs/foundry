@@ -21,6 +21,7 @@ use solar::{
     interface::{
         Session,
         diagnostics::{self, HumanEmitter, JsonEmitter},
+        source_map::SourceFile,
     },
     sema::{
         Compiler, Gcx,
@@ -29,7 +30,7 @@ use solar::{
 };
 use std::{
     path::{Path, PathBuf},
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
 };
 use thiserror::Error;
 
@@ -130,6 +131,7 @@ impl<'a> SolidityLinter<'a> {
         ast: &'gcx ast::SourceUnit<'gcx>,
         path: &Path,
         inline_config: &InlineConfig<Vec<String>>,
+        source_file: Option<Arc<SourceFile>>,
     ) -> Result<(), diagnostics::ErrorGuaranteed> {
         // Declare all available passes and lints
         let mut passes_and_lints = Vec::new();
@@ -168,6 +170,7 @@ impl<'a> SolidityLinter<'a> {
             self.with_json_emitter,
             self.config(inline_config),
             lints,
+            source_file,
         );
         let mut early_visitor = EarlyLintVisitor::new(&ctx, &mut passes);
         _ = early_visitor.visit_source_unit(ast);
@@ -182,6 +185,7 @@ impl<'a> SolidityLinter<'a> {
         source_id: hir::SourceId,
         path: &Path,
         inline_config: &InlineConfig<Vec<String>>,
+        source_file: Option<Arc<SourceFile>>,
     ) -> Result<(), diagnostics::ErrorGuaranteed> {
         // Declare all available passes and lints
         let mut passes_and_lints = Vec::new();
@@ -220,6 +224,7 @@ impl<'a> SolidityLinter<'a> {
             self.with_json_emitter,
             self.config(inline_config),
             lints,
+            source_file,
         );
         let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
 
@@ -288,13 +293,25 @@ impl<'a> Linter for SolidityLinter<'a> {
                 let inline_config = parse_inline_config(gcx.sess, &comments, ast);
 
                 // Early lints.
-                let _ = self.process_source_ast(gcx.sess, ast, path, &inline_config);
+                let _ = self.process_source_ast(
+                    gcx.sess,
+                    ast,
+                    path,
+                    &inline_config,
+                    Some(file.clone()),
+                );
 
                 // Late lints.
                 let Some((hir_source_id, _)) = gcx.get_hir_source(path) else {
                     panic!("HIR source not found for {}", path.display());
                 };
-                let _ = self.process_source_hir(gcx, hir_source_id, path, &inline_config);
+                let _ = self.process_source_hir(
+                    gcx,
+                    hir_source_id,
+                    path,
+                    &inline_config,
+                    Some(file.clone()),
+                );
             });
 
             convert_solar_errors(compiler.dcx())

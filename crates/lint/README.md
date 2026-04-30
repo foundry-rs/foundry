@@ -11,6 +11,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `incorrect-shift`: Warns against shift operations where operands might be in the wrong order.
   - `unchecked-call`: Low-level calls should check the success return value.
   - `erc20-unchecked-transfer`: ERC20 `transfer` and `transferFrom` calls should check the return value.
+  - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
 - **Medium Severity:**
   - `boolean-cst`: Flags misuse of boolean constants.
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
