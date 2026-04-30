@@ -16,11 +16,8 @@ use alloy_signer::Signer;
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
-    opts::{
-        EthereumOpts, TransactionOpts,
-        tempo_lanes::{maybe_print_resolved_lane, resolve_lane},
-    },
-    utils::{self, LoadConfig},
+    opts::{EthereumOpts, TransactionOpts},
+    utils::{self, LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use tempo_alloy::TempoNetwork;

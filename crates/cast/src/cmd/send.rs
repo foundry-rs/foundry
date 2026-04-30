@@ -9,11 +9,8 @@ use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
-    opts::{
-        TransactionOpts,
-        tempo_lanes::{maybe_print_resolved_lane, resolve_lane},
-    },
-    utils::LoadConfig,
+    opts::TransactionOpts,
+    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder,

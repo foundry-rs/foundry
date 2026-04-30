@@ -11,11 +11,8 @@ use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    opts::{
-        EthereumOpts, TransactionOpts,
-        tempo_lanes::{maybe_print_resolved_lane, resolve_lane},
-    },
-    utils::LoadConfig,
+    opts::{EthereumOpts, TransactionOpts},
+    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use std::{path::PathBuf, str::FromStr};

@@ -33,7 +33,7 @@ use crate::{
     tx::{CastTxBuilder, SendTxOpts},
 };
 use alloy_network::TransactionBuilder;
-use foundry_cli::opts::tempo_lanes::{maybe_print_resolved_lane, resolve_lane};
+use foundry_cli::utils::{maybe_print_resolved_lane, resolve_lane};
 
 /// Tempo keychain management commands.
 ///
