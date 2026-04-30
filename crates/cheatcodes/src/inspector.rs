@@ -1975,19 +1975,24 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
 impl<FEN: FoundryEvmNetwork> InspectorExt for Cheatcodes<FEN> {
     fn should_use_create2_factory(&mut self, depth: usize, inputs: &CreateInputs) -> bool {
-        if let CreateScheme::Create2 { .. } = inputs.scheme() {
-            let target_depth = if let Some(prank) = &self.get_prank(depth) {
-                prank.depth
-            } else if let Some(broadcast) = &self.broadcast {
-                broadcast.depth
-            } else {
-                1
-            };
-
-            depth == target_depth
-                && (self.broadcast.is_some() || self.config.always_use_create_2_factory)
+        let target_depth = if let Some(prank) = &self.get_prank(depth) {
+            prank.depth
+        } else if let Some(broadcast) = &self.broadcast {
+            broadcast.depth
         } else {
-            false
+            1
+        };
+
+        if depth != target_depth {
+            return false;
+        }
+
+        match inputs.scheme() {
+            CreateScheme::Create2 { .. } => {
+                self.broadcast.is_some() || self.config.always_use_create_2_factory
+            }
+            CreateScheme::Create => self.config.batch_rewrite_creates && self.broadcast.is_some(),
+            _ => false,
         }
     }
 

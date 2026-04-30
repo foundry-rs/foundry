@@ -727,8 +727,15 @@ impl BundledState<TempoEvmNetwork> {
             }
         };
 
-        // Collect all transactions into Call structs
-        // Tempo batch transactions support CREATE only as the first call
+        // CREATE2 deployer must exist on-chain for the rewritten CREATEs.
+        let create2_deployer = self.script_config.evm_opts.create2_deployer;
+        if provider.get_code_at(create2_deployer).await?.is_empty() {
+            bail!(
+                "CREATE2 deployer {create2_deployer:#x} is not deployed on this Tempo network; \
+                 --batch requires it. Deploy it first and retry."
+            );
+        }
+
         let mut calls: Vec<Call> = Vec::new();
         let mut has_create = false;
         for (idx, tx) in sequence.transactions().enumerate() {
@@ -862,26 +869,29 @@ impl BundledState<TempoEvmNetwork> {
             bail!("Batch transaction failed (reverted)");
         }
 
-        // For CREATE transactions, compute the deployed contract address
-        let created_address = if has_create {
-            let deployed_addr = sender.create(nonce);
-            sh_println!("Contract deployed at: {:#x}", deployed_addr)?;
-            Some(deployed_addr)
-        } else {
-            None
-        };
+        // Use simulation's contract_address; fall back to sender.create(nonce) for legacy path.
+        let per_tx_addresses: Vec<Option<Address>> = sequence
+            .transactions
+            .iter()
+            .enumerate()
+            .map(|(idx, tx)| {
+                if idx == 0 && has_create && tx.contract_address.is_none() {
+                    Some(sender.create(nonce))
+                } else {
+                    tx.contract_address
+                }
+            })
+            .collect();
 
-        // Add receipt to sequence for each original transaction.
-        // In batch mode, all calls share the same receipt. Set contract_address
-        // only for index 0 if CREATE, clear for the rest to prevent the verifier
-        // from attempting to verify the same address multiple times.
-        for idx in 0..calls.len() {
-            let mut tx_receipt = receipt.clone();
-            if idx == 0 && has_create {
-                tx_receipt.contract_address = created_address;
-            } else {
-                tx_receipt.contract_address = None;
+        for (idx, addr) in per_tx_addresses.iter().enumerate() {
+            if let Some(addr) = addr {
+                sh_println!("  call[{idx}] contract address: {addr:#x}")?;
             }
+        }
+
+        for addr in &per_tx_addresses {
+            let mut tx_receipt = receipt.clone();
+            tx_receipt.contract_address = *addr;
             sequence.receipts.push(tx_receipt);
         }
 

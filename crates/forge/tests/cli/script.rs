@@ -3571,6 +3571,119 @@ contract ArbScript is Script {
     }
 );
 
+forgetest_async!(script_batch_rejects_non_tempo_network, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let script = prj.add_source(
+        "BatchOnly",
+        r#"
+import "forge-std/Script.sol";
+contract BatchOnly is Script {
+    function run() external {
+        vm.startBroadcast();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+
+    cmd.arg("script")
+        .arg(script)
+        .args([
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--broadcast",
+            "--batch",
+        ])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Error: --batch mode is only supported on Tempo networks
+
+"#]]);
+});
+
+// Dry-run against Tempo Moderato testnet to verify CREATE→CREATE2 rewriting.
+forgetest_async!(
+    #[ignore]
+    script_batch_rewrites_creates_to_create2,
+    |prj, cmd| {
+        foundry_test_utils::util::initialize(prj.root());
+
+        let script = prj.add_source(
+            "MultiDeploy",
+            r#"
+import "forge-std/Script.sol";
+
+contract A { function ping() external pure returns (uint256) { return 1; } }
+contract B { address public a; constructor(address _a) { a = _a; } }
+contract C { bytes32 public tag; constructor(bytes32 _t) { tag = _t; } }
+
+contract MultiDeploy is Script {
+    function run() external {
+        vm.startBroadcast();
+        A a = new A();
+        new B(address(a));
+        new C(bytes32(uint256(0x1234)));
+        vm.stopBroadcast();
+    }
+}
+"#,
+        );
+
+        cmd.arg("script").arg(script).args([
+            "--tc",
+            "MultiDeploy",
+            "--rpc-url",
+            "https://rpc.moderato.tempo.xyz",
+            "--batch",
+            "--network",
+            "tempo",
+        ]);
+        cmd.assert_success();
+
+        let sequence_path = prj
+            .root()
+            .join("broadcast")
+            .join("MultiDeploy.sol")
+            .join("42431")
+            .join("dry-run")
+            .join("run-latest.json");
+
+        let raw = fs::read_to_string(&sequence_path).unwrap_or_else(|e| {
+            let broadcast_dir = prj.root().join("broadcast");
+            let listing = fs::read_dir(&broadcast_dir)
+                .map(|d| {
+                    d.flatten()
+                        .map(|e| e.path().display().to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n  ")
+                })
+                .unwrap_or_else(|_| "<no broadcast dir>".to_string());
+            panic!(
+                "couldn't read sequence at {}: {e}\nbroadcast/ entries:\n  {listing}",
+                sequence_path.display()
+            );
+        });
+        let json: Value = serde_json::from_str(&raw).unwrap();
+        let txs = json["transactions"].as_array().unwrap();
+        assert_eq!(txs.len(), 3, "three CREATE attempts in script");
+
+        let create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
+        for tx in txs {
+            assert_eq!(tx["transactionType"], "CREATE2", "plain CREATE was rewritten");
+            assert_eq!(tx["transaction"]["to"].as_str().unwrap().to_lowercase(), create2_deployer);
+        }
+
+        let addrs: std::collections::HashSet<_> =
+            txs.iter().map(|t| t["contractAddress"].as_str().unwrap().to_owned()).collect();
+        assert_eq!(addrs.len(), 3);
+    }
+);
+
 // Tests that `forge script` works in Tempo mode without CreateCollision.
 // Tempo genesis pre-deploys the Arachnid CREATE2 factory at the same address as the default
 // CREATE2 deployer, so `deploy_create2_deployer` must be skipped to avoid a collision.

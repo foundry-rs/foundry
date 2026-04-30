@@ -391,6 +391,8 @@ pub struct InspectorStackInner {
     /// Pending CREATE2 deployer validation error, deferred from `frame_start` to `create` so
     /// it goes through the normal inspector lifecycle (tracing, etc.).
     pub pending_create2_error: Option<CreateOutcome>,
+    /// Counter for CREATE2 salt in `--batch` CREATE rewrites.
+    pub batch_create_counter: u64,
 }
 
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
@@ -1051,8 +1053,18 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         frame_input: &mut FrameInput,
     ) -> Option<FrameResult> {
         if let FrameInput::Create(inputs) = frame_input
-            && let CreateScheme::Create2 { salt } = inputs.scheme()
             && self.should_use_create2_factory(ecx.journal().depth(), inputs)
+            && let Some(salt) = match inputs.scheme() {
+                CreateScheme::Create2 { salt } => Some(salt),
+                // --batch: nonce makes re-runs unique, counter makes each deploy unique.
+                CreateScheme::Create => {
+                    let counter = self.inner.batch_create_counter;
+                    self.inner.batch_create_counter = counter.wrapping_add(1);
+                    let nonce = ecx.journal_mut().load_account(inputs.caller()).ok()?.info.nonce;
+                    Some(U256::from(nonce) << 64 | U256::from(counter))
+                }
+                _ => None,
+            }
         {
             let gas_limit = inputs.gas_limit();
             let create2_deployer = self.create2_deployer();

@@ -803,6 +803,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                             Some(known_contracts),
                             Some(target),
                             self.fee_token,
+                            self.batch,
                         )
                         .into(),
                     )
