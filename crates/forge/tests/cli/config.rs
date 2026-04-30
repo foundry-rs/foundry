@@ -29,6 +29,28 @@ use std::{
     thread,
 };
 
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => unsafe { std::env::set_var(self.key, value) },
+            None => unsafe { std::env::remove_var(self.key) },
+        }
+    }
+}
+
 const DEFAULT_CONFIG: &str = r#"[profile.default]
 src = "src"
 test = "test"
@@ -567,15 +589,10 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
     assert_eq!(config.eth_rpc_url, Some(url.to_string()));
     assert!(config.ffi);
 
-    unsafe {
-        std::env::set_var("FOUNDRY_ETH_RPC_URL", url);
-    }
+    let _rpc_url = EnvGuard::set("FOUNDRY_ETH_RPC_URL", url);
     let figment = Config::figment_with_root(prj.root()).merge(("debug", false));
     let evm_opts: EvmOpts = figment.extract().unwrap();
     assert_eq!(evm_opts.fork_url, Some(url.to_string()));
-    unsafe {
-        std::env::remove_var("FOUNDRY_ETH_RPC_URL");
-    }
 });
 
 // checks that we can set various config values

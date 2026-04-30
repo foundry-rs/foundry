@@ -827,6 +827,28 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
     #[test]
     fn can_parse_sig() {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
@@ -975,9 +997,7 @@ mod tests {
 
         assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
 
-        unsafe {
-            std::env::set_var("_CAN_EXTRACT_RPC_ALIAS", "123456");
-        }
+        let _rpc_alias = EnvGuard::set("_CAN_EXTRACT_RPC_ALIAS", "123456");
         let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
         assert_eq!(config.eth_rpc_url, Some("polygonAmoy".to_string()));
         assert_eq!(
@@ -1017,12 +1037,8 @@ mod tests {
 
         assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
 
-        unsafe {
-            std::env::set_var("_EXTRACT_RPC_ALIAS", "123456");
-        }
-        unsafe {
-            std::env::set_var("_ETHERSCAN_API_KEY", "etherscan_api_key");
-        }
+        let _rpc_alias = EnvGuard::set("_EXTRACT_RPC_ALIAS", "123456");
+        let _etherscan_key = EnvGuard::set("_ETHERSCAN_API_KEY", "etherscan_api_key");
         let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
         assert_eq!(config.eth_rpc_url, Some("amoy".to_string()));
         assert_eq!(
@@ -1064,12 +1080,8 @@ mod tests {
 
         assert!(err.downcast::<UnresolvedEnvVarError>().is_ok());
 
-        unsafe {
-            std::env::set_var("_SOLE_EXTRACT_RPC_ALIAS", "123456");
-        }
-        unsafe {
-            std::env::set_var("_SOLE_ETHERSCAN_API_KEY", "etherscan_api_key");
-        }
+        let _rpc_alias = EnvGuard::set("_SOLE_EXTRACT_RPC_ALIAS", "123456");
+        let _etherscan_key = EnvGuard::set("_SOLE_ETHERSCAN_API_KEY", "etherscan_api_key");
         let (config, evm_opts) = args.load_config_and_evm_opts().unwrap();
         assert_eq!(
             evm_opts.fork_url,

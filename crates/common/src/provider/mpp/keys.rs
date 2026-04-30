@@ -133,6 +133,34 @@ mod tests {
         (dir, keys_path)
     }
 
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::remove_var(key) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
     #[test]
     fn discover_from_tempo_home_keys_toml() {
         let key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -147,15 +175,11 @@ chain_id = 4217
         );
         let (dir, _) = setup_keys_toml(&toml_content);
 
-        unsafe {
-            std::env::set_var("TEMPO_HOME", dir.path());
-            std::env::remove_var("TEMPO_PRIVATE_KEY");
-        }
+        let _tempo_home = EnvGuard::set("TEMPO_HOME", dir.path());
+        let _tempo_private_key = EnvGuard::remove("TEMPO_PRIVATE_KEY");
 
         let discovered = discover_mpp_key();
         assert_eq!(discovered.as_deref(), Some(key));
-
-        unsafe { std::env::remove_var("TEMPO_HOME") };
     }
 
     #[test]
@@ -171,33 +195,22 @@ key = "{file_key}"
         );
         let (dir, _) = setup_keys_toml(&toml_content);
 
-        unsafe {
-            std::env::set_var("TEMPO_HOME", dir.path());
-            std::env::set_var("TEMPO_PRIVATE_KEY", env_key);
-        }
+        let _tempo_home = EnvGuard::set("TEMPO_HOME", dir.path());
+        let _tempo_private_key = EnvGuard::set("TEMPO_PRIVATE_KEY", env_key);
 
         let discovered = discover_mpp_key();
         assert_eq!(discovered.as_deref(), Some(env_key));
-
-        unsafe {
-            std::env::remove_var("TEMPO_HOME");
-            std::env::remove_var("TEMPO_PRIVATE_KEY");
-        }
     }
 
     #[test]
     fn discover_returns_none_when_no_keys() {
         let (dir, _) = setup_keys_toml("");
 
-        unsafe {
-            std::env::set_var("TEMPO_HOME", dir.path());
-            std::env::remove_var("TEMPO_PRIVATE_KEY");
-        }
+        let _tempo_home = EnvGuard::set("TEMPO_HOME", dir.path());
+        let _tempo_private_key = EnvGuard::remove("TEMPO_PRIVATE_KEY");
 
         let discovered = discover_mpp_key();
         assert!(discovered.is_none());
-
-        unsafe { std::env::remove_var("TEMPO_HOME") };
     }
 
     #[test]
@@ -217,15 +230,11 @@ chain_id = 4217
         );
         let (dir, _) = setup_keys_toml(&toml_content);
 
-        unsafe {
-            std::env::set_var("TEMPO_HOME", dir.path());
-            std::env::remove_var("TEMPO_PRIVATE_KEY");
-        }
+        let _tempo_home = EnvGuard::set("TEMPO_HOME", dir.path());
+        let _tempo_private_key = EnvGuard::remove("TEMPO_PRIVATE_KEY");
 
         let discovered = discover_mpp_key();
         assert_eq!(discovered.as_deref(), Some(key));
-
-        unsafe { std::env::remove_var("TEMPO_HOME") };
     }
 
     #[test]
@@ -362,10 +371,8 @@ chain_id = 42431
 "#
         );
         let (dir, _) = setup_keys_toml(&toml_content);
-        unsafe {
-            std::env::set_var("TEMPO_HOME", dir.path());
-            std::env::remove_var("TEMPO_PRIVATE_KEY");
-        }
+        let _tempo_home = EnvGuard::set("TEMPO_HOME", dir.path());
+        let _tempo_private_key = EnvGuard::remove("TEMPO_PRIVATE_KEY");
 
         // Filter by testnet chain_id → returns testnet key (even though mainnet is first)
         let config =
@@ -403,7 +410,7 @@ chain_id = 4217
 "#
         );
         let (dir2, _) = setup_keys_toml(&toml_mixed);
-        unsafe { std::env::set_var("TEMPO_HOME", dir2.path()) };
+        let _tempo_home2 = EnvGuard::set("TEMPO_HOME", dir2.path());
 
         let config =
             discover_mpp_config(DiscoverOptions { chain_id: Some(4217), ..Default::default() });
@@ -412,8 +419,6 @@ chain_id = 4217
             testnet_key,
             "passkey should win over local within the same chain_id"
         );
-
-        unsafe { std::env::remove_var("TEMPO_HOME") };
     }
 
     #[test]

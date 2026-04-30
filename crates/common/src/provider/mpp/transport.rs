@@ -674,6 +674,34 @@ mod tests {
         },
     };
 
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::remove_var(key) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
     #[derive(Clone, Debug)]
     struct MockPaymentProvider;
 
@@ -873,10 +901,8 @@ mod tests {
 
         let (base_url, handle) = spawn_server(app).await;
 
-        unsafe {
-            std::env::set_var("TEMPO_HOME", "/nonexistent/path");
-            std::env::remove_var("TEMPO_PRIVATE_KEY");
-        }
+        let _tempo_home = EnvGuard::set("TEMPO_HOME", "/nonexistent/path");
+        let _tempo_private_key = EnvGuard::remove("TEMPO_PRIVATE_KEY");
 
         let transport = RuntimeTransportBuilder::new(Url::parse(&base_url).unwrap()).build();
         let err = transport.request(test_request()).await.unwrap_err();
@@ -888,7 +914,6 @@ mod tests {
         );
 
         handle.abort();
-        unsafe { std::env::remove_var("TEMPO_HOME") };
     }
 
     #[test]

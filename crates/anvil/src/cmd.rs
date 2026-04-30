@@ -867,6 +867,28 @@ mod tests {
     use super::*;
     use std::{env, net::Ipv4Addr};
 
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = env::var_os(key);
+            unsafe { env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe { env::set_var(self.key, value) },
+                None => unsafe { env::remove_var(self.key) },
+            }
+        }
+    }
+
     #[test]
     fn test_parse_fork_url() {
         let fork: ForkUrl = "http://localhost:8545@1000000".parse().unwrap();
@@ -1002,11 +1024,11 @@ mod tests {
             ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
         );
 
-        unsafe { env::set_var("ANVIL_IP_ADDR", "1.1.1.1") };
+        let _anvil_ip_addr = EnvGuard::set("ANVIL_IP_ADDR", "1.1.1.1");
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(args.host, vec!["1.1.1.1".parse::<IpAddr>().unwrap()]);
 
-        unsafe { env::set_var("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2") };
+        let _anvil_ip_addr = EnvGuard::set("ANVIL_IP_ADDR", "::1,1.1.1.1,2.2.2.2");
         let args = NodeArgs::parse_from(["anvil"]);
         assert_eq!(
             args.host,

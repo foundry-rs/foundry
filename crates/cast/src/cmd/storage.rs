@@ -395,19 +395,36 @@ const fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool
 mod tests {
     use super::*;
 
+    struct EnvGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
+
     #[test]
     fn parse_storage_etherscan_api_key() {
         let args =
             StorageArgs::parse_from(["foundry-cli", "addr.eth", "--etherscan-api-key", "dummykey"]);
         assert_eq!(args.etherscan.key(), Some("dummykey".to_string()));
 
-        unsafe {
-            std::env::set_var("ETHERSCAN_API_KEY", "FXY");
-        }
+        let _etherscan_key = EnvGuard::set("ETHERSCAN_API_KEY", "FXY");
         let config = args.load_config().unwrap();
-        unsafe {
-            std::env::remove_var("ETHERSCAN_API_KEY");
-        }
         assert_eq!(config.etherscan_api_key, Some("dummykey".to_string()));
 
         let key = config.get_etherscan_api_key(None).unwrap();
