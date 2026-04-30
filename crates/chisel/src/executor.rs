@@ -16,7 +16,10 @@ use solar::{
     ast::{BinOpKind, ElementaryType, FunctionKind, LitKind, StateMutability, StrKind, UnOpKind},
     interface::Symbol,
     sema::{
-        hir::{self, Visibility},
+        hir::{
+            ContractId, Event, Expr, ExprKind, Function, ItemId, Res, StmtKind, Type as HirType,
+            TypeKind, Visibility,
+        },
         ty::{Gcx, Ty, TyKind},
     },
 };
@@ -142,10 +145,10 @@ impl SessionSource {
             // and pull out the first call argument.
             let block = out.run_func_body();
             let last = block.last()?;
-            let hir::StmtKind::DeclSingle(vid) = last.kind else { return None };
+            let StmtKind::DeclSingle(vid) = last.kind else { return None };
             let var = gcx.hir.variable(vid);
             let init = var.initializer?;
-            let hir::ExprKind::Call(_callee, args, _) = &init.kind else { return None };
+            let ExprKind::Call(_callee, args, _) = &init.kind else { return None };
             let inner_expr = args.exprs().next()?;
 
             // If the call is `func()` returning a single value, prefer the function return type.
@@ -247,13 +250,13 @@ fn lookup_named_variable_type(gcx: Gcx<'_>, name: &str) -> Option<DynSolType> {
     let body = hir.function(run_fid).body?;
     for stmt in body.stmts {
         match stmt.kind {
-            hir::StmtKind::DeclSingle(vid) => {
+            StmtKind::DeclSingle(vid) => {
                 let var = hir.variable(vid);
                 if var.name.map(|n| n.as_str() == name).unwrap_or(false) {
                     return solar_ty_to_dyn(gcx, gcx.type_of_item(vid.into()));
                 }
             }
-            hir::StmtKind::DeclMulti(vids, _) => {
+            StmtKind::DeclMulti(vids, _) => {
                 for vid in vids.iter().flatten() {
                     let var = hir.variable(*vid);
                     if var.name.map(|n| n.as_str() == name).unwrap_or(false) {
@@ -371,7 +374,7 @@ fn format_token(token: DynSolValue) -> String {
 
 /// Formats an [`hir::Event`] into an inspection message.
 // TODO: Verbosity option
-fn format_event_definition(gcx: Gcx<'_>, event: &hir::Event<'_>) -> Result<String> {
+fn format_event_definition(gcx: Gcx<'_>, event: &Event<'_>) -> Result<String> {
     let event_name = event.name.as_str().to_string();
     let inputs = event
         .parameters
@@ -454,15 +457,15 @@ enum Type {
 
 impl Type {
     /// Convert a [`hir::Expr`] to a [`Type`].
-    fn from_expr(gcx: Gcx<'_>, expr: &hir::Expr<'_>) -> Option<Self> {
+    fn from_expr(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<Self> {
         match &expr.kind {
             // Elementary type expression: `uint256`, `address`, etc.
-            hir::ExprKind::Type(ty) => Self::from_hir_ty(gcx, ty),
+            ExprKind::Type(ty) => Self::from_hir_ty(gcx, ty),
 
             // `type(T)` expression. Modelled like a call to a builtin `type` function so that
             // member access (e.g. `type(C).name` or `type(uint256).max`) can be resolved by
             // [`Self::map_special`].
-            hir::ExprKind::TypeCall(ty) => {
+            ExprKind::TypeCall(ty) => {
                 let inner = Self::from_hir_ty(gcx, ty);
                 Some(Self::Function(
                     Box::new(Self::Custom(vec![Symbol::intern("type")])),
@@ -472,11 +475,11 @@ impl Type {
             }
 
             // Resolved identifier: `foo`.
-            hir::ExprKind::Ident(reses) => {
+            ExprKind::Ident(reses) => {
                 let res = reses.first()?;
                 match *res {
-                    hir::Res::Item(item) => match item {
-                        hir::ItemId::Variable(vid) => {
+                    Res::Item(item) => match item {
+                        ItemId::Variable(vid) => {
                             let var = gcx.hir.variable(vid);
                             let name = var.name?.name;
                             // Try the resolved solar type first.
@@ -487,16 +490,16 @@ impl Type {
                                 Some(Self::Custom(vec![name]))
                             }
                         }
-                        hir::ItemId::Function(fid) => {
+                        ItemId::Function(fid) => {
                             let func = gcx.hir.function(fid);
                             let name = func.name?.name;
                             Some(Self::Custom(vec![name]))
                         }
-                        hir::ItemId::Contract(cid) => {
+                        ItemId::Contract(cid) => {
                             let c = gcx.hir.contract(cid);
                             Some(Self::Custom(vec![c.name.name]))
                         }
-                        hir::ItemId::Struct(sid) => {
+                        ItemId::Struct(sid) => {
                             // Struct constructor: produces a value of the struct type, which we
                             // model as a tuple of field types.
                             let fields = gcx.struct_field_types(sid);
@@ -506,35 +509,35 @@ impl Type {
                                 .collect();
                             Some(Self::Tuple(parts))
                         }
-                        hir::ItemId::Enum(eid) => {
+                        ItemId::Enum(eid) => {
                             let e = gcx.hir.enumm(eid);
                             Some(Self::Custom(vec![e.name.name]))
                         }
-                        hir::ItemId::Udvt(uid) => {
+                        ItemId::Udvt(uid) => {
                             let u = gcx.hir.udvt(uid);
                             Some(Self::Custom(vec![u.name.name]))
                         }
-                        hir::ItemId::Error(eid) => {
+                        ItemId::Error(eid) => {
                             let e = gcx.hir.error(eid);
                             Some(Self::Custom(vec![e.name.name]))
                         }
-                        hir::ItemId::Event(eid) => {
+                        ItemId::Event(eid) => {
                             let e = gcx.hir.event(eid);
                             Some(Self::Custom(vec![e.name.name]))
                         }
                     },
-                    hir::Res::Builtin(b) => Some(Self::Custom(vec![b.name()])),
-                    hir::Res::Namespace(_) | hir::Res::Err(_) => None,
+                    Res::Builtin(b) => Some(Self::Custom(vec![b.name()])),
+                    Res::Namespace(_) | Res::Err(_) => None,
                 }
             }
 
             // Index/access: `arr[i]`, `MyType[]`.
-            hir::ExprKind::Index(base, idx) => Self::from_expr(gcx, base).map(|ty| {
+            ExprKind::Index(base, idx) => Self::from_expr(gcx, base).map(|ty| {
                 let boxed = Box::new(ty);
                 let num =
                     idx.and_then(|e| parse_number_literal(e)).and_then(|n| usize::try_from(n).ok());
                 match &base.kind {
-                    hir::ExprKind::Type(_) | hir::ExprKind::TypeCall(_) => {
+                    ExprKind::Type(_) | ExprKind::TypeCall(_) => {
                         if let Some(num) = num {
                             Self::FixedArray(boxed, num)
                         } else {
@@ -546,40 +549,40 @@ impl Type {
             }),
 
             // Slice expression: `arr[a:b]`.
-            hir::ExprKind::Slice(base, _, _) => Self::from_expr(gcx, base),
+            ExprKind::Slice(base, _, _) => Self::from_expr(gcx, base),
 
             // Array literal `[a, b, c]`.
-            hir::ExprKind::Array(values) => values
+            ExprKind::Array(values) => values
                 .first()
                 .and_then(|e| Self::from_expr(gcx, e))
                 .map(|ty| Self::FixedArray(Box::new(ty), values.len())),
 
             // Tuple expression `(a, b, c)`.
-            hir::ExprKind::Tuple(items) => Some(Self::Tuple(
+            ExprKind::Tuple(items) => Some(Self::Tuple(
                 items.iter().map(|opt| opt.and_then(|e| Self::from_expr(gcx, e))).collect(),
             )),
 
             // Member access `lhs.rhs`.
-            hir::ExprKind::Member(lhs, ident) => {
+            ExprKind::Member(lhs, ident) => {
                 Self::from_expr(gcx, lhs).map(|lhs| Self::Access(Box::new(lhs), ident.name))
             }
 
             // `new T`.
-            hir::ExprKind::New(ty) => Self::from_hir_ty(gcx, ty),
+            ExprKind::New(ty) => Self::from_hir_ty(gcx, ty),
 
             // `payable(addr)`.
-            hir::ExprKind::Payable(_) => Some(Self::Builtin(DynSolType::Address)),
+            ExprKind::Payable(_) => Some(Self::Builtin(DynSolType::Address)),
 
             // Ternary: prefer truthy branch's type, fall back to else branch.
-            hir::ExprKind::Ternary(_, t, e) => {
+            ExprKind::Ternary(_, t, e) => {
                 Self::from_expr(gcx, t).or_else(|| Self::from_expr(gcx, e))
             }
 
             // Delete expression has no usable type.
-            hir::ExprKind::Delete(_) => None,
+            ExprKind::Delete(_) => None,
 
             // Literals.
-            hir::ExprKind::Lit(lit) => match &lit.kind {
+            ExprKind::Lit(lit) => match &lit.kind {
                 LitKind::Address(_) => Some(Self::Builtin(DynSolType::Address)),
                 LitKind::Bool(_) => Some(Self::Builtin(DynSolType::Bool)),
                 LitKind::Str(kind, _, _) => match kind {
@@ -593,7 +596,7 @@ impl Type {
             },
 
             // Unary operations.
-            hir::ExprKind::Unary(op, inner) => match op.kind {
+            ExprKind::Unary(op, inner) => match op.kind {
                 UnOpKind::Neg => Self::from_expr(gcx, inner).map(Self::invert_int),
                 UnOpKind::Not => Some(Self::Builtin(DynSolType::Bool)),
                 UnOpKind::BitNot
@@ -604,7 +607,7 @@ impl Type {
             },
 
             // Binary operations.
-            hir::ExprKind::Binary(lhs, op, rhs) => match op.kind {
+            ExprKind::Binary(lhs, op, rhs) => match op.kind {
                 BinOpKind::Lt
                 | BinOpKind::Le
                 | BinOpKind::Gt
@@ -636,23 +639,23 @@ impl Type {
             },
 
             // Assignments: type of the lhs.
-            hir::ExprKind::Assign(lhs, _, _) => Self::from_expr(gcx, lhs),
+            ExprKind::Assign(lhs, _, _) => Self::from_expr(gcx, lhs),
 
             // Function call.
-            hir::ExprKind::Call(callee, args, _named) => Self::from_expr(gcx, callee).map(|name| {
+            ExprKind::Call(callee, args, _named) => Self::from_expr(gcx, callee).map(|name| {
                 let args = args.exprs().map(|e| Self::from_expr(gcx, e)).collect();
                 Self::Function(Box::new(name), args, vec![])
             }),
 
-            hir::ExprKind::Err(_) => None,
+            ExprKind::Err(_) => None,
         }
     }
 
     /// Convert a [`hir::Type`] to a [`Type`].
-    fn from_hir_ty(gcx: Gcx<'_>, ty: &hir::Type<'_>) -> Option<Self> {
+    fn from_hir_ty(gcx: Gcx<'_>, ty: &HirType<'_>) -> Option<Self> {
         match &ty.kind {
-            hir::TypeKind::Elementary(et) => Some(Self::Builtin(elementary_to_dyn(*et)?)),
-            hir::TypeKind::Array(arr) => {
+            TypeKind::Elementary(et) => Some(Self::Builtin(elementary_to_dyn(*et)?)),
+            TypeKind::Array(arr) => {
                 let elem = Self::from_hir_ty(gcx, &arr.element)?;
                 if let Some(size) = arr.size {
                     let n = parse_number_literal(size).and_then(|n| usize::try_from(n).ok());
@@ -665,7 +668,7 @@ impl Type {
                     Some(Self::Array(Box::new(elem)))
                 }
             }
-            hir::TypeKind::Function(f) => {
+            TypeKind::Function(f) => {
                 let params = f
                     .parameters
                     .iter()
@@ -688,25 +691,25 @@ impl Type {
                     returns,
                 ))
             }
-            hir::TypeKind::Mapping(m) => Self::from_hir_ty(gcx, &m.value),
-            hir::TypeKind::Custom(item) => {
+            TypeKind::Mapping(m) => Self::from_hir_ty(gcx, &m.value),
+            TypeKind::Custom(item) => {
                 // User-defined type names always become `Custom([name])` here, mirroring the
                 // legacy pt-based engine where custom names came in via `Variable(name)` rather
                 // than the elementary `from_type` path. Conversion to a concrete `DynSolType`
                 // (e.g. struct → tuple, udvt → underlying) happens later in `try_as_ethabi`.
                 let name = match *item {
-                    hir::ItemId::Contract(id) => gcx.hir.contract(id).name.name,
-                    hir::ItemId::Struct(id) => gcx.hir.strukt(id).name.name,
-                    hir::ItemId::Enum(id) => gcx.hir.enumm(id).name.name,
-                    hir::ItemId::Udvt(id) => gcx.hir.udvt(id).name.name,
-                    hir::ItemId::Error(id) => gcx.hir.error(id).name.name,
-                    hir::ItemId::Event(id) => gcx.hir.event(id).name.name,
-                    hir::ItemId::Function(id) => gcx.hir.function(id).name?.name,
-                    hir::ItemId::Variable(id) => gcx.hir.variable(id).name?.name,
+                    ItemId::Contract(id) => gcx.hir.contract(id).name.name,
+                    ItemId::Struct(id) => gcx.hir.strukt(id).name.name,
+                    ItemId::Enum(id) => gcx.hir.enumm(id).name.name,
+                    ItemId::Udvt(id) => gcx.hir.udvt(id).name.name,
+                    ItemId::Error(id) => gcx.hir.error(id).name.name,
+                    ItemId::Event(id) => gcx.hir.event(id).name.name,
+                    ItemId::Function(id) => gcx.hir.function(id).name?.name,
+                    ItemId::Variable(id) => gcx.hir.variable(id).name?.name,
                 };
                 Some(Self::Custom(vec![name]))
             }
-            hir::TypeKind::Err(_) => {
+            TypeKind::Err(_) => {
                 // Best-effort fallback: when name resolution failed, recover the textual name
                 // from the source span so the inference engine can still treat it as a custom
                 // type (e.g., `type(C).name` where contract `C` does not exist).
@@ -871,7 +874,7 @@ impl Type {
     fn infer_custom_type(
         gcx: Gcx<'_>,
         custom_type: &mut Vec<Symbol>,
-        contract_id: Option<hir::ContractId>,
+        contract_id: Option<ContractId>,
     ) -> Result<Option<DynSolType>> {
         if let Some(last) = custom_type.last()
             && (last.as_str() == "this" || last.as_str() == "super")
@@ -917,7 +920,7 @@ impl Type {
                 let ret_id = func.returns[0];
                 let ret_var = hir.variable(ret_id);
                 // If the return type is a custom (user-defined) type, recurse on the same contract.
-                if let hir::TypeKind::Custom(_) = &ret_var.ty.kind
+                if let TypeKind::Custom(_) = &ret_var.ty.kind
                     && let Some(t) = Self::from_hir_ty(gcx, &ret_var.ty)
                 {
                     return Ok(t.try_as_ethabi(true, Some(gcx)));
@@ -952,7 +955,7 @@ impl Type {
 
             // Struct?
             if let Some(sid) = contract.items.iter().find_map(|i| {
-                if let hir::ItemId::Struct(sid) = i
+                if let ItemId::Struct(sid) = i
                     && hir.strukt(*sid).name.as_str() == cur
                 {
                     Some(*sid)
@@ -1006,7 +1009,7 @@ impl Type {
     /// Infers the type from a variable's HIR type.
     fn infer_var_ty(
         gcx: Gcx<'_>,
-        ty: &hir::Type<'_>,
+        ty: &HirType<'_>,
         custom_type: &mut Vec<Symbol>,
     ) -> Result<Option<DynSolType>> {
         let res: Option<DynSolType> = if let Some(t) = Self::from_hir_ty(gcx, ty) {
@@ -1063,21 +1066,21 @@ impl Type {
     }
 
     /// Equivalent to `Type::from_expr` + `Type::map_special` + `Type::try_as_ethabi`.
-    fn ethabi(gcx: Gcx<'_>, expr: &hir::Expr<'_>, lookup: bool) -> Option<DynSolType> {
+    fn ethabi(gcx: Gcx<'_>, expr: &Expr<'_>, lookup: bool) -> Option<DynSolType> {
         Self::from_expr(gcx, expr)
             .map(Self::map_special)
             .and_then(|ty| ty.try_as_ethabi(lookup, Some(gcx)))
     }
 
     /// Get the return type of a function call expression.
-    fn get_function_return_type<'a>(gcx: Gcx<'_>, expr: &'a hir::Expr<'a>) -> Option<DynSolType> {
-        let hir::ExprKind::Call(callee, _, _) = &expr.kind else { return None };
-        let hir::ExprKind::Member(obj, fn_ident) = &callee.kind else { return None };
+    fn get_function_return_type<'a>(gcx: Gcx<'_>, expr: &'a Expr<'a>) -> Option<DynSolType> {
+        let ExprKind::Call(callee, _, _) = &expr.kind else { return None };
+        let ExprKind::Member(obj, fn_ident) = &callee.kind else { return None };
         // The receiver should be a variable holding a contract.
-        let hir::ExprKind::Ident(reses) = &obj.kind else { return None };
+        let ExprKind::Ident(reses) = &obj.kind else { return None };
         let res = reses.first()?;
         let var_id = match res {
-            hir::Res::Item(hir::ItemId::Variable(vid)) => *vid,
+            Res::Item(ItemId::Variable(vid)) => *vid,
             _ => return None,
         };
         let var_ty = gcx.type_of_item(var_id.into()).peel_refs();
@@ -1170,7 +1173,7 @@ impl Type {
 ///
 /// Ref: <https://docs.soliditylang.org/en/latest/types.html#function-types>
 #[inline]
-fn func_members(func: &hir::Function<'_>, custom_type: &[Symbol]) -> Option<DynSolType> {
+fn func_members(func: &Function<'_>, custom_type: &[Symbol]) -> Option<DynSolType> {
     if !matches!(func.kind, FunctionKind::Function) {
         return None;
     }
@@ -1186,18 +1189,18 @@ fn func_members(func: &hir::Function<'_>, custom_type: &[Symbol]) -> Option<DynS
 
 /// Whether execution should continue after inspecting this expression.
 #[inline]
-fn should_continue(expr: &hir::Expr<'_>) -> bool {
+fn should_continue(expr: &Expr<'_>) -> bool {
     match &expr.kind {
         // assignments and compound assignments
-        hir::ExprKind::Assign(_, _, _) => true,
+        ExprKind::Assign(_, _, _) => true,
         // ++/-- pre/post operations
-        hir::ExprKind::Unary(op, _) => matches!(
+        ExprKind::Unary(op, _) => matches!(
             op.kind,
             UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
         ),
         // Array.pop()
-        hir::ExprKind::Call(callee, _, _) => match &callee.kind {
-            hir::ExprKind::Member(_, ident) => ident.as_str() == "pop",
+        ExprKind::Call(callee, _, _) => match &callee.kind {
+            ExprKind::Member(_, ident) => ident.as_str() == "pop",
             _ => false,
         },
         _ => false,
@@ -1216,9 +1219,9 @@ fn types_to_parameters(
 /// is not a numeric literal.
 ///
 /// SubDenominations are already applied to numeric literals in solar's HIR.
-const fn parse_number_literal(expr: &hir::Expr<'_>) -> Option<U256> {
+const fn parse_number_literal(expr: &Expr<'_>) -> Option<U256> {
     match &expr.kind {
-        hir::ExprKind::Lit(lit) => match &lit.kind {
+        ExprKind::Lit(lit) => match &lit.kind {
             LitKind::Number(n) => Some(*n),
             _ => None,
         },
@@ -1675,7 +1678,7 @@ mod tests {
             let body = hir.function(run_fid).body?;
             let last = body.last()?;
             let expr = match last.kind {
-                hir::StmtKind::Expr(e) => e,
+                StmtKind::Expr(e) => e,
                 _ => return None,
             };
             Type::ethabi(gcx, expr, true)
