@@ -109,6 +109,25 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         }
     }
 
+    /// Returns `true` if `func` should run in the current multi-network pass.
+    ///
+    /// In single-pass mode (no inline network overrides) every function passes.
+    /// In multi-pass mode:
+    /// - Default pass (`pass_network = None`): includes functions *without* an override annotation.
+    /// - Override pass (`pass_network = Some(v)`): includes only functions annotated with `v`.
+    fn function_matches_network_pass(&self, func: &Function) -> bool {
+        let multi = &self.mcr.tcfg.multi_network;
+        if multi.all_override_networks.is_empty() {
+            return true;
+        }
+        let profile = &self.tcfg.config.profile;
+        let func_network = self.mcr.inline_config.network_for(profile, self.name, &func.name);
+        match &multi.pass_network {
+            None => func_network.is_none_or(|n| !multi.all_override_networks.contains(&n)),
+            Some(target) => func_network.as_ref() == Some(target),
+        }
+    }
+
     /// Deploys the test contract inside the runner from the sending account, and optionally runs
     /// the `setUp` function on the test contract.
     pub fn setup(&mut self, call_setup: bool) -> TestSetup {
@@ -380,6 +399,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             .abi
             .functions()
             .filter(|func| filter.matches_test_function(func))
+            .filter(|func| self.function_matches_network_pass(func))
             .collect::<Vec<_>>();
         debug!(
             "Found {} test functions out of {} in {:?}",
