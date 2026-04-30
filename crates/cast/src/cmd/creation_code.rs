@@ -1,17 +1,16 @@
 use super::interface::load_abi_from_file;
 use crate::SimpleCast;
 use alloy_consensus::Transaction;
+use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, Bytes};
-use alloy_provider::{Provider, ext::TraceApi};
+use alloy_provider::{Provider, RootProvider, ext::TraceApi};
 use alloy_rpc_types::trace::parity::{Action, CreateAction, CreateOutput, TraceOutput};
 use clap::Parser;
 use eyre::{OptionExt, Result, eyre};
-use foundry_block_explorers::Client;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig, fetch_abi_from_etherscan},
 };
-use foundry_common::provider::RetryProvider;
 use foundry_config::Config;
 
 foundry_config::impl_figment_convert!(CreationCodeArgs, etherscan, rpc);
@@ -136,11 +135,13 @@ pub async fn parse_code_output(
 pub async fn fetch_creation_code_from_etherscan(
     contract: Address,
     config: &Config,
-    provider: RetryProvider,
+    provider: RootProvider<AnyNetwork>,
 ) -> Result<Bytes> {
     let chain = config.chain.unwrap_or_default();
-    let api_key = config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-    let client = Client::new(chain, api_key)?;
+    let client = config
+        .get_etherscan_config_with_chain(Some(chain))?
+        .ok_or_else(|| eyre!("No Etherscan API key configured for chain {chain}"))?
+        .into_client()?;
     let creation_data = client.contract_creation_data(contract).await?;
     let creation_tx_hash = creation_data.transaction_hash;
     let tx_data = provider.get_transaction_by_hash(creation_tx_hash).await?;

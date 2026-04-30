@@ -128,7 +128,7 @@ impl MaybeFullDatabase for MemDb {
 }
 
 impl MaybeForkedDatabase for MemDb {
-    fn maybe_reset(&mut self, _url: Option<String>, _block_number: BlockId) -> Result<(), String> {
+    fn maybe_reset(&mut self, _urls: Vec<String>, _block_number: BlockId) -> Result<(), String> {
         Err("not supported".to_string())
     }
 

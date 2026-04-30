@@ -1,10 +1,12 @@
 use crate::cmd::{
     access_list::AccessListArgs, artifact::ArtifactArgs, b2e_payload::B2EPayloadArgs,
-    bind::BindArgs, call::CallArgs, constructor_args::ConstructorArgsArgs, create2::Create2Args,
-    creation_code::CreationCodeArgs, da_estimate::DAEstimateArgs, erc20::Erc20Subcommand,
-    estimate::EstimateArgs, find_block::FindBlockArgs, interface::InterfaceArgs, logs::LogsArgs,
-    mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs,
-    trace::TraceArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    batch_mktx::BatchMakeTxArgs, batch_send::BatchSendArgs, bind::BindArgs, call::CallArgs,
+    constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
+    da_estimate::DAEstimateArgs, erc20::Erc20Subcommand, estimate::EstimateArgs,
+    find_block::FindBlockArgs, interface::InterfaceArgs, keychain::KeychainSubcommand,
+    logs::LogsArgs, mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs,
+    storage::StorageArgs, tip20::Tip20Subcommand, trace::TraceArgs, txpool::TxPoolSubcommands,
+    wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
@@ -13,6 +15,7 @@ use clap::{ArgAction, Parser, Subcommand, ValueHint};
 use eyre::Result;
 use foundry_cli::opts::{EtherscanOpts, GlobalArgs, RpcOpts};
 use foundry_common::version::{LONG_VERSION, SHORT_VERSION};
+use foundry_evm_networks::NetworkVariant;
 use std::{path::PathBuf, str::FromStr};
 /// A Swiss Army knife for interacting with Ethereum applications from the command line.
 #[derive(Parser)]
@@ -390,6 +393,10 @@ pub enum CastSubcommand {
 
         #[command(flatten)]
         rpc: RpcOpts,
+
+        /// Specify the Network for correct encoding.
+        #[arg(long, short, num_args = 1, value_name = "NETWORK")]
+        network: Option<NetworkVariant>,
     },
 
     /// Get the latest block number.
@@ -519,6 +526,10 @@ pub enum CastSubcommand {
         /// If specified, the transaction will be converted to a TransactionRequest JSON format.
         #[arg(long)]
         to_request: bool,
+
+        /// Specify the Network for correct encoding.
+        #[arg(long, short, num_args = 1, value_name = "NETWORK")]
+        network: Option<NetworkVariant>,
     },
 
     /// Get the transaction receipt for a transaction.
@@ -545,6 +556,14 @@ pub enum CastSubcommand {
     /// Sign and publish a transaction.
     #[command(name = "send", visible_alias = "s")]
     SendTx(SendTxArgs),
+
+    /// Build and sign a batch transaction (Tempo).
+    #[command(name = "batch-mktx", visible_alias = "bm")]
+    BatchMakeTx(BatchMakeTxArgs),
+
+    /// Sign and publish a batch transaction (Tempo).
+    #[command(name = "batch-send", visible_alias = "bs")]
+    BatchSend(BatchSendArgs),
 
     /// Publish a raw transaction to the network.
     #[command(name = "publish", visible_alias = "p")]
@@ -1113,7 +1132,14 @@ pub enum CastSubcommand {
 
     /// Decodes a raw signed EIP 2718 typed transaction
     #[command(visible_aliases = &["dt", "decode-tx"])]
-    DecodeTransaction { tx: Option<String> },
+    DecodeTransaction {
+        /// Encoded transaction
+        tx: Option<String>,
+
+        /// Specify the Network for correct encoding.
+        #[arg(long, short, num_args = 1, value_name = "NETWORK")]
+        network: Option<NetworkVariant>,
+    },
 
     /// Recovery an EIP-7702 authority from a Authorization JSON string.
     #[command(visible_aliases = &["decode-auth"])]
@@ -1145,6 +1171,20 @@ pub enum CastSubcommand {
     Erc20Token {
         #[command(subcommand)]
         command: Erc20Subcommand,
+    },
+
+    /// TIP-20 token operations (Tempo).
+    #[command(visible_alias = "tip20")]
+    Tip20Token {
+        #[command(subcommand)]
+        command: Tip20Subcommand,
+    },
+
+    /// Tempo keychain (access key) management.
+    #[command(visible_alias = "kc")]
+    Keychain {
+        #[command(subcommand)]
+        command: KeychainSubcommand,
     },
     #[command(name = "trace")]
     Trace(TraceArgs),

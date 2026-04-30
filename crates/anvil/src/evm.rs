@@ -15,24 +15,22 @@ mod tests {
 
     use crate::PrecompileFactory;
     use alloy_evm::{
-        EthEvm, Evm, EvmEnv,
+        EthEvm, Evm, EvmEnv, EvmFactory,
         eth::EthEvmContext,
         precompiles::{DynPrecompile, PrecompilesMap},
     };
-    use alloy_op_evm::OpEvm;
+    use alloy_op_evm::{OpEvm, OpEvmFactory, OpTx};
     use alloy_primitives::{Address, Bytes, TxKind, U256, address};
-    use foundry_evm::core::either_evm::EitherEvm;
-    use foundry_evm_networks::NetworkConfigs;
     use itertools::Itertools;
-    use op_revm::{L1BlockInfo, OpContext, OpSpecId, OpTransaction, precompiles::OpPrecompiles};
+    use op_revm::{OpSpecId, OpTransaction};
     use revm::{
         Journal,
-        context::{CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv},
+        context::{BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv},
         database::{EmptyDB, EmptyDBTyped},
         handler::{EthPrecompiles, instructions::EthInstructions},
         inspector::NoOpInspector,
         interpreter::interpreter::EthInterpreter,
-        precompile::{PrecompileOutput, PrecompileSpecId, Precompiles},
+        precompile::{PrecompileOutput, PrecompileSpecId, PrecompileStatus, Precompiles},
         primitives::hardfork::SpecId,
     };
 
@@ -59,35 +57,33 @@ mod tests {
                 PRECOMPILE_ADDR,
                 DynPrecompile::from(|input: PrecompileInput<'_>| {
                     Ok(PrecompileOutput {
+                        status: PrecompileStatus::Success,
                         bytes: Bytes::copy_from_slice(input.data),
                         gas_used: 0,
                         gas_refunded: 0,
-                        reverted: false,
+                        state_gas_used: 0,
+                        reservoir: input.reservoir,
                     })
                 }),
             )]
         }
     }
 
-    /// Creates a new EVM instance with the custom precompile factory.
+    /// Creates a new Eth EVM instance.
     fn create_eth_evm(
         spec: SpecId,
-    ) -> (foundry_evm::Env, EitherEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap>)
-    {
-        let eth_env = foundry_evm::Env {
-            evm_env: EvmEnv { block_env: Default::default(), cfg_env: CfgEnv::new_with_spec(spec) },
-            tx: TxEnv {
-                kind: TxKind::Call(PRECOMPILE_ADDR),
-                data: PAYLOAD.into(),
-                ..Default::default()
-            },
+    ) -> (TxEnv, EthEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap>) {
+        let tx_env = TxEnv {
+            kind: TxKind::Call(PRECOMPILE_ADDR),
+            data: PAYLOAD.into(),
+            ..Default::default()
         };
 
         let eth_evm_context = EthEvmContext {
             journaled_state: Journal::new(EmptyDB::default()),
-            block: eth_env.evm_env.block_env.clone(),
-            cfg: eth_env.evm_env.cfg_env.clone(),
-            tx: eth_env.tx.clone(),
+            block: BlockEnv::default(),
+            cfg: CfgEnv::new_with_spec(spec),
+            tx: tx_env.clone(),
             chain: (),
             local: LocalContext::default(),
             error: Ok(()),
@@ -98,198 +94,130 @@ mod tests {
             spec,
         }
         .precompiles;
-        let eth_evm = EitherEvm::Eth(EthEvm::new(
+        let eth_evm = EthEvm::new(
             RevmEvm::new_with_inspector(
                 eth_evm_context,
                 NoOpInspector,
-                EthInstructions::<EthInterpreter, EthEvmContext<EmptyDB>>::default(),
+                EthInstructions::<EthInterpreter, EthEvmContext<EmptyDB>>::new_mainnet_with_spec(
+                    spec,
+                ),
                 PrecompilesMap::from_static(eth_precompiles),
             ),
             true,
-        ));
+        );
 
-        (eth_env, eth_evm)
+        (tx_env, eth_evm)
     }
 
-    /// Creates a new OP EVM instance with the custom precompile factory.
+    /// Creates a new OP EVM instance.
     fn create_op_evm(
-        spec: SpecId,
+        _spec: SpecId,
         op_spec: OpSpecId,
-    ) -> (
-        crate::eth::backend::env::Env,
-        EitherEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap>,
-    ) {
-        let op_env = crate::eth::backend::env::Env {
-            evm_env: EvmEnv { block_env: Default::default(), cfg_env: CfgEnv::new_with_spec(spec) },
-            tx: OpTransaction::<TxEnv> {
-                base: TxEnv {
-                    kind: TxKind::Call(PRECOMPILE_ADDR),
-                    data: PAYLOAD.into(),
-                    ..Default::default()
-                },
+    ) -> (OpTx, OpEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap, OpTx>) {
+        let tx = OpTx(OpTransaction::<TxEnv> {
+            base: TxEnv {
+                kind: TxKind::Call(PRECOMPILE_ADDR),
+                data: PAYLOAD.into(),
                 ..Default::default()
             },
-            networks: NetworkConfigs::with_optimism(),
-        };
+            ..Default::default()
+        });
 
-        let mut chain = L1BlockInfo::default();
+        let mut evm = OpEvmFactory::<OpTx>::default().create_evm_with_inspector(
+            EmptyDB::default(),
+            EvmEnv::new(CfgEnv::new_with_spec(op_spec), BlockEnv::default()),
+            NoOpInspector,
+        );
 
         if op_spec == OpSpecId::ISTHMUS {
-            chain.operator_fee_constant = Some(U256::from(0));
-            chain.operator_fee_scalar = Some(U256::from(0));
+            evm.ctx_mut().chain.operator_fee_constant = Some(U256::ZERO);
+            evm.ctx_mut().chain.operator_fee_scalar = Some(U256::ZERO);
         }
 
-        let op_cfg: CfgEnv<OpSpecId> = CfgEnv::new_with_spec(op_spec);
-        let op_evm_context = OpContext {
-            journaled_state: {
-                let mut journal = Journal::new(EmptyDB::default());
-                // Converting SpecId into OpSpecId
-                journal.set_spec_id(op_env.evm_env.cfg_env.spec);
-                journal
-            },
-            block: op_env.evm_env.block_env.clone(),
-            cfg: op_cfg.clone(),
-            tx: op_env.tx.clone(),
-            chain,
-            local: LocalContext::default(),
-            error: Ok(()),
-        };
-
-        let op_precompiles = OpPrecompiles::new_with_spec(op_cfg.spec).precompiles();
-        let op_evm = EitherEvm::Op(OpEvm::new(
-            op_revm::OpEvm(RevmEvm::new_with_inspector(
-                op_evm_context,
-                NoOpInspector,
-                EthInstructions::<EthInterpreter, OpContext<EmptyDB>>::default(),
-                PrecompilesMap::from_static(op_precompiles),
-            )),
-            true,
-        ));
-
-        (op_env, op_evm)
+        (tx, evm)
     }
 
     #[test]
     fn build_eth_evm_with_extra_precompiles_osaka_spec() {
-        let (env, mut evm) = create_eth_evm(SpecId::OSAKA);
+        let (tx_env, mut evm) = create_eth_evm(SpecId::OSAKA);
 
-        // Check that the Osaka precompile IS present when using the Osaka spec.
         assert!(evm.precompiles().addresses().contains(&ETH_OSAKA_PRECOMPILE));
-
-        // Check that the Prague precompile IS present when using the Osaka spec.
         assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
-
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        let result = match &mut evm {
-            EitherEvm::Eth(eth_evm) => eth_evm.transact(env.tx).unwrap(),
-            _ => unreachable!(),
-        };
-
+        let result = evm.transact(tx_env).unwrap();
         assert!(result.result.is_success());
         assert_eq!(result.result.output(), Some(&PAYLOAD.into()));
     }
 
     #[test]
     fn build_eth_evm_with_extra_precompiles_london_spec() {
-        let (env, mut evm) = create_eth_evm(SpecId::LONDON);
+        let (tx_env, mut evm) = create_eth_evm(SpecId::LONDON);
 
-        // Check that the Osaka precompile IS NOT present when using the London spec.
         assert!(!evm.precompiles().addresses().contains(&ETH_OSAKA_PRECOMPILE));
-
-        // Check that the Prague precompile IS NOT present when using the London spec.
         assert!(!evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
-
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        let result = match &mut evm {
-            EitherEvm::Eth(eth_evm) => eth_evm.transact(env.tx).unwrap(),
-            _ => unreachable!(),
-        };
-
+        let result = evm.transact(tx_env).unwrap();
         assert!(result.result.is_success());
         assert_eq!(result.result.output(), Some(&PAYLOAD.into()));
     }
 
     #[test]
     fn build_eth_evm_with_extra_precompiles_prague_spec() {
-        let (env, mut evm) = create_eth_evm(SpecId::PRAGUE);
+        let (tx_env, mut evm) = create_eth_evm(SpecId::PRAGUE);
 
-        // Check that the Osaka precompile IS NOT present when using the Prague spec.
         assert!(!evm.precompiles().addresses().contains(&ETH_OSAKA_PRECOMPILE));
-
-        // Check that the Prague precompile IS present when using the Prague spec.
         assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
-
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        let result = match &mut evm {
-            EitherEvm::Eth(eth_evm) => eth_evm.transact(env.tx).unwrap(),
-            _ => unreachable!(),
-        };
-
+        let result = evm.transact(tx_env).unwrap();
         assert!(result.result.is_success());
         assert_eq!(result.result.output(), Some(&PAYLOAD.into()));
     }
 
     #[test]
     fn build_op_evm_with_extra_precompiles_isthmus_spec() {
-        let (env, mut evm) = create_op_evm(SpecId::OSAKA, OpSpecId::ISTHMUS);
+        let (tx, mut evm) = create_op_evm(SpecId::OSAKA, OpSpecId::ISTHMUS);
 
-        // Check that the Isthmus precompile IS present when using the Isthmus spec.
         assert!(evm.precompiles().addresses().contains(&OP_ISTHMUS_PRECOMPILE));
-
-        // Check that the Prague precompile IS present when using the Isthmus spec.
         assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
-
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        let result = match &mut evm {
-            EitherEvm::Op(op_evm) => op_evm.transact(env.tx).unwrap(),
-            _ => unreachable!(),
-        };
-
+        let result = evm.transact(tx).unwrap();
         assert!(result.result.is_success());
         assert_eq!(result.result.output(), Some(&PAYLOAD.into()));
     }
 
     #[test]
     fn build_op_evm_with_extra_precompiles_bedrock_spec() {
-        let (env, mut evm) = create_op_evm(SpecId::OSAKA, OpSpecId::BEDROCK);
+        let (tx, mut evm) = create_op_evm(SpecId::OSAKA, OpSpecId::BEDROCK);
 
-        // Check that the Isthmus precompile IS NOT present when using the `OpSpecId::BEDROCK` spec.
         assert!(!evm.precompiles().addresses().contains(&OP_ISTHMUS_PRECOMPILE));
-
-        // Check that the Prague precompile IS NOT present when using the `OpSpecId::BEDROCK` spec.
         assert!(!evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
-
         assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
 
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
-        let result = match &mut evm {
-            EitherEvm::Op(op_evm) => op_evm.transact(env.tx).unwrap(),
-            _ => unreachable!(),
-        };
-
+        let result = evm.transact(tx).unwrap();
         assert!(result.result.is_success());
         assert_eq!(result.result.output(), Some(&PAYLOAD.into()));
     }

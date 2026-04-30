@@ -1,25 +1,27 @@
 use crate::cmd::install;
 use alloy_chains::Chain;
+use alloy_consensus::{SignableTransaction, Signed};
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt, Specifier};
 use alloy_json_abi::{Constructor, JsonAbi};
-use alloy_network::{AnyNetwork, AnyTransactionReceipt, EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, Bytes, hex};
-use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder};
-use alloy_rpc_types::TransactionRequest;
-use alloy_serde::WithOtherFields;
-use alloy_signer::Signer;
+use alloy_network::{Ethereum, EthereumWallet, Network, ReceiptResponse, TransactionBuilder};
+use alloy_primitives::{Address, Bytes, U256, hex};
+use alloy_provider::{PendingTransactionError, Provider, ProviderBuilder as AlloyProviderBuilder};
+use alloy_signer::{Signature, Signer};
 use alloy_transport::TransportError;
 use clap::{Parser, ValueHint};
-use eyre::{Context, Result};
+use eyre::{Context, ContextCompat, Result};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
-    utils::{self, LoadConfig, find_contract_artifacts, read_constructor_args_file},
+    utils::{LoadConfig, find_contract_artifacts, read_constructor_args_file},
 };
 use foundry_common::{
+    FoundryTransactionBuilder,
     compile::{self},
     fmt::parse_tokens,
+    provider::ProviderBuilder,
     shell,
+    tempo::TEMPO_BROWSER_GAS_BUFFER,
 };
 use foundry_compilers::{
     ArtifactId, artifacts::BytecodeObject, info::ContractInfo, utils::canonicalize,
@@ -32,8 +34,12 @@ use foundry_config::{
     },
     merge_impl_figment_convert,
 };
+use foundry_wallets::{
+    BrowserWalletOpts, TempoAccessKeyConfig, WalletSigner, wallet_browser::signer::BrowserSigner,
+};
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
+use tempo_alloy::{TempoNetwork, contracts::precompiles::DEFAULT_FEE_TOKEN};
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
 
@@ -98,11 +104,46 @@ pub struct CreateArgs {
 
     #[command(flatten)]
     retry: RetryArgs,
+
+    /// Browser wallet options
+    #[command(flatten)]
+    browser: BrowserWalletOpts,
 }
 
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
+        let (signer, tempo_access_key) = self.eth.wallet.maybe_signer().await?;
+
+        // Resolve chain early so we can dispatch to the correct network type.
+        if self.chain_id().is_none() {
+            let config = self.load_config()?;
+            let provider = ProviderBuilder::<Ethereum>::from_config(&config)?.build()?;
+            let chain_id = provider.get_chain_id().await?;
+            self.eth.etherscan.chain = Some(chain_id.into());
+        }
+
+        if tempo_access_key.is_some()
+            || self.tx.tempo.is_tempo()
+            || self.chain_id().is_some_and(|c| c.is_tempo())
+        {
+            self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
+        } else {
+            self.run_generic::<Ethereum>(signer, None).await
+        }
+    }
+
+    async fn run_generic<N: Network>(
+        mut self,
+        pre_resolved_signer: Option<WalletSigner>,
+        access_key: Option<TempoAccessKeyConfig>,
+    ) -> Result<()>
+    where
+        N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+        N::UnsignedTx: SignableTransaction<Signature>,
+        N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
+        N::ReceiptResponse: serde::Serialize,
+    {
         let mut config = self.load_config()?;
 
         // Install missing dependencies.
@@ -155,19 +196,36 @@ impl CreateArgs {
             vec![]
         };
 
-        let provider = utils::get_provider(&config)?;
+        let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
 
-        // respect chain, if set explicitly via cmd args
-        let chain_id = if let Some(chain_id) = self.chain_id() {
-            chain_id
-        } else {
-            provider.get_chain_id().await?
-        };
+        // Inject access key ID into TempoOpts so it's set before gas estimation.
+        if let Some(ref ak) = access_key {
+            self.tx.tempo.key_id = Some(ak.key_address);
+        }
 
         // Whether to broadcast the transaction or not
         let dry_run = !self.broadcast;
 
-        if self.unlocked {
+        // Launch browser signer if `--browser` flag is set
+        let browser = self.browser.run::<N>().await?;
+
+        if let Some(browser) = browser {
+            // Deploy with browser wallet
+            let deployer_address = browser.address();
+            self.deploy(
+                abi,
+                bin,
+                params,
+                provider,
+                deployer_address,
+                config.transaction_timeout,
+                id,
+                dry_run,
+                None,
+                Some(browser),
+            )
+            .await
+        } else if self.unlocked {
             // Deploy with unlocked account
             let sender = self.eth.wallet.from.expect("required");
             self.deploy(
@@ -175,18 +233,42 @@ impl CreateArgs {
                 bin,
                 params,
                 provider,
-                chain_id,
                 sender,
                 config.transaction_timeout,
                 id,
                 dry_run,
+                None,
+                None,
+            )
+            .await
+        } else if let Some(ak) = access_key {
+            // Tempo keychain mode: sign with access key and send raw
+            let signer = match pre_resolved_signer {
+                Some(s) => s,
+                None => self.eth.wallet.signer().await?,
+            };
+            let deployer_address = ak.wallet_address;
+            self.deploy(
+                abi,
+                bin,
+                params,
+                provider,
+                deployer_address,
+                config.transaction_timeout,
+                id,
+                dry_run,
+                Some((signer, ak)),
+                None,
             )
             .await
         } else {
             // Deploy with signer
-            let signer = self.eth.wallet.signer().await?;
+            let signer = match pre_resolved_signer {
+                Some(s) => s,
+                None => self.eth.wallet.signer().await?,
+            };
             let deployer = signer.address();
-            let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
+            let provider = AlloyProviderBuilder::<_, _, N>::default()
                 .wallet(EthereumWallet::new(signer))
                 .connect_provider(provider);
             self.deploy(
@@ -194,19 +276,20 @@ impl CreateArgs {
                 bin,
                 params,
                 provider,
-                chain_id,
                 deployer,
                 config.transaction_timeout,
                 id,
                 dry_run,
+                None,
+                None,
             )
             .await
         }
     }
 
-    /// Returns the provided chain id, if any.
-    fn chain_id(&self) -> Option<u64> {
-        self.eth.etherscan.chain.map(|chain| chain.id())
+    /// Returns the resolved chain, if any.
+    const fn chain_id(&self) -> Option<Chain> {
+        self.eth.etherscan.chain
     }
 
     /// Ensures the verify command can be executed.
@@ -218,7 +301,6 @@ impl CreateArgs {
     async fn verify_preflight_check(
         &self,
         constructor_args: Option<String>,
-        chain: u64,
         id: &ArtifactId,
     ) -> Result<()> {
         // NOTE: this does not represent the same `VerifyArgs` that would be sent after deployment,
@@ -234,7 +316,7 @@ impl CreateArgs {
             num_of_optimizations: None,
             etherscan: EtherscanOpts {
                 key: self.eth.etherscan.key.clone(),
-                chain: Some(chain.into()),
+                chain: self.chain_id(),
             },
             rpc: Default::default(),
             flatten: false,
@@ -249,7 +331,7 @@ impl CreateArgs {
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
-            compilation_profile: Some(id.profile.to_string()),
+            compilation_profile: Some(id.profile.clone()),
             language: None,
             creation_transaction_hash: None,
         };
@@ -258,7 +340,7 @@ impl CreateArgs {
         // ETHERSCAN_API_KEY value set.
         let config = verify.load_config()?;
         verify.etherscan.key =
-            config.get_etherscan_config_with_chain(Some(chain.into()))?.map(|c| c.key);
+            config.get_etherscan_config_with_chain(self.chain_id())?.map(|c| c.key);
 
         let context = verify.resolve_context().await?;
 
@@ -268,25 +350,33 @@ impl CreateArgs {
 
     /// Deploys the contract
     #[expect(clippy::too_many_arguments)]
-    async fn deploy<P: Provider<AnyNetwork>>(
+    async fn deploy<N: Network, P: Provider<N>>(
         self,
         abi: JsonAbi,
         bin: BytecodeObject,
         args: Vec<DynSolValue>,
         provider: P,
-        chain: u64,
         deployer_address: Address,
         timeout: u64,
         id: ArtifactId,
         dry_run: bool,
-    ) -> Result<()> {
+        tempo_keychain: Option<(WalletSigner, TempoAccessKeyConfig)>,
+        browser_signer: Option<BrowserSigner<N>>,
+    ) -> Result<()>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
+        N::ReceiptResponse: serde::Serialize,
+    {
+        let chain = self.chain_id().context("chain ID not resolved")?;
+
         let bin = bin.into_bytes().unwrap_or_default();
         if bin.is_empty() {
             eyre::bail!("no bytecode found in bin object for {}", self.contract.name)
         }
 
         let provider = Arc::new(provider);
-        let factory = ContractFactory::new(abi.clone(), bin.clone(), provider.clone(), timeout);
+        let factory =
+            ContractFactory::<N, _>::new(abi.clone(), bin.clone(), provider.clone(), timeout);
 
         let is_args_empty = args.is_empty();
         let mut deployer =
@@ -297,53 +387,77 @@ impl CreateArgs {
                     e
                 }
             })?;
-        let is_legacy = self.tx.legacy || Chain::from(chain).is_legacy();
+        let is_legacy = self.tx.legacy || chain.is_legacy();
 
         deployer.tx.set_from(deployer_address);
-        deployer.tx.set_chain_id(chain);
+        deployer.tx.set_chain_id(chain.id());
         // `to` field must be set explicitly, cannot be None.
-        if deployer.tx.to.is_none() {
+        if deployer.tx.to().is_none() {
             deployer.tx.set_create();
         }
-        deployer.tx.set_nonce(if let Some(nonce) = self.tx.nonce {
-            Ok(nonce.to())
-        } else {
-            provider.get_transaction_count(deployer_address).await
-        }?);
 
-        // set tx value if specified
-        if let Some(value) = self.tx.value {
-            deployer.tx.set_value(value);
+        // If Tempo chain fee token must be set
+        if chain.is_tempo() {
+            if let Some(fee_token) = self.tx.tempo.fee_token {
+                deployer.tx.set_fee_token(fee_token);
+            } else {
+                deployer.tx.set_fee_token(DEFAULT_FEE_TOKEN);
+            }
         }
 
-        deployer.tx.set_gas_limit(if let Some(gas_limit) = self.tx.gas_limit {
-            Ok(gas_limit.to())
-        } else {
-            provider.estimate_gas(deployer.tx.clone()).await
-        }?);
+        // Apply user-provided gas, fee, nonce, and Tempo options.
+        self.tx.apply::<N>(&mut deployer.tx, is_legacy);
+
+        // For keychain mode, set key_id and nonce_key before gas estimation.
+        // Convert the CREATE into an AA-compatible call entry since Tempo AA
+        // transactions use a `calls` list instead of `to`+`input`.
+        if let Some((_, ref ak)) = tempo_keychain {
+            deployer.tx.set_key_id(ak.key_address);
+            if deployer.tx.nonce_key().is_none() {
+                deployer.tx.set_nonce_key(U256::ZERO);
+            }
+            deployer.tx.convert_create_to_call();
+        }
+
+        // Fetch defaults from provider for values not specified by user.
+        if self.tx.nonce.is_none() && !self.tx.tempo.expiring_nonce {
+            deployer.tx.set_nonce(provider.get_transaction_count(deployer_address).await?);
+        }
+
+        // set access list if specified
+        if let Some(access_list) = match self.tx.access_list {
+            None => None,
+            Some(None) => Some(provider.create_access_list(&deployer.tx).await?.access_list),
+            Some(Some(ref access_list)) => Some(access_list.clone()),
+        } {
+            deployer.tx.set_access_list(access_list);
+        }
+
+        if self.tx.gas_limit.is_none() {
+            let mut estimated = provider.estimate_gas(deployer.tx.clone()).await?;
+
+            // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
+            // costs more gas for signature verification on Tempo chains. Add a
+            // conservative buffer since we can't determine the signature type beforehand.
+            if browser_signer.is_some() && chain.is_tempo() {
+                estimated += TEMPO_BROWSER_GAS_BUFFER;
+            }
+
+            deployer.tx.set_gas_limit(estimated);
+        }
 
         if is_legacy {
-            let gas_price = if let Some(gas_price) = self.tx.gas_price {
-                gas_price.to()
-            } else {
-                provider.get_gas_price().await?
-            };
-            deployer.tx.set_gas_price(gas_price);
-        } else {
+            if self.tx.gas_price.is_none() {
+                deployer.tx.set_gas_price(provider.get_gas_price().await?);
+            }
+        } else if self.tx.gas_price.is_none() || self.tx.priority_gas_price.is_none() {
             let estimate = provider.estimate_eip1559_fees().await.wrap_err("Failed to estimate EIP1559 fees. This chain might not support EIP1559, try adding --legacy to your command.")?;
-            let priority_fee = if let Some(priority_fee) = self.tx.priority_gas_price {
-                priority_fee.to()
-            } else {
-                estimate.max_priority_fee_per_gas
-            };
-            let max_fee = if let Some(max_fee) = self.tx.gas_price {
-                max_fee.to()
-            } else {
-                estimate.max_fee_per_gas
-            };
-
-            deployer.tx.set_max_fee_per_gas(max_fee);
-            deployer.tx.set_max_priority_fee_per_gas(priority_fee);
+            if self.tx.priority_gas_price.is_none() {
+                deployer.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+            }
+            if self.tx.gas_price.is_none() {
+                deployer.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+            }
         }
 
         // Before we actually deploy the contract we try check if the verify settings are valid
@@ -357,11 +471,18 @@ impl CreateArgs {
                 constructor_args = Some(hex::encode(encoded_args));
             }
 
-            self.verify_preflight_check(constructor_args.clone(), chain, &id).await?;
+            self.verify_preflight_check(constructor_args.clone(), &id).await?;
         }
 
         if dry_run {
-            if !shell::is_json() {
+            if shell::is_json() {
+                let output = json!({
+                    "contract": self.contract.name,
+                    "transaction": &deployer.tx,
+                    "abi":&abi
+                });
+                sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
+            } else {
                 sh_warn!("Dry run enabled, not broadcasting transaction\n")?;
 
                 sh_println!("Contract: {}", self.contract.name)?;
@@ -374,33 +495,79 @@ impl CreateArgs {
                 sh_warn!(
                     "To broadcast this transaction, add --broadcast to the previous command. See forge create --help for more."
                 )?;
-            } else {
-                let output = json!({
-                    "contract": self.contract.name,
-                    "transaction": &deployer.tx,
-                    "abi":&abi
-                });
-                sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
             }
 
             return Ok(());
         }
 
         // Deploy the actual contract
-        let (deployed_contract, receipt) = deployer.send_with_receipt().await?;
+        let (deployed_contract, receipt) = if let Some(browser) = browser_signer {
+            // Browser wallet signs and sends the transaction
+            let tx_hash = browser.send_transaction_via_browser(deployer.tx).await?;
+
+            // Wait for the transaction to be confirmed, then fetch the receipt.
+            provider
+                .watch_pending_transaction(alloy_provider::PendingTransactionConfig::new(tx_hash))
+                .await?
+                .await?;
+
+            let receipt = provider
+                .get_transaction_receipt(tx_hash)
+                .await?
+                .ok_or_else(|| eyre::eyre!("could not get transaction receipt for {tx_hash}"))?;
+
+            if !receipt.status() {
+                eyre::bail!("deployment transaction failed (receipt status 0): {tx_hash}");
+            }
+
+            let address = receipt
+                .contract_address()
+                .ok_or_else(|| eyre::eyre!("contract was not deployed"))?;
+
+            (address, receipt)
+        } else if let Some((signer, ak)) = tempo_keychain {
+            // Tempo keychain mode: sign with access key provisioning and send raw
+            let raw_tx = deployer
+                .tx
+                .sign_with_access_key(
+                    &provider,
+                    &signer,
+                    ak.wallet_address,
+                    ak.key_address,
+                    ak.key_authorization.as_ref(),
+                )
+                .await?;
+
+            let receipt = provider
+                .send_raw_transaction(&raw_tx)
+                .await?
+                .with_required_confirmations(1)
+                .with_timeout(Some(Duration::from_secs(timeout)))
+                .get_receipt()
+                .await?;
+
+            let address = receipt
+                .contract_address()
+                .ok_or_else(|| eyre::eyre!("contract was not deployed"))?;
+
+            (address, receipt)
+        } else {
+            deployer.send_with_receipt().await?
+        };
 
         let address = deployed_contract;
+        let tx_hash = receipt.transaction_hash();
         if shell::is_json() {
             let output = json!({
                 "deployer": deployer_address.to_string(),
                 "deployedTo": address.to_string(),
-                "transactionHash": receipt.transaction_hash
+                "transactionHash": tx_hash
             });
             sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
         } else {
             sh_println!("Deployer: {deployer_address}")?;
             sh_println!("Deployed to: {address}")?;
-            sh_println!("Transaction hash: {:?}", receipt.transaction_hash)?;
+            sh_println!("Transaction hash: {tx_hash:?}")?;
         };
 
         if !self.verify {
@@ -410,7 +577,7 @@ impl CreateArgs {
         sh_println!("Starting contract verification...")?;
 
         let num_of_optimizations = if let Some(optimizer) = self.build.compiler.optimize {
-            if optimizer { Some(self.build.compiler.optimizer_runs.unwrap_or(200)) } else { None }
+            optimizer.then(|| self.build.compiler.optimizer_runs.unwrap_or(200))
         } else {
             self.build.compiler.optimizer_runs
         };
@@ -424,7 +591,7 @@ impl CreateArgs {
             no_auto_detect: false,
             use_solc: None,
             num_of_optimizations,
-            etherscan: EtherscanOpts { key: self.eth.etherscan.key(), chain: Some(chain.into()) },
+            etherscan: EtherscanOpts { key: self.eth.etherscan.key(), chain: Some(chain) },
             rpc: Default::default(),
             flatten: false,
             force: false,
@@ -438,9 +605,9 @@ impl CreateArgs {
             evm_version: self.build.compiler.evm_version,
             show_standard_json_input: self.show_standard_json_input,
             guess_constructor_args: false,
-            compilation_profile: Some(id.profile.to_string()),
+            compilation_profile: Some(id.profile.clone()),
             language: None,
-            creation_transaction_hash: Some(receipt.transaction_hash),
+            creation_transaction_hash: Some(tx_hash),
         };
         sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
         verify.run().await
@@ -455,6 +622,14 @@ impl CreateArgs {
         constructor: &Constructor,
         constructor_args: &[String],
     ) -> Result<Vec<DynSolValue>> {
+        if constructor.inputs.len() != constructor_args.len() {
+            eyre::bail!(
+                "Constructor argument count mismatch: expected {} but got {}",
+                constructor.inputs.len(),
+                constructor_args.len()
+            );
+        }
+
         let mut params = Vec::with_capacity(constructor.inputs.len());
         for (input, arg) in constructor.inputs.iter().zip(constructor_args) {
             // resolve the input type directly
@@ -487,30 +662,30 @@ impl figment::Provider for CreateArgs {
 /// compatibility with less-abstract Contracts.
 ///
 /// For full usage docs, see [`DeploymentTxFactory`].
-pub type ContractFactory<P> = DeploymentTxFactory<P>;
+pub type ContractFactory<N, P> = DeploymentTxFactory<N, P>;
 
 /// Helper which manages the deployment transaction of a smart contract. It
 /// wraps a deployment transaction, and retrieves the contract address output
 /// by it.
 #[derive(Debug)]
 #[must_use = "ContractDeploymentTx does nothing unless you `send` it"]
-pub struct ContractDeploymentTx<P, C> {
+pub struct ContractDeploymentTx<N: Network, P, C> {
     /// the actual deployer, exposed for overriding the defaults
-    pub deployer: Deployer<P>,
+    pub deployer: Deployer<N, P>,
     /// marker for the `Contract` type to create afterwards
     ///
     /// this type will be used to construct it via `From::from(Contract)`
     _contract: PhantomData<C>,
 }
 
-impl<P: Clone, C> Clone for ContractDeploymentTx<P, C> {
+impl<N: Network, P: Clone, C> Clone for ContractDeploymentTx<N, P, C> {
     fn clone(&self) -> Self {
         Self { deployer: self.deployer.clone(), _contract: self._contract }
     }
 }
 
-impl<P, C> From<Deployer<P>> for ContractDeploymentTx<P, C> {
-    fn from(deployer: Deployer<P>) -> Self {
+impl<N: Network, P, C> From<Deployer<N, P>> for ContractDeploymentTx<N, P, C> {
+    fn from(deployer: Deployer<N, P>) -> Self {
         Self { deployer, _contract: PhantomData }
     }
 }
@@ -518,21 +693,21 @@ impl<P, C> From<Deployer<P>> for ContractDeploymentTx<P, C> {
 /// Helper which manages the deployment transaction of a smart contract
 #[derive(Clone, Debug)]
 #[must_use = "Deployer does nothing unless you `send` it"]
-pub struct Deployer<P> {
+pub struct Deployer<N: Network, P> {
     /// The deployer's transaction, exposed for overriding the defaults
-    pub tx: WithOtherFields<TransactionRequest>,
+    pub tx: N::TransactionRequest,
     client: P,
     confs: usize,
     timeout: u64,
 }
 
-impl<P: Provider<AnyNetwork>> Deployer<P> {
+impl<N: Network, P: Provider<N>> Deployer<N, P> {
     /// Broadcasts the contract deployment transaction and after waiting for it to
     /// be sufficiently confirmed (default: 1), it returns a tuple with the [`Address`] at the
-    /// deployed contract's address and the corresponding [`AnyTransactionReceipt`].
+    /// deployed contract's address and the corresponding receipt.
     pub async fn send_with_receipt(
         self,
-    ) -> Result<(Address, AnyTransactionReceipt), ContractDeploymentError> {
+    ) -> Result<(Address, N::ReceiptResponse), ContractDeploymentError> {
         let receipt = self
             .client
             .borrow()
@@ -543,8 +718,12 @@ impl<P: Provider<AnyNetwork>> Deployer<P> {
             .get_receipt()
             .await?;
 
+        if !receipt.status() {
+            return Err(ContractDeploymentError::DeploymentFailed(receipt.transaction_hash()));
+        }
+
         let address =
-            receipt.contract_address.ok_or(ContractDeploymentError::ContractNotDeployed)?;
+            receipt.contract_address().ok_or(ContractDeploymentError::ContractNotDeployed)?;
 
         Ok((address, receipt))
     }
@@ -554,19 +733,20 @@ impl<P: Provider<AnyNetwork>> Deployer<P> {
 /// created which manages the Contract bytecode and Application Binary Interface
 /// (ABI), usually generated from the Solidity compiler.
 #[derive(Clone, Debug)]
-pub struct DeploymentTxFactory<P> {
+pub struct DeploymentTxFactory<N: Network, P> {
     client: P,
     abi: JsonAbi,
     bytecode: Bytes,
     timeout: u64,
+    _network: PhantomData<N>,
 }
 
-impl<P: Provider<AnyNetwork> + Clone> DeploymentTxFactory<P> {
+impl<N: Network, P: Provider<N> + Clone> DeploymentTxFactory<N, P> {
     /// Creates a factory for deployment of the Contract with bytecode, and the
     /// constructor defined in the abi. The client will be used to send any deployment
     /// transaction.
-    pub fn new(abi: JsonAbi, bytecode: Bytes, client: P, timeout: u64) -> Self {
-        Self { client, abi, bytecode, timeout }
+    pub const fn new(abi: JsonAbi, bytecode: Bytes, client: P, timeout: u64) -> Self {
+        Self { client, abi, bytecode, timeout, _network: PhantomData }
     }
 
     /// Create a deployment tx using the provided tokens as constructor
@@ -574,7 +754,10 @@ impl<P: Provider<AnyNetwork> + Clone> DeploymentTxFactory<P> {
     pub fn deploy_tokens(
         self,
         params: Vec<DynSolValue>,
-    ) -> Result<Deployer<P>, ContractDeploymentError> {
+    ) -> Result<Deployer<N, P>, ContractDeploymentError>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         // Encode the constructor args & concatenate with the bytecode if necessary
         let data: Bytes = match (self.abi.constructor(), params.is_empty()) {
             (None, false) => return Err(ContractDeploymentError::ConstructorError),
@@ -590,8 +773,8 @@ impl<P: Provider<AnyNetwork> + Clone> DeploymentTxFactory<P> {
         };
 
         // create the tx object. Since we're deploying a contract, `to` is `None`
-        let tx = WithOtherFields::new(TransactionRequest::default().input(data.into()));
-
+        let mut tx = N::TransactionRequest::default();
+        tx.set_input(data);
         Ok(Deployer { client: self.client.clone(), tx, confs: 1, timeout: self.timeout })
     }
 }
@@ -605,6 +788,8 @@ pub enum ContractDeploymentError {
     DetokenizationError(#[from] alloy_dyn_abi::Error),
     #[error("contract was not deployed")]
     ContractNotDeployed,
+    #[error("deployment transaction failed (receipt status 0): {0}")]
+    DeploymentFailed(alloy_primitives::TxHash),
     #[error(transparent)]
     RpcError(#[from] TransportError),
 }
@@ -647,7 +832,7 @@ mod tests {
             "--chain-id",
             "9999",
         ]);
-        assert_eq!(args.chain_id(), Some(9999));
+        assert_eq!(args.chain_id().map(|c| c.id()), Some(9999));
     }
 
     #[test]

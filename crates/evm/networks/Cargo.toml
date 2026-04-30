@@ -14,6 +14,8 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+foundry-evm-hardforks.workspace = true
+
 alloy-chains.workspace = true
 alloy-eips.workspace = true
 alloy-evm.workspace = true
@@ -39,3 +41,6 @@ revm = { workspace = true, features = [
 
 clap = { version = "4", features = ["derive", "env", "unicode", "wrap_help"] }
 serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

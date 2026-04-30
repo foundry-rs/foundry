@@ -51,18 +51,19 @@ forge-script.workspace = true
 forge-sol-macro-gen.workspace = true
 foundry-cli.workspace = true
 foundry-debugger.workspace = true
-foundry-wallets = { workspace = true, optional = true }
+foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 
 alloy-chains.workspace = true
+alloy-consensus.workspace = true
 alloy-dyn-abi.workspace = true
 alloy-json-abi.workspace = true
 alloy-network.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-provider = { workspace = true, features = ["reqwest", "ws", "ipc"] }
-alloy-rpc-types.workspace = true
-alloy-serde.workspace = true
 alloy-signer.workspace = true
 alloy-transport.workspace = true
+
+tempo-alloy.workspace = true
 
 revm.workspace = true
 
@@ -106,7 +107,6 @@ alloy-hardforks.workspace = true
 anvil.workspace = true
 forge-script-sequence.workspace = true
 foundry-test-utils.workspace = true
-reqwest = { workspace = true, features = ["json"] }
 
 mockall = "0.14"
 globset = "0.4"
@@ -117,12 +117,12 @@ tempfile.workspace = true
 alloy-signer-local.workspace = true
 
 [features]
-default = ["jemalloc"]
-asm-keccak = ["alloy-primitives/asm-keccak"]
+default = ["jemalloc", "asm-keccak"]
+asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
-aws-kms = ["dep:foundry-wallets", "foundry-wallets/aws-kms"]
-gcp-kms = ["dep:foundry-wallets", "foundry-wallets/gcp-kms"]
-turnkey = ["dep:foundry-wallets", "foundry-wallets/turnkey"]
+aws-kms = ["foundry-wallets/aws-kms"]
+gcp-kms = ["foundry-wallets/gcp-kms"]
+turnkey = ["foundry-wallets/turnkey"]
 isolate-by-default = ["foundry-config/isolate-by-default"]

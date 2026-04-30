@@ -3,7 +3,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.5.0"
+FOUNDRYUP_INSTALLER_VERSION="1.8.1"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -102,25 +102,58 @@ main() {
     exit 0
   fi
 
-  # If Tempo network is set, use the Tempo fork of Foundry
-  if [[ "$FOUNDRYUP_NETWORK" == "tempo" ]]; then
-    FOUNDRYUP_REPO="tempoxyz/tempo-foundry"
-  else
-  # Default to Foundry repo
-    FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
+  if [[ -n "$FOUNDRYUP_NETWORK" ]]; then
+    warn "--network is deprecated and ignored; installing the regular Foundry release"
   fi
+
+  FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
 
   # Install by downloading binaries
   if [[ "$FOUNDRYUP_REPO" == "foundry-rs/foundry" && -z "$FOUNDRYUP_BRANCH" && -z "$FOUNDRYUP_COMMIT" ]]; then
-    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-stable}
-    FOUNDRYUP_TAG=$FOUNDRYUP_VERSION
+    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-latest}
 
     # Normalize versions (handle channels, versions without v prefix)
-    if [[ "$FOUNDRYUP_VERSION" =~ ^nightly ]]; then
+    if [[ "$FOUNDRYUP_VERSION" == "latest" || "$FOUNDRYUP_VERSION" == "stable" ]]; then
+      # Resolve to the latest release (non-prerelease) via the GitHub API
+      say "fetching latest release from ${FOUNDRYUP_REPO}..."
+      FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases/latest" | awk '
+        /"tag_name"[[:space:]]*:/ && !found { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); print; found=1 }
+      ') || err "failed to fetch releases from GitHub API"
+      if [ -z "$FOUNDRYUP_TAG" ]; then
+        err "could not find a latest release for ${FOUNDRYUP_REPO}"
+      fi
+      say "resolved release tag: ${FOUNDRYUP_TAG}"
+      FOUNDRYUP_VERSION="$FOUNDRYUP_TAG"
+    elif [[ "$FOUNDRYUP_VERSION" == "nightly" ]]; then
+      # Resolve to the latest nightly (prerelease) release via the GitHub API.
+      # The GitHub API does not guarantee that releases are returned in
+      # chronological order, so we collect all matching nightlies along with
+      # their `published_at` timestamps and sort them ourselves.
+      say "fetching latest nightly releases from ${FOUNDRYUP_REPO}..."
+      FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases" | awk '
+        /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
+        /"published_at"[[:space:]]*:[[:space:]]*"/ {
+          pub=$0
+          gsub(/.*"published_at"[[:space:]]*:[[:space:]]*"/, "", pub)
+          gsub(/".*/, "", pub)
+          if (tag ~ /^nightly-/) print pub "\t" tag
+          tag=""
+        }
+      ' | sort -r | awk -F '\t' 'NR==1 { print $2 }') || err "failed to fetch releases from GitHub API"
+      if [ -z "$FOUNDRYUP_TAG" ]; then
+        err "could not find a nightly release for ${FOUNDRYUP_REPO}"
+      fi
+      say "resolved nightly release tag: ${FOUNDRYUP_TAG}"
+      FOUNDRYUP_VERSION="nightly"
+    elif [[ "$FOUNDRYUP_VERSION" =~ ^nightly- ]]; then
+      # Specific nightly tag (e.g. nightly-abc123...)
+      FOUNDRYUP_TAG="$FOUNDRYUP_VERSION"
       FOUNDRYUP_VERSION="nightly"
     elif [[ "$FOUNDRYUP_VERSION" == [[:digit:]]* ]]; then
       # Add v prefix
       FOUNDRYUP_VERSION="v${FOUNDRYUP_VERSION}"
+      FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
+    else
       FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
     fi
 
@@ -316,58 +349,6 @@ main() {
     use
 
     say "done!"
-  # Install from Tempo's fork of Foundry if --network tempo is set
-  elif [[ "$FOUNDRYUP_NETWORK" == "tempo" ]]; then
-    FOUNDRYUP_VERSION=${FOUNDRYUP_VERSION:-nightly}
-    FOUNDRYUP_TAG="${FOUNDRYUP_VERSION}"
-
-    say "installing tempo-foundry (version ${FOUNDRYUP_VERSION}, tag ${FOUNDRYUP_TAG})"
-
-    # Detect platform and architecture.
-    detect_platform_arch
-
-    # Compute the URL of the release tarball in the Tempo Foundry repository.
-    RELEASE_URL="https://github.com/${FOUNDRYUP_REPO}/releases/download/${FOUNDRYUP_TAG}/"
-    BIN_ARCHIVE_URL="${RELEASE_URL}foundry_nightly_${PLATFORM}_${ARCHITECTURE}.$EXT"
-    MAN_TARBALL_URL="${RELEASE_URL}foundry_man_nightly.tar.gz"
-
-    ensure mkdir -p "$FOUNDRY_VERSIONS_DIR"
-
-    # Download and extract the binaries archive
-    say "downloading forge and cast for $FOUNDRYUP_TAG version"
-    if [ "$PLATFORM" = "win32" ]; then
-      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
-      tmp="$tmp/foundry.zip"
-      ensure download "$BIN_ARCHIVE_URL" "$tmp"
-      ensure unzip "$tmp" -d "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
-      rm -f "$tmp"
-    else
-      tmp="$(mktemp -d 2>/dev/null)" || err "failed to create temp dir"
-      tmp="$tmp/foundry.tar.gz"
-      ensure download "$BIN_ARCHIVE_URL" "$tmp"
-      # Make sure it's a valid tar archive.
-      ensure tar tf "$tmp" 1> /dev/null
-      ensure mkdir -p "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG"
-      ensure tar -C "$FOUNDRY_VERSIONS_DIR/$FOUNDRYUP_TAG" -xvf "$tmp"
-      rm -f "$tmp"
-    fi
-
-    # Optionally download the manuals
-    if check_cmd tar; then
-      say "downloading manpages"
-      mkdir -p "$FOUNDRY_MAN_DIR"
-      if ! download "$MAN_TARBALL_URL" | tar -xzC "$FOUNDRY_MAN_DIR"; then
-        warn "skipping manpage download: unavailable or invalid archive"
-      fi
-    else
-      say 'skipping manpage download: missing "tar"'
-    fi
-
-    # Use newly installed version.
-    FOUNDRYUP_VERSION=$FOUNDRYUP_TAG
-    use
-
-    say "done!"
   # Install by cloning the repo with the provided branch/tag
   else
     need_cmd cargo
@@ -437,7 +418,7 @@ The installer for Foundry.
 
 Update or revert to a specific Foundry version with ease.
 
-By default, the latest stable version is installed from built binaries.
+By default, the latest version is installed from built binaries.
 
 USAGE:
     foundryup <OPTIONS>
@@ -446,7 +427,7 @@ OPTIONS:
     -h, --help      Print help information
     -v, --version   Print the version of foundryup
     -U, --update    Update foundryup to the latest version
-    -i, --install   Install a specific version from built binaries
+    -i, --install   Install a specific version (latest, nightly, nightly-<SHA>, or v1.2.3)
     -l, --list      List versions installed from built binaries
     -u, --use       Use a specific installed version from built binaries
     -b, --branch    Build and install a specific branch
@@ -455,8 +436,8 @@ OPTIONS:
     -r, --repo      Build and install from a remote GitHub repo (uses default branch if no other options are set)
     -p, --path      Build and install a local repository
     -j, --jobs      Number of CPUs to use for building Foundry (default: all CPUs)
+    -n, --network   Deprecated and ignored; installs the regular Foundry release
     -f, --force     Skip SHA verification for downloaded binaries (INSECURE - use with caution)
-    -n, --network   Install binaries for a specific network (e.g., tempo)
     --arch          Install a specific architecture (supports amd64 and arm64)
     --platform      Install a specific platform (supports win32, linux, darwin and alpine)
 EOF
@@ -628,11 +609,7 @@ detect_platform_arch() {
 check_installer_up_to_date() {
   say "checking if foundryup is up to date..."
 
-  if check_cmd curl; then
-    remote_version=$(curl -fsSL "$FOUNDRY_BIN_URL" | grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2)
-  else
-    remote_version=$(wget -qO- "$FOUNDRY_BIN_URL" | grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2)
-  fi
+  remote_version=$(fetch "$FOUNDRY_BIN_URL" | grep -Eo 'FOUNDRYUP_INSTALLER_VERSION="[0-9]+\.[0-9]+\.[0-9]+"' | cut -d'"' -f2 || true)
 
   if [ -z "$remote_version" ]; then
     warn "Could not determine remote foundryup version. Skipping version check."
@@ -704,6 +681,15 @@ check_bins_in_use() {
 # will immediately terminate with an error showing the failing command.
 ensure() {
   if ! "$@"; then err "command failed: $*"; fi
+}
+
+# Silently fetches $1 to stdout
+fetch() {
+  if check_cmd curl; then
+    curl -fsSL "$1"
+  else
+    wget -qO- "$1"
+  fi
 }
 
 # Downloads $1 into $2 or stdout

@@ -34,13 +34,13 @@ impl ExtTester {
     }
 
     /// Sets the path style.
-    pub fn style(mut self, style: PathStyle) -> Self {
+    pub const fn style(mut self, style: PathStyle) -> Self {
         self.style = style;
         self
     }
 
     /// Sets the fork block.
-    pub fn fork_block(mut self, fork_block: u64) -> Self {
+    pub const fn fork_block(mut self, fork_block: u64) -> Self {
         self.fork_block = Some(fork_block);
         self
     }
@@ -124,9 +124,7 @@ impl ExtTester {
             git.current_dir(root).args(["log", "-n", "1"]);
             test_debug!("$ {git:?}");
             let output = git.output().unwrap();
-            if !output.status.success() {
-                panic!("git log failed: {output:?}");
-            }
+            assert!(output.status.success(), "git log failed: {output:?}");
             let stdout = String::from_utf8(output.stdout).unwrap();
             let commit = stdout.lines().next().unwrap().split_whitespace().nth(1).unwrap();
             panic!("pin to latest commit: {commit}");
@@ -135,9 +133,7 @@ impl ExtTester {
             git.current_dir(root).args(["checkout", self.rev]);
             test_debug!("$ {git:?}");
             let status = git.status().unwrap();
-            if !status.success() {
-                panic!("git checkout failed: {status}");
-            }
+            assert!(status.success(), "git checkout failed: {status}")
         }
 
         (prj, test_cmd)

@@ -38,6 +38,30 @@ LL │         uint256 Enabled_MixedCase_Variable = 1;
    │
    ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
 
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+   ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
+   │
+LL │ contract AsmKeccak256 {
+   │          ━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+   ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
+   │
+LL │ contract OtherAsmKeccak256 {
+   │          ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
+note[multi-contract-file]: prefer having only one contract, interface or library per file
+   ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
+   │
+LL │ contract YetAnotherAsmKeccak256 {
+   │          ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
    │
@@ -85,6 +109,14 @@ LL │         return keccak256(abi.encode(a, b, c));
    │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+
+note[unused-state-variables]: state variable is never used
+   ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
+   │
+LL │     uint256 Enabled_MixedCase_Variable;
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-state-variables
 
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC

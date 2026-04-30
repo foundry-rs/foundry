@@ -216,7 +216,7 @@ pub fn render_trace_arena_inner(
     String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
 }
 
-fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
+const fn convert_color_choice(choice: shell::ColorChoice) -> revm_inspectors::ColorChoice {
     match choice {
         shell::ColorChoice::Auto => revm_inspectors::ColorChoice::Auto,
         shell::ColorChoice::Always => revm_inspectors::ColorChoice::Always,
@@ -237,7 +237,7 @@ impl TraceKind {
     ///
     /// [`Deployment`]: TraceKind::Deployment
     #[must_use]
-    pub fn is_deployment(self) -> bool {
+    pub const fn is_deployment(self) -> bool {
         matches!(self, Self::Deployment)
     }
 
@@ -245,7 +245,7 @@ impl TraceKind {
     ///
     /// [`Setup`]: TraceKind::Setup
     #[must_use]
-    pub fn is_setup(self) -> bool {
+    pub const fn is_setup(self) -> bool {
         matches!(self, Self::Setup)
     }
 
@@ -253,7 +253,7 @@ impl TraceKind {
     ///
     /// [`Execution`]: TraceKind::Execution
     #[must_use]
-    pub fn is_execution(self) -> bool {
+    pub const fn is_execution(self) -> bool {
         matches!(self, Self::Execution)
     }
 }
@@ -321,7 +321,10 @@ pub enum TraceMode {
     ///
     /// Used by debugger.
     Debug,
-    /// Debug trace with storage changes.
+    /// Step trace with storage change recording.
+    ///
+    /// Records JUMP/JUMPDEST steps (like `Steps`) plus storage diffs on SLOAD/SSTORE.
+    /// Does not enable memory/stack snapshots or unfiltered opcode recording.
     RecordStateDiff,
 }
 
@@ -370,9 +373,9 @@ impl TraceMode {
         match verbosity {
             0..3 => self,
             3..=4 => std::cmp::max(self, Self::Call),
-            // Enable step recording for backtraces when verbosity is 5 or higher.
-            // We need to ensure we're recording JUMP AND JUMPDEST steps.
-            _ => std::cmp::min(self, Self::Steps),
+            // Enable step recording and state diff recording when verbosity is 5 or higher.
+            // This includes backtraces (JUMP/JUMPDEST steps) and storage changes.
+            _ => std::cmp::max(self, Self::RecordStateDiff),
         }
     }
 
@@ -380,23 +383,128 @@ impl TraceMode {
         if self.is_none() {
             None
         } else {
+            // RecordStateDiff is Steps + state diff recording, not Debug + state diff.
+            // It should not enable memory/stack snapshots.
+            // State diff recording requires all opcodes (no filter) since it needs
+            // SLOAD/SSTORE steps, not just JUMP/JUMPDEST.
+            let effective = if self.record_state_diff() { Self::Steps } else { self };
             TracingInspectorConfig {
                 record_steps: self >= Self::Steps,
-                record_memory_snapshots: self >= Self::Jump,
-                record_stack_snapshots: if self > Self::Steps {
+                record_memory_snapshots: effective >= Self::Jump,
+                record_stack_snapshots: if effective > Self::Steps {
                     StackSnapshotType::Full
                 } else {
                     StackSnapshotType::None
                 },
                 record_logs: true,
                 record_state_diff: self.record_state_diff(),
-                record_returndata_snapshots: self.is_debug(),
-                record_opcodes_filter: (self.is_steps() || self.is_jump() || self.is_jump_simple())
-                    .then(|| OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)),
+                record_returndata_snapshots: effective.is_debug(),
+                // State diff needs all opcodes recorded to capture SLOAD/SSTORE.
+                record_opcodes_filter: if self.record_state_diff() {
+                    None
+                } else {
+                    (effective.is_steps() || effective.is_jump() || effective.is_jump_simple())
+                        .then(|| {
+                            OpcodeFilter::new().enabled(OpCode::JUMP).enabled(OpCode::JUMPDEST)
+                        })
+                },
                 exclude_precompile_calls: false,
-                record_immediate_bytes: self.is_debug(),
+                record_immediate_bytes: effective.is_debug(),
             }
             .into()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- TraceMode::with_verbosity level tests --
+
+    #[test]
+    fn verbosity_0_through_2_is_noop() {
+        for v in 0..=2 {
+            assert_eq!(TraceMode::None.with_verbosity(v), TraceMode::None, "v={v}");
+            assert_eq!(TraceMode::Call.with_verbosity(v), TraceMode::Call, "v={v}");
+            assert_eq!(TraceMode::Debug.with_verbosity(v), TraceMode::Debug, "v={v}");
+        }
+    }
+
+    #[test]
+    fn verbosity_3_and_4_raises_to_call() {
+        for v in 3..=4 {
+            assert_eq!(TraceMode::None.with_verbosity(v), TraceMode::Call, "v={v}");
+            // Already above Call — must not downgrade.
+            assert_eq!(TraceMode::Debug.with_verbosity(v), TraceMode::Debug, "v={v}");
+            assert_eq!(
+                TraceMode::RecordStateDiff.with_verbosity(v),
+                TraceMode::RecordStateDiff,
+                "v={v}"
+            );
+        }
+    }
+
+    #[test]
+    fn verbosity_5_raises_to_record_state_diff() {
+        assert_eq!(TraceMode::None.with_verbosity(5), TraceMode::RecordStateDiff);
+        assert_eq!(TraceMode::Call.with_verbosity(5), TraceMode::RecordStateDiff);
+        assert_eq!(TraceMode::Steps.with_verbosity(5), TraceMode::RecordStateDiff);
+        assert_eq!(TraceMode::Debug.with_verbosity(5), TraceMode::RecordStateDiff);
+        // Already at the top — stays the same.
+        assert_eq!(TraceMode::RecordStateDiff.with_verbosity(5), TraceMode::RecordStateDiff);
+    }
+
+    // -- into_config at each verbosity level --
+
+    #[test]
+    fn config_at_verbosity_0_is_none() {
+        let mode = TraceMode::None.with_verbosity(0);
+        assert!(mode.into_config().is_none());
+    }
+
+    #[test]
+    fn config_at_verbosity_3_records_calls_only() {
+        let cfg = TraceMode::None.with_verbosity(3).into_config().unwrap();
+        assert!(!cfg.record_steps, "verbosity 3 should not record steps");
+        assert!(!cfg.record_state_diff, "verbosity 3 should not record state diff");
+        assert!(cfg.record_logs, "verbosity 3 should record logs");
+    }
+
+    #[test]
+    fn config_at_verbosity_5_records_steps_and_state_diff() {
+        let cfg = TraceMode::None.with_verbosity(5).into_config().unwrap();
+        assert!(cfg.record_steps, "verbosity 5 must record steps for backtraces");
+        assert!(cfg.record_state_diff, "verbosity 5 must record state diff");
+        assert!(cfg.record_logs, "verbosity 5 must record logs");
+        // RecordStateDiff should NOT enable expensive debug-level features.
+        assert!(!cfg.record_memory_snapshots, "verbosity 5 should not record memory snapshots");
+        assert_eq!(
+            cfg.record_stack_snapshots,
+            StackSnapshotType::None,
+            "verbosity 5 should not record stack snapshots"
+        );
+        // State diff requires all opcodes to capture SLOAD/SSTORE, so no filter.
+        assert!(
+            cfg.record_opcodes_filter.is_none(),
+            "verbosity 5 needs unfiltered opcodes for state diff"
+        );
+    }
+
+    #[test]
+    fn config_debug_mode_unchanged() {
+        // Debug mode must still enable full recording for the debugger.
+        let cfg = TraceMode::Debug.into_config().unwrap();
+        assert!(cfg.record_steps);
+        assert!(cfg.record_memory_snapshots, "Debug must record memory snapshots");
+        assert_eq!(
+            cfg.record_stack_snapshots,
+            StackSnapshotType::Full,
+            "Debug must record full stack snapshots"
+        );
+        assert!(cfg.record_returndata_snapshots, "Debug must record returndata");
+        assert!(cfg.record_immediate_bytes, "Debug must record immediate bytes");
+        assert!(cfg.record_opcodes_filter.is_none(), "Debug must record all opcodes (no filter)");
+        assert!(!cfg.record_state_diff, "Debug alone should not record state diff");
     }
 }
