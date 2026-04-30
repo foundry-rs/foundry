@@ -474,6 +474,33 @@ forgetest!(per_test_network_routing, |prj, cmd| {
                 require(token == address(0), "expected unset user fee token");
             }
         }
+
+        // Mixed contract: one function annotated with Tempo, one unannotated (runs on Ethereum).
+        contract MixedNetwork {
+            // No annotation -> runs on Ethereum; precompile must be absent.
+            function test_fee_manager_absent_on_ethereum() public view {
+                require(
+                    TIP_FEE_MANAGER.code.length == 0,
+                    "TipFeeManager should not exist on Ethereum"
+                );
+            }
+
+            /// forge-config: default.networks.network = "tempo"
+            function test_fee_manager_callable_on_tempo() public view {
+                require(
+                    TIP_FEE_MANAGER.code.length > 0,
+                    "TipFeeManager must be deployed on Tempo"
+                );
+
+                (bool ok, bytes memory ret) = TIP_FEE_MANAGER.staticcall(
+                    abi.encodeWithSignature("userTokens(address)", address(0))
+                );
+                require(ok, "userTokens call to TipFeeManager failed");
+                require(ret.length == 32, "unexpected return data length");
+                address token = abi.decode(ret, (address));
+                require(token == address(0), "expected unset user fee token");
+            }
+        }
         "#,
     );
 
@@ -481,6 +508,10 @@ forgetest!(per_test_network_routing, |prj, cmd| {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+Ran 1 test for test/inline.sol:MixedNetwork
+[PASS] test_fee_manager_absent_on_ethereum() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test for test/inline.sol:DefaultNetwork
 [PASS] test_fee_manager_absent_on_ethereum() ([GAS])
@@ -490,7 +521,11 @@ Ran 1 test for test/inline.sol:TempoNetwork
 [PASS] test_fee_manager_callable_on_tempo() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 2 test suites [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+Ran 1 test for test/inline.sol:MixedNetwork
+[PASS] test_fee_manager_callable_on_tempo() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 3 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
 
 "#]]);
 });
