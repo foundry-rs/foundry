@@ -916,11 +916,18 @@ Installing tempo-std in [..] (url: https://github.com/tempoxyz/tempo-std, tag: N
 
     assert!(prj.root().join("foundry.toml").exists());
 
-    // Verify foundry.toml contains `tempo = true` so subsequent commands auto-detect the network.
+    // Verify foundry.toml contains `network = "tempo"` so subsequent commands auto-detect the
+    // network.
     let foundry_toml = std::fs::read_to_string(prj.root().join("foundry.toml")).unwrap();
     assert!(
-        foundry_toml.contains("tempo = true"),
-        "foundry.toml should contain `tempo = true`, got:\n{foundry_toml}"
+        foundry_toml.contains("network = \"tempo\""),
+        "foundry.toml should contain `network = \"tempo\"`, got:\n{foundry_toml}"
+    );
+    assert!(
+        foundry_toml.contains("[rpc_endpoints]")
+            && foundry_toml.contains("tempo = \"https://rpc.tempo.xyz/\"")
+            && foundry_toml.contains("moderato = \"https://rpc.moderato.tempo.xyz/\""),
+        "foundry.toml should contain tempo rpc_endpoints, got:\n{foundry_toml}"
     );
 
     assert!(prj.root().join("lib/forge-std").exists());
