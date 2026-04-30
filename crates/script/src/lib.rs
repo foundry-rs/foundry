@@ -146,7 +146,7 @@ pub struct ScriptArgs {
 
     /// Opt into TIP-1009 expiring-nonce mode with a validity window.
     ///
-    /// Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now + <seconds> on every
+    /// Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now + seconds on every
     /// broadcast transaction. The transaction (or batch) must be mined before the deadline or it
     /// becomes permanently invalid, preventing late-landing replays. Maximum value is 30 seconds.
     #[arg(long = "tempo.expires", value_name = "SECONDS", value_parser = parse_expires_seconds_script)]
