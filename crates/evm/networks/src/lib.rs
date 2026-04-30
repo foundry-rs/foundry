@@ -63,7 +63,7 @@ impl From<ChainId> for NetworkVariant {
 pub struct NetworkConfigs {
     /// Enable a specific network family.
     #[arg(help_heading = "Networks", long, short, num_args = 1, value_name = "NETWORK", value_enum, conflicts_with_all = ["celo", "optimism", "tempo"])]
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     network: Option<NetworkVariant>,
     /// Enable Celo network features.
     #[arg(help_heading = "Networks", long, conflicts_with_all = ["network", "optimism", "tempo"])]

@@ -1437,6 +1437,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "soldeer": null,
   "assertions_revert": true,
   "legacy_assertions": false,
+  "network": null,
   "celo": false,
   "tempo": false,
   "bypass_prevrandao": false,
