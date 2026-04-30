@@ -3,7 +3,12 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.8.1"
+FOUNDRYUP_INSTALLER_VERSION="1.8.2"
+
+# Sent on every download. The GitHub REST API rejects requests with no
+# User-Agent (HTTP 403). Default curl/wget UAs work but are stripped by
+# some proxies and sandboxed runners; set it explicitly to be robust.
+FOUNDRYUP_USER_AGENT="foundryup/${FOUNDRYUP_INSTALLER_VERSION}"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -686,9 +691,9 @@ ensure() {
 # Silently fetches $1 to stdout
 fetch() {
   if check_cmd curl; then
-    curl -fsSL "$1"
+    curl -fsSL --user-agent "$FOUNDRYUP_USER_AGENT" "$1"
   else
-    wget -qO- "$1"
+    wget -qO- --user-agent="$FOUNDRYUP_USER_AGENT" "$1"
   fi
 }
 
@@ -697,16 +702,16 @@ download() {
   if [ -n "$2" ]; then
     # output into $2
     if check_cmd curl; then
-      curl -#o "$2" -L "$1"
+      curl -#o "$2" -L --user-agent "$FOUNDRYUP_USER_AGENT" "$1"
     else
-      wget --show-progress -qO "$2" "$1"
+      wget --show-progress -qO "$2" --user-agent="$FOUNDRYUP_USER_AGENT" "$1"
     fi
   else
     # output to stdout
     if check_cmd curl; then
-      curl -#L "$1"
+      curl -#L --user-agent "$FOUNDRYUP_USER_AGENT" "$1"
     else
-      wget --show-progress -qO- "$1"
+      wget --show-progress -qO- --user-agent="$FOUNDRYUP_USER_AGENT" "$1"
     fi
   fi
 }
