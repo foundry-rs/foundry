@@ -63,7 +63,7 @@ use foundry_evm::{
 use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
 use serde::Serialize;
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 mod broadcast;
 mod build;
@@ -146,13 +146,11 @@ pub struct ScriptArgs {
 
     /// Opt into TIP-1009 expiring-nonce mode with a validity window.
     ///
-    /// Sets nonce_key = U256::MAX and valid_before = now + duration on every broadcast
-    /// transaction. The transaction (or batch) must be mined before the deadline or it becomes
-    /// permanently invalid, preventing late-landing replays.
-    ///
-    /// Duration format: integer followed by `s`, `m`, `h`, or `d`. Example: `30s`, `5m`, `2h`.
-    #[arg(long = "tempo.expires", value_name = "DURATION", value_parser = parse_expires_duration_script)]
-    pub expires: Option<Duration>,
+    /// Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now + <seconds> on every
+    /// broadcast transaction. The transaction (or batch) must be mined before the deadline or it
+    /// becomes permanently invalid, preventing late-landing replays. Maximum value is 30 seconds.
+    #[arg(long = "tempo.expires", value_name = "SECONDS", value_parser = parse_expires_seconds_script)]
+    pub expires: Option<u64>,
 
     /// Skips on-chain simulation.
     #[arg(long)]
@@ -301,16 +299,13 @@ impl ScriptArgs {
             self.fee_token
         };
 
-        let expires_at = self.expires.and_then(|d| {
+        let expires_at = self.expires.map(|secs| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .ok()
-                .map(|now| (now + d).as_secs())
+                .expect("time went backwards")
+                .as_secs()
+                + secs
         });
-
-        if let Some(ts) = expires_at {
-            sh_println!("Transactions expire at unix timestamp {ts}")?;
-        }
 
         let script_config =
             ScriptConfig::new(config, evm_opts, self.batch, fee_token, expires_at).await?;
@@ -852,24 +847,14 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     }
 }
 
-fn parse_expires_duration_script(s: &str) -> Result<Duration, String> {
-    if s.is_empty() {
-        return Err("empty duration".to_string());
-    }
-    let (digits, unit) = s.split_at(s.len() - 1);
-    let n: u64 = digits
+fn parse_expires_seconds_script(s: &str) -> Result<u64, String> {
+    let secs: u64 = s
         .parse()
-        .map_err(|_| format!("invalid duration '{s}': expected integer followed by s/m/h/d"))?;
-    let secs = match unit {
-        "s" => n,
-        "m" => n * 60,
-        "h" => n * 3600,
-        "d" => n * 86400,
-        _ => {
-            return Err(format!("invalid duration unit '{unit}' in '{s}': expected s, m, h, or d"));
-        }
-    };
-    Ok(Duration::from_secs(secs))
+        .map_err(|_| format!("invalid value '{s}': expected an integer number of seconds"))?;
+    if secs > 30 {
+        return Err(format!("expires must be at most 30 seconds (got {secs})"));
+    }
+    Ok(secs)
 }
 
 #[cfg(test)]

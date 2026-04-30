@@ -6,7 +6,7 @@ use foundry_common::FoundryTransactionBuilder;
 use std::{
     num::NonZeroU64,
     str::FromStr,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::utils::parse_fee_token_address;
@@ -81,21 +81,18 @@ pub struct TempoOpts {
     ///
     /// Convenience flag that combines `--tempo.expiring-nonce` with a relative
     /// `--tempo.valid-before`. Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now +
-    /// <duration>.
+    /// seconds.
     ///
-    /// Duration format: integer followed by a unit suffix: `s` (seconds), `m` (minutes),
-    /// `h` (hours), or `d` (days). Examples: `30s`, `5m`, `2h`.
-    ///
-    /// The transaction must be mined before the deadline or it becomes permanently invalid,
-    /// giving safe retry semantics: retries produce a fresh tx hash and the old tx can never
-    /// land late.
+    /// Maximum value is 30 seconds. The transaction must be mined before the deadline or it
+    /// becomes permanently invalid, giving safe retry semantics: retries produce a fresh tx hash
+    /// and the old tx can never land late.
     #[arg(
         long = "tempo.expires",
-        value_name = "DURATION",
-        value_parser = parse_expires_duration,
+        value_name = "SECONDS",
+        value_parser = parse_expires_seconds,
         conflicts_with_all = &["expiring_nonce", "valid_before"],
     )]
-    pub expires: Option<Duration>,
+    pub expires: Option<u64>,
 }
 
 impl TempoOpts {
@@ -113,13 +110,10 @@ impl TempoOpts {
     }
 
     /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.
-    ///
-    /// Computed as `now + expires` at call time, so callers that need a stable value (e.g. to
-    /// print it after sending) should capture this once and reuse it.
     pub fn expires_at(&self) -> Option<u64> {
-        let window = self.expires?;
+        let secs = self.expires?;
         let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
-        Some((now + window).as_secs())
+        Some(now.as_secs() + secs)
     }
 
     /// Applies Tempo-specific options to a transaction request.
@@ -181,22 +175,15 @@ fn parse_signature(s: &str) -> Result<Signature, String> {
     Signature::from_str(s).map_err(|e| format!("invalid signature: {e}"))
 }
 
-/// Parses a human-readable duration like `30s`, `5m`, `2h`, or `1d` into a [`Duration`].
-fn parse_expires_duration(s: &str) -> Result<Duration, String> {
-    let (digits, unit) = s.split_at(s.len() - 1);
-    let n: u64 = digits
+/// Parses a seconds value for `--tempo.expires`, capped at the protocol maximum of 30 seconds.
+fn parse_expires_seconds(s: &str) -> Result<u64, String> {
+    let secs: u64 = s
         .parse()
-        .map_err(|_| format!("invalid duration '{s}': expected integer followed by s/m/h/d"))?;
-    let secs = match unit {
-        "s" => n,
-        "m" => n * 60,
-        "h" => n * 3600,
-        "d" => n * 86400,
-        _ => {
-            return Err(format!("invalid duration unit '{unit}' in '{s}': expected s, m, h, or d"));
-        }
-    };
-    Ok(Duration::from_secs(secs))
+        .map_err(|_| format!("invalid value '{s}': expected an integer number of seconds"))?;
+    if secs > 30 {
+        return Err(format!("expires must be at most 30 seconds (got {secs})"));
+    }
+    Ok(secs)
 }
 
 #[cfg(test)]
@@ -206,24 +193,21 @@ mod tests {
 
     #[test]
     fn parse_expires_flag() {
-        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "30s"]).unwrap();
-        assert_eq!(opts.expires, Some(Duration::from_secs(30)));
+        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "30"]).unwrap();
+        assert_eq!(opts.expires, Some(30));
 
-        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "5m"]).unwrap();
-        assert_eq!(opts.expires, Some(Duration::from_secs(300)));
+        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
+        assert_eq!(opts.expires, Some(10));
 
-        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "2h"]).unwrap();
-        assert_eq!(opts.expires, Some(Duration::from_secs(7200)));
-
-        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "1d"]).unwrap();
-        assert_eq!(opts.expires, Some(Duration::from_secs(86400)));
+        // exceeds 30s maximum
+        assert!(TempoOpts::try_parse_from(["", "--tempo.expires", "31"]).is_err());
 
         // conflicts with --tempo.expiring-nonce
         assert!(
             TempoOpts::try_parse_from([
                 "",
                 "--tempo.expires",
-                "30s",
+                "30",
                 "--tempo.expiring-nonce",
                 "--tempo.valid-before",
                 "999"
