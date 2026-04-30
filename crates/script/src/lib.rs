@@ -146,7 +146,7 @@ pub struct ScriptArgs {
 
     /// Opt into TIP-1009 expiring-nonce mode with a validity window.
     ///
-    /// Sets nonce_key = U256::MAX and valid_before = now + <duration> on every broadcast
+    /// Sets nonce_key = U256::MAX and valid_before = now + duration on every broadcast
     /// transaction. The transaction (or batch) must be mined before the deadline or it becomes
     /// permanently invalid, preventing late-landing replays.
     ///
