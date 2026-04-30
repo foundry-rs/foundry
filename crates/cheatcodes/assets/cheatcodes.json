@@ -864,7 +864,7 @@
       "func": {
         "id": "assertApproxEqAbsDecimal_1",
         "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertApproxEqAbsDecimal(uint256 left, uint256 right, uint256 maxDelta, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqAbsDecimal(uint256,uint256,uint256,uint256,string)",
@@ -904,7 +904,7 @@
       "func": {
         "id": "assertApproxEqAbsDecimal_3",
         "description": "Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertApproxEqAbsDecimal(int256 left, int256 right, uint256 maxDelta, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertApproxEqAbsDecimal(int256 left, int256 right, uint256 maxDelta, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqAbsDecimal(int256,int256,uint256,uint256,string)",
@@ -944,7 +944,7 @@
       "func": {
         "id": "assertApproxEqAbs_1",
         "description": "Compares two `uint256` values. Expects difference to be less than or equal to `maxDelta`.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata error) external pure;",
+        "declaration": "function assertApproxEqAbs(uint256 left, uint256 right, uint256 maxDelta, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqAbs(uint256,uint256,uint256,string)",
@@ -984,7 +984,7 @@
       "func": {
         "id": "assertApproxEqAbs_3",
         "description": "Compares two `int256` values. Expects difference to be less than or equal to `maxDelta`.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata error) external pure;",
+        "declaration": "function assertApproxEqAbs(int256 left, int256 right, uint256 maxDelta, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqAbs(int256,int256,uint256,string)",
@@ -1024,7 +1024,7 @@
       "func": {
         "id": "assertApproxEqRelDecimal_1",
         "description": "Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertApproxEqRelDecimal(uint256 left, uint256 right, uint256 maxPercentDelta, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertApproxEqRelDecimal(uint256 left, uint256 right, uint256 maxPercentDelta, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqRelDecimal(uint256,uint256,uint256,uint256,string)",
@@ -1064,7 +1064,7 @@
       "func": {
         "id": "assertApproxEqRelDecimal_3",
         "description": "Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertApproxEqRelDecimal(int256 left, int256 right, uint256 maxPercentDelta, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertApproxEqRelDecimal(int256 left, int256 right, uint256 maxPercentDelta, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqRelDecimal(int256,int256,uint256,uint256,string)",
@@ -1104,7 +1104,7 @@
       "func": {
         "id": "assertApproxEqRel_1",
         "description": "Compares two `uint256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nIncludes error message into revert string on failure.",
-        "declaration": "function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata error) external pure;",
+        "declaration": "function assertApproxEqRel(uint256 left, uint256 right, uint256 maxPercentDelta, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqRel(uint256,uint256,uint256,string)",
@@ -1144,7 +1144,7 @@
       "func": {
         "id": "assertApproxEqRel_3",
         "description": "Compares two `int256` values. Expects relative difference in percents to be less than or equal to `maxPercentDelta`.\n`maxPercentDelta` is an 18 decimal fixed point number, where 1e18 == 100%\nIncludes error message into revert string on failure.",
-        "declaration": "function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata error) external pure;",
+        "declaration": "function assertApproxEqRel(int256 left, int256 right, uint256 maxPercentDelta, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertApproxEqRel(int256,int256,uint256,string)",
@@ -1184,7 +1184,7 @@
       "func": {
         "id": "assertEqDecimal_1",
         "description": "Asserts that two `uint256` values are equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEqDecimal(uint256,uint256,uint256,string)",
@@ -1224,7 +1224,7 @@
       "func": {
         "id": "assertEqDecimal_3",
         "description": "Asserts that two `int256` values are equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertEqDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEqDecimal(int256,int256,uint256,string)",
@@ -1264,7 +1264,7 @@
       "func": {
         "id": "assertEq_1",
         "description": "Asserts that two `bool` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(bool left, bool right, string calldata error) external pure;",
+        "declaration": "function assertEq(bool left, bool right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(bool,bool,string)",
@@ -1304,7 +1304,7 @@
       "func": {
         "id": "assertEq_11",
         "description": "Asserts that two `string` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(string calldata left, string calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(string calldata left, string calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(string,string,string)",
@@ -1344,7 +1344,7 @@
       "func": {
         "id": "assertEq_13",
         "description": "Asserts that two `bytes` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(bytes calldata left, bytes calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(bytes calldata left, bytes calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(bytes,bytes,string)",
@@ -1384,7 +1384,7 @@
       "func": {
         "id": "assertEq_15",
         "description": "Asserts that two arrays of `bool` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(bool[] calldata left, bool[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(bool[],bool[],string)",
@@ -1424,7 +1424,7 @@
       "func": {
         "id": "assertEq_17",
         "description": "Asserts that two arrays of `uint256` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(uint256[] calldata left, uint256[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(uint256[],uint256[],string)",
@@ -1464,7 +1464,7 @@
       "func": {
         "id": "assertEq_19",
         "description": "Asserts that two arrays of `int256` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(int256[] calldata left, int256[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(int256[],int256[],string)",
@@ -1524,7 +1524,7 @@
       "func": {
         "id": "assertEq_21",
         "description": "Asserts that two arrays of `address` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(address[] calldata left, address[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(address[] calldata left, address[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(address[],address[],string)",
@@ -1564,7 +1564,7 @@
       "func": {
         "id": "assertEq_23",
         "description": "Asserts that two arrays of `bytes32` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(bytes32[] calldata left, bytes32[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(bytes32[],bytes32[],string)",
@@ -1604,7 +1604,7 @@
       "func": {
         "id": "assertEq_25",
         "description": "Asserts that two arrays of `string` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(string[] calldata left, string[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(string[] calldata left, string[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(string[],string[],string)",
@@ -1644,7 +1644,7 @@
       "func": {
         "id": "assertEq_27",
         "description": "Asserts that two arrays of `bytes` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertEq(bytes[] calldata left, bytes[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(bytes[],bytes[],string)",
@@ -1664,7 +1664,7 @@
       "func": {
         "id": "assertEq_3",
         "description": "Asserts that two `uint256` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(uint256 left, uint256 right, string calldata error) external pure;",
+        "declaration": "function assertEq(uint256 left, uint256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(uint256,uint256,string)",
@@ -1704,7 +1704,7 @@
       "func": {
         "id": "assertEq_5",
         "description": "Asserts that two `int256` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(int256 left, int256 right, string calldata error) external pure;",
+        "declaration": "function assertEq(int256 left, int256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(int256,int256,string)",
@@ -1744,7 +1744,7 @@
       "func": {
         "id": "assertEq_7",
         "description": "Asserts that two `address` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(address left, address right, string calldata error) external pure;",
+        "declaration": "function assertEq(address left, address right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(address,address,string)",
@@ -1784,7 +1784,7 @@
       "func": {
         "id": "assertEq_9",
         "description": "Asserts that two `bytes32` values are equal and includes error message into revert string on failure.",
-        "declaration": "function assertEq(bytes32 left, bytes32 right, string calldata error) external pure;",
+        "declaration": "function assertEq(bytes32 left, bytes32 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertEq(bytes32,bytes32,string)",
@@ -1824,7 +1824,7 @@
       "func": {
         "id": "assertFalse_1",
         "description": "Asserts that the given condition is false and includes error message into revert string on failure.",
-        "declaration": "function assertFalse(bool condition, string calldata error) external pure;",
+        "declaration": "function assertFalse(bool condition, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertFalse(bool,string)",
@@ -1864,7 +1864,7 @@
       "func": {
         "id": "assertGeDecimal_1",
         "description": "Compares two `uint256` values. Expects first value to be greater than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertGeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertGeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGeDecimal(uint256,uint256,uint256,string)",
@@ -1904,7 +1904,7 @@
       "func": {
         "id": "assertGeDecimal_3",
         "description": "Compares two `int256` values. Expects first value to be greater than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertGeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertGeDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGeDecimal(int256,int256,uint256,string)",
@@ -1944,7 +1944,7 @@
       "func": {
         "id": "assertGe_1",
         "description": "Compares two `uint256` values. Expects first value to be greater than or equal to second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertGe(uint256 left, uint256 right, string calldata error) external pure;",
+        "declaration": "function assertGe(uint256 left, uint256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGe(uint256,uint256,string)",
@@ -1984,7 +1984,7 @@
       "func": {
         "id": "assertGe_3",
         "description": "Compares two `int256` values. Expects first value to be greater than or equal to second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertGe(int256 left, int256 right, string calldata error) external pure;",
+        "declaration": "function assertGe(int256 left, int256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGe(int256,int256,string)",
@@ -2024,7 +2024,7 @@
       "func": {
         "id": "assertGtDecimal_1",
         "description": "Compares two `uint256` values. Expects first value to be greater than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertGtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertGtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGtDecimal(uint256,uint256,uint256,string)",
@@ -2064,7 +2064,7 @@
       "func": {
         "id": "assertGtDecimal_3",
         "description": "Compares two `int256` values. Expects first value to be greater than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertGtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertGtDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGtDecimal(int256,int256,uint256,string)",
@@ -2104,7 +2104,7 @@
       "func": {
         "id": "assertGt_1",
         "description": "Compares two `uint256` values. Expects first value to be greater than second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertGt(uint256 left, uint256 right, string calldata error) external pure;",
+        "declaration": "function assertGt(uint256 left, uint256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGt(uint256,uint256,string)",
@@ -2144,7 +2144,7 @@
       "func": {
         "id": "assertGt_3",
         "description": "Compares two `int256` values. Expects first value to be greater than second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertGt(int256 left, int256 right, string calldata error) external pure;",
+        "declaration": "function assertGt(int256 left, int256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertGt(int256,int256,string)",
@@ -2184,7 +2184,7 @@
       "func": {
         "id": "assertLeDecimal_1",
         "description": "Compares two `uint256` values. Expects first value to be less than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertLeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertLeDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLeDecimal(uint256,uint256,uint256,string)",
@@ -2224,7 +2224,7 @@
       "func": {
         "id": "assertLeDecimal_3",
         "description": "Compares two `int256` values. Expects first value to be less than or equal to second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertLeDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertLeDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLeDecimal(int256,int256,uint256,string)",
@@ -2264,7 +2264,7 @@
       "func": {
         "id": "assertLe_1",
         "description": "Compares two `uint256` values. Expects first value to be less than or equal to second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertLe(uint256 left, uint256 right, string calldata error) external pure;",
+        "declaration": "function assertLe(uint256 left, uint256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLe(uint256,uint256,string)",
@@ -2304,7 +2304,7 @@
       "func": {
         "id": "assertLe_3",
         "description": "Compares two `int256` values. Expects first value to be less than or equal to second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertLe(int256 left, int256 right, string calldata error) external pure;",
+        "declaration": "function assertLe(int256 left, int256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLe(int256,int256,string)",
@@ -2344,7 +2344,7 @@
       "func": {
         "id": "assertLtDecimal_1",
         "description": "Compares two `uint256` values. Expects first value to be less than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertLtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertLtDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLtDecimal(uint256,uint256,uint256,string)",
@@ -2384,7 +2384,7 @@
       "func": {
         "id": "assertLtDecimal_3",
         "description": "Compares two `int256` values. Expects first value to be less than second.\nFormats values with decimals in failure message. Includes error message into revert string on failure.",
-        "declaration": "function assertLtDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertLtDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLtDecimal(int256,int256,uint256,string)",
@@ -2424,7 +2424,7 @@
       "func": {
         "id": "assertLt_1",
         "description": "Compares two `uint256` values. Expects first value to be less than second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertLt(uint256 left, uint256 right, string calldata error) external pure;",
+        "declaration": "function assertLt(uint256 left, uint256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLt(uint256,uint256,string)",
@@ -2464,7 +2464,7 @@
       "func": {
         "id": "assertLt_3",
         "description": "Compares two `int256` values. Expects first value to be less than second.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertLt(int256 left, int256 right, string calldata error) external pure;",
+        "declaration": "function assertLt(int256 left, int256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertLt(int256,int256,string)",
@@ -2504,7 +2504,7 @@
       "func": {
         "id": "assertNotEqDecimal_1",
         "description": "Asserts that two `uint256` values are not equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertNotEqDecimal(uint256 left, uint256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEqDecimal(uint256,uint256,uint256,string)",
@@ -2544,7 +2544,7 @@
       "func": {
         "id": "assertNotEqDecimal_3",
         "description": "Asserts that two `int256` values are not equal, formatting them with decimals in failure message.\nIncludes error message into revert string on failure.",
-        "declaration": "function assertNotEqDecimal(int256 left, int256 right, uint256 decimals, string calldata error) external pure;",
+        "declaration": "function assertNotEqDecimal(int256 left, int256 right, uint256 decimals, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEqDecimal(int256,int256,uint256,string)",
@@ -2584,7 +2584,7 @@
       "func": {
         "id": "assertNotEq_1",
         "description": "Asserts that two `bool` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(bool left, bool right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(bool left, bool right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(bool,bool,string)",
@@ -2624,7 +2624,7 @@
       "func": {
         "id": "assertNotEq_11",
         "description": "Asserts that two `string` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(string calldata left, string calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(string calldata left, string calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(string,string,string)",
@@ -2664,7 +2664,7 @@
       "func": {
         "id": "assertNotEq_13",
         "description": "Asserts that two `bytes` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(bytes calldata left, bytes calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(bytes calldata left, bytes calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(bytes,bytes,string)",
@@ -2704,7 +2704,7 @@
       "func": {
         "id": "assertNotEq_15",
         "description": "Asserts that two arrays of `bool` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(bool[] calldata left, bool[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(bool[] calldata left, bool[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(bool[],bool[],string)",
@@ -2744,7 +2744,7 @@
       "func": {
         "id": "assertNotEq_17",
         "description": "Asserts that two arrays of `uint256` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(uint256[] calldata left, uint256[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(uint256[] calldata left, uint256[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(uint256[],uint256[],string)",
@@ -2784,7 +2784,7 @@
       "func": {
         "id": "assertNotEq_19",
         "description": "Asserts that two arrays of `int256` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(int256[] calldata left, int256[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(int256[] calldata left, int256[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(int256[],int256[],string)",
@@ -2844,7 +2844,7 @@
       "func": {
         "id": "assertNotEq_21",
         "description": "Asserts that two arrays of `address` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(address[] calldata left, address[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(address[] calldata left, address[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(address[],address[],string)",
@@ -2884,7 +2884,7 @@
       "func": {
         "id": "assertNotEq_23",
         "description": "Asserts that two arrays of `bytes32` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(bytes32[] calldata left, bytes32[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(bytes32[] calldata left, bytes32[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(bytes32[],bytes32[],string)",
@@ -2924,7 +2924,7 @@
       "func": {
         "id": "assertNotEq_25",
         "description": "Asserts that two arrays of `string` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(string[] calldata left, string[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(string[] calldata left, string[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(string[],string[],string)",
@@ -2964,7 +2964,7 @@
       "func": {
         "id": "assertNotEq_27",
         "description": "Asserts that two arrays of `bytes` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(bytes[] calldata left, bytes[] calldata right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(bytes[] calldata left, bytes[] calldata right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(bytes[],bytes[],string)",
@@ -2984,7 +2984,7 @@
       "func": {
         "id": "assertNotEq_3",
         "description": "Asserts that two `uint256` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(uint256 left, uint256 right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(uint256 left, uint256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(uint256,uint256,string)",
@@ -3024,7 +3024,7 @@
       "func": {
         "id": "assertNotEq_5",
         "description": "Asserts that two `int256` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(int256 left, int256 right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(int256 left, int256 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(int256,int256,string)",
@@ -3064,7 +3064,7 @@
       "func": {
         "id": "assertNotEq_7",
         "description": "Asserts that two `address` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(address left, address right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(address left, address right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(address,address,string)",
@@ -3104,7 +3104,7 @@
       "func": {
         "id": "assertNotEq_9",
         "description": "Asserts that two `bytes32` values are not equal and includes error message into revert string on failure.",
-        "declaration": "function assertNotEq(bytes32 left, bytes32 right, string calldata error) external pure;",
+        "declaration": "function assertNotEq(bytes32 left, bytes32 right, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertNotEq(bytes32,bytes32,string)",
@@ -3144,7 +3144,7 @@
       "func": {
         "id": "assertTrue_1",
         "description": "Asserts that the given condition is true and includes error message into revert string on failure.",
-        "declaration": "function assertTrue(bool condition, string calldata error) external pure;",
+        "declaration": "function assertTrue(bool condition, string calldata err) external pure;",
         "visibility": "external",
         "mutability": "pure",
         "signature": "assertTrue(bool,string)",
