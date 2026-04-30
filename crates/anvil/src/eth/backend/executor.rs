@@ -25,7 +25,7 @@ use alloy_evm::{
         receipt_builder::{ReceiptBuilder, ReceiptBuilderCtx},
     },
 };
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use anvil_core::eth::transaction::{
     MaybeImpersonatedTransaction, PendingTransaction, TransactionInfo,
 };
@@ -346,8 +346,10 @@ pub fn execute_pool_transactions<B>(
     ) -> Result<(), InvalidTransactionError>,
 ) -> ExecutedPoolTransactions<B::Transaction>
 where
-    B: BlockExecutor<Evm: Evm<DB: Database + Debug, Inspector = AnvilInspector>>,
-    B::Transaction: Transaction + Encodable2718 + Clone,
+    B: BlockExecutor<
+            Transaction = FoundryTxEnvelope,
+            Evm: Evm<DB: Database + Debug, Inspector = AnvilInspector>,
+        >,
     B::Receipt: TxReceipt,
     <B::Result as TxResult>::HaltReason: Clone + IntoInstructionResult,
     <B::Evm as Evm>::Tx: FromTxWithEncoded<B::Transaction> + FoundryTransaction,
@@ -364,6 +366,16 @@ where
     for pool_tx in pool_transactions {
         let pending = &pool_tx.pending_transaction;
         let sender = *pending.sender();
+        let block_timestamp = executor.evm().block().timestamp();
+
+        if let FoundryTxEnvelope::Tempo(aa_tx) = pending.transaction.as_ref()
+            && let Some(valid_after) = aa_tx.tx().valid_after
+            && U256::from(valid_after.get()) > block_timestamp
+        {
+            trace!(target: "backend", "[{:?}] transaction not valid yet, will retry later", pool_tx.hash());
+            not_yet_valid.push(pool_tx.clone());
+            continue;
+        }
 
         let account = match executor.evm_mut().db_mut().basic(sender).map(|a| a.unwrap_or_default())
         {
@@ -471,11 +483,7 @@ where
                 transactions.push(pending.transaction.clone());
             }
             Err(err) => {
-                let err_str = err.to_string();
-                if err_str.contains("not valid yet") {
-                    trace!(target: "backend", "[{:?}] transaction not valid yet, will retry later", pool_tx.hash());
-                    not_yet_valid.push(pool_tx.clone());
-                } else if err.as_validation().is_some() {
+                if err.as_validation().is_some() {
                     warn!(target: "backend", "Skipping invalid tx [{:?}]: {}", pool_tx.hash(), err);
                     invalid.push(pool_tx.clone());
                 } else {

@@ -847,12 +847,15 @@ impl Config {
         // Check if the selected profile exists.
         if config.profiles.contains(&selected_profile) {
             config.profile = selected_profile;
-        } else if strict_profile {
-            return Err(ExtractConfigError::new(Error::from(format!(
-                "selected profile `{selected_profile}` does not exist"
-            ))));
         } else {
-            // Fall back to default profile for nested lib configs.
+            // Fall back to the default profile. In strict mode (top-level loads), emit a warning
+            // so users are informed when an unknown profile (e.g. via `FOUNDRY_PROFILE`) is
+            // selected; the silent fallback is reserved for nested lib configs.
+            if strict_profile {
+                config
+                    .warnings
+                    .push(Warning::UnknownProfile { profile: selected_profile.to_string() });
+            }
             config.profile = Self::DEFAULT_PROFILE;
         }
 
@@ -7024,9 +7027,9 @@ mod tests {
         });
     }
 
-    // Test for issue #12844: FOUNDRY_PROFILE=nonexistent should fail
+    // Test for issue #12844: FOUNDRY_PROFILE=nonexistent should warn and fall back to default.
     #[test]
-    fn fails_on_unknown_profile() {
+    fn warns_on_unknown_profile() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
@@ -7037,11 +7040,15 @@ mod tests {
             )?;
 
             jail.set_env("FOUNDRY_PROFILE", "nonexistent");
-            let err = Config::load().expect_err("expected unknown profile to fail");
-            let err_msg = err.to_string();
+            let cfg = Config::load().expect("expected unknown profile to fall back to default");
+            assert_eq!(cfg.profile, Config::DEFAULT_PROFILE);
             assert!(
-                err_msg.contains("selected profile `nonexistent` does not exist"),
-                "Expected error about nonexistent profile, got: {err_msg}"
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::UnknownProfile { profile } if profile == "nonexistent"
+                )),
+                "Expected UnknownProfile warning, got: {:?}",
+                cfg.warnings
             );
 
             Ok(())

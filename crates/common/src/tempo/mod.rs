@@ -3,6 +3,9 @@
 mod keystore;
 pub use keystore::*;
 
+#[cfg(test)]
+mod tests;
+
 /// Conservative gas buffer for browser wallet transactions on Tempo chains.
 ///
 /// Browser wallets may sign with P256 or WebAuthn instead of secp256k1, which costs more gas
