@@ -6,7 +6,7 @@ use crate::{
     inspectors::Fuzzer,
 };
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, Bytes, FixedBytes, I256, Selector, U256, map::AddressMap};
+use alloy_primitives::{Address, Bytes, FixedBytes, I256, Selector, U256, map::AddressMap};
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{
@@ -185,21 +185,25 @@ impl InvariantFailureMetrics {
     }
 }
 
-/// Returns the (name, reason) of the first broken invariant in declaration order. Falls back
-/// to the primary's name with an empty reason if `failures.errors` is somehow empty.
-fn first_broken_event<'a>(
-    invariant_contract: &'a InvariantContract<'_>,
+/// Bridges newly-recorded invariant breaks from `failures.errors` into the pulse
+/// `failure_metrics` so the live progress stream reflects breaks as they happen.
+///
+/// Without this, `unique_failures` only updates when the campaign is *forced to
+/// stop* (i.e., `can_continue` returns false — which only happens once *all*
+/// invariants are broken under `assert_all`). Iterates in declaration order so
+/// the emitted "failure" events are deterministic.
+fn record_new_invariant_failures(
+    failure_metrics: &mut InvariantFailureMetrics,
+    invariant_contract: &InvariantContract<'_>,
     failures: &InvariantFailures,
-) -> (&'a str, String) {
-    invariant_contract
-        .invariant_fns
-        .iter()
-        .find_map(|(f, _)| {
-            failures
-                .get_failure(f)
-                .map(|e| (f.name.as_str(), e.revert_reason().unwrap_or_default()))
-        })
-        .unwrap_or((invariant_contract.primary_invariant_fn.name.as_str(), String::new()))
+) {
+    for (f, _) in &invariant_contract.invariant_fns {
+        if !failure_metrics.unique_failures.contains(&f.name) && failures.has_failure(f) {
+            let reason =
+                failures.get_failure(f).and_then(|e| e.revert_reason()).unwrap_or_default();
+            failure_metrics.record_failure(&f.name, invariant_contract.name, &reason);
+        }
+    }
 }
 
 /// Builds the machine-readable invariant progress payload emitted during a
@@ -468,7 +472,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         fuzz_state: EvmFuzzState,
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
-        initial_handler_failures: std::collections::HashMap<B256, HandlerAssertionFailure>,
+        initial_handler_failures: std::collections::HashMap<
+            (Address, Selector),
+            HandlerAssertionFailure,
+        >,
     ) -> Result<InvariantFuzzTestResult> {
         // Throw an error to abort test run if the invariant function accepts input params
         if !invariant_contract.primary_invariant_fn.inputs.is_empty() {
@@ -655,6 +662,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 || is_last_call
                         };
 
+                    let errors_before_check = invariant_test.test_data.failures.errors.len();
                     let result = if should_check_invariant {
                         can_continue(
                             &invariant_contract,
@@ -689,12 +697,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             );
 
                             // Skip building case data if we already have a strictly shorter
-                            // repro for this fingerprint.
+                            // repro for this site.
                             let already_minimal = invariant_test
                                 .test_data
                                 .failures
                                 .broken_handlers
-                                .get(&fingerprint)
+                                .get(&(target, selector))
                                 .is_some_and(|f| f.call_sequence.len() <= current_run.inputs.len());
 
                             if !already_minimal {
@@ -767,6 +775,21 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     if !result || current_run.depth == self.config.depth - 1 {
                         invariant_test.set_last_run_inputs(&current_run.inputs);
                     }
+                    // Pulse-metrics fix: bridge any newly-recorded invariant breaks into
+                    // `failure_metrics` regardless of whether `result` told us to stop.
+                    // `can_continue` returns `true` while at least one invariant is still
+                    // intact (under `assert_all`), so the legacy code below — which only
+                    // recorded on `!result` — under-counted breaks for the live pulse stream
+                    // until the *last* invariant fell. Iterating in declaration order over
+                    // `invariant_fns` keeps the emitted "failure" events deterministic and
+                    // covers cases where multiple invariants break in the same step.
+                    if invariant_test.test_data.failures.errors.len() > errors_before_check {
+                        record_new_invariant_failures(
+                            &mut failure_metrics,
+                            &invariant_contract,
+                            &invariant_test.test_data.failures,
+                        );
+                    }
                     // Phase A: decouple "record failure" from "stop campaign" so the campaign
                     // can keep using its budget to surface handler-side bugs even after all
                     // invariant predicates are broken. Continuation is gated on
@@ -781,15 +804,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     // Handler-side assertions never reach this branch — they are routed into
                     // `failures.broken_handlers` and return `Ok(true)`.
                     if !result {
-                        // Attribute the failure event to the first invariant in declaration
-                        // order whose entry is in `failures.errors`. Avoids the nondeterminism
-                        // of `errors.values().next()` (HashMap RandomState) and keeps the
-                        // event's `invariant` and `reason` fields self-consistent.
-                        let (name, reason) = first_broken_event(
-                            &invariant_contract,
-                            &invariant_test.test_data.failures,
-                        );
-                        failure_metrics.record_failure(name, invariant_contract.name, &reason);
                         if self.config.assert_all && !self.config.fail_on_revert {
                             break;
                         }
@@ -833,11 +847,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 )
                 .map_err(|_| eyre!("Failed to call afterInvariant"))?;
                 if !success {
-                    // Same as the in-run failure path above: attribute to the first broken
-                    // invariant in declaration order so the event is deterministic.
-                    let (name, reason) =
-                        first_broken_event(&invariant_contract, &invariant_test.test_data.failures);
-                    failure_metrics.record_failure(name, invariant_contract.name, &reason);
+                    // Same as the in-run failure path above: bridge any newly-recorded
+                    // invariant breaks (here from `afterInvariant`) into pulse metrics in
+                    // declaration order so the emitted events are deterministic.
+                    record_new_invariant_failures(
+                        &mut failure_metrics,
+                        &invariant_contract,
+                        &invariant_test.test_data.failures,
+                    );
                 }
             }
 
@@ -913,9 +930,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // Post-campaign: shrink each handler bug's call sequence to its minimal prefix.
         if !result.failures.broken_handlers.is_empty() {
             let total = result.failures.broken_handlers.len();
-            for (idx, (_fingerprint, failure)) in
-                result.failures.broken_handlers.iter_mut().enumerate()
-            {
+            for (idx, (_site, failure)) in result.failures.broken_handlers.iter_mut().enumerate() {
                 if early_exit.should_stop() {
                     break;
                 }
@@ -965,7 +980,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
-        initial_handler_failures: std::collections::HashMap<B256, HandlerAssertionFailure>,
+        initial_handler_failures: std::collections::HashMap<
+            (Address, Selector),
+            HandlerAssertionFailure,
+        >,
     ) -> Result<(InvariantTest, WorkerCorpus)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;

@@ -12,7 +12,7 @@ use crate::{
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, Bytes, U256, address, map::HashMap};
+use alloy_primitives::{Address, Bytes, Selector, U256, address, map::HashMap};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
@@ -47,7 +47,6 @@ use std::{
     collections::BTreeMap,
     ops::Deref,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
     time::Instant,
 };
@@ -1218,29 +1217,17 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // a best-effort `Contract::function` resolved from `identified_contracts`, falling back
         // to `0xreverter::0xselector` when the ABI is unavailable. We render them in their own
         // `Suite handlers:` section so they do not get conflated with invariant failures.
-        // The map is keyed by edge-coverage fingerprint; the human-meaningful
-        // `(reverter, selector)` lives on the `HandlerAssertionFailure` value. Sort by
-        // `(reverter, selector, fingerprint)` so duplicates of the same handler reached via
-        // different paths are grouped together and order is deterministic.
+        // The map is keyed by `(reverter, selector)` site (one entry per handler function that
+        // asserted, regardless of how many code paths reached it).
         let identified_contracts_ro = identified_contracts;
         let invariant_handler_failures = invariant_result
             .handler_errors
             .iter()
-            .sorted_by(|(fa, a), (fb, b)| {
-                // Stable order across runs: group duplicates of the same handler together by
-                // `(reverter, selector)`, then disambiguate by the asserting call's calldata
-                // (so args=[N] differences sort identically across seeds), then fall back to
-                // the fingerprint for full determinism.
-                (a.reverter, a.selector)
-                    .cmp(&(b.reverter, b.selector))
-                    .then_with(|| {
-                        let ca = a.call_sequence.last().map(|tx| &tx.call_details.calldata);
-                        let cb = b.call_sequence.last().map(|tx| &tx.call_details.calldata);
-                        ca.cmp(&cb)
-                    })
-                    .then_with(|| fa.cmp(fb))
+            .sorted_by(|(ka, _), (kb, _)| {
+                // Stable order across runs: sort by `(reverter, selector)` site directly.
+                ka.cmp(kb)
             })
-            .map(|(fingerprint, failure)| {
+            .map(|(_site, failure)| {
                 let reverter = failure.reverter;
                 let selector = failure.selector;
                 // Resolve a human-readable name when possible. We look up the reverter in the
@@ -1272,7 +1259,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 if !counterexample_calls.is_empty() {
                     record_handler_failure(
                         failure_dir.as_path(),
-                        *fingerprint,
+                        reverter,
+                        selector,
                         &counterexample_calls,
                         &current_settings,
                     );
@@ -1637,10 +1625,13 @@ fn record_invariant_failure(
     }
 }
 
-/// Persists a handler-side assertion bug under `<failure_dir>/handlers/<fingerprint>.json`.
+/// Persists a handler-side assertion bug under `<failure_dir>/handlers/<site>.json`, where
+/// `<site>` is `keccak256(reverter || selector)` so each `(handler, function)` site occupies
+/// a single, stable file regardless of how the campaign reached it.
 fn record_handler_failure(
     failure_dir: &Path,
-    edge_fingerprint: B256,
+    reverter: Address,
+    selector: Selector,
     call_sequence: &[BaseCounterExample],
     settings: &InvariantSettings,
 ) {
@@ -1649,19 +1640,25 @@ fn record_handler_failure(
         error!(%err, "Failed to create handler failure dir");
         return;
     }
-    let file = handlers_dir.join(format!("{edge_fingerprint:x}.json"));
+    let mut buf = [0u8; 24];
+    buf[..20].copy_from_slice(reverter.as_slice());
+    buf[20..].copy_from_slice(selector.as_slice());
+    let site_hash = alloy_primitives::keccak256(buf);
+    let file = handlers_dir.join(format!("{site_hash:x}.json"));
     record_invariant_failure(&handlers_dir, &file, call_sequence, settings, true);
 }
 
 /// Replays persisted handler-side assertion bugs. A file is kept only if the anchor still
-/// asserts on the same path (matching fingerprint); stale files are deleted in place.
+/// asserts at the same `(reverter, selector)` site; stale files (anchor no longer asserts,
+/// asserts at a different site, or earlier call asserts) are deleted in place.
 fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
     handlers_dir: &Path,
     current_settings: &InvariantSettings,
     executor: Executor<FEN>,
     ctx: &ReplayContext<'_>,
-) -> std::collections::HashMap<B256, HandlerAssertionFailure> {
-    let mut replayed = std::collections::HashMap::new();
+) -> std::collections::HashMap<(Address, Selector), HandlerAssertionFailure> {
+    let mut replayed: std::collections::HashMap<(Address, Selector), HandlerAssertionFailure> =
+        std::collections::HashMap::new();
     let entries = match std::fs::read_dir(handlers_dir) {
         Ok(e) => e,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return replayed,
@@ -1672,14 +1669,9 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        let Some(expected_fingerprint) = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .filter(|_| path.extension().and_then(|s| s.to_str()) == Some("json"))
-            .and_then(|stem| B256::from_str(&format!("0x{stem}")).ok())
-        else {
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
             continue;
-        };
+        }
         let Some(persisted) = persisted_call_sequence(&path, current_settings) else {
             continue;
         };
@@ -1689,6 +1681,15 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
             continue;
         }
         let txes = base_counterexamples_to_txes(ctx, &mut call_sequence);
+        // Expected site = (target, selector) of the persisted reproducer's last call.
+        let Some(last) = txes.last() else {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        };
+        let expected_target = last.call_details.target;
+        let expected_selector_bytes: [u8; 4] =
+            last.call_details.calldata.get(..4).and_then(|s| s.try_into().ok()).unwrap_or_default();
+        let expected_site = (expected_target, Selector::from(expected_selector_bytes));
         let sequence: Vec<usize> =
             (0..min(txes.len(), ctx.invariant_config.depth as usize)).collect();
         let outcome = replay_handler_failure_sequence(
@@ -1699,23 +1700,26 @@ fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
             Some(ctx.revert_decoder),
         );
         match outcome {
-            Ok(outcome)
-                if outcome.anchor_asserted
-                    && outcome.anchor_fingerprint == expected_fingerprint =>
-            {
+            Ok(outcome) if outcome.anchor_asserted => {
                 let _ = sh_warn!(
                     "Replayed handler-side assertion bug from {path:?}. \nRun `forge clean` or remove file to ignore."
                 );
-                replayed.insert(
-                    expected_fingerprint,
-                    HandlerAssertionFailure::from_replayed_sequence(
-                        txes,
-                        expected_fingerprint,
-                        outcome.revert_reason.unwrap_or_default(),
-                    ),
+                let failure = HandlerAssertionFailure::from_replayed_sequence(
+                    txes,
+                    outcome.anchor_fingerprint,
+                    outcome.revert_reason.unwrap_or_default(),
                 );
+                // On collision (stale duplicate file from an earlier path-granular layout) keep
+                // the shorter reproducer.
+                match replayed.get(&expected_site) {
+                    Some(existing)
+                        if existing.call_sequence.len() <= failure.call_sequence.len() => {}
+                    _ => {
+                        replayed.insert(expected_site, failure);
+                    }
+                }
             }
-            // Stale: anchor doesn't assert, earlier call asserts, or fingerprint changed.
+            // Stale: anchor doesn't assert or earlier call asserts.
             Ok(_) => {
                 let _ = std::fs::remove_file(&path);
             }

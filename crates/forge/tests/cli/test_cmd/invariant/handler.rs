@@ -1,6 +1,7 @@
-//! E2E tests for handler-side assertion bugs: dedup by edge fingerprint, persistence
-//! under `failures/<contract>/handlers/<fingerprint>.json`, replay/shrink semantics, and
-//! stale-file cleanup. Distinct from invariant predicate failures.
+//! E2E tests for handler-side assertion bugs: dedup by `(reverter, selector)` site,
+//! persistence under `failures/<contract>/handlers/<keccak256(reverter‖selector)>.json`,
+//! replay/shrink semantics, and stale-file cleanup. Distinct from invariant predicate
+//! failures.
 
 use foundry_test_utils::{forgetest_init, str};
 
@@ -59,10 +60,11 @@ Suite handlers: 1 assertion bug(s) found
 "#]]);
 });
 
-// Edge-coverage dedup: 4 distinct paths through one selector → 4 separate bugs, each
-// shrunk to its anchor. Then collapsing all 4 branches into one path triggers fingerprint
-// mismatch on replay → all stale files deleted.
-forgetest_init!(handler_assertion_dedupes_by_edge_coverage, |prj, cmd| {
+// Site-granular dedup: 4 distinct paths through one selector all share the same
+// `(reverter, selector)` site → 1 persisted bug, shrunk to its anchor. Echidna/Medusa
+// semantics: one bug per `(handler, function)`, regardless of which code path reached it.
+// If the handler is patched to no longer assert, the persisted file is deleted on replay.
+forgetest_init!(handler_assertion_dedupes_by_site, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 200;
@@ -79,7 +81,9 @@ contract MultiPathHandler {
     // Filler so fuzzing produces a prefix to shrink.
     function noop() external {}
 
-    // Four branches, one selector — distinct edge fingerprints per path.
+    // Four branches, one selector — all asserting via the same `(reverter, selector)`
+    // site. Under site-granular dedup these collapse into a single persisted bug
+    // (Echidna/Medusa semantics).
     function maybeAssert(uint8 path) external {
         if (path < 64) {
             state = 1;
@@ -117,31 +121,17 @@ contract MultiPathTest is Test {
    "#,
     );
 
-    // Seed pinned for stable shrink counts; concrete originals (2, 22, 11, 7) confirm
-    // shrinking actually fired. Update the snapshot if upstream RNG shifts the numbers.
     cmd.args(["test", "--mt", "invariant_ok", "--fuzz-seed", "119"]).assert_failure().stdout_eq(
         str![[r#"
 ...
-Suite handlers: 4 assertion bug(s) found
+Suite handlers: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
-	[Sequence] (original: 2, shrunk: 1)
-		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[2]
-[FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
-	[Sequence] (original: 22, shrunk: 1)
-		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[66]
-[FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
-	[Sequence] (original: 11, shrunk: 1)
-		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[148]
-[FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
-	[Sequence] (original: 7, shrunk: 1)
-		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[253]
+	[Sequence] (original: [..], shrunk: 1)
+		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[..]
 ...
 "#]],
     );
 
-    // Stale-fingerprint deletion: collapse all 4 branches into a single uniform path so the
-    // same calldata still asserts but takes a different code path → recomputed fingerprint
-    // no longer matches any of the persisted filenames. Replay must delete every stale file.
     let handlers_dir = prj
         .root()
         .join("cache")
@@ -154,28 +144,30 @@ Suite handlers: 4 assertion bug(s) found
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .collect();
-    assert_eq!(before.len(), 4, "expected 4 persisted handler bugs before patch");
+    assert_eq!(
+        before.len(),
+        1,
+        "expected 1 persisted handler bug after site-granular dedup, got {before:?}",
+    );
 
+    // Stale-file deletion: patch the handler so `maybeAssert` no longer asserts. On the
+    // next replay the persisted reproducer's anchor stops asserting → the stale file is
+    // deleted in place.
     prj.add_source(
         "MultiPathHandler.sol",
         r#"
 contract MultiPathHandler {
     uint256 public state;
     function noop() external {}
-    // Single uniform branch: every input now hits the same edge fingerprint.
-    function maybeAssert(uint8 path) external {
-        state = uint256(path) % 4 + 1;
-        assert(false);
-    }
+    function maybeAssert(uint8 path) external { state = uint256(path) % 4 + 1; }
 }
    "#,
     );
     prj.update_config(|config| {
         config.invariant.runs = 0;
     });
-    // All 4 persisted fingerprints are stale (the patched contract has a single uniform
-    // path with a different fingerprint). With `runs=0` there's no fuzzing to rediscover
-    // the bug under a fresh fingerprint, so no handler bug should survive replay → success.
+    // With `runs=0` no new fuzzing happens; the only work is replaying the persisted
+    // reproducer, which now no longer asserts → file deleted → no handler bug → success.
     cmd.forge_fuse().args(["test", "--mt", "invariant_ok", "--fuzz-seed", "119"]).assert_success();
 
     let after: Vec<_> = std::fs::read_dir(&handlers_dir)
@@ -183,7 +175,7 @@ contract MultiPathHandler {
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .collect();
-    assert!(after.is_empty(), "all stale fingerprint files should be deleted, got {after:?}");
+    assert!(after.is_empty(), "stale handler-bug file should be deleted, got {after:?}");
 });
 
 // Bug persists to `failures/<contract>/handlers/<fingerprint>.json`, replays from disk,
@@ -610,20 +602,18 @@ contract TwoStep {
     );
 });
 
-// Shrink rejects candidates whose anchor takes a different edge path: a setup call that
-// routes the anchor through branch A is kept, even though dropping it would still assert.
-forgetest_init!(handler_shrink_keeps_setup_call_when_required_for_same_path, |prj, cmd| {
+// Two branches that both assert in the same handler function collapse to a single
+// persisted bug under site-granular dedup, regardless of whether one branch requires
+// a setup call. The shrinker minimizes the kept reproducer to whichever branch is
+// reachable with the fewest calls (typically the no-setup-required branch).
+forgetest_init!(handler_two_branches_same_function_collapse_to_one_bug, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 100;
         config.invariant.depth = 20;
         config.invariant.fail_on_revert = false;
         config.invariant.assert_all = true;
-        // Edge-coverage dedup requires the corpus to be enabled; otherwise
-        // `handler_edge_fingerprint` falls back to `(reverter, selector)` and the two
-        // branches collapse to a single fingerprint.
         config.invariant.corpus.corpus_dir = Some("inv_corpus".into());
     });
-    // Two branches that both assert; `route()` flips state so `check()` takes branch A.
     prj.add_source(
         "TwoBranch.sol",
         r#"
@@ -632,10 +622,8 @@ contract TwoBranch {
     function route() external { routed = true; }
     function check() external {
         if (routed) {
-            // Branch A — distinct edge fingerprint vs branch B.
             assert(false);
         } else {
-            // Branch B.
             assert(false);
         }
     }
@@ -669,23 +657,11 @@ contract TwoBranchTest is Test {
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
         .collect();
-    // Each branch is a distinct fingerprint → 2 persisted bugs.
-    assert_eq!(entries.len(), 2, "expected 2 persisted handler bugs (one per branch)");
-
-    // The branch-A bug requires `route()` before `check()`. Without the fingerprint check
-    // the shrinker would drop `route()` and silently keep the file under the (now stale)
-    // branch-A fingerprint. With the fix, that file's call_sequence stays length 2.
-    let max_len = entries
-        .iter()
-        .map(|e| {
-            let v: serde_json::Value =
-                serde_json::from_reader(std::fs::File::open(e.path()).unwrap()).unwrap();
-            v["call_sequence"].as_array().unwrap().len()
-        })
-        .max()
-        .unwrap();
-    assert!(
-        max_len >= 2,
-        "branch-A bug must keep its `route()` setup call after shrink, max_len={max_len}"
+    // Both branches share `(reverter, check_selector)` → 1 persisted bug under
+    // site-granular dedup.
+    assert_eq!(
+        entries.len(),
+        1,
+        "expected 1 persisted handler bug for two branches in same function, got {entries:?}",
     );
 });

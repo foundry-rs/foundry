@@ -14,10 +14,11 @@ use std::{collections::HashMap, fmt};
 ///
 /// Handler-side assertions (e.g. a `require`/`assert` inside a fuzzed handler that the campaign
 /// reaches with a malformed input) are bugs in their own right, but they are *not* invariant
-/// predicate violations. We dedup them by `edge_fingerprint` (a hash of the asserting call's
-/// edge coverage) so distinct paths to the same `(reverter, selector)` are surfaced as
-/// separate bugs (Medusa/Echidna semantics). When edge coverage is unavailable we fall back
-/// to a `(reverter, selector)` fingerprint so behavior degrades gracefully.
+/// predicate violations. We dedup them by the `(reverter, selector)` site of the asserting
+/// call so the same handler function asserting via N different code paths counts as a single
+/// bug (Echidna/Medusa semantics). The shortest call sequence wins on collision, so persisted
+/// reproducers stay minimal. `edge_fingerprint` is still recorded on the failure value to let
+/// the shrinker preserve path identity when minimizing a single reproducer.
 #[derive(Clone, Debug)]
 pub struct HandlerAssertionFailure {
     /// Address of the handler contract whose call asserted/reverted with an assertion.
@@ -36,7 +37,8 @@ pub struct HandlerAssertionFailure {
     /// `FailedInvariantCaseData::assertion_failure`.
     pub assertion_failure: bool,
     /// Stable hash of the asserting call's edge coverage (or `(reverter, selector)` when
-    /// edge coverage is unavailable). Used as the dedup key in `InvariantFailures`.
+    /// edge coverage is unavailable). Not used for dedup (see `InvariantFailures.broken_handlers`)
+    /// but kept so the shrinker can preserve path identity when minimizing this reproducer.
     pub edge_fingerprint: B256,
 }
 
@@ -110,11 +112,18 @@ pub struct InvariantFailures {
     pub revert_reason: Option<String>,
     /// Maps a broken invariant to its specific error.
     pub errors: HashMap<String, InvariantFuzzError>,
-    /// Handler-side assertion bugs discovered during the campaign, keyed by edge-coverage
-    /// fingerprint of the asserting call (Medusa/Echidna semantics: distinct paths to the
-    /// same `(reverter, selector)` are distinct bugs). On collision, the entry with the
-    /// shortest `call_sequence` wins so persisted reproducers stay minimal.
-    pub broken_handlers: HashMap<B256, HandlerAssertionFailure>,
+    /// Handler-side assertion bugs discovered during the campaign, keyed by the
+    /// `(reverter, selector)` site of the asserting call. The same handler function
+    /// asserting via N different code paths counts as a single bug (Echidna/Medusa
+    /// semantics). On collision, the entry with the shortest `call_sequence` wins so
+    /// persisted reproducers stay minimal.
+    ///
+    /// TODO: dedup multiple distinct `assert(...)` failures within the same
+    /// `(reverter, selector)` handler. Echidna explicitly cannot tell them apart and
+    /// our current key collapses them as well; if/when callers need finer attribution
+    /// (e.g. per-assertion-label), extend the key with a stable per-call discriminator
+    /// (revert reason hash, source location, or label string).
+    pub broken_handlers: HashMap<(Address, Selector), HandlerAssertionFailure>,
 }
 
 impl InvariantFailures {
@@ -143,11 +152,12 @@ impl InvariantFailures {
         self.errors.len() < invariants
     }
 
-    /// Records a handler-side assertion bug. Keyed by `failure.edge_fingerprint`, so distinct
-    /// paths to the same `(reverter, selector)` are recorded as separate bugs. On collision
-    /// the shortest `call_sequence` wins, giving us a smaller reproducer over time.
+    /// Records a handler-side assertion bug. Keyed by the `(reverter, selector)` site of
+    /// the failing call, so the same handler function asserting via different code paths
+    /// counts as a single bug. On collision the shortest `call_sequence` wins, giving us
+    /// a smaller reproducer over time.
     pub fn record_handler_failure(&mut self, failure: HandlerAssertionFailure) {
-        let key = failure.edge_fingerprint;
+        let key = (failure.reverter, failure.selector);
         match self.broken_handlers.get(&key) {
             Some(existing) if existing.call_sequence.len() <= failure.call_sequence.len() => {
                 // Existing repro is at least as short; keep it.
@@ -158,9 +168,9 @@ impl InvariantFailures {
         }
     }
 
-    /// Returns true if a handler bug has already been recorded for the given fingerprint.
-    pub fn has_handler_failure(&self, fingerprint: B256) -> bool {
-        self.broken_handlers.contains_key(&fingerprint)
+    /// Returns true if a handler bug has already been recorded for the given site.
+    pub fn has_handler_failure(&self, target: Address, selector: Selector) -> bool {
+        self.broken_handlers.contains_key(&(target, selector))
     }
 }
 

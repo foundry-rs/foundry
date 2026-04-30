@@ -30,11 +30,11 @@ use std::{borrow::Cow, collections::HashMap};
 pub struct InvariantFuzzTestResult {
     /// Errors recorded per invariant.
     pub errors: HashMap<String, InvariantFuzzError>,
-    /// Handler-side assertion bugs discovered during the campaign, keyed by edge-coverage
-    /// fingerprint of the asserting call. These are bugs in fuzzed handler functions,
-    /// distinct from invariant predicate violations; distinct edge fingerprints with the
-    /// same `(reverter, selector)` are surfaced as separate bugs.
-    pub handler_errors: HashMap<B256, HandlerAssertionFailure>,
+    /// Handler-side assertion bugs discovered during the campaign, keyed by the
+    /// `(reverter, selector)` site of the asserting call. These are bugs in fuzzed handler
+    /// functions, distinct from invariant predicate violations; the same handler function
+    /// asserting via different code paths counts as a single bug.
+    pub handler_errors: HashMap<(Address, Selector), HandlerAssertionFailure>,
     /// Every successful fuzz test case
     pub cases: Vec<FuzzedCases>,
     /// Number of reverted fuzz calls
@@ -269,21 +269,21 @@ pub(crate) fn can_continue<FEN: FoundryEvmNetwork>(
 
         if is_assert_failure {
             // Handler-side assertion: a unique bug attributable to the *handler call*, not to
-            // any of the live `invariant_*` predicates. Dedup by edge-coverage fingerprint so
-            // distinct paths to the same `(reverter, selector)` are recorded as separate bugs
-            // (Medusa/Echidna semantics). On collision the shortest `call_sequence` wins, so
-            // persisted reproducers stay minimal.
+            // any of the live `invariant_*` predicates. Dedup by the `(reverter, selector)`
+            // site so the same handler function asserting via different code paths counts as
+            // a single bug (Echidna/Medusa semantics). On collision the shortest
+            // `call_sequence` wins, so persisted reproducers stay minimal.
             let target = handler_target;
             let selector = handler_selector;
             let fingerprint = handler_edge_fingerprint(pre_merge_edges_hash, target, selector);
 
             // Skip building case data if we already have a strictly shorter repro for this
-            // fingerprint — common when a handler asserts repeatedly along the same path.
+            // site — common when a handler asserts repeatedly.
             let already_minimal = invariant_test
                 .test_data
                 .failures
                 .broken_handlers
-                .get(&fingerprint)
+                .get(&(target, selector))
                 .is_some_and(|f| f.call_sequence.len() <= invariant_run.inputs.len());
 
             if !already_minimal {
