@@ -55,10 +55,10 @@ pub enum VaddrSubcommand {
         no_register: bool,
 
         #[command(flatten)]
-        send_tx: SendTxOpts,
+        send_tx: Box<SendTxOpts>,
 
         #[command(flatten)]
-        tx: TxParams,
+        tx: Box<TxParams>,
     },
 
     /// Resolve a virtual address to its registered master and decode its components.
@@ -116,8 +116,8 @@ impl VaddrSubcommand {
                     seed,
                     no_random,
                     no_register,
-                    send_tx,
-                    tx,
+                    *send_tx,
+                    *tx,
                 )
                 .await?
             }
