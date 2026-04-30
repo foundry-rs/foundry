@@ -2864,19 +2864,35 @@ impl BasicConfig {
     ///
     /// This serializes to a table with the name of the profile
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        let mut value = toml::Value::try_from(self)?;
+        let mut profile_body = toml::Value::try_from(self)?;
         if let Some(ref network) = self.network
-            && let toml::Value::Table(ref mut table) = value
+            && let toml::Value::Table(ref mut table) = profile_body
         {
-            table.insert(network.clone(), toml::Value::Boolean(true));
+            table.insert("network".to_string(), toml::Value::String(network.clone()));
         }
-        let s = toml::to_string_pretty(&value)?;
+
+        let mut profile_section = toml::value::Table::new();
+        profile_section.insert(self.profile.to_string(), profile_body);
+
+        let mut document = toml::value::Table::new();
+        document.insert("profile".to_string(), toml::Value::Table(profile_section));
+
+        if self.network.as_deref() == Some("tempo") {
+            let mut endpoints = toml::value::Table::new();
+            endpoints.insert(
+                "tempo".to_string(),
+                toml::Value::String("https://rpc.tempo.xyz/".to_string()),
+            );
+            endpoints.insert(
+                "moderato".to_string(),
+                toml::Value::String("https://rpc.moderato.tempo.xyz/".to_string()),
+            );
+            document.insert("rpc_endpoints".to_string(), toml::Value::Table(endpoints));
+        }
+
+        let body = toml::to_string_pretty(&toml::Value::Table(document))?;
         Ok(format!(
-            "\
-[profile.{}]
-{s}
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n",
-            self.profile
+            "{body}\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n"
         ))
     }
 }

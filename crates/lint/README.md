@@ -11,7 +11,9 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `incorrect-shift`: Warns against shift operations where operands might be in the wrong order.
   - `unchecked-call`: Low-level calls should check the success return value.
   - `erc20-unchecked-transfer`: ERC20 `transfer` and `transferFrom` calls should check the return value.
+  - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
 - **Medium Severity:**
+  - `boolean-cst`: Flags misuse of boolean constants.
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
@@ -19,6 +21,7 @@ It helps enforce best practices and improve code quality within Foundry projects
 - **Low Severity:**
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
 - **Informational / Style Guide:**
+  - `boolean-equal`: Boolean comparisons to constants should be simplified.
   - `pascal-case-struct`: Flags for struct names not adhering to `PascalCase`.
   - `mixed-case-function`: Flags for function names not adhering to `mixedCase`.
   - `mixed-case-variable`: Flags for mutable variable names not adhering to `mixedCase`.
@@ -30,6 +33,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `unsafe-cheatcode`: Usage of unsafe cheatcodes that can perform dangerous operations.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
+  - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
   - `custom-errors`: Recommends using custom errors instead of strings and plain reverts for potential gas savings.
 - **Code Size:**
   - `unwrapped-modifier-logic`: Recommends wrapping modifier logic to reduce contract code size.
