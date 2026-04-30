@@ -97,6 +97,7 @@ impl MakeTxArgs {
         let Self { to, mut sig, mut args, command, tx, path, eth, raw_unsigned, ethsign } = self;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
+        let expires_at = tx.tempo.expires_at();
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -137,6 +138,10 @@ impl MakeTxArgs {
             })?;
             sh_println!("{hash:?}")?;
             return Ok(());
+        }
+
+        if let Some(ts) = expires_at {
+            sh_println!("Transaction expires at unix timestamp {ts}")?;
         }
 
         if raw_unsigned {

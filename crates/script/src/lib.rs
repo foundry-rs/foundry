@@ -63,7 +63,7 @@ use foundry_evm::{
 use foundry_evm_networks::NetworkConfigs;
 use foundry_wallets::MultiWalletOpts;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 mod broadcast;
 mod build;
@@ -143,6 +143,16 @@ pub struct ScriptArgs {
     /// Tempo fee token address for paying transaction fees.
     #[arg(long = "tempo.fee-token", value_parser = parse_fee_token_address)]
     pub fee_token: Option<Address>,
+
+    /// Opt into TIP-1009 expiring-nonce mode with a validity window.
+    ///
+    /// Sets nonce_key = U256::MAX and valid_before = now + <duration> on every broadcast
+    /// transaction. The transaction (or batch) must be mined before the deadline or it becomes
+    /// permanently invalid, preventing late-landing replays.
+    ///
+    /// Duration format: integer followed by `s`, `m`, `h`, or `d`. Example: `30s`, `5m`, `2h`.
+    #[arg(long = "tempo.expires", value_name = "DURATION", value_parser = parse_expires_duration_script)]
+    pub expires: Option<Duration>,
 
     /// Skips on-chain simulation.
     #[arg(long)]
@@ -251,8 +261,8 @@ impl ScriptArgs {
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
-        if self.fee_token.is_some() {
-            // If fee token is set directly select tempo
+        if self.fee_token.is_some() || self.expires.is_some() {
+            // If fee token or expiry is set directly select tempo
             evm_opts.networks = NetworkConfigs::with_tempo();
         } else {
             // Auto-detect network from fork chain ID when not explicitly configured.
@@ -291,7 +301,19 @@ impl ScriptArgs {
             self.fee_token
         };
 
-        let script_config = ScriptConfig::new(config, evm_opts, self.batch, fee_token).await?;
+        let expires_at = self.expires.and_then(|d| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()
+                .map(|now| (now + d).as_secs())
+        });
+
+        if let Some(ts) = expires_at {
+            sh_println!("Transactions expire at unix timestamp {ts}")?;
+        }
+
+        let script_config =
+            ScriptConfig::new(config, evm_opts, self.batch, fee_token, expires_at).await?;
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
 
@@ -710,6 +732,8 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub batch: bool,
     /// Tempo fee token address for paying transaction fees.
     pub fee_token: Option<Address>,
+    /// TIP-1009 expiring-nonce valid_before unix timestamp, derived from `--tempo.expires`.
+    pub expires_at: Option<u64>,
 }
 
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
@@ -718,6 +742,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         evm_opts: EvmOpts,
         batch: bool,
         fee_token: Option<Address>,
+        expires_at: Option<u64>,
     ) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
             next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
@@ -726,7 +751,15 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             1
         };
 
-        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default(), batch, fee_token })
+        Ok(Self {
+            config,
+            evm_opts,
+            sender_nonce,
+            backends: HashMap::default(),
+            batch,
+            fee_token,
+            expires_at,
+        })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
@@ -817,6 +850,26 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
         Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
     }
+}
+
+fn parse_expires_duration_script(s: &str) -> Result<Duration, String> {
+    if s.is_empty() {
+        return Err("empty duration".to_string());
+    }
+    let (digits, unit) = s.split_at(s.len() - 1);
+    let n: u64 = digits
+        .parse()
+        .map_err(|_| format!("invalid duration '{s}': expected integer followed by s/m/h/d"))?;
+    let secs = match unit {
+        "s" => n,
+        "m" => n * 60,
+        "h" => n * 3600,
+        "d" => n * 86400,
+        _ => {
+            return Err(format!("invalid duration unit '{unit}' in '{s}': expected s, m, h, or d"));
+        }
+    };
+    Ok(Duration::from_secs(secs))
 }
 
 #[cfg(test)]

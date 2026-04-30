@@ -3,7 +3,11 @@ use alloy_primitives::{Address, ruint::aliases::U256};
 use alloy_signer::Signature;
 use clap::Parser;
 use foundry_common::FoundryTransactionBuilder;
-use std::{num::NonZeroU64, str::FromStr};
+use std::{
+    num::NonZeroU64,
+    str::FromStr,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use crate::utils::parse_fee_token_address;
 
@@ -72,6 +76,26 @@ pub struct TempoOpts {
     /// Requires `--tempo.expiring-nonce`.
     #[arg(long = "tempo.valid-after")]
     pub valid_after: Option<u64>,
+
+    /// Opt into TIP-1009 expiring-nonce mode with a validity window.
+    ///
+    /// Convenience flag that combines `--tempo.expiring-nonce` with a relative
+    /// `--tempo.valid-before`. Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now +
+    /// <duration>.
+    ///
+    /// Duration format: integer followed by a unit suffix: `s` (seconds), `m` (minutes),
+    /// `h` (hours), or `d` (days). Examples: `30s`, `5m`, `2h`.
+    ///
+    /// The transaction must be mined before the deadline or it becomes permanently invalid,
+    /// giving safe retry semantics: retries produce a fresh tx hash and the old tx can never
+    /// land late.
+    #[arg(
+        long = "tempo.expires",
+        value_name = "DURATION",
+        value_parser = parse_expires_duration,
+        conflicts_with_all = &["expiring_nonce", "valid_before"],
+    )]
+    pub expires: Option<Duration>,
 }
 
 impl TempoOpts {
@@ -85,6 +109,17 @@ impl TempoOpts {
             || self.expiring_nonce
             || self.valid_before.is_some()
             || self.valid_after.is_some()
+            || self.expires.is_some()
+    }
+
+    /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.
+    ///
+    /// Computed as `now + expires` at call time, so callers that need a stable value (e.g. to
+    /// print it after sending) should capture this once and reuse it.
+    pub fn expires_at(&self) -> Option<u64> {
+        let window = self.expires?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
+        Some((now + window).as_secs())
     }
 
     /// Applies Tempo-specific options to a transaction request.
@@ -94,8 +129,9 @@ impl TempoOpts {
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        // Handle expiring nonce mode: sets nonce=0 and nonce_key=U256::MAX
-        if self.expiring_nonce {
+        // Handle expiring nonce mode: sets nonce=0 and nonce_key=U256::MAX.
+        // --tempo.expires is a convenience alias that also sets valid_before = now + duration.
+        if self.expiring_nonce || self.expires.is_some() {
             tx.set_nonce(0);
             tx.set_nonce_key(U256::MAX);
         } else {
@@ -111,7 +147,10 @@ impl TempoOpts {
             tx.set_fee_token(fee_token);
         }
 
-        if let Some(valid_before) = self.valid_before
+        // --tempo.expires sets valid_before relative to now; --tempo.valid-before takes a raw
+        // unix timestamp. The two flags are mutually exclusive (enforced by clap).
+        let effective_valid_before = self.expires_at().or(self.valid_before);
+        if let Some(valid_before) = effective_valid_before
             && let Some(v) = NonZeroU64::new(valid_before)
         {
             tx.set_valid_before(v);
@@ -142,10 +181,56 @@ fn parse_signature(s: &str) -> Result<Signature, String> {
     Signature::from_str(s).map_err(|e| format!("invalid signature: {e}"))
 }
 
+/// Parses a human-readable duration like `30s`, `5m`, `2h`, or `1d` into a [`Duration`].
+fn parse_expires_duration(s: &str) -> Result<Duration, String> {
+    let (digits, unit) = s.split_at(s.len() - 1);
+    let n: u64 = digits
+        .parse()
+        .map_err(|_| format!("invalid duration '{s}': expected integer followed by s/m/h/d"))?;
+    let secs = match unit {
+        "s" => n,
+        "m" => n * 60,
+        "h" => n * 3600,
+        "d" => n * 86400,
+        _ => {
+            return Err(format!("invalid duration unit '{unit}' in '{s}': expected s, m, h, or d"));
+        }
+    };
+    Ok(Duration::from_secs(secs))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_primitives::address;
+
+    #[test]
+    fn parse_expires_flag() {
+        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "30s"]).unwrap();
+        assert_eq!(opts.expires, Some(Duration::from_secs(30)));
+
+        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "5m"]).unwrap();
+        assert_eq!(opts.expires, Some(Duration::from_secs(300)));
+
+        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "2h"]).unwrap();
+        assert_eq!(opts.expires, Some(Duration::from_secs(7200)));
+
+        let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "1d"]).unwrap();
+        assert_eq!(opts.expires, Some(Duration::from_secs(86400)));
+
+        // conflicts with --tempo.expiring-nonce
+        assert!(
+            TempoOpts::try_parse_from([
+                "",
+                "--tempo.expires",
+                "30s",
+                "--tempo.expiring-nonce",
+                "--tempo.valid-before",
+                "999"
+            ])
+            .is_err()
+        );
+    }
 
     #[test]
     fn parse_fee_token_id() {
