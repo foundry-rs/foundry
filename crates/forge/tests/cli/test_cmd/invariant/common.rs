@@ -2664,7 +2664,8 @@ contract InvariantWarp is Test {
 
 "#]]);
 
-    cmd.forge_fuse().args(["test", "--mt", "invariant_warp"]).assert_failure().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["test", "--mt", "invariant_warp"]).assert_failure().stdout_eq(str![[
+        r#"
 ...
 [FAIL: max time]
 	[Sequence] (original: 3, shrunk: 1)
@@ -2674,5 +2675,6 @@ contract InvariantWarp is Test {
  invariant_warp() (runs: 0, calls: 0, reverts: 2)
 ...
 
-"#]]);
+"#
+    ]]);
 });
