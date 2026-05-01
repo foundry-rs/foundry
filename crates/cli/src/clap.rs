@@ -45,6 +45,9 @@ impl Generator for Shell {
             Self::ClapCompleteShell(ClapCompleteShell::Fish) => {
                 generate_compacted(ClapCompleteShell::Fish, cmd, compact_fish_completion, buf)
             }
+            Self::ClapCompleteShell(ClapCompleteShell::Zsh) => {
+                generate_compacted(ClapCompleteShell::Zsh, cmd, compact_zsh_completion, buf)
+            }
             Self::ClapCompleteShell(shell) => shell.generate(cmd, buf),
             Self::Nushell => Nushell.generate(cmd, buf),
         }
@@ -133,6 +136,86 @@ fn compact_bash_completion(cmd_name: &str, completion: Vec<u8>) -> String {
     out
 }
 
+fn compact_zsh_completion(cmd_name: &str, completion: Vec<u8>) -> String {
+    let completion = String::from_utf8(completion).expect("zsh completion scripts should be UTF-8");
+
+    let start = "_arguments \"${_arguments_options[@]}\" : \\";
+    let end = "&& ret=0";
+    let lines: Vec<_> = completion.lines().collect();
+    let mut counts = BTreeMap::<String, usize>::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i] == start {
+            if let Some(block_end) = lines[i + 1..].iter().position(|line| *line == end) {
+                let block_end = i + 1 + block_end;
+                let block = format!("{}\n", lines[i..=block_end].join("\n"));
+                *counts.entry(block).or_default() += 1;
+                i = block_end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    let prefix = zsh_helper_prefix(cmd_name);
+    let mut replacements = BTreeMap::<String, String>::new();
+    let mut helpers = String::new();
+    for (block, count) in counts {
+        if count < 2 {
+            continue;
+        }
+
+        let helper = format!("{prefix}{}", replacements.len());
+        let replacement = format!("{helper} && ret=0\n");
+        let mut body = block.replace("&& ret=0\n", "");
+        if body.as_bytes().ends_with(b" \\\n") {
+            body.truncate(body.len() - 3);
+            body.push('\n');
+        }
+        let definition = format!("{helper}() {{\n{body}}}\n");
+        let old_len = block.len() * count;
+        let new_len = replacement.len() * count + definition.len();
+        if old_len <= new_len {
+            continue;
+        }
+
+        helpers.push_str(&definition);
+        replacements.insert(block, replacement);
+    }
+
+    if replacements.is_empty() {
+        return completion;
+    }
+
+    let mut out = String::with_capacity(completion.len().saturating_sub(helpers.len()));
+    let mut inserted_helpers = false;
+    let mut i = 0;
+    while i < lines.len() {
+        if !inserted_helpers && lines[i].starts_with(&format!("_{}_commands()", cmd_name)) {
+            out.push_str(&helpers);
+            inserted_helpers = true;
+        }
+
+        if lines[i] == start {
+            if let Some(block_end) = lines[i + 1..].iter().position(|line| *line == end) {
+                let block_end = i + 1 + block_end;
+                let block = format!("{}\n", lines[i..=block_end].join("\n"));
+                if let Some(replacement) = replacements.get(&block) {
+                    out.push_str(replacement);
+                    i = block_end + 1;
+                    continue;
+                }
+            }
+        }
+
+        out.push_str(lines[i]);
+        out.push('\n');
+        i += 1;
+    }
+
+    out
+}
+
 fn compact_fish_completion(cmd_name: &str, completion: Vec<u8>) -> String {
     let completion =
         String::from_utf8(completion).expect("fish completion scripts should be UTF-8");
@@ -209,6 +292,12 @@ fn bash_helper_prefix(cmd_name: &str) -> String {
     let short_name: String =
         cmd_name.chars().filter(|c| c.is_ascii_alphanumeric()).take(2).collect();
     format!("__b{short_name}")
+}
+
+fn zsh_helper_prefix(cmd_name: &str) -> String {
+    let short_name: String =
+        cmd_name.chars().filter(|c| c.is_ascii_alphanumeric()).take(2).collect();
+    format!("__z{short_name}")
 }
 
 fn fish_condition_helper_prefix(cmd_name: &str) -> String {
