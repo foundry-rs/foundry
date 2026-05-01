@@ -2217,7 +2217,6 @@ impl EthApi<FoundryNetwork> {
         } else {
             (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
         };
-        debug_assert!(requires != provides);
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -3558,6 +3557,7 @@ impl EthApi<FoundryNetwork> {
         requires: Vec<TxMarker>,
         provides: Vec<TxMarker>,
     ) -> Result<TxHash> {
+        debug_assert!(requires != provides);
         let from = *pending_transaction.sender();
         let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction =
