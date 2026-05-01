@@ -39,6 +39,12 @@ impl Generator for Shell {
 
     fn generate(&self, cmd: &clap::Command, buf: &mut dyn std::io::Write) {
         match self {
+            Self::ClapCompleteShell(ClapCompleteShell::Bash) => {
+                let mut completion = Vec::new();
+                ClapCompleteShell::Bash.generate(cmd, &mut completion);
+                let completion = compact_bash_completion(cmd.get_name(), completion);
+                buf.write_all(completion.as_bytes()).expect("failed to write completion file");
+            }
             Self::ClapCompleteShell(ClapCompleteShell::Fish) => {
                 let mut completion = Vec::new();
                 ClapCompleteShell::Fish.generate(cmd, &mut completion);
@@ -49,6 +55,76 @@ impl Generator for Shell {
             Self::Nushell => Nushell.generate(cmd, buf),
         }
     }
+}
+
+fn compact_bash_completion(cmd_name: &str, completion: Vec<u8>) -> String {
+    let completion =
+        String::from_utf8(completion).expect("bash completion scripts should be UTF-8");
+
+    let prev_case_start = "            case \"${prev}\" in";
+    let prev_case_end = "            esac";
+    let mut counts = BTreeMap::<String, usize>::new();
+    let lines: Vec<_> = completion.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i] == prev_case_start {
+            if let Some(end) = lines[i + 1..].iter().position(|line| *line == prev_case_end) {
+                let end = i + 1 + end;
+                let block = format!("{}\n", lines[i..=end].join("\n"));
+                *counts.entry(block).or_default() += 1;
+                i = end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    let prefix = bash_helper_prefix(cmd_name);
+    let mut replacements = BTreeMap::<String, String>::new();
+    let mut helpers = String::new();
+    for (block, count) in counts {
+        if count < 2 {
+            continue;
+        }
+
+        let helper = format!("{prefix}{}", replacements.len());
+        let replacement = format!("            {helper} && return 0\n");
+        let definition = format!("{helper}() {{\n{block}            return 1\n}}\n");
+        let old_len = block.len() * count;
+        let new_len = replacement.len() * count + definition.len();
+        if old_len <= new_len {
+            continue;
+        }
+
+        helpers.push_str(&definition);
+        replacements.insert(block, replacement);
+    }
+
+    if replacements.is_empty() {
+        return completion;
+    }
+
+    let mut out = String::with_capacity(completion.len().saturating_sub(helpers.len()));
+    out.push_str(&helpers);
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i] == prev_case_start {
+            if let Some(end) = lines[i + 1..].iter().position(|line| *line == prev_case_end) {
+                let end = i + 1 + end;
+                let block = format!("{}\n", lines[i..=end].join("\n"));
+                if let Some(replacement) = replacements.get(&block) {
+                    out.push_str(replacement);
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+        out.push_str(lines[i]);
+        out.push('\n');
+        i += 1;
+    }
+
+    out
 }
 
 fn compact_fish_completion(cmd_name: &str, completion: Vec<u8>) -> String {
@@ -121,6 +197,12 @@ fn fish_complete_condition(line: &str) -> Option<&str> {
     let (_, rest) = line.split_once(" -n \"")?;
     let (condition, _) = rest.split_once('"')?;
     Some(condition)
+}
+
+fn bash_helper_prefix(cmd_name: &str) -> String {
+    let short_name: String =
+        cmd_name.chars().filter(|c| c.is_ascii_alphanumeric()).take(2).collect();
+    format!("__b{short_name}")
 }
 
 fn fish_condition_helper_prefix(cmd_name: &str) -> String {
