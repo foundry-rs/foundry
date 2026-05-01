@@ -40,21 +40,27 @@ impl Generator for Shell {
     fn generate(&self, cmd: &clap::Command, buf: &mut dyn std::io::Write) {
         match self {
             Self::ClapCompleteShell(ClapCompleteShell::Bash) => {
-                let mut completion = Vec::new();
-                ClapCompleteShell::Bash.generate(cmd, &mut completion);
-                let completion = compact_bash_completion(cmd.get_name(), completion);
-                buf.write_all(completion.as_bytes()).expect("failed to write completion file");
+                generate_compacted(ClapCompleteShell::Bash, cmd, compact_bash_completion, buf)
             }
             Self::ClapCompleteShell(ClapCompleteShell::Fish) => {
-                let mut completion = Vec::new();
-                ClapCompleteShell::Fish.generate(cmd, &mut completion);
-                let completion = compact_fish_completion(cmd.get_name(), completion);
-                buf.write_all(completion.as_bytes()).expect("failed to write completion file");
+                generate_compacted(ClapCompleteShell::Fish, cmd, compact_fish_completion, buf)
             }
             Self::ClapCompleteShell(shell) => shell.generate(cmd, buf),
             Self::Nushell => Nushell.generate(cmd, buf),
         }
     }
+}
+
+fn generate_compacted(
+    generator: impl Generator,
+    cmd: &clap::Command,
+    compact: fn(&str, Vec<u8>) -> String,
+    buf: &mut dyn std::io::Write,
+) {
+    let mut completion = Vec::new();
+    generator.generate(cmd, &mut completion);
+    let completion = compact(cmd.get_name(), completion);
+    buf.write_all(completion.as_bytes()).expect("failed to write completion file");
 }
 
 fn compact_bash_completion(cmd_name: &str, completion: Vec<u8>) -> String {
