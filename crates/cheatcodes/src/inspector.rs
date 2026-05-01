@@ -872,13 +872,8 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             && mock.value.is_none_or(|value| Some(value) == call.transfer_value())
                     })
                     .map(|(_, v)| v),
-            } && let Some(return_data) = if return_data_queue.len() == 1 {
-                // If the mocked calls stack has a single element in it, don't empty it
-                return_data_queue.front().map(|x| x.to_owned())
-            } else {
-                // Else, we pop the front element
-                return_data_queue.pop_front()
-            } {
+            } && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
+            {
                 if let Some(value) = call.transfer_value() {
                     let checkpoint = ecx.journal_mut().checkpoint();
                     match ecx.journal_mut().transfer_loaded(
@@ -907,6 +902,11 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             });
                         }
                     }
+                }
+
+                // If the mocked calls stack has a single element in it, don't empty it
+                if return_data_queue.len() > 1 {
+                    return_data_queue.pop_front();
                 }
 
                 return Some(CallOutcome {
