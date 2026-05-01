@@ -8,7 +8,7 @@ declare_forge_lint!(
     PRAGMA_INCONSISTENT,
     Severity::Info,
     "pragma-inconsistent",
-    "files in this project use different Solidity pragma version requirements"
+    "inconsistent Solidity pragma version requirements across the project"
 );
 
 impl<'ast> ProjectLintPass<'ast> for PragmaDirective {
@@ -27,24 +27,18 @@ impl<'ast> ProjectLintPass<'ast> for PragmaDirective {
             }
         }
 
-        // Cheap distinct-count check; bail if all sources agree.
-        let distinct_count = entries
-            .iter()
-            .map(|(_, _, s)| s.as_str())
-            .collect::<std::collections::HashSet<_>>()
-            .len();
-        if distinct_count < 2 {
-            return;
-        }
-
         // Stable order for snapshots and JSON output.
         entries.sort_by(|a, b| {
             sources[a.0].path.cmp(&sources[b.0].path).then(a.1.lo().cmp(&b.1.lo()))
         });
 
+        // Build the distinct list once and bail if all sources agree.
         let mut distinct: Vec<&str> = entries.iter().map(|(_, _, s)| s.as_str()).collect();
         distinct.sort_unstable();
         distinct.dedup();
+        if distinct.len() < 2 {
+            return;
+        }
 
         for (idx, span, req_str) in &entries {
             let others = distinct
@@ -54,7 +48,7 @@ impl<'ast> ProjectLintPass<'ast> for PragmaDirective {
                 .collect::<Vec<_>>()
                 .join(", ");
             let msg = format!(
-                "this file uses 'pragma solidity {req_str};', but other files use {others}"
+                "'pragma solidity {req_str};' conflicts with other version requirements in the project: {others}"
             );
             ctx.emit_with_msg(&sources[*idx], &PRAGMA_INCONSISTENT, *span, msg);
         }

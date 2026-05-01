@@ -1286,7 +1286,7 @@ forgetest!(pragma_inconsistent_cross_file, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
-note[pragma-inconsistent]: this file uses 'pragma solidity ^0.8.20;', but other files use 0.8.20
+note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
   [FILE]:3:1
   │
 3 │ pragma solidity ^0.8.20;
@@ -1294,7 +1294,7 @@ note[pragma-inconsistent]: this file uses 'pragma solidity ^0.8.20;', but other 
   │
   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#pragma-inconsistent
 
-note[pragma-inconsistent]: this file uses 'pragma solidity 0.8.20;', but other files use ^0.8.20
+note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
   [FILE]:3:1
   │
 3 │ pragma solidity 0.8.20;

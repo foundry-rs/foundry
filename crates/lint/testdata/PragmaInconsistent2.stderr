@@ -1,4 +1,4 @@
-note[pragma-inconsistent]: this file uses 'pragma solidity ^0.8.20;', but other files use 0.8.20
+note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
    ╭▸ ROOT/testdata/PragmaInconsistent2.sol:LL:CC
    │
 LL │ pragma solidity ^0.8.20;
@@ -6,7 +6,7 @@ LL │ pragma solidity ^0.8.20;
    │
    ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#pragma-inconsistent
 
-note[pragma-inconsistent]: this file uses 'pragma solidity 0.8.20;', but other files use ^0.8.20
+note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
    ╭▸ ROOT/testdata/PragmaInconsistent2.sol:LL:CC
    │
 LL │ pragma solidity 0.8.20;
