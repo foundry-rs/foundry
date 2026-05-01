@@ -1265,3 +1265,44 @@ contract OldContract {
 "#
     ]]);
 });
+
+const PRAGMA_INCONSISTENT_ALPHA: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Alpha {}
+"#;
+
+const PRAGMA_INCONSISTENT_BETA: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+contract Beta {}
+"#;
+
+forgetest!(pragma_inconsistent_cross_file, |prj, cmd| {
+    prj.add_source("Alpha", PRAGMA_INCONSISTENT_ALPHA);
+    prj.add_source("Beta", PRAGMA_INCONSISTENT_BETA);
+
+    cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
+        [r#"
+note[pragma-inconsistent]: this file uses 'pragma solidity ^0.8.20;', but other files use 0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity ^0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#pragma-inconsistent
+
+note[pragma-inconsistent]: this file uses 'pragma solidity 0.8.20;', but other files use ^0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity 0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#pragma-inconsistent
+
+
+"#]
+    ]);
+});

@@ -1,8 +1,10 @@
 mod early;
 mod late;
+mod project;
 
 pub use early::{EarlyLintPass, EarlyLintVisitor};
 pub use late::{LateLintPass, LateLintVisitor};
+pub use project::{ProjectLintEmitter, ProjectLintPass, ProjectSource};
 
 use foundry_common::comments::inline_config::InlineConfig;
 use foundry_compilers::Language;

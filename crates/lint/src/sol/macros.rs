@@ -53,6 +53,7 @@ macro_rules! register_lints {
 
                 register_lints!(@early_impl $pass_id, $pass_type);
                 register_lints!(@late_impl $pass_id, $pass_type);
+                register_lints!(@project_impl $pass_id, $pass_type);
             }
         )*
     };
@@ -89,10 +90,22 @@ macro_rules! register_lints {
             .flatten()
             .collect()
         }
+
+        pub fn create_project_lint_passes<'ast>() -> Vec<(Box<dyn $crate::linter::ProjectLintPass<'ast>>, &'static [SolLint])> {
+            [
+                $(
+                    register_lints!(@project_create $pass_id, $pass_type),
+                )*
+            ]
+            .into_iter()
+            .flatten()
+            .collect()
+        }
     };
 
     // --- HELPERS ------------------------------------------------------------
     (@early_impl $_pass_id:ident, late) => {};
+    (@early_impl $_pass_id:ident, project) => {};
     (@early_impl $pass_id:ident, $other:ident) => {
         pub fn as_early_lint_pass<'a>() -> Box<dyn EarlyLintPass<'a>> {
             Box::new(Self::default())
@@ -100,20 +113,39 @@ macro_rules! register_lints {
     };
 
     (@late_impl $_pass_id:ident, early) => {};
+    (@late_impl $_pass_id:ident, project) => {};
     (@late_impl $pass_id:ident, $other:ident) => {
         pub fn as_late_lint_pass<'hir>() -> Box<dyn LateLintPass<'hir>> {
             Box::new(Self::default())
         }
     };
 
+    (@project_impl $_pass_id:ident, early) => {};
+    (@project_impl $_pass_id:ident, late) => {};
+    (@project_impl $_pass_id:ident, both) => {};
+    (@project_impl $pass_id:ident, $other:ident) => {
+        pub fn as_project_lint_pass<'ast>() -> Box<dyn $crate::linter::ProjectLintPass<'ast>> {
+            Box::new(Self::default())
+        }
+    };
+
     (@early_create $_pass_id:ident, late) => { None };
+    (@early_create $_pass_id:ident, project) => { None };
     (@early_create $pass_id:ident, $_other:ident) => {
         Some(($pass_id::as_early_lint_pass(), $pass_id::LINTS))
     };
 
     (@late_create $_pass_id:ident, early) => { None };
+    (@late_create $_pass_id:ident, project) => { None };
     (@late_create $pass_id:ident, $_other:ident) => {
         Some(($pass_id::as_late_lint_pass(), $pass_id::LINTS))
+    };
+
+    (@project_create $_pass_id:ident, early) => { None };
+    (@project_create $_pass_id:ident, late) => { None };
+    (@project_create $_pass_id:ident, both) => { None };
+    (@project_create $pass_id:ident, $_other:ident) => {
+        Some(($pass_id::as_project_lint_pass(), $pass_id::LINTS))
     };
 
     // --- ENTRY POINT ---------------------------------------------------------
