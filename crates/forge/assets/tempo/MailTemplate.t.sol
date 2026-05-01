@@ -17,7 +17,9 @@ contract MailTest is Test {
     address public constant BOB = address(0x70997970C51812dc3A010C7d01b50e0d17dc79C8);
 
     function setUp() public virtual {
-        address feeToken = vm.envOr("TEMPO_FEE_TOKEN", StdTokens.ALPHA_USD_ADDRESS);
+        // Fall back to the native PATH_USD because it is the only fee token guaranteed to be
+        // registered on every Tempo network (devnet/testnet/mainnet).
+        address feeToken = vm.envOr("TEMPO_FEE_TOKEN", StdTokens.PATH_USD);
         StdPrecompiles.TIP_FEE_MANAGER.setUserToken(feeToken);
 
         token = ITIP20(
