@@ -372,7 +372,7 @@ fn format_token(token: DynSolValue) -> String {
     }
 }
 
-/// Formats an [`hir::Event`] into an inspection message.
+/// Formats an [`Event`] into an inspection message.
 // TODO: Verbosity option
 fn format_event_definition(gcx: Gcx<'_>, event: &Event<'_>) -> Result<String> {
     let event_name = event.name.as_str().to_string();
@@ -1048,7 +1048,7 @@ fn should_continue(expr: &Expr<'_>) -> bool {
     }
 }
 
-/// Parses an [`hir::Expr`] number/hex literal into a `U256`. Returns `None` if the expression
+/// Parses an [`Expr`] number/hex literal into a `U256`. Returns `None` if the expression
 /// is not a numeric literal.
 ///
 /// SubDenominations are already applied to numeric literals in solar's HIR.
