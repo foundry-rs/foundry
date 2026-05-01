@@ -879,6 +879,36 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 // Else, we pop the front element
                 return_data_queue.pop_front()
             } {
+                if let Some(value) = call.transfer_value() {
+                    let checkpoint = ecx.journal_mut().checkpoint();
+                    match ecx.journal_mut().transfer_loaded(
+                        call.transfer_from(),
+                        call.transfer_to(),
+                        value,
+                    ) {
+                        None => {
+                            if return_data.ret_type.is_ok() {
+                                ecx.journal_mut().checkpoint_commit();
+                            } else {
+                                ecx.journal_mut().checkpoint_revert(checkpoint);
+                            }
+                        }
+                        Some(err) => {
+                            ecx.journal_mut().checkpoint_revert(checkpoint);
+                            return Some(CallOutcome {
+                                result: InterpreterResult {
+                                    result: err.into(),
+                                    output: Bytes::new(),
+                                    gas,
+                                },
+                                memory_offset: call.return_memory_offset.clone(),
+                                was_precompile_called: false,
+                                precompile_call_logs: vec![],
+                            });
+                        }
+                    }
+                }
+
                 return Some(CallOutcome {
                     result: InterpreterResult {
                         result: return_data.ret_type,
