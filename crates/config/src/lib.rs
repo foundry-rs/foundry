@@ -6698,6 +6698,55 @@ mod tests {
     }
 
     #[test]
+    fn no_unknown_key_warning_for_network_field() {
+        // Regression test: `network` is a flattened `Option` field of `NetworkConfigs`. It must
+        // not trigger an unknown-key warning, regardless of whether it is set.
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                network = "tempo"
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings.iter().any(
+                    |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "network")
+                ),
+                "did not expect UnknownKey warning for `network`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn no_unknown_key_warning_for_legacy_tempo_alias() {
+        // Regression test: the legacy `tempo = true` alias must keep working without warnings.
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                tempo = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "tempo")),
+                "did not expect UnknownKey warning for `tempo`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     fn fails_on_ambiguous_version_in_compilation_restrictions() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(

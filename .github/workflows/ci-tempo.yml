@@ -71,6 +71,7 @@ jobs:
 
       - name: Run Tempo check on devnet
         if: |
+          github.event_name == 'push' ||
           github.event_name == 'pull_request' ||
           github.event.inputs.network == 'devnet' ||
           github.event.inputs.network == 'all'
@@ -87,6 +88,7 @@ jobs:
 
       - name: Run Tempo wallet tests on devnet
         if: |
+          github.event_name == 'push' ||
           github.event_name == 'pull_request' ||
           github.event.inputs.network == 'devnet' ||
           github.event.inputs.network == 'all'
