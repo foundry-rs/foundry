@@ -11,6 +11,7 @@ use alloy_chains::{
 };
 use alloy_eips::eip1559::BaseFeeParams;
 use alloy_evm::precompiles::PrecompilesMap;
+#[cfg(feature = "optimism")]
 use alloy_op_hardforks::{OpChainHardforks, OpHardforks};
 use alloy_primitives::{Address, ChainId, map::AddressHashMap};
 use clap::Parser;
@@ -26,6 +27,7 @@ pub mod celo;
 pub enum NetworkVariant {
     #[default]
     Ethereum,
+    #[cfg(feature = "optimism")]
     Optimism,
     Tempo,
 }
@@ -34,6 +36,7 @@ impl NetworkVariant {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::Ethereum => "ethereum",
+            #[cfg(feature = "optimism")]
             Self::Optimism => "optimism",
             Self::Tempo => "tempo",
         }
@@ -51,14 +54,17 @@ impl From<ChainId> for NetworkVariant {
         let chain = Chain::from_id(chain_id);
         if chain.is_tempo() {
             Self::Tempo
-        } else if chain.is_optimism() {
-            Self::Optimism
         } else {
+            #[cfg(feature = "optimism")]
+            if chain.is_optimism() {
+                return Self::Optimism;
+            }
             Self::Ethereum
         }
     }
 }
 
+#[cfg(feature = "optimism")]
 #[derive(Clone, Debug, Default, Parser, Deserialize, Copy, PartialEq, Eq)]
 pub struct NetworkConfigs {
     /// Enable a specific network family.
@@ -86,6 +92,26 @@ pub struct NetworkConfigs {
     bypass_prevrandao: bool,
 }
 
+#[cfg(not(feature = "optimism"))]
+#[derive(Clone, Debug, Default, Parser, Deserialize, Copy, PartialEq, Eq)]
+pub struct NetworkConfigs {
+    /// Enable a specific network family.
+    #[arg(help_heading = "Networks", long, short, num_args = 1, value_name = "NETWORK", value_enum, conflicts_with_all = ["celo", "tempo"])]
+    #[serde(default)]
+    network: Option<NetworkVariant>,
+    /// Enable Celo network features.
+    #[arg(help_heading = "Networks", long, conflicts_with_all = ["network", "tempo"])]
+    celo: bool,
+    /// Enable Tempo network features (deprecated: use --network tempo).
+    #[arg(long, hide = true, conflicts_with_all = ["network", "celo"])]
+    #[serde(default)]
+    tempo: bool,
+    /// Whether to bypass prevrandao.
+    #[arg(skip)]
+    #[serde(default)]
+    bypass_prevrandao: bool,
+}
+
 // Custom `Serialize` impl: always emits the *resolved* network as the canonical
 // `network = "..."` field, and never emits the legacy `tempo` / `optimism` aliases. This avoids
 // confusing output like `network = "tempo"` next to `tempo = false`, and ensures `tempo = true`
@@ -102,6 +128,7 @@ impl Serialize for NetworkConfigs {
 }
 
 impl NetworkConfigs {
+    #[cfg(feature = "optimism")]
     pub fn with_optimism() -> Self {
         Self { network: Some(NetworkVariant::Optimism), optimism: true, ..Default::default() }
     }
@@ -114,6 +141,7 @@ impl NetworkConfigs {
         Self { network: Some(NetworkVariant::Tempo), tempo: true, ..Default::default() }
     }
 
+    #[cfg(feature = "optimism")]
     pub fn is_optimism(&self) -> bool {
         matches!(self.resolved_network(), Some(NetworkVariant::Optimism))
     }
@@ -128,12 +156,21 @@ impl NetworkConfigs {
 
     /// Returns the resolved network variant, folding legacy flags.
     fn resolved_network(&self) -> Option<NetworkVariant> {
-        self.network.or(if self.optimism {
-            Some(NetworkVariant::Optimism)
-        } else if self.tempo {
-            Some(NetworkVariant::Tempo)
-        } else {
-            None
+        self.network.or({
+            #[cfg(feature = "optimism")]
+            {
+                if self.optimism {
+                    Some(NetworkVariant::Optimism)
+                } else if self.tempo {
+                    Some(NetworkVariant::Tempo)
+                } else {
+                    None
+                }
+            }
+            #[cfg(not(feature = "optimism"))]
+            {
+                if self.tempo { Some(NetworkVariant::Tempo) } else { None }
+            }
         })
     }
 
@@ -150,16 +187,17 @@ impl NetworkConfigs {
     /// For Optimism networks, returns Canyon parameters if the Canyon hardfork is active
     /// at the given timestamp, otherwise returns pre-Canyon parameters.
     pub fn base_fee_params(&self, timestamp: u64) -> BaseFeeParams {
+        #[cfg(feature = "optimism")]
         if self.is_optimism() {
             let op_hardforks = OpChainHardforks::op_mainnet();
-            if op_hardforks.is_canyon_active_at_timestamp(timestamp) {
+            return if op_hardforks.is_canyon_active_at_timestamp(timestamp) {
                 BaseFeeParams::optimism_canyon()
             } else {
                 BaseFeeParams::optimism()
-            }
-        } else {
-            BaseFeeParams::ethereum()
+            };
         }
+        let _ = timestamp;
+        BaseFeeParams::ethereum()
     }
 
     pub fn bypass_prevrandao(&self, chain_id: u64) -> bool {
@@ -177,9 +215,11 @@ impl NetworkConfigs {
         if self.resolved_network().is_none() {
             if chain.is_tempo() {
                 Self::with_tempo()
-            } else if chain.is_optimism() {
-                Self::with_optimism()
             } else {
+                #[cfg(feature = "optimism")]
+                if chain.is_optimism() {
+                    return Self::with_optimism();
+                }
                 self
             }
         } else if !self.celo
@@ -208,6 +248,7 @@ impl NetworkConfigs {
         let network = match hardfork {
             FoundryHardfork::Ethereum(_) => self,
             FoundryHardfork::Tempo(_) => Self::with_tempo(),
+            #[cfg(feature = "optimism")]
             FoundryHardfork::Optimism(_) => Self::with_optimism(),
         };
 
@@ -254,10 +295,10 @@ mod tests {
         let via_new = NetworkConfigs { network: Some(NetworkVariant::Tempo), ..Default::default() };
         let via_old = NetworkConfigs { tempo: true, ..Default::default() };
         assert_eq!(via_new.is_tempo(), via_old.is_tempo());
-        assert_eq!(via_new.is_optimism(), via_old.is_optimism());
         assert_eq!(via_new.active_network_name(), via_old.active_network_name());
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn new_optimism_flag_equivalent_to_legacy() {
         let via_new =
@@ -276,6 +317,7 @@ mod tests {
         assert_eq!(cfg.active_network_name(), Some("tempo"));
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn active_network_name_optimism() {
         let cfg = NetworkConfigs::with_optimism();
@@ -289,6 +331,7 @@ mod tests {
 
     // --- new flag takes precedence over legacy flag ---
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn new_flag_wins_over_legacy_when_both_set() {
         // --network optimism --tempo: network field wins
@@ -309,9 +352,9 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let restored: NetworkConfigs = serde_json::from_str(&json).unwrap();
         assert!(restored.is_tempo());
-        assert!(!restored.is_optimism());
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn serde_roundtrip_optimism() {
         let original = NetworkConfigs::with_optimism();
@@ -345,8 +388,12 @@ mod tests {
         let json_tempo = r#"{"network": "tempo", "celo": false, "bypass_prevrandao": false}"#;
         let cfg_tempo: NetworkConfigs = serde_json::from_str(json_tempo).unwrap();
         assert!(cfg_tempo.is_tempo());
-        let json_optimism = r#"{"network": "optimism", "celo": false, "bypass_prevrandao": false}"#;
-        let cfg_optimism: NetworkConfigs = serde_json::from_str(json_optimism).unwrap();
-        assert!(cfg_optimism.is_optimism());
+        #[cfg(feature = "optimism")]
+        {
+            let json_optimism =
+                r#"{"network": "optimism", "celo": false, "bypass_prevrandao": false}"#;
+            let cfg_optimism: NetworkConfigs = serde_json::from_str(json_optimism).unwrap();
+            assert!(cfg_optimism.is_optimism());
+        }
     }
 }

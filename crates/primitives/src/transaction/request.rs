@@ -3,10 +3,14 @@ use alloy_network::{
     BuildResult, NetworkTransactionBuilder, NetworkWallet, TransactionBuilder,
     TransactionBuilder4844, TransactionBuilderError,
 };
-use alloy_primitives::{Address, B256, ChainId, TxKind, U256};
+#[cfg(feature = "optimism")]
+use alloy_primitives::B256;
+use alloy_primitives::{Address, ChainId, TxKind, U256};
 use alloy_rpc_types::{AccessList, TransactionInputKind, TransactionRequest};
 use alloy_serde::{OtherFields, WithOtherFields};
+#[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, POST_EXEC_TX_TYPE_ID, TxDeposit};
+#[cfg(feature = "optimism")]
 use op_revm::transaction::deposit::DepositTransactionParts;
 use serde::{Deserialize, Serialize};
 use tempo_alloy::rpc::TempoTransactionRequest;
@@ -28,6 +32,7 @@ use crate::FoundryNetwork;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FoundryTransactionRequest {
     Ethereum(TransactionRequest),
+    #[cfg(feature = "optimism")]
     Op(WithOtherFields<TransactionRequest>),
     Tempo(Box<TempoTransactionRequest>),
 }
@@ -44,6 +49,7 @@ impl FoundryTransactionRequest {
     pub fn into_inner(self) -> TransactionRequest {
         match self {
             Self::Ethereum(tx) => tx,
+            #[cfg(feature = "optimism")]
             Self::Op(tx) => tx.inner,
             Self::Tempo(tx) => tx.inner,
         }
@@ -55,6 +61,7 @@ impl FoundryTransactionRequest {
     /// # Returns
     /// - Ok(deposit_tx_parts) if all necessary keys are present to build a deposit transaction.
     /// - Err(missing) if some keys are missing to build a deposit transaction.
+    #[cfg(feature = "optimism")]
     pub fn get_deposit_tx_parts(&self) -> Result<DepositTransactionParts, Vec<&'static str>> {
         match self {
             Self::Op(tx) => get_deposit_tx_parts(&tx.other),
@@ -69,9 +76,11 @@ impl FoundryTransactionRequest {
     pub fn preferred_type(&self) -> FoundryTxType {
         match self {
             Self::Ethereum(tx) => tx.preferred_type().into(),
+            #[cfg(feature = "optimism")]
             Self::Op(tx) if tx.inner.transaction_type == Some(POST_EXEC_TX_TYPE_ID) => {
                 FoundryTxType::PostExec
             }
+            #[cfg(feature = "optimism")]
             Self::Op(_) => FoundryTxType::Deposit,
             Self::Tempo(_) => FoundryTxType::Tempo,
         }
@@ -95,6 +104,7 @@ impl FoundryTransactionRequest {
 
     /// Check if all necessary keys are present to build a Deposit transaction, returning a list of
     /// keys that are missing.
+    #[cfg(feature = "optimism")]
     pub fn complete_deposit(&self) -> Result<(), Vec<&'static str>> {
         self.get_deposit_tx_parts().map(|_| ())
     }
@@ -123,7 +133,9 @@ impl FoundryTransactionRequest {
             FoundryTxType::Eip1559 => self.as_ref().complete_1559(),
             FoundryTxType::Eip4844 => self.complete_4844(),
             FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
+            #[cfg(feature = "optimism")]
             FoundryTxType::Deposit => self.complete_deposit(),
+            #[cfg(feature = "optimism")]
             FoundryTxType::PostExec => Err(vec!["not implemented for post-exec tx"]),
             FoundryTxType::Tempo => self.complete_tempo(),
         } {
@@ -138,9 +150,10 @@ impl FoundryTransactionRequest {
     /// Converts the request into a `FoundryTypedTx`, handling all Ethereum and OP-stack transaction
     /// types.
     pub fn build_typed_tx(self) -> Result<FoundryTypedTx, Self> {
+        #[cfg(feature = "optimism")]
         if let Ok(deposit_tx_parts) = self.get_deposit_tx_parts() {
             // Build deposit transaction
-            Ok(FoundryTypedTx::Deposit(TxDeposit {
+            return Ok(FoundryTypedTx::Deposit(TxDeposit {
                 from: self.from().unwrap_or_default(),
                 source_hash: deposit_tx_parts.source_hash,
                 to: self.kind().unwrap_or_default(),
@@ -149,8 +162,9 @@ impl FoundryTransactionRequest {
                 gas_limit: self.gas_limit().unwrap_or_default(),
                 is_system_transaction: deposit_tx_parts.is_system_transaction,
                 input: self.input().cloned().unwrap_or_default(),
-            }))
-        } else if self.complete_tempo().is_ok()
+            }));
+        }
+        if self.complete_tempo().is_ok()
             && let Self::Tempo(tx_req) = self
         {
             // Build Tempo transaction
@@ -192,6 +206,7 @@ impl Serialize for FoundryTransactionRequest {
     {
         match self {
             Self::Ethereum(tx) => tx.serialize(serializer),
+            #[cfg(feature = "optimism")]
             Self::Op(tx) => tx.serialize(serializer),
             Self::Tempo(tx) => tx.serialize(serializer),
         }
@@ -211,6 +226,7 @@ impl AsRef<TransactionRequest> for FoundryTransactionRequest {
     fn as_ref(&self) -> &TransactionRequest {
         match self {
             Self::Ethereum(tx) => tx,
+            #[cfg(feature = "optimism")]
             Self::Op(tx) => tx,
             Self::Tempo(tx) => tx.as_ref(),
         }
@@ -221,6 +237,7 @@ impl AsMut<TransactionRequest> for FoundryTransactionRequest {
     fn as_mut(&mut self) -> &mut TransactionRequest {
         match self {
             Self::Ethereum(tx) => tx,
+            #[cfg(feature = "optimism")]
             Self::Op(tx) => tx,
             Self::Tempo(tx) => tx.as_mut(),
         }
@@ -244,15 +261,16 @@ impl From<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest {
             {
                 tempo_tx_req.set_nonce_key(nonce_key);
             }
-            Self::Tempo(Box::new(tempo_tx_req))
-        } else if tx.transaction_type == Some(DEPOSIT_TX_TYPE_ID)
+            return Self::Tempo(Box::new(tempo_tx_req));
+        }
+        #[cfg(feature = "optimism")]
+        if tx.transaction_type == Some(DEPOSIT_TX_TYPE_ID)
             || tx.transaction_type == Some(POST_EXEC_TX_TYPE_ID)
             || get_deposit_tx_parts(&tx.other).is_ok()
         {
-            Self::Op(tx)
-        } else {
-            Self::Ethereum(tx.into_inner())
+            return Self::Op(tx);
         }
+        Self::Ethereum(tx.into_inner())
     }
 }
 
@@ -264,6 +282,7 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
             FoundryTypedTx::Eip1559(tx) => Self::Ethereum(Into::<TransactionRequest>::into(tx)),
             FoundryTypedTx::Eip4844(tx) => Self::Ethereum(Into::<TransactionRequest>::into(tx)),
             FoundryTypedTx::Eip7702(tx) => Self::Ethereum(Into::<TransactionRequest>::into(tx)),
+            #[cfg(feature = "optimism")]
             FoundryTypedTx::Deposit(tx) => {
                 let other = OtherFields::from_iter([
                     ("sourceHash", tx.source_hash.to_string().into()),
@@ -272,6 +291,7 @@ impl From<FoundryTypedTx> for FoundryTransactionRequest {
                 ]);
                 WithOtherFields { inner: Into::<TransactionRequest>::into(tx), other }.into()
             }
+            #[cfg(feature = "optimism")]
             FoundryTypedTx::PostExec(tx) => WithOtherFields {
                 inner: Into::<TransactionRequest>::into(tx),
                 other: OtherFields::default(),
@@ -307,9 +327,17 @@ impl From<FoundryTxEnvelope> for FoundryTransactionRequest {
     }
 }
 
+#[cfg(feature = "optimism")]
 impl From<op_alloy_rpc_types::Transaction<FoundryTxEnvelope>> for FoundryTransactionRequest {
     fn from(tx: op_alloy_rpc_types::Transaction<FoundryTxEnvelope>) -> Self {
         tx.inner.into_inner().into()
+    }
+}
+
+#[cfg(not(feature = "optimism"))]
+impl From<alloy_rpc_types::Transaction<FoundryTxEnvelope>> for FoundryTransactionRequest {
+    fn from(tx: alloy_rpc_types::Transaction<FoundryTxEnvelope>) -> Self {
+        tx.into_inner().into()
     }
 }
 
@@ -437,7 +465,9 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
             FoundryTxType::Eip1559 => self.as_ref().complete_1559(),
             FoundryTxType::Eip4844 => self.as_ref().complete_4844(),
             FoundryTxType::Eip7702 => self.as_ref().complete_7702(),
+            #[cfg(feature = "optimism")]
             FoundryTxType::Deposit => self.complete_deposit(),
+            #[cfg(feature = "optimism")]
             FoundryTxType::PostExec => Err(vec!["not implemented for post-exec tx"]),
             FoundryTxType::Tempo => self.complete_tempo(),
         }
@@ -448,9 +478,17 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
     }
 
     fn can_build(&self) -> bool {
-        self.as_ref().can_build()
-            || self.complete_deposit().is_ok()
-            || self.complete_tempo().is_ok()
+        if self.as_ref().can_build() || self.complete_tempo().is_ok() {
+            return true;
+        }
+        #[cfg(feature = "optimism")]
+        {
+            self.complete_deposit().is_ok()
+        }
+        #[cfg(not(feature = "optimism"))]
+        {
+            false
+        }
     }
 
     fn output_tx_type(&self) -> FoundryTxType {
@@ -465,7 +503,9 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
             FoundryTxType::Eip1559 => self.as_ref().complete_1559().ok(),
             FoundryTxType::Eip4844 => self.as_ref().complete_4844().ok(),
             FoundryTxType::Eip7702 => self.as_ref().complete_7702().ok(),
+            #[cfg(feature = "optimism")]
             FoundryTxType::Deposit => self.complete_deposit().ok(),
+            #[cfg(feature = "optimism")]
             FoundryTxType::PostExec => self.complete_type(pref).ok(),
             FoundryTxType::Tempo => self.complete_tempo().ok(),
         }?;
@@ -479,11 +519,16 @@ impl NetworkTransactionBuilder<FoundryNetwork> for FoundryTransactionRequest {
         let inner = self.as_mut();
         inner.transaction_type = Some(preferred_type as u8);
         inner.gas.is_none().then(|| inner.set_gas_limit(Default::default()));
-        if !matches!(preferred_type, FoundryTxType::Deposit | FoundryTxType::Tempo) {
+        #[cfg(feature = "optimism")]
+        let is_deposit = matches!(preferred_type, FoundryTxType::Deposit);
+        #[cfg(not(feature = "optimism"))]
+        let is_deposit = false;
+
+        if !is_deposit && !matches!(preferred_type, FoundryTxType::Tempo) {
             inner.trim_conflicting_keys();
             inner.populate_blob_hashes();
         }
-        if preferred_type != FoundryTxType::Deposit {
+        if !is_deposit {
             inner.nonce.is_none().then(|| inner.set_nonce(Default::default()));
         }
         if matches!(preferred_type, FoundryTxType::Legacy | FoundryTxType::Eip2930) {
@@ -549,6 +594,7 @@ impl TransactionBuilder4844 for FoundryTransactionRequest {
 }
 
 /// Converts `OtherFields` to `DepositTransactionParts`, produces error with missing fields
+#[cfg(feature = "optimism")]
 pub fn get_deposit_tx_parts(
     other: &OtherFields,
 ) -> Result<DepositTransactionParts, Vec<&'static str>> {
@@ -617,6 +663,7 @@ mod tests {
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Tempo(_))));
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn test_routing_op_by_deposit_fields() {
         let tx = default_tx_req();
@@ -631,6 +678,7 @@ mod tests {
         assert!(matches!(req.build_unsigned(), Ok(FoundryTypedTx::Deposit(_))));
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn test_op_incomplete_routes_to_ethereum() {
         let tx = default_tx_req();
@@ -668,6 +716,7 @@ mod tests {
         assert!(matches!(deserialized, FoundryTransactionRequest::Ethereum(_)));
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn test_serialization_op() {
         let tx = default_tx_req();

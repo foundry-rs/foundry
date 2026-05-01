@@ -19,7 +19,7 @@ foundry-evm-hardforks.workspace = true
 alloy-chains.workspace = true
 alloy-eips.workspace = true
 alloy-evm.workspace = true
-alloy-op-hardforks.workspace = true
+alloy-op-hardforks = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, features = [
     "serde",
     "getrandom",
@@ -44,3 +44,7 @@ serde.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = ["dep:alloy-op-hardforks", "foundry-evm-hardforks/optimism"]

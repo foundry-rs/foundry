@@ -1,9 +1,13 @@
+#[cfg(feature = "optimism")]
 use alloy_consensus::{Receipt, TxReceipt};
 use alloy_network::{AnyReceiptEnvelope, AnyTransactionReceipt, ReceiptResponse};
-use alloy_primitives::{Address, B256, BlockHash, TxHash, U64};
+#[cfg(feature = "optimism")]
+use alloy_primitives::U64;
+use alloy_primitives::{Address, B256, BlockHash, TxHash};
 use alloy_rpc_types::{ConversionError, Log, TransactionReceipt};
 use alloy_serde::WithOtherFields;
 use derive_more::AsRef;
+#[cfg(feature = "optimism")]
 use op_alloy_consensus::{OpDepositReceipt, OpDepositReceiptWithBloom};
 use serde::{Deserialize, Serialize};
 use tempo_primitives::TEMPO_TX_TYPE_ID;
@@ -144,6 +148,7 @@ impl TryFrom<AnyTransactionReceipt> for FoundryTxReceipt {
                     0x03 => FoundryReceiptEnvelope::Eip4844(receipt_with_bloom),
                     0x04 => FoundryReceiptEnvelope::Eip7702(receipt_with_bloom),
                     TEMPO_TX_TYPE_ID => FoundryReceiptEnvelope::Tempo(receipt_with_bloom),
+                    #[cfg(feature = "optimism")]
                     0x7E => {
                         // Construct the deposit receipt, extracting optional deposit fields
                         // These fields may not be present in all receipts, so missing/invalid

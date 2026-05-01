@@ -33,10 +33,12 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     },
     executors::TracingExecutor,
     opts::EvmOpts,
@@ -228,11 +230,11 @@ impl CallArgs {
             let mut evm_opts = figment.extract::<EvmOpts>()?;
             evm_opts.infer_network_from_fork().await;
 
+            #[cfg(feature = "optimism")]
             if evm_opts.networks.is_optimism() {
-                self.run_with_network::<OpEvmNetwork>().await
-            } else {
-                self.run_with_network::<EthEvmNetwork>().await
+                return self.run_with_network::<OpEvmNetwork>().await;
             }
+            self.run_with_network::<EthEvmNetwork>().await
         }
     }
 

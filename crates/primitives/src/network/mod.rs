@@ -36,7 +36,11 @@ impl Network for FoundryNetwork {
 
     type TransactionRequest = crate::FoundryTransactionRequest;
 
+    #[cfg(feature = "optimism")]
     type TransactionResponse = op_alloy_rpc_types::Transaction<crate::FoundryTxEnvelope>;
+
+    #[cfg(not(feature = "optimism"))]
+    type TransactionResponse = alloy_rpc_types::Transaction<crate::FoundryTxEnvelope>;
 
     type ReceiptResponse = crate::FoundryTxReceipt;
 

@@ -44,11 +44,13 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
         tempo::PATH_USD_ADDRESS,
     },
     executors::ExecutorBuilder,
@@ -321,9 +323,11 @@ impl ScriptArgs {
                 broadcasted.verify().await?;
             }
             Ok(())
-        } else if evm_opts.networks.is_optimism() {
-            self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await
         } else {
+            #[cfg(feature = "optimism")]
+            if evm_opts.networks.is_optimism() {
+                return self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await;
+            }
             self.run_generic_script::<EthEvmNetwork>(config, evm_opts).await
         }
     }

@@ -12,6 +12,7 @@ use anvil_rpc::{
     response::ResponseResult,
 };
 use foundry_evm::{backend::DatabaseError, decode::RevertDecoder};
+#[cfg(feature = "optimism")]
 use op_revm::OpTransactionError;
 use revm::{
     context_interface::result::{EVMError, InvalidHeader, InvalidTransaction},
@@ -163,6 +164,7 @@ where
     }
 }
 
+#[cfg(feature = "optimism")]
 impl<T> From<EVMError<T, OpTransactionError>> for BlockchainError
 where
     T: Into<Self>,
@@ -190,6 +192,7 @@ where
     }
 }
 
+#[cfg(feature = "optimism")]
 impl<T> From<EVMError<T, alloy_op_evm::OpTxError>> for BlockchainError
 where
     T: Into<Self>,
@@ -451,6 +454,7 @@ impl From<InvalidTransaction> for InvalidTransactionError {
     }
 }
 
+#[cfg(feature = "optimism")]
 impl From<OpTransactionError> for InvalidTransactionError {
     fn from(value: OpTransactionError) -> Self {
         match value {

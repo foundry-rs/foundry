@@ -9,7 +9,7 @@ pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
     fn precompiles(&self) -> Vec<(Address, DynPrecompile)>;
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "optimism"))]
 mod tests {
     use std::convert::Infallible;
 

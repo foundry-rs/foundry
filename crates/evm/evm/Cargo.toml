@@ -61,3 +61,12 @@ serde.workspace = true
 uuid.workspace = true
 rayon.workspace = true
 tokio.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-evm-core/optimism",
+    "foundry-evm-hardforks/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+]

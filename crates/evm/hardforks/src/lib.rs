@@ -8,11 +8,13 @@ use std::str::FromStr;
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
 use foundry_compilers::artifacts::EvmVersion;
+#[cfg(feature = "optimism")]
 use op_revm::OpSpecId;
 use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Serialize};
 
 pub use alloy_hardforks::EthereumHardfork;
+#[cfg(feature = "optimism")]
 pub use alloy_op_hardforks::OpHardfork;
 pub use tempo_chainspec::hardfork::TempoHardfork;
 
@@ -20,6 +22,7 @@ pub use tempo_chainspec::hardfork::TempoHardfork;
 #[serde(into = "String")]
 pub enum FoundryHardfork {
     Ethereum(EthereumHardfork),
+    #[cfg(feature = "optimism")]
     Optimism(OpHardfork),
     Tempo(TempoHardfork),
 }
@@ -28,6 +31,7 @@ impl From<FoundryHardfork> for String {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
             FoundryHardfork::Ethereum(h) => format!("{h}"),
+            #[cfg(feature = "optimism")]
             FoundryHardfork::Optimism(h) => format!("optimism:{h}"),
             FoundryHardfork::Tempo(h) => format!("tempo:{h}"),
         }
@@ -64,6 +68,7 @@ impl FromStr for FoundryHardfork {
                 .map(Self::Ethereum)
                 .map_err(|_| format!("unknown ethereum hardfork '{fork_raw}'")),
 
+            #[cfg(feature = "optimism")]
             "op" | "optimism" => OpHardfork::from_str(&fork)
                 .map(Self::Optimism)
                 .map_err(|_| format!("unknown optimism hardfork '{fork_raw}'")),
@@ -83,6 +88,7 @@ impl FoundryHardfork {
         Self::Ethereum(h)
     }
 
+    #[cfg(feature = "optimism")]
     pub const fn optimism(h: OpHardfork) -> Self {
         Self::Optimism(h)
     }
@@ -95,6 +101,7 @@ impl FoundryHardfork {
     pub fn name(&self) -> String {
         match self {
             Self::Ethereum(h) => format!("{h}"),
+            #[cfg(feature = "optimism")]
             Self::Optimism(h) => format!("{h}"),
             Self::Tempo(h) => format!("{h}"),
         }
@@ -106,6 +113,7 @@ impl FoundryHardfork {
     pub const fn namespace(&self) -> Option<&'static str> {
         match self {
             Self::Ethereum(_) => None,
+            #[cfg(feature = "optimism")]
             Self::Optimism(_) => Some("optimism"),
             Self::Tempo(_) => Some("tempo"),
         }
@@ -119,6 +127,7 @@ impl FoundryHardfork {
         if let Some(fork) = EthereumHardfork::from_chain_and_timestamp(chain, timestamp) {
             return Some(Self::Ethereum(fork));
         }
+        #[cfg(feature = "optimism")]
         if let Some(fork) = OpHardfork::from_chain_and_timestamp(chain, timestamp) {
             return Some(Self::Optimism(fork));
         }
@@ -143,12 +152,14 @@ impl From<FoundryHardfork> for EthereumHardfork {
     }
 }
 
+#[cfg(feature = "optimism")]
 impl From<OpHardfork> for FoundryHardfork {
     fn from(value: OpHardfork) -> Self {
         Self::Optimism(value)
     }
 }
 
+#[cfg(feature = "optimism")]
 impl From<FoundryHardfork> for OpHardfork {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
@@ -177,12 +188,14 @@ impl From<FoundryHardfork> for SpecId {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
             FoundryHardfork::Ethereum(hardfork) => spec_id_from_ethereum_hardfork(hardfork),
+            #[cfg(feature = "optimism")]
             FoundryHardfork::Optimism(hardfork) => spec_id_from_optimism_hardfork(hardfork).into(),
             FoundryHardfork::Tempo(hardfork) => hardfork.into(),
         }
     }
 }
 
+#[cfg(feature = "optimism")]
 impl From<FoundryHardfork> for OpSpecId {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
@@ -223,6 +236,7 @@ pub fn spec_id_from_ethereum_hardfork(hardfork: EthereumHardfork) -> SpecId {
 }
 
 /// Map an `OptimismHardfork` enum into its corresponding `OpSpecId`.
+#[cfg(feature = "optimism")]
 pub fn spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> OpSpecId {
     match hardfork {
         OpHardfork::Bedrock => OpSpecId::BEDROCK,
@@ -265,6 +279,7 @@ impl FromEvmVersion for SpecId {
     }
 }
 
+#[cfg(feature = "optimism")]
 impl FromEvmVersion for OpSpecId {
     fn from_evm_version(version: EvmVersion) -> Self {
         match version {
@@ -324,6 +339,7 @@ mod tests {
         assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Osaka), SpecId::OSAKA);
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn test_optimism_spec_id_mapping() {
         assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Bedrock), OpSpecId::BEDROCK);
@@ -370,6 +386,7 @@ mod tests {
         assert!(FoundryHardfork::from_chain_and_timestamp(sepolia_chain_id, u64::MAX).is_some());
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn test_from_chain_and_timestamp_op_mainnet() {
         let op_chain_id = 10;
@@ -379,6 +396,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn test_from_chain_and_timestamp_base() {
         let base_chain_id = 8453;

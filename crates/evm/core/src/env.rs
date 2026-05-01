@@ -4,9 +4,12 @@ use alloy_consensus::Typed2718;
 pub use alloy_evm::EvmEnv;
 use alloy_evm::FromRecoveredTx;
 use alloy_network::{AnyRpcTransaction, AnyTxEnvelope, TransactionResponse};
+#[cfg(feature = "optimism")]
 use alloy_op_evm::OpTx;
 use alloy_primitives::{Address, B256, Bytes, U256};
+#[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, TxDeposit};
+#[cfg(feature = "optimism")]
 use op_revm::{
     OpTransaction,
     transaction::{OpTxTr, deposit::DEPOSIT_TRANSACTION_TYPE},
@@ -238,7 +241,14 @@ pub trait FoundryTransaction: Transaction {
 
     /// Returns `true` if transaction is of type [`DEPOSIT_TRANSACTION_TYPE`].
     fn is_deposit(&self) -> bool {
-        self.tx_type() == DEPOSIT_TRANSACTION_TYPE
+        #[cfg(feature = "optimism")]
+        {
+            self.tx_type() == DEPOSIT_TRANSACTION_TYPE
+        }
+        #[cfg(not(feature = "optimism"))]
+        {
+            false
+        }
     }
 
     // Tempo methods
@@ -320,6 +330,7 @@ impl FoundryTransaction for TxEnv {
     }
 }
 
+#[cfg(feature = "optimism")]
 impl<TX: FoundryTransaction> FoundryTransaction for OpTransaction<TX> {
     fn set_tx_type(&mut self, tx_type: u8) {
         self.base.set_tx_type(tx_type);
@@ -414,6 +425,7 @@ impl<TX: FoundryTransaction> FoundryTransaction for OpTransaction<TX> {
     }
 }
 
+#[cfg(feature = "optimism")]
 impl FoundryTransaction for OpTx {
     fn set_tx_type(&mut self, tx_type: u8) {
         self.0.set_tx_type(tx_type);
@@ -687,6 +699,7 @@ impl FromAnyRpcTransaction for TxEnv {
     }
 }
 
+#[cfg(feature = "optimism")]
 impl FromAnyRpcTransaction for OpTx {
     fn from_any_rpc_transaction(tx: &AnyRpcTransaction) -> eyre::Result<Self> {
         if let Some(envelope) = tx.as_envelope() {
@@ -752,16 +765,22 @@ mod tests {
     use std::num::NonZeroU64;
 
     use super::*;
-    use alloy_consensus::{Sealed, Signed, TxEip1559, transaction::Recovered};
+    #[cfg(feature = "optimism")]
+    use alloy_consensus::Sealed;
+    use alloy_consensus::{Signed, TxEip1559, transaction::Recovered};
     use alloy_evm::{EthEvmFactory, EvmFactory};
     use alloy_network::{AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
+    #[cfg(feature = "optimism")]
     use alloy_op_evm::OpEvmFactory;
     use alloy_primitives::Signature;
     use alloy_rpc_types::{Transaction as RpcTransaction, TransactionInfo};
     use alloy_serde::WithOtherFields;
     use foundry_evm_hardforks::TempoHardfork;
+    #[cfg(feature = "optimism")]
     use op_alloy_consensus::{OpTxEnvelope, transaction::OpTransactionInfo};
+    #[cfg(feature = "optimism")]
     use op_alloy_rpc_types::Transaction as OpRpcTransaction;
+    #[cfg(feature = "optimism")]
     use op_revm::OpSpecId;
     use revm::database::EmptyDB;
     use tempo_alloy::primitives::{
@@ -793,6 +812,7 @@ mod tests {
         evm.ctx_mut().set_evm(evm_env);
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn op_evm_foundry_context_ext_implementation() {
         let mut evm =
@@ -874,6 +894,7 @@ mod tests {
         assert_eq!(tx_env.kind, TxKind::Call(Address::with_last_byte(0xBB)));
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn from_any_rpc_transaction_for_op() {
         let from = Address::random();
@@ -915,6 +936,7 @@ mod tests {
         assert!(result.to_string().contains("unknown transaction type"));
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn from_any_rpc_transaction_for_op_deposit() {
         let from = Address::random();

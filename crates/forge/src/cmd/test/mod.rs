@@ -39,10 +39,11 @@ use foundry_config::{
     filter::GlobMatcher,
 };
 use foundry_debugger::Debugger;
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, SpecFor, TempoEvmNetwork,
-        TxEnvFor,
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
@@ -343,6 +344,11 @@ impl TestArgs {
         evm_opts.infer_network_from_fork().await;
 
         // Dispatch based on network type.
+        #[cfg(feature = "optimism")]
+        let op_path = evm_opts.networks.is_optimism();
+        #[cfg(not(feature = "optimism"))]
+        let op_path = false;
+
         let (libraries, mut outcome) = if evm_opts.networks.is_tempo() {
             self.build_and_run_tests::<TempoEvmNetwork>(
                 config,
@@ -354,17 +360,24 @@ impl TestArgs {
                 decode_internal,
             )
             .await?
-        } else if evm_opts.networks.is_optimism() {
-            self.build_and_run_tests::<OpEvmNetwork>(
-                config,
-                evm_opts,
-                output,
-                filter,
-                coverage,
-                should_debug,
-                decode_internal,
-            )
-            .await?
+        } else if op_path {
+            #[cfg(feature = "optimism")]
+            {
+                self.build_and_run_tests::<OpEvmNetwork>(
+                    config,
+                    evm_opts,
+                    output,
+                    filter,
+                    coverage,
+                    should_debug,
+                    decode_internal,
+                )
+                .await?
+            }
+            #[cfg(not(feature = "optimism"))]
+            {
+                unreachable!()
+            }
         } else {
             self.build_and_run_tests::<EthEvmNetwork>(
                 config,

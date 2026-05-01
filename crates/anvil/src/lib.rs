@@ -3,6 +3,11 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+// op-alloy-rpc-types is listed as an optional dependency (not dev-dependency) because
+// cargo doesn't allow optional dev-dependencies. It's only used by integration tests.
+#[cfg(feature = "optimism")]
+use op_alloy_rpc_types as _;
+
 use crate::{
     error::{NodeError, NodeResult},
     eth::{

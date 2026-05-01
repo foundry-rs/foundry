@@ -57,6 +57,7 @@ use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
     NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
 };
+#[cfg(feature = "optimism")]
 use alloy_op_evm::{OpEvmContext, OpEvmFactory, OpTx};
 use alloy_primitives::{
     Address, B256, Bloom, Bytes, TxHash, TxKind, U64, U256, hex, keccak256, logs_bloom,
@@ -108,20 +109,53 @@ use foundry_evm::{
     },
 };
 use foundry_evm_networks::NetworkConfigs;
+#[cfg(feature = "optimism")]
+use foundry_primitives::get_deposit_tx_parts;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
-    FoundryTxReceipt, get_deposit_tx_parts,
+    FoundryTxReceipt,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
+#[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
+#[cfg(feature = "optimism")]
 use op_revm::{OpHaltReason, OpSpecId, OpTransaction};
+#[cfg(feature = "optimism")]
+use revm::context_interface::result::EVMError;
+
+/// Stub `OpTransaction` for non-optimism builds. Mirrors the `base` field used by callers.
+#[cfg(not(feature = "optimism"))]
+#[derive(Clone, Debug, Default)]
+struct OpTransaction<T> {
+    base: T,
+}
+
+#[cfg(not(feature = "optimism"))]
+impl<T> OpTransaction<T> {
+    fn new(base: T) -> Self {
+        Self { base }
+    }
+}
+
+#[cfg(not(feature = "optimism"))]
+impl<T> From<T> for OpTransaction<T> {
+    fn from(base: T) -> Self {
+        Self { base }
+    }
+}
+
+/// Stub `OpEvmContext` alias for non-optimism builds. Aliasing to `EthEvmContext` lets the
+/// existing `Inspector<OpEvmContext<...>>` trait bounds collapse to the (already required)
+/// Ethereum bound, since the optimism execution path is fully cfg-gated out.
+#[cfg(not(feature = "optimism"))]
+type OpEvmContext<DB> = alloy_evm::eth::EthEvmContext<DB>;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use revm::{
     DatabaseCommit, Inspector,
     context::{Block as RevmBlock, BlockEnv, Cfg, TxEnv},
     context_interface::{
         block::BlobExcessGasAndPrice,
-        result::{EVMError, ExecutionResult, HaltReason, Output, ResultAndState},
+        result::{ExecutionResult, HaltReason, Output, ResultAndState},
     },
     database::{CacheDB, DbAccount, WrapDatabaseRef},
     interpreter::InstructionResult,
@@ -491,7 +525,14 @@ impl<N: Network> Backend<N> {
 
     /// Returns true if op-stack deposits are active
     pub fn is_optimism(&self) -> bool {
-        self.networks.is_optimism()
+        #[cfg(feature = "optimism")]
+        {
+            self.networks.is_optimism()
+        }
+        #[cfg(not(feature = "optimism"))]
+        {
+            false
+        }
     }
 
     /// Returns true if Tempo network mode is active
@@ -1148,6 +1189,7 @@ impl<N: Network> Backend<N> {
             + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
+        #[cfg(feature = "optimism")]
         if self.is_optimism() {
             let op_env = EvmEnv::new(
                 evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
@@ -1166,14 +1208,15 @@ impl<N: Network> Backend<N> {
                 EVMError::CustomAny(err) => EVMError::CustomAny(err),
                 EVMError::Transaction(t) => EVMError::Transaction(t),
             })?;
-            Ok(ResultAndState {
+            return Ok(ResultAndState {
                 result: result.result.map_haltreason(|h| match h {
                     OpHaltReason::Base(eth) => eth,
                     _ => HaltReason::PrecompileError,
                 }),
                 state: result.state,
-            })
-        } else if self.is_tempo() {
+            });
+        }
+        if self.is_tempo() {
             self.transact_tempo_with_inspector_ref(
                 db,
                 evm_env,
@@ -1215,8 +1258,17 @@ impl<N: Network> Backend<N> {
             let result = self.transact_tempo_with_inspector_ref(db, evm_env, inspector, tx_env)?;
             Ok((result, base))
         } else {
+            #[cfg(feature = "optimism")]
             let tx_env: OpTransaction<TxEnv> =
                 FromTxWithEncoded::from_encoded_tx(tx, sender, tx.encoded_2718().into());
+            #[cfg(not(feature = "optimism"))]
+            let tx_env: OpTransaction<TxEnv> = OpTransaction::new(<TxEnv as FromTxWithEncoded<
+                FoundryTxEnvelope,
+            >>::from_encoded_tx(
+                tx,
+                sender,
+                tx.encoded_2718().into(),
+            ));
             let base = tx_env.base.clone();
             let result = self.transact_with_inspector_ref(db, evm_env, inspector, tx_env)?;
             Ok((result, base))
@@ -1298,6 +1350,7 @@ impl<N: Network> Backend<N> {
             }};
         }
 
+        #[cfg(feature = "optimism")]
         if self.is_optimism() {
             let op_env = EvmEnv::new(
                 evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
@@ -1305,8 +1358,9 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 OpEvmFactory::<OpTx>::default().create_evm_with_inspector(db, op_env, inspector);
-            run!(evm)
-        } else if self.is_tempo() {
+            return run!(evm);
+        }
+        if self.is_tempo() {
             let hardfork = TempoHardfork::from(self.hardfork);
             let tempo_env = EvmEnv::new(
                 evm_env
@@ -1427,11 +1481,14 @@ impl<N: Network> Backend<N> {
         }
 
         // Deposit transaction? (only valid when op-stack deposits are active)
+        #[cfg(feature = "optimism")]
         if self.ensure_op_deposits_active().is_ok()
             && let Ok(deposit) = get_deposit_tx_parts(&other)
         {
             tx_env.deposit = deposit;
         }
+        #[cfg(not(feature = "optimism"))]
+        let _ = other;
 
         (evm_env, tx_env)
     }
@@ -4359,7 +4416,10 @@ where
         }
 
         // Nonce validation — skip for deposits (L1→L2) and Tempo txs (2D nonce system)
+        #[cfg(feature = "optimism")]
         let is_deposit_tx = pending.transaction.as_ref().is_deposit();
+        #[cfg(not(feature = "optimism"))]
+        let is_deposit_tx = false;
         let is_tempo_tx = pending.transaction.as_ref().is_tempo();
         let nonce = tx.nonce();
         if nonce < account.nonce && !is_deposit_tx && !is_tempo_tx {
@@ -4475,6 +4535,7 @@ where
                 );
             let value = tx.value();
             match tx.as_ref() {
+                #[cfg(feature = "optimism")]
                 FoundryTxEnvelope::Deposit(deposit_tx) => {
                     // Deposit transactions
                     // https://specs.optimism.io/protocol/deposits.html#execution
@@ -4538,6 +4599,7 @@ pub fn transaction_build(
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
+    #[cfg(feature = "optimism")]
     if let FoundryTxEnvelope::Deposit(deposit_tx) = eth_transaction.as_ref() {
         let dep_tx = deposit_tx;
 

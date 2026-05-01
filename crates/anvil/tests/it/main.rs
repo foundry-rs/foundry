@@ -11,6 +11,7 @@ mod gas;
 mod genesis;
 mod ipc;
 mod logs;
+#[cfg(feature = "optimism")]
 mod optimism;
 mod otterscan;
 mod proof;

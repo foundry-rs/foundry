@@ -10,13 +10,16 @@ use alloy_evm::{
     EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap,
 };
 use alloy_network::{Ethereum, Network};
+#[cfg(feature = "optimism")]
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
 use foundry_config::FromEvmVersion;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
+#[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
+#[cfg(feature = "optimism")]
 use op_revm::OpHaltReason;
 use revm::{
     Database,
@@ -36,10 +39,12 @@ use tempo_evm::evm::TempoEvmFactory;
 use tempo_revm::TempoHaltReason;
 
 pub mod eth;
+#[cfg(feature = "optimism")]
 pub mod op;
 pub mod tempo;
 
 pub use eth::*;
+#[cfg(feature = "optimism")]
 pub use op::*;
 pub use tempo::*;
 
@@ -75,8 +80,10 @@ impl FoundryEvmNetwork for TempoEvmNetwork {
     type EvmFactory = TempoEvmFactory;
 }
 
+#[cfg(feature = "optimism")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OpEvmNetwork;
+#[cfg(feature = "optimism")]
 impl FoundryEvmNetwork for OpEvmNetwork {
     type Network = Optimism;
     type EvmFactory = OpEvmFactory;
@@ -249,6 +256,7 @@ impl IntoInstructionResult for HaltReason {
     }
 }
 
+#[cfg(feature = "optimism")]
 impl IntoInstructionResult for OpHaltReason {
     fn into_instruction_result(self) -> InstructionResult {
         match self {

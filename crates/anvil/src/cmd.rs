@@ -12,7 +12,9 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-use foundry_evm::hardfork::{EthereumHardfork, OpHardfork};
+use foundry_evm::hardfork::EthereumHardfork;
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -241,9 +243,16 @@ impl NodeArgs {
 
         let hardfork = match &self.hardfork {
             Some(hf) => {
+                #[cfg(feature = "optimism")]
                 if self.evm.networks.is_optimism() {
                     Some(OpHardfork::from_str(hf)?.into())
                 } else if self.evm.networks.is_tempo() {
+                    Some(TempoHardfork::from_str(hf)?.into())
+                } else {
+                    Some(EthereumHardfork::from_str(hf)?.into())
+                }
+                #[cfg(not(feature = "optimism"))]
+                if self.evm.networks.is_tempo() {
                     Some(TempoHardfork::from_str(hf)?.into())
                 } else {
                     Some(EthereumHardfork::from_str(hf)?.into())
@@ -904,6 +913,7 @@ mod tests {
         assert_eq!(config.hardfork, Some(EthereumHardfork::Berlin.into()));
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn can_parse_optimism_hardfork() {
         let args: NodeArgs =
