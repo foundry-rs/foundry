@@ -158,6 +158,19 @@ contract MockCallTest is Test {
         assertEq(mock.pay{value: 50}(1), 100);
     }
 
+    function testMockCallWithValueTransfersBalance() public {
+        Mock mock = new Mock();
+        uint256 value = 10;
+        vm.deal(address(this), value);
+
+        vm.mockCall(address(mock), value, abi.encodeWithSelector(mock.pay.selector), abi.encode(10));
+
+        assertEq(address(mock).balance, 0);
+        assertEq(mock.pay{value: value}(1), 10);
+        assertEq(address(mock).balance, value);
+        assertEq(address(this).balance, 0);
+    }
+
     function testMockCallWithValueCalldataPrecedence() public {
         Mock mock = new Mock();
 
@@ -279,17 +292,24 @@ contract MockCallRevertTest is Test {
 
     function testMockCallRevertWithValue() public {
         Mock mock = new Mock();
+        vm.deal(address(this), 10);
 
         vm.mockCallRevert(address(mock), 10, abi.encodeWithSelector(mock.pay.selector), ERROR_MESSAGE);
 
         assertEq(mock.pay(1), 1);
         assertEq(mock.pay(2), 2);
 
+        uint256 senderBalance = address(this).balance;
+        uint256 targetBalance = address(mock).balance;
+
         try mock.pay{value: 10}(1) {
             revert();
         } catch (bytes memory err) {
             require(keccak256(err) == keccak256(ERROR_MESSAGE));
         }
+
+        assertEq(address(this).balance, senderBalance);
+        assertEq(address(mock).balance, targetBalance);
     }
 
     function testMockCallResetsMockCallRevert() public {
