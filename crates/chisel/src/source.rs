@@ -16,10 +16,11 @@ use foundry_evm::{backend::Backend, core::bytecode::InstIter, opts::EvmOpts};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solar::{
+    ast::{ItemKind, StmtKind as AstStmtKind, yul},
     interface::{Span, diagnostics::EmittedDiagnostics},
     sema::{
         CompilerRef,
-        hir::{Block, Contract, EventId, ItemId, Stmt, StmtKind},
+        hir::{Block, Contract, EventId, ItemId, Stmt, StmtKind as HirStmtKind},
         ty::Gcx,
     },
 };
@@ -135,7 +136,7 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
         // version) are handled separately via `trailing_assembly_last_stmt_span`, which
         // walks the AST to recover the last meaningful Yul statement.
         let source_stmt = match &last_stmt.kind {
-            StmtKind::UncheckedBlock(stmts) | StmtKind::Block(stmts) => {
+            HirStmtKind::UncheckedBlock(stmts) | HirStmtKind::Block(stmts) => {
                 if let Some(stmt) = stmts.last() {
                     stmt
                 } else {
@@ -157,7 +158,7 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
         //   2. `trailing_assembly_last_stmt_span` returning `Some`, verifies via the AST that the
         //      failing HIR node actually corresponds to an assembly block (not some other lowering
         //      failure), and supplies the concrete span to use.
-        let mut source_span = if matches!(last_stmt.kind, StmtKind::Err(_))
+        let mut source_span = if matches!(last_stmt.kind, HirStmtKind::Err(_))
             && let Some(span) = self.trailing_assembly_last_stmt_span()
         {
             span
@@ -199,7 +200,7 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
     /// Statements' ranges in the solc source map do not include the semicolon.
     fn stmt_span_without_semicolon(&self, stmt: &Stmt<'_>) -> Span {
         match stmt.kind {
-            StmtKind::DeclSingle(id) => {
+            HirStmtKind::DeclSingle(id) => {
                 let decl = self.gcx().hir.variable(id);
                 if let Some(expr) = decl.initializer {
                     stmt.span.with_hi(expr.span.hi())
@@ -207,8 +208,8 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
                     stmt.span
                 }
             }
-            StmtKind::DeclMulti(_, expr) => stmt.span.with_hi(expr.span.hi()),
-            StmtKind::Expr(expr) => expr.span,
+            HirStmtKind::DeclMulti(_, expr) => stmt.span.with_hi(expr.span.hi()),
+            HirStmtKind::Expr(expr) => expr.span,
             _ => stmt.span,
         }
     }
@@ -218,8 +219,6 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
     /// Yul/assembly is not yet lowered to HIR in the pinned solar version, so we
     /// keep around the AST to be able to inspect inline assembly blocks.
     fn repl_run_ast_body(&self) -> Option<&'gcx solar::ast::Block<'gcx>> {
-        use solar::ast::ItemKind;
-
         let contract = self.repl_contract_hir()?;
         let source = self.gcx().sources.get(contract.source)?;
         let ast = source.ast.as_ref()?;
@@ -239,11 +238,9 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
     /// Returns the span of the first top-level `return(...)` call inside any
     /// `assembly { ... }` block in the REPL `run()` function, if any.
     fn first_yul_return_span(&self) -> Option<Span> {
-        use solar::ast::{StmtKind, yul};
-
         let run_body = self.repl_run_ast_body()?;
         for stmt in run_body.stmts.iter() {
-            let StmtKind::Assembly(asm) = &stmt.kind else { continue };
+            let AstStmtKind::Assembly(asm) = &stmt.kind else { continue };
             for ystmt in asm.block.stmts.iter() {
                 if let yul::StmtKind::Expr(e) = &ystmt.kind
                     && let yul::ExprKind::Call(call) = &e.kind
@@ -262,10 +259,8 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
     /// This mirrors the legacy behavior used to pick a meaningful end-of-function PC when
     /// the trailing statement is inline assembly.
     fn trailing_assembly_last_stmt_span(&self) -> Option<Span> {
-        use solar::ast::{StmtKind, yul};
-
         let run_body = self.repl_run_ast_body()?;
-        let StmtKind::Assembly(asm) = &run_body.stmts.last()?.kind else { return None };
+        let AstStmtKind::Assembly(asm) = &run_body.stmts.last()?.kind else { return None };
         asm.block
             .stmts
             .iter()
