@@ -292,24 +292,25 @@ contract MockCallRevertTest is Test {
 
     function testMockCallRevertWithValue() public {
         Mock mock = new Mock();
-        vm.deal(address(this), 10);
+        uint256 value = 10;
+        vm.deal(address(this), value);
 
-        vm.mockCallRevert(address(mock), 10, abi.encodeWithSelector(mock.pay.selector), ERROR_MESSAGE);
+        vm.mockCallRevert(address(mock), value, abi.encodeWithSelector(mock.pay.selector), ERROR_MESSAGE);
 
         assertEq(mock.pay(1), 1);
         assertEq(mock.pay(2), 2);
 
-        uint256 senderBalance = address(this).balance;
-        uint256 targetBalance = address(mock).balance;
+        uint256 initSenderBalance = address(this).balance;
+        uint256 initTargetBalance = address(mock).balance;
 
-        try mock.pay{value: 10}(1) {
+        try mock.pay{value: value}(1) {
             revert();
         } catch (bytes memory err) {
             require(keccak256(err) == keccak256(ERROR_MESSAGE));
         }
 
-        assertEq(address(this).balance, senderBalance);
-        assertEq(address(mock).balance, targetBalance);
+        assertEq(address(this).balance, initSenderBalance);
+        assertEq(address(mock).balance, initTargetBalance);
     }
 
     function testMockCallResetsMockCallRevert() public {
