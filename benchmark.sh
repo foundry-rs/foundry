@@ -9,7 +9,7 @@ AAVE_V4="aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35"
 UNISWAP_V4_CORE="uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc TickMathTestTest"
 SPARK_PSM="sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting"
 
-SOLADY_ISOLATE="vectorized/solady:v0.1.26 --nmc SafeTransferLibTest|LifebuoyTest|LibBitTest|Base58Test|LibStringTest"
+SOLADY_ISOLATE="vectorized/solady:v0.1.26 --nmc 'SafeTransferLibTest|LifebuoyTest|LibBitTest|Base58Test|LibStringTest'"
 ITHACA_ISOLATE="ithacaxyz/account:v0.5.7 --nmc SimulateExecuteTest"
 
 SOLADY_BUILD="vectorized/solady:v0.1.26"
