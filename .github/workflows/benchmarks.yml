@@ -28,7 +28,7 @@ env:
   # `--nmc BrokenTest`, so a single failing test does not fail the whole CI).
   TEST_REPOS: >-
     ithacaxyz/account:v0.5.7,
-    vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest|Base58Test',
+    vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest|Base58Test|LibStringTest',
     aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35,
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
     sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
@@ -60,7 +60,7 @@ jobs:
     name: Run All Benchmarks
     runs-on: depot-ubuntu-24.04-32
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -113,7 +113,8 @@ jobs:
             --versions "$VERSIONS" \
             --repos "$REPOS" \
             --benchmarks forge_test,forge_fuzz_test \
-            --output-file forge_test_bench.md
+            --output-file forge_test_bench.md \
+            --verbose
 
       - name: Run forge isolate test benchmarks
         env:
@@ -125,7 +126,8 @@ jobs:
             --versions "$VERSIONS" \
             --repos "$REPOS" \
             --benchmarks forge_isolate_test \
-            --output-file forge_isolate_test_bench.md
+            --output-file forge_isolate_test_bench.md \
+            --verbose
 
       - name: Run forge build benchmarks
         env:
@@ -137,7 +139,8 @@ jobs:
             --versions "$VERSIONS" \
             --repos "$REPOS" \
             --benchmarks forge_build_no_cache,forge_build_with_cache \
-            --output-file forge_build_bench.md
+            --output-file forge_build_bench.md \
+            --verbose
 
       - name: Run forge coverage benchmarks
         env:
@@ -149,16 +152,15 @@ jobs:
             --versions "$VERSIONS" \
             --repos "$REPOS" \
             --benchmarks forge_coverage \
-            --output-file forge_coverage_bench.md
+            --output-file forge_coverage_bench.md \
+            --verbose
 
       - name: Combine benchmark results
         run: ./.github/scripts/combine-benchmarks.sh benches
 
-      - name: Commit and read benchmark results
+      - name: Read benchmark results
         id: benchmark_results
-        env:
-          GITHUB_HEAD_REF: ${{ github.head_ref }}
-        run: ./.github/scripts/commit-and-read-benchmarks.sh benches "${{ github.event_name }}" "${{ github.repository }}"
+        run: ./.github/scripts/read-benchmark-results.sh benches
 
       - name: Upload benchmark results as artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -172,21 +174,21 @@ jobs:
             benches/LATEST.md
 
     outputs:
-      branch_name: ${{ steps.benchmark_results.outputs.branch_name }}
       pr_comment: ${{ steps.benchmark_results.outputs.pr_comment }}
 
   publish-results:
     name: Publish Results
     needs: run-benchmarks
     runs-on: ubuntu-latest
+    # All git writes happen here, on a clean ubuntu-latest runner that has
+    # never executed third-party benchmark code.
     permissions:
       contents: write
       pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
+        # persist-credentials defaults to true so we can push.
 
       - name: Download benchmark results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -194,19 +196,22 @@ jobs:
           name: benchmark-results
           path: benches/
 
-      - name: Push branch for manual runs
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          git push origin "${{ needs.run-benchmarks.outputs.branch_name }}"
-          echo "Pushed branch: ${{ needs.run-benchmarks.outputs.branch_name }}"
+      - name: Commit benchmark results
+        id: commit_results
+        env:
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: ./.github/scripts/commit-benchmark-results.sh benches "${{ github.event_name }}" "${{ github.repository }}"
 
       - name: Create PR for manual runs
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && steps.commit_results.outputs.committed == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          BRANCH_NAME: ${{ steps.commit_results.outputs.branch_name }}
+          PR_COMMENT: ${{ needs.run-benchmarks.outputs.pr_comment }}
         with:
           script: |
-            const branchName = '${{ needs.run-benchmarks.outputs.branch_name }}';
-            const prComment = `${{ needs.run-benchmarks.outputs.pr_comment }}`;
+            const branchName = process.env.BRANCH_NAME;
+            const prComment = process.env.PR_COMMENT;
 
             // Create the pull request
             const { data: pr } = await github.rest.pulls.create({
@@ -231,10 +236,12 @@ jobs:
       - name: Comment on PR
         if: github.event.inputs.pr_number != '' || github.event_name == 'pull_request'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_COMMENT: ${{ needs.run-benchmarks.outputs.pr_comment }}
         with:
           script: |
             const prNumber = ${{ github.event.inputs.pr_number || github.event.pull_request.number }};
-            const prComment = `${{ needs.run-benchmarks.outputs.pr_comment }}`;
+            const prComment = process.env.PR_COMMENT;
 
             const comment = `${prComment}
 
