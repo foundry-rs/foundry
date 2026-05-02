@@ -10,17 +10,17 @@ on:
         required: false
         type: string
       versions:
-        description: "Comma-separated list of Foundry versions to benchmark (e.g., stable,nightly,v1.0.0)"
+        description: "Comma-separated list of Foundry versions to benchmark (optional, defaults to 'v1.5.1,v1.7.0')"
         required: false
         type: string
-        default: "stable,nightly"
       repos:
-        description: "Comma-separated repos to benchmark. Each entry: org/repo[:rev][ <extra args>] (e.g. vectorized/solady:v0.1.26 --nmc BrokenTest). Leave empty to use the per-benchmark default repo lists."
+        description: "Comma-separated repos to benchmark. Each entry: org/repo[:rev] (e.g. aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35). Leave empty to use the per-benchmark default repo lists."
         required: false
         type: string
-        default: ""
 
 env:
+  DEFAULT_VERSIONS: "v1.5.1,v1.7.0"
+
   # Repos to benchmark per step. Each comma-separated entry has the form
   #   org/repo[:rev][ <extra args>]
   # where anything after the first whitespace is appended to every benchmark
@@ -28,28 +28,24 @@ env:
   # `--nmc BrokenTest`, so a single failing test does not fail the whole CI).
   TEST_REPOS: >-
     ithacaxyz/account:v0.5.7,
-    vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest|Base58Test|LibStringTest',
-    aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35,
+    vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest|Base58Test',
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
     sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
 
   ISOLATE_TEST_REPOS: >-
     ithacaxyz/account:v0.5.7 --nmc SimulateExecuteTest,
-    vectorized/solady:v0.1.26 --nmc 'SafeTransferLibTest|LifebuoyTest|LibBitTest|Base58Test',
-    aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35,
+    vectorized/solady:v0.1.26 --nmc 'SafeTransferLibTest|LifebuoyTest|LibBitTest|Base58Test|LibStringTest',
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
     sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
 
   BUILD_REPOS: >-
     ithacaxyz/account:v0.5.7,
     vectorized/solady:v0.1.26,
-    aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35,
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75,
     sparkdotfi/spark-psm:v1.0.0
 
   COVERAGE_REPOS: >-
     ithacaxyz/account:v0.5.7,
-    aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35,
     uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75,
     sparkdotfi/spark-psm:v1.0.0
 
@@ -106,7 +102,7 @@ jobs:
       - name: Run forge test benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || 'stable,nightly' }}
+          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
           REPOS: ${{ github.event.inputs.repos || env.TEST_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches --force-install \
@@ -119,7 +115,7 @@ jobs:
       - name: Run forge isolate test benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || 'stable,nightly' }}
+          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
           REPOS: ${{ github.event.inputs.repos || env.ISOLATE_TEST_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches --force-install \
@@ -132,7 +128,7 @@ jobs:
       - name: Run forge build benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || 'stable,nightly' }}
+          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
           REPOS: ${{ github.event.inputs.repos || env.BUILD_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches --force-install \
@@ -145,7 +141,7 @@ jobs:
       - name: Run forge coverage benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || 'stable,nightly' }}
+          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
           REPOS: ${{ github.event.inputs.repos || env.COVERAGE_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches --force-install \
