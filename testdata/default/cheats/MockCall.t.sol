@@ -171,6 +171,22 @@ contract MockCallTest is Test {
         assertEq(address(this).balance, 0);
     }
 
+    function testMockCallWithValueTransfersPrankedSenderBalance() public {
+        Mock mock = new Mock();
+        address sender = address(0xBEEF);
+        uint256 value = 10;
+        vm.deal(address(this), 0);
+        vm.deal(sender, value);
+
+        vm.mockCall(address(mock), value, abi.encodeWithSelector(mock.pay.selector), abi.encode(10));
+
+        vm.prank(sender);
+        assertEq(mock.pay{value: value}(1), 10);
+        assertEq(address(mock).balance, value);
+        assertEq(address(this).balance, 0);
+        assertEq(sender.balance, 0);
+    }
+
     function testMockCallWithValueCalldataPrecedence() public {
         Mock mock = new Mock();
 
