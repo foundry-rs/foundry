@@ -22,6 +22,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
 - **Informational / Style Guide:**
   - `boolean-equal`: Boolean comparisons to constants should be simplified.
+  - `too-many-digits`: Numeric literals with 5+ consecutive zeros are error-prone; use scientific notation, sub-denominations, or underscore separators.
   - `pascal-case-struct`: Flags for struct names not adhering to `PascalCase`.
   - `mixed-case-function`: Flags for function names not adhering to `mixedCase`.
   - `mixed-case-variable`: Flags for mutable variable names not adhering to `mixedCase`.
