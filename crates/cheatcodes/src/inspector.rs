@@ -856,6 +856,46 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         }
 
+        // Apply our prank
+        if let Some(prank) = &self.get_prank(curr_depth) {
+            // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
+            if prank.delegate_call
+                && curr_depth == prank.depth
+                && call.scheme == CallScheme::DelegateCall
+            {
+                call.target_address = prank.new_caller;
+                call.caller = prank.new_caller;
+                if let Some(new_origin) = prank.new_origin {
+                    ecx.tx_mut().set_caller(new_origin);
+                }
+            }
+
+            if curr_depth >= prank.depth && call.caller == prank.prank_caller {
+                // At the target depth we set `msg.sender`
+                let prank_applied = if curr_depth == prank.depth {
+                    // Ensure new caller is loaded and touched
+                    let _ = journaled_account(ecx, prank.new_caller);
+                    call.caller = prank.new_caller;
+                    true
+                } else {
+                    false
+                };
+
+                // At the target depth, or deeper, we set `tx.origin`
+                let prank_applied = if let Some(new_origin) = prank.new_origin {
+                    ecx.tx_mut().set_caller(new_origin);
+                    true
+                } else {
+                    prank_applied
+                };
+
+                // If prank applied for first time, then update
+                if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
+                    self.pranks.insert(curr_depth, applied_prank);
+                }
+            }
+        }
+
         // Handle mocked calls
         if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
             let ctx = MockCallDataContext {
@@ -919,46 +959,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     was_precompile_called: true,
                     precompile_call_logs: vec![],
                 });
-            }
-        }
-
-        // Apply our prank
-        if let Some(prank) = &self.get_prank(curr_depth) {
-            // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
-            if prank.delegate_call
-                && curr_depth == prank.depth
-                && call.scheme == CallScheme::DelegateCall
-            {
-                call.target_address = prank.new_caller;
-                call.caller = prank.new_caller;
-                if let Some(new_origin) = prank.new_origin {
-                    ecx.tx_mut().set_caller(new_origin);
-                }
-            }
-
-            if curr_depth >= prank.depth && call.caller == prank.prank_caller {
-                // At the target depth we set `msg.sender`
-                let prank_applied = if curr_depth == prank.depth {
-                    // Ensure new caller is loaded and touched
-                    let _ = journaled_account(ecx, prank.new_caller);
-                    call.caller = prank.new_caller;
-                    true
-                } else {
-                    false
-                };
-
-                // At the target depth, or deeper, we set `tx.origin`
-                let prank_applied = if let Some(new_origin) = prank.new_origin {
-                    ecx.tx_mut().set_caller(new_origin);
-                    true
-                } else {
-                    prank_applied
-                };
-
-                // If prank applied for first time, then update
-                if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
-                    self.pranks.insert(curr_depth, applied_prank);
-                }
             }
         }
 
