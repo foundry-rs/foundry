@@ -16,7 +16,7 @@ contract MailScript is Script {
 
         // Fall back to the native PATH_USD because it is the only fee token guaranteed to be
         // registered on every Tempo network (devnet/testnet/mainnet).
-        address feeToken = vm.envOr("TEMPO_FEE_TOKEN", StdTokens.PATH_USD);
+        address feeToken = vm.envOr("TEMPO_FEE_TOKEN", StdTokens.PATH_USD_ADDRESS);
         StdPrecompiles.TIP_FEE_MANAGER.setUserToken(feeToken);
 
         ITIP20 token = ITIP20(
