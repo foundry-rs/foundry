@@ -20,6 +20,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
 - **Low Severity:**
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
+  - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
 - **Informational / Style Guide:**
   - `boolean-equal`: Boolean comparisons to constants should be simplified.
   - `pascal-case-struct`: Flags for struct names not adhering to `PascalCase`.
@@ -31,10 +32,14 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `unaliased-plain-import`: Use named imports `{A, B}` or alias `import ".." as X`.
   - `named-struct-fields`: Prefer initializing structs with named fields.
   - `unsafe-cheatcode`: Usage of unsafe cheatcodes that can perform dangerous operations.
+  - `multi-contract-file`: Prefer having only one contract, interface, or library per file.
+  - `interface-file-naming`: Interface file names should be prefixed with `I`.
+  - `interface-naming`: Interface names should be prefixed with `I`.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
   - `custom-errors`: Recommends using custom errors instead of strings and plain reverts for potential gas savings.
+  - `unused-state-variables`: State variables that are never used should be removed.
 - **Code Size:**
   - `unwrapped-modifier-logic`: Recommends wrapping modifier logic to reduce contract code size.
 
