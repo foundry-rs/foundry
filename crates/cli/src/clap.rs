@@ -189,9 +189,13 @@ fn compact_zsh_completion(cmd_name: &str, completion: Vec<u8>) -> String {
 
     let mut out = String::with_capacity(completion.len().saturating_sub(helpers.len()));
     let mut inserted_helpers = false;
+    let command_guard = format!("(( $+functions[_{cmd_name}_commands] )) ||");
+    let command_function = format!("_{cmd_name}_commands()");
     let mut i = 0;
     while i < lines.len() {
-        if !inserted_helpers && lines[i].starts_with(&format!("_{cmd_name}_commands()")) {
+        if !inserted_helpers
+            && (lines[i] == command_guard || lines[i].starts_with(&command_function))
+        {
             out.push_str(&helpers);
             inserted_helpers = true;
         }
@@ -304,4 +308,38 @@ fn fish_condition_helper_prefix(cmd_name: &str) -> String {
     let short_name: String =
         cmd_name.chars().filter(|c| c.is_ascii_alphanumeric()).take(2).collect();
     format!("__f{short_name}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zsh_helpers_are_inserted_before_command_guard() {
+        let block = "_arguments \"${_arguments_options[@]}\" : \\\n'--root=[Project root]:PATH:_files' \\\n&& ret=0\n";
+        let completion = format!(
+            "#compdef forge\n\
+             _forge() {{\n\
+             {block}\
+             case $state in\n\
+             (test)\n\
+             {block}\
+             ;;\n\
+             esac\n\
+             }}\n\
+             (( $+functions[_forge_commands] )) ||\n\
+             _forge_commands() {{\n\
+             }}\n"
+        );
+
+        let compacted = compact_zsh_completion("forge", completion.into_bytes());
+        let helper = compacted.find("__zfo0()").expect("helper should be generated");
+        let guard = compacted
+            .find("(( $+functions[_forge_commands] )) ||")
+            .expect("command guard should be preserved");
+        let command = compacted.find("_forge_commands()").expect("command function should exist");
+
+        assert!(helper < guard, "helper should be inserted before command guard");
+        assert!(guard < command, "command guard should still apply to command function");
+    }
 }
