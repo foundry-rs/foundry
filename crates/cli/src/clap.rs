@@ -76,14 +76,14 @@ fn compact_bash_completion(cmd_name: &str, completion: Vec<u8>) -> String {
     let lines: Vec<_> = completion.lines().collect();
     let mut i = 0;
     while i < lines.len() {
-        if lines[i] == prev_case_start {
-            if let Some(end) = lines[i + 1..].iter().position(|line| *line == prev_case_end) {
-                let end = i + 1 + end;
-                let block = format!("{}\n", lines[i..=end].join("\n"));
-                *counts.entry(block).or_default() += 1;
-                i = end + 1;
-                continue;
-            }
+        if lines[i] == prev_case_start
+            && let Some(end) = lines[i + 1..].iter().position(|line| *line == prev_case_end)
+        {
+            let end = i + 1 + end;
+            let block = format!("{}\n", lines[i..=end].join("\n"));
+            *counts.entry(block).or_default() += 1;
+            i = end + 1;
+            continue;
         }
         i += 1;
     }
@@ -117,15 +117,15 @@ fn compact_bash_completion(cmd_name: &str, completion: Vec<u8>) -> String {
     out.push_str(&helpers);
     let mut i = 0;
     while i < lines.len() {
-        if lines[i] == prev_case_start {
-            if let Some(end) = lines[i + 1..].iter().position(|line| *line == prev_case_end) {
-                let end = i + 1 + end;
-                let block = format!("{}\n", lines[i..=end].join("\n"));
-                if let Some(replacement) = replacements.get(&block) {
-                    out.push_str(replacement);
-                    i = end + 1;
-                    continue;
-                }
+        if lines[i] == prev_case_start
+            && let Some(end) = lines[i + 1..].iter().position(|line| *line == prev_case_end)
+        {
+            let end = i + 1 + end;
+            let block = format!("{}\n", lines[i..=end].join("\n"));
+            if let Some(replacement) = replacements.get(&block) {
+                out.push_str(replacement);
+                i = end + 1;
+                continue;
             }
         }
         out.push_str(lines[i]);
@@ -145,14 +145,14 @@ fn compact_zsh_completion(cmd_name: &str, completion: Vec<u8>) -> String {
     let mut counts = BTreeMap::<String, usize>::new();
     let mut i = 0;
     while i < lines.len() {
-        if lines[i] == start {
-            if let Some(block_end) = lines[i + 1..].iter().position(|line| *line == end) {
-                let block_end = i + 1 + block_end;
-                let block = format!("{}\n", lines[i..=block_end].join("\n"));
-                *counts.entry(block).or_default() += 1;
-                i = block_end + 1;
-                continue;
-            }
+        if lines[i] == start
+            && let Some(block_end) = lines[i + 1..].iter().position(|line| *line == end)
+        {
+            let block_end = i + 1 + block_end;
+            let block = format!("{}\n", lines[i..=block_end].join("\n"));
+            *counts.entry(block).or_default() += 1;
+            i = block_end + 1;
+            continue;
         }
         i += 1;
     }
@@ -191,20 +191,20 @@ fn compact_zsh_completion(cmd_name: &str, completion: Vec<u8>) -> String {
     let mut inserted_helpers = false;
     let mut i = 0;
     while i < lines.len() {
-        if !inserted_helpers && lines[i].starts_with(&format!("_{}_commands()", cmd_name)) {
+        if !inserted_helpers && lines[i].starts_with(&format!("_{cmd_name}_commands()")) {
             out.push_str(&helpers);
             inserted_helpers = true;
         }
 
-        if lines[i] == start {
-            if let Some(block_end) = lines[i + 1..].iter().position(|line| *line == end) {
-                let block_end = i + 1 + block_end;
-                let block = format!("{}\n", lines[i..=block_end].join("\n"));
-                if let Some(replacement) = replacements.get(&block) {
-                    out.push_str(replacement);
-                    i = block_end + 1;
-                    continue;
-                }
+        if lines[i] == start
+            && let Some(block_end) = lines[i + 1..].iter().position(|line| *line == end)
+        {
+            let block_end = i + 1 + block_end;
+            let block = format!("{}\n", lines[i..=block_end].join("\n"));
+            if let Some(replacement) = replacements.get(&block) {
+                out.push_str(replacement);
+                i = block_end + 1;
+                continue;
             }
         }
 
