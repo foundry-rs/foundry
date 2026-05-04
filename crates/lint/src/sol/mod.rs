@@ -1,6 +1,6 @@
 use crate::linter::{
     EarlyLintPass, EarlyLintVisitor, LateLintPass, LateLintVisitor, Lint, LintContext, Linter,
-    LinterConfig,
+    LinterConfig, ProjectLintEmitter, ProjectLintPass, ProjectSource,
 };
 use foundry_common::{
     comments::{
@@ -179,6 +179,62 @@ impl<'a> SolidityLinter<'a> {
         Ok(())
     }
 
+    /// Runs all enabled project-wide lint passes against the given input sources.
+    fn process_project<'gcx>(&self, gcx: Gcx<'gcx>, input: &[PathBuf]) {
+        // Gather enabled project passes from every severity bucket.
+        let mut passes_and_lints: Vec<(Box<dyn ProjectLintPass<'_>>, &'static [SolLint])> =
+            Vec::new();
+        passes_and_lints.extend(high::create_project_lint_passes());
+        passes_and_lints.extend(med::create_project_lint_passes());
+        passes_and_lints.extend(low::create_project_lint_passes());
+        passes_and_lints.extend(info::create_project_lint_passes());
+        passes_and_lints.extend(gas::create_project_lint_passes());
+        passes_and_lints.extend(codesize::create_project_lint_passes());
+
+        let (mut passes, lint_ids): (Vec<Box<dyn ProjectLintPass<'_>>>, Vec<_>) = passes_and_lints
+            .into_iter()
+            .fold((Vec::new(), Vec::new()), |(mut passes, mut ids), (pass, lints)| {
+                let included: Vec<_> = lints
+                    .iter()
+                    .filter_map(|lint| self.include_lint(*lint).then_some(lint.id))
+                    .collect();
+                if !included.is_empty() {
+                    passes.push(pass);
+                    ids.extend(included);
+                }
+                (passes, ids)
+            });
+
+        if passes.is_empty() {
+            return;
+        }
+
+        // Pre-load every input source with its inline config, in input order.
+        let sources: Vec<ProjectSource<'_>> = input
+            .iter()
+            .filter_map(|path| {
+                let path = self.path_config.root.join(path);
+                let (_, source) = gcx.get_ast_source(&path)?;
+                let ast = source.ast.as_ref()?;
+                let comments =
+                    Comments::new(&source.file, gcx.sess.source_map(), false, false, None);
+                let inline_config = parse_inline_config(gcx.sess, &comments, ast);
+                Some(ProjectSource { path, file: source.file.clone(), ast, inline_config })
+            })
+            .collect();
+
+        let emitter = ProjectLintEmitter::new(
+            gcx.sess,
+            self.with_description,
+            self.with_json_emitter,
+            self.lint_specific,
+            lint_ids,
+        );
+        for pass in &mut passes {
+            pass.check_project(&emitter, &sources);
+        }
+    }
+
     fn process_source_hir<'gcx>(
         &self,
         gcx: Gcx<'gcx>,
@@ -313,6 +369,9 @@ impl<'a> Linter for SolidityLinter<'a> {
                     Some(file.clone()),
                 );
             });
+
+            // Project-wide lints, run once after all per-file passes.
+            self.process_project(gcx, input);
 
             convert_solar_errors(compiler.dcx())
         })?;
