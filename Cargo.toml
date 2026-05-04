@@ -337,7 +337,7 @@ foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-wallets = { version = "0.1.0", default-features = false }
 foundry-linking = { path = "crates/linking" }
-foundry-primitives = { path = "crates/primitives" }
+foundry-primitives = { path = "crates/primitives", default-features = false }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.23.0", default-features = false }
