@@ -1,0 +1,24 @@
+note[pragma-inconsistent]: 'pragma solidity >=0.8.0;' conflicts with other version requirements in the project: ^0.8.0, ~0.8.0
+   ╭▸ ROOT/testdata/PragmaInconsistentThreeDistinct.sol:LL:CC
+   │
+LL │ pragma solidity >=0.8.0;
+   │ ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#pragma-inconsistent
+
+note[pragma-inconsistent]: 'pragma solidity ^0.8.0;' conflicts with other version requirements in the project: >=0.8.0, ~0.8.0
+   ╭▸ ROOT/testdata/PragmaInconsistentThreeDistinct.sol:LL:CC
+   │
+LL │ pragma solidity ^0.8.0;
+   │ ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#pragma-inconsistent
+
+note[pragma-inconsistent]: 'pragma solidity ~0.8.0;' conflicts with other version requirements in the project: >=0.8.0, ^0.8.0
+   ╭▸ ROOT/testdata/PragmaInconsistentThreeDistinct.sol:LL:CC
+   │
+LL │ pragma solidity ~0.8.0;
+   │ ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#pragma-inconsistent
+
