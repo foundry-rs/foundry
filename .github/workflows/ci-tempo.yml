@@ -69,6 +69,42 @@ jobs:
         run: |
           cargo test --locked -p foundry-common --lib tempo::tests::test_fork_schedule_parses_configured_rpcs -- --exact --nocapture
 
+      - name: Run Tempo check on mainnet
+        if: |
+          github.event_name == 'schedule' ||
+          github.event.inputs.network == 'mainnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+          TEMPO_FEE_TOKEN: "0x20c0000000000000000000000000000000000000"
+          VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
+          PRIVATE_KEY: ${{ secrets.THROW_AWAY_MAINNET_PKEY }}
+          SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
+        run: |
+          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-check.sh
+          fi
+          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-deploy.sh
+          fi
+
+      - name: Run Tempo check on testnet
+        if: |
+          github.event_name == 'schedule' ||
+          github.event.inputs.network == 'testnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+          VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
+          SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
+        run: |
+          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-check.sh
+          fi
+          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-deploy.sh
+          fi
+
       - name: Run Tempo check on devnet
         if: |
           github.event_name == 'push' ||
@@ -95,42 +131,6 @@ jobs:
         env:
           ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
         run: ./.github/scripts/tempo-wallet.sh
-
-      - name: Run Tempo check on testnet
-        if: |
-          github.event_name == 'schedule' ||
-          github.event.inputs.network == 'testnet' ||
-          github.event.inputs.network == 'all'
-        env:
-          ETH_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
-          VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
-          SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
-        run: |
-          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
-            ./.github/scripts/tempo-check.sh
-          fi
-          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
-            ./.github/scripts/tempo-deploy.sh
-          fi
-
-      - name: Run Tempo check on mainnet
-        if: |
-          github.event_name == 'schedule' ||
-          github.event.inputs.network == 'mainnet' ||
-          github.event.inputs.network == 'all'
-        env:
-          ETH_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
-          TEMPO_FEE_TOKEN: "0x20c0000000000000000000000000000000000000"
-          VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
-          PRIVATE_KEY: ${{ secrets.THROW_AWAY_MAINNET_PKEY }}
-          SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
-        run: |
-          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
-            ./.github/scripts/tempo-check.sh
-          fi
-          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
-            ./.github/scripts/tempo-deploy.sh
-          fi
 
   # If the nightly run fails, this will create an issue to signal so.
   issue:
