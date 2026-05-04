@@ -67,5 +67,9 @@ contract TestContract {
 
         vars.previousTotalDebt = vars.reallyLongVarThatCausesALineBreak()
             .previousOngoingDebtScaled();
+
+        // total overflows but the rhs alone fits: callee should still stay inline
+        vars.previousTotalDebt = someFunction(argument1, argument2, arg3)
+            + longVariableName;
     }
 }

@@ -871,14 +871,15 @@ impl<'ast> State<'_, 'ast> {
                 };
 
                 // Binary expressions: check if we need to break and indent
-                if force_break {
-                    print_with_break(self, true);
-                } else if self.estimate_lhs_size(rhs, op) + lhs_size > space_left {
+                let lhs_overflows = self.estimate_lhs_size(rhs, op) + lhs_size > space_left;
+                if force_break || lhs_overflows {
                     if has_complex_successor(&rhs.kind, true)
                         && get_callee_head_size(lhs) + lhs_size <= space_left
                     {
-                        // Keep complex exprs (where callee fits) inline, as they will have breaks
-                        if matches!(lhs.kind, ast::ExprKind::Call(..)) {
+                        // Keep complex exprs (where callee fits) inline, as they will have breaks.
+                        // De-indent only when the call's args themselves are expected to break,
+                        // so that the closing `)` returns to the assignment's base indent.
+                        if lhs_overflows && matches!(lhs.kind, ast::ExprKind::Call(..)) {
                             self.s.ibox(-self.ind);
                             print_inline(self);
                             self.end();
@@ -886,7 +887,7 @@ impl<'ast> State<'_, 'ast> {
                             print_inline(self);
                         }
                     } else {
-                        print_with_break(self, false);
+                        print_with_break(self, force_break);
                     }
                 }
                 // Otherwise, if expr fits, ensure no breaks
