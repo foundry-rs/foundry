@@ -20,7 +20,7 @@ use foundry_common::{
     get_pretty_receipt_w_reason_attr, shell,
 };
 use foundry_config::{Chain, Config};
-use foundry_wallets::{BrowserWalletOpts, WalletOpts, WalletSigner};
+use foundry_wallets::{BrowserWalletOpts, TempoAccessKeyConfig, WalletOpts, WalletSigner};
 use itertools::Itertools;
 use serde_json::value::RawValue;
 use std::{fmt::Write, marker::PhantomData, str::FromStr, time::Duration};
@@ -535,13 +535,27 @@ where
         sender: impl Into<SenderKind<'_>>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         let fill = self.fill;
-        self._build(sender, fill).await
+        self._build(sender, fill, None).await
+    }
+
+    /// Builds a transaction that will be signed by a Tempo access key.
+    ///
+    /// If the access key needs on-chain provisioning, its authorization is embedded before
+    /// access-list/gas estimation and before any sponsor digest can be computed.
+    pub async fn build_with_access_key(
+        self,
+        sender: impl Into<SenderKind<'_>>,
+        access_key: &TempoAccessKeyConfig,
+    ) -> Result<(N::TransactionRequest, Option<Function>)> {
+        let fill = self.fill;
+        self._build(sender, fill, Some(access_key)).await
     }
 
     async fn _build(
         mut self,
         sender: impl Into<SenderKind<'_>>,
         fill: bool,
+        access_key: Option<&TempoAccessKeyConfig>,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
         // prepare
         let sender = sender.into();
@@ -555,6 +569,16 @@ where
         // resolve
         let tx_nonce = self.resolve_nonce(sender.address(), fill).await?;
         self.resolve_auth(&sender, tx_nonce).await?;
+        if let Some(access_key) = access_key {
+            self.tx
+                .prepare_access_key_authorization(
+                    &self.provider,
+                    access_key.wallet_address,
+                    access_key.key_address,
+                    access_key.key_authorization.as_ref(),
+                )
+                .await?;
+        }
         self.resolve_access_list().await?;
 
         // fill

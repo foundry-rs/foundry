@@ -427,6 +427,18 @@ impl CreateArgs {
             deployer.tx.set_nonce(provider.get_transaction_count(deployer_address).await?);
         }
 
+        if let Some((_, ref ak)) = tempo_keychain {
+            deployer
+                .tx
+                .prepare_access_key_authorization(
+                    provider.as_ref(),
+                    ak.wallet_address,
+                    ak.key_address,
+                    ak.key_authorization.as_ref(),
+                )
+                .await?;
+        }
+
         // set access list if specified
         if let Some(access_list) = match self.tx.access_list {
             None => None,
@@ -501,6 +513,11 @@ impl CreateArgs {
             }
 
             return Ok(());
+        }
+
+        let tempo_sponsor = self.tx.tempo.sponsor_config().await?;
+        if let Some(sponsor) = &tempo_sponsor {
+            sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
         }
 
         // Deploy the actual contract

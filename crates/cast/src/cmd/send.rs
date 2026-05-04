@@ -119,8 +119,9 @@ impl SendTxArgs {
             self;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
-        let sponsor_signature = tx.tempo.sponsor_signature;
         let expires_at = tx.tempo.expires_at();
+        let tempo_sponsor =
+            if print_sponsor_hash { None } else { tx.tempo.sponsor_config().await? };
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -203,13 +204,19 @@ impl SendTxArgs {
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
         if print_sponsor_hash {
-            // Use the pre-resolved signer to derive the actual sender address, since the
-            // sponsor hash commits to the sender.
-            let signer = pre_resolved_signer.as_ref().ok_or_else(|| {
-                eyre!("--tempo.print-sponsor-hash requires a signer (e.g. --private-key)")
-            })?;
-            let from = signer.address();
-            let (tx, _) = builder.build(from).await?;
+            let (tx, from) = if let Some(ref ak) = access_key {
+                let (tx, _) = builder.build_with_access_key(ak.wallet_address, ak).await?;
+                (tx, ak.wallet_address)
+            } else {
+                // Use the pre-resolved signer to derive the actual sender address, since the
+                // sponsor hash commits to the sender.
+                let signer = pre_resolved_signer.as_ref().ok_or_else(|| {
+                    eyre!("--tempo.print-sponsor-hash requires a signer (e.g. --private-key)")
+                })?;
+                let from = signer.address();
+                let (tx, _) = builder.build(from).await?;
+                (tx, from)
+            };
             let hash = tx
                 .compute_sponsor_hash(from)
                 .ok_or_else(|| eyre!("This network does not support sponsored transactions"))?;
@@ -251,6 +258,10 @@ impl SendTxArgs {
             }
 
             let (tx, _) = builder.build(config.sender).await?;
+            let mut tx = tx;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
+            }
 
             cast_send(
                 provider,
@@ -275,6 +286,9 @@ impl SendTxArgs {
             {
                 tx_request.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
             }
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
+            }
 
             let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
 
@@ -288,7 +302,10 @@ impl SendTxArgs {
                 Some(s) => s,
                 None => send_tx.eth.wallet.signer().await?,
             };
-            let (tx_request, _) = builder.build(ak.wallet_address).await?;
+            let (mut tx_request, _) = builder.build_with_access_key(ak.wallet_address, &ak).await?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx_request, ak.wallet_address).await?;
+            }
             cast_send_with_access_key(
                 &provider,
                 tx_request,
@@ -314,10 +331,8 @@ impl SendTxArgs {
 
             let (mut tx_request, _) = builder.build(&signer).await?;
 
-            // Apply sponsor signature after gas estimation so the estimate is
-            // consistent with what `--tempo.print-sponsor-hash` computes.
-            if let Some(sig) = sponsor_signature {
-                tx_request.set_fee_payer_signature(sig);
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx_request, from).await?;
             }
 
             let wallet = EthereumWallet::from(signer);

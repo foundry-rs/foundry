@@ -98,6 +98,8 @@ impl MakeTxArgs {
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
         let expires_at = tx.tempo.expires_at();
+        let tempo_sponsor =
+            if print_sponsor_hash { None } else { tx.tempo.sponsor_config().await? };
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -153,11 +155,19 @@ impl MakeTxArgs {
                     "Missing required parameters for raw unsigned transaction. When --from is not provided, you must specify: --nonce"
                 );
             }
+            if tempo_sponsor.is_some() && eth.wallet.from.is_none() {
+                eyre::bail!(
+                    "--tempo.sponsor requires --from for --raw-unsigned because the sponsor digest commits to the sender"
+                );
+            }
 
             // Use zero address as placeholder for unsigned transactions
             let from = eth.wallet.from.unwrap_or(Address::ZERO);
 
-            let (tx, _) = tx_builder.build(from).await?;
+            let (mut tx, _) = tx_builder.build(from).await?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx, from).await?;
+            }
             let raw_tx = hex::encode_prefixed(tx.build_unsigned()?.encoded_for_signing());
 
             sh_println!("{raw_tx}")?;
@@ -167,7 +177,10 @@ impl MakeTxArgs {
         if ethsign {
             // Use "eth_signTransaction" to sign the transaction only works if the node/RPC has
             // unlocked accounts.
-            let (tx, _) = tx_builder.build(config.sender).await?;
+            let (mut tx, _) = tx_builder.build(config.sender).await?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx, config.sender).await?;
+            }
             let signed_tx = provider.sign_transaction(tx).await?;
 
             sh_println!("{signed_tx}")?;
@@ -181,7 +194,10 @@ impl MakeTxArgs {
 
         tx::validate_from_address(eth.wallet.from, from)?;
 
-        let (tx, _) = tx_builder.build(&signer).await?;
+        let (mut tx, _) = tx_builder.build(&signer).await?;
+        if let Some(sponsor) = &tempo_sponsor {
+            sponsor.attach_and_print::<N>(&mut tx, from).await?;
+        }
 
         let tx = tx.build(&EthereumWallet::new(signer)).await?;
 
