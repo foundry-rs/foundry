@@ -384,8 +384,8 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
         "event".red(),
         SolidityHelper::new().highlight(&format!(
             "{}({})",
-            &event.name,
-            &event
+            event.name,
+            event
                 .inputs
                 .iter()
                 .map(|param| format!(
