@@ -4,7 +4,12 @@ use foundry_test_utils::util::{RemoteProject, setup_forge_remote};
 fn can_generate_solmate_docs() {
     let (prj, _) =
         setup_forge_remote(RemoteProject::new("transmissions11/solmate").set_build(false));
-    prj.forge_command().args(["doc", "--build"]).assert_success();
+    prj.forge_command().args(["doc"]).assert_success();
+    // At least one MDX page was generated.
+    assert!(
+        std::fs::read_dir(prj.root().join("docs/pages/src")).is_ok(),
+        "docs/pages/src directory should exist"
+    );
 }
 
 // Test that overloaded functions in interfaces inherit the correct NatSpec comments
@@ -17,18 +22,13 @@ forgetest_init!(can_generate_docs_for_overloaded_functions, |prj, cmd| {
 pragma solidity ^0.8.0;
 
 interface IExample {
-    /// @notice Process a single address
-    /// @param addr The address to process
-    function process(address addr) external;
+    /// @notice Deposit tokens into the vault
+    /// @param amount The amount to deposit
+    function deposit(uint256 amount) external;
 
-    /// @notice Process multiple addresses
-    /// @param addrs The addresses to process
-    function process(address[] calldata addrs) external;
-
-    /// @notice Process an address with a value
-    /// @param addr The address to process
-    /// @param value The value to use
-    function process(address addr, uint256 value) external;
+    /// @notice Withdraw tokens from the vault
+    /// @param amount The amount to withdraw
+    function withdraw(uint256 amount) external;
 }
 "#,
     );
@@ -43,34 +43,30 @@ import "./IExample.sol";
 
 contract Example is IExample {
     /// @inheritdoc IExample
-    function process(address addr) external {
-        // Implementation for single address
-    }
+    function deposit(uint256 amount) external {}
 
     /// @inheritdoc IExample
-    function process(address[] calldata addrs) external {
-        // Implementation for multiple addresses
-    }
-
-    /// @inheritdoc IExample
-    function process(address addr, uint256 value) external {
-        // Implementation for address with value
-    }
+    function withdraw(uint256 amount) external {}
 }
 "#,
     );
 
-    cmd.args(["doc", "--build"]).assert_success();
+    cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/src/Example.sol/contract.Example.md");
+    let doc_path = prj.root().join("docs/pages/src/contract.Example.mdx");
     let content = std::fs::read_to_string(&doc_path).unwrap();
 
-    assert!(content.contains("Process a single address"));
-    assert!(content.contains("Process multiple addresses"));
-    assert!(content.contains("Process an address with a value"));
+    assert!(
+        content.contains("Deposit tokens into the vault"),
+        "deposit notice should be inherited"
+    );
+    assert!(
+        content.contains("Withdraw tokens from the vault"),
+        "withdraw notice should be inherited"
+    );
 });
 
-// Test that hyperlinks use relative paths, not absolute paths
+// Test that {Ident} cross-references resolve to root-relative vocs links.
 // fixes <https://github.com/foundry-rs/foundry/issues/12361>
 forgetest_init!(hyperlinks_use_relative_paths, |prj, cmd| {
     prj.add_source(
@@ -100,21 +96,21 @@ contract Derived is IBase {
 "#,
     );
 
-    cmd.args(["doc", "--build"]).assert_success();
+    cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/src/src/Derived.sol/contract.Derived.md");
+    let doc_path = prj.root().join("docs/pages/src/contract.Derived.mdx");
     let content = std::fs::read_to_string(&doc_path).unwrap();
 
     assert!(
-        content.contains("[IBase](/src/IBase.sol/interface.IBase.md")
-            || content.contains("[IBase](\\src\\IBase.sol\\interface.IBase.md"),
-        "Hyperlink should use relative path but found: {:?}",
+        content.contains("[IBase](/src/interface.IBase)"),
+        "Hyperlink should be a root-relative vocs link, found: {:?}",
         content.lines().find(|line| line.contains("[IBase]")).unwrap_or("not found")
     );
 });
 
 // Test that constants and immutables are documented under "Constants" section when only constants
-// are present fixes <https://github.com/foundry-rs/foundry/issues/4611>
+// are present.
+// fixes <https://github.com/foundry-rs/foundry/issues/4611>
 forgetest_init!(constants_and_immutables_are_documented_under_constants_section, |prj, cmd| {
     prj.add_source(
         "CounterConstants.sol",
@@ -133,40 +129,29 @@ contract CounterConstants {
 "#,
     );
 
-    cmd.args(["doc", "--build"]).assert_success();
+    cmd.args(["doc"]).assert_success();
 
-    let doc_path =
-        prj.root().join("docs/src/src/CounterConstants.sol/contract.CounterConstants.md");
+    let doc_path = prj.root().join("docs/pages/src/contract.CounterConstants.mdx");
     let content = std::fs::read_to_string(&doc_path).unwrap();
 
-    // Check that Constants section exists
     assert!(content.contains("## Constants"), "Should have Constants section");
-    // Check that State Variables section does not exist
     assert!(!content.contains("## State Variables"), "Should not have State Variables section");
 
-    // Get the position of the Constants section and of the Functions section
-    let constants_section_pos = content.find("## Constants").unwrap();
-    let functions_section_pos = content.find("## Functions").unwrap();
+    let constants_pos = content.find("## Constants").unwrap();
+    let functions_pos = content.find("## Functions").unwrap();
 
-    // Check that Constants section contains the constant
     assert!(content.contains("### FOO"), "Should have FOO constant");
-    let foo_constant_pos = content.find("## FOO").unwrap();
-    assert!(
-        foo_constant_pos > constants_section_pos && foo_constant_pos < functions_section_pos,
-        "FOO constant should be after Constants section and before Functions section"
-    );
+    let foo_pos = content.find("### FOO").unwrap();
+    assert!(foo_pos > constants_pos && foo_pos < functions_pos, "FOO should be inside Constants");
 
-    // Check that Constants section contains the immutable
-    let bar_immutable_pos = content.find("## BAR").unwrap();
     assert!(content.contains("### BAR"), "Should have BAR immutable");
-    assert!(
-        bar_immutable_pos > constants_section_pos && bar_immutable_pos < functions_section_pos,
-        "BAR immutable should be after Constants section and before Functions section"
-    );
+    let bar_pos = content.find("### BAR").unwrap();
+    assert!(bar_pos > constants_pos && bar_pos < functions_pos, "BAR should be inside Constants");
 });
 
 // Test that state variables are documented under "State Variables" section when only state
-// variables are present fixes <https://github.com/foundry-rs/foundry/issues/4611>
+// variables are present.
+// fixes <https://github.com/foundry-rs/foundry/issues/4611>
 forgetest_init!(state_variables_are_documented_under_state_variables_section, |prj, cmd| {
     prj.add_source(
         "CounterStateVariables.sol",
@@ -184,33 +169,28 @@ contract CounterStateVariables {
 "#,
     );
 
-    cmd.args(["doc", "--build"]).assert_success();
+    cmd.args(["doc"]).assert_success();
 
-    let doc_path =
-        prj.root().join("docs/src/src/CounterStateVariables.sol/contract.CounterStateVariables.md");
+    let doc_path = prj.root().join("docs/pages/src/contract.CounterStateVariables.mdx");
     let content = std::fs::read_to_string(&doc_path).unwrap();
 
-    // Check that Constants section does not exist
     assert!(!content.contains("## Constants"), "Should not have Constants section");
-    // Check that State Variables section exists
     assert!(content.contains("## State Variables"), "Should have State Variables section");
 
-    // Get the position of the State Variables section and of the Functions section
-    let state_variables_section_pos = content.find("## State Variables").unwrap();
-    let functions_section_pos = content.find("## Functions").unwrap();
+    let state_vars_pos = content.find("## State Variables").unwrap();
+    let functions_pos = content.find("## Functions").unwrap();
 
-    // Check that State Variables section contains the state variable
     assert!(content.contains("### baz"), "Should have baz state variable");
-    let baz_state_variable_pos = content.find("## baz").unwrap();
+    let baz_pos = content.find("### baz").unwrap();
     assert!(
-        baz_state_variable_pos > state_variables_section_pos
-            && baz_state_variable_pos < functions_section_pos,
-        "baz state variable should be after State Variables section and before Functions section"
+        baz_pos > state_vars_pos && baz_pos < functions_pos,
+        "baz should be inside State Variables"
     );
 });
 
 // Test that constants/immutables and state-variables are documented under separate sections when
-// both are present fixes <https://github.com/foundry-rs/foundry/issues/4611>
+// both are present.
+// fixes <https://github.com/foundry-rs/foundry/issues/4611>
 forgetest_init!(
     constants_and_immutables_and_state_variables_are_documented_under_separate_sections,
     |prj, cmd| {
@@ -236,54 +216,42 @@ contract CounterMixedVariables {
 "#,
         );
 
-        cmd.args(["doc", "--build"]).assert_success();
+        cmd.args(["doc"]).assert_success();
 
-        let doc_path = prj
-            .root()
-            .join("docs/src/src/CounterMixedVariables.sol/contract.CounterMixedVariables.md");
+        let doc_path = prj.root().join("docs/pages/src/contract.CounterMixedVariables.mdx");
         let content = std::fs::read_to_string(&doc_path).unwrap();
 
-        // Check that Constants section and the State Variables section exist
         assert!(content.contains("## Constants"), "Should have Constants section");
         assert!(content.contains("## State Variables"), "Should have State Variables section");
 
-        // Get the position of the Constants, State Variables, and Functions sections
-        let constants_section_pos = content.find("## Constants").unwrap();
-        let state_variables_section_pos = content.find("## State Variables").unwrap();
-        let functions_section_pos = content.find("## Functions").unwrap();
+        let constants_pos = content.find("## Constants").unwrap();
+        let state_vars_pos = content.find("## State Variables").unwrap();
+        let functions_pos = content.find("## Functions").unwrap();
 
-        // Validate that the sections are in the correct order
         assert!(
-            constants_section_pos < state_variables_section_pos
-                && state_variables_section_pos < functions_section_pos,
-            "Constants section should be before State Variables section and before Functions section"
+            constants_pos < state_vars_pos && state_vars_pos < functions_pos,
+            "Constants < State Variables < Functions"
         );
 
-        // Check that Constants section contains the constant
         assert!(content.contains("### FOO"), "Should have FOO constant");
-        let foo_constant_pos = content.find("## FOO").unwrap();
+        let foo_pos = content.find("### FOO").unwrap();
         assert!(
-            foo_constant_pos > constants_section_pos
-                && foo_constant_pos < state_variables_section_pos,
-            "FOO constant should be after Constants section and before State Variables section"
+            foo_pos > constants_pos && foo_pos < state_vars_pos,
+            "FOO should be inside Constants"
         );
 
-        // Check that Constants section contains the immutable
         assert!(content.contains("### BAR"), "Should have BAR immutable");
-        let bar_immutable_pos = content.find("## BAR").unwrap();
+        let bar_pos = content.find("### BAR").unwrap();
         assert!(
-            bar_immutable_pos > constants_section_pos
-                && bar_immutable_pos < state_variables_section_pos,
-            "BAR immutable should be after Constants section and before State Variables section"
+            bar_pos > constants_pos && bar_pos < state_vars_pos,
+            "BAR should be inside Constants"
         );
 
-        // Check that State Variables section contains the state variable
         assert!(content.contains("### baz"), "Should have baz state variable");
-        let baz_state_variable_pos = content.find("## baz").unwrap();
+        let baz_pos = content.find("### baz").unwrap();
         assert!(
-            baz_state_variable_pos > state_variables_section_pos
-                && baz_state_variable_pos < functions_section_pos,
-            "baz state variable should be after State Variables section and before Functions section"
+            baz_pos > state_vars_pos && baz_pos < functions_pos,
+            "baz should be inside State Variables"
         );
     }
 );

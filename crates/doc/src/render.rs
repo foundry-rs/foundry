@@ -1,0 +1,933 @@
+//! Rendering: `solar` AST -> vocs MDX.
+
+use crate::{
+    extras::Deployment,
+    hir_ext::{self, NameToPage},
+};
+use solar::{
+    ast::{
+        ContractKind, DocComments, FunctionKind, ItemContract, ItemEnum, ItemError, ItemEvent,
+        ItemFunction, ItemKind, ItemStruct, ItemUdvt, NatSpecKind, ParameterList, SourceUnit, Span,
+        VariableDefinition,
+    },
+    interface::{
+        Ident,
+        source_map::{SourceFile, SourceMap},
+    },
+    sema::{Gcx, hir},
+};
+use std::{
+    collections::HashMap,
+    fmt::Write as _,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+
+// ── public entry point ───────────────────────────────────────────────────────
+
+/// Render a single Solidity source file as a list of `(relative_output_path, mdx_content)` pairs.
+#[allow(clippy::too_many_arguments)]
+pub fn source<'ast, 'gcx>(
+    ast: &'ast SourceUnit<'ast>,
+    file: &Arc<SourceFile>,
+    _sm: &SourceMap,
+    rel_sol_path: &Path,
+    gcx: Gcx<'gcx>,
+    name_to_page: &NameToPage,
+    git_url: Option<&str>,
+    deployments: &HashMap<String, Vec<Deployment>>,
+) -> Vec<(PathBuf, String)> {
+    let out_dir = rel_sol_path.parent().unwrap_or(Path::new(""));
+    let stem = rel_sol_path.file_stem().and_then(|s| s.to_str()).unwrap_or("constants");
+
+    let src_text = file.src.as_str();
+    let src_start = file.start_pos.to_usize();
+    let ctx = Ctx { src_text, src_start };
+
+    let mut pages: Vec<(PathBuf, String)> = Vec::new();
+    let mut const_vars: Vec<(Span, &VariableDefinition<'_>, &DocComments<'_>)> = Vec::new();
+    let mut free_fns: std::collections::BTreeMap<
+        String,
+        Vec<(Span, &ItemFunction<'_>, &DocComments<'_>)>,
+    > = Default::default();
+
+    for item in ast.items.iter() {
+        let span = item.span;
+        match &item.kind {
+            ItemKind::Pragma(_) | ItemKind::Import(_) | ItemKind::Using(_) => (),
+            ItemKind::Contract(c) => {
+                let kind_str = contract_kind_str(c.kind);
+                let fname = format!("{kind_str}.{}.mdx", c.name.as_str());
+                let page_path = out_dir.join(&fname);
+                // Look up HIR contract id for inheritance/inheritdoc.
+                let hir_id = find_contract_id(gcx, c.name.as_str(), rel_sol_path);
+                // Deployments only apply to non-abstract, non-interface, non-library contracts.
+                let contract_deployments = if matches!(c.kind, ContractKind::Contract) {
+                    deployments.get(c.name.as_str()).map(Vec::as_slice).unwrap_or(&[])
+                } else {
+                    &[]
+                };
+                let content = render_contract(
+                    span,
+                    c,
+                    &item.docs,
+                    &ctx,
+                    gcx,
+                    hir_id,
+                    name_to_page,
+                    &page_path,
+                    git_url,
+                    contract_deployments,
+                );
+                pages.push((page_path, content));
+            }
+
+            ItemKind::Function(f) => {
+                let name = f.header.name.map(|n| n.as_str().to_string()).unwrap_or_default();
+                free_fns.entry(name).or_default().push((span, f, &item.docs));
+            }
+
+            ItemKind::Variable(v) => {
+                const_vars.push((span, v, &item.docs));
+            }
+
+            ItemKind::Struct(s) => {
+                let fname = format!("struct.{}.mdx", s.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_struct(span, s, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+
+            ItemKind::Enum(e) => {
+                let fname = format!("enum.{}.mdx", e.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_enum(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+
+            ItemKind::Udvt(u) => {
+                let fname = format!("type.{}.mdx", u.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_udvt(span, u, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+
+            ItemKind::Error(e) => {
+                let fname = format!("error.{}.mdx", e.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_error(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+
+            ItemKind::Event(e) => {
+                let fname = format!("event.{}.mdx", e.name.as_str());
+                let page_path = out_dir.join(&fname);
+                pages.push((
+                    page_path.clone(),
+                    render_event(span, e, &item.docs, &ctx, name_to_page, &page_path, git_url),
+                ));
+            }
+        }
+    }
+
+    for (name, overloads) in &free_fns {
+        let fname = format!("function.{name}.mdx");
+        let page_path = out_dir.join(&fname);
+        let content =
+            render_free_functions(name, overloads, &ctx, name_to_page, &page_path, git_url);
+        pages.push((page_path, content));
+    }
+
+    if !const_vars.is_empty() {
+        let fname = format!("constants.{stem}.mdx");
+        let page_path = out_dir.join(&fname);
+        let content = render_constants(stem, &const_vars, &ctx, name_to_page, &page_path, git_url);
+        pages.push((page_path, content));
+    }
+
+    pages
+}
+
+// ── rendering context ────────────────────────────────────────────────────────
+
+struct Ctx<'a> {
+    src_text: &'a str,
+    src_start: usize,
+}
+
+impl<'a> Ctx<'a> {
+    fn snippet(&self, span: Span) -> &'a str {
+        let lo = span.lo().to_usize().saturating_sub(self.src_start);
+        let hi = span.hi().to_usize().saturating_sub(self.src_start);
+        let lo = lo.min(self.src_text.len());
+        let hi = hi.min(self.src_text.len());
+        &self.src_text[lo..hi]
+    }
+
+    fn dedented_snippet(&self, span: Span) -> String {
+        dedent(self.snippet(span))
+    }
+}
+
+// ── contract ─────────────────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+fn render_contract<'ast, 'gcx>(
+    _span: Span,
+    c: &'ast ItemContract<'ast>,
+    docs: &'ast DocComments<'ast>,
+    ctx: &Ctx<'_>,
+    gcx: Gcx<'gcx>,
+    hir_id: Option<hir::ContractId>,
+    name_to_page: &NameToPage,
+    page_path: &Path,
+    git_url: Option<&str>,
+    deployments: &[Deployment],
+) -> String {
+    let name = c.name.as_str();
+    let comments = collect_comments(docs, name_to_page, page_path);
+    let mut out = String::new();
+    write_frontmatter(&mut out, name, first_notice(&comments).as_deref());
+    writeln!(out, "# {name}").unwrap();
+    writeln!(out).unwrap();
+    write_git_source(&mut out, git_url);
+    write_deployments_table(&mut out, deployments);
+
+    // inheritance links.
+    if let Some(id) = hir_id
+        && let Some(inherits) = hir_ext::inheritance_links(gcx, id, name_to_page, page_path)
+    {
+        writeln!(out, "{inherits}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    write_comment_block(&mut out, &comments);
+
+    // Group members.
+    let mut constants: Vec<(Span, &VariableDefinition<'_>, &DocComments<'_>)> = Vec::new();
+    let mut state_vars: Vec<(Span, &VariableDefinition<'_>, &DocComments<'_>)> = Vec::new();
+    let mut functions: Vec<(Span, &ItemFunction<'_>, &DocComments<'_>)> = Vec::new();
+    let mut events: Vec<(Span, &ItemEvent<'_>, &DocComments<'_>)> = Vec::new();
+    let mut errors: Vec<(Span, &ItemError<'_>, &DocComments<'_>)> = Vec::new();
+    let mut structs: Vec<(Span, &ItemStruct<'_>, &DocComments<'_>)> = Vec::new();
+    let mut enums: Vec<(Span, &ItemEnum<'_>, &DocComments<'_>)> = Vec::new();
+    let mut udvts: Vec<(Span, &ItemUdvt<'_>, &DocComments<'_>)> = Vec::new();
+
+    for member in c.body.iter() {
+        let s = member.span;
+        match &member.kind {
+            ItemKind::Variable(v) => {
+                // constants and immutables get their own section.
+                if v.mutability.is_some_and(|m| m.is_constant() || m.is_immutable()) {
+                    constants.push((s, v, &member.docs));
+                } else {
+                    state_vars.push((s, v, &member.docs));
+                }
+            }
+            ItemKind::Function(f) => functions.push((s, f, &member.docs)),
+            ItemKind::Event(e) => events.push((s, e, &member.docs)),
+            ItemKind::Error(e) => errors.push((s, e, &member.docs)),
+            ItemKind::Struct(st) => structs.push((s, st, &member.docs)),
+            ItemKind::Enum(e) => enums.push((s, e, &member.docs)),
+            ItemKind::Udvt(u) => udvts.push((s, u, &member.docs)),
+            _ => {}
+        }
+    }
+
+    let write_vars =
+        |out: &mut String, vars: &[(Span, &VariableDefinition<'_>, &DocComments<'_>)]| {
+            for (span, v, docs) in vars {
+                let vname = v.name.map(|n| n.as_str().to_string()).unwrap_or_default();
+                writeln!(out, "### {vname}").unwrap();
+                writeln!(out).unwrap();
+                let c = collect_comments(docs, name_to_page, page_path);
+                write_comment_block(out, &c);
+                write_code_block(out, &ctx.dedented_snippet(*span));
+            }
+        };
+
+    if !constants.is_empty() {
+        writeln!(out, "## Constants").unwrap();
+        writeln!(out).unwrap();
+        write_vars(&mut out, &constants);
+    }
+
+    if !state_vars.is_empty() {
+        writeln!(out, "## State Variables").unwrap();
+        writeln!(out).unwrap();
+        write_vars(&mut out, &state_vars);
+    }
+
+    if !functions.is_empty() {
+        writeln!(out, "## Functions").unwrap();
+        writeln!(out).unwrap();
+        for (span, f, docs) in &functions {
+            let fn_name = f.header.name.map(|n| n.as_str().to_string());
+            // Attempt inheritdoc resolution.
+            let inherited = fn_name.as_deref().and_then(|fname| {
+                let base = inheritdoc_base(docs)?;
+                hir_id.and_then(|cid| hir_ext::resolve_inheritdoc(gcx, cid, fname, &base))
+            });
+            render_function_section(
+                &mut out,
+                *span,
+                f,
+                docs,
+                ctx,
+                name_to_page,
+                page_path,
+                inherited.as_ref(),
+            );
+        }
+    }
+
+    if !events.is_empty() {
+        writeln!(out, "## Events").unwrap();
+        writeln!(out).unwrap();
+        for (span, e, docs) in &events {
+            writeln!(out, "### {}", e.name.as_str()).unwrap();
+            writeln!(out).unwrap();
+            let c = collect_comments(docs, name_to_page, page_path);
+            write_comment_block(&mut out, &c);
+            let snippet = ctx.dedented_snippet(*span);
+            write_code_block(&mut out, &format!("{snippet};"));
+            write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
+        }
+    }
+
+    if !errors.is_empty() {
+        writeln!(out, "## Errors").unwrap();
+        writeln!(out).unwrap();
+        for (span, e, docs) in &errors {
+            writeln!(out, "### {}", e.name.as_str()).unwrap();
+            writeln!(out).unwrap();
+            let c = collect_comments(docs, name_to_page, page_path);
+            write_comment_block(&mut out, &c);
+            let snippet = ctx.dedented_snippet(*span);
+            write_code_block(&mut out, &format!("{snippet};"));
+            write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
+        }
+    }
+
+    if !structs.is_empty() {
+        writeln!(out, "## Structs").unwrap();
+        writeln!(out).unwrap();
+        for (span, s, docs) in &structs {
+            writeln!(out, "### {}", s.name.as_str()).unwrap();
+            writeln!(out).unwrap();
+            let c = collect_comments(docs, name_to_page, page_path);
+            write_comment_block(&mut out, &c);
+            write_code_block(&mut out, &ctx.dedented_snippet(*span));
+            write_struct_properties_table(&mut out, s.fields, &c, ctx);
+        }
+    }
+
+    if !enums.is_empty() {
+        writeln!(out, "## Enums").unwrap();
+        writeln!(out).unwrap();
+        for (span, e, docs) in &enums {
+            writeln!(out, "### {}", e.name.as_str()).unwrap();
+            writeln!(out).unwrap();
+            let c = collect_comments(docs, name_to_page, page_path);
+            write_comment_block(&mut out, &c);
+            write_code_block(&mut out, &ctx.dedented_snippet(*span));
+            write_enum_variants_table(&mut out, e.variants, &c);
+        }
+    }
+
+    if !udvts.is_empty() {
+        writeln!(out, "## Custom Types").unwrap();
+        writeln!(out).unwrap();
+        for (span, u, docs) in &udvts {
+            writeln!(out, "### {}", u.name.as_str()).unwrap();
+            writeln!(out).unwrap();
+            let c = collect_comments(docs, name_to_page, page_path);
+            write_comment_block(&mut out, &c);
+            write_code_block(&mut out, &format!("{};", ctx.dedented_snippet(*span)));
+        }
+    }
+
+    out
+}
+
+// ── free functions ────────────────────────────────────────────────────────────
+
+fn render_free_functions(
+    name: &str,
+    overloads: &[(Span, &ItemFunction<'_>, &DocComments<'_>)],
+    ctx: &Ctx<'_>,
+    name_to_page: &NameToPage,
+    page_path: &Path,
+    git_url: Option<&str>,
+) -> String {
+    let title = if name.is_empty() { "function" } else { name };
+    let first_comments = collect_comments(overloads[0].2, name_to_page, page_path);
+    let mut out = String::new();
+    write_frontmatter(&mut out, title, first_notice(&first_comments).as_deref());
+    writeln!(out, "# {title}").unwrap();
+    writeln!(out).unwrap();
+    write_git_source(&mut out, git_url);
+    for (span, f, docs) in overloads {
+        render_function_section(&mut out, *span, f, docs, ctx, name_to_page, page_path, None);
+    }
+    out
+}
+
+// ── constants ─────────────────────────────────────────────────────────────────
+
+fn render_constants(
+    stem: &str,
+    vars: &[(Span, &VariableDefinition<'_>, &DocComments<'_>)],
+    ctx: &Ctx<'_>,
+    name_to_page: &NameToPage,
+    page_path: &Path,
+    git_url: Option<&str>,
+) -> String {
+    let title = format!("{stem} Constants");
+    let mut out = String::new();
+    write_frontmatter(&mut out, &title, None);
+    writeln!(out, "# {title}").unwrap();
+    writeln!(out).unwrap();
+    write_git_source(&mut out, git_url);
+    for (span, v, docs) in vars {
+        let name = v.name.map(|n| n.as_str().to_string()).unwrap_or_else(|| "_".to_string());
+        writeln!(out, "## {name}").unwrap();
+        writeln!(out).unwrap();
+        let c = collect_comments(docs, name_to_page, page_path);
+        write_comment_block(&mut out, &c);
+        write_code_block(&mut out, &ctx.dedented_snippet(*span));
+    }
+    out
+}
+
+// ── standalone items ──────────────────────────────────────────────────────────
+
+fn render_struct<'ast>(
+    span: Span,
+    s: &'ast ItemStruct<'ast>,
+    docs: &'ast DocComments<'ast>,
+    ctx: &Ctx<'_>,
+    name_to_page: &NameToPage,
+    page_path: &Path,
+    git_url: Option<&str>,
+) -> String {
+    let name = s.name.as_str();
+    let c = collect_comments(docs, name_to_page, page_path);
+    let mut out = String::new();
+    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
+    writeln!(out, "# {name}").unwrap();
+    writeln!(out).unwrap();
+    write_git_source(&mut out, git_url);
+    write_comment_block(&mut out, &c);
+    write_code_block(&mut out, &ctx.dedented_snippet(span));
+    write_struct_properties_table(&mut out, s.fields, &c, ctx);
+    out
+}
+
+fn render_enum<'ast>(
+    span: Span,
+    e: &'ast ItemEnum<'ast>,
+    docs: &'ast DocComments<'ast>,
+    ctx: &Ctx<'_>,
+    name_to_page: &NameToPage,
+    page_path: &Path,
+    git_url: Option<&str>,
+) -> String {
+    let name = e.name.as_str();
+    let c = collect_comments(docs, name_to_page, page_path);
+    let mut out = String::new();
+    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
+    writeln!(out, "# {name}").unwrap();
+    writeln!(out).unwrap();
+    write_git_source(&mut out, git_url);
+    write_comment_block(&mut out, &c);
+    write_code_block(&mut out, &ctx.dedented_snippet(span));
+    write_enum_variants_table(&mut out, e.variants, &c);
+    out
+}
+
+fn render_udvt<'ast>(
+    span: Span,
+    u: &'ast ItemUdvt<'ast>,
+    docs: &'ast DocComments<'ast>,
+    ctx: &Ctx<'_>,
+    name_to_page: &NameToPage,
+    page_path: &Path,
+    git_url: Option<&str>,
+) -> String {
+    let name = u.name.as_str();
+    let c = collect_comments(docs, name_to_page, page_path);
+    let mut out = String::new();
+    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
+    writeln!(out, "# {name}").unwrap();
+    writeln!(out).unwrap();
+    write_git_source(&mut out, git_url);
+    write_comment_block(&mut out, &c);
+    write_code_block(&mut out, &format!("{};", ctx.dedented_snippet(span)));
+    out
+}
+
+fn render_error<'ast>(
+    span: Span,
+    e: &'ast ItemError<'ast>,
+    docs: &'ast DocComments<'ast>,
+    ctx: &Ctx<'_>,
+    name_to_page: &NameToPage,
+    page_path: &Path,
+    git_url: Option<&str>,
+) -> String {
+    let name = e.name.as_str();
+    let c = collect_comments(docs, name_to_page, page_path);
+    let mut out = String::new();
+    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
+    writeln!(out, "# {name}").unwrap();
+    writeln!(out).unwrap();
+    write_git_source(&mut out, git_url);
+    write_comment_block(&mut out, &c);
+    write_code_block(&mut out, &format!("{};", ctx.dedented_snippet(span)));
+    write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
+    out
+}
+
+fn render_event<'ast>(
+    span: Span,
+    e: &'ast ItemEvent<'ast>,
+    docs: &'ast DocComments<'ast>,
+    ctx: &Ctx<'_>,
+    name_to_page: &NameToPage,
+    page_path: &Path,
+    git_url: Option<&str>,
+) -> String {
+    let name = e.name.as_str();
+    let c = collect_comments(docs, name_to_page, page_path);
+    let mut out = String::new();
+    write_frontmatter(&mut out, name, first_notice(&c).as_deref());
+    writeln!(out, "# {name}").unwrap();
+    writeln!(out).unwrap();
+    write_git_source(&mut out, git_url);
+    write_comment_block(&mut out, &c);
+    write_code_block(&mut out, &format!("{};", ctx.dedented_snippet(span)));
+    write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
+    out
+}
+
+// ── function section ──────────────────────────────────────────────────────────
+#[allow(clippy::too_many_arguments)]
+fn render_function_section(
+    out: &mut String,
+    span: Span,
+    f: &ItemFunction<'_>,
+    docs: &DocComments<'_>,
+    ctx: &Ctx<'_>,
+    name_to_page: &NameToPage,
+    page_path: &Path,
+    inherited: Option<&hir_ext::InheritedDoc>,
+) {
+    let heading = function_heading(f);
+    writeln!(out, "### {heading}").unwrap();
+    writeln!(out).unwrap();
+    let mut c = collect_comments(docs, name_to_page, page_path);
+    // Merge inherited natspec for missing tags.
+    if let Some(inherited) = inherited {
+        let sanitize = |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path);
+        let inherited_notices: Vec<String> =
+            inherited.notices.iter().map(|s| sanitize(s)).collect();
+        let inherited_devs: Vec<String> = inherited.devs.iter().map(|s| sanitize(s)).collect();
+        if c.notices.is_empty() {
+            let mut new_desc: Vec<String> = inherited_notices.clone();
+            new_desc.append(&mut c.descriptions);
+            c.descriptions = new_desc;
+            c.notices.extend_from_slice(&inherited_notices);
+        }
+        if c.devs.is_empty() {
+            c.devs.extend_from_slice(&inherited_devs);
+            c.descriptions.extend_from_slice(&inherited_devs);
+        }
+        for (name, desc) in &inherited.params {
+            if !c.params.iter().any(|(n, _)| n == name) {
+                c.params.push((name.clone(), sanitize(desc)));
+            }
+        }
+        for (name, desc) in &inherited.returns {
+            if !c.returns.iter().any(|(n, _)| n == name) {
+                c.returns.push((name.clone(), sanitize(desc)));
+            }
+        }
+    }
+    write_comment_block(out, &c);
+    let hspan = if f.header.span.lo() == f.header.span.hi() { span } else { f.header.span };
+    let snippet = ctx.dedented_snippet(hspan);
+    write_code_block(out, &format!("{snippet};"));
+    write_param_table(out, "Parameters", &f.header.parameters, &c, ctx);
+    if let Some(returns) = &f.header.returns {
+        write_param_table(out, "Returns", returns, &c, ctx);
+    }
+}
+
+fn function_heading(f: &ItemFunction<'_>) -> String {
+    match f.kind {
+        FunctionKind::Constructor => "constructor".to_string(),
+        FunctionKind::Fallback => "fallback".to_string(),
+        FunctionKind::Receive => "receive".to_string(),
+        FunctionKind::Function | FunctionKind::Modifier => {
+            f.header.name.map(|n| n.as_str().to_string()).unwrap_or_else(|| "function".to_string())
+        }
+    }
+}
+
+// ── natspec comment collection ────────────────────────────────────────────────
+
+struct CommentData {
+    titles: Vec<String>,
+    authors: Vec<String>,
+    /// Real `@notice` items (used for inheritdoc merging and frontmatter description).
+    notices: Vec<String>,
+    /// Real `@dev` items (used for inheritdoc merging).
+    devs: Vec<String>,
+    /// All notice/dev text in source order, with continuation lines joined to their parent.
+    /// Used for rendering to preserve correct paragraph ordering.
+    descriptions: Vec<String>,
+    params: Vec<(String, String)>,
+    returns: Vec<(String, String)>,
+    customs: Vec<(String, String)>,
+    /// `@custom:name <name>` values, used to fill in unnamed function parameters.
+    unnamed_param_names: Vec<String>,
+}
+
+/// Collect natspec from doc comments, applying inline link replacement.
+///
+/// Solar emits each `///` line as a separate `DocComment`. Lines without a `@` tag become
+/// synthetic `@notice` items with leading whitespace in their raw content. We detect these
+/// continuation lines and join them to the previous description paragraph so that multi-line
+/// natspec tags appear as a single coherent block in the right source order.
+fn collect_comments(
+    docs: &DocComments<'_>,
+    name_to_page: &NameToPage,
+    page_path: &Path,
+) -> CommentData {
+    let mut data = CommentData {
+        titles: Vec::new(),
+        authors: Vec::new(),
+        notices: Vec::new(),
+        devs: Vec::new(),
+        descriptions: Vec::new(),
+        params: Vec::new(),
+        returns: Vec::new(),
+        customs: Vec::new(),
+        unnamed_param_names: Vec::new(),
+    };
+
+    // Tags that are not user-facing natspec; do not warn on these.
+    const FILTERED_CUSTOM: &[&str] = &["solidity", "src", "use-src", "ast-id"];
+    // Recognised natspec custom tags (mirror legacy behaviour).
+    const KNOWN_CUSTOM: &[&str] = &["name"];
+
+    // Track whether the previous DocComment was blank (empty natspec), which signals a
+    // paragraph break even between continuation lines.
+    let mut prev_doc_was_blank = false;
+
+    for doc in docs.iter() {
+        if doc.natspec.is_empty() {
+            prev_doc_was_blank = true;
+            continue;
+        }
+
+        for item in doc.natspec.iter() {
+            let raw = doc.natspec_content(item);
+
+            // Detect a solar "synthetic" @notice: a continuation line with no `@` tag.
+            // Solar produces these when a `///` line has no tag; the raw content starts
+            // with whitespace (the indentation after `///`).
+            let is_continuation = matches!(item.kind, NatSpecKind::Notice)
+                && raw.starts_with(|c: char| c.is_whitespace());
+
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                prev_doc_was_blank = true;
+                continue;
+            }
+
+            // Apply inline {Ident} -> markdown link replacement.
+            let content = hir_ext::replace_inline_links(trimmed, name_to_page, page_path);
+
+            if is_continuation && !prev_doc_was_blank && !data.descriptions.is_empty() {
+                // Append to the previous description paragraph (same tag, no blank between).
+                let last = data.descriptions.last_mut().unwrap();
+                last.push('\n');
+                last.push_str(&content);
+                prev_doc_was_blank = false;
+                continue;
+            }
+
+            prev_doc_was_blank = false;
+
+            match item.kind {
+                NatSpecKind::Title => data.titles.push(content),
+                NatSpecKind::Author => data.authors.push(content),
+                NatSpecKind::Notice => {
+                    data.notices.push(content.clone());
+                    data.descriptions.push(content);
+                }
+                NatSpecKind::Dev => {
+                    data.devs.push(content.clone());
+                    data.descriptions.push(content);
+                }
+                NatSpecKind::Param { name } => {
+                    data.params.push((name.as_str().to_string(), content))
+                }
+                NatSpecKind::Return { name } => {
+                    data.returns.push((name.as_str().to_string(), content))
+                }
+                NatSpecKind::Inheritdoc { .. } => {} // resolved separately via HIR
+                NatSpecKind::Custom { name } => {
+                    let tag = name.as_str();
+                    if FILTERED_CUSTOM.contains(&tag) {
+                        // Silently ignored.
+                    } else if tag == "name" {
+                        // `@custom:name <name>` -> unnamed param name (legacy parity).
+                        if let Some(first) = content.split_whitespace().next() {
+                            data.unnamed_param_names.push(first.to_string());
+                        }
+                    } else {
+                        // unknown-natspec-tag warning.
+                        if !KNOWN_CUSTOM.contains(&tag) && !is_known_custom_tag(tag) {
+                            warn!("unknown natspec custom tag: @custom:{tag}");
+                        }
+                        data.customs.push((tag.to_string(), content));
+                    }
+                }
+                NatSpecKind::Internal { .. } => {}
+            }
+        }
+    }
+
+    data
+}
+
+/// Returns true if `tag` looks like a generally-recognised natspec custom tag.
+///
+/// We accept any non-empty alphanumeric/dash identifier as "known enough" not
+/// to warn, only obviously malformed tags trigger the warning channel.
+fn is_known_custom_tag(tag: &str) -> bool {
+    !tag.is_empty() && tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Returns the base contract name from `@inheritdoc Base`, or `None`.
+fn inheritdoc_base(docs: &DocComments<'_>) -> Option<String> {
+    for doc in docs.iter() {
+        for item in doc.natspec.iter() {
+            if let NatSpecKind::Inheritdoc { contract } = item.kind {
+                return Some(contract.as_str().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn first_notice(data: &CommentData) -> Option<String> {
+    data.notices.first().cloned()
+}
+
+// ── markdown output helpers ───────────────────────────────────────────────────
+
+fn write_frontmatter(out: &mut String, title: &str, description: Option<&str>) {
+    writeln!(out, "---").unwrap();
+    writeln!(out, "title: {title}").unwrap();
+    if let Some(desc) = description {
+        let truncated: String = desc.chars().take(120).collect();
+        writeln!(out, "description: \"{truncated}\"").unwrap();
+    }
+    writeln!(out, "---").unwrap();
+    writeln!(out).unwrap();
+}
+
+fn write_comment_block(out: &mut String, data: &CommentData) {
+    if !data.titles.is_empty() {
+        let label = if data.titles.len() == 1 { "Title" } else { "Titles" };
+        writeln!(out, "**{label}:** {}", data.titles.join(", ")).unwrap();
+        writeln!(out).unwrap();
+    }
+    if !data.authors.is_empty() {
+        let label = if data.authors.len() == 1 { "Author" } else { "Authors" };
+        writeln!(out, "**{label}:** {}", data.authors.join(", ")).unwrap();
+        writeln!(out).unwrap();
+    }
+    // Render descriptions in source order (notices and devs interleaved, continuations joined).
+    for desc in &data.descriptions {
+        writeln!(out, "{desc}").unwrap();
+        writeln!(out).unwrap();
+    }
+    if !data.customs.is_empty() {
+        let label = if data.customs.len() == 1 { "Note" } else { "Notes" };
+        writeln!(out, "**{label}:**").unwrap();
+        writeln!(out).unwrap();
+        for (tag, content) in &data.customs {
+            writeln!(out, "- **{tag}:** {content}").unwrap();
+        }
+        writeln!(out).unwrap();
+    }
+}
+
+fn write_code_block(out: &mut String, snippet: &str) {
+    writeln!(out, "```solidity").unwrap();
+    writeln!(out, "{}", snippet.trim_end()).unwrap();
+    writeln!(out, "```").unwrap();
+    writeln!(out).unwrap();
+}
+
+/// Write link if `git_url` is set.
+fn write_git_source(out: &mut String, git_url: Option<&str>) {
+    if let Some(url) = git_url {
+        writeln!(out, "[Git Source]({url})").unwrap();
+        writeln!(out).unwrap();
+    }
+}
+
+/// Write the **Deployments** table for a contract page.
+fn write_deployments_table(out: &mut String, deployments: &[Deployment]) {
+    if deployments.is_empty() {
+        return;
+    }
+    writeln!(out, "**Deployments**").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "| Network | Address |").unwrap();
+    writeln!(out, "| ------- | ------- |").unwrap();
+    for d in deployments {
+        let network = d.network.as_deref().unwrap_or("-");
+        writeln!(out, "| {network} | `{:#x}` |", d.address).unwrap();
+    }
+    writeln!(out).unwrap();
+}
+
+fn write_param_table(
+    out: &mut String,
+    heading: &str,
+    params: &ParameterList<'_>,
+    comments: &CommentData,
+    ctx: &Ctx<'_>,
+) {
+    if params.is_empty() {
+        return;
+    }
+    writeln!(out, "**{heading}**").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "| Name | Type | Description |").unwrap();
+    writeln!(out, "| ---- | ---- | ----------- |").unwrap();
+    let is_return = heading == "Returns";
+    // Positional fall-back to `@custom:name <name>` for unnamed params
+    // (parameters only, return names aren't substituted).
+    let mut unnamed_iter = comments.unnamed_param_names.iter();
+    for var in params.iter() {
+        let name = match var.name {
+            Some(n) => n.as_str().to_string(),
+            None if !is_return => unnamed_iter.next().cloned().unwrap_or_else(|| "_".to_string()),
+            None => "&lt;none&gt;".to_string(),
+        };
+        let ty = format!("`{}`", ctx.snippet(var.ty.span).trim());
+        let desc = if is_return {
+            comments.returns.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str()).unwrap_or("")
+        } else {
+            comments.params.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str()).unwrap_or("")
+        };
+        writeln!(out, "| {name} | {ty} | {desc} |").unwrap();
+    }
+    writeln!(out).unwrap();
+}
+
+fn write_struct_properties_table(
+    out: &mut String,
+    fields: &[VariableDefinition<'_>],
+    comments: &CommentData,
+    ctx: &Ctx<'_>,
+) {
+    if fields.is_empty() {
+        return;
+    }
+    writeln!(out, "**Properties**").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "| Name | Type | Description |").unwrap();
+    writeln!(out, "| ---- | ---- | ----------- |").unwrap();
+    for field in fields {
+        let name = field.name.map(|n| n.as_str().to_string()).unwrap_or_else(|| "_".to_string());
+        let ty = format!("`{}`", ctx.snippet(field.ty.span).trim());
+        let desc =
+            comments.params.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str()).unwrap_or("");
+        writeln!(out, "| {name} | {ty} | {desc} |").unwrap();
+    }
+    writeln!(out).unwrap();
+}
+
+fn write_enum_variants_table(out: &mut String, variants: &[Ident], comments: &CommentData) {
+    if variants.is_empty() {
+        return;
+    }
+    writeln!(out, "**Variants**").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "| Name | Description |").unwrap();
+    writeln!(out, "| ---- | ----------- |").unwrap();
+    for variant in variants {
+        let name = variant.as_str();
+        let desc =
+            comments.params.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str()).unwrap_or("");
+        writeln!(out, "| {name} | {desc} |").unwrap();
+    }
+    writeln!(out).unwrap();
+}
+
+const fn contract_kind_str(kind: ContractKind) -> &'static str {
+    match kind {
+        ContractKind::Contract => "contract",
+        ContractKind::AbstractContract => "abstract",
+        ContractKind::Interface => "interface",
+        ContractKind::Library => "library",
+    }
+}
+
+/// Find the HIR `ContractId` for a contract by name, preferring contracts in the same
+/// source file (to handle shadowing across files).
+fn find_contract_id<'gcx>(
+    gcx: Gcx<'gcx>,
+    name: &str,
+    rel_sol_path: &Path,
+) -> Option<hir::ContractId> {
+    gcx.hir.contract_ids().find(|&id| {
+        let c = gcx.hir.contract(id);
+        if c.name.as_str() != name {
+            return false;
+        }
+        // Prefer same file.
+        if let solar::interface::source_map::FileName::Real(p) = &gcx.hir.source(c.source).file.name
+        {
+            p.ends_with(rel_sol_path)
+        } else {
+            true
+        }
+    })
+}
+
+/// Strip common leading whitespace from all non-empty lines.
+fn dedent(s: &str) -> String {
+    let lines: Vec<&str> = s.lines().collect();
+    if lines.is_empty() {
+        return s.to_string();
+    }
+    let indent = lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    lines
+        .iter()
+        .map(|l| if l.len() >= indent { &l[indent..] } else { l.trim() })
+        .collect::<Vec<_>>()
+        .join("\n")
+}

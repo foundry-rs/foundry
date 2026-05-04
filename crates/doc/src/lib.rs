@@ -1,4 +1,6 @@
-//! The module for generating Solidity documentation.
+//! Solidity documentation generator powered by [`solar`].
+//! * uses directly the [`solar`] AST
+//! * emits [vocs](https://vocs.dev/docs)-flavoured MDX.
 //!
 //! See [`DocBuilder`].
 
@@ -6,32 +8,12 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[macro_use]
-extern crate foundry_common;
-
-#[macro_use]
 extern crate tracing;
 
 mod builder;
+mod extras;
+mod hir_ext;
+mod render;
+mod vocs;
+
 pub use builder::DocBuilder;
-
-mod document;
-pub use document::Document;
-
-mod helpers;
-
-mod parser;
-pub use parser::{
-    Comment, CommentTag, Comments, CommentsRef, ParseItem, ParseSource, Parser, error,
-    source::{
-        BaseInfo, ContractKind, ContractSource, EnumSource, ErrorSource, EventSource,
-        FunctionSource, ParamInfo, StructSource, TypeSource, VariableAttr, VariableSource,
-    },
-};
-
-mod preprocessor;
-pub use preprocessor::*;
-
-mod writer;
-pub use writer::{AsDoc, AsDocResult, BufWriter, Markdown};
-
-pub use mdbook_driver;
