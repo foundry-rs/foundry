@@ -92,6 +92,7 @@ jobs:
         uses: depot/setup-action@15c09a5f77a0840ad4bce955686522a257853461 # v1.7.1
 
       - name: Build and push Foundry image
+        id: build
         uses: depot/build-push-action@5f3b3c2e5a00f0093de47f657aeaefcedff27d18 # v1.17.0
         with:
           build-args: |
@@ -106,3 +107,30 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           no-cache: true
+          sbom: true
+          provenance: mode=max
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+
+      - name: Sign image with cosign (keyless)
+        env:
+          DOCKER_TAGS: ${{ steps.docker_tagging.outputs.docker_tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          IFS=',' read -r -a tags <<< "$DOCKER_TAGS"
+          for tag in "${tags[@]}"; do
+            # Strip any tag suffix and pin to immutable digest, then sign.
+            ref="${tag%%:*}@${DIGEST}"
+            printf 'Signing %s\n' "$ref"
+            cosign sign --yes "$ref"
+          done
+
+      - name: Image build provenance attestation
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
