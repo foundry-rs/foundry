@@ -395,7 +395,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
                     if param.name.is_empty() {
                         String::default()
                     } else {
-                        format!(" {}", &param.name)
+                        format!(" {}", param.name)
                     },
                 ))
                 .collect::<Vec<_>>()
