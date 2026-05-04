@@ -919,9 +919,8 @@ impl TestArgs {
                 //
                 // Exiting early with code 1 if differences are found.
                 if self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check) {
-                    let differences_found = gas_snapshots.clone().into_iter().fold(
-                        false,
-                        |mut found, (group, snapshots)| {
+                    let differences_found =
+                        gas_snapshots.iter().fold(false, |mut found, (group, snapshots)| {
                             // If the snapshot file doesn't exist, we can't compare so we skip.
                             if !&config.snapshots.join(format!("{group}.json")).exists() {
                                 return found;
@@ -959,8 +958,7 @@ impl TestArgs {
                             }
 
                             found
-                        },
-                    );
+                        });
 
                     if differences_found {
                         sh_eprintln!()?;
@@ -982,13 +980,13 @@ impl TestArgs {
                     fs::create_dir_all(&config.snapshots)?;
 
                     // Write gas snapshots to disk per group.
-                    gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
+                    for (group, snapshots) in &gas_snapshots {
                         fs::write_pretty_json_file(
                             &config.snapshots.join(format!("{group}.json")),
                             &snapshots,
                         )
                         .expect("Failed to write gas snapshots to disk");
-                    });
+                    }
                 }
             }
 
@@ -1012,7 +1010,7 @@ impl TestArgs {
 
         if let Some(gas_report) = gas_report {
             let finalized = gas_report.finalize();
-            sh_println!("{}", &finalized)?;
+            sh_println!("{finalized}")?;
             outcome.gas_report = Some(finalized);
         }
 
@@ -1022,7 +1020,7 @@ impl TestArgs {
 
         if !is_multi_pass && self.summary && !outcome.results.is_empty() {
             let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
-            sh_println!("{}", &summary_report)?;
+            sh_println!("{summary_report}")?;
         }
 
         // Reattach the task.
