@@ -66,8 +66,20 @@ impl figment::Provider for RpcOpts {
 impl RpcOpts {
     /// Returns the RPC endpoint.
     pub fn url<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
+        self.url_with_env(config, std::env::var("ETH_RPC_URL").ok())
+    }
+
+    fn url_with_env<'a>(
+        &'a self,
+        config: Option<&'a Config>,
+        env_url: Option<String>,
+    ) -> Result<Option<Cow<'a, str>>> {
         if self.flashbots {
             Ok(Some(Cow::Borrowed(FLASHBOTS_URL)))
+        } else if let Some(url) = self.common.rpc_url.as_deref() {
+            Ok(Some(Cow::Borrowed(url)))
+        } else if let Some(url) = env_url {
+            Ok(Some(Cow::Owned(url)))
         } else {
             self.common.url(config)
         }
@@ -85,6 +97,9 @@ impl RpcOpts {
 
     pub fn dict(&self) -> Dict {
         let mut dict = self.common.dict();
+        if let Ok(Some(url)) = self.url(None) {
+            dict.insert("eth_rpc_url".into(), url.into_owned().into());
+        }
         if self.flashbots {
             dict.insert("eth_rpc_url".into(), FLASHBOTS_URL.into());
         }
@@ -199,6 +214,7 @@ impl figment::Provider for EthereumOpts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
 
     #[test]
     fn parse_etherscan_opts() {
@@ -222,5 +238,42 @@ mod tests {
         let chain_id = dict.get("chain_id").expect("chain_id should be present");
         let id: u64 = chain_id.deserialize().expect("chain_id should deserialize as u64");
         assert_eq!(id, 9745);
+    }
+
+    #[test]
+    fn rpc_url_arg_does_not_read_eth_rpc_url_env() {
+        let command = RpcOpts::command();
+        let rpc_url =
+            command.get_arguments().find(|arg| arg.get_id() == "rpc_url").expect("rpc_url arg");
+
+        assert!(rpc_url.get_env().is_none());
+    }
+
+    #[test]
+    fn rpc_url_resolves_eth_rpc_url_env() {
+        let args = RpcOpts::default();
+        let url = args
+            .url_with_env(None, Some("http://127.0.0.1:8545".to_string()))
+            .expect("url")
+            .expect("url");
+
+        assert_eq!(url.as_ref(), "http://127.0.0.1:8545");
+    }
+
+    #[test]
+    fn explicit_rpc_url_takes_precedence_over_eth_rpc_url_env() {
+        let args = RpcOpts {
+            common: RpcCommonOpts {
+                rpc_url: Some("http://127.0.0.1:8546".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let url = args
+            .url_with_env(None, Some("http://127.0.0.1:8545".to_string()))
+            .expect("url")
+            .expect("url");
+
+        assert_eq!(url.as_ref(), "http://127.0.0.1:8546");
     }
 }
