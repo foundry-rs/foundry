@@ -3,7 +3,7 @@ use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
     gas_report::GasReport,
-    multi_runner::matches_artifact,
+    multi_runner::{MultiNetworkConfig, matches_artifact},
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -31,7 +31,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, figment,
+    Config, InlineConfig, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map},
@@ -342,40 +342,80 @@ impl TestArgs {
         // Auto-detect network from fork chain ID when not explicitly configured.
         evm_opts.infer_network_from_fork().await;
 
-        // Dispatch based on network type.
-        let (libraries, mut outcome) = if evm_opts.networks.is_tempo() {
-            self.build_and_run_tests::<TempoEvmNetwork>(
+        // Parse inline config early to detect per-test network annotations.
+        let inline_config = InlineConfig::new_parsed(output, &config)?;
+        let override_networks = inline_config.referenced_override_networks(&config.profile);
+
+        let (libraries, mut outcome) = if override_networks.is_empty() {
+            // Single-pass: no per-test network overrides, use global network setting.
+            self.dispatch_network(
+                &evm_opts,
                 config,
-                evm_opts,
+                evm_opts.clone(),
                 output,
                 filter,
                 coverage,
                 should_debug,
                 decode_internal,
-            )
-            .await?
-        } else if evm_opts.networks.is_optimism() {
-            self.build_and_run_tests::<OpEvmNetwork>(
-                config,
-                evm_opts,
-                output,
-                filter,
-                coverage,
-                should_debug,
-                decode_internal,
+                MultiNetworkConfig::default(),
             )
             .await?
         } else {
-            self.build_and_run_tests::<EthEvmNetwork>(
-                config,
-                evm_opts,
-                output,
-                filter,
-                coverage,
-                should_debug,
-                decode_internal,
-            )
-            .await?
+            // Multi-pass: run each distinct network separately and merge results.
+            let all_override_networks = override_networks.clone();
+            let multi_pass_timer = Instant::now();
+
+            // Default pass: global network, runs tests without an explicit network annotation.
+            let (libraries, mut outcome) = self
+                .dispatch_network(
+                    &evm_opts,
+                    config.clone(),
+                    evm_opts.clone(),
+                    output,
+                    filter,
+                    coverage,
+                    should_debug,
+                    decode_internal,
+                    MultiNetworkConfig {
+                        all_override_networks: all_override_networks.clone(),
+                        pass_network: None,
+                    },
+                )
+                .await?;
+
+            // Override passes: one per annotated network.
+            for &network in &override_networks {
+                let mut pass_evm_opts = evm_opts.clone();
+                pass_evm_opts.networks = network.into();
+                let (_, pass_outcome) = self
+                    .dispatch_network(
+                        &pass_evm_opts,
+                        config.clone(),
+                        pass_evm_opts.clone(),
+                        output,
+                        filter,
+                        coverage,
+                        should_debug,
+                        decode_internal,
+                        MultiNetworkConfig {
+                            all_override_networks: all_override_networks.clone(),
+                            pass_network: Some(network),
+                        },
+                    )
+                    .await?;
+                merge_outcomes(&mut outcome, pass_outcome);
+            }
+
+            // Print the merged summary (per-pass summaries are suppressed in `run_tests_inner`).
+            if !self.summary && !shell::is_json() {
+                sh_println!("{}", outcome.summary(multi_pass_timer.elapsed()))?;
+            }
+            if self.summary && !outcome.results.is_empty() {
+                let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
+                sh_println!("{}", &summary_report)?;
+            }
+
+            (libraries, outcome)
         };
 
         if should_draw {
@@ -461,6 +501,7 @@ impl TestArgs {
         coverage: bool,
         should_debug: bool,
         decode_internal: InternalTraceMode,
+        multi_network: MultiNetworkConfig,
     ) -> eyre::Result<(Libraries, TestOutcome)> {
         let verbosity = evm_opts.verbosity;
         let (evm_env, tx_env, fork_block) =
@@ -476,11 +517,65 @@ impl TestArgs {
             .enable_isolation(evm_opts.isolate)
             .fail_fast(self.fail_fast)
             .set_coverage(coverage)
+            .with_multi_network(multi_network)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();
         let outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
         Ok((libraries, outcome))
+    }
+
+    /// Dispatches `build_and_run_tests` to the correct network type based on `evm_opts.networks`.
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_network(
+        &self,
+        dispatch_opts: &EvmOpts,
+        config: Config,
+        evm_opts: EvmOpts,
+        output: &ProjectCompileOutput,
+        filter: &ProjectPathsAwareFilter,
+        coverage: bool,
+        should_debug: bool,
+        decode_internal: InternalTraceMode,
+        multi_network: MultiNetworkConfig,
+    ) -> eyre::Result<(Libraries, TestOutcome)> {
+        if dispatch_opts.networks.is_tempo() {
+            self.build_and_run_tests::<TempoEvmNetwork>(
+                config,
+                evm_opts,
+                output,
+                filter,
+                coverage,
+                should_debug,
+                decode_internal,
+                multi_network,
+            )
+            .await
+        } else if dispatch_opts.networks.is_optimism() {
+            self.build_and_run_tests::<OpEvmNetwork>(
+                config,
+                evm_opts,
+                output,
+                filter,
+                coverage,
+                should_debug,
+                decode_internal,
+                multi_network,
+            )
+            .await
+        } else {
+            self.build_and_run_tests::<EthEvmNetwork>(
+                config,
+                evm_opts,
+                output,
+                filter,
+                coverage,
+                should_debug,
+                decode_internal,
+                multi_network,
+            )
+            .await
+        }
     }
 
     /// Run all tests that matches the filter predicate from a test runner
@@ -586,6 +681,11 @@ impl TestArgs {
 
         let libraries = runner.libraries.clone();
 
+        // Capture multi-pass state before moving `runner` into the spawn task.
+        // In multi-pass mode the per-pass summary is suppressed; the merged summary is
+        // printed once by the caller after all passes complete.
+        let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
+
         // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
         let timer = Instant::now();
@@ -642,6 +742,13 @@ impl TestArgs {
         for (contract_name, mut suite_result) in rx {
             let tests = &mut suite_result.test_results;
             let has_tests = !tests.is_empty();
+
+            // In multi-pass (per-test network override) mode, skip suites that contributed no
+            // tests to this pass so we don't emit a stray blank line in the suite header or
+            // pollute the outcome with empty entries.
+            if is_multi_pass && !has_tests && suite_result.warnings.is_empty() {
+                continue;
+            }
 
             // Clear the addresses and labels from previous test.
             decoder.clear_addresses();
@@ -907,11 +1014,11 @@ impl TestArgs {
             outcome.gas_report = Some(finalized);
         }
 
-        if !self.summary && !shell::is_json() {
+        if !is_multi_pass && !self.summary && !shell::is_json() {
             sh_println!("{}", outcome.summary(duration))?;
         }
 
-        if self.summary && !outcome.results.is_empty() {
+        if !is_multi_pass && self.summary && !outcome.results.is_empty() {
             let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
             sh_println!("{summary_report}")?;
         }
@@ -1021,6 +1128,29 @@ fn list<FEN: FoundryEvmNetwork>(
         }
     }
     Ok(TestOutcome::empty(Some(runner.known_contracts), false))
+}
+
+/// Merges `other` into `base` by extending suite results.
+///
+/// For suites that appear in both, test results are combined (function-level pass routing ensures
+/// each function appears in exactly one pass, so there are no key conflicts in practice).
+fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
+    for (suite_id, other_suite) in other.results {
+        match base.results.entry(suite_id) {
+            std::collections::btree_map::Entry::Vacant(e) => {
+                e.insert(other_suite);
+            }
+            std::collections::btree_map::Entry::Occupied(mut e) => {
+                let base_suite = e.get_mut();
+                base_suite.test_results.extend(other_suite.test_results);
+                base_suite.warnings.extend(other_suite.warnings);
+                base_suite.duration = base_suite.duration.max(other_suite.duration);
+            }
+        }
+    }
+    if let Some(decoder) = other.last_run_decoder {
+        base.last_run_decoder = Some(decoder);
+    }
 }
 
 /// Load persisted filter (with last test run failures) from file.
