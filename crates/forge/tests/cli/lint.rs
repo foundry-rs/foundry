@@ -1,4 +1,7 @@
-use forge_lint::{linter::Lint, sol::med::REGISTERED_LINTS};
+use forge_lint::{
+    linter::Lint,
+    sol::{self, SolLint},
+};
 use foundry_config::{
     DenyLevel, LintSeverity, LinterConfig, SolidityErrorCode, lint::LintSpecificConfig,
 };
@@ -1129,46 +1132,46 @@ Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. 
 
 #[tokio::test]
 async fn ensure_lint_rule_docs() {
-    const FOUNDRY_BOOK_LINT_PAGE_URL: &str = "https://book.getfoundry.sh/forge/linting";
+    let client = reqwest::Client::new();
+    let mut failures = Vec::new();
 
-    // Fetch the content of the lint reference
-    let content = match reqwest::get(FOUNDRY_BOOK_LINT_PAGE_URL).await {
-        Ok(resp) => {
-            assert!(
-                resp.status().is_success(),
-                "Failed to fetch Foundry Book lint page ({FOUNDRY_BOOK_LINT_PAGE_URL}). Status: {status}",
-                status = resp.status()
-            );
-            match resp.text().await {
-                Ok(text) => text,
-                Err(e) => {
-                    panic!("Failed to read response text: {e}");
-                }
+    for lint in registered_lints() {
+        let url = lint.help();
+        let response = match client.get(url).send().await {
+            Ok(response) => response,
+            Err(err) => {
+                failures.push(format!("{} ({url}) could not be fetched: {err}", lint.id()));
+                continue;
             }
-        }
-        Err(e) => {
-            panic!("Failed to fetch Foundry Book lint page ({FOUNDRY_BOOK_LINT_PAGE_URL}): {e}",);
-        }
-    };
+        };
 
-    // Ensure no missing lints
-    let mut missing_lints = Vec::new();
-    for lint in REGISTERED_LINTS {
+        if !response.status().is_success() {
+            failures.push(format!("{} ({url}) returned HTTP {}", lint.id(), response.status()));
+            continue;
+        }
+
+        let content = match response.text().await {
+            Ok(content) => content.to_lowercase(),
+            Err(err) => {
+                failures
+                    .push(format!("{} ({url}) response body could not be read: {err}", lint.id()));
+                continue;
+            }
+        };
+
         let selector = lint.id().to_lowercase();
         let selector_with_space = selector.replace('-', " ");
-        if !content.to_lowercase().contains(&selector)
-            && !content.to_lowercase().contains(&selector_with_space)
-        {
-            missing_lints.push(lint.id());
+        if !content.contains(&selector) && !content.contains(&selector_with_space) {
+            failures.push(format!("{} ({url}) did not mention the lint id", lint.id()));
         }
     }
 
-    if !missing_lints.is_empty() {
+    if !failures.is_empty() {
         let mut msg = String::from(
-            "Foundry Book lint validation failed. The following lints must be added to the docs:\n",
+            "Foundry Book lint validation failed. The following lint pages are missing or invalid:\n",
         );
-        for lint in missing_lints {
-            msg.push_str(&format!("  - {lint}\n"));
+        for failure in failures {
+            msg.push_str(&format!("  - {failure}\n"));
         }
         msg.push_str("Please open a PR: https://github.com/foundry-rs/book");
         panic!("{msg}");
@@ -1177,9 +1180,19 @@ async fn ensure_lint_rule_docs() {
 
 #[test]
 fn ensure_no_privileged_lint_id() {
-    for lint in REGISTERED_LINTS {
+    for lint in registered_lints() {
         assert_ne!(lint.id(), "all", "lint-id 'all' is reserved. Please use a different id");
     }
+}
+
+fn registered_lints() -> impl Iterator<Item = &'static SolLint> {
+    sol::high::REGISTERED_LINTS
+        .iter()
+        .chain(sol::med::REGISTERED_LINTS)
+        .chain(sol::low::REGISTERED_LINTS)
+        .chain(sol::info::REGISTERED_LINTS)
+        .chain(sol::gas::REGISTERED_LINTS)
+        .chain(sol::codesize::REGISTERED_LINTS)
 }
 
 // <https://github.com/foundry-rs/foundry/issues/13107>
