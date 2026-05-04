@@ -203,7 +203,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 16 │         (1 / 2) * 3;
    │         ━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 
 "#]]);
@@ -230,7 +230,7 @@ note[mixed-case-function]: function names should use mixedCase
 9 │     function functionMIXEDCaseInfo() public {}
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
   │
-  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
 
 "#]]);
@@ -610,7 +610,7 @@ note[mixed-case-function]: function names should use mixedCase
 9 │     function functionMIXEDCaseInfo() public {}
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
   │
-  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
 
 "#]]);
@@ -637,7 +637,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 16 │         (1 / 2) * 3;
    │         ━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 
 "#]]);
@@ -665,7 +665,7 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 13 │         uint256 result = 8 >> localValue;
    │                          ━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 
 
 "#
@@ -694,7 +694,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 16 │         (1 / 2) * 3;
    │         ━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 
 "#]]).stdout_eq(str![[r#"
@@ -855,7 +855,7 @@ note[unused-import]: unused imports should be removed
 8 │ import { _PascalCaseInfo } from "./ContractWithLints.sol";
   │          ━━━━━━━━━━━━━━━
   │
-  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
+  ╰ help: https://getfoundry.sh/forge/linting/unused-import
 
 
 "#]]);
@@ -887,7 +887,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 6 │     uint256 public CounterB_Fail_Lint;
   │                    ━━━━━━━━━━━━━━━━━━ help: consider using: `counterBFailLint`
   │
-  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
 
 "#]]);
@@ -992,7 +992,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
     ],
     "children": [
     {
-        "message": "https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic",
+        "message": "https://getfoundry.sh/forge/linting/unwrapped-modifier-logic",
         "code": null,
         "level": "help",
         "spans": [],
@@ -1048,7 +1048,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
         "rendered": null
     }
     ],
-    "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
+    "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
 }
 "#]],
 );
@@ -1264,4 +1264,196 @@ contract OldContract {
 
 "#
     ]]);
+});
+
+const PRAGMA_INCONSISTENT_ALPHA: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Alpha {}
+"#;
+
+const PRAGMA_INCONSISTENT_BETA: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+contract Beta {}
+"#;
+
+forgetest!(pragma_inconsistent_cross_file, |prj, cmd| {
+    prj.add_source("Alpha", PRAGMA_INCONSISTENT_ALPHA);
+    prj.add_source("Beta", PRAGMA_INCONSISTENT_BETA);
+
+    cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
+        [r#"
+note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity ^0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity 0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+
+"#]
+    ]);
+});
+
+const PRAGMA_EXACT_A: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+contract A {}
+"#;
+
+const PRAGMA_EXACT_B: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+contract B {}
+"#;
+
+const PRAGMA_EXACT_C: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+contract C {}
+"#;
+
+const PRAGMA_CARET_A: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract A {}
+"#;
+
+const PRAGMA_CARET_B: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract B {}
+"#;
+
+const PRAGMA_CARET_C: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract C {}
+"#;
+
+const NO_PRAGMA_C: &str = r#"
+// SPDX-License-Identifier: MIT
+
+contract C {}
+"#;
+
+// Multiple files all using the exact same pragma must NOT warn.
+forgetest!(pragma_inconsistent_consistent_exact_no_warning, |prj, cmd| {
+    prj.add_source("A", PRAGMA_EXACT_A);
+    prj.add_source("B", PRAGMA_EXACT_B);
+    prj.add_source("C", PRAGMA_EXACT_C);
+
+    cmd.arg("lint")
+        .args(["--only-lint", "pragma-inconsistent"])
+        .assert_success()
+        .stderr_eq(str![[r#""#]]);
+});
+
+// Multiple files all using the exact same caret pragma must NOT warn.
+forgetest!(pragma_inconsistent_consistent_caret_no_warning, |prj, cmd| {
+    prj.add_source("A", PRAGMA_CARET_A);
+    prj.add_source("B", PRAGMA_CARET_B);
+
+    cmd.arg("lint")
+        .args(["--only-lint", "pragma-inconsistent"])
+        .assert_success()
+        .stderr_eq(str![[r#""#]]);
+});
+
+// A single file in the project cannot conflict with itself.
+forgetest!(pragma_inconsistent_single_file_no_warning, |prj, cmd| {
+    prj.add_source("A", PRAGMA_CARET_A);
+
+    cmd.arg("lint")
+        .args(["--only-lint", "pragma-inconsistent"])
+        .assert_success()
+        .stderr_eq(str![[r#""#]]);
+});
+
+// Even files that share a requirement still emit when ANY other variant exists.
+// Two files with `0.8.20` plus one file with `^0.8.20` => 3 emits total.
+forgetest!(pragma_inconsistent_duplicates_among_conflict, |prj, cmd| {
+    prj.add_source("A", PRAGMA_EXACT_A);
+    prj.add_source("B", PRAGMA_EXACT_B);
+    prj.add_source("C", PRAGMA_CARET_C);
+
+    cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
+        [r#"
+note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity 0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity 0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity ^0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+
+"#]
+    ]);
+});
+
+// Files without a `pragma solidity` directive must not affect the conflict computation.
+// Note: `add_raw_source` is used here to bypass the helper that would otherwise inject a default
+// `pragma solidity =<SOLC_VERSION>;` for files that omit one.
+forgetest!(pragma_inconsistent_files_without_pragma, |prj, cmd| {
+    prj.add_raw_source("A", PRAGMA_EXACT_A);
+    prj.add_raw_source("B", PRAGMA_CARET_B);
+    // C has no pragma at all; should be ignored by the cross-file check.
+    prj.add_raw_source("C", NO_PRAGMA_C);
+
+    cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
+        [r#"
+note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity 0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity ^0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+
+"#]
+    ]);
 });

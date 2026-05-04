@@ -85,7 +85,7 @@ pub struct AnvilTxResult<H> {
     pub sender: Address,
 }
 
-impl<H> TxResult for AnvilTxResult<H> {
+impl<H: Send + 'static> TxResult for AnvilTxResult<H> {
     type HaltReason = H;
 
     fn result(&self) -> &ResultAndState<Self::HaltReason> {
@@ -217,10 +217,7 @@ where
         })
     }
 
-    fn commit_transaction(
-        &mut self,
-        output: Self::Result,
-    ) -> Result<GasOutput, BlockExecutionError> {
+    fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
         let AnvilTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
             sender,
@@ -266,7 +263,7 @@ where
         self.receipts.push(receipt);
         self.evm.db_mut().commit(state);
 
-        Ok(GasOutput::new(gas_used))
+        GasOutput::new(gas_used)
     }
 
     fn finish(
@@ -429,7 +426,7 @@ where
                 let exec_result = result.result().result.clone();
                 let gas_used = result.result().result.tx_gas_used();
 
-                executor.commit_transaction(result).expect("commit failed");
+                executor.commit_transaction(result);
 
                 let traces =
                     executor.evm_mut().inspector_mut().finish_transaction(inspector_config);
