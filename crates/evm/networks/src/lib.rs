@@ -20,7 +20,20 @@ use std::collections::BTreeMap;
 
 pub mod celo;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    clap::ValueEnum,
+)]
 #[serde(rename_all = "lowercase")]
 #[clap(rename_all = "lowercase")]
 pub enum NetworkVariant {
@@ -28,6 +41,19 @@ pub enum NetworkVariant {
     Ethereum,
     Optimism,
     Tempo,
+}
+
+impl std::str::FromStr for NetworkVariant {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ethereum" => Ok(Self::Ethereum),
+            "optimism" => Ok(Self::Optimism),
+            "tempo" => Ok(Self::Tempo),
+            _ => Err(format!("unknown network variant: {s}")),
+        }
+    }
 }
 
 impl NetworkVariant {
@@ -240,6 +266,20 @@ impl NetworkConfigs {
                 .insert(PRECOMPILE_ID_CELO_TRANSFER.name().to_string(), CELO_TRANSFER_ADDRESS);
         }
         precompiles
+    }
+}
+
+impl From<NetworkVariant> for NetworkConfigs {
+    fn from(network: NetworkVariant) -> Self {
+        match network {
+            NetworkVariant::Ethereum => Self::default(),
+            NetworkVariant::Tempo => {
+                Self { network: Some(network), tempo: true, ..Default::default() }
+            }
+            NetworkVariant::Optimism => {
+                Self { network: Some(network), optimism: true, ..Default::default() }
+            }
+        }
     }
 }
 
