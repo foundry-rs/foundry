@@ -509,20 +509,20 @@ forgetest!(per_test_network_routing, |prj, cmd| {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 1 test for test/inline.sol:MixedNetwork
-[PASS] test_fee_manager_absent_on_ethereum() ([GAS])
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_fee_manager_absent_on_[..]() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/inline.sol:DefaultNetwork
-[PASS] test_fee_manager_absent_on_ethereum() ([GAS])
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_fee_manager_absent_on_[..]() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/inline.sol:TempoNetwork
-[PASS] test_fee_manager_callable_on_tempo() ([GAS])
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_fee_manager_callable_on_[..]() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/inline.sol:MixedNetwork
-[PASS] test_fee_manager_callable_on_tempo() ([GAS])
+Ran 1 test for test/inline.sol:[..]Network
+[PASS] test_fee_manager_callable_on_[..]() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 3 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)

@@ -13,14 +13,10 @@ use serde::Serialize;
 use std::borrow::Cow;
 
 /// Common RPC-related options shared across CLI commands.
-///
-/// This struct holds fields that both [`super::RpcOpts`] (cast) and
-/// [`super::EvmArgs`] (forge/script) need, eliminating duplication and
-/// making the two structs composable.
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 pub struct RpcCommonOpts {
     /// The RPC endpoint.
-    #[arg(short, long, visible_alias = "fork-url", env = "ETH_RPC_URL")]
+    #[arg(short, long, visible_alias = "fork-url", value_name = "URL")]
     #[serde(rename = "eth_rpc_url", skip_serializing_if = "Option::is_none")]
     pub rpc_url: Option<String>,
 
@@ -80,12 +76,7 @@ impl figment::Provider for RpcCommonOpts {
 impl RpcCommonOpts {
     /// Returns the RPC endpoint URL, resolving from CLI args or config.
     pub fn url<'a>(&'a self, config: Option<&'a Config>) -> Result<Option<Cow<'a, str>>> {
-        let url = match (self.rpc_url.as_deref(), config) {
-            (Some(url), _) => Some(Cow::Borrowed(url)),
-            (None, Some(config)) => config.get_rpc_url().transpose()?,
-            (None, None) => None,
-        };
-        Ok(url)
+        resolve_rpc_url(self.rpc_url.as_deref(), config)
     }
 
     /// Builds a figment-compatible dictionary from these options.
@@ -111,4 +102,17 @@ impl RpcCommonOpts {
         }
         dict
     }
+}
+
+/// Resolves an RPC URL from an explicit CLI value or config.
+pub fn resolve_rpc_url<'a>(
+    rpc_url: Option<&'a str>,
+    config: Option<&'a Config>,
+) -> Result<Option<Cow<'a, str>>> {
+    let url = match (rpc_url, config) {
+        (Some(url), _) => Some(Cow::Borrowed(url)),
+        (None, Some(config)) => config.get_rpc_url().transpose()?,
+        (None, None) => None,
+    };
+    Ok(url)
 }
