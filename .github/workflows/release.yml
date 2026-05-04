@@ -71,7 +71,7 @@ jobs:
 
       - name: Build changelog
         id: build_changelog
-        uses: mikepenz/release-changelog-builder-action@bcae7115752d4ed746ff92feb666574428a79415 # v6.2
+        uses: mikepenz/release-changelog-builder-action@bcae7115752d4ed746ff92feb666574428a79415 # v6.2.1
         with:
           configuration: "./.github/changelog.json"
           fromTag: ${{ steps.release_info.outputs.from_tag || '' }}
@@ -264,6 +264,38 @@ jobs:
             printf "file_name=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" >> "$GITHUB_OUTPUT"
           fi
           printf "foundry_attestation=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.attestation.txt" >> "$GITHUB_OUTPUT"
+          printf "foundry_sbom=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.spdx.json" >> "$GITHUB_OUTPUT"
+          printf "foundry_checksum=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sha256" >> "$GITHUB_OUTPUT"
+          printf "foundry_signature=%s\n" "foundry_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.sigstore.json" >> "$GITHUB_OUTPUT"
+
+      - name: Generate archive checksum
+        env:
+          FILE_NAME: ${{ steps.artifacts.outputs.file_name }}
+          FOUNDRY_CHECKSUM: ${{ steps.artifacts.outputs.foundry_checksum }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$FILE_NAME" > "$FOUNDRY_CHECKSUM"
+          else
+            shasum -a 256 "$FILE_NAME" > "$FOUNDRY_CHECKSUM"
+          fi
+          cat "$FOUNDRY_CHECKSUM"
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Generate SBOM (SPDX)
+        env:
+          FOUNDRY_SBOM: ${{ steps.artifacts.outputs.foundry_sbom }}
+          VERSION_NAME: ${{ (env.IS_NIGHTLY == 'true' && 'nightly') || needs.prepare.outputs.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          syft scan dir:. \
+            --source-name foundry \
+            --source-version "$VERSION_NAME" \
+            -o spdx-json="$FOUNDRY_SBOM"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -292,15 +324,37 @@ jobs:
           tar -czvf "foundry_man_${VERSION_NAME}.tar.gz" forge.1.gz cast.1.gz anvil.1.gz chisel.1.gz
           printf 'foundry_man=%s\n' "foundry_man_${VERSION_NAME}.tar.gz" >> "$GITHUB_OUTPUT"
 
-      - name: Binaries attestation
+      - name: Binaries and archive provenance attestation
         id: attestation
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-path: |
             ${{ env.anvil_bin_path }}
             ${{ env.cast_bin_path }}
             ${{ env.chisel_bin_path }}
             ${{ env.forge_bin_path }}
+            ${{ steps.artifacts.outputs.file_name }}
+
+      - name: Archive SBOM attestation
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-path: ${{ steps.artifacts.outputs.file_name }}
+          sbom-path: ${{ steps.artifacts.outputs.foundry_sbom }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+
+      - name: Sign archive with cosign (keyless)
+        env:
+          FILE_NAME: ${{ steps.artifacts.outputs.file_name }}
+          FOUNDRY_SIGNATURE: ${{ steps.artifacts.outputs.foundry_signature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign-blob \
+            --yes \
+            --bundle "$FOUNDRY_SIGNATURE" \
+            "$FILE_NAME"
 
       - name: Record attestation URL
         env:
@@ -321,11 +375,20 @@ jobs:
           TAG_NAME: ${{ needs.prepare.outputs.tag_name }}
           FILE_NAME: ${{ steps.artifacts.outputs.file_name }}
           FOUNDRY_ATTESTATION: ${{ steps.artifacts.outputs.foundry_attestation }}
+          FOUNDRY_SBOM: ${{ steps.artifacts.outputs.foundry_sbom }}
+          FOUNDRY_CHECKSUM: ${{ steps.artifacts.outputs.foundry_checksum }}
+          FOUNDRY_SIGNATURE: ${{ steps.artifacts.outputs.foundry_signature }}
           FOUNDRY_MAN: ${{ steps.man.outputs.foundry_man }}
         shell: bash
         run: |
           set -euo pipefail
-          files=("$FILE_NAME" "$FOUNDRY_ATTESTATION")
+          files=(
+            "$FILE_NAME"
+            "$FOUNDRY_ATTESTATION"
+            "$FOUNDRY_SBOM"
+            "$FOUNDRY_CHECKSUM"
+            "$FOUNDRY_SIGNATURE"
+          )
           if [[ -n "${FOUNDRY_MAN:-}" ]]; then
             files+=("$FOUNDRY_MAN")
           fi
