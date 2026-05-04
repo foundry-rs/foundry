@@ -72,8 +72,8 @@ impl AsDoc for CommentsRef<'_> {
                 writer.writeln_raw(format!(
                     "{}{}: {}",
                     if customs.len() == 1 { "" } else { "- " },
-                    &c.tag,
-                    &c.value
+                    c.tag,
+                    c.value
                 ))?;
                 writer.writeln()?;
             }

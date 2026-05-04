@@ -3,6 +3,12 @@ use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
 mod mixed_case;
 use mixed_case::{MIXED_CASE_FUNCTION, MIXED_CASE_VARIABLE};
 
+mod boolean_cst;
+use boolean_cst::BOOLEAN_CST;
+
+mod boolean_equal;
+use boolean_equal::BOOLEAN_EQUAL;
+
 mod pascal_case;
 use pascal_case::PASCAL_CASE_STRUCT;
 
@@ -24,7 +30,12 @@ use multi_contract_file::MULTI_CONTRACT_FILE;
 mod interface_naming;
 use interface_naming::{INTERFACE_FILE_NAMING, INTERFACE_NAMING};
 
+mod too_many_digits;
+use too_many_digits::TOO_MANY_DIGITS;
+
 register_lints!(
+    (BooleanCst, early, (BOOLEAN_CST)),
+    (BooleanEqual, early, (BOOLEAN_EQUAL)),
     (PascalCaseStruct, early, (PASCAL_CASE_STRUCT)),
     (MixedCaseVariable, early, (MIXED_CASE_VARIABLE)),
     (MixedCaseFunction, early, (MIXED_CASE_FUNCTION)),
@@ -34,4 +45,5 @@ register_lints!(
     (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE)),
     (MultiContractFile, early, (MULTI_CONTRACT_FILE)),
     (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING)),
+    (TooManyDigits, early, (TOO_MANY_DIGITS)),
 );

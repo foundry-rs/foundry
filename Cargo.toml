@@ -174,9 +174,6 @@ foundry-compilers.opt-level = 3
 serde_json.opt-level = 3
 serde.opt-level = 3
 
-foundry-solang-parser.opt-level = 3
-lalrpop-util.opt-level = 3
-
 solar-compiler.opt-level = 3
 solar-ast.opt-level = 3
 solar-data-structures.opt-level = 3
@@ -324,7 +321,7 @@ foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
 foundry-cli = { path = "crates/cli" }
 foundry-cli-markdown = { path = "crates/cli-markdown" }
 foundry-common = { path = "crates/common" }
-foundry-common-fmt = { path = "crates/common/fmt" }
+foundry-common-fmt = { path = "crates/common/fmt", default-features = false }
 foundry-config = { path = "crates/config" }
 foundry-debugger = { path = "crates/debugger" }
 foundry-evm = { path = "crates/evm/evm" }
@@ -349,7 +346,6 @@ foundry-compilers = { version = "0.20.0", default-features = false, features = [
     "svm-solc",
 ] }
 foundry-fork-db = { version = "0.26.0", features = ["zstd"] }
-solang-parser = { version = "=0.3.9", package = "foundry-solang-parser" }
 solar = { package = "solar-compiler", version = "=0.1.8", default-features = false }
 svm = { package = "svm-rs", version = "0.5", default-features = false, features = [
     "rustls",
