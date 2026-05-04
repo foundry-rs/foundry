@@ -779,8 +779,7 @@ flag to set your key via:
                 )?;
                 let address = wallet.address();
                 let success_message = format!(
-                    "`{}` keystore was saved successfully. Address: {:?}",
-                    &account_name, address,
+                    "`{account_name}` keystore was saved successfully. Address: {address:?}",
                 );
                 sh_println!("{}", success_message.green())?;
             }
@@ -944,10 +943,9 @@ flag to set your key via:
                     Some(&account_name),
                 )?;
 
+                let address = wallet.address();
                 let success_message = format!(
-                    "Password for keystore `{}` was changed successfully. Address: {:?}",
-                    &account_name,
-                    wallet.address(),
+                    "Password for keystore `{account_name}` was changed successfully. Address: {address:?}",
                 );
                 sh_println!("{}", success_message.green())?;
             }
