@@ -21,13 +21,13 @@ pub fn write_site_files(
 ) -> eyre::Result<()> {
     fs::create_dir_all(out_dir)?;
 
-    fs::write(out_dir.join(".gitignore"), "dist/\ncache/\nnode_modules/\n")?;
+    fs::write(out_dir.join(".gitignore"), "dist\nnode_modules\n")?;
     fs::write(out_dir.join("package.json"), package_json())?;
     fs::write(out_dir.join("vocs.config.ts"), vocs_config(config, pages))?;
 
     // Homepage: config.homepage -> <sources>/README.md -> <root>/README.md -> empty.
     let homepage_content = find_homepage(config, root);
-    let index_path = out_dir.join("pages").join("index.mdx");
+    let index_path = out_dir.join("src").join("pages").join("index.mdx");
     if let Some(parent) = index_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -44,11 +44,8 @@ fn vocs_config(config: &DocConfig, pages: &[PathBuf]) -> String {
     let sidebar = build_sidebar(pages);
 
     let mut ts = String::new();
-    ts.push_str("import { defineConfig } from 'vocs'\n\n");
+    ts.push_str("import { defineConfig } from 'vocs/config'\n\n");
     ts.push_str("export default defineConfig({\n");
-    // The config sits next to `pages/` rather than at a project root with a
-    // `docs/` subdirectory (vocs' default), so override `rootDir` accordingly.
-    ts.push_str("  rootDir: '.',\n");
     ts.push_str(&format!("  title: {},\n", json_str(title)));
 
     if let Some(repo) = &config.repository {
@@ -57,6 +54,22 @@ fn vocs_config(config: &DocConfig, pages: &[PathBuf]) -> String {
             repo.trim_end_matches('/')
         ));
     }
+
+    // Pin the shiki language bundle. Vocs otherwise scans every MDX page and
+    // eagerly loads any code-fence language it finds, which fails for fences
+    // like ```ml (OCaml, used by some READMEs as an ASCII tree). With an
+    // explicit `langs` list, unknown fences fall back to `plaintext` instead
+    // of crashing the highlighter at startup.
+    ts.push_str("  codeHighlight: {\n");
+    ts.push_str("    fallbackLanguage: 'plaintext',\n");
+    ts.push_str("    langs: [\n");
+    ts.push_str(
+        "      'ansi', 'bash', 'diff', 'html', 'js', 'json', 'jsx',\n      \
+         'markdown', 'md', 'mdx', 'plaintext', 'rust', 'sol', 'solidity',\n      \
+         'toml', 'ts', 'tsx', 'yaml', 'zsh',\n",
+    );
+    ts.push_str("    ],\n");
+    ts.push_str("  },\n");
 
     ts.push_str("  sidebar: [\n");
     ts.push_str(&sidebar);
@@ -210,12 +223,16 @@ fn find_homepage(config: &DocConfig, root: &Path) -> String {
 
 const fn package_json() -> &'static str {
     r#"{
-  "devDependencies": {
-    "vocs": "^1"
-  },
   "scripts": {
     "dev": "vocs dev",
-    "build": "vocs build"
+    "build": "vocs build",
+    "preview": "vocs preview"
+  },
+  "dependencies": {
+    "react": "^19",
+    "react-dom": "^19",
+    "vocs": "https://pkg.pr.new/wevm/vocs@next",
+    "waku": "^1.0.0-alpha.4"
   }
 }
 "#

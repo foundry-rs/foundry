@@ -61,7 +61,7 @@ impl DocBuilder {
     /// Run the documentation pipeline.
     pub fn build(self, compiler: &mut Compiler) -> Result<()> {
         let out = self.out_dir();
-        let pages_dir = out.join("pages");
+        let pages_dir = out.join("src").join("pages");
 
         let ignored = expand_globs(&self.root, self.config.ignore.iter()).unwrap_or_default();
 

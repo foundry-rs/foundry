@@ -84,8 +84,10 @@ impl DocArgs {
 
         builder.build(compiler)?;
 
+        // TODO: `--legacy-peer-deps` flag is required waku dependency conflict resolution.
+        // Remove this flag once vocs v2 and waku v1 are released.
         sh_println!(
-            "\nDocumentation written to: {}\n\nTo preview:\n  cd {}\n  npm install\n  npm run dev",
+            "\nDocumentation written to: {}\n\nTo preview:\n  cd {}\n  npm install --legacy-peer-deps\n  npm run dev",
             out_dir.display(),
             out_dir.display(),
         )?;
