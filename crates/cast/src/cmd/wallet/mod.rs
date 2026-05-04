@@ -886,8 +886,7 @@ flag to set your key via:
 
                 let private_key = B256::from_slice(&wallet.credential().to_bytes());
 
-                let success_message =
-                    format!("{account_name}'s private key is: {private_key}");
+                let success_message = format!("{account_name}'s private key is: {private_key}");
 
                 sh_println!("{}", success_message.green())?;
             }
