@@ -54,3 +54,19 @@ LL │     uint256 middleZeros = 123000007;
    │
    ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#too-many-digits
 
+note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+   ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
+   │
+LL │     uint256 badGrouping = 1_000000;
+   │                           ━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#too-many-digits
+
+note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+   ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
+   │
+LL │     uint256 badGrouping2 = 1_00000;
+   │                            ━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#too-many-digits
+

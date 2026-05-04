@@ -28,6 +28,12 @@ contract TooManyDigits {
     // Zero-run in the middle (not just trailing).
     uint256 middleZeros = 123000007; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
 
+    // Underscores that don't actually break up the zero run.
+    uint256 badGrouping = 1_000000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+
+    // Underscore right after a single digit, leaving a 5-zero group.
+    uint256 badGrouping2 = 1_00000; //~NOTE: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+
     // SHOULD PASS:
 
     // Boundary: 4 consecutive zeros (one short of the threshold).

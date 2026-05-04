@@ -41,12 +41,8 @@ impl<'ast> EarlyLintPass<'ast> for TooManyDigits {
             return;
         }
 
-        // Skip if the user already used digit separators (`1_000_000`).
-        if s.contains('_') {
-            return;
-        }
-
-        // Heuristic: 5+ consecutive zeros in the as-written decimal literal.
+        // 5+ consecutive zeros in the literal as written. Underscores are
+        // preserved, so `1_000_000` passes while `1_000000` is flagged.
         if s.contains("00000") {
             ctx.emit(&TOO_MANY_DIGITS, lit.span);
         }
