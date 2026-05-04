@@ -727,7 +727,11 @@ mod tests {
             warp: warp.map(U256::from),
             roll: roll.map(U256::from),
             sender: Address::ZERO,
-            call_details: CallDetails { target: Address::ZERO, calldata: Bytes::new() },
+            call_details: CallDetails {
+                target: Address::ZERO,
+                calldata: Bytes::new(),
+                value: None,
+            },
         }
     }
 

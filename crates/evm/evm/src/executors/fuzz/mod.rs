@@ -263,7 +263,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 warp: None,
                 roll: None,
                 sender: self.sender,
-                call_details: CallDetails { target: address, calldata: calldata.clone() },
+                call_details: CallDetails {
+                    target: address,
+                    calldata: calldata.clone(),
+                    value: None,
+                },
             }],
             new_coverage,
             None,
@@ -427,7 +431,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             warp: None,
             roll: None,
             sender: Default::default(),
-            call_details: CallDetails { target: Default::default(), calldata },
+            call_details: CallDetails { target: Default::default(), calldata, value: None },
         });
 
         let mut corpus = WorkerCorpus::new(

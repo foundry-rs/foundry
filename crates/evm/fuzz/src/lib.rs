@@ -56,6 +56,10 @@ pub struct CallDetails {
     pub target: Address,
     /// The data of the transaction.
     pub calldata: Bytes,
+    /// Ether value to send with the transaction.
+    /// Uses `#[serde(default)]` for backwards compatibility with existing corpus files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<U256>,
 }
 
 impl BasicTxDetails {
@@ -86,6 +90,9 @@ pub struct BaseCounterExample {
     pub addr: Option<Address>,
     /// The data to provide.
     pub calldata: Bytes,
+    /// Ether value sent with the call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<U256>,
     /// Contract name if it exists.
     pub contract_name: Option<String>,
     /// Function name if it exists.
@@ -115,6 +122,7 @@ impl BaseCounterExample {
         let sender = tx.sender;
         let target = tx.call_details.target;
         let bytes = &tx.call_details.calldata;
+        let value = tx.call_details.value;
         let warp = tx.warp;
         let roll = tx.roll;
         if let Some((name, abi)) = &contracts.get(&target)
@@ -128,6 +136,7 @@ impl BaseCounterExample {
                     sender: Some(sender),
                     addr: Some(target),
                     calldata: bytes.clone(),
+                    value,
                     contract_name: Some(name.clone()),
                     func_name: Some(func.name.clone()),
                     signature: Some(func.signature()),
@@ -147,6 +156,7 @@ impl BaseCounterExample {
             sender: Some(sender),
             addr: Some(target),
             calldata: bytes.clone(),
+            value,
             contract_name: None,
             func_name: None,
             signature: None,
@@ -169,6 +179,7 @@ impl BaseCounterExample {
             sender: None,
             addr: None,
             calldata: bytes,
+            value: None,
             contract_name: None,
             func_name: None,
             signature: None,
@@ -194,6 +205,20 @@ impl fmt::Display for BaseCounterExample {
                 writeln!(f, "\t\tvm.roll(block.number + {roll});")?;
             }
             writeln!(f, "\t\tvm.prank({sender});")?;
+            // Use value syntax for payable calls.
+            if let Some(value) = &self.value
+                && !value.is_zero()
+            {
+                write!(
+                    f,
+                    "\t\t{}({}).{}{{value: {value}}}({});",
+                    contract.split_once(':').map_or(contract.as_str(), |(_, contract)| contract),
+                    address,
+                    func_name,
+                    args
+                )?;
+                return Ok(());
+            }
             write!(
                 f,
                 "\t\t{}({}).{}({});",
@@ -224,6 +249,13 @@ impl fmt::Display for BaseCounterExample {
         }
         if let Some(roll) = &self.roll {
             write!(f, "roll={roll} ")?;
+        }
+
+        // Display value if non-zero (for payable calls).
+        if let Some(value) = &self.value
+            && !value.is_zero()
+        {
+            write!(f, "value={value} ")?;
         }
 
         if let Some(sig) = &self.signature {

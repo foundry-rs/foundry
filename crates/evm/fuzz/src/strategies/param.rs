@@ -512,6 +512,53 @@ fn mutate_random_array_value(
     *elem = new_val;
 }
 
+/// 0.001 ETH in wei.
+const MILLI_ETH: u64 = 1_000_000_000_000_000;
+/// 1 ETH in wei.
+const ONE_ETH: u64 = 1_000_000_000_000_000_000;
+
+/// Returns a proptest strategy for generating random msg.value for payable functions.
+/// Biased towards smaller values to avoid balance issues.
+///
+/// Distribution:
+/// - 85% chance: no value (None)
+/// - 10% chance: small values (0-1000 wei)
+/// - 4% chance: medium values (up to 0.001 ETH)
+/// - 1% chance: larger values (up to 1 ETH)
+pub fn fuzz_msg_value() -> impl Strategy<Value = Option<U256>> {
+    proptest::prop_oneof![
+        // 85% chance: no value
+        85 => proptest::strategy::Just(None),
+        // 10% chance: small values (0-1000 wei)
+        10 => (0u64..=1000).prop_map(|v| Some(U256::from(v))),
+        // 4% chance: medium values (up to 0.001 ETH)
+        4 => (0u64..=MILLI_ETH).prop_map(|v| Some(U256::from(v))),
+        // 1% chance: larger values (up to 1 ETH)
+        1 => (0u64..=ONE_ETH).prop_map(|v| Some(U256::from(v))),
+    ]
+}
+
+/// Generates a random msg.value for payable functions using TestRunner's RNG.
+/// Biased towards smaller values to avoid balance issues.
+///
+/// Distribution:
+/// - 60% chance: small values (0-1000 wei)
+/// - 30% chance: medium values (up to 0.001 ETH)
+/// - 9% chance: larger values (up to 1 ETH)
+/// - 1% chance: max value (edge case)
+pub fn generate_msg_value(test_runner: &mut TestRunner) -> U256 {
+    match test_runner.rng().random_range(0..=10) {
+        // Small values (0-1000 wei) - 60% chance.
+        0..=5 => U256::from(test_runner.rng().random_range(0u64..=1000)),
+        // Medium values (up to 0.001 ETH) - 30% chance.
+        6..=8 => U256::from(test_runner.rng().random_range(0u64..=MILLI_ETH)),
+        // Larger values (up to 1 ETH) - 9% chance.
+        9 => U256::from(test_runner.rng().random_range(0u64..=ONE_ETH)),
+        // Edge case (max) - 1% chance.
+        _ => U256::MAX,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
