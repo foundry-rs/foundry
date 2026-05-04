@@ -144,6 +144,14 @@ pub struct ScriptArgs {
     #[arg(long = "tempo.fee-token", value_parser = parse_fee_token_address)]
     pub fee_token: Option<Address>,
 
+    /// Opt into TIP-1009 expiring-nonce mode with a validity window.
+    ///
+    /// Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now + seconds on every
+    /// broadcast transaction. The transaction (or batch) must be mined before the deadline or it
+    /// becomes permanently invalid, preventing late-landing replays. Maximum value is 30 seconds.
+    #[arg(long = "tempo.expires", value_name = "SECONDS", value_parser = parse_expires_seconds_script)]
+    pub expires: Option<u64>,
+
     /// Skips on-chain simulation.
     #[arg(long)]
     pub skip_simulation: bool,
@@ -251,8 +259,8 @@ impl ScriptArgs {
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
-        if self.fee_token.is_some() {
-            // If fee token is set directly select tempo
+        if self.fee_token.is_some() || self.expires.is_some() {
+            // If fee token or expiry is set directly select tempo
             evm_opts.networks = NetworkConfigs::with_tempo();
         } else {
             // Auto-detect network from fork chain ID when not explicitly configured.
@@ -291,7 +299,16 @@ impl ScriptArgs {
             self.fee_token
         };
 
-        let script_config = ScriptConfig::new(config, evm_opts, self.batch, fee_token).await?;
+        let expires_at = self.expires.map(|secs| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time went backwards")
+                .as_secs()
+                + secs
+        });
+
+        let script_config =
+            ScriptConfig::new(config, evm_opts, self.batch, fee_token, expires_at).await?;
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
 
@@ -710,6 +727,8 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub batch: bool,
     /// Tempo fee token address for paying transaction fees.
     pub fee_token: Option<Address>,
+    /// TIP-1009 expiring-nonce valid_before unix timestamp, derived from `--tempo.expires`.
+    pub expires_at: Option<u64>,
 }
 
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
@@ -718,6 +737,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         evm_opts: EvmOpts,
         batch: bool,
         fee_token: Option<Address>,
+        expires_at: Option<u64>,
     ) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
             next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
@@ -726,7 +746,15 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             1
         };
 
-        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default(), batch, fee_token })
+        Ok(Self {
+            config,
+            evm_opts,
+            sender_nonce,
+            backends: HashMap::default(),
+            batch,
+            fee_token,
+            expires_at,
+        })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
@@ -817,6 +845,16 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
         Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
     }
+}
+
+fn parse_expires_seconds_script(s: &str) -> Result<u64, String> {
+    let secs: u64 = s
+        .parse()
+        .map_err(|_| format!("invalid value '{s}': expected an integer number of seconds"))?;
+    if secs > 30 {
+        return Err(format!("expires must be at most 30 seconds (got {secs})"));
+    }
+    Ok(secs)
 }
 
 #[cfg(test)]
