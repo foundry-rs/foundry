@@ -153,6 +153,26 @@ assembly {
     repl.expect("[0x00:0x20]");
 });
 
+// Assembly as the final statement with a return — exercises the path where both
+// `first_yul_return_span` and `trailing_assembly_last_stmt_span` resolve to the same `return(...)`
+// span (no subsequent Solidity statement after the assembly block).
+repl_test!(assembly_return_final, |repl| {
+    repl.sendln("uint x = 0xbeef;");
+    repl.sendln("assembly { mstore(0x0, sload(0)) return(0x0, 0x20) }");
+    repl.sendln("!md");
+    repl.expect("[0x00:0x20]");
+});
+
+// Assembly block without a `return(...)` call as an intermediate statement, exercises
+// `first_yul_return_span` returning `None` while a subsequent Solidity statement is still evaluated
+// correctly.
+repl_test!(assembly_no_return_intermediate, |repl| {
+    repl.sendln("uint x = 1;");
+    repl.sendln("assembly { x := add(x, 1) }");
+    repl.sendln("x");
+    repl.expect("Decimal: 2");
+});
+
 // Issue #5051, #8978: Test EVM version normalization.
 repl_test!(flaky_evm_version_normalization, "--use 0.7.6 --evm-version london", |repl| {
     repl.sendln("uint x;\nx");

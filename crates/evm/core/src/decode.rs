@@ -223,8 +223,8 @@ fn trimmed_hex(s: &[u8]) -> String {
     } else {
         format!(
             "{}…{} ({} bytes)",
-            &hex::encode(&s[..n / 2]),
-            &hex::encode(&s[s.len() - n / 2..]),
+            hex::encode(&s[..n / 2]),
+            hex::encode(&s[s.len() - n / 2..]),
             s.len(),
         )
     }
