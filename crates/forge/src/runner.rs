@@ -1072,7 +1072,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.cr.name,
             &func.name,
             fuzz_config.timeout,
-            fuzz_config.runs,
+            if fuzz_config.run.is_some() { 1 } else { fuzz_config.runs },
         );
 
         let state = self.build_fuzz_state(false);
