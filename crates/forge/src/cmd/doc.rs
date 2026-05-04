@@ -2,15 +2,12 @@
 
 use crate::cmd::watch::WatchArgs;
 use clap::{Parser, ValueHint};
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use forge_doc::DocBuilder;
 use foundry_cli::{opts::GH_REPO_PREFIX_REGEX, utils::Git};
 use foundry_common::compile::ProjectCompiler;
 use foundry_config::{Config, load_config_with_root};
-use std::{
-    path::PathBuf,
-    process::{Command, Stdio},
-};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, Parser)]
 pub struct DocArgs {
@@ -23,17 +20,12 @@ pub struct DocArgs {
 
     /// The doc's output path.
     ///
-    /// By default, it is the `docs/` in project root.
+    /// By default, it is the `docs/` directory in the project root.
+    /// The directory is created if it does not exist, and contains a
+    /// ready-to-use [vocs](https://vocs.dev) site scaffold alongside the
+    /// generated MDX pages.
     #[arg(long, short, value_hint = ValueHint::DirPath, value_name = "PATH")]
     out: Option<PathBuf>,
-
-    /// Build the vocs site from the generated MDX files.
-    #[arg(long, short)]
-    build: bool,
-
-    /// Serve the documentation after generating it (runs `npm run dev`).
-    #[arg(long, short)]
-    serve: bool,
 
     /// Document external library sources as well as the project's own sources.
     #[arg(long, short)]
@@ -46,20 +38,6 @@ pub struct DocArgs {
     #[arg(long, value_name = "PATH", num_args(0..=1))]
     deployments: Option<Option<PathBuf>>,
 
-    // ── Serve options ─────────────────────────────────────────────────────────
-    /// Open the documentation in a browser after serving.
-    #[arg(long, requires = "serve", help_heading = "Serve options")]
-    open: bool,
-
-    /// Hostname to bind the documentation server to.
-    #[arg(long, requires = "serve", value_name = "HOSTNAME", help_heading = "Serve options")]
-    hostname: Option<String>,
-
-    /// Port to bind the documentation server to.
-    #[arg(long, short, requires = "serve", value_name = "PORT", help_heading = "Serve options")]
-    port: Option<usize>,
-
-    // ── Watch options (via WatchArgs) ─────────────────────────────────────────
     #[command(flatten)]
     pub watch: WatchArgs,
 }
@@ -98,23 +76,19 @@ impl DocArgs {
             project.paths.libraries,
             self.include_libraries,
         );
-        builder.should_build = self.build;
         builder.commit = commit;
-        builder.deployments = self.deployments.clone();
+        builder.deployments = self.deployments;
         builder.config = doc_cfg.clone();
 
         let out_dir = if doc_cfg.out.is_absolute() { doc_cfg.out } else { root.join(&doc_cfg.out) };
 
         builder.build(compiler)?;
 
-        if self.serve {
-            run_vocs_dev(
-                &out_dir,
-                self.hostname.as_deref().unwrap_or("localhost"),
-                self.port.unwrap_or(3000),
-                self.open,
-            )?;
-        }
+        sh_println!(
+            "\nDocumentation written to: {}\n\nTo preview:\n  cd {}\n  npm install\n  npm run dev",
+            out_dir.display(),
+            out_dir.display(),
+        )?;
 
         Ok(())
     }
@@ -127,26 +101,4 @@ impl DocArgs {
     pub fn config(&self) -> Result<Config> {
         load_config_with_root(self.root.as_deref())
     }
-}
-
-fn run_vocs_dev(out_dir: &std::path::Path, hostname: &str, port: usize, open: bool) -> Result<()> {
-    sh_println!("Serving on: http://{hostname}:{port}")?;
-    let mut cmd = Command::new("npm");
-    cmd.args(["run", "dev", "--", "--host"])
-        .arg(hostname)
-        .arg("--port")
-        .arg(port.to_string())
-        .current_dir(out_dir)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    if open {
-        cmd.arg("--open");
-    }
-    let status = cmd
-        .status()
-        .wrap_err("failed to spawn `npm run dev`; ensure Node.js / npm is installed and on PATH")?;
-    if !status.success() {
-        eyre::bail!("`npm run dev` exited with status {status}");
-    }
-    Ok(())
 }

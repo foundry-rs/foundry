@@ -2,17 +2,12 @@ use crate::{
     extras::{Deployment, git_source_url, read_deployments},
     hir_ext, render, vocs,
 };
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
 use foundry_config::{DocConfig, filter::expand_globs};
 use rayon::prelude::*;
 use solar::sema::Compiler;
-use std::{
-    collections::HashMap,
-    fs,
-    path::PathBuf,
-    process::{Command, Stdio},
-};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 /// Build Solidity documentation for a project from natspec comments using [`solar`].
 #[derive(Debug)]
@@ -25,8 +20,6 @@ pub struct DocBuilder {
     pub libraries: Vec<PathBuf>,
     /// Whether to also document files coming from external libraries.
     pub include_libraries: bool,
-    /// Whether to invoke `vocs build` after generating the MDX files.
-    pub should_build: bool,
     /// Optional commit hash (HEAD) used when building Git Source links.
     pub commit: Option<String>,
     /// Optional path to the deployments directory (relative to `root`).
@@ -50,7 +43,6 @@ impl DocBuilder {
             sources,
             libraries,
             include_libraries,
-            should_build: false,
             commit: None,
             deployments: None,
             config: DocConfig::default(),
@@ -208,52 +200,6 @@ impl DocBuilder {
         vocs::write_site_files(&out, &self.config, &all_pages, &self.root)?;
         info!("wrote vocs site files to {}", out.display());
 
-        // Ensure npm dependencies are installed before building or serving.
-        run_npm_install(&out)?;
-
-        if self.should_build {
-            run_vocs_build(&out)?;
-        }
-
         Ok(())
     }
-}
-
-// ── npm install ───────────────────────────────────────────────────────────────
-
-fn run_npm_install(out_dir: &std::path::Path) -> Result<()> {
-    if out_dir.join("node_modules/vocs").exists() {
-        return Ok(());
-    }
-    info!("running `npm install` in {}", out_dir.display());
-    let status = Command::new("npm")
-        .args(["install", "--prefer-offline", "--loglevel=warn"])
-        .current_dir(out_dir)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .wrap_err("failed to spawn `npm install`; ensure Node.js / npm is installed and on PATH")?;
-    if !status.success() {
-        eyre::bail!("`npm install` exited with status {status}");
-    }
-    Ok(())
-}
-
-// ── vocs build ────────────────────────────────────────────────────────────────
-
-fn run_vocs_build(out_dir: &std::path::Path) -> Result<()> {
-    info!("running `npm run build` in {}", out_dir.display());
-    let status = Command::new("npm")
-        .args(["run", "build"])
-        .current_dir(out_dir)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .wrap_err(
-            "failed to spawn `npm run build`; ensure Node.js / npm is installed and on PATH",
-        )?;
-    if !status.success() {
-        eyre::bail!("`npm run build` exited with status {status}");
-    }
-    Ok(())
 }
