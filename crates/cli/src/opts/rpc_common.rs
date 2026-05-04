@@ -17,10 +17,15 @@ use std::borrow::Cow;
 /// This struct holds fields that both [`super::RpcOpts`] (cast) and
 /// [`super::EvmArgs`] (forge/script) need, eliminating duplication and
 /// making the two structs composable.
+///
+/// Note: `ETH_RPC_URL` is intentionally **not** bound here as a clap env
+/// fallback; otherwise it would be inherited by `EvmArgs` and silently
+/// fork all `forge test` runs. Cast resolves `ETH_RPC_URL` explicitly
+/// at the call site (see [`super::RpcOpts::url`]).
 #[derive(Clone, Debug, Default, Serialize, Parser)]
 pub struct RpcCommonOpts {
     /// The RPC endpoint.
-    #[arg(short, long, visible_alias = "fork-url", env = "ETH_RPC_URL")]
+    #[arg(short, long, visible_alias = "fork-url", value_name = "URL")]
     #[serde(rename = "eth_rpc_url", skip_serializing_if = "Option::is_none")]
     pub rpc_url: Option<String>,
 

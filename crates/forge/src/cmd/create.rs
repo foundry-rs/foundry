@@ -398,7 +398,7 @@ impl CreateArgs {
 
         // If Tempo chain fee token must be set
         if chain.is_tempo() {
-            if let Some(fee_token) = self.tx.tempo.fee_token {
+            if let Some(fee_token) = self.tx.tempo.common.fee_token {
                 deployer.tx.set_fee_token(fee_token);
             } else {
                 deployer.tx.set_fee_token(DEFAULT_FEE_TOKEN);

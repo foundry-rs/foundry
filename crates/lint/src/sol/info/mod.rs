@@ -33,6 +33,9 @@ use interface_naming::{INTERFACE_FILE_NAMING, INTERFACE_NAMING};
 mod too_many_digits;
 use too_many_digits::TOO_MANY_DIGITS;
 
+mod pragma_directive;
+use pragma_directive::PRAGMA_INCONSISTENT;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -46,4 +49,5 @@ register_lints!(
     (MultiContractFile, early, (MULTI_CONTRACT_FILE)),
     (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING)),
     (TooManyDigits, early, (TOO_MANY_DIGITS)),
+    (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
 );
