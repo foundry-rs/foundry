@@ -36,9 +36,6 @@ pub(crate) fn is_known_tempo_endpoint(url: &url::Url) -> bool {
 /// Env var to override the device-code service URL (for tests / staging).
 const TEMPO_CLI_AUTH_URL_ENV: &str = "TEMPO_CLI_AUTH_URL";
 
-/// Env var to suppress browser opening (e.g. in CI).
-const TEMPO_NO_BROWSER_ENV: &str = "TEMPO_NO_BROWSER";
-
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -60,12 +57,15 @@ pub struct EnsureAccessKeyConfig {
     /// Total timeout for the authorization flow.
     pub(crate) timeout: Duration,
     /// If `true`, print the authorization URL to stderr instead of opening a
-    /// browser. Set automatically when `TEMPO_NO_BROWSER` or `CI` is set.
-    pub(crate) no_browser: bool,
+    /// browser.
+    pub no_browser: bool,
 }
 
 impl EnsureAccessKeyConfig {
     /// Build a config from the environment for the given chain.
+    ///
+    /// `no_browser` defaults to `true` under `CI`; callers (e.g. `cast tempo
+    /// login --no-browser`) may override it.
     pub fn from_env(chain_id: u64) -> Self {
         Self {
             chain_id,
@@ -73,7 +73,7 @@ impl EnsureAccessKeyConfig {
                 .unwrap_or_else(|_| DEFAULT_CLI_AUTH_URL.to_string()),
             poll_interval: DEFAULT_POLL_INTERVAL,
             timeout: DEFAULT_TIMEOUT,
-            no_browser: env::var_os(TEMPO_NO_BROWSER_ENV).is_some() || env::var_os("CI").is_some(),
+            no_browser: env::var_os("CI").is_some(),
         }
     }
 }

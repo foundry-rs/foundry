@@ -329,9 +329,10 @@ impl LazySessionProvider {
                  This endpoint requires payment via the Machine Payments Protocol (MPP).\n\n\
                  Authorize an access key against your Tempo wallet:\n\
                  \n  cast tempo login\
-                 \n\nIn headless environments (no browser), set TEMPO_NO_BROWSER=1 to print the \
-                 authorization URL instead of launching a browser.\n\
-                 \nSee https://docs.tempo.xyz for more information.",
+                 \n\nIn headless environments, pass `--no-browser` to print the authorization \
+                 URL instead of launching a browser:\n\
+                 \n  cast tempo login --no-browser\
+                 \n\nSee https://docs.tempo.xyz for more information.",
             ))
         })?;
 
@@ -917,8 +918,6 @@ where
 /// offered Tempo challenge resolves against a local key on `(chain, currency)`.
 /// The picked chain matches the first unresolved challenge — same iteration
 /// order [`MppHttpTransport::select_challenge`] uses.
-///
-/// `TEMPO_NO_BROWSER` only swaps the opener; it does not skip this flow.
 fn tempo_chain_needing_auth(url: &Url, resp: &reqwest::Response) -> Option<u64> {
     if !io::stderr().is_terminal() || env::var_os("CI").is_some() {
         return None;
