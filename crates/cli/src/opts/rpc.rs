@@ -97,11 +97,10 @@ impl RpcOpts {
 
     pub fn dict(&self) -> Dict {
         let mut dict = self.common.dict();
+        // `self.url(None)` already accounts for `flashbots` and the `ETH_RPC_URL` env var,
+        // so a single insert here covers both.
         if let Ok(Some(url)) = self.url(None) {
             dict.insert("eth_rpc_url".into(), url.into_owned().into());
-        }
-        if self.flashbots {
-            dict.insert("eth_rpc_url".into(), FLASHBOTS_URL.into());
         }
         if let Ok(Some(jwt)) = self.jwt(None) {
             dict.insert("eth_rpc_jwt".into(), jwt.into_owned().into());

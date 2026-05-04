@@ -577,6 +577,32 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
     }
 });
 
+// Regression test for <https://github.com/foundry-rs/foundry/issues/14538>:
+// the bare `ETH_RPC_URL` env var must NOT cause `forge` commands to set
+// `eth_rpc_url` (which would silently fork all `forge test` runs).
+// Only `--rpc-url`, `foundry.toml`, the `FOUNDRY_ETH_RPC_URL` env var, or
+// cheatcodes should configure forking.
+forgetest_init!(eth_rpc_url_env_does_not_set_fork_url, |prj, _cmd| {
+    prj.initialize_default_contracts();
+    let url = "http://127.0.0.1:8545";
+
+    let mut cmd = prj.forge_bin();
+    cmd.arg("config")
+        .arg("--root")
+        .arg(prj.root())
+        .arg("--json")
+        .env("ETH_RPC_URL", url)
+        // Make sure the figment-style env var is not set in the test environment.
+        .env_remove("FOUNDRY_ETH_RPC_URL");
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let config: Config = serde_json::from_str(stdout.as_ref()).unwrap();
+    assert_eq!(
+        config.eth_rpc_url, None,
+        "bare ETH_RPC_URL must not propagate to forge config (regression #14538)"
+    );
+});
+
 // checks that we can set various config values
 forgetest_init!(can_set_config_values, |prj, _cmd| {
     prj.initialize_default_contracts();
