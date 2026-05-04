@@ -738,7 +738,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         if !msg.is_empty() {
                             msg.push_str(", ");
                         }
-                        msg.push_str(&format!("{}", &corpus_manager.metrics));
+                        msg.push_str(&format!("{}", corpus_manager.metrics));
                     }
                     if broken > 0 {
                         if !msg.is_empty() {

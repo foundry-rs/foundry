@@ -913,7 +913,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 );
 
                 if let Some(ref progress) = progress {
-                    progress.set_prefix(format!("{}\n{warn}\n", &func.name));
+                    progress.set_prefix(format!("{}\n{warn}\n", func.name));
                 } else {
                     let _ = sh_warn!("{warn}");
                 }

@@ -711,7 +711,7 @@ impl<'sess> State<'sess, '_> {
                         // Merge the lines and let the wrapper handle breaking if needed
                         let merged_line = format!(
                             "{current_line} {next_content}",
-                            next_content = &next_line[prefix.len()..].trim_start()
+                            next_content = next_line[prefix.len()..].trim_start()
                         );
                         result.push(merged_line);
 
