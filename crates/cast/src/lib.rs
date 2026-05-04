@@ -246,7 +246,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {
-                s.push(format!("- address: {}", &al.address.to_checksum(None)));
+                s.push(format!("- address: {}", al.address.to_checksum(None)));
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {
