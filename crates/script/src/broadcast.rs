@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, sync::Arc, time::Duration};
+use std::{cmp::Ordering, num::NonZeroU64, sync::Arc, time::Duration};
 
 use crate::{
     ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
@@ -796,6 +796,8 @@ impl BundledState<TempoEvmNetwork> {
             },
             fee_token: self.script_config.fee_token,
             calls: calls.clone(),
+            nonce_key: self.script_config.expires_at.map(|_| alloy_primitives::U256::MAX),
+            valid_before: self.script_config.expires_at.and_then(NonZeroU64::new),
             ..Default::default()
         };
 
