@@ -28,8 +28,8 @@ use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
-    opts::{BuildOpts, EvmArgs, GlobalArgs},
-    utils::{LoadConfig, parse_fee_token_address},
+    opts::{BuildOpts, EvmArgs, GlobalArgs, TempoCommonOpts},
+    utils::LoadConfig,
 };
 use foundry_common::{
     CONTRACT_MAX_SIZE, ContractsByArtifact, SELECTOR_LEN,
@@ -140,17 +140,9 @@ pub struct ScriptArgs {
     #[arg(long, requires = "batch", default_value = "100")]
     pub batch_size: usize,
 
-    /// Tempo fee token address for paying transaction fees.
-    #[arg(long = "tempo.fee-token", value_parser = parse_fee_token_address)]
-    pub fee_token: Option<Address>,
-
-    /// Opt into TIP-1009 expiring-nonce mode with a validity window.
-    ///
-    /// Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now + seconds on every
-    /// broadcast transaction. The transaction (or batch) must be mined before the deadline or it
-    /// becomes permanently invalid, preventing late-landing replays. Maximum value is 30 seconds.
-    #[arg(long = "tempo.expires", value_name = "SECONDS", value_parser = parse_expires_seconds_script)]
-    pub expires: Option<u64>,
+    /// Tempo transaction options.
+    #[command(flatten)]
+    pub tempo: TempoCommonOpts,
 
     /// Skips on-chain simulation.
     #[arg(long)]
@@ -259,7 +251,7 @@ impl ScriptArgs {
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
-        if self.fee_token.is_some() || self.expires.is_some() {
+        if self.tempo.is_tempo() {
             // If fee token or expiry is set directly select tempo
             evm_opts.networks = NetworkConfigs::with_tempo();
         } else {
@@ -293,19 +285,13 @@ impl ScriptArgs {
             }
         }
 
-        let fee_token = if evm_opts.networks.is_tempo() && self.fee_token.is_none() {
+        let fee_token = if evm_opts.networks.is_tempo() && self.tempo.fee_token.is_none() {
             Some(PATH_USD_ADDRESS)
         } else {
-            self.fee_token
+            self.tempo.fee_token
         };
 
-        let expires_at = self.expires.map(|secs| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("time went backwards")
-                .as_secs()
-                + secs
-        });
+        let expires_at = self.tempo.expires_at();
 
         let script_config =
             ScriptConfig::new(config, evm_opts, self.batch, fee_token, expires_at).await?;
@@ -847,20 +833,11 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
     }
 }
 
-fn parse_expires_seconds_script(s: &str) -> Result<u64, String> {
-    let secs: u64 = s
-        .parse()
-        .map_err(|_| format!("invalid value '{s}': expected an integer number of seconds"))?;
-    if secs > 30 {
-        return Err(format!("expires must be at most 30 seconds (got {secs})"));
-    }
-    Ok(secs)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_network::Ethereum;
+    use alloy_primitives::address;
     use foundry_config::{NamedChain, UnresolvedEnvVarError};
     use std::fs;
     use tempfile::tempdir;
@@ -870,6 +847,32 @@ mod tests {
         let sig = "0x522bb704000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfFFb92266";
         let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--sig", sig]);
         assert_eq!(args.sig, sig);
+    }
+
+    #[test]
+    fn can_parse_shared_tempo_opts() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--tempo.fee-token",
+            "1",
+            "--tempo.expires",
+            "10",
+        ]);
+
+        assert_eq!(
+            args.tempo.fee_token,
+            Some(address!("0x20C0000000000000000000000000000000000001"))
+        );
+        assert_eq!(args.tempo.expires, Some(10));
+    }
+
+    #[test]
+    fn does_not_parse_unsupported_tempo_opts() {
+        assert!(
+            ScriptArgs::try_parse_from(["foundry-cli", "Contract.sol", "--tempo.nonce-key", "1"])
+                .is_err()
+        );
     }
 
     #[test]
