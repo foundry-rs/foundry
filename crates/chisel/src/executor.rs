@@ -2,10 +2,7 @@
 //!
 //! This module contains the execution logic for the [SessionSource].
 
-use crate::{
-    prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper},
-    source::IntermediateOutput,
-};
+use crate::prelude::{ChiselDispatcher, ChiselResult, ChiselRunner, SessionSource, SolidityHelper};
 use alloy_dyn_abi::{DynSolType, DynSolValue};
 use alloy_json_abi::EventParam;
 use alloy_primitives::{Address, B256, U256, hex};
@@ -15,7 +12,17 @@ use foundry_evm::{
     backend::Backend, decode::decode_console_logs, executors::ExecutorBuilder,
     inspectors::CheatsConfig, traces::TraceMode,
 };
-use solang_parser::pt;
+use solar::{
+    ast::{BinOpKind, ElementaryType, FunctionKind, LitKind, StateMutability, StrKind, UnOpKind},
+    interface::Symbol,
+    sema::{
+        hir::{
+            ContractId, Event, Expr, ExprKind, Function, ItemId, Res, StmtKind, Type as HirType,
+            TypeKind, Visibility,
+        },
+        ty::{Gcx, Ty, TyKind},
+    },
+};
 use std::ops::ControlFlow;
 use yansi::Paint;
 
@@ -86,8 +93,10 @@ impl SessionSource {
         if let Some(err) = err {
             let output = source_without_inspector.build()?;
 
-            let formatted_event =
-                output.enter(|output| output.get_event(input).map(format_event_definition));
+            let formatted_event = output.enter(|output| {
+                let gcx = output.gcx();
+                output.get_event(input).map(|eid| format_event_definition(gcx, gcx.hir.event(eid)))
+            });
             if let Some(formatted_event) = formatted_event {
                 return Ok((ControlFlow::Break(()), Some(formatted_event?)));
             }
@@ -122,30 +131,37 @@ impl SessionSource {
         // which was wrapped in `abi.encode`.
         let generated_output = source.build()?;
 
-        // If the expression is a variable declaration within the REPL contract, use its type;
-        // otherwise, attempt to infer the type.
-        let contract_expr = generated_output
-            .intermediate
-            .repl_contract_expressions
-            .get(input)
-            .or_else(|| source.infer_inner_expr_type());
+        // Inside the compiler closure, infer the DynSolType of the inspected expression and
+        // determine whether the REPL should continue.
+        let res_ty = generated_output.enter(|out| -> Option<(bool, DynSolType)> {
+            let gcx = out.gcx();
 
-        // If the current action is a function call, we get its return type
-        // otherwise it returns None
-        let function_call_return_type =
-            Type::get_function_return_type(contract_expr, &generated_output.intermediate);
-
-        let (contract_expr, ty) = if let Some(function_call_return_type) = function_call_return_type
-        {
-            (function_call_return_type.0, function_call_return_type.1)
-        } else {
-            match contract_expr.and_then(|e| {
-                Type::ethabi(e, Some(&generated_output.intermediate)).map(|ty| (e, ty))
-            }) {
-                Some(res) => res,
-                // this type was denied for inspection, continue
-                None => return Ok((ControlFlow::Continue(()), None)),
+            // Try direct lookup of `input` as a named variable in the REPL contract.
+            if let Some(direct_ty) = lookup_named_variable_type(gcx, input) {
+                return Some((false, direct_ty));
             }
+
+            // Otherwise, find the appended `bytes memory inspectoor = abi.encode(<input>);`
+            // and pull out the first call argument.
+            let block = out.run_func_body();
+            let last = block.last()?;
+            let StmtKind::DeclSingle(vid) = last.kind else { return None };
+            let var = gcx.hir.variable(vid);
+            let init = var.initializer?;
+            let ExprKind::Call(_callee, args, _) = &init.kind else { return None };
+            let inner_expr = args.exprs().next()?;
+
+            // If the call is `func()` returning a single value, prefer the function return type.
+            if let Some(ty) = get_function_return_type(gcx, inner_expr) {
+                return Some((should_continue(inner_expr), ty));
+            }
+
+            let ty = expr_to_dyn(gcx, inner_expr, true)?;
+            Some((should_continue(inner_expr), ty))
+        });
+
+        let Some((cont, ty)) = res_ty else {
+            return Ok((ControlFlow::Continue(()), None));
         };
 
         // the file compiled correctly, thus the last stack item must be the memory offset of
@@ -162,40 +178,8 @@ impl SessionSource {
             eyre::bail!("Failed to inspect last expression: could not retrieve data from memory")
         };
         let token = ty.abi_decode(data).wrap_err("Could not decode inspected values")?;
-        let c = if should_continue(contract_expr) {
-            ControlFlow::Continue(())
-        } else {
-            ControlFlow::Break(())
-        };
+        let c = if cont { ControlFlow::Continue(()) } else { ControlFlow::Break(()) };
         Ok((c, Some(format_token(token))))
-    }
-
-    /// Gracefully attempts to extract the type of the expression within the `abi.encode(...)`
-    /// call inserted by the inspect function.
-    ///
-    /// ### Takes
-    ///
-    /// A reference to a [SessionSource]
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, a [Type]
-    fn infer_inner_expr_type(&self) -> Option<&pt::Expression> {
-        let out = self.build().ok()?;
-        let run = out.run_func_body().ok()?.last();
-        match run {
-            Some(pt::Statement::VariableDefinition(
-                _,
-                _,
-                Some(pt::Expression::FunctionCall(_, _, args)),
-            )) => {
-                // We can safely unwrap the first expression because this function
-                // will only be called on a session source that has just had an
-                // `inspectoor` variable appended to it.
-                Some(args.first().unwrap())
-            }
-            _ => None,
-        }
     }
 
     async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
@@ -239,6 +223,51 @@ impl SessionSource {
 
         Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
+}
+
+/// Looks up `name` as a named variable in the REPL contract (state variables or run() locals)
+/// and returns its type as a [`DynSolType`].
+///
+/// Only top-level statements of `run()` are scanned. Variables declared inside nested blocks
+/// (`if`, `for`, `while`, `unchecked`, etc.) are not visible here; the caller falls back to
+/// the `inspectoor`-based path for those cases.
+fn lookup_named_variable_type(gcx: Gcx<'_>, name: &str) -> Option<DynSolType> {
+    let hir = &gcx.hir;
+    let repl = hir.contracts().find(|c| c.name.as_str() == "REPL")?;
+
+    // State variables.
+    for vid in repl.variables() {
+        let var = hir.variable(vid);
+        if var.name.map(|n| n.as_str() == name).unwrap_or(false) {
+            return solar_ty_to_dyn(gcx, gcx.type_of_item(vid.into()));
+        }
+    }
+
+    // Locals declared in run().
+    let run_fid = repl
+        .functions()
+        .find(|&f| hir.function(f).name.as_ref().map(|n| n.as_str()) == Some("run"))?;
+    let body = hir.function(run_fid).body?;
+    for stmt in body.stmts {
+        match stmt.kind {
+            StmtKind::DeclSingle(vid) => {
+                let var = hir.variable(vid);
+                if var.name.map(|n| n.as_str() == name).unwrap_or(false) {
+                    return solar_ty_to_dyn(gcx, gcx.type_of_item(vid.into()));
+                }
+            }
+            StmtKind::DeclMulti(vids, _) => {
+                for vid in vids.iter().flatten() {
+                    let var = hir.variable(*vid);
+                    if var.name.map(|n| n.as_str() == name).unwrap_or(false) {
+                        return solar_ty_to_dyn(gcx, gcx.type_of_item((*vid).into()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Formats a value into an inspection message
@@ -343,49 +372,37 @@ fn format_token(token: DynSolValue) -> String {
     }
 }
 
-/// Formats a [pt::EventDefinition] into an inspection message
-///
-/// ### Takes
-///
-/// An borrowed [pt::EventDefinition]
-///
-/// ### Returns
-///
-/// A formatted [pt::EventDefinition] for use in inspection output.
+/// Formats an [`Event`] into an inspection message.
 // TODO: Verbosity option
-fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<String> {
-    let event_name = event_definition.name.as_ref().expect("Event has a name").to_string();
-    let inputs = event_definition
-        .fields
+fn format_event_definition(gcx: Gcx<'_>, event: &Event<'_>) -> Result<String> {
+    let event_name = event.name.as_str().to_string();
+    let inputs = event
+        .parameters
         .iter()
-        .map(|param| {
-            let name = param
-                .name
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "<anonymous>".to_string());
-            let kind = Type::from_expression(&param.ty)
-                .and_then(Type::into_builtin)
+        .map(|&pid| {
+            let var = gcx.hir.variable(pid);
+            let name =
+                var.name.map(|n| n.as_str().to_string()).unwrap_or_else(|| "<anonymous>".into());
+            let kind = solar_ty_to_dyn(gcx, gcx.type_of_item(pid.into()))
                 .ok_or_else(|| eyre::eyre!("Invalid type in event {event_name}"))?;
             Ok(EventParam {
                 name,
                 ty: kind.to_string(),
                 components: vec![],
-                indexed: param.indexed,
+                indexed: var.indexed,
                 internal_type: None,
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let event =
-        alloy_json_abi::Event { name: event_name, inputs, anonymous: event_definition.anonymous };
+    let event = alloy_json_abi::Event { name: event_name, inputs, anonymous: event.anonymous };
 
     Ok(format!(
         "Type: {}\n├ Name: {}\n├ Signature: {:?}\n└ Selector: {:?}",
         "event".red(),
         SolidityHelper::new().highlight(&format!(
             "{}({})",
-            &event.name,
-            &event
+            event.name,
+            event
                 .inputs
                 .iter()
                 .map(|param| format!(
@@ -395,7 +412,7 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
                     if param.name.is_empty() {
                         String::default()
                     } else {
-                        format!(" {}", &param.name)
+                        format!(" {}", param.name)
                     },
                 ))
                 .collect::<Vec<_>>()
@@ -411,837 +428,716 @@ fn format_event_definition(event_definition: &pt::EventDefinition) -> Result<Str
 // [soli](https://github.com/jpopesculian/soli)
 // =============================================
 
-#[derive(Clone, Debug, PartialEq)]
-enum Type {
-    /// (type)
-    Builtin(DynSolType),
+/// Converts an [`Expr`] directly to a [`DynSolType`] for ABI inspection.
+///
+/// `lookup` controls whether user-defined type names are resolved via the HIR.
+fn expr_to_dyn(gcx: Gcx<'_>, expr: &Expr<'_>, lookup: bool) -> Option<DynSolType> {
+    match &expr.kind {
+        // Elementary type expression: `uint256`, `address`, etc.
+        ExprKind::Type(ty) => hir_ty_to_dyn(gcx, ty),
 
-    /// (type)
-    Array(Box<Self>),
+        // `type(T)`: only meaningful as the lhs of a member access.
+        ExprKind::TypeCall(_) => None,
 
-    /// (type, length)
-    FixedArray(Box<Self>, usize),
+        // Literals.
+        ExprKind::Lit(lit) => match &lit.kind {
+            LitKind::Address(_) => Some(DynSolType::Address),
+            LitKind::Bool(_) => Some(DynSolType::Bool),
+            LitKind::Str(kind, _, _) => match kind {
+                StrKind::Hex => Some(DynSolType::Bytes),
+                StrKind::Str | StrKind::Unicode => Some(DynSolType::String),
+            },
+            LitKind::Number(_) | LitKind::Rational(_) => Some(DynSolType::Uint(256)),
+            LitKind::Err(_) => None,
+        },
 
-    /// (type, index)
-    ArrayIndex(Box<Self>, Option<usize>),
+        // Resolved identifier: `foo`.
+        ExprKind::Ident(reses) => {
+            let res = reses.first()?;
+            match *res {
+                Res::Item(ItemId::Variable(vid)) => {
+                    solar_ty_to_dyn(gcx, gcx.type_of_item(vid.into()))
+                }
+                Res::Item(ItemId::Struct(sid)) => {
+                    // Struct reference used as a constructor produces a tuple of field types.
+                    Some(DynSolType::Tuple(
+                        gcx.struct_field_types(sid)
+                            .iter()
+                            .filter_map(|&t| solar_ty_to_dyn(gcx, t))
+                            .collect(),
+                    ))
+                }
+                // Other items and builtins: handled by enclosing Call/Member expressions.
+                _ => None,
+            }
+        }
 
-    /// (types)
-    Tuple(Vec<Option<Self>>),
+        // Index/access: `arr[i]`, `MyType[]`, `MyType[N]`.
+        ExprKind::Index(base, idx) => {
+            let base_ty = expr_to_dyn(gcx, base, lookup)?;
+            let num =
+                idx.and_then(|e| parse_number_literal(e)).and_then(|n| usize::try_from(n).ok());
+            match &base.kind {
+                // Type-level indexing builds an array type expression.
+                ExprKind::Type(_) | ExprKind::TypeCall(_) => {
+                    if let Some(n) = num {
+                        Some(DynSolType::FixedArray(Box::new(base_ty), n))
+                    } else {
+                        Some(DynSolType::Array(Box::new(base_ty)))
+                    }
+                }
+                // Runtime indexing returns the element type.
+                _ => match base_ty {
+                    DynSolType::Array(inner) | DynSolType::FixedArray(inner, _) => Some(*inner),
+                    DynSolType::Bytes | DynSolType::String | DynSolType::FixedBytes(_) => {
+                        Some(DynSolType::FixedBytes(1))
+                    }
+                    other => Some(other),
+                },
+            }
+        }
 
-    /// (name, params, returns)
-    Function(Box<Self>, Vec<Option<Self>>, Vec<Option<Self>>),
+        // Slice: same type as the base.
+        ExprKind::Slice(base, _, _) => expr_to_dyn(gcx, base, lookup),
 
-    /// (lhs, rhs)
-    Access(Box<Self>, String),
+        // Array literal `[a, b, c]`.
+        ExprKind::Array(values) => values
+            .first()
+            .and_then(|e| expr_to_dyn(gcx, e, lookup))
+            .map(|ty| DynSolType::FixedArray(Box::new(ty), values.len())),
 
-    /// (types)
-    Custom(Vec<String>),
+        // Tuple expression `(a, b, c)`.
+        ExprKind::Tuple(items) => Some(DynSolType::Tuple(
+            items.iter().filter_map(|opt| opt.and_then(|e| expr_to_dyn(gcx, e, lookup))).collect(),
+        )),
+
+        // Member access `lhs.member`.
+        ExprKind::Member(_, _) => resolve_member(gcx, expr, lookup),
+
+        // Function/constructor call.
+        ExprKind::Call(_, _, _) => resolve_call(gcx, expr, lookup),
+
+        // `new T`: produces a value of type T.
+        ExprKind::New(ty) => hir_ty_to_dyn(gcx, ty),
+
+        // `payable(addr)`.
+        ExprKind::Payable(_) => Some(DynSolType::Address),
+
+        // Ternary: prefer truthy branch's type, fall back to else branch.
+        ExprKind::Ternary(_, t, e) => {
+            expr_to_dyn(gcx, t, lookup).or_else(|| expr_to_dyn(gcx, e, lookup))
+        }
+
+        // Delete has no return type.
+        ExprKind::Delete(_) => None,
+
+        // Unary operations.
+        ExprKind::Unary(op, inner) => match op.kind {
+            UnOpKind::Neg => expr_to_dyn(gcx, inner, lookup).map(|ty| match ty {
+                DynSolType::Uint(n) => DynSolType::Int(n),
+                DynSolType::Int(n) => DynSolType::Uint(n),
+                x => x,
+            }),
+            UnOpKind::Not => Some(DynSolType::Bool),
+            UnOpKind::BitNot
+            | UnOpKind::PreInc
+            | UnOpKind::PreDec
+            | UnOpKind::PostInc
+            | UnOpKind::PostDec => expr_to_dyn(gcx, inner, lookup),
+        },
+
+        // Binary operations.
+        ExprKind::Binary(lhs, op, rhs) => match op.kind {
+            BinOpKind::Lt
+            | BinOpKind::Le
+            | BinOpKind::Gt
+            | BinOpKind::Ge
+            | BinOpKind::Eq
+            | BinOpKind::Ne
+            | BinOpKind::And
+            | BinOpKind::Or => Some(DynSolType::Bool),
+            BinOpKind::Add | BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div => {
+                match (expr_to_dyn(gcx, lhs, false), expr_to_dyn(gcx, rhs, false)) {
+                    (Some(DynSolType::Int(_) | DynSolType::Uint(_)), Some(DynSolType::Int(_)))
+                    | (Some(DynSolType::Int(_)), Some(DynSolType::Uint(_))) => {
+                        Some(DynSolType::Int(256))
+                    }
+                    _ => Some(DynSolType::Uint(256)),
+                }
+            }
+            BinOpKind::Rem
+            | BinOpKind::Pow
+            | BinOpKind::BitAnd
+            | BinOpKind::BitOr
+            | BinOpKind::BitXor
+            | BinOpKind::Shl
+            | BinOpKind::Shr
+            | BinOpKind::Sar => Some(DynSolType::Uint(256)),
+        },
+
+        // Assignments: type of the lhs.
+        ExprKind::Assign(lhs, _, _) => expr_to_dyn(gcx, lhs, lookup),
+
+        ExprKind::Err(_) => None,
+    }
 }
 
-impl Type {
-    /// Convert a [pt::Expression] to a [Type]
-    ///
-    /// ### Takes
-    ///
-    /// A reference to a [pt::Expression] to convert.
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, an owned [Type]
-    fn from_expression(expr: &pt::Expression) -> Option<Self> {
-        match expr {
-            pt::Expression::Type(_, ty) => Self::from_type(ty),
-
-            pt::Expression::Variable(ident) => Some(Self::Custom(vec![ident.name.clone()])),
-
-            // array
-            pt::Expression::ArraySubscript(_, expr, num) => {
-                // if num is Some then this is either an index operation (arr[<num>])
-                // or a FixedArray statement (new uint256[<num>])
-                Self::from_expression(expr).and_then(|ty| {
-                    let boxed = Box::new(ty);
-                    let num = num.as_deref().and_then(parse_number_literal).and_then(|n| {
-                        usize::try_from(n).ok()
-                    });
-                    match expr.as_ref() {
-                        // statement
-                        pt::Expression::Type(_, _) => {
-                            if let Some(num) = num {
-                                Some(Self::FixedArray(boxed, num))
-                            } else {
-                                Some(Self::Array(boxed))
-                            }
-                        }
-                        // index
-                        pt::Expression::Variable(_) => {
-                            Some(Self::ArrayIndex(boxed, num))
-                        }
-                        _ => None
-                    }
-                })
-            }
-            pt::Expression::ArrayLiteral(_, values) => {
-                values.first().and_then(Self::from_expression).map(|ty| {
-                    Self::FixedArray(Box::new(ty), values.len())
-                })
-            }
-
-            // tuple
-            pt::Expression::List(_, params) => Some(Self::Tuple(map_parameters(params))),
-
-            // <lhs>.<rhs>
-            pt::Expression::MemberAccess(_, lhs, rhs) => {
-                Self::from_expression(lhs).map(|lhs| {
-                    Self::Access(Box::new(lhs), rhs.name.clone())
-                })
-            }
-
-            // <inner>
-            pt::Expression::Parenthesis(_, inner) |         // (<inner>)
-            pt::Expression::New(_, inner) |                 // new <inner>
-            pt::Expression::UnaryPlus(_, inner) |           // +<inner>
-            // ops
-            pt::Expression::BitwiseNot(_, inner) |          // ~<inner>
-            pt::Expression::ArraySlice(_, inner, _, _) |    // <inner>[*start*:*end*]
-            // assign ops
-            pt::Expression::PreDecrement(_, inner) |        // --<inner>
-            pt::Expression::PostDecrement(_, inner) |       // <inner>--
-            pt::Expression::PreIncrement(_, inner) |        // ++<inner>
-            pt::Expression::PostIncrement(_, inner) |       // <inner>++
-            pt::Expression::Assign(_, inner, _) |           // <inner>   = ...
-            pt::Expression::AssignAdd(_, inner, _) |        // <inner>  += ...
-            pt::Expression::AssignSubtract(_, inner, _) |   // <inner>  -= ...
-            pt::Expression::AssignMultiply(_, inner, _) |   // <inner>  *= ...
-            pt::Expression::AssignDivide(_, inner, _) |     // <inner>  /= ...
-            pt::Expression::AssignModulo(_, inner, _) |     // <inner>  %= ...
-            pt::Expression::AssignAnd(_, inner, _) |        // <inner>  &= ...
-            pt::Expression::AssignOr(_, inner, _) |         // <inner>  |= ...
-            pt::Expression::AssignXor(_, inner, _) |        // <inner>  ^= ...
-            pt::Expression::AssignShiftLeft(_, inner, _) |  // <inner> <<= ...
-            pt::Expression::AssignShiftRight(_, inner, _)   // <inner> >>= ...
-            => Self::from_expression(inner),
-
-            // *condition* ? <if_true> : <if_false>
-            pt::Expression::ConditionalOperator(_, _, if_true, if_false) => {
-                Self::from_expression(if_true).or_else(|| Self::from_expression(if_false))
-            }
-
-            // address
-            pt::Expression::AddressLiteral(_, _) => Some(Self::Builtin(DynSolType::Address)),
-            pt::Expression::HexNumberLiteral(_, s, _) => {
-                match s.parse::<Address>() {
-                    Ok(addr) if *s == addr.to_checksum(None) => {
-                        Some(Self::Builtin(DynSolType::Address))
-                    }
-                    _ => Some(Self::Builtin(DynSolType::Uint(256))),
+/// Converts a [`HirType`] to a [`DynSolType`].
+fn hir_ty_to_dyn(gcx: Gcx<'_>, ty: &HirType<'_>) -> Option<DynSolType> {
+    match &ty.kind {
+        TypeKind::Elementary(et) => elementary_to_dyn(*et),
+        TypeKind::Array(arr) => {
+            let elem = hir_ty_to_dyn(gcx, &arr.element)?;
+            if let Some(size) = arr.size {
+                let n = parse_number_literal(size).and_then(|n| usize::try_from(n).ok());
+                if let Some(n) = n {
+                    Some(DynSolType::FixedArray(Box::new(elem), n))
+                } else {
+                    Some(DynSolType::Array(Box::new(elem)))
                 }
+            } else {
+                Some(DynSolType::Array(Box::new(elem)))
             }
-
-            // uint and int
-            // invert
-            pt::Expression::Negate(_, inner) => Self::from_expression(inner).map(Self::invert_int),
-
-            // int if either operand is int
-            // TODO: will need an update for Solidity v0.8.18 user defined operators:
-            // https://github.com/ethereum/solidity/issues/13718#issuecomment-1341058649
-            pt::Expression::Add(_, lhs, rhs) |
-            pt::Expression::Subtract(_, lhs, rhs) |
-            pt::Expression::Multiply(_, lhs, rhs) |
-            pt::Expression::Divide(_, lhs, rhs) => {
-                match (Self::ethabi(lhs, None), Self::ethabi(rhs, None)) {
-                    (Some(DynSolType::Int(_) | DynSolType::Uint(_)), Some(DynSolType::Int(_))) |
-(Some(DynSolType::Int(_)), Some(DynSolType::Uint(_))) => {
-                        Some(Self::Builtin(DynSolType::Int(256)))
-                    }
-                    _ => {
-                        Some(Self::Builtin(DynSolType::Uint(256)))
-                    }
-                }
-            }
-
-            // always assume uint
-            pt::Expression::Modulo(_, _, _) |
-            pt::Expression::Power(_, _, _) |
-            pt::Expression::BitwiseOr(_, _, _) |
-            pt::Expression::BitwiseAnd(_, _, _) |
-            pt::Expression::BitwiseXor(_, _, _) |
-            pt::Expression::ShiftRight(_, _, _) |
-            pt::Expression::ShiftLeft(_, _, _) |
-            pt::Expression::NumberLiteral(_, _, _, _) => Some(Self::Builtin(DynSolType::Uint(256))),
-
-            // TODO: Rational numbers
-            pt::Expression::RationalNumberLiteral(_, _, _, _, _) => {
-                Some(Self::Builtin(DynSolType::Uint(256)))
-            }
-
-            // bool
-            pt::Expression::BoolLiteral(_, _) |
-            pt::Expression::And(_, _, _) |
-            pt::Expression::Or(_, _, _) |
-            pt::Expression::Equal(_, _, _) |
-            pt::Expression::NotEqual(_, _, _) |
-            pt::Expression::Less(_, _, _) |
-            pt::Expression::LessEqual(_, _, _) |
-            pt::Expression::More(_, _, _) |
-            pt::Expression::MoreEqual(_, _, _) |
-            pt::Expression::Not(_, _) => Some(Self::Builtin(DynSolType::Bool)),
-
-            // string
-            pt::Expression::StringLiteral(_) => Some(Self::Builtin(DynSolType::String)),
-
-            // bytes
-            pt::Expression::HexLiteral(_) => Some(Self::Builtin(DynSolType::Bytes)),
-
-            // function
-            pt::Expression::FunctionCall(_, name, args) => {
-                Self::from_expression(name).map(|name| {
-                    let args = args.iter().map(Self::from_expression).collect();
-                    Self::Function(Box::new(name), args, vec![])
-                })
-            }
-            pt::Expression::NamedFunctionCall(_, name, args) => {
-                Self::from_expression(name).map(|name| {
-                    let args = args.iter().map(|arg| Self::from_expression(&arg.expr)).collect();
-                    Self::Function(Box::new(name), args, vec![])
-                })
-            }
-
-            // explicitly None
-            pt::Expression::Delete(_, _) | pt::Expression::FunctionCallBlock(_, _, _) => None,
         }
+        TypeKind::Function(f) => match f.returns.len() {
+            0 => None,
+            1 => {
+                let var = gcx.hir.variable(f.returns[0]);
+                hir_ty_to_dyn(gcx, &var.ty)
+            }
+            _ => Some(DynSolType::Tuple(
+                f.returns
+                    .iter()
+                    .filter_map(|&pid| hir_ty_to_dyn(gcx, &gcx.hir.variable(pid).ty))
+                    .collect(),
+            )),
+        },
+        TypeKind::Mapping(m) => hir_ty_to_dyn(gcx, &m.value),
+        TypeKind::Custom(item) => solar_ty_to_dyn(gcx, gcx.type_of_item(*item)),
+        TypeKind::Err(_) => None,
     }
+}
 
-    /// Convert a [pt::Type] to a [Type]
-    ///
-    /// ### Takes
-    ///
-    /// A reference to a [pt::Type] to convert.
-    ///
-    /// ### Returns
-    ///
-    /// Optionally, an owned [Type]
-    fn from_type(ty: &pt::Type) -> Option<Self> {
-        let ty = match ty {
-            pt::Type::Address | pt::Type::AddressPayable | pt::Type::Payable => {
-                Self::Builtin(DynSolType::Address)
-            }
-            pt::Type::Bool => Self::Builtin(DynSolType::Bool),
-            pt::Type::String => Self::Builtin(DynSolType::String),
-            pt::Type::Int(size) => Self::Builtin(DynSolType::Int(*size as usize)),
-            pt::Type::Uint(size) => Self::Builtin(DynSolType::Uint(*size as usize)),
-            pt::Type::Bytes(size) => Self::Builtin(DynSolType::FixedBytes(*size as usize)),
-            pt::Type::DynamicBytes => Self::Builtin(DynSolType::Bytes),
-            pt::Type::Mapping { value, .. } => Self::from_expression(value)?,
-            pt::Type::Function { params, returns, .. } => {
-                let params = map_parameters(params);
-                let returns = returns
-                    .as_ref()
-                    .map(|(returns, _)| map_parameters(returns))
-                    .unwrap_or_default();
-                Self::Function(
-                    Box::new(Self::Custom(vec!["__fn_type__".to_string()])),
-                    params,
-                    returns,
-                )
-            }
-            // TODO: Rational numbers
-            pt::Type::Rational => return None,
+/// Resolves a member-access expression (`lhs.member`) to its [`DynSolType`].
+///
+/// `expr` must be `ExprKind::Member`.
+fn resolve_member(gcx: Gcx<'_>, expr: &Expr<'_>, lookup: bool) -> Option<DynSolType> {
+    let ExprKind::Member(lhs, ident) = &expr.kind else { return None };
+    let member = ident.name;
+
+    // `type(T).member` — type introspection.
+    if let ExprKind::TypeCall(ty) = &lhs.kind {
+        return match member.as_str() {
+            "name" => Some(DynSolType::String),
+            "creationCode" | "runtimeCode" => Some(DynSolType::Bytes),
+            "interfaceId" => Some(DynSolType::FixedBytes(4)),
+            // Only valid for integer types; custom types (enums) fall back to Uint(256).
+            "min" | "max" => match &ty.kind {
+                TypeKind::Elementary(et) => elementary_to_dyn(*et),
+                _ => Some(DynSolType::Uint(256)),
+            },
+            _ => None,
         };
-        Some(ty)
     }
 
-    /// Handle special expressions like [global variables](https://docs.soliditylang.org/en/latest/cheatsheet.html#global-variables)
-    ///
-    /// See: <https://github.com/ethereum/solidity/blob/81268e336573721819e39fbb3fefbc9344ad176c/libsolidity/ast/Types.cpp#L4106>
-    fn map_special(self) -> Self {
-        if !matches!(self, Self::Function(_, _, _) | Self::Access(_, _) | Self::Custom(_)) {
-            return self;
-        }
+    // Built-in namespace identifier: `block.timestamp`, `msg.sender`, `abi.encode`, etc.
+    if let ExprKind::Ident(reses) = &lhs.kind
+        && let Some(Res::Builtin(b)) = reses.first()
+        && let Some(ty) = builtin_member(b.name().as_str(), member.as_str())
+    {
+        return Some(ty);
+    }
 
-        let mut types = Vec::with_capacity(5);
-        let mut args = None;
-        self.recurse(&mut types, &mut args);
+    // Elementary type used as a namespace: `address.balance`, `bytes.concat`, etc.
+    if let ExprKind::Type(ty) = &lhs.kind
+        && let TypeKind::Elementary(et) = &ty.kind
+    {
+        return match et {
+            ElementaryType::Address(_) => match member.as_str() {
+                "balance" => Some(DynSolType::Uint(256)),
+                "code" => Some(DynSolType::Bytes),
+                "codehash" => Some(DynSolType::FixedBytes(32)),
+                "send" => Some(DynSolType::Bool),
+                _ => None,
+            },
+            ElementaryType::Bytes => match member.as_str() {
+                "concat" => Some(DynSolType::Bytes),
+                _ => None,
+            },
+            ElementaryType::String => match member.as_str() {
+                "concat" => Some(DynSolType::String),
+                _ => None,
+            },
+            _ => None,
+        };
+    }
 
-        let len = types.len();
-        if len == 0 {
-            return self;
-        }
+    // Members on a resolved DynSolType (`.length`, `.pop`, `.selector`, `.address`).
+    if let Some(lhs_ty) = expr_to_dyn(gcx, lhs, lookup)
+        && let Some(ty) = dyn_member(&lhs_ty, member.as_str())
+    {
+        return Some(ty);
+    }
 
-        // Type members, like array, bytes etc
-        #[expect(clippy::single_match)]
-        #[allow(clippy::collapsible_match)]
-        match &self {
-            Self::Access(inner, access) => {
-                if let Some(ty) = inner.as_ref().clone().try_as_ethabi(None) {
-                    // Array / bytes members
-                    let ty = Self::Builtin(ty);
-                    match access.as_str() {
-                        "length" if ty.is_dynamic() || ty.is_array() || ty.is_fixed_bytes() => {
-                            return Self::Builtin(DynSolType::Uint(256));
+    // HIR lookup for user-defined type members.
+    if lookup && let Some(mut chain) = expr_name_chain(gcx, lhs) {
+        chain.insert(0, member);
+        return infer_custom_type(gcx, &mut chain, None).ok().flatten();
+    }
+
+    None
+}
+
+/// Returns the type of `builtin_ns.member` for built-in global namespaces.
+fn builtin_member(builtin: &str, member: &str) -> Option<DynSolType> {
+    match builtin {
+        "block" => match member {
+            "coinbase" => Some(DynSolType::Address),
+            "timestamp" | "difficulty" | "prevrandao" | "number" | "gaslimit" | "chainid"
+            | "basefee" | "blobbasefee" => Some(DynSolType::Uint(256)),
+            _ => None,
+        },
+        "msg" => match member {
+            "sender" => Some(DynSolType::Address),
+            "gas" | "value" => Some(DynSolType::Uint(256)),
+            "data" => Some(DynSolType::Bytes),
+            "sig" => Some(DynSolType::FixedBytes(4)),
+            _ => None,
+        },
+        "tx" => match member {
+            "origin" => Some(DynSolType::Address),
+            "gasprice" => Some(DynSolType::Uint(256)),
+            _ => None,
+        },
+        "address" => match member {
+            "balance" => Some(DynSolType::Uint(256)),
+            "code" => Some(DynSolType::Bytes),
+            "codehash" => Some(DynSolType::FixedBytes(32)),
+            "send" => Some(DynSolType::Bool),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Returns the type of `ty.member` for a known [`DynSolType`].
+fn dyn_member(ty: &DynSolType, member: &str) -> Option<DynSolType> {
+    match member {
+        "length" => match ty {
+            DynSolType::Array(_)
+            | DynSolType::FixedArray(_, _)
+            | DynSolType::Bytes
+            | DynSolType::String
+            | DynSolType::FixedBytes(_) => Some(DynSolType::Uint(256)),
+            _ => None,
+        },
+        "pop" => match ty {
+            DynSolType::Array(inner) => Some(*inner.clone()),
+            _ => None,
+        },
+        // Address members.
+        "balance" => match ty {
+            DynSolType::Address => Some(DynSolType::Uint(256)),
+            _ => None,
+        },
+        "code" => match ty {
+            DynSolType::Address => Some(DynSolType::Bytes),
+            _ => None,
+        },
+        "codehash" => match ty {
+            DynSolType::Address => Some(DynSolType::FixedBytes(32)),
+            _ => None,
+        },
+        "send" => match ty {
+            DynSolType::Address => Some(DynSolType::Bool),
+            _ => None,
+        },
+        // External function members.
+        "selector" => Some(DynSolType::FixedBytes(4)),
+        "address" => Some(DynSolType::Address),
+        _ => None,
+    }
+}
+
+/// Resolves a call expression to its return [`DynSolType`].
+///
+/// `expr` must be `ExprKind::Call`.
+fn resolve_call(gcx: Gcx<'_>, expr: &Expr<'_>, lookup: bool) -> Option<DynSolType> {
+    let ExprKind::Call(callee, args, _named) = &expr.kind else { return None };
+
+    // Type cast: `uint256(x)`, `address(y)`, etc.
+    if let ExprKind::Type(ty) = &callee.kind {
+        return hir_ty_to_dyn(gcx, ty);
+    }
+
+    // Member call: `ns.method(...)`.
+    if let ExprKind::Member(lhs, method) = &callee.kind
+        && let ExprKind::Ident(reses) = &lhs.kind
+        && let Some(Res::Builtin(b)) = reses.first()
+    {
+        match b.name().as_str() {
+            "abi" => {
+                return match method.as_str() {
+                    "decode" => {
+                        let last = args.exprs().last()?;
+                        match expr_to_dyn(gcx, last, false)? {
+                            DynSolType::Tuple(tys) => Some(DynSolType::Tuple(tys)),
+                            ty => Some(DynSolType::Tuple(vec![ty])),
                         }
-                        "pop" if ty.is_dynamic_array() => return ty,
-                        _ => {}
                     }
-                }
+                    s if s.starts_with("encode") => Some(DynSolType::Bytes),
+                    _ => None,
+                };
             }
+            "string" if method.as_str() == "concat" => return Some(DynSolType::String),
+            "bytes" if method.as_str() == "concat" => return Some(DynSolType::Bytes),
             _ => {}
         }
+    }
 
-        let this = {
-            let name = types.last().unwrap().as_str();
-            match len {
-                0 => unreachable!(),
-                1 => match name {
+    // Simple identifier call: built-in global functions and HIR function calls.
+    if let ExprKind::Ident(reses) = &callee.kind {
+        match reses.first() {
+            Some(Res::Builtin(b)) => {
+                return match b.name().as_str() {
                     "gasleft" | "addmod" | "mulmod" => Some(DynSolType::Uint(256)),
                     "keccak256" | "sha256" | "blockhash" => Some(DynSolType::FixedBytes(32)),
                     "ripemd160" => Some(DynSolType::FixedBytes(20)),
                     "ecrecover" => Some(DynSolType::Address),
                     _ => None,
-                },
-                2 => {
-                    let access = types.first().unwrap().as_str();
-                    match name {
-                        "block" => match access {
-                            "coinbase" => Some(DynSolType::Address),
-                            "timestamp" | "difficulty" | "prevrandao" | "number" | "gaslimit"
-                            | "chainid" | "basefee" | "blobbasefee" => Some(DynSolType::Uint(256)),
-                            _ => None,
-                        },
-                        "msg" => match access {
-                            "sender" => Some(DynSolType::Address),
-                            "gas" => Some(DynSolType::Uint(256)),
-                            "value" => Some(DynSolType::Uint(256)),
-                            "data" => Some(DynSolType::Bytes),
-                            "sig" => Some(DynSolType::FixedBytes(4)),
-                            _ => None,
-                        },
-                        "tx" => match access {
-                            "origin" => Some(DynSolType::Address),
-                            "gasprice" => Some(DynSolType::Uint(256)),
-                            _ => None,
-                        },
-                        "abi" => match access {
-                            "decode" => {
-                                // args = Some([Bytes(_), Tuple(args)])
-                                // unwrapping is safe because this is first compiled by solc so
-                                // it is guaranteed to be a valid call
-                                let mut args = args.unwrap();
-                                let last = args.pop().unwrap();
-                                match last {
-                                    Some(ty) => {
-                                        return match ty {
-                                            Self::Tuple(_) => ty,
-                                            ty => Self::Tuple(vec![Some(ty)]),
-                                        };
-                                    }
-                                    None => None,
-                                }
-                            }
-                            s if s.starts_with("encode") => Some(DynSolType::Bytes),
-                            _ => None,
-                        },
-                        "address" => match access {
-                            "balance" => Some(DynSolType::Uint(256)),
-                            "code" => Some(DynSolType::Bytes),
-                            "codehash" => Some(DynSolType::FixedBytes(32)),
-                            "send" => Some(DynSolType::Bool),
-                            _ => None,
-                        },
-                        "type" => match access {
-                            "name" => Some(DynSolType::String),
-                            "creationCode" | "runtimeCode" => Some(DynSolType::Bytes),
-                            "interfaceId" => Some(DynSolType::FixedBytes(4)),
-                            "min" | "max" => Some(
-                                // Either a builtin or an enum
-                                (|| args?.pop()??.into_builtin())()
-                                    .unwrap_or(DynSolType::Uint(256)),
-                            ),
-                            _ => None,
-                        },
-                        "string" => match access {
-                            "concat" => Some(DynSolType::String),
-                            _ => None,
-                        },
-                        "bytes" => match access {
-                            "concat" => Some(DynSolType::Bytes),
-                            _ => None,
-                        },
-                        _ => None,
-                    }
-                }
-                _ => None,
+                };
             }
-        };
-
-        this.map(Self::Builtin).unwrap_or_else(|| match types.last().unwrap().as_str() {
-            "this" | "super" => Self::Custom(types),
-            _ => match self {
-                Self::Custom(_) | Self::Access(_, _) => Self::Custom(types),
-                Self::Function(_, _, _) => self,
-                _ => unreachable!(),
-            },
-        })
-    }
-
-    /// Recurses over itself, appending all the idents and function arguments in the order that they
-    /// are found
-    fn recurse(&self, types: &mut Vec<String>, args: &mut Option<Vec<Option<Self>>>) {
-        match self {
-            Self::Builtin(ty) => types.push(ty.to_string()),
-            Self::Custom(tys) => types.extend(tys.clone()),
-            Self::Access(expr, name) => {
-                types.push(name.clone());
-                expr.recurse(types, args);
-            }
-            Self::Function(fn_name, fn_args, _fn_ret) => {
-                if args.is_none() && !fn_args.is_empty() {
-                    *args = Some(fn_args.clone());
+            Some(Res::Item(ItemId::Function(fid))) if lookup => {
+                let func = gcx.hir.function(*fid);
+                if !matches!(func.state_mutability, StateMutability::View | StateMutability::Pure) {
+                    return None;
                 }
-                fn_name.recurse(types, args);
+                let ret_id = *func.returns.first()?;
+                return solar_ty_to_dyn(gcx, gcx.type_of_item(ret_id.into()));
             }
             _ => {}
         }
     }
 
-    /// Infers a custom type's true type by recursing up the parse tree
-    ///
-    /// ### Takes
-    /// - A reference to the [IntermediateOutput]
-    /// - An array of custom types generated by the `MemberAccess` arm of [Self::from_expression]
-    /// - An optional contract name. This should always be `None` when this function is first
-    ///   called.
-    ///
-    /// ### Returns
-    ///
-    /// If successful, an `Ok(Some(DynSolType))` variant.
-    /// If gracefully failed, an `Ok(None)` variant.
-    /// If failed, an `Err(e)` variant.
-    fn infer_custom_type(
-        intermediate: &IntermediateOutput,
-        custom_type: &mut Vec<String>,
-        contract_name: Option<String>,
-    ) -> Result<Option<DynSolType>> {
-        if let Some("this" | "super") = custom_type.last().map(String::as_str) {
-            custom_type.pop();
+    // Fall back to the callee's resolved type.
+    expr_to_dyn(gcx, callee, lookup)
+}
+
+/// Extracts a name chain from a member-access expression tree for HIR lookup.
+///
+/// The chain is ordered outermost-first so `a.b.c` produces `["c", "b", "a"]` with the root
+/// identifier at the back. This matches the convention expected by [`infer_custom_type`].
+fn expr_name_chain(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<Vec<Symbol>> {
+    match &expr.kind {
+        ExprKind::Ident(reses) => {
+            let res = reses.first()?;
+            let name = match *res {
+                Res::Item(ItemId::Variable(vid)) => gcx.hir.variable(vid).name?.name,
+                Res::Item(ItemId::Function(fid)) => gcx.hir.function(fid).name?.name,
+                Res::Item(ItemId::Contract(cid)) => gcx.hir.contract(cid).name.name,
+                Res::Builtin(b) => b.name(),
+                _ => return None,
+            };
+            Some(vec![name])
         }
-        if custom_type.is_empty() {
-            return Ok(None);
+        ExprKind::Member(lhs, ident) => {
+            let mut chain = expr_name_chain(gcx, lhs)?;
+            chain.insert(0, ident.name);
+            Some(chain)
         }
+        _ => None,
+    }
+}
 
-        // If a contract exists with the given name, check its definitions for a match.
-        // Otherwise look in the `run`
-        if let Some(contract_name) = contract_name {
-            let intermediate_contract = intermediate
-                .intermediate_contracts
-                .get(&contract_name)
-                .ok_or_else(|| eyre::eyre!("Could not find intermediate contract!"))?;
+/// Infers a custom type's true type by recursing through the HIR.
+///
+/// `custom_type` is a name chain ordered outermost-first (root at back). This is mutated during
+/// resolution. `contract_id` narrows the search to a specific contract scope.
+fn infer_custom_type(
+    gcx: Gcx<'_>,
+    custom_type: &mut Vec<Symbol>,
+    contract_id: Option<ContractId>,
+) -> Result<Option<DynSolType>> {
+    if let Some(last) = custom_type.last()
+        && (last.as_str() == "this" || last.as_str() == "super")
+    {
+        custom_type.pop();
+    }
+    if custom_type.is_empty() {
+        return Ok(None);
+    }
 
-            let cur_type = custom_type.last().unwrap();
-            if let Some(func) = intermediate_contract.function_definitions.get(cur_type) {
-                // Check if the custom type is a function pointer member access
-                if let res @ Some(_) = func_members(func, custom_type) {
-                    return Ok(res);
-                }
+    if let Some(cid) = contract_id {
+        let hir = &gcx.hir;
+        let contract = hir.contract(cid);
 
-                // Because tuple types cannot be passed to `abi.encode`, we will only be
-                // receiving functions that have 0 or 1 return parameters here.
-                if func.returns.is_empty() {
-                    eyre::bail!(
-                        "This call expression does not return any values to inspect. Insert as statement."
-                    )
-                }
+        let cur_name = *custom_type.last().unwrap();
+        let cur = cur_name.as_str();
 
-                // Empty return types check is done above
-                let (_, param) = func.returns.first().unwrap();
-                // Return type should always be present
-                let return_ty = &param.as_ref().unwrap().ty;
-
-                // If the return type is a variable (not a type expression), re-enter the recursion
-                // on the same contract for a variable / struct search. It could be a contract,
-                // struct, array, etc.
-                if let pt::Expression::Variable(ident) = return_ty {
-                    custom_type.push(ident.name.clone());
-                    return Self::infer_custom_type(intermediate, custom_type, Some(contract_name));
-                }
-
-                // Check if our final function call alters the state. If it does, we bail so that it
-                // will be inserted normally without inspecting. If the state mutability was not
-                // expressly set, the function is inferred to alter state.
-                if let Some(pt::FunctionAttribute::Mutability(_mut)) = func
-                    .attributes
-                    .iter()
-                    .find(|attr| matches!(attr, pt::FunctionAttribute::Mutability(_)))
-                {
-                    if let pt::Mutability::Payable(_) = _mut {
-                        eyre::bail!("This function mutates state. Insert as a statement.")
-                    }
-                } else {
-                    eyre::bail!("This function mutates state. Insert as a statement.")
-                }
-
-                Ok(Self::ethabi(return_ty, Some(intermediate)))
-            } else if let Some(var) = intermediate_contract.variable_definitions.get(cur_type) {
-                Self::infer_var_expr(&var.ty, Some(intermediate), custom_type)
-            } else if let Some(strukt) = intermediate_contract.struct_definitions.get(cur_type) {
-                let inner_types = strukt
-                    .fields
-                    .iter()
-                    .map(|var| {
-                        Self::ethabi(&var.ty, Some(intermediate))
-                            .ok_or_else(|| eyre::eyre!("Struct `{cur_type}` has invalid fields"))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                Ok(Some(DynSolType::Tuple(inner_types)))
-            } else {
-                eyre::bail!(
-                    "Could not find any definition in contract \"{contract_name}\" for type: {custom_type:?}"
-                )
-            }
-        } else {
-            // Check if the custom type is a variable or function within the REPL contract before
-            // anything. If it is, we can stop here.
-            if let Ok(res) = Self::infer_custom_type(intermediate, custom_type, Some("REPL".into()))
-            {
+        // Function?
+        if let Some(fid) = contract
+            .functions()
+            .find(|&f| hir.function(f).name.as_ref().map(|n| n.as_str() == cur).unwrap_or(false))
+        {
+            let func = hir.function(fid);
+            if let res @ Some(_) = func_members(func, custom_type) {
                 return Ok(res);
             }
 
-            // Check if the first element of the custom type is a known contract. If it is, begin
-            // our recursion on that contract's definitions.
-            let name = custom_type.last().unwrap();
-            let contract = intermediate.intermediate_contracts.get(name);
-            if contract.is_some() {
-                let contract_name = custom_type.pop();
-                return Self::infer_custom_type(intermediate, custom_type, contract_name);
+            if func.returns.is_empty() {
+                eyre::bail!(
+                    "This call expression does not return any values to inspect. Insert as statement."
+                )
             }
 
-            // See [`Type::infer_var_expr`]
-            let name = custom_type.last().unwrap();
-            if let Some(expr) = intermediate.repl_contract_expressions.get(name) {
-                return Self::infer_var_expr(expr, Some(intermediate), custom_type);
+            let sm = func.state_mutability;
+            if !matches!(sm, StateMutability::View | StateMutability::Pure) {
+                eyre::bail!("This function mutates state. Insert as a statement.")
             }
 
-            // The first element of our custom type was neither a variable or a function within the
-            // REPL contract, move on to globally available types gracefully.
-            Ok(None)
+            let ret_id = func.returns[0];
+            let ret_var = hir.variable(ret_id);
+            return Ok(solar_ty_to_dyn(gcx, gcx.type_of_item(ret_id.into()))
+                .or_else(|| hir_ty_to_dyn(gcx, &ret_var.ty)));
         }
-    }
 
-    /// Infers the type from a variable's type
-    fn infer_var_expr(
-        expr: &pt::Expression,
-        intermediate: Option<&IntermediateOutput>,
-        custom_type: &mut Vec<String>,
-    ) -> Result<Option<DynSolType>> {
-        // Resolve local (in `run` function) or global (in the `REPL` or other contract) variable
-        let res = match &expr {
-            // Custom variable handling
-            pt::Expression::Variable(ident) => {
-                let name = &ident.name;
-
-                if let Some(intermediate) = intermediate {
-                    // expression in `run`
-                    if let Some(expr) = intermediate.repl_contract_expressions.get(name) {
-                        Self::infer_var_expr(expr, Some(intermediate), custom_type)
-                    } else if intermediate.intermediate_contracts.contains_key(name) {
-                        if custom_type.len() > 1 {
-                            // There is still some recursing left to do: jump into the contract.
-                            custom_type.pop();
-                            Self::infer_custom_type(intermediate, custom_type, Some(name.clone()))
-                        } else {
-                            // We have no types left to recurse: return the address of the contract.
-                            Ok(Some(DynSolType::Address))
-                        }
-                    } else {
-                        Err(eyre::eyre!("Could not infer variable type"))
-                    }
-                } else {
-                    Ok(None)
+        // Variable?
+        if let Some(vid) = contract
+            .variables()
+            .find(|&v| hir.variable(v).name.as_ref().map(|n| n.as_str() == cur).unwrap_or(false))
+        {
+            if let Some(ty) = solar_ty_to_dyn(gcx, gcx.type_of_item(vid.into())) {
+                custom_type.pop();
+                if custom_type.is_empty() {
+                    return Ok(Some(ty));
                 }
+                let next_member = custom_type.drain(..).next().unwrap_or(Symbol::DUMMY);
+                return Ok(dyn_member(&ty, next_member.as_str()).or(Some(ty)));
             }
-            other_expr => Ok(Self::ethabi(other_expr, intermediate)),
-        };
-        // re-run everything with the resolved variable in case we're accessing a builtin member
-        // for example array or bytes length etc
-        match res {
-            Ok(Some(ty)) => {
-                let box_ty = Box::new(Self::Builtin(ty.clone()));
-                let access = Self::Access(box_ty, custom_type.drain(..).next().unwrap_or_default());
-                if let Some(mapped) = access.map_special().try_as_ethabi(intermediate) {
-                    Ok(Some(mapped))
-                } else {
-                    Ok(Some(ty))
-                }
-            }
-            res => res,
+            let var = hir.variable(vid);
+            return infer_var_ty(gcx, &var.ty, custom_type);
         }
-    }
 
-    /// Attempt to convert this type into a [DynSolType]
-    ///
-    /// ### Takes
-    /// An immutable reference to an [IntermediateOutput]
-    ///
-    /// ### Returns
-    /// Optionally, a [DynSolType]
-    fn try_as_ethabi(self, intermediate: Option<&IntermediateOutput>) -> Option<DynSolType> {
-        match self {
-            Self::Builtin(ty) => Some(ty),
-            Self::Tuple(types) => Some(DynSolType::Tuple(types_to_parameters(types, intermediate))),
-            Self::Array(inner) => match *inner {
-                ty @ Self::Custom(_) => ty.try_as_ethabi(intermediate),
-                _ => inner
-                    .try_as_ethabi(intermediate)
-                    .map(|inner| DynSolType::Array(Box::new(inner))),
-            },
-            Self::FixedArray(inner, size) => match *inner {
-                ty @ Self::Custom(_) => ty.try_as_ethabi(intermediate),
-                _ => inner
-                    .try_as_ethabi(intermediate)
-                    .map(|inner| DynSolType::FixedArray(Box::new(inner), size)),
-            },
-            ty @ Self::ArrayIndex(_, _) => ty.into_array_index(intermediate),
-            Self::Function(ty, _, _) => ty.try_as_ethabi(intermediate),
-            // should have been mapped to `Custom` in previous steps
-            Self::Access(_, _) => None,
-            Self::Custom(mut types) => {
-                // Cover any local non-state-modifying function call expressions
-                intermediate.and_then(|intermediate| {
-                    Self::infer_custom_type(intermediate, &mut types, None).ok().flatten()
+        // Struct?
+        if let Some(sid) = contract.items.iter().find_map(|i| {
+            if let ItemId::Struct(sid) = i
+                && hir.strukt(*sid).name.as_str() == cur
+            {
+                Some(*sid)
+            } else {
+                None
+            }
+        }) {
+            let inner = gcx
+                .struct_field_types(sid)
+                .iter()
+                .map(|&t| {
+                    solar_ty_to_dyn(gcx, t)
+                        .ok_or_else(|| eyre::eyre!("Struct `{cur}` has invalid fields"))
                 })
-            }
+                .collect::<Result<Vec<_>>>()?;
+            return Ok(Some(DynSolType::Tuple(inner)));
         }
-    }
 
-    /// Equivalent to `Type::from_expression` + `Type::map_special` + `Type::try_as_ethabi`
-    fn ethabi(
-        expr: &pt::Expression,
-        intermediate: Option<&IntermediateOutput>,
-    ) -> Option<DynSolType> {
-        Self::from_expression(expr)
-            .map(Self::map_special)
-            .and_then(|ty| ty.try_as_ethabi(intermediate))
-    }
-
-    /// Get the return type of a function call expression.
-    fn get_function_return_type<'a>(
-        contract_expr: Option<&'a pt::Expression>,
-        intermediate: &IntermediateOutput,
-    ) -> Option<(&'a pt::Expression, DynSolType)> {
-        let function_call = match contract_expr? {
-            pt::Expression::FunctionCall(_, function_call, _) => function_call,
-            _ => return None,
-        };
-        let (contract_name, function_name) = match function_call.as_ref() {
-            pt::Expression::MemberAccess(_, contract_name, function_name) => {
-                (contract_name, function_name)
-            }
-            _ => return None,
-        };
-        let contract_name = match contract_name.as_ref() {
-            pt::Expression::Variable(contract_name) => contract_name.to_owned(),
-            _ => return None,
-        };
-
-        let pt::Expression::Variable(contract_name) =
-            intermediate.repl_contract_expressions.get(&contract_name.name)?
-        else {
-            return None;
-        };
-
-        let contract = intermediate
-            .intermediate_contracts
-            .get(&contract_name.name)?
-            .function_definitions
-            .get(&function_name.name)?;
-        let return_parameter = contract.as_ref().returns.first()?.to_owned().1?;
-        Self::ethabi(&return_parameter.ty, Some(intermediate)).map(|p| (contract_expr.unwrap(), p))
-    }
-
-    /// Inverts Int to Uint and vice-versa.
-    fn invert_int(self) -> Self {
-        match self {
-            Self::Builtin(DynSolType::Uint(n)) => Self::Builtin(DynSolType::Int(n)),
-            Self::Builtin(DynSolType::Int(n)) => Self::Builtin(DynSolType::Uint(n)),
-            x => x,
-        }
-    }
-
-    /// Returns the `DynSolType` contained by `Type::Builtin`
-    #[inline]
-    fn into_builtin(self) -> Option<DynSolType> {
-        match self {
-            Self::Builtin(ty) => Some(ty),
-            _ => None,
-        }
-    }
-
-    /// Returns the resulting `DynSolType` of indexing self
-    fn into_array_index(self, intermediate: Option<&IntermediateOutput>) -> Option<DynSolType> {
-        match self {
-            Self::Array(inner) | Self::FixedArray(inner, _) | Self::ArrayIndex(inner, _) => {
-                match inner.try_as_ethabi(intermediate) {
-                    Some(DynSolType::Array(inner) | DynSolType::FixedArray(inner, _)) => {
-                        Some(*inner)
-                    }
-                    Some(DynSolType::Bytes | DynSolType::String | DynSolType::FixedBytes(_)) => {
-                        Some(DynSolType::FixedBytes(1))
-                    }
-                    ty => ty,
-                }
-            }
-            _ => None,
-        }
-    }
-
-    /// Returns whether this type is dynamic
-    #[inline]
-    const fn is_dynamic(&self) -> bool {
-        match self {
-            // TODO: Note, this is not entirely correct. Fixed arrays of non-dynamic types are
-            // not dynamic, nor are tuples of non-dynamic types.
-            Self::Builtin(DynSolType::Bytes | DynSolType::String | DynSolType::Array(_)) => true,
-            Self::Array(_) => true,
-            _ => false,
-        }
-    }
-
-    /// Returns whether this type is an array
-    #[inline]
-    const fn is_array(&self) -> bool {
-        matches!(
-            self,
-            Self::Array(_)
-                | Self::FixedArray(_, _)
-                | Self::Builtin(DynSolType::Array(_) | DynSolType::FixedArray(_, _))
+        eyre::bail!(
+            "Could not find any definition in contract \"{}\" for type: {custom_type:?}",
+            contract.name.as_str()
         )
     }
 
-    /// Returns whether this type is a dynamic array (can call push, pop)
-    #[inline]
-    const fn is_dynamic_array(&self) -> bool {
-        matches!(self, Self::Array(_) | Self::Builtin(DynSolType::Array(_)))
+    let repl_id = gcx
+        .hir
+        .contracts_enumerated()
+        .find_map(|(cid, c)| (c.name.as_str() == "REPL").then_some(cid));
+    if let Some(repl_id) = repl_id
+        && let Ok(res) = infer_custom_type(gcx, custom_type, Some(repl_id))
+    {
+        return Ok(res);
     }
 
-    const fn is_fixed_bytes(&self) -> bool {
-        matches!(self, Self::Builtin(DynSolType::FixedBytes(_)))
+    let last_name = *custom_type.last().unwrap();
+    let last = last_name.as_str();
+    let contract_match = gcx
+        .hir
+        .contracts_enumerated()
+        .find_map(|(cid, c)| (c.name.as_str() == last).then_some(cid));
+    if let Some(cid) = contract_match {
+        custom_type.pop();
+        return infer_custom_type(gcx, custom_type, Some(cid));
+    }
+
+    Ok(None)
+}
+
+/// Infers the type from a variable's HIR type, optionally accessing a named member.
+fn infer_var_ty(
+    gcx: Gcx<'_>,
+    ty: &HirType<'_>,
+    custom_type: &mut Vec<Symbol>,
+) -> Result<Option<DynSolType>> {
+    let Some(ty) = hir_ty_to_dyn(gcx, ty) else { return Ok(None) };
+    let next_member = custom_type.drain(..).next();
+    if let Some(m) = next_member {
+        Ok(dyn_member(&ty, m.as_str()).or(Some(ty)))
+    } else {
+        Ok(Some(ty))
     }
 }
 
-/// Returns Some if the custom type is a function member access
+/// Get the return type of a contract method call `receiver.method()`.
+fn get_function_return_type(gcx: Gcx<'_>, expr: &Expr<'_>) -> Option<DynSolType> {
+    let ExprKind::Call(callee, _, _) = &expr.kind else { return None };
+    let ExprKind::Member(obj, fn_ident) = &callee.kind else { return None };
+    let ExprKind::Ident(reses) = &obj.kind else { return None };
+    let res = reses.first()?;
+    let var_id = match res {
+        Res::Item(ItemId::Variable(vid)) => *vid,
+        _ => return None,
+    };
+    let var_ty = gcx.type_of_item(var_id.into()).peel_refs();
+    let cid = match var_ty.kind {
+        TyKind::Contract(cid) => cid,
+        _ => return None,
+    };
+
+    let hir = &gcx.hir;
+    let contract = hir.contract(cid);
+    let fid = contract
+        .functions()
+        .find(|&f| hir.function(f).name.as_ref().map(|n| n.as_str()) == Some(fn_ident.as_str()))?;
+    let func = hir.function(fid);
+    let ret_id = *func.returns.first()?;
+    solar_ty_to_dyn(gcx, gcx.type_of_item(ret_id.into()))
+}
+
+/// Returns Some if the custom type is a function member access.
 ///
 /// Ref: <https://docs.soliditylang.org/en/latest/types.html#function-types>
 #[inline]
-fn func_members(func: &pt::FunctionDefinition, custom_type: &[String]) -> Option<DynSolType> {
-    if !matches!(func.ty, pt::FunctionTy::Function) {
+fn func_members(func: &Function<'_>, custom_type: &[Symbol]) -> Option<DynSolType> {
+    if !matches!(func.kind, FunctionKind::Function) {
         return None;
     }
-
-    let vis = func.attributes.iter().find_map(|attr| match attr {
-        pt::FunctionAttribute::Visibility(vis) => Some(vis),
-        _ => None,
-    });
-    match vis {
-        Some(pt::Visibility::External(_) | pt::Visibility::Public(_)) => {
-            match custom_type.first().unwrap().as_str() {
-                "address" => Some(DynSolType::Address),
-                "selector" => Some(DynSolType::FixedBytes(4)),
-                _ => None,
-            }
-        }
+    if !matches!(func.visibility, Visibility::External | Visibility::Public) {
+        return None;
+    }
+    match custom_type.first().unwrap().as_str() {
+        "address" => Some(DynSolType::Address),
+        "selector" => Some(DynSolType::FixedBytes(4)),
         _ => None,
     }
 }
 
-/// Whether execution should continue after inspecting this expression
+/// Whether execution should continue after inspecting this expression.
 #[inline]
-fn should_continue(expr: &pt::Expression) -> bool {
-    match expr {
-        // assignments
-        pt::Expression::PreDecrement(_, _) |       // --<inner>
-        pt::Expression::PostDecrement(_, _) |      // <inner>--
-        pt::Expression::PreIncrement(_, _) |       // ++<inner>
-        pt::Expression::PostIncrement(_, _) |      // <inner>++
-        pt::Expression::Assign(_, _, _) |          // <inner>   = ...
-        pt::Expression::AssignAdd(_, _, _) |       // <inner>  += ...
-        pt::Expression::AssignSubtract(_, _, _) |  // <inner>  -= ...
-        pt::Expression::AssignMultiply(_, _, _) |  // <inner>  *= ...
-        pt::Expression::AssignDivide(_, _, _) |    // <inner>  /= ...
-        pt::Expression::AssignModulo(_, _, _) |    // <inner>  %= ...
-        pt::Expression::AssignAnd(_, _, _) |       // <inner>  &= ...
-        pt::Expression::AssignOr(_, _, _) |        // <inner>  |= ...
-        pt::Expression::AssignXor(_, _, _) |       // <inner>  ^= ...
-        pt::Expression::AssignShiftLeft(_, _, _) | // <inner> <<= ...
-        pt::Expression::AssignShiftRight(_, _, _)  // <inner> >>= ...
-        => {
-            true
-        }
-
+fn should_continue(expr: &Expr<'_>) -> bool {
+    match &expr.kind {
+        // assignments and compound assignments
+        ExprKind::Assign(_, _, _) => true,
+        // ++/-- pre/post operations
+        ExprKind::Unary(op, _) => matches!(
+            op.kind,
+            UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
+        ),
         // Array.pop()
-        pt::Expression::FunctionCall(_, lhs, _) => {
-            match lhs.as_ref() {
-                pt::Expression::MemberAccess(_, _inner, access) => access.name == "pop",
-                _ => false
-            }
-        }
-
-        _ => false
+        ExprKind::Call(callee, _, _) => match &callee.kind {
+            ExprKind::Member(_, ident) => ident.as_str() == "pop",
+            _ => false,
+        },
+        _ => false,
     }
 }
 
-fn map_parameters(params: &[(pt::Loc, Option<pt::Parameter>)]) -> Vec<Option<Type>> {
-    params
-        .iter()
-        .map(|(_, param)| param.as_ref().and_then(|param| Type::from_expression(&param.ty)))
-        .collect()
-}
-
-fn types_to_parameters(
-    types: Vec<Option<Type>>,
-    intermediate: Option<&IntermediateOutput>,
-) -> Vec<DynSolType> {
-    types.into_iter().filter_map(|ty| ty.and_then(|ty| ty.try_as_ethabi(intermediate))).collect()
-}
-
-fn parse_number_literal(expr: &pt::Expression) -> Option<U256> {
-    match expr {
-        pt::Expression::NumberLiteral(_, num, exp, unit) => {
-            let num = num.parse::<U256>().unwrap_or(U256::ZERO);
-            let exp = exp.parse().unwrap_or(0u32);
-            if exp > 77 {
-                None
-            } else {
-                let exp = U256::from(10usize.pow(exp));
-                let unit_mul = unit_multiplier(unit).ok()?;
-                Some(num * exp * unit_mul)
-            }
-        }
-        pt::Expression::HexNumberLiteral(_, num, unit) => {
-            let unit_mul = unit_multiplier(unit).ok()?;
-            num.parse::<U256>().map(|num| num * unit_mul).ok()
-        }
-        // TODO: Rational numbers
-        pt::Expression::RationalNumberLiteral(..) => None,
+/// Parses an [`Expr`] number/hex literal into a `U256`. Returns `None` if the expression
+/// is not a numeric literal.
+///
+/// SubDenominations are already applied to numeric literals in solar's HIR.
+const fn parse_number_literal(expr: &Expr<'_>) -> Option<U256> {
+    match &expr.kind {
+        ExprKind::Lit(lit) => match &lit.kind {
+            LitKind::Number(n) => Some(*n),
+            _ => None,
+        },
         _ => None,
     }
 }
 
-#[inline]
-fn unit_multiplier(unit: &Option<pt::Identifier>) -> Result<U256> {
-    if let Some(unit) = unit {
-        let mul = match unit.name.as_str() {
-            "seconds" => 1,
-            "minutes" => 60,
-            "hours" => 60 * 60,
-            "days" => 60 * 60 * 24,
-            "weeks" => 60 * 60 * 24 * 7,
-            "wei" => 1,
-            "gwei" => 10_usize.pow(9),
-            "ether" => 10_usize.pow(18),
-            other => eyre::bail!("unknown unit: {other}"),
-        };
-        Ok(U256::from(mul))
-    } else {
-        Ok(U256::from(1))
+/// Maps a solar [`ElementaryType`] to a [`DynSolType`].
+const fn elementary_to_dyn(et: ElementaryType) -> Option<DynSolType> {
+    Some(match et {
+        ElementaryType::Address(_) => DynSolType::Address,
+        ElementaryType::Bool => DynSolType::Bool,
+        ElementaryType::String => DynSolType::String,
+        ElementaryType::Bytes => DynSolType::Bytes,
+        ElementaryType::Int(size) => DynSolType::Int(size.bits() as usize),
+        ElementaryType::UInt(size) => DynSolType::Uint(size.bits() as usize),
+        ElementaryType::FixedBytes(size) => DynSolType::FixedBytes(size.bytes() as usize),
+        // Fixed-point numbers are not yet representable as DynSolType.
+        ElementaryType::Fixed(_, _) | ElementaryType::UFixed(_, _) => return None,
+    })
+}
+
+/// Maps a solar [`Ty`] to a [`DynSolType`].
+fn solar_ty_to_dyn<'gcx>(gcx: Gcx<'gcx>, ty: Ty<'gcx>) -> Option<DynSolType> {
+    match ty.kind {
+        TyKind::Elementary(et) => elementary_to_dyn(et),
+        TyKind::Ref(inner, _) => solar_ty_to_dyn(gcx, inner),
+        TyKind::Array(elem, n) => {
+            let inner = solar_ty_to_dyn(gcx, elem)?;
+            let size: usize = n.try_into().ok()?;
+            Some(DynSolType::FixedArray(Box::new(inner), size))
+        }
+        TyKind::DynArray(elem) | TyKind::Slice(elem) => {
+            let inner = solar_ty_to_dyn(gcx, elem)?;
+            Some(DynSolType::Array(Box::new(inner)))
+        }
+        TyKind::Tuple(tys) => {
+            Some(DynSolType::Tuple(tys.iter().filter_map(|t| solar_ty_to_dyn(gcx, *t)).collect()))
+        }
+        TyKind::Mapping(_, _) => None,
+        TyKind::Struct(sid) => Some(DynSolType::Tuple(
+            gcx.struct_field_types(sid).iter().filter_map(|t| solar_ty_to_dyn(gcx, *t)).collect(),
+        )),
+        TyKind::Enum(_) => Some(DynSolType::Uint(8)),
+        TyKind::Udvt(inner, _) => solar_ty_to_dyn(gcx, inner),
+        TyKind::Contract(_) => Some(DynSolType::Address),
+        // For a function-pointer type we return the ABI type of what the call *produces*, not a
+        // representation of the pointer itself. This is intentional: chisel inspects values, so
+        // the interesting type is the returned value.  A zero-return function pointer has no
+        // inspectable value, so we return `None`.
+        TyKind::FnPtr(f) => match f.returns.len() {
+            0 => None,
+            1 => solar_ty_to_dyn(gcx, f.returns[0]),
+            _ => Some(DynSolType::Tuple(
+                f.returns.iter().filter_map(|t| solar_ty_to_dyn(gcx, *t)).collect(),
+            )),
+        },
+        TyKind::Type(inner) => solar_ty_to_dyn(gcx, inner),
+        TyKind::Meta(inner) => solar_ty_to_dyn(gcx, inner),
+        TyKind::IntLiteral(neg, size) => {
+            let bits = (size.bits() as usize).max(8);
+            // Round up to the nearest multiple of 8 bits, capped at 256.
+            let bits = bits.div_ceil(8) * 8;
+            let bits = bits.min(256);
+            if neg {
+                Some(DynSolType::Int(bits.max(8)))
+            } else {
+                Some(DynSolType::Uint(bits.max(8)))
+            }
+        }
+        TyKind::StringLiteral(valid_utf8, _) => {
+            if valid_utf8 {
+                Some(DynSolType::String)
+            } else {
+                Some(DynSolType::Bytes)
+            }
+        }
+        TyKind::Module(_)
+        | TyKind::BuiltinModule(_)
+        | TyKind::Error(_, _)
+        | TyKind::Event(_, _)
+        | TyKind::Err(_) => None,
+        _ => None,
     }
 }
 
@@ -1249,6 +1145,7 @@ fn unit_multiplier(unit: &Option<pt::Identifier>) -> Result<U256> {
 mod tests {
     use super::*;
     use foundry_compilers::{error::SolcError, solc::Solc};
+    use solar::sema::Compiler;
     use std::sync::Mutex;
 
     #[test]
@@ -1558,46 +1455,66 @@ mod tests {
         DynSolType::FixedArray(Box::new(ty), len)
     }
 
-    fn parse(s: &mut SessionSource, input: &str, clear: bool) -> IntermediateOutput {
+    /// Lowers the given snippet appended to the REPL contract via solar's HIR pipeline (without
+    /// invoking solc) and returns the resulting `DynSolType` of the last expression statement in
+    /// the run() body.
+    ///
+    /// Tests bypass `SessionSource::build` (which routes through foundry-compilers + solc) so that
+    /// inputs which are syntactically valid but semantically rejected by solc (e.g.
+    /// `abi.decode(bytes, (uint8[13]))` or `a[0:3]` on a memory array) can still exercise the
+    /// HIR-based type-inference engine.
+    fn get_type_ethabi(s: &mut SessionSource, input: &str, clear: bool) -> Option<DynSolType> {
         if clear {
             s.clear();
         }
 
+        // Always declare a sample enum so `Enum1` is available for `type(Enum1)` tests.
         *s = s.clone_with_new_line("enum Enum1 { A }".into()).unwrap().0;
 
         let input = format!("{};", input.trim_end().trim_end_matches(';'));
-        let (mut _s, _) = s.clone_with_new_line(input).unwrap();
-        *s = _s.clone();
-        let s = &mut _s;
+        let (new_source, _) = s.clone_with_new_line(input).unwrap();
+        *s = new_source.clone();
 
-        if let Err(e) = s.parse() {
-            let source = s.to_repl_source();
-            panic!("{e}\n\ncould not parse input:\n{source}")
-        }
-        s.generate_intermediate_output().expect("could not generate intermediate output")
-    }
+        let src = new_source.to_repl_source();
+        let sess =
+            solar::interface::Session::builder().with_buffer_emitter(Default::default()).build();
+        let mut compiler = Compiler::new(sess);
 
-    fn expr(stmts: &[pt::Statement]) -> pt::Expression {
-        match stmts.last().expect("no statements") {
-            pt::Statement::Expression(_, e) => e.clone(),
-            s => panic!("Not an expression: {s:?}"),
-        }
-    }
+        compiler.enter_mut(|c| -> Option<DynSolType> {
+            // Stage 1: parse + lower (mutable access required).
+            let lowered = {
+                let mut pcx = c.parse();
+                let file = c
+                    .sess()
+                    .source_map()
+                    .new_source_file(
+                        std::path::PathBuf::from(new_source.file_name.clone()),
+                        src.clone(),
+                    )
+                    .ok()?;
+                pcx.add_file(file);
+                pcx.parse();
+                matches!(c.lower_asts(), Ok(ControlFlow::Continue(())))
+            };
+            if !lowered {
+                return None;
+            }
 
-    fn get_type(
-        s: &mut SessionSource,
-        input: &str,
-        clear: bool,
-    ) -> (Option<Type>, IntermediateOutput) {
-        let intermediate = parse(s, input, clear);
-        let run_func_body = intermediate.run_func_body().expect("no run func body");
-        let expr = expr(run_func_body);
-        (Type::from_expression(&expr).map(Type::map_special), intermediate)
-    }
-
-    fn get_type_ethabi(s: &mut SessionSource, input: &str, clear: bool) -> Option<DynSolType> {
-        let (ty, intermediate) = get_type(s, input, clear);
-        ty.and_then(|ty| ty.try_as_ethabi(Some(&intermediate)))
+            // Stage 2: walk HIR (immutable access).
+            let gcx = c.gcx();
+            let hir = &gcx.hir;
+            let repl = hir.contracts().find(|c| c.name.as_str() == "REPL")?;
+            let run_fid = repl
+                .functions()
+                .find(|&f| hir.function(f).name.as_ref().map(|n| n.as_str()) == Some("run"))?;
+            let body = hir.function(run_fid).body?;
+            let last = body.last()?;
+            let expr = match last.kind {
+                StmtKind::Expr(e) => e,
+                _ => return None,
+            };
+            expr_to_dyn(gcx, expr, true)
+        })
     }
 
     fn generic_type_test<'a, T, I>(s: &mut SessionSource, input: I)

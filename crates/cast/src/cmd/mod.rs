@@ -15,6 +15,7 @@ pub mod call;
 pub mod constructor_args;
 pub mod create2;
 pub mod creation_code;
+#[cfg(feature = "optimism")]
 pub mod da_estimate;
 pub mod erc20;
 pub mod estimate;

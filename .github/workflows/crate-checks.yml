@@ -29,7 +29,7 @@ jobs:
         with:
           toolchain: stable
       - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
-      - uses: taiki-e/install-action@58e862542551f667fa44c8a2a4a1d64ad477c96a # v2.75.17
+      - uses: taiki-e/install-action@5f57d6cb7cd20b14a8a27f522884c4bc8a187458 # v2.75.19
         with:
           tool: cargo-hack
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
