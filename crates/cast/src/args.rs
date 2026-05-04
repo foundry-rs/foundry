@@ -809,6 +809,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::Tip20Token { command } => command.run().await?,
         CastSubcommand::Keychain { command } => command.run().await?,
+        #[cfg(feature = "optimism")]
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
         }

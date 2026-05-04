@@ -30,6 +30,9 @@ use multi_contract_file::MULTI_CONTRACT_FILE;
 mod interface_naming;
 use interface_naming::{INTERFACE_FILE_NAMING, INTERFACE_NAMING};
 
+mod too_many_digits;
+use too_many_digits::TOO_MANY_DIGITS;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -42,4 +45,5 @@ register_lints!(
     (UnsafeCheatcodes, early, (UNSAFE_CHEATCODE_USAGE)),
     (MultiContractFile, early, (MULTI_CONTRACT_FILE)),
     (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING)),
+    (TooManyDigits, early, (TOO_MANY_DIGITS)),
 );

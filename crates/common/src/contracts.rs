@@ -411,7 +411,7 @@ impl ContractsByArtifact {
         let mut funcs = BTreeMap::new();
         let mut events = BTreeMap::new();
         let mut errors_abi = JsonAbi::new();
-        for (_name, contract) in self.iter() {
+        for contract in self.values() {
             for func in contract.abi.functions() {
                 funcs.insert(func.selector(), func.clone());
             }

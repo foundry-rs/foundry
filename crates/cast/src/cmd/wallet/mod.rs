@@ -779,8 +779,7 @@ flag to set your key via:
                 )?;
                 let address = wallet.address();
                 let success_message = format!(
-                    "`{}` keystore was saved successfully. Address: {:?}",
-                    &account_name, address,
+                    "`{account_name}` keystore was saved successfully. Address: {address:?}",
                 );
                 sh_println!("{}", success_message.green())?;
             }
@@ -815,7 +814,7 @@ flag to set your key via:
                     format!("Failed to remove keystore file at {}", keystore_path.display())
                 })?;
 
-                let success_message = format!("`{}` keystore was removed successfully.", &name);
+                let success_message = format!("`{name}` keystore was removed successfully.");
                 sh_println!("{}", success_message.green())?;
             }
             Self::PrivateKey {
@@ -886,8 +885,7 @@ flag to set your key via:
 
                 let private_key = B256::from_slice(&wallet.credential().to_bytes());
 
-                let success_message =
-                    format!("{}'s private key is: {}", &account_name, private_key);
+                let success_message = format!("{account_name}'s private key is: {private_key}");
 
                 sh_println!("{}", success_message.green())?;
             }
@@ -945,10 +943,9 @@ flag to set your key via:
                     Some(&account_name),
                 )?;
 
+                let address = wallet.address();
                 let success_message = format!(
-                    "Password for keystore `{}` was changed successfully. Address: {:?}",
-                    &account_name,
-                    wallet.address(),
+                    "Password for keystore `{account_name}` was changed successfully. Address: {address:?}",
                 );
                 sh_println!("{}", success_message.green())?;
             }
