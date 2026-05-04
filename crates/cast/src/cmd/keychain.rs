@@ -6,6 +6,7 @@ use alloy_primitives::{Address, U256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
+use alloy_transport::TransportError;
 use chrono::DateTime;
 use clap::Parser;
 use eyre::Result;
@@ -16,7 +17,7 @@ use foundry_cli::{
 use foundry_common::{
     FoundryTransactionBuilder,
     provider::ProviderBuilder,
-    shell,
+    sh_warn, shell,
     tempo::{
         self, KeyType, KeysFile, TEMPO_BROWSER_GAS_BUFFER, WalletType, read_tempo_keys_file,
         tempo_keys_path,
@@ -1065,6 +1066,12 @@ async fn run_policy_add_call(
 
     let (target_scope, changed) = match existing_target {
         Some(mut scope) => {
+            if scope.selectorRules.is_empty() {
+                sh_warn!(
+                    "Allowed calls for {} already allow any selector; leaving wildcard scope unchanged",
+                    address_label_with_address(target)
+                )?;
+            }
             let changed = add_selector_rule_to_scope(&mut scope, new_rule);
             (scope, changed)
         }
@@ -1098,6 +1105,7 @@ async fn run_policy_set_limit(
         );
     }
 
+    // updateSpendingLimit authorizes against msg.sender; the root account is not part of calldata.
     run_update_limit(key_address, token, amount, tx_opts, send_tx).await
 }
 
@@ -1211,20 +1219,38 @@ where
 {
     match provider.is_hardfork_active(hardfork).await {
         Ok(active) => Ok(active),
-        Err(err) => {
-            let anvil_info =
-                provider.raw_request::<_, AnvilNodeInfo>("anvil_nodeInfo".into(), ()).await;
-
-            if let Ok(info) = anvil_info
-                && info.network.as_deref() == Some("tempo")
-                && let Some(active_hardfork) = info.hard_fork
-            {
-                return Ok(active_hardfork.parse::<TempoHardfork>().is_ok_and(|h| h >= hardfork));
+        Err(err) if is_rpc_method_not_found(&err) => {
+            match anvil_tempo_hardfork_active(provider, hardfork).await {
+                Ok(Some(active)) => Ok(active),
+                _ => Err(err.into()),
             }
-
-            Err(err.into())
         }
+        Err(err) => Err(err.into()),
     }
+}
+
+async fn anvil_tempo_hardfork_active<P>(
+    provider: &P,
+    hardfork: TempoHardfork,
+) -> Result<Option<bool>, TransportError>
+where
+    P: Provider<TempoNetwork>,
+{
+    let info = provider.raw_request::<_, AnvilNodeInfo>("anvil_nodeInfo".into(), ()).await?;
+    Ok(active_from_anvil_node_info(&info, hardfork))
+}
+
+fn active_from_anvil_node_info(info: &AnvilNodeInfo, hardfork: TempoHardfork) -> Option<bool> {
+    (info.network.as_deref() == Some("tempo")).then(|| {
+        info.hard_fork
+            .as_deref()
+            .and_then(|active_hardfork| active_hardfork.parse::<TempoHardfork>().ok())
+            .is_some_and(|active_hardfork| active_hardfork >= hardfork)
+    })
+}
+
+fn is_rpc_method_not_found(err: &TransportError) -> bool {
+    err.as_error_resp().is_some_and(|payload| payload.code == -32601)
 }
 
 fn resolve_key_metadata(
@@ -1624,6 +1650,7 @@ fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_json_rpc::ErrorPayload;
     use std::str::FromStr;
 
     #[test]
@@ -1829,5 +1856,64 @@ mod tests {
 
         assert!(!changed);
         assert!(scope.selectorRules.is_empty());
+    }
+
+    #[test]
+    fn test_policy_set_limit_parses() {
+        let key = "0x1111111111111111111111111111111111111111";
+
+        let command = KeychainSubcommand::try_parse_from([
+            "keychain",
+            "policy",
+            "set-limit",
+            key,
+            "--token",
+            "PathUSD",
+            "--amount",
+            "123",
+        ])
+        .unwrap();
+
+        match command {
+            KeychainSubcommand::Policy {
+                command:
+                    KeychainPolicySubcommand::SetLimit { key_address, token, amount, period, .. },
+            } => {
+                assert_eq!(key_address, Address::from_str(key).unwrap());
+                assert_eq!(token, PATH_USD_ADDRESS);
+                assert_eq!(amount, U256::from(123));
+                assert_eq!(period, None);
+            }
+            other => panic!("unexpected command: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_active_from_anvil_node_info_requires_tempo_network() {
+        let tempo_t3 =
+            AnvilNodeInfo { network: Some("tempo".to_string()), hard_fork: Some("T3".to_string()) };
+        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T2), Some(true));
+        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T3), Some(true));
+        assert_eq!(active_from_anvil_node_info(&tempo_t3, TempoHardfork::T4), Some(false));
+
+        let ethereum_t3 = AnvilNodeInfo {
+            network: Some("ethereum".to_string()),
+            hard_fork: Some("T3".to_string()),
+        };
+        assert_eq!(active_from_anvil_node_info(&ethereum_t3, TempoHardfork::T3), None);
+    }
+
+    #[test]
+    fn test_rpc_method_not_found_detection() {
+        let method_missing: TransportError =
+            TransportError::ErrorResp(ErrorPayload::method_not_found());
+        assert!(is_rpc_method_not_found(&method_missing));
+
+        let internal_error: TransportError =
+            TransportError::ErrorResp(ErrorPayload::internal_error());
+        assert!(!is_rpc_method_not_found(&internal_error));
+
+        let transport_error = alloy_transport::TransportErrorKind::backend_gone();
+        assert!(!is_rpc_method_not_found(&transport_error));
     }
 }
