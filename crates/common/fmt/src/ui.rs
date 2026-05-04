@@ -18,6 +18,7 @@ use alloy_rpc_types::{
     AccessListItem, Block, BlockTransactions, Header, Log, Transaction, TransactionReceipt,
 };
 use alloy_serde::{OtherFields, WithOtherFields};
+#[cfg(feature = "optimism")]
 use op_alloy_consensus::{OpTxEnvelope, TxDeposit, TxPostExec};
 use revm::context_interface::transaction::SignedAuthorization;
 use serde::Deserialize;
@@ -448,6 +449,7 @@ input                {}",
     }
 }
 
+#[cfg(feature = "optimism")]
 impl UIfmt for TxDeposit {
     fn pretty(&self) -> String {
         format!(
@@ -472,6 +474,7 @@ input                {}",
     }
 }
 
+#[cfg(feature = "optimism")]
 impl UIfmt for TxPostExec {
     fn pretty(&self) -> String {
         format!(
@@ -606,6 +609,7 @@ type               {:#x}
     }
 }
 
+#[cfg(feature = "optimism")]
 impl UIfmt for OpTxEnvelope {
     fn pretty(&self) -> String {
         match self {
@@ -651,6 +655,7 @@ effectiveGasPrice    {}
     }
 }
 
+#[cfg(feature = "optimism")]
 impl<T: UIfmt> UIfmt for op_alloy_rpc_types::Transaction<T> {
     fn pretty(&self) -> String {
         format!(
@@ -786,6 +791,7 @@ impl UIfmtSignatureExt for AnyTxEnvelope {
     }
 }
 
+#[cfg(feature = "optimism")]
 impl UIfmtSignatureExt for OpTxEnvelope {
     fn signature_pretty(&self) -> Option<(String, String, String)> {
         self.signature().map(|sig| {
@@ -1135,6 +1141,7 @@ mod tests {
         assert_eq!(b.pretty(), b32.pretty());
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn can_pretty_print_optimism_tx() {
         let s = r#"
@@ -1186,6 +1193,7 @@ yParity              1
         );
     }
 
+    #[cfg(feature = "optimism")]
     #[test]
     fn can_pretty_print_optimism_tx_through_any() {
         let s = r#"
