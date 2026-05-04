@@ -4,7 +4,7 @@ note[too-many-digits]: numeric literal with many digits is error-prone; use scie
 LL │     uint256 stateA = 1000000000000000000;
    │                      ━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#too-many-digits
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
 
 note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
    ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
@@ -12,7 +12,7 @@ note[too-many-digits]: numeric literal with many digits is error-prone; use scie
 LL │     uint256 stateB = 100000;
    │                      ━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#too-many-digits
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
 
 note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
    ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
@@ -20,7 +20,7 @@ note[too-many-digits]: numeric literal with many digits is error-prone; use scie
 LL │ …     return 10000000;
    │              ━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#too-many-digits
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
 
 note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
    ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
@@ -28,7 +28,7 @@ note[too-many-digits]: numeric literal with many digits is error-prone; use scie
 LL │ …     return x == 1000000;
    │                   ━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#too-many-digits
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
 
 note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
    ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
@@ -36,7 +36,7 @@ note[too-many-digits]: numeric literal with many digits is error-prone; use scie
 LL │ …     _send(to, 50000000000);
    │                 ━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#too-many-digits
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
 
 note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
    ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
@@ -44,7 +44,7 @@ note[too-many-digits]: numeric literal with many digits is error-prone; use scie
 LL │ …     uint256[100000] memory _arr;
    │               ━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#too-many-digits
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
 
 note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
    ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
@@ -52,7 +52,7 @@ note[too-many-digits]: numeric literal with many digits is error-prone; use scie
 LL │     uint256 middleZeros = 123000007;
    │                           ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#too-many-digits
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
 
 note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
    ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
@@ -60,7 +60,7 @@ note[too-many-digits]: numeric literal with many digits is error-prone; use scie
 LL │     uint256 badGrouping = 1_000000;
    │                           ━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#too-many-digits
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
 
 note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
    ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
@@ -68,5 +68,5 @@ note[too-many-digits]: numeric literal with many digits is error-prone; use scie
 LL │     uint256 badGrouping2 = 1_00000;
    │                            ━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#too-many-digits
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
 

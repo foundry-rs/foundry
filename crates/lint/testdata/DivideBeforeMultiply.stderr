@@ -4,7 +4,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 LL │         (1 / 2) * 3;
    │         ━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
@@ -12,7 +12,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 LL │         ((1 / 2) * 3) * 4;
    │          ━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
@@ -20,7 +20,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 LL │         ((1 * 2) / 3) * 4;
    │         ━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
@@ -28,7 +28,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 LL │         (1 / 2 / 3) * 4;
    │         ━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
@@ -36,7 +36,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 LL │         (1 / (2 + 3)) * 4;
    │         ━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
    ╭▸ ROOT/testdata/DivideBeforeMultiply.sol:LL:CC
@@ -44,5 +44,5 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 LL │         1 / ((2 / 3) * 3);
    │              ━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
