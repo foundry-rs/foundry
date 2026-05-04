@@ -385,6 +385,7 @@ mod tests {
                     false,
                     LinterConfig { inline: &inline, lint_specific: &lint_specific },
                     Vec::new(),
+                    None,
                 );
                 let mut passes: Vec<Box<dyn LateLintPass<'_>>> =
                     vec![Box::new(RecordingPass { counts: counts.clone() })];

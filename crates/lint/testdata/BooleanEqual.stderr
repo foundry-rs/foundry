@@ -1,0 +1,56 @@
+note[boolean-equal]: boolean comparisons to constants should be simplified
+   ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
+   │
+LL │         if (enabled == true) {}
+   │             ━━━━━━━━━━━━━━━ help: consider simplifying to: `enabled`
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#boolean-equal
+
+note[boolean-equal]: boolean comparisons to constants should be simplified
+   ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
+   │
+LL │         if (paused == false) {}
+   │             ━━━━━━━━━━━━━━━ help: consider simplifying to: `!paused`
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#boolean-equal
+
+note[boolean-equal]: boolean comparisons to constants should be simplified
+   ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
+   │
+LL │         if (true != ready) {}
+   │             ━━━━━━━━━━━━━ help: consider simplifying to: `!ready`
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#boolean-equal
+
+note[boolean-equal]: boolean comparisons to constants should be simplified
+   ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
+   │
+LL │         while (done != false) {
+   │                ━━━━━━━━━━━━━ help: consider simplifying to: `done`
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#boolean-equal
+
+note[boolean-equal]: boolean comparisons to constants should be simplified
+   ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
+   │
+LL │         for (; enabled == true && paused != false;) {
+   │                ━━━━━━━━━━━━━━━ help: consider simplifying to: `enabled`
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#boolean-equal
+
+note[boolean-equal]: boolean comparisons to constants should be simplified
+   ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
+   │
+LL │         for (; enabled == true && paused != false;) {
+   │                                   ━━━━━━━━━━━━━━━ help: consider simplifying to: `paused`
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#boolean-equal
+
+note[boolean-equal]: boolean comparisons to constants should be simplified
+   ╭▸ ROOT/testdata/BooleanEqual.sol:LL:CC
+   │
+LL │         return enabled == true;
+   │                ━━━━━━━━━━━━━━━ help: consider simplifying to: `enabled`
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#boolean-equal
+

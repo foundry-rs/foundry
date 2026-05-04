@@ -62,7 +62,7 @@ tempo-primitives.workspace = true
 alloy-evm.workspace = true
 
 op-alloy-consensus = { workspace = true, features = ["k256"] }
-op-alloy-flz.workspace = true
+op-alloy-flz = { workspace = true, optional = true }
 op-alloy-network.workspace = true
 
 chrono.workspace = true
@@ -100,7 +100,7 @@ anvil.workspace = true
 foundry-test-utils.workspace = true
 
 [features]
-default = ["jemalloc", "asm-keccak"]
+default = ["jemalloc", "asm-keccak", "optimism"]
 asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
@@ -109,3 +109,4 @@ aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
+optimism = ["dep:op-alloy-flz", "foundry-common/optimism"]

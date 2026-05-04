@@ -16,10 +16,11 @@ use solar::{
         diagnostics::{
             Applicability, DiagBuilder, DiagId, DiagMsg, MultiSpan, Style, SuggestionStyle,
         },
+        source_map::SourceFile,
     },
     sema::Compiler,
 };
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 /// Trait representing a generic linter for analyzing and reporting issues in smart contract source
 /// code files.
@@ -54,6 +55,8 @@ pub struct LintContext<'s, 'c> {
     with_json_emitter: bool,
     pub config: LinterConfig<'c>,
     active_lints: Vec<&'static str>,
+    /// The source file currently being linted, when known.
+    source_file: Option<Arc<SourceFile>>,
 }
 
 pub struct LinterConfig<'s> {
@@ -68,8 +71,9 @@ impl<'s, 'c> LintContext<'s, 'c> {
         with_json_emitter: bool,
         config: LinterConfig<'c>,
         active_lints: Vec<&'static str>,
+        source_file: Option<Arc<SourceFile>>,
     ) -> Self {
-        Self { sess, with_description, with_json_emitter, config, active_lints }
+        Self { sess, with_description, with_json_emitter, config, active_lints, source_file }
     }
 
     fn add_help<'a>(&self, diag: DiagBuilder<'a, ()>, help: &'static str) -> DiagBuilder<'a, ()> {
@@ -79,6 +83,11 @@ impl<'s, 'c> LintContext<'s, 'c> {
 
     pub const fn session(&self) -> &'s Session {
         self.sess
+    }
+
+    /// Returns the source file currently being linted, if any.
+    pub const fn source_file(&self) -> Option<&Arc<SourceFile>> {
+        self.source_file.as_ref()
     }
 
     // Helper method to check if a lint id is enabled.
@@ -106,6 +115,25 @@ impl<'s, 'c> LintContext<'s, 'c> {
         diag = self.add_help(diag, lint.help());
 
         diag.emit();
+    }
+
+    /// Emit a diagnostic with a caller-provided message instead of the lint's description.
+    ///
+    /// Useful when the message must vary per occurrence (e.g. embedding the offending
+    /// codepoint detected by the `rtlo` lint).
+    pub fn emit_with_msg<L: Lint>(&self, lint: &'static L, span: Span, msg: impl Into<DiagMsg>) {
+        if self.config.inline.is_id_disabled(span, lint.id()) || !self.is_lint_enabled(lint.id()) {
+            return;
+        }
+
+        let diag: DiagBuilder<'_, ()> = self
+            .sess
+            .dcx
+            .diag(lint.severity().into(), msg.into())
+            .code(DiagId::new_str(lint.id()))
+            .span(MultiSpan::from_span(span));
+
+        self.add_help(diag, lint.help()).emit();
     }
 
     /// Emit a diagnostic with a code suggestion.

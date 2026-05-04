@@ -9,7 +9,9 @@ use alloy_primitives::{Address, B256, Signature, TxKind, U256};
 use alloy_provider::Provider;
 use alloy_signer::Signer;
 use eyre::Result;
+#[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
+#[cfg(feature = "optimism")]
 use op_alloy_rpc_types::OpTransactionRequest;
 use tempo_alloy::{TempoNetwork, provider::TempoProviderExt};
 use tempo_primitives::{
@@ -355,6 +357,7 @@ impl FoundryTransactionBuilder<AnyNetwork> for <AnyNetwork as Network>::Transact
     }
 }
 
+#[cfg(feature = "optimism")]
 impl FoundryTransactionBuilder<Optimism> for OpTransactionRequest {
     fn reset_gas_limit(&mut self) {
         self.as_mut().gas = None;

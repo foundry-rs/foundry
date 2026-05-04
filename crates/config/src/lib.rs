@@ -2864,19 +2864,35 @@ impl BasicConfig {
     ///
     /// This serializes to a table with the name of the profile
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        let mut value = toml::Value::try_from(self)?;
+        let mut profile_body = toml::Value::try_from(self)?;
         if let Some(ref network) = self.network
-            && let toml::Value::Table(ref mut table) = value
+            && let toml::Value::Table(ref mut table) = profile_body
         {
-            table.insert(network.clone(), toml::Value::Boolean(true));
+            table.insert("network".to_string(), toml::Value::String(network.clone()));
         }
-        let s = toml::to_string_pretty(&value)?;
+
+        let mut profile_section = toml::value::Table::new();
+        profile_section.insert(self.profile.to_string(), profile_body);
+
+        let mut document = toml::value::Table::new();
+        document.insert("profile".to_string(), toml::Value::Table(profile_section));
+
+        if self.network.as_deref() == Some("tempo") {
+            let mut endpoints = toml::value::Table::new();
+            endpoints.insert(
+                "tempo".to_string(),
+                toml::Value::String("https://rpc.tempo.xyz/".to_string()),
+            );
+            endpoints.insert(
+                "moderato".to_string(),
+                toml::Value::String("https://rpc.moderato.tempo.xyz/".to_string()),
+            );
+            document.insert("rpc_endpoints".to_string(), toml::Value::Table(endpoints));
+        }
+
+        let body = toml::to_string_pretty(&toml::Value::Table(document))?;
         Ok(format!(
-            "\
-[profile.{}]
-{s}
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n",
-            self.profile
+            "{body}\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n"
         ))
     }
 }
@@ -6677,6 +6693,55 @@ mod tests {
             assert!(cfg.warnings.iter().any(
                 |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "unknown_key_xyz")
             ));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn no_unknown_key_warning_for_network_field() {
+        // Regression test: `network` is a flattened `Option` field of `NetworkConfigs`. It must
+        // not trigger an unknown-key warning, regardless of whether it is set.
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                network = "tempo"
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings.iter().any(
+                    |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "network")
+                ),
+                "did not expect UnknownKey warning for `network`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn no_unknown_key_warning_for_legacy_tempo_alias() {
+        // Regression test: the legacy `tempo = true` alias must keep working without warnings.
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                tempo = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "tempo")),
+                "did not expect UnknownKey warning for `tempo`, got: {:?}",
+                cfg.warnings
+            );
             Ok(())
         });
     }

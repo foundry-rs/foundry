@@ -110,6 +110,14 @@ LL │         return keccak256(abi.encode(a, b, c));
    │
    ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
 
+note[unused-state-variables]: state variable is never used
+   ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
+   │
+LL │     uint256 Enabled_MixedCase_Variable;
+   │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-state-variables
+
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
    │
