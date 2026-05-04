@@ -1,7 +1,14 @@
 //! Tempo network utilities.
 
+pub mod auth;
 mod keystore;
+
+pub(crate) use auth::is_known_tempo_endpoint;
+pub use auth::{AccessKeyOutcome, EnsureAccessKeyConfig, ensure_access_key};
 pub use keystore::*;
+
+#[cfg(test)]
+pub(crate) use keystore::test_env_mutex;
 
 #[cfg(test)]
 mod tests;

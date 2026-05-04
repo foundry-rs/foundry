@@ -5,8 +5,8 @@ use crate::cmd::{
     da_estimate::DAEstimateArgs, erc20::Erc20Subcommand, estimate::EstimateArgs,
     find_block::FindBlockArgs, interface::InterfaceArgs, keychain::KeychainSubcommand,
     logs::LogsArgs, mktx::MakeTxArgs, rpc::RpcArgs, run::RunArgs, send::SendTxArgs,
-    storage::StorageArgs, tip20::Tip20Subcommand, trace::TraceArgs, txpool::TxPoolSubcommands,
-    wallet::WalletSubcommands,
+    storage::StorageArgs, tempo::TempoSubcommand, tip20::Tip20Subcommand, trace::TraceArgs,
+    txpool::TxPoolSubcommands, wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
@@ -1186,6 +1186,13 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: KeychainSubcommand,
     },
+
+    /// Tempo wallet integration (login, etc.).
+    Tempo {
+        #[command(subcommand)]
+        command: TempoSubcommand,
+    },
+
     #[command(name = "trace")]
     Trace(TraceArgs),
 }
