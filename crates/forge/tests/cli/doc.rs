@@ -7,8 +7,8 @@ fn can_generate_solmate_docs() {
     prj.forge_command().args(["doc"]).assert_success();
     // At least one MDX page was generated.
     assert!(
-        std::fs::read_dir(prj.root().join("docs/pages/src")).is_ok(),
-        "docs/pages/src directory should exist"
+        std::fs::read_dir(prj.root().join("docs/src/pages/src")).is_ok(),
+        "docs/src/pages/src directory should exist"
     );
 }
 
@@ -53,7 +53,7 @@ contract Example is IExample {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/pages/src/contract.Example.mdx");
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Example.mdx");
     let content = std::fs::read_to_string(&doc_path).unwrap();
 
     assert!(
@@ -98,7 +98,7 @@ contract Derived is IBase {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/pages/src/contract.Derived.mdx");
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Derived.mdx");
     let content = std::fs::read_to_string(&doc_path).unwrap();
 
     assert!(
@@ -131,7 +131,7 @@ contract CounterConstants {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/pages/src/contract.CounterConstants.mdx");
+    let doc_path = prj.root().join("docs/src/pages/src/contract.CounterConstants.mdx");
     let content = std::fs::read_to_string(&doc_path).unwrap();
 
     assert!(content.contains("## Constants"), "Should have Constants section");
@@ -171,7 +171,7 @@ contract CounterStateVariables {
 
     cmd.args(["doc"]).assert_success();
 
-    let doc_path = prj.root().join("docs/pages/src/contract.CounterStateVariables.mdx");
+    let doc_path = prj.root().join("docs/src/pages/src/contract.CounterStateVariables.mdx");
     let content = std::fs::read_to_string(&doc_path).unwrap();
 
     assert!(!content.contains("## Constants"), "Should not have Constants section");
@@ -218,7 +218,7 @@ contract CounterMixedVariables {
 
         cmd.args(["doc"]).assert_success();
 
-        let doc_path = prj.root().join("docs/pages/src/contract.CounterMixedVariables.mdx");
+        let doc_path = prj.root().join("docs/src/pages/src/contract.CounterMixedVariables.mdx");
         let content = std::fs::read_to_string(&doc_path).unwrap();
 
         assert!(content.contains("## Constants"), "Should have Constants section");
