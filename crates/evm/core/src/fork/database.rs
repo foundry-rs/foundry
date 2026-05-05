@@ -213,12 +213,7 @@ pub struct ForkDbStateSnapshot<N: Network, B: ForkBlockEnv = BlockEnv> {
 
 impl<N: Network, B: ForkBlockEnv> ForkDbStateSnapshot<N, B> {
     fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
-        self.local
-            .cache
-            .accounts
-            .get(&address)
-            .and_then(|account| account.storage.get(&index))
-            .copied()
+        self.state_snapshot.storage.get(&address).and_then(|storage| storage.get(&index)).copied()
     }
 }
 
