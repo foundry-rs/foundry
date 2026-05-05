@@ -893,6 +893,7 @@ impl BundledState<TempoEvmNetwork> {
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
 
         if let BatchSigner::TempoKeychain(_, ak) = &batch_signer {
+            batch_tx.key_id = Some(ak.key_address);
             batch_tx
                 .prepare_access_key_authorization(
                     provider.as_ref(),
@@ -924,8 +925,6 @@ impl BundledState<TempoEvmNetwork> {
                 *pending.tx_hash()
             }
             BatchSigner::TempoKeychain(signer, access_key) => {
-                batch_tx.key_id = Some(access_key.key_address);
-
                 let raw_tx = batch_tx
                     .sign_with_access_key(
                         provider.as_ref(),
