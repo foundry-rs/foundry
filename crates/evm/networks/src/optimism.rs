@@ -9,7 +9,7 @@ impl NetworkConfigs {
         Self { network: Some(NetworkVariant::Optimism), optimism: true, ..Default::default() }
     }
 
-    pub fn is_optimism(&self) -> bool {
+    pub const fn is_optimism(&self) -> bool {
         matches!(self.resolved_network(), Some(NetworkVariant::Optimism))
     }
 

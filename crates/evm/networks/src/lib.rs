@@ -146,7 +146,7 @@ impl NetworkConfigs {
         Self { network: Some(NetworkVariant::Tempo), tempo: true, ..Default::default() }
     }
 
-    pub fn is_tempo(&self) -> bool {
+    pub const fn is_tempo(&self) -> bool {
         matches!(self.resolved_network(), Some(NetworkVariant::Tempo))
     }
 
