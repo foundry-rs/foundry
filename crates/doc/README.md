@@ -1,4 +1,4 @@
-# foundry-doc
+# forge-doc
 
 Solidity documentation generator powered by [`solar`](https://github.com/paradigmxyz/solar).
 
