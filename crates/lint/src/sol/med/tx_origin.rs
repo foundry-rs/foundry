@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{Expr, ExprKind, Stmt, StmtKind},
+    ast::{Expr, ExprKind, IndexKind, Stmt, StmtKind},
     interface::SpannedOption,
 };
 
@@ -54,6 +54,17 @@ fn contains_tx_origin(expr: &Expr<'_>) -> bool {
     match &expr.kind {
         ExprKind::Unary(_, inner) => contains_tx_origin(inner),
         ExprKind::Binary(lhs, _, rhs) => contains_tx_origin(lhs) || contains_tx_origin(rhs),
+        ExprKind::Index(base, index) => {
+            contains_tx_origin(base)
+                || match index {
+                    IndexKind::Index(Some(index)) => contains_tx_origin(index),
+                    IndexKind::Range(start, end) => {
+                        start.as_ref().is_some_and(|start| contains_tx_origin(start))
+                            || end.as_ref().is_some_and(|end| contains_tx_origin(end))
+                    }
+                    _ => false,
+                }
+        }
         ExprKind::Tuple(elems) => elems.iter().any(|elem| {
             if let SpannedOption::Some(inner) = elem.as_ref() {
                 contains_tx_origin(inner)
@@ -63,6 +74,11 @@ fn contains_tx_origin(expr: &Expr<'_>) -> bool {
         }),
         ExprKind::Call(callee, args) => {
             contains_tx_origin(callee) || args.exprs().any(contains_tx_origin)
+        }
+        ExprKind::Ternary(cond, then_expr, else_expr) => {
+            contains_tx_origin(cond)
+                || contains_tx_origin(then_expr)
+                || contains_tx_origin(else_expr)
         }
         _ => false,
     }

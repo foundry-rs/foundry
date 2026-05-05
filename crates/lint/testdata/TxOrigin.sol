@@ -4,6 +4,7 @@ pragma solidity ^0.8.18;
 
 contract TxOrigin {
     address public owner;
+    mapping(address => bool) public allowed;
 
     constructor() {
         owner = msg.sender;
@@ -38,8 +39,16 @@ contract TxOrigin {
 
     function guardedByDoWhile() external view {
         do {
-            break;
         } while (tx.origin == owner); //~WARN: `tx.origin` should not be used for authorization
+    }
+
+    function guardedByMapping() external view {
+        require(allowed[tx.origin], "not allowed"); //~WARN: `tx.origin` should not be used for authorization
+        require(allowed[tx.origin] == true, "not allowed"); //~WARN: `tx.origin` should not be used for authorization
+    }
+
+    function guardedByTernary() external view {
+        require(tx.origin == owner ? true : false, "not owner"); //~WARN: `tx.origin` should not be used for authorization
     }
 
     function readForLogging() external view returns (address) {
