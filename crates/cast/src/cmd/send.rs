@@ -120,6 +120,7 @@ impl SendTxArgs {
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
         let sponsor_signature = tx.tempo.sponsor_signature;
+        let expires_at = tx.tempo.expires_at();
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -214,6 +215,10 @@ impl SendTxArgs {
                 .ok_or_else(|| eyre!("This network does not support sponsored transactions"))?;
             sh_println!("{hash:?}")?;
             return Ok(());
+        }
+
+        if let Some(ts) = expires_at {
+            sh_println!("Transaction expires at unix timestamp {ts}")?;
         }
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);

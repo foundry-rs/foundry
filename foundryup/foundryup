@@ -3,7 +3,7 @@ set -eo pipefail
 
 # NOTE: if you make modifications to this script, please increment the version number.
 # WARNING: the SemVer pattern: major.minor.patch must be followed as we use it to determine if the script is up to date.
-FOUNDRYUP_INSTALLER_VERSION="1.8.1"
+FOUNDRYUP_INSTALLER_VERSION="1.8.2"
 
 BASE_DIR=${XDG_CONFIG_HOME:-$HOME}
 FOUNDRY_DIR=${FOUNDRY_DIR:-"$BASE_DIR/.foundry"}
@@ -14,6 +14,13 @@ FOUNDRY_BIN_URL="https://raw.githubusercontent.com/foundry-rs/foundry/HEAD/found
 FOUNDRY_BIN_PATH="$FOUNDRY_BIN_DIR/foundryup"
 FOUNDRYUP_JOBS=""
 FOUNDRYUP_IGNORE_VERIFICATION=false
+
+# Retry/backoff settings used for `fetch` (GitHub API calls).
+# Recovers from transient HTTP 403/429/5xx responses returned by
+# api.github.com under heavy load or per-IP rate limiting.
+FOUNDRYUP_MAX_RETRIES=5
+FOUNDRYUP_RETRY_DELAY=2
+FOUNDRYUP_RETRY_MAX_TIME=60
 
 BINS=(forge cast anvil chisel)
 HASH_NAMES=()
@@ -683,12 +690,20 @@ ensure() {
   if ! "$@"; then err "command failed: $*"; fi
 }
 
-# Silently fetches $1 to stdout
+# Silently fetches $1 to stdout.
 fetch() {
   if check_cmd curl; then
-    curl -fsSL "$1"
+    curl -fsSL \
+      --retry "$FOUNDRYUP_MAX_RETRIES" \
+      --retry-delay "$FOUNDRYUP_RETRY_DELAY" \
+      --retry-max-time "$FOUNDRYUP_RETRY_MAX_TIME" \
+      --retry-all-errors \
+      "$1"
   else
-    wget -qO- "$1"
+    wget --tries="$FOUNDRYUP_MAX_RETRIES" \
+         --waitretry="$FOUNDRYUP_RETRY_DELAY" \
+         --retry-on-http-error=403,408,429,500,502,503,504 \
+         -qO- "$1"
   fi
 }
 

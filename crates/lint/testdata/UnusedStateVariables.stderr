@@ -1,0 +1,40 @@
+note[could-be-immutable]: state variable could be declared immutable
+   ╭▸ ROOT/testdata/UnusedStateVariables.sol:LL:CC
+   │
+LL │     address usedInBoth;
+   │             ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
+
+note[unused-state-variables]: state variable is never used
+   ╭▸ ROOT/testdata/UnusedStateVariables.sol:LL:CC
+   │
+LL │     uint256 unused;
+   │     ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-state-variables
+
+note[unused-state-variables]: state variable is never used
+   ╭▸ ROOT/testdata/UnusedStateVariables.sol:LL:CC
+   │
+LL │     uint256 unused;
+   │     ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-state-variables
+
+note[unused-state-variables]: state variable is never used
+   ╭▸ ROOT/testdata/UnusedStateVariables.sol:LL:CC
+   │
+LL │     uint256 firstUnused;
+   │     ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-state-variables
+
+note[unused-state-variables]: state variable is never used
+   ╭▸ ROOT/testdata/UnusedStateVariables.sol:LL:CC
+   │
+LL │     uint256 secondUnused;
+   │     ━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/unused-state-variables
+

@@ -12,7 +12,6 @@ use anvil_rpc::{
     response::ResponseResult,
 };
 use foundry_evm::{backend::DatabaseError, decode::RevertDecoder};
-use op_revm::OpTransactionError;
 use revm::{
     context_interface::result::{EVMError, InvalidHeader, InvalidTransaction},
     interpreter::InstructionResult,
@@ -20,6 +19,9 @@ use revm::{
 use serde::Serialize;
 use tempo_revm::TempoInvalidTransaction;
 use tokio::time::Duration;
+
+#[cfg(feature = "optimism")]
+mod optimism;
 
 pub(crate) type Result<T> = std::result::Result<T, BlockchainError>;
 
@@ -156,51 +158,6 @@ where
                 InvalidHeader::ExcessBlobGasNotSet => Self::ExcessBlobGasNotSet,
                 InvalidHeader::PrevrandaoNotSet => Self::PrevrandaoNotSet,
             },
-            EVMError::Database(err) => err.into(),
-            EVMError::Custom(err) => Self::Message(err),
-            EVMError::CustomAny(err) => Self::Message(err.to_string()),
-        }
-    }
-}
-
-impl<T> From<EVMError<T, OpTransactionError>> for BlockchainError
-where
-    T: Into<Self>,
-{
-    fn from(err: EVMError<T, OpTransactionError>) -> Self {
-        match err {
-            EVMError::Transaction(err) => match err {
-                OpTransactionError::Base(err) => InvalidTransactionError::from(err).into(),
-                OpTransactionError::DepositSystemTxPostRegolith => {
-                    Self::DepositTransactionUnsupported
-                }
-                OpTransactionError::HaltedDepositPostRegolith => {
-                    Self::DepositTransactionUnsupported
-                }
-                OpTransactionError::MissingEnvelopedTx => Self::InvalidTransaction(err.into()),
-            },
-            EVMError::Header(err) => match err {
-                InvalidHeader::ExcessBlobGasNotSet => Self::ExcessBlobGasNotSet,
-                InvalidHeader::PrevrandaoNotSet => Self::PrevrandaoNotSet,
-            },
-            EVMError::Database(err) => err.into(),
-            EVMError::Custom(err) => Self::Message(err),
-            EVMError::CustomAny(err) => Self::Message(err.to_string()),
-        }
-    }
-}
-
-impl<T> From<EVMError<T, alloy_op_evm::OpTxError>> for BlockchainError
-where
-    T: Into<Self>,
-{
-    fn from(err: EVMError<T, alloy_op_evm::OpTxError>) -> Self {
-        match err {
-            EVMError::Transaction(err) => {
-                let op_err: OpTransactionError = err.0;
-                EVMError::<T, OpTransactionError>::Transaction(op_err).into()
-            }
-            EVMError::Header(err) => EVMError::<T, OpTransactionError>::Header(err).into(),
             EVMError::Database(err) => err.into(),
             EVMError::Custom(err) => Self::Message(err),
             EVMError::CustomAny(err) => Self::Message(err.to_string()),
@@ -451,16 +408,6 @@ impl From<InvalidTransaction> for InvalidTransactionError {
     }
 }
 
-impl From<OpTransactionError> for InvalidTransactionError {
-    fn from(value: OpTransactionError) -> Self {
-        match value {
-            OpTransactionError::Base(err) => err.into(),
-            OpTransactionError::DepositSystemTxPostRegolith
-            | OpTransactionError::HaltedDepositPostRegolith => Self::DepositTxErrorPostRegolith,
-            OpTransactionError::MissingEnvelopedTx => Self::MissingEnvelopedTx,
-        }
-    }
-}
 /// Helper trait to easily convert results to rpc results
 pub(crate) trait ToRpcResponseResult {
     fn to_rpc_result(self) -> ResponseResult;

@@ -27,6 +27,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
+use foundry_evm_networks::NetworkVariant;
 
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
@@ -280,6 +281,25 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
     }
 }
 
+/// Tracks network assignment across a multi-network test run.
+///
+/// When inline config specifies different networks for different tests, the runner performs one
+/// pass per distinct network. This struct encodes which pass we're in so each `ContractRunner`
+/// can skip tests that belong to a different pass.
+///
+/// Default (empty `all_override_networks`, `None` pass) = single-pass mode, every test runs.
+#[derive(Clone, Debug, Default)]
+pub struct MultiNetworkConfig {
+    /// All networks explicitly referenced in inline config annotations across the whole suite.
+    /// Empty means single-pass mode (no per-test network overrides present).
+    pub all_override_networks: Vec<NetworkVariant>,
+    /// The network this pass is responsible for.
+    /// `None` = default pass: runs tests *without* an explicit network annotation (or annotated
+    /// with a network not in `all_override_networks`).
+    /// `Some(v)` = override pass: runs only tests annotated with exactly `v`.
+    pub pass_network: Option<NetworkVariant>,
+}
+
 /// Configuration for the test runner.
 ///
 /// This is modified after instantiation through inline config.
@@ -311,6 +331,9 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub isolation: bool,
     /// Whether to exit early on test failure or if test run interrupted.
     pub early_exit: EarlyExit,
+
+    /// Multi-network pass configuration. Default = single-pass mode.
+    pub multi_network: MultiNetworkConfig,
 }
 
 impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
@@ -423,6 +446,8 @@ pub struct MultiContractRunnerBuilder {
     pub isolation: bool,
     /// Whether to exit early on test failure.
     pub fail_fast: bool,
+    /// Multi-network pass configuration.
+    pub multi_network: MultiNetworkConfig,
 }
 
 impl MultiContractRunnerBuilder {
@@ -437,6 +462,7 @@ impl MultiContractRunnerBuilder {
             isolation: Default::default(),
             decode_internal: Default::default(),
             fail_fast: false,
+            multi_network: Default::default(),
         }
     }
 
@@ -467,6 +493,11 @@ impl MultiContractRunnerBuilder {
 
     pub const fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
         self.decode_internal = mode;
+        self
+    }
+
+    pub fn with_multi_network(mut self, multi_network: MultiNetworkConfig) -> Self {
+        self.multi_network = multi_network;
         self
     }
 
@@ -594,6 +625,7 @@ impl MultiContractRunnerBuilder {
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 early_exit: EarlyExit::new(self.fail_fast),
+                multi_network: self.multi_network,
                 config: self.config,
             },
 
