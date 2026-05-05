@@ -171,14 +171,11 @@ impl TempoOpts {
     /// Resolves sponsor CLI options into a reusable sponsor config for transaction submission.
     pub async fn sponsor_config(&self) -> Result<Option<TempoSponsor>> {
         let Some(sponsor) = self.sponsor else {
-            if self.sponsor_signer.is_some() || self.sponsor_sig.is_some() {
-                eyre::bail!("--tempo.sponsor is required when configuring Tempo sponsorship");
-            }
             return Ok(None);
         };
 
         let signer = if let Some(spec) = &self.sponsor_signer {
-            Some(Arc::new(Box::pin(resolve_tempo_sponsor_signer(spec)).await?))
+            Some(Arc::new(resolve_tempo_sponsor_signer(spec).await?))
         } else {
             None
         };

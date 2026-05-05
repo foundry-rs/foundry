@@ -896,6 +896,14 @@ mod tests {
     }
 
     #[test]
+    fn can_parse_full_tempo_opts() {
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--tempo.nonce-key", "1"]);
+
+        assert_eq!(args.tempo.nonce_key, Some(U256::from(1)));
+    }
+
+    #[test]
     fn can_parse_unlocked() {
         let args = ScriptArgs::parse_from([
             "foundry-cli",
