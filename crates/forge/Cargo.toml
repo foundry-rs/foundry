@@ -29,7 +29,7 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
-foundry-evm-networks = { workspace = true, features = ["optimism"] }
+foundry-evm-networks.workspace = true
 foundry-linking.workspace = true
 
 comfy-table.workspace = true
@@ -117,7 +117,7 @@ tempfile.workspace = true
 alloy-signer-local.workspace = true
 
 [features]
-default = ["jemalloc", "asm-keccak"]
+default = ["jemalloc", "asm-keccak", "optimism"]
 asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
@@ -126,3 +126,8 @@ aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
+optimism = [
+    "foundry-evm/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+]

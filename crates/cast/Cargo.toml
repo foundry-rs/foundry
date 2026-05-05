@@ -28,7 +28,7 @@ foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-debugger.workspace = true
 foundry-evm.workspace = true
-foundry-evm-networks = { workspace = true, features = ["optimism"] }
+foundry-evm-networks.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 forge-fmt.workspace = true
 
@@ -61,9 +61,9 @@ tempo-contracts.workspace = true
 tempo-primitives.workspace = true
 alloy-evm.workspace = true
 
-op-alloy-consensus = { workspace = true, features = ["k256"] }
+op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
 op-alloy-flz = { workspace = true, optional = true }
-op-alloy-network.workspace = true
+op-alloy-network = { workspace = true, optional = true }
 
 chrono.workspace = true
 eyre.workspace = true
@@ -109,4 +109,11 @@ aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
-optimism = ["dep:op-alloy-flz", "foundry-common/optimism"]
+optimism = [
+    "dep:op-alloy-flz",
+    "dep:op-alloy-consensus",
+    "dep:op-alloy-network",
+    "foundry-common/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-evm/optimism",
+]

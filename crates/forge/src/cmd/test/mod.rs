@@ -39,10 +39,11 @@ use foundry_config::{
     filter::GlobMatcher,
 };
 use foundry_debugger::Debugger;
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, SpecFor, TempoEvmNetwork,
-        TxEnvFor,
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
@@ -563,19 +564,22 @@ impl TestArgs {
                 multi_network,
             )
             .await
-        } else if dispatch_opts.networks.is_optimism() {
-            self.build_and_run_tests::<OpEvmNetwork>(
-                config,
-                evm_opts,
-                output,
-                filter,
-                coverage,
-                should_debug,
-                decode_internal,
-                multi_network,
-            )
-            .await
         } else {
+            #[cfg(feature = "optimism")]
+            if dispatch_opts.networks.is_optimism() {
+                return self
+                    .build_and_run_tests::<OpEvmNetwork>(
+                        config,
+                        evm_opts,
+                        output,
+                        filter,
+                        coverage,
+                        should_debug,
+                        decode_internal,
+                        multi_network,
+                    )
+                    .await;
+            }
             self.build_and_run_tests::<EthEvmNetwork>(
                 config,
                 evm_opts,

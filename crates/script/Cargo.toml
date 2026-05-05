@@ -19,7 +19,7 @@ foundry-cli.workspace = true
 foundry-config.workspace = true
 foundry-common.workspace = true
 foundry-evm.workspace = true
-foundry-evm-networks = { workspace = true, features = ["optimism"] }
+foundry-evm-networks.workspace = true
 alloy-evm.workspace = true
 foundry-debugger.workspace = true
 foundry-cheatcodes.workspace = true
@@ -62,3 +62,11 @@ tempo-primitives.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-evm/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+]
