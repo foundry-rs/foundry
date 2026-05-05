@@ -111,7 +111,7 @@ dependencies = [
  "alloy-rlp",
  "num_enum",
  "serde",
- "strum",
+ "strum 0.27.2",
 ]
 
 [[package]]
@@ -718,7 +718,7 @@ dependencies = [
  "jsonwebtoken",
  "rand 0.8.6",
  "serde",
- "strum",
+ "strum 0.27.2",
 ]
 
 [[package]]
@@ -4647,7 +4647,7 @@ dependencies = [
  "solar-compiler",
  "soldeer-commands",
  "soldeer-core",
- "strum",
+ "strum 0.28.0",
  "svm-rs",
  "tempfile",
  "tempo-alloy",
@@ -4978,7 +4978,7 @@ dependencies = [
  "serde_json",
  "solar-compiler",
  "strsim",
- "strum",
+ "strum 0.28.0",
  "tempfile",
  "tempo-primitives",
  "tikv-jemallocator",
@@ -8768,7 +8768,7 @@ dependencies = [
  "itertools 0.14.0",
  "kasuari",
  "lru",
- "strum",
+ "strum 0.27.2",
  "thiserror 2.0.18",
  "unicode-segmentation",
  "unicode-truncate",
@@ -8800,7 +8800,7 @@ dependencies = [
  "itertools 0.14.0",
  "line-clipping",
  "ratatui-core",
- "strum",
+ "strum 0.27.2",
  "time",
  "unicode-segmentation",
  "unicode-width 0.2.2",
@@ -9298,7 +9298,7 @@ dependencies = [
  "modular-bitfield",
  "reth-codecs",
  "serde",
- "strum",
+ "strum 0.27.2",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -9374,7 +9374,7 @@ dependencies = [
  "fixed-map",
  "reth-stages-types",
  "serde",
- "strum",
+ "strum 0.27.2",
  "tracing",
 ]
 
@@ -10676,7 +10676,7 @@ dependencies = [
  "solar-data-structures",
  "solar-interface",
  "solar-macros",
- "strum",
+ "strum 0.27.2",
 ]
 
 [[package]]
@@ -10700,7 +10700,7 @@ version = "0.1.8"
 source = "git+https://github.com/paradigmxyz/solar?rev=530f129#530f129b1b2d7138df973dd71d2fc1e592b593d7"
 dependencies = [
  "colorchoice",
- "strum",
+ "strum 0.27.2",
 ]
 
 [[package]]
@@ -10797,7 +10797,7 @@ dependencies = [
  "solar-interface",
  "solar-macros",
  "solar-parse",
- "strum",
+ "strum 0.27.2",
  "thread_local",
  "tracing",
 ]
@@ -10942,7 +10942,16 @@ version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.27.2",
+]
+
+[[package]]
+name = "strum"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
+dependencies = [
+ "strum_macros 0.28.0",
 ]
 
 [[package]]
@@ -10950,6 +10959,18 @@ name = "strum_macros"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7695ce3845ea4b33927c055a39dc438a45b059f7c1b3d91d38d10355fb8cbca7"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
 dependencies = [
  "heck",
  "proc-macro2",

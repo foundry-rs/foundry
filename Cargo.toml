@@ -478,7 +478,7 @@ serde_json = { version = "1.0", features = ["arbitrary_precision"] }
 similar-asserts = "1.7"
 soldeer-commands = "=0.10.0"
 soldeer-core = { version = "=0.10.1", features = ["serde"] }
-strum = "0.27"
+strum = "0.28"
 tempfile = "3.23"
 tokio = "1"
 tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
