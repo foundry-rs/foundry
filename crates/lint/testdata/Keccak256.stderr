@@ -4,7 +4,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 LL │         uint256 MixedCase_Variable = 1;
    │                 ━━━━━━━━━━━━━━━━━━ help: consider using: `mixedCaseVariable`
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
 note[mixed-case-variable]: mutable variables should use mixedCase
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -12,7 +12,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 LL │         uint256 Another_MixedCase = 2;
    │                 ━━━━━━━━━━━━━━━━━ help: consider using: `anotherMixedCase`
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
 note[mixed-case-variable]: mutable variables should use mixedCase
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -20,7 +20,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 LL │         uint256 YetAnother_MixedCase = 3;
    │                 ━━━━━━━━━━━━━━━━━━━━ help: consider using: `yetAnotherMixedCase`
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
 note[mixed-case-variable]: mutable variables should use mixedCase
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -28,7 +28,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 LL │     uint256 Enabled_MixedCase_Variable;
    │             ━━━━━━━━━━━━━━━━━━━━━━━━━━ help: consider using: `enabledMixedCaseVariable`
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
 note[mixed-case-variable]: mutable variables should use mixedCase
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -36,7 +36,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 LL │         uint256 Enabled_MixedCase_Variable = 1;
    │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━ help: consider using: `enabledMixedCaseVariable`
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+   ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -44,7 +44,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ contract AsmKeccak256 {
    │          ━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -52,7 +52,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ contract OtherAsmKeccak256 {
    │          ━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -60,7 +60,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ contract YetAnotherAsmKeccak256 {
    │          ━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -68,7 +68,7 @@ note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline
 LL │         bytes32 hash = keccak256(abi.encodePacked(a, b, bytes32(bytes20(c))));
    │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+   ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -76,7 +76,7 @@ note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline
 LL │         bytes32 afterDisabledBlock = keccak256(abi.encode(a, b, c));
    │                                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+   ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -84,7 +84,7 @@ note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline
 LL │         bytes32 loadsFromCalldata = keccak256(z);
    │                                     ━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+   ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -92,7 +92,7 @@ note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline
 LL │         bytes32 loadsFromMemory = keccak256(y);
    │                                   ━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+   ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -100,7 +100,7 @@ note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline
 LL │         bytes32 lintWithoutFix = keccak256(abi.encodePacked(a, b, c));
    │                                  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+   ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -108,7 +108,7 @@ note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline
 LL │         return keccak256(abi.encode(a, b, c));
    │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+   ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
 note[unused-state-variables]: state variable is never used
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -116,7 +116,7 @@ note[unused-state-variables]: state variable is never used
 LL │     uint256 Enabled_MixedCase_Variable;
    │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-state-variables
+   ╰ help: https://getfoundry.sh/forge/linting/unused-state-variables
 
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -124,7 +124,7 @@ note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline
 LL │         bytes32 doesNotUseScratchSpace = keccak256(abi.encode(x, y, x, y, x, y));
    │                                          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+   ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -132,7 +132,7 @@ note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline
 LL │         bytes32 doesUseScratchSpace = keccak256(abi.encode(x));
    │                                       ━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+   ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 
 note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline assembly
    ╭▸ ROOT/testdata/Keccak256.sol:LL:CC
@@ -140,5 +140,5 @@ note[asm-keccak256]: use of inefficient hashing mechanism; consider using inline
 LL │         return keccak256(abi.encode(doesUseScratchSpace, doesNotUseScratchSpace));
    │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#asm-keccak256
+   ╰ help: https://getfoundry.sh/forge/linting/asm-keccak256
 

@@ -169,6 +169,14 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
 
+    /// Run only the fuzz case at the given 1-based run index.
+    #[arg(long, env = "FOUNDRY_FUZZ_RUN", value_name = "RUN")]
+    pub fuzz_run: Option<u32>,
+
+    /// Run the fuzz case from the given worker. Requires `--fuzz-run`.
+    #[arg(long, env = "FOUNDRY_FUZZ_WORKER", value_name = "WORKER", requires = "fuzz_run")]
+    pub fuzz_worker: Option<u32>,
+
     /// Timeout for each fuzz run in seconds.
     #[arg(long, env = "FOUNDRY_FUZZ_TIMEOUT", value_name = "TIMEOUT")]
     pub fuzz_timeout: Option<u64>,
@@ -301,6 +309,10 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
         coverage: bool,
     ) -> Result<TestOutcome> {
+        if config.fuzz.run == Some(0) {
+            bail!("`fuzz.run` must be greater than 0");
+        }
+
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
             evm_opts.isolate = true;
@@ -1087,6 +1099,12 @@ impl Provider for TestArgs {
         if let Some(fuzz_runs) = self.fuzz_runs {
             fuzz_dict.insert("runs".to_string(), fuzz_runs.into());
         }
+        if let Some(fuzz_run) = self.fuzz_run {
+            fuzz_dict.insert("run".to_string(), fuzz_run.into());
+        }
+        if let Some(fuzz_worker) = self.fuzz_worker {
+            fuzz_dict.insert("worker".to_string(), fuzz_worker.into());
+        }
         if let Some(fuzz_timeout) = self.fuzz_timeout {
             fuzz_dict.insert("timeout".to_string(), fuzz_timeout.into());
         }
@@ -1259,6 +1277,14 @@ mod tests {
         let args: TestArgs =
             TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
         assert!(args.fuzz_seed.is_some());
+    }
+
+    #[test]
+    fn fuzz_run() {
+        let args: TestArgs =
+            TestArgs::parse_from(["foundry-cli", "--fuzz-run", "10", "--fuzz-worker", "2"]);
+        assert_eq!(args.fuzz_run, Some(10));
+        assert_eq!(args.fuzz_worker, Some(2));
     }
 
     #[test]

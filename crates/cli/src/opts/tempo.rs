@@ -11,10 +11,10 @@ use std::{
 
 use crate::utils::parse_fee_token_address;
 
-/// CLI options for Tempo transactions.
+/// CLI options common to Tempo transactions across commands.
 #[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Tempo")]
-pub struct TempoOpts {
+pub struct TempoCommonOpts {
     /// Fee token address for Tempo transactions.
     ///
     /// When set, builds a Tempo (type 0x76) transaction that pays gas fees
@@ -24,6 +24,40 @@ pub struct TempoOpts {
     /// for more information.
     #[arg(long = "tempo.fee-token", value_parser = parse_fee_token_address)]
     pub fee_token: Option<Address>,
+
+    /// Opt into TIP-1009 expiring-nonce mode with a validity window.
+    ///
+    /// Convenience flag that combines `--tempo.expiring-nonce` with a relative
+    /// `--tempo.valid-before`. Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now +
+    /// seconds.
+    ///
+    /// Maximum value is 30 seconds. The transaction must be mined before the deadline or it
+    /// becomes permanently invalid, giving safe retry semantics: retries produce a fresh tx hash
+    /// and the old tx can never land late.
+    #[arg(long = "tempo.expires", value_name = "SECONDS", value_parser = parse_expires_seconds)]
+    pub expires: Option<u64>,
+}
+
+impl TempoCommonOpts {
+    /// Returns `true` if any Tempo-specific option is set.
+    pub const fn is_tempo(&self) -> bool {
+        self.fee_token.is_some() || self.expires.is_some()
+    }
+
+    /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.
+    pub fn expires_at(&self) -> Option<u64> {
+        let secs = self.expires?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
+        Some(now.as_secs() + secs)
+    }
+}
+
+/// CLI options for Tempo transactions.
+#[derive(Clone, Debug, Default, Parser)]
+#[command(next_help_heading = "Tempo")]
+pub struct TempoOpts {
+    #[command(flatten)]
+    pub common: TempoCommonOpts,
 
     /// Nonce key for Tempo parallelizable nonces.
     ///
@@ -60,14 +94,14 @@ pub struct TempoOpts {
     ///
     /// Sets nonce to 0 and nonce_key to U256::MAX, enabling time-bounded transaction
     /// validity via `--tempo.valid-before` and `--tempo.valid-after`.
-    #[arg(long = "tempo.expiring-nonce", requires = "valid_before")]
+    #[arg(long = "tempo.expiring-nonce", requires = "valid_before", conflicts_with = "expires")]
     pub expiring_nonce: bool,
 
     /// Upper bound timestamp for Tempo expiring nonce transactions.
     ///
     /// The transaction is only valid before this unix timestamp.
     /// Requires `--tempo.expiring-nonce`.
-    #[arg(long = "tempo.valid-before")]
+    #[arg(long = "tempo.valid-before", conflicts_with = "expires")]
     pub valid_before: Option<u64>,
 
     /// Lower bound timestamp for Tempo expiring nonce transactions.
@@ -76,29 +110,12 @@ pub struct TempoOpts {
     /// Requires `--tempo.expiring-nonce`.
     #[arg(long = "tempo.valid-after")]
     pub valid_after: Option<u64>,
-
-    /// Opt into TIP-1009 expiring-nonce mode with a validity window.
-    ///
-    /// Convenience flag that combines `--tempo.expiring-nonce` with a relative
-    /// `--tempo.valid-before`. Sets nonce_key = U256::MAX, nonce = 0, and valid_before = now +
-    /// seconds.
-    ///
-    /// Maximum value is 30 seconds. The transaction must be mined before the deadline or it
-    /// becomes permanently invalid, giving safe retry semantics: retries produce a fresh tx hash
-    /// and the old tx can never land late.
-    #[arg(
-        long = "tempo.expires",
-        value_name = "SECONDS",
-        value_parser = parse_expires_seconds,
-        conflicts_with_all = &["expiring_nonce", "valid_before"],
-    )]
-    pub expires: Option<u64>,
 }
 
 impl TempoOpts {
     /// Returns `true` if any Tempo-specific option is set.
     pub const fn is_tempo(&self) -> bool {
-        self.fee_token.is_some()
+        self.common.is_tempo()
             || self.nonce_key.is_some()
             || self.sponsor_signature.is_some()
             || self.print_sponsor_hash
@@ -106,14 +123,11 @@ impl TempoOpts {
             || self.expiring_nonce
             || self.valid_before.is_some()
             || self.valid_after.is_some()
-            || self.expires.is_some()
     }
 
     /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.
     pub fn expires_at(&self) -> Option<u64> {
-        let secs = self.expires?;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
-        Some(now.as_secs() + secs)
+        self.common.expires_at()
     }
 
     /// Applies Tempo-specific options to a transaction request.
@@ -125,7 +139,7 @@ impl TempoOpts {
     {
         // Handle expiring nonce mode: sets nonce=0 and nonce_key=U256::MAX.
         // --tempo.expires is a convenience alias that also sets valid_before = now + duration.
-        if self.expiring_nonce || self.expires.is_some() {
+        if self.expiring_nonce || self.common.expires.is_some() {
             tx.set_nonce(0);
             tx.set_nonce_key(U256::MAX);
         } else {
@@ -137,7 +151,7 @@ impl TempoOpts {
             }
         }
 
-        if let Some(fee_token) = self.fee_token {
+        if let Some(fee_token) = self.common.fee_token {
             tx.set_fee_token(fee_token);
         }
 
@@ -194,10 +208,10 @@ mod tests {
     #[test]
     fn parse_expires_flag() {
         let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "30"]).unwrap();
-        assert_eq!(opts.expires, Some(30));
+        assert_eq!(opts.common.expires, Some(30));
 
         let opts = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
-        assert_eq!(opts.expires, Some(10));
+        assert_eq!(opts.common.expires, Some(10));
 
         // exceeds 30s maximum
         assert!(TempoOpts::try_parse_from(["", "--tempo.expires", "31"]).is_err());
@@ -224,12 +238,15 @@ mod tests {
             "0x20C0000000000000000000000000000000000002",
         ])
         .unwrap();
-        assert_eq!(opts.fee_token, Some(address!("0x20C0000000000000000000000000000000000002")),);
+        assert_eq!(
+            opts.common.fee_token,
+            Some(address!("0x20C0000000000000000000000000000000000002")),
+        );
 
         // AlphaUSD token ID is 1u64
         let opts_with_id = TempoOpts::try_parse_from(["", "--tempo.fee-token", "1"]).unwrap();
         assert_eq!(
-            opts_with_id.fee_token,
+            opts_with_id.common.fee_token,
             Some(address!("0x20C0000000000000000000000000000000000001")),
         );
     }

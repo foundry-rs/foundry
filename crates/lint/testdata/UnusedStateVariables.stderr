@@ -4,7 +4,7 @@ note[could-be-immutable]: state variable could be declared immutable
 LL │     address usedInBoth;
    │             ━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#could-be-immutable
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
 note[unused-state-variables]: state variable is never used
    ╭▸ ROOT/testdata/UnusedStateVariables.sol:LL:CC
@@ -12,7 +12,7 @@ note[unused-state-variables]: state variable is never used
 LL │     uint256 unused;
    │     ━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-state-variables
+   ╰ help: https://getfoundry.sh/forge/linting/unused-state-variables
 
 note[unused-state-variables]: state variable is never used
    ╭▸ ROOT/testdata/UnusedStateVariables.sol:LL:CC
@@ -20,7 +20,7 @@ note[unused-state-variables]: state variable is never used
 LL │     uint256 unused;
    │     ━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-state-variables
+   ╰ help: https://getfoundry.sh/forge/linting/unused-state-variables
 
 note[unused-state-variables]: state variable is never used
    ╭▸ ROOT/testdata/UnusedStateVariables.sol:LL:CC
@@ -28,7 +28,7 @@ note[unused-state-variables]: state variable is never used
 LL │     uint256 firstUnused;
    │     ━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-state-variables
+   ╰ help: https://getfoundry.sh/forge/linting/unused-state-variables
 
 note[unused-state-variables]: state variable is never used
    ╭▸ ROOT/testdata/UnusedStateVariables.sol:LL:CC
@@ -36,5 +36,5 @@ note[unused-state-variables]: state variable is never used
 LL │     uint256 secondUnused;
    │     ━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-state-variables
+   ╰ help: https://getfoundry.sh/forge/linting/unused-state-variables
 
