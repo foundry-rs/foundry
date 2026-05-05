@@ -7,7 +7,7 @@ use crate::cmd::{
     erc20::Erc20Subcommand, estimate::EstimateArgs, find_block::FindBlockArgs,
     interface::InterfaceArgs, keychain::KeychainSubcommand, logs::LogsArgs, mktx::MakeTxArgs,
     rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, tip20::Tip20Subcommand,
-    trace::TraceArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    trace::TraceArgs, txpool::TxPoolSubcommands, vaddr::VaddrSubcommand, wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
@@ -1188,6 +1188,14 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: KeychainSubcommand,
     },
+
+    /// TIP-1022 virtual address registry operations (Tempo).
+    #[command(visible_alias = "vaddr")]
+    VirtualAddress {
+        #[command(subcommand)]
+        command: VaddrSubcommand,
+    },
+
     #[command(name = "trace")]
     Trace(TraceArgs),
 }
