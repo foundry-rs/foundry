@@ -102,6 +102,10 @@ pub struct VerifyArgs {
     #[arg(long, visible_alias = "optimizer-runs", value_name = "NUM")]
     pub num_of_optimizations: Option<usize>,
 
+    /// The Etherscan license type code or SPDX identifier.
+    #[arg(long, help_heading = "Verifier options", value_name = "LICENSE", value_parser = parse_etherscan_license_type)]
+    pub license_type: Option<String>,
+
     /// Flatten the source code before verifying.
     #[arg(long)]
     pub flatten: bool,
@@ -176,6 +180,76 @@ pub struct VerifyArgs {
 }
 
 impl_figment_convert!(VerifyArgs);
+
+fn parse_etherscan_license_type(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("license type cannot be empty".into());
+    }
+
+    if let Ok(code) = value.parse::<u8>() {
+        if (1..=14).contains(&code) {
+            return Ok(code.to_string());
+        }
+        return Err(format!(
+            "unsupported Etherscan license type `{value}`; expected a code from 1 to 14"
+        ));
+    }
+
+    let normalized = normalize_license_type(value);
+    let code = match normalized.as_str() {
+        "none" | "no-license" | "unlicensed" => 1,
+        "unlicense" | "the-unlicense" => 2,
+        "mit" | "mit-license" => 3,
+        "gpl-2.0" | "gpl-2.0+" | "gpl-2.0-only" | "gpl-2.0-or-later" | "gplv2" | "gnu-gplv2" => 4,
+        "gpl-3.0" | "gpl-3.0+" | "gpl-3.0-only" | "gpl-3.0-or-later" | "gplv3" | "gnu-gplv3" => 5,
+        "lgpl-2.1" | "lgpl-2.1+" | "lgpl-2.1-only" | "lgpl-2.1-or-later" | "lgplv2.1"
+        | "gnu-lgplv2.1" => 6,
+        "lgpl-3.0" | "lgpl-3.0+" | "lgpl-3.0-only" | "lgpl-3.0-or-later" | "lgplv3"
+        | "gnu-lgplv3" => 7,
+        "bsd-2-clause" => 8,
+        "bsd-3-clause" => 9,
+        "mpl-2.0" => 10,
+        "osl-3.0" => 11,
+        "apache-2.0" | "apache-license-2.0" => 12,
+        "agpl-3.0" | "agpl-3.0+" | "agpl-3.0-only" | "agpl-3.0-or-later" | "agplv3"
+        | "gnu-agplv3" => 13,
+        "bsl-1.1" | "busl-1.1" | "business-source-license-1.1" => 14,
+        _ => {
+            return Err(format!(
+                "unsupported Etherscan license type `{value}`; expected a code from 1 to 14 or a \
+                 supported SPDX identifier such as MIT, Apache-2.0, GPL-3.0-or-later, or \
+                 AGPL-3.0-or-later"
+            ));
+        }
+    };
+
+    Ok(code.to_string())
+}
+
+fn normalize_license_type(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len());
+    let mut last_was_dash = false;
+
+    for ch in value.trim().chars() {
+        let ch = match ch {
+            '_' | ' ' | '\t' | '\n' | '\r' => '-',
+            _ => ch.to_ascii_lowercase(),
+        };
+
+        if ch == '-' {
+            if !last_was_dash {
+                normalized.push(ch);
+            }
+            last_was_dash = true;
+        } else {
+            normalized.push(ch);
+            last_was_dash = false;
+        }
+    }
+
+    normalized.trim_matches('-').to_string()
+}
 
 impl figment::Provider for VerifyArgs {
     fn metadata(&self) -> figment::Metadata {
@@ -567,6 +641,40 @@ mod tests {
             "--via-ir",
         ]);
         assert!(args.via_ir);
+    }
+
+    #[test]
+    fn can_parse_verify_contract_license_type() {
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--license-type",
+            "AGPL-3.0-or-later",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("13"));
+
+        let args: VerifyArgs = VerifyArgs::parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--license-type",
+            "3",
+        ]);
+        assert_eq!(args.license_type.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn errors_on_invalid_verify_contract_license_type() {
+        let err = VerifyArgs::try_parse_from([
+            "foundry-cli",
+            "0x0000000000000000000000000000000000000000",
+            "src/Domains.sol:Domains",
+            "--license-type",
+            "Unknown-License",
+        ])
+        .unwrap_err();
+        assert!(err.to_string().contains("unsupported Etherscan license type"));
     }
 
     #[test]
