@@ -1,8 +1,8 @@
 //! Rendering: `solar` AST -> vocs MDX.
 
 use crate::{
-    extras::Deployment,
     hir_ext::{self, NameToPage},
+    utils::Deployment,
 };
 use solar::{
     ast::{

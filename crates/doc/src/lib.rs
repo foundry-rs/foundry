@@ -1,9 +1,4 @@
-//! Solidity documentation generator powered by [`solar`].
-//! * uses directly the [`solar`] AST
-//! * emits [vocs](https://vocs.dev/docs)-flavoured MDX.
-//!
-//! See [`DocBuilder`].
-
+#![doc = include_str!("../README.md")]
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -11,9 +6,9 @@
 extern crate tracing;
 
 mod builder;
-mod extras;
 mod hir_ext;
 mod render;
+mod utils;
 mod vocs;
 
 pub use builder::DocBuilder;

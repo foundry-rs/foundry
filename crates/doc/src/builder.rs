@@ -1,6 +1,7 @@
 use crate::{
-    extras::{Deployment, git_source_url, read_deployments},
-    hir_ext, render, vocs,
+    hir_ext, render,
+    utils::{Deployment, git_source_url, read_deployments},
+    vocs,
 };
 use eyre::Result;
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};

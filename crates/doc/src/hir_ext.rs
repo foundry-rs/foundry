@@ -29,67 +29,51 @@ pub type NameToPage = HashMap<String, PathBuf>;
 pub fn build_name_to_page(gcx: Gcx<'_>, root: &Path) -> NameToPage {
     let mut map = NameToPage::new();
 
-    // Contracts.
-    for id in gcx.hir.contract_ids() {
-        let c = gcx.hir.contract(id);
-        if let Some(rel) = source_rel_path(gcx, c.source, root) {
-            let out_dir = rel.parent().unwrap_or(Path::new("")).to_owned();
-            let kind = match c.kind {
-                ContractKind::Contract => "contract",
-                ContractKind::AbstractContract => "abstract",
-                ContractKind::Interface => "interface",
-                ContractKind::Library => "library",
-            };
-            let page = out_dir.join(format!("{kind}.{}.mdx", c.name.as_str()));
-            map.insert(c.name.as_str().to_string(), page);
-        }
-    }
+    for item_id in gcx.hir.item_ids() {
+        let (name, source, contract, prefix) = match item_id {
+            hir::ItemId::Contract(id) => {
+                let c = gcx.hir.contract(id);
+                let kind = match c.kind {
+                    ContractKind::Contract => "contract",
+                    ContractKind::AbstractContract => "abstract",
+                    ContractKind::Interface => "interface",
+                    ContractKind::Library => "library",
+                };
+                (c.name, c.source, None, kind)
+            }
+            hir::ItemId::Struct(id) => {
+                let s = gcx.hir.strukt(id);
+                (s.name, s.source, s.contract, "struct")
+            }
+            hir::ItemId::Enum(id) => {
+                let e = gcx.hir.enumm(id);
+                (e.name, e.source, e.contract, "enum")
+            }
+            hir::ItemId::Error(id) => {
+                let e = gcx.hir.error(id);
+                (e.name, e.source, e.contract, "error")
+            }
+            hir::ItemId::Event(id) => {
+                let e = gcx.hir.event(id);
+                (e.name, e.source, e.contract, "event")
+            }
+            hir::ItemId::Udvt(id) => {
+                let u = gcx.hir.udvt(id);
+                (u.name, u.source, u.contract, "udvt")
+            }
+            hir::ItemId::Function(_) | hir::ItemId::Variable(_) => continue,
+        };
 
-    // Structs.
-    for id in gcx.hir.strukt_ids() {
-        let s = gcx.hir.strukt(id);
-        if s.contract.is_none()
-            && let Some(rel) = source_rel_path(gcx, s.source, root)
-        {
-            let out_dir = rel.parent().unwrap_or(Path::new("")).to_owned();
-            let page = out_dir.join(format!("struct.{}.mdx", s.name.as_str()));
-            map.insert(s.name.as_str().to_string(), page);
+        // For non-contract items, skip those defined inside a contract (they appear on the
+        // contract page, not their own page).
+        if contract.is_some() && !matches!(item_id, hir::ItemId::Contract(_)) {
+            continue;
         }
-    }
 
-    // Enums.
-    for id in gcx.hir.enumm_ids() {
-        let e = gcx.hir.enumm(id);
-        if e.contract.is_none()
-            && let Some(rel) = source_rel_path(gcx, e.source, root)
-        {
+        if let Some(rel) = source_rel_path(gcx, source, root) {
             let out_dir = rel.parent().unwrap_or(Path::new("")).to_owned();
-            let page = out_dir.join(format!("enum.{}.mdx", e.name.as_str()));
-            map.insert(e.name.as_str().to_string(), page);
-        }
-    }
-
-    // Errors.
-    for id in gcx.hir.error_ids() {
-        let e = gcx.hir.error(id);
-        if e.contract.is_none()
-            && let Some(rel) = source_rel_path(gcx, e.source, root)
-        {
-            let out_dir = rel.parent().unwrap_or(Path::new("")).to_owned();
-            let page = out_dir.join(format!("error.{}.mdx", e.name.as_str()));
-            map.insert(e.name.as_str().to_string(), page);
-        }
-    }
-
-    // Events.
-    for id in gcx.hir.event_ids() {
-        let e = gcx.hir.event(id);
-        if e.contract.is_none()
-            && let Some(rel) = source_rel_path(gcx, e.source, root)
-        {
-            let out_dir = rel.parent().unwrap_or(Path::new("")).to_owned();
-            let page = out_dir.join(format!("event.{}.mdx", e.name.as_str()));
-            map.insert(e.name.as_str().to_string(), page);
+            let page = out_dir.join(format!("{prefix}.{}.mdx", name.as_str()));
+            map.insert(name.as_str().to_string(), page);
         }
     }
 
