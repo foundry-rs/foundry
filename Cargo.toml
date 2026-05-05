@@ -326,7 +326,7 @@ foundry-config = { path = "crates/config" }
 foundry-debugger = { path = "crates/debugger" }
 foundry-evm = { path = "crates/evm/evm" }
 foundry-evm-abi = { path = "crates/evm/abi" }
-foundry-evm-core = { path = "crates/evm/core" }
+foundry-evm-core = { path = "crates/evm/core", default-features = false }
 foundry-evm-coverage = { path = "crates/evm/coverage" }
 foundry-evm-hardforks = { path = "crates/evm/hardforks", default-features = false }
 foundry-evm-networks = { path = "crates/evm/networks", default-features = false }
