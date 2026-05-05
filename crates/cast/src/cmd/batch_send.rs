@@ -9,14 +9,14 @@ use crate::{
     cmd::send::{cast_send, cast_send_with_access_key},
     tx::{self, CastTxBuilder, SendTxOpts},
 };
-use alloy_network::EthereumWallet;
+use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::Signer;
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{self, LoadConfig},
+    utils::{self, LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::provider::ProviderBuilder;
 use std::time::Duration;
@@ -50,7 +50,7 @@ pub struct BatchSendArgs {
 
 impl BatchSendArgs {
     pub async fn run(self) -> Result<()> {
-        let Self { calls, send_tx, tx, unlocked } = self;
+        let Self { calls, send_tx, mut tx, unlocked } = self;
 
         if calls.is_empty() {
             return Err(eyre!("No calls specified. Use --call to specify at least one call."));
@@ -58,6 +58,10 @@ impl BatchSendArgs {
 
         let config = send_tx.eth.load_config()?;
         let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+
+        // Resolve `--tempo.lane <name>` against the lanes file (default
+        // `<root>/tempo.lanes.toml`) and populate `tx.tempo.nonce_key` from the lane.
+        let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
 
         if let Some(interval) = send_tx.poll_interval {
             provider.client().set_poll_interval(Duration::from_secs(interval))
@@ -116,6 +120,7 @@ impl BatchSendArgs {
 
         if unlocked {
             let (tx, _) = builder.build(config.sender).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
             cast_send(
                 provider,
                 tx,
@@ -133,6 +138,10 @@ impl BatchSendArgs {
 
             if let Some(ref access_key) = tempo_access_key {
                 let (tx_request, _) = builder.build(access_key.wallet_address).await?;
+                maybe_print_resolved_lane(
+                    resolved_lane.as_ref(),
+                    tx_request.nonce().unwrap_or_default(),
+                )?;
                 cast_send_with_access_key(
                     &provider,
                     tx_request,
@@ -146,6 +155,10 @@ impl BatchSendArgs {
             } else {
                 tx::validate_from_address(send_tx.eth.wallet.from, Signer::address(&signer))?;
                 let (tx_request, _) = builder.build(&signer).await?;
+                maybe_print_resolved_lane(
+                    resolved_lane.as_ref(),
+                    tx_request.nonce().unwrap_or_default(),
+                )?;
                 let wallet = EthereumWallet::from(signer);
                 let provider = AlloyProviderBuilder::<_, _, TempoNetwork>::default()
                     .wallet(wallet)

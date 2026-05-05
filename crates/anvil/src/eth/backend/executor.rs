@@ -67,9 +67,11 @@ impl ReceiptBuilder for FoundryReceiptBuilder {
             FoundryTxType::Eip1559 => FoundryReceiptEnvelope::Eip1559(receipt),
             FoundryTxType::Eip4844 => FoundryReceiptEnvelope::Eip4844(receipt),
             FoundryTxType::Eip7702 => FoundryReceiptEnvelope::Eip7702(receipt),
+            #[cfg(feature = "optimism")]
             FoundryTxType::Deposit => {
                 unreachable!("deposit receipts are built in commit_transaction")
             }
+            #[cfg(feature = "optimism")]
             FoundryTxType::PostExec => FoundryReceiptEnvelope::PostExec(receipt),
             FoundryTxType::Tempo => FoundryReceiptEnvelope::Tempo(receipt),
         }
@@ -220,6 +222,7 @@ where
     fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
         let AnvilTxResult {
             inner: EthTxResult { result: ResultAndState { result, state }, blob_gas_used, tx_type },
+            #[cfg_attr(not(feature = "optimism"), allow(unused_variables))]
             sender,
         } = output;
 
@@ -234,6 +237,7 @@ where
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas_used);
         }
 
+        #[cfg(feature = "optimism")]
         let receipt = if tx_type == FoundryTxType::Deposit {
             let deposit_nonce = state.get(&sender).map(|acc| acc.info.nonce);
             let receipt = alloy_consensus::Receipt {
@@ -259,6 +263,14 @@ where
                 cumulative_gas_used: self.gas_used,
             })
         };
+        #[cfg(not(feature = "optimism"))]
+        let receipt = self.receipt_builder.build_receipt(ReceiptBuilderCtx {
+            tx_type,
+            evm: &self.evm,
+            result,
+            state: &state,
+            cumulative_gas_used: self.gas_used,
+        });
 
         self.receipts.push(receipt);
         self.evm.db_mut().commit(state);

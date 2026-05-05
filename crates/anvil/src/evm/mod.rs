@@ -2,6 +2,9 @@ use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::Address;
 use std::fmt::Debug;
 
+#[cfg(feature = "optimism")]
+mod optimism;
+
 /// Object-safe trait that enables injecting extra precompiles when using
 /// `anvil` as a library.
 pub trait PrecompileFactory: Send + Sync + Unpin + Debug {
@@ -15,14 +18,12 @@ mod tests {
 
     use crate::PrecompileFactory;
     use alloy_evm::{
-        EthEvm, Evm, EvmEnv, EvmFactory,
+        EthEvm, Evm,
         eth::EthEvmContext,
         precompiles::{DynPrecompile, PrecompilesMap},
     };
-    use alloy_op_evm::{OpEvm, OpEvmFactory, OpTx};
-    use alloy_primitives::{Address, Bytes, TxKind, U256, address};
+    use alloy_primitives::{Address, Bytes, TxKind, address};
     use itertools::Itertools;
-    use op_revm::{OpSpecId, OpTransaction};
     use revm::{
         Journal,
         context::{BlockEnv, CfgEnv, Evm as RevmEvm, JournalTr, LocalContext, TxEnv},
@@ -35,20 +36,19 @@ mod tests {
     };
 
     // A precompile activated in the `Prague` spec (BLS12-381 G2 map).
-    const ETH_PRAGUE_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000011");
+    pub(super) const ETH_PRAGUE_PRECOMPILE: Address =
+        address!("0x0000000000000000000000000000000000000011");
 
     // A precompile activated in the `Osaka` spec (EIP-7951).
     const ETH_OSAKA_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000100");
 
-    // A precompile activated in the `Isthmus` spec.
-    const OP_ISTHMUS_PRECOMPILE: Address = address!("0x0000000000000000000000000000000000000100");
-
     // A custom precompile address and payload for testing.
-    const PRECOMPILE_ADDR: Address = address!("0x0000000000000000000000000000000000000071");
-    const PAYLOAD: &[u8] = &[0xde, 0xad, 0xbe, 0xef];
+    pub(super) const PRECOMPILE_ADDR: Address =
+        address!("0x0000000000000000000000000000000000000071");
+    pub(super) const PAYLOAD: &[u8] = &[0xde, 0xad, 0xbe, 0xef];
 
     #[derive(Debug)]
-    struct CustomPrecompileFactory;
+    pub(super) struct CustomPrecompileFactory;
 
     impl PrecompileFactory for CustomPrecompileFactory {
         fn precompiles(&self) -> Vec<(Address, DynPrecompile)> {
@@ -109,34 +109,6 @@ mod tests {
         (tx_env, eth_evm)
     }
 
-    /// Creates a new OP EVM instance.
-    fn create_op_evm(
-        _spec: SpecId,
-        op_spec: OpSpecId,
-    ) -> (OpTx, OpEvm<EmptyDBTyped<Infallible>, NoOpInspector, PrecompilesMap, OpTx>) {
-        let tx = OpTx(OpTransaction::<TxEnv> {
-            base: TxEnv {
-                kind: TxKind::Call(PRECOMPILE_ADDR),
-                data: PAYLOAD.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        let mut evm = OpEvmFactory::<OpTx>::default().create_evm_with_inspector(
-            EmptyDB::default(),
-            EvmEnv::new(CfgEnv::new_with_spec(op_spec), BlockEnv::default()),
-            NoOpInspector,
-        );
-
-        if op_spec == OpSpecId::ISTHMUS {
-            evm.ctx_mut().chain.operator_fee_constant = Some(U256::ZERO);
-            evm.ctx_mut().chain.operator_fee_scalar = Some(U256::ZERO);
-        }
-
-        (tx, evm)
-    }
-
     #[test]
     fn build_eth_evm_with_extra_precompiles_osaka_spec() {
         let (tx_env, mut evm) = create_eth_evm(SpecId::OSAKA);
@@ -184,40 +156,6 @@ mod tests {
         assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
 
         let result = evm.transact(tx_env).unwrap();
-        assert!(result.result.is_success());
-        assert_eq!(result.result.output(), Some(&PAYLOAD.into()));
-    }
-
-    #[test]
-    fn build_op_evm_with_extra_precompiles_isthmus_spec() {
-        let (tx, mut evm) = create_op_evm(SpecId::OSAKA, OpSpecId::ISTHMUS);
-
-        assert!(evm.precompiles().addresses().contains(&OP_ISTHMUS_PRECOMPILE));
-        assert!(evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
-        assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
-
-        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
-
-        assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
-
-        let result = evm.transact(tx).unwrap();
-        assert!(result.result.is_success());
-        assert_eq!(result.result.output(), Some(&PAYLOAD.into()));
-    }
-
-    #[test]
-    fn build_op_evm_with_extra_precompiles_bedrock_spec() {
-        let (tx, mut evm) = create_op_evm(SpecId::OSAKA, OpSpecId::BEDROCK);
-
-        assert!(!evm.precompiles().addresses().contains(&OP_ISTHMUS_PRECOMPILE));
-        assert!(!evm.precompiles().addresses().contains(&ETH_PRAGUE_PRECOMPILE));
-        assert!(!evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
-
-        evm.precompiles_mut().extend_precompiles(CustomPrecompileFactory.precompiles());
-
-        assert!(evm.precompiles().addresses().contains(&PRECOMPILE_ADDR));
-
-        let result = evm.transact(tx).unwrap();
         assert!(result.result.is_success());
         assert_eq!(result.result.output(), Some(&PAYLOAD.into()));
     }

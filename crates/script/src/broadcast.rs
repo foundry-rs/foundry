@@ -26,6 +26,7 @@ use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
     provider::{ProviderBuilder, try_get_http_provider},
     shell,
+    tempo::TempoSponsor,
 };
 use foundry_config::Config;
 use foundry_evm::core::evm::{FoundryEvmNetwork, TempoEvmNetwork};
@@ -100,7 +101,17 @@ where
         is_fixed_gas_limit: bool,
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
+        tempo_sponsor: Option<&TempoSponsor>,
     ) -> Result<()> {
+        let access_key_authorization = match self {
+            Self::AccessKey(_, _, access_key) => Some((
+                access_key.wallet_address,
+                access_key.key_address,
+                access_key.key_authorization.clone(),
+            )),
+            _ => None,
+        };
+
         if let Self::Raw(tx, _)
         | Self::Unlocked(tx)
         | Self::Browser(tx, _)
@@ -137,10 +148,27 @@ where
                 }
             }
 
+            if let Some((wallet_address, key_address, key_authorization)) =
+                access_key_authorization.as_ref()
+            {
+                tx.prepare_access_key_authorization(
+                    provider,
+                    *wallet_address,
+                    *key_address,
+                    key_authorization.as_ref(),
+                )
+                .await?;
+            }
+
             // Chains which use `eth_estimateGas` are being sent sequentially and require their
             // gas to be re-estimated right before broadcasting.
             if !is_fixed_gas_limit && estimate_via_rpc {
                 estimate_gas(tx, provider, estimate_multiplier).await?;
+            }
+
+            if let Some(sponsor) = tempo_sponsor {
+                let from = tx.from().expect("no sender");
+                sponsor.attach_and_print::<N>(tx, from).await?;
             }
         }
 
@@ -211,6 +239,7 @@ where
         is_fixed_gas_limit: bool,
         estimate_via_rpc: bool,
         estimate_multiplier: u64,
+        tempo_sponsor: Option<&TempoSponsor>,
     ) -> Result<TxHash> {
         self.prepare(
             &provider,
@@ -218,6 +247,7 @@ where
             is_fixed_gas_limit,
             estimate_via_rpc,
             estimate_multiplier,
+            tempo_sponsor,
         )
         .await?;
 
@@ -387,6 +417,27 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             SendTransactionsKind::Raw { eth_wallets, browser: self.browser_wallet, access_keys }
         };
 
+        let tempo_sponsor = self.script_config.tempo.sponsor_config().await?.map(Arc::new);
+        if tempo_sponsor.is_some() && self.script_config.tempo.sponsor_sig.is_some() {
+            let remaining = self
+                .sequence
+                .sequences()
+                .iter()
+                .map(|sequence| {
+                    sequence
+                        .transactions()
+                        .skip(sequence.receipts.len())
+                        .filter(|tx| tx.is_unsigned())
+                        .count()
+                })
+                .sum::<usize>();
+            if remaining > 1 {
+                eyre::bail!(
+                    "--tempo.sponsor-sig can only sponsor one remaining script transaction; use --tempo.sponsor-signer for multi-transaction scripts"
+                );
+            }
+        }
+
         let progress = ScriptProgress::default();
 
         for i in 0..self.sequence.sequences().len() {
@@ -464,6 +515,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                         let kind = match tx_with_metadata.tx().clone() {
                             TransactionMaybeSigned::Signed { tx, .. } => {
+                                if tempo_sponsor.is_some() {
+                                    eyre::bail!(
+                                        "cannot attach Tempo sponsor signature to an already signed script transaction"
+                                    );
+                                }
                                 SendTransactionKind::Signed(tx)
                             }
                             TransactionMaybeSigned::Unsigned(mut tx) => {
@@ -486,6 +542,8 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     );
                                     tx.set_max_fee_per_gas(eip1559_fees.max_fee_per_gas);
                                 }
+
+                                self.script_config.tempo.apply::<FEN::Network>(&mut tx, None);
 
                                 send_kind.for_sender(&from, tx)?
                             }
@@ -525,6 +583,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         let pending_transactions =
                             batch.iter().map(|(kind, is_fixed_gas_limit)| {
                                 let provider = provider.clone();
+                                let tempo_sponsor = tempo_sponsor.clone();
                                 async move {
                                     let res = kind
                                         .clone()
@@ -534,22 +593,36 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                             *is_fixed_gas_limit,
                                             estimate_via_rpc,
                                             self.args.gas_estimate_multiplier,
+                                            tempo_sponsor.as_deref(),
                                         )
                                         .await;
-                                    (res, kind, 0, None)
+                                    (res, kind, *is_fixed_gas_limit, 0, None)
                                 }
                                 .boxed()
                             });
 
                         let mut buffer = pending_transactions.collect::<FuturesUnordered<_>>();
 
-                        'send: while let Some((res, kind, attempt, original_res)) =
-                            buffer.next().await
+                        'send: while let Some((
+                            res,
+                            kind,
+                            is_fixed_gas_limit,
+                            attempt,
+                            original_res,
+                        )) = buffer.next().await
                         {
-                            if res.is_err() && attempt <= 3 {
+                            if res.is_err()
+                                && self.script_config.tempo.sponsor_sig.is_some()
+                                && attempt == 0
+                            {
+                                debug!(
+                                    "not retrying transaction because --tempo.sponsor-sig is a static signature"
+                                );
+                            } else if res.is_err() && attempt <= 3 {
                                 // Try to resubmit the transaction
                                 let provider = provider.clone();
                                 let progress = seq_progress.inner.clone();
+                                let tempo_sponsor = tempo_sponsor.clone();
                                 buffer.push(Box::pin(async move {
                                     debug!(err=?res, ?attempt, "retrying transaction ");
                                     let attempt = attempt + 1;
@@ -557,8 +630,24 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                         "retrying transaction {res:?} (attempt {attempt})"
                                     ));
                                     tokio::time::sleep(Duration::from_millis(1000 * attempt)).await;
-                                    let r = kind.clone().send(provider).await;
-                                    (r, kind, attempt, original_res.or(Some(res)))
+                                    let r = kind
+                                        .clone()
+                                        .prepare_and_send(
+                                            provider,
+                                            sequential_broadcast,
+                                            is_fixed_gas_limit,
+                                            estimate_via_rpc,
+                                            self.args.gas_estimate_multiplier,
+                                            tempo_sponsor.as_deref(),
+                                        )
+                                        .await;
+                                    (
+                                        r,
+                                        kind,
+                                        is_fixed_gas_limit,
+                                        attempt,
+                                        original_res.or(Some(res)),
+                                    )
                                 }));
 
                                 continue 'send;
@@ -675,6 +764,7 @@ impl BundledState<TempoEvmNetwork> {
 
         let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
         let provider = Arc::new(ProviderBuilder::<TempoNetwork>::new(sequence.rpc_url()).build()?);
+        let tempo_sponsor = self.script_config.tempo.sponsor_config().await?;
 
         // Collect sender addresses - batch mode requires single sender
         let senders: AddressHashSet = sequence
@@ -800,11 +890,27 @@ impl BundledState<TempoEvmNetwork> {
             valid_before: self.script_config.expires_at.and_then(NonZeroU64::new),
             ..Default::default()
         };
+        self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
+
+        if let BatchSigner::TempoKeychain(_, ak) = &batch_signer {
+            batch_tx
+                .prepare_access_key_authorization(
+                    provider.as_ref(),
+                    ak.wallet_address,
+                    ak.key_address,
+                    ak.key_authorization.as_ref(),
+                )
+                .await?;
+        }
 
         // Estimate gas for the batch transaction
         estimate_gas(&mut batch_tx, provider.as_ref(), self.args.gas_estimate_multiplier).await?;
 
         sh_println!("Estimated gas: {}", batch_tx.inner.gas.unwrap_or(0))?;
+
+        if let Some(sponsor) = &tempo_sponsor {
+            sponsor.attach_and_print::<TempoNetwork>(&mut batch_tx, sender).await?;
+        }
 
         // Sign and send
         let tx_hash = match batch_signer {
