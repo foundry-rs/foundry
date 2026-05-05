@@ -22,6 +22,28 @@ contract InlineAssembly {
         }
     }
 
+    function withNatspecMemorySafe() public view returns (uint256 v) {
+        /// @solidity memory-safe-assembly
+        assembly { //~NOTE: inline assembly (declared memory-safe); review business logic and side effects
+            v := chainid()
+        }
+    }
+
+    function withNatspecMemorySafeAndOtherDocs() public view returns (uint256 v) {
+        /// @notice does a thing
+        /// @solidity memory-safe-assembly
+        assembly { //~NOTE: inline assembly (declared memory-safe); review business logic and side effects
+            v := gas()
+        }
+    }
+
+    function plainCommentDoesNotCount() public view returns (uint256 v) {
+        // solidity memory-safe-assembly
+        assembly { //~NOTE: inline assembly used; review for memory safety and side effects
+            v := chainid()
+        }
+    }
+
     function nestedInControlFlow(bool flag) public view returns (uint256 v) {
         if (flag) {
             assembly { //~NOTE: inline assembly used; review for memory safety and side effects

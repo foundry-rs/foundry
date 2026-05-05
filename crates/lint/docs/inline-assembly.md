@@ -10,9 +10,10 @@ high-impact bugs, so each occurrence should be reviewed deliberately.
 ## What it does
 
 Reports every inline assembly statement, including blocks declared with the `"evmasm"` dialect
-and/or the `("memory-safe")` flag. Blocks declared `("memory-safe")` are still reported, but
-with a softer message acknowledging the developer attestation: review focuses on business logic
-and side effects rather than memory layout.
+and/or the `("memory-safe")` flag. Blocks declared as memory-safe — either via the modern
+`("memory-safe")` flag or the legacy `/// @solidity memory-safe-assembly` NatSpec marker — are
+still reported, but with a softer message acknowledging the developer attestation: review
+focuses on business logic and side effects rather than memory layout.
 
 ## Why is this bad?
 
@@ -35,7 +36,9 @@ If you must use assembly:
 
 1. Keep the block minimal and well-commented.
 2. Add the `("memory-safe")` flag when the block does not violate Solidity's memory model, so
-   the optimizer (and reviewers) can rely on it.
+   the optimizer (and reviewers) can rely on it. The legacy
+   `/// @solidity memory-safe-assembly` NatSpec marker on the line directly above the block is
+   also recognized for compatibility with older codebases.
 3. Suppress the lint locally to mark the block as audited:
    ```solidity
    // forge-lint: disable-next-line(inline-assembly)
