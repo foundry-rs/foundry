@@ -1,0 +1,217 @@
+name: Nightly Benchmarks (AAVE v4)
+
+permissions: {}
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 2am UTC nightly
+  workflow_dispatch: # allow manual triggering for testing
+
+env:
+  AAVE_V4_REPO: "aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35"
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  run-benchmarks:
+    name: Run Nightly Benchmarks
+    runs-on: depot-ubuntu-24.04-32
+    permissions:
+      contents: read
+      actions: read # needed to download artifacts from previous runs
+    outputs:
+      has_regression: ${{ steps.compare.outputs.has_regression }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        with:
+          toolchain: stable
+
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+
+      - name: Setup Foundry
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          ./.github/scripts/setup-foundryup.sh
+          printf '%s\n' "$GITHUB_WORKSPACE/.foundry/bin" >> "$GITHUB_PATH"
+
+      - name: Build benchmark binary
+        run: cargo build --locked --release --bin foundry-bench
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24"
+
+      - name: Install hyperfine
+        run: |
+          curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
+          rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
+
+      - name: Download previous benchmark results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p prev-results
+          PREV_RUN_ID=$(gh run list \
+            --workflow=benchmarks-nightly.yml \
+            --status=success \
+            --limit=1 \
+            --json databaseId \
+            -q '.[0].databaseId // empty' 2>/dev/null || true)
+          if [[ -n "$PREV_RUN_ID" ]]; then
+            echo "Downloading results from previous run $PREV_RUN_ID"
+            gh run download "$PREV_RUN_ID" \
+              --name nightly-bench-results \
+              --dir prev-results/ || true
+          else
+            echo "No previous successful run found, skipping download."
+          fi
+
+      - name: Run forge test benchmarks
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
+            --versions nightly \
+            --repos "$AAVE_V4_REPO" \
+            --benchmarks forge_test \
+            --json-output "nightly-${DATE}-forge_test.json" \
+            --verbose
+
+      - name: Run forge fuzz test benchmarks
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions nightly \
+            --repos "$AAVE_V4_REPO" \
+            --benchmarks forge_fuzz_test \
+            --json-output "nightly-${DATE}-forge_fuzz_test.json" \
+            --verbose
+
+      - name: Run forge isolate test benchmarks
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions nightly \
+            --repos "$AAVE_V4_REPO" \
+            --benchmarks forge_isolate_test \
+            --json-output "nightly-${DATE}-forge_isolate_test.json" \
+            --verbose
+
+      - name: Run forge build benchmarks
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions nightly \
+            --repos "$AAVE_V4_REPO" \
+            --benchmarks forge_build_no_cache,forge_build_with_cache \
+            --json-output "nightly-${DATE}-forge_build.json" \
+            --verbose
+
+      - name: Run forge coverage benchmarks
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions nightly \
+            --repos "$AAVE_V4_REPO" \
+            --benchmarks forge_coverage \
+            --json-output "nightly-${DATE}-forge_coverage.json" \
+            --verbose
+
+      - name: Merge benchmark JSON results
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          shopt -s nullglob
+          parts=( benches/nightly-${DATE}-*.json )
+          if [[ ${#parts[@]} -eq 0 ]]; then
+            echo "No benchmark results produced — all steps failed."
+            exit 1
+          fi
+          jq -s 'add' "${parts[@]}" > "benches/nightly-${DATE}.json"
+          echo "Merged ${#parts[@]} result file(s) into nightly-${DATE}.json"
+
+      - name: Compare with previous results
+        id: compare
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          PREV_JSON=$(ls prev-results/nightly-*.json 2>/dev/null | head -1 || true)
+          TODAY_JSON="benches/nightly-${DATE}.json"
+          if ./.github/scripts/compare-nightly.sh "$PREV_JSON" "$TODAY_JSON" > regression.md 2>&1; then
+            echo "has_regression=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_regression=true" >> "$GITHUB_OUTPUT"
+          fi
+          cat regression.md
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-bench-results
+          retention-days: 7
+          path: |
+            benches/nightly-*.json
+            regression.md
+
+  report-regression:
+    name: Report Regression
+    needs: run-benchmarks
+    if: needs.run-benchmarks.outputs.has_regression == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Download benchmark results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: nightly-bench-results
+          path: results/
+
+      - name: Open regression issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          BODY="$(cat results/regression.md)
+
+          ---
+
+          **Run**: [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          **Date**: ${DATE}
+          **Repo benchmarked**: \`aave/aave-v4\` (pinned commit)
+          **Threshold**: 🔴 >=3% regression, 🟡 >=1% warning"
+
+          gh issue create \
+            --title "[Nightly Regression] ${DATE}" \
+            --body "$BODY" \
+            --label "regression" \
+            --repo "$GH_REPO"
