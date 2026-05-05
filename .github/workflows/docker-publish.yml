@@ -32,6 +32,8 @@ jobs:
     name: build and push
     runs-on: depot-ubuntu-latest
     permissions:
+      attestations: write
+      artifact-metadata: write
       contents: read
       id-token: write
       packages: write

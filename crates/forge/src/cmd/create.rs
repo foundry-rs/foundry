@@ -408,15 +408,18 @@ impl CreateArgs {
         // Apply user-provided gas, fee, nonce, and Tempo options.
         self.tx.apply::<N>(&mut deployer.tx, is_legacy);
 
-        // For keychain mode, set key_id and nonce_key before gas estimation.
         // Convert the CREATE into an AA-compatible call entry since Tempo AA
         // transactions use a `calls` list instead of `to`+`input`.
+        if chain.is_tempo() {
+            deployer.tx.convert_create_to_call();
+        }
+
+        // For keychain mode, set key_id and nonce_key before gas estimation.
         if let Some((_, ref ak)) = tempo_keychain {
             deployer.tx.set_key_id(ak.key_address);
             if deployer.tx.nonce_key().is_none() {
                 deployer.tx.set_nonce_key(U256::ZERO);
             }
-            deployer.tx.convert_create_to_call();
         }
 
         // Fetch defaults from provider for values not specified by user.

@@ -29,7 +29,7 @@ foundry-common.workspace = true
 foundry-compilers.workspace = true
 foundry-config.workspace = true
 foundry-evm.workspace = true
-foundry-evm-networks.workspace = true
+foundry-evm-networks = { workspace = true, features = ["optimism"] }
 foundry-linking.workspace = true
 
 comfy-table.workspace = true

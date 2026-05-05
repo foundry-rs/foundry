@@ -15,7 +15,7 @@ workspace = true
 [dependencies]
 foundry-common.workspace = true
 foundry-evm.workspace = true
-foundry-primitives = { workspace = true, features = ["optimism"] }
+foundry-primitives = { workspace = true, default-features = false }
 revm = { workspace = true, default-features = false, features = [
     "std",
     "serde",
@@ -39,3 +39,7 @@ bytes.workspace = true
 # misc
 rand.workspace = true
 thiserror.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = ["foundry-primitives/optimism"]

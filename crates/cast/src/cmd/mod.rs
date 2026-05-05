@@ -32,4 +32,5 @@ pub mod storage;
 pub mod tip20;
 pub mod trace;
 pub mod txpool;
+pub mod vaddr;
 pub mod wallet;
