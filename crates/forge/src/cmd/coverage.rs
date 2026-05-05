@@ -6,7 +6,7 @@ use crate::coverage::{
     anchors::find_anchors,
 };
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
-use clap::{Parser, ValueEnum, ValueHint};
+use clap::{Parser, ValueHint};
 use eyre::Result;
 use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
 use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
@@ -14,8 +14,9 @@ use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
     artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
 };
-use foundry_config::Config;
+use foundry_config::{Config, CoverageConfig, CoverageReportKind};
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
+use globset::{Glob, GlobSetBuilder};
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
 use std::path::{Path, PathBuf};
@@ -24,12 +25,18 @@ use std::path::{Path, PathBuf};
 foundry_config::impl_figment_convert!(CoverageArgs, test);
 
 /// CLI arguments for `forge coverage`.
+///
+/// Most flags here have a corresponding `[profile.<name>.coverage]` config
+/// option in `foundry.toml`. CLI flags take precedence over config; the helper
+/// [`Self::resolve_with`] merges them after the config is loaded.
 #[derive(Parser)]
 pub struct CoverageArgs {
     /// The report type to use for coverage.
     ///
-    /// This flag can be used multiple times.
-    #[arg(long, value_enum, default_value = "summary")]
+    /// This flag can be used multiple times. Falls back to the
+    /// `[profile.<name>.coverage] report` config value when not provided
+    /// (default: `summary`).
+    #[arg(long, value_enum)]
     report: Vec<CoverageReportKind>,
 
     /// The version of the LCOV "tracefile" format to use.
@@ -40,8 +47,11 @@ pub struct CoverageArgs {
     /// - `1.x`: The original v1 format.
     /// - `2.0`: Adds support for "line end" numbers for functions.
     /// - `2.2`: Changes the format of functions.
-    #[arg(long, default_value = "1", value_parser = parse_lcov_version)]
-    lcov_version: Version,
+    ///
+    /// Falls back to the `[profile.<name>.coverage] lcov_version` config value
+    /// when not provided (default: `1`).
+    #[arg(long, value_parser = parse_lcov_version)]
+    lcov_version: Option<Version>,
 
     /// Enable viaIR with minimum optimization
     ///
@@ -72,6 +82,12 @@ pub struct CoverageArgs {
     #[arg(skip)]
     reporters: Vec<Box<dyn CoverageReporter>>,
 
+    /// Glob patterns of source files to exclude from the coverage report.
+    /// Populated from `[profile.<name>.coverage] skip_files` after config is
+    /// loaded; not exposed directly on the CLI.
+    #[arg(skip)]
+    skip_files: Vec<String>,
+
     #[command(flatten)]
     test: TestArgs,
 }
@@ -90,6 +106,10 @@ impl CoverageArgs {
         // Set fuzz seed so coverage reports are deterministic
         config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
 
+        // Merge CLI args with `[profile.<name>.coverage]` config values. CLI
+        // flags take precedence; unset CLI flags fall back to the config.
+        self.resolve_with(&config.coverage);
+
         let (paths, mut output) = {
             let (project, output) = self.build(&config)?;
             (project.paths, output)
@@ -104,7 +124,43 @@ impl CoverageArgs {
         self.collect(&paths.root, &output, report, config, evm_opts).await
     }
 
+    /// Merge `[profile.<name>.coverage]` config values into this struct. CLI
+    /// flags already set on `self` win; unset/false flags inherit from
+    /// `config`.
+    ///
+    /// After this returns:
+    /// - `self.report` is non-empty.
+    /// - `self.lcov_version` is `Some(_)`.
+    /// - boolean flags reflect `cli || config` (CLI cannot disable a flag set
+    ///   to `true` in config; this matches the pre-existing flag-only
+    ///   semantics where booleans defaulted to `false`).
+    fn resolve_with(&mut self, config: &CoverageConfig) {
+        if self.report.is_empty() {
+            self.report.clone_from(&config.report);
+        }
+        if self.lcov_version.is_none() {
+            self.lcov_version = Some(config.lcov_version.clone());
+        }
+        if !self.ir_minimum {
+            self.ir_minimum = config.ir_minimum;
+        }
+        if self.report_file.is_none() {
+            self.report_file.clone_from(&config.report_file);
+        }
+        if !self.include_libs {
+            self.include_libs = config.include_libs;
+        }
+        if !self.exclude_tests {
+            self.exclude_tests = config.exclude_tests;
+        }
+        // Glob filters are additive — there's no CLI flag for these, so always
+        // take from config.
+        self.skip_files.clone_from(&config.skip_files);
+    }
+
     fn populate_reporters(&mut self, root: &Path) {
+        // `resolve_with` guarantees `lcov_version` is `Some` before we get here.
+        let lcov_version = self.lcov_version.clone().unwrap_or_else(|| Version::new(1, 0, 0));
         self.reporters = self
             .report
             .iter()
@@ -115,7 +171,7 @@ impl CoverageArgs {
                 CoverageReportKind::Lcov => {
                     let path =
                         root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
-                    Box::new(LcovReporter::new(path, self.lcov_version.clone()))
+                    Box::new(LcovReporter::new(path, lcov_version.clone()))
                 }
                 CoverageReportKind::Bytecode => Box::new(BytecodeReporter::new(
                     root.to_path_buf(),
@@ -288,11 +344,27 @@ impl CoverageArgs {
         }
 
         // Filter out ignored sources from the report.
+        let file_root = filter.paths().root.as_path();
         if let Some(not_re) = &filter.args().coverage_pattern_inverse {
-            let file_root = filter.paths().root.as_path();
             report.retain_sources(|path: &Path| {
                 let path = path.strip_prefix(file_root).unwrap_or(path);
                 !not_re.is_match(&path.to_string_lossy())
+            });
+        }
+        if !self.skip_files.is_empty() {
+            let mut builder = GlobSetBuilder::new();
+            for pattern in &self.skip_files {
+                let glob = Glob::new(pattern).map_err(|e| {
+                    eyre::eyre!("invalid glob in coverage.skip_files: '{pattern}': {e}")
+                })?;
+                builder.add(glob);
+            }
+            let set = builder
+                .build()
+                .map_err(|e| eyre::eyre!("failed to build coverage.skip_files glob set: {e}"))?;
+            report.retain_sources(|path: &Path| {
+                let path = path.strip_prefix(file_root).unwrap_or(path);
+                !set.is_match(path)
             });
         }
 
@@ -322,16 +394,6 @@ impl CoverageArgs {
     pub const fn watch(&self) -> &WatchArgs {
         &self.test.watch
     }
-}
-
-/// Coverage reports to generate.
-#[derive(Clone, Debug, Default, ValueEnum)]
-pub enum CoverageReportKind {
-    #[default]
-    Summary,
-    Lcov,
-    Debug,
-    Bytecode,
 }
 
 /// Helper function that will link references in unlinked bytecode to the 0 address.

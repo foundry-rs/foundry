@@ -225,6 +225,14 @@ show_metrics = true
 show_solidity = false
 check_interval = 1
 
+[coverage]
+report = ["summary"]
+lcov_version = "1.0.0"
+ir_minimum = false
+include_libs = false
+exclude_tests = false
+skip_files = []
+
 [labels]
 
 [vyper]
@@ -306,6 +314,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             },
             ..Default::default()
         },
+        coverage: Default::default(),
         ffi: true,
         live_logs: true,
         allow_internal_expect_revert: false,
@@ -1346,6 +1355,17 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_time_delay": null,
     "max_block_delay": null,
     "check_interval": 1
+  },
+  "coverage": {
+    "report": [
+      "summary"
+    ],
+    "lcov_version": "1.0.0",
+    "ir_minimum": false,
+    "report_file": null,
+    "include_libs": false,
+    "exclude_tests": false,
+    "skip_files": []
   },
   "ffi": false,
   "live_logs": false,
