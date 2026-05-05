@@ -175,7 +175,7 @@ impl TempoOpts {
         };
 
         let signer = if let Some(spec) = &self.sponsor_signer {
-            Some(Arc::new(resolve_tempo_sponsor_signer(spec).await?))
+            Some(Arc::new(Box::pin(resolve_tempo_sponsor_signer(spec)).await?))
         } else {
             None
         };
