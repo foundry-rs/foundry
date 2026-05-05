@@ -117,6 +117,8 @@ jobs:
     needs: prepare
     uses: ./.github/workflows/docker-publish.yml
     permissions:
+      attestations: write
+      artifact-metadata: write
       contents: read
       id-token: write
       packages: write
