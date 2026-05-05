@@ -985,7 +985,7 @@ async fn run_remaining_limit(
     };
 
     if shell::is_json() {
-        sh_println!("{}", serde_json::to_string(&remaining.to_string())?)?;
+        sh_println!("{}", serde_json::json!({ "remaining": remaining.to_string() }))?;
     } else {
         sh_println!("{remaining}")?;
     }
@@ -1079,7 +1079,14 @@ async fn run_policy_add_call(
     };
 
     if !changed {
-        sh_println!("Allowed call already present for {}", address_label_with_address(target))?;
+        if shell::is_json() {
+            sh_println!(
+                "{}",
+                serde_json::json!({ "status": "already_present", "target": target.to_string() })
+            )?;
+        } else {
+            sh_println!("Allowed call already present for {}", address_label_with_address(target))?;
+        }
         return Ok(());
     }
 
@@ -1157,7 +1164,11 @@ async fn send_keychain_tx(
         let hash = tx
             .compute_sponsor_hash(from)
             .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;
-        sh_println!("{hash:?}")?;
+        if shell::is_json() {
+            sh_println!("{}", serde_json::json!({ "sponsor_hash": format!("{hash:?}") }))?;
+        } else {
+            sh_println!("{hash:?}")?;
+        }
         return Ok(());
     }
 
