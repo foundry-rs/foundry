@@ -328,8 +328,8 @@ foundry-evm = { path = "crates/evm/evm" }
 foundry-evm-abi = { path = "crates/evm/abi" }
 foundry-evm-core = { path = "crates/evm/core" }
 foundry-evm-coverage = { path = "crates/evm/coverage" }
-foundry-evm-hardforks = { path = "crates/evm/hardforks" }
-foundry-evm-networks = { path = "crates/evm/networks" }
+foundry-evm-hardforks = { path = "crates/evm/hardforks", default-features = false }
+foundry-evm-networks = { path = "crates/evm/networks", default-features = false }
 foundry-evm-fuzz = { path = "crates/evm/fuzz" }
 foundry-evm-sancov = { path = "crates/evm/sancov" }
 foundry-evm-traces = { path = "crates/evm/traces" }
