@@ -884,10 +884,10 @@ impl BundledState<TempoEvmNetwork> {
                 max_priority_fee_per_gas: Some(max_priority_fee_per_gas),
                 ..Default::default()
             },
-            fee_token: self.script_config.fee_token,
+            fee_token: self.script_config.tempo.common.fee_token,
             calls: calls.clone(),
-            nonce_key: self.script_config.expires_at.map(|_| alloy_primitives::U256::MAX),
-            valid_before: self.script_config.expires_at.and_then(NonZeroU64::new),
+            nonce_key: self.script_config.tempo.expiring_nonce.then_some(U256::MAX),
+            valid_before: self.script_config.tempo.valid_before.and_then(NonZeroU64::new),
             ..Default::default()
         };
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
