@@ -10,8 +10,9 @@ use alloy_primitives::{Address, B256};
 use alloy_signer::Signer;
 use eyre::Result;
 use foundry_cli::utils::{LoadConfig, get_chain};
-use foundry_common::provider::ProviderBuilder;
+use foundry_common::{provider::ProviderBuilder, shell};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
+use serde_json::json;
 use std::time::Instant;
 use tempo_alloy::{
     TempoNetwork,
@@ -69,24 +70,19 @@ pub(super) async fn run(
             rng.fill_bytes(&mut start_salt[..]);
         }
 
-        sh_println!("Mining TIP-1022 salt for {owner} with {n_threads} threads...")?;
+        if !shell::is_json() {
+            sh_println!("Mining TIP-1022 salt for {owner} with {n_threads} threads...")?;
+        }
         let timer = Instant::now();
         let output = mine::mine(owner, start_salt, n_threads, POW_BYTES)?;
-        sh_println!("Found salt in {:?}", timer.elapsed())?;
+        if !shell::is_json() {
+            sh_println!("Found salt in {:?}", timer.elapsed())?;
+        }
         output
     };
 
-    sh_println!(
-        "Salt:              {}
-Registration hash: {}
-Master ID:         {}",
-        output.salt,
-        output.registration_hash,
-        output.master_id,
-    )?;
-
     const MAX_USER_TAG: u64 = 0x0000_FFFF_FFFF_FFFF;
-    sh_println!("\nVirtual addresses:")?;
+    let mut virtual_addresses = Vec::with_capacity(count as usize);
     for i in 0..count {
         let tag_value = tag
             .checked_add(i as u64)
@@ -95,7 +91,35 @@ Master ID:         {}",
         let raw = tag_value.to_be_bytes();
         let user_tag = UserTag::new(raw[2..].try_into().expect("slice is 6 bytes"));
         let vaddr = Address::new_virtual(output.master_id, user_tag);
-        sh_println!("  tag={user_tag}  {vaddr}")?;
+        virtual_addresses.push((user_tag, vaddr));
+    }
+
+    if shell::is_json() {
+        sh_println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "salt": format!("{}", output.salt),
+                "registration_hash": format!("{}", output.registration_hash),
+                "master_id": format!("{}", output.master_id),
+                "virtual_addresses": virtual_addresses.iter().map(|(tag, addr)| json!({
+                    "tag": format!("{tag}"),
+                    "address": format!("{addr}"),
+                })).collect::<Vec<_>>(),
+            }))?
+        )?;
+    } else {
+        sh_println!(
+            "Salt:              {}
+Registration hash: {}
+Master ID:         {}",
+            output.salt,
+            output.registration_hash,
+            output.master_id,
+        )?;
+        sh_println!("\nVirtual addresses:")?;
+        for (tag, vaddr) in &virtual_addresses {
+            sh_println!("  tag={tag}  {vaddr}")?;
+        }
     }
 
     if no_register {
