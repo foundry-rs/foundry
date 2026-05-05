@@ -208,7 +208,7 @@ jobs:
           **Run**: [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
           **Date**: ${DATE}
           **Repo benchmarked**: \`aave/aave-v4\` (pinned commit)
-          **Threshold**: 🔴 >10% regression, 🟡 >5% warning"
+          **Threshold**: 🔴 >=3% regression, 🟡 >=1% warning"
 
           gh issue create \
             --title "[Nightly Regression] ${DATE}" \
