@@ -50,3 +50,7 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["time", "macros"] }
 tracing.workspace = true
 yansi.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = ["foundry-common/optimism", "foundry-evm-core/optimism"]

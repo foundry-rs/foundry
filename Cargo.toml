@@ -306,35 +306,35 @@ alloy-json-abi.opt-level = "s"
 [workspace.dependencies]
 anvil = { path = "crates/anvil" }
 cast = { path = "crates/cast" }
-chisel = { path = "crates/chisel" }
+chisel = { path = "crates/chisel", default-features = false }
 forge = { path = "crates/forge" }
 
-forge-doc = { path = "crates/doc" }
-forge-fmt = { path = "crates/fmt" }
-forge-lint = { path = "crates/lint" }
-forge-verify = { path = "crates/verify" }
-forge-script = { path = "crates/script" }
-forge-sol-macro-gen = { path = "crates/sol-macro-gen" }
-forge-script-sequence = { path = "crates/script-sequence" }
-foundry-cheatcodes = { path = "crates/cheatcodes" }
+forge-doc = { path = "crates/doc", default-features = false }
+forge-fmt = { path = "crates/fmt", default-features = false }
+forge-lint = { path = "crates/lint", default-features = false }
+forge-verify = { path = "crates/verify", default-features = false }
+forge-script = { path = "crates/script", default-features = false }
+forge-sol-macro-gen = { path = "crates/sol-macro-gen", default-features = false }
+forge-script-sequence = { path = "crates/script-sequence", default-features = false }
+foundry-cheatcodes = { path = "crates/cheatcodes", default-features = false }
 foundry-cheatcodes-spec = { path = "crates/cheatcodes/spec" }
-foundry-cli = { path = "crates/cli" }
+foundry-cli = { path = "crates/cli", default-features = false }
 foundry-cli-markdown = { path = "crates/cli-markdown" }
-foundry-common = { path = "crates/common" }
+foundry-common = { path = "crates/common", default-features = false }
 foundry-common-fmt = { path = "crates/common/fmt", default-features = false }
 foundry-config = { path = "crates/config" }
-foundry-debugger = { path = "crates/debugger" }
-foundry-evm = { path = "crates/evm/evm" }
+foundry-debugger = { path = "crates/debugger", default-features = false }
+foundry-evm = { path = "crates/evm/evm", default-features = false }
 foundry-evm-abi = { path = "crates/evm/abi" }
 foundry-evm-core = { path = "crates/evm/core", default-features = false }
-foundry-evm-coverage = { path = "crates/evm/coverage" }
+foundry-evm-coverage = { path = "crates/evm/coverage", default-features = false }
 foundry-evm-hardforks = { path = "crates/evm/hardforks", default-features = false }
 foundry-evm-networks = { path = "crates/evm/networks", default-features = false }
-foundry-evm-fuzz = { path = "crates/evm/fuzz" }
+foundry-evm-fuzz = { path = "crates/evm/fuzz", default-features = false }
 foundry-evm-sancov = { path = "crates/evm/sancov" }
-foundry-evm-traces = { path = "crates/evm/traces" }
+foundry-evm-traces = { path = "crates/evm/traces", default-features = false }
 foundry-macros = { path = "crates/macros" }
-foundry-test-utils = { path = "crates/test-utils" }
+foundry-test-utils = { path = "crates/test-utils", default-features = false }
 foundry-wallets = { version = "0.1.0", default-features = false }
 foundry-linking = { path = "crates/linking" }
 foundry-primitives = { path = "crates/primitives", default-features = false }

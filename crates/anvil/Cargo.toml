@@ -132,6 +132,8 @@ optimism = [
     "anvil-core/optimism",
     "foundry-primitives/optimism",
     "foundry-common/optimism",
+    "foundry-evm/optimism",
+    "foundry-cli/optimism",
 ]
 asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
