@@ -1,4 +1,3 @@
-use alloy_primitives::map::HashSet;
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_sol_macro_gen::{MultiSolMacroGen, SolMacroGen};
@@ -7,6 +6,7 @@ use foundry_common::{compile::ProjectCompiler, fs::json_files};
 use foundry_config::impl_figment_convert;
 use regex::Regex;
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -197,14 +197,35 @@ impl BindArgs {
     }
 
     fn get_solmacrogen(&self, artifacts: &Path) -> Result<MultiSolMacroGen> {
-        let mut dup = HashSet::<String>::default();
-        let instances = self
-            .get_json_files(artifacts)?
-            .filter_map(|(name, path)| {
-                trace!(?path, "parsing SolMacroGen from file");
-                dup.insert(name.clone()).then(|| SolMacroGen::new(path, name))
-            })
-            .collect::<Vec<_>>();
+        // Group artifacts by Solidity contract name. Same-named contracts in different
+        // source paths share a name but produce separate artifacts (e.g.
+        // `out/A.sol/A.json` vs `out/nested/A.sol/A.json`); they all need bindings.
+        let mut by_name: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+        for (name, path) in self.get_json_files(artifacts)? {
+            trace!(?path, "parsing SolMacroGen from file");
+            by_name.entry(name).or_default().push(path);
+        }
+
+        let mut instances = Vec::new();
+        for (name, mut paths) in by_name {
+            if paths.len() == 1 {
+                let path = paths.pop().expect("non-empty");
+                instances.push(SolMacroGen::new(path, name));
+            } else {
+                // Disambiguate: derive a unique Rust module name from the artifact path
+                // for each colliding contract so all of them get bindings.
+                paths.sort();
+                let mut used = alloy_primitives::map::HashSet::<String>::default();
+                for path in paths {
+                    let binding_name = unique_binding_name(&name, &path, artifacts, &mut used);
+                    instances.push(SolMacroGen::with_binding_name(
+                        path,
+                        name.clone(),
+                        binding_name,
+                    ));
+                }
+            }
+        }
 
         let multi = MultiSolMacroGen::new(instances);
         eyre::ensure!(!multi.instances.is_empty(), "No contract artifacts found");
@@ -293,4 +314,45 @@ impl Filter {
 
         Self::Skip(skip)
     }
+}
+
+/// Derives a Rust module name for an artifact whose contract name collides with
+/// other artifacts. The artifact layout is
+/// `<artifacts>/[<dir>/...]<source>.sol/<contract>.json`; leading directory
+/// components are added by the compiler precisely to disambiguate same-named
+/// contracts, so they are folded into the binding name.
+///
+/// Numeric suffixes are appended on the rare chance that the derived name
+/// collides with a previously generated one.
+fn unique_binding_name(
+    name: &str,
+    path: &Path,
+    artifacts: &Path,
+    used: &mut alloy_primitives::map::HashSet<String>,
+) -> String {
+    let rel = path.strip_prefix(artifacts).unwrap_or(path);
+    let mut comps: Vec<_> = rel.components().filter_map(|c| c.as_os_str().to_str()).collect();
+    // Drop the file name (e.g. `Counter.json`) and the per-source directory
+    // (e.g. `Counter.sol`). What remains are the disambiguating parents.
+    if !comps.is_empty() {
+        comps.pop();
+    }
+    if !comps.is_empty() {
+        comps.pop();
+    }
+    let prefix = comps
+        .into_iter()
+        .map(|s| s.replace(char::is_whitespace, "").replace('-', "_"))
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
+
+    let base = if prefix.is_empty() { name.to_string() } else { format!("{prefix}_{name}") };
+    let mut candidate = base.clone();
+    let mut suffix = 1usize;
+    while !used.insert(candidate.clone()) {
+        suffix += 1;
+        candidate = format!("{base}_{suffix}");
+    }
+    candidate
 }

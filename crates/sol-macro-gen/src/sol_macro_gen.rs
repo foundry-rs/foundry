@@ -24,13 +24,21 @@ use heck::ToSnakeCase;
 
 pub struct SolMacroGen {
     pub path: PathBuf,
+    /// Solidity contract name used for the `sol!` macro identifier.
     pub name: String,
+    /// Identifier used to derive the Rust module and file name for this binding.
+    /// Defaults to `name` but may be disambiguated when multiple contracts share `name`.
+    pub binding_name: String,
     pub expansion: Option<TokenStream>,
 }
 
 impl SolMacroGen {
-    pub const fn new(path: PathBuf, name: String) -> Self {
-        Self { path, name, expansion: None }
+    pub fn new(path: PathBuf, name: String) -> Self {
+        Self { binding_name: name.clone(), path, name, expansion: None }
+    }
+
+    pub const fn with_binding_name(path: PathBuf, name: String, binding_name: String) -> Self {
+        Self { path, name, binding_name, expansion: None }
     }
 
     pub fn get_sol_input(&self) -> Result<SolInput> {
@@ -59,7 +67,7 @@ impl MultiSolMacroGen {
 
     pub fn populate_expansion(&mut self, bindings_path: &Path) -> Result<()> {
         for instance in &mut self.instances {
-            let path = bindings_path.join(format!("{}.rs", instance.name.to_snake_case()));
+            let path = bindings_path.join(format!("{}.rs", instance.binding_name.to_snake_case()));
             let expansion = fs::read_to_string(path).wrap_err("Failed to read file")?;
 
             let tokens = TokenStream::from_str(&expansion)
@@ -179,7 +187,7 @@ edition = "2021"
         for instance in &self.instances {
             let contents = instance.expansion.as_ref().unwrap();
 
-            let name = instance.name.to_snake_case();
+            let name = instance.binding_name.to_snake_case();
             let path = src.join(format!("{name}.rs"));
             let file = syn::parse2(contents.clone())
                 .wrap_err_with(|| parse_error(&format!("{}:{}", path.display(), name)))?;
@@ -237,7 +245,7 @@ edition = "2021"
             .to_string();
 
         for instance in &self.instances {
-            let name = instance.name.to_snake_case();
+            let name = instance.binding_name.to_snake_case();
             if single_file {
                 // Single File
                 let mut contents = String::new();
@@ -299,7 +307,7 @@ edition = "2021"
         )?;
         if !single_file {
             for instance in &self.instances {
-                let name = instance.name.to_snake_case();
+                let name = instance.binding_name.to_snake_case();
                 let path = if is_mod {
                     crate_path.join(format!("{name}.rs"))
                 } else {
