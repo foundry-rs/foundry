@@ -173,10 +173,18 @@ impl Comments {
             }
         };
 
+        fn push_continuation(value: &mut String, line: &str) {
+            if value.is_empty() {
+                value.push_str(line);
+            } else {
+                value.push('\n');
+                value.push_str(line);
+            }
+        }
+
         for raw_line in lines {
             let raw = raw_line.as_ref();
-            // For block comments, process each line individually
-            for line in raw.lines() {
+            let mut process_line = |line: &str| {
                 let trimmed = line.trim().trim_start_matches('*').trim();
 
                 if let Some(rest) = trimmed.strip_prefix('@') {
@@ -186,14 +194,19 @@ impl Comments {
                     let (tag, value) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
                     current_tag = Some(tag.to_string());
                     current_value = value.trim().to_string();
-                } else if !trimmed.is_empty() {
+                } else if !trimmed.is_empty() || !current_value.is_empty() {
                     // Continuation of current tag
-                    if current_value.is_empty() {
-                        current_value = trimmed.to_string();
-                    } else {
-                        current_value.push('\n');
-                        current_value.push_str(trimmed);
-                    }
+                    push_continuation(&mut current_value, trimmed);
+                }
+            };
+
+            // For block comments, process each line individually. Empty `///` comments are
+            // represented as empty symbols, but `str::lines` yields no items for an empty string.
+            if raw.is_empty() {
+                process_line("");
+            } else {
+                for line in raw.lines() {
+                    process_line(line);
                 }
             }
         }
@@ -313,5 +326,36 @@ mod tests {
                 "Non-custom tag {tag:?} should return false for is_custom"
             );
         }
+    }
+
+    #[test]
+    fn parse_comment_preserves_empty_lines_within_tag_values() {
+        let comments = Comments::from_doc_lines([
+            "@notice Transfers the admin of the contract to a new address.",
+            "",
+            "Notes:",
+            "- Does not revert if the admin is the same.",
+            "",
+            "Requirements:",
+            "- The caller must be the current contract admin.",
+            "",
+            "@param newAdmin The address of the new admin.",
+        ]);
+
+        assert_eq!(comments.len(), 2);
+        assert_eq!(
+            comments[0],
+            Comment::new(
+                CommentTag::Notice,
+                "Transfers the admin of the contract to a new address.\n\nNotes:\n- Does not \
+                 revert if the admin is the same.\n\nRequirements:\n- The caller must be the \
+                 current contract admin."
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            comments[1],
+            Comment::new(CommentTag::Param, "newAdmin The address of the new admin.".to_owned())
+        );
     }
 }

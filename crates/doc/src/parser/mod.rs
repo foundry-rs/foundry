@@ -457,4 +457,43 @@ mod tests {
             Comment::new(CommentTag::Notice, "my function\ni like whitespace".to_owned())
         );
     }
+
+    #[test]
+    fn contract_with_doc_comments_preserves_empty_lines() {
+        let items = parse_source(
+            r"
+            interface IAdmin {
+                /// @notice Transfers the admin of the contract to a new address.
+                ///
+                /// Notes:
+                /// - Does not revert if the admin is the same.
+                ///
+                /// Requirements:
+                /// - The caller must be the current contract admin.
+                ///
+                /// @param newAdmin The address of the new admin.
+                function transferAdmin(address newAdmin) external;
+            }
+        ",
+        );
+
+        assert_eq!(items.len(), 1);
+
+        let contract = items.first().unwrap();
+        let function = contract.children.first().unwrap();
+        assert_eq!(
+            function.comments[0],
+            Comment::new(
+                CommentTag::Notice,
+                "Transfers the admin of the contract to a new address.\n\nNotes:\n- Does not \
+                 revert if the admin is the same.\n\nRequirements:\n- The caller must be the \
+                 current contract admin."
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            function.comments[1],
+            Comment::new(CommentTag::Param, "newAdmin The address of the new admin.".to_owned())
+        );
+    }
 }
