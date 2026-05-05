@@ -19,13 +19,13 @@ impl<'ast> EarlyLintPass<'ast> for TxOrigin {
     fn check_stmt(&mut self, ctx: &LintContext, stmt: &'ast Stmt<'ast>) {
         match &stmt.kind {
             StmtKind::If(cond, ..) | StmtKind::DoWhile(_, cond) => {
-                emit_tx_origin_reads(ctx, cond);
+                emit_if_contains_tx_origin(ctx, cond);
             }
             StmtKind::While(cond, _) => {
-                emit_tx_origin_reads(ctx, cond);
+                emit_if_contains_tx_origin(ctx, cond);
             }
             StmtKind::For { cond: Some(cond), .. } => {
-                emit_tx_origin_reads(ctx, cond);
+                emit_if_contains_tx_origin(ctx, cond);
             }
             _ => {}
         }
@@ -36,75 +36,35 @@ impl<'ast> EarlyLintPass<'ast> for TxOrigin {
             && is_require_or_assert_call(callee)
             && let Some(cond) = args.exprs().next()
         {
-            emit_tx_origin_reads(ctx, cond);
+            emit_if_contains_tx_origin(ctx, cond);
         }
     }
 }
 
-fn emit_tx_origin_reads(ctx: &LintContext, expr: &Expr<'_>) {
-    if is_tx_origin(expr) {
+fn emit_if_contains_tx_origin(ctx: &LintContext, expr: &Expr<'_>) {
+    if contains_tx_origin(expr) {
         ctx.emit(&TX_ORIGIN, expr.span);
-        return;
     }
+}
 
+fn contains_tx_origin(expr: &Expr<'_>) -> bool {
+    if is_tx_origin(expr) {
+        return true;
+    }
     match &expr.kind {
-        ExprKind::Array(elems) => {
-            for elem in elems.iter() {
-                emit_tx_origin_reads(ctx, elem);
+        ExprKind::Unary(_, inner) => contains_tx_origin(inner),
+        ExprKind::Binary(lhs, _, rhs) => contains_tx_origin(lhs) || contains_tx_origin(rhs),
+        ExprKind::Tuple(elems) => elems.iter().any(|elem| {
+            if let SpannedOption::Some(inner) = elem.as_ref() {
+                contains_tx_origin(inner)
+            } else {
+                false
             }
-        }
-        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-            emit_tx_origin_reads(ctx, lhs);
-            emit_tx_origin_reads(ctx, rhs);
-        }
+        }),
         ExprKind::Call(callee, args) => {
-            emit_tx_origin_reads(ctx, callee);
-            for arg in args.exprs() {
-                emit_tx_origin_reads(ctx, arg);
-            }
+            contains_tx_origin(callee) || args.exprs().any(contains_tx_origin)
         }
-        ExprKind::CallOptions(callee, args) => {
-            emit_tx_origin_reads(ctx, callee);
-            for arg in args.iter() {
-                emit_tx_origin_reads(ctx, &arg.value);
-            }
-        }
-        ExprKind::Delete(inner) | ExprKind::Member(inner, _) | ExprKind::Unary(_, inner) => {
-            emit_tx_origin_reads(ctx, inner);
-        }
-        ExprKind::Index(base, kind) => {
-            emit_tx_origin_reads(ctx, base);
-            match kind {
-                solar::ast::IndexKind::Index(Some(index)) => emit_tx_origin_reads(ctx, index),
-                solar::ast::IndexKind::Range(start, end) => {
-                    if let Some(start) = start {
-                        emit_tx_origin_reads(ctx, start);
-                    }
-                    if let Some(end) = end {
-                        emit_tx_origin_reads(ctx, end);
-                    }
-                }
-                _ => {}
-            }
-        }
-        ExprKind::Payable(args) => {
-            for arg in args.exprs() {
-                emit_tx_origin_reads(ctx, arg);
-            }
-        }
-        ExprKind::Ternary(cond, then_expr, else_expr) => {
-            emit_tx_origin_reads(ctx, cond);
-            emit_tx_origin_reads(ctx, then_expr);
-            emit_tx_origin_reads(ctx, else_expr);
-        }
-        ExprKind::Tuple(elems) => {
-            for elem in elems.iter() {
-                if let SpannedOption::Some(elem) = elem.as_ref() {
-                    emit_tx_origin_reads(ctx, elem);
-                }
-            }
-        }
-        _ => {}
+        _ => false,
     }
 }
 

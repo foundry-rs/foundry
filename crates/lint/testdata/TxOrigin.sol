@@ -24,6 +24,24 @@ contract TxOrigin {
         assert(isOwner(tx.origin)); //~WARN: `tx.origin` should not be used for authorization
     }
 
+    function guardedByWhile() external view {
+        while (tx.origin == owner) { //~WARN: `tx.origin` should not be used for authorization
+            break;
+        }
+    }
+
+    function guardedByFor() external view {
+        for (; tx.origin == owner;) { //~WARN: `tx.origin` should not be used for authorization
+            break;
+        }
+    }
+
+    function guardedByDoWhile() external view {
+        do {
+            break;
+        } while (tx.origin == owner); //~WARN: `tx.origin` should not be used for authorization
+    }
+
     function readForLogging() external view returns (address) {
         return tx.origin;
     }
