@@ -4,7 +4,7 @@ warning[boolean-cst]: misuse of a boolean constant
 LL │         if (false) {}
    │             ━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#boolean-cst
+   ╰ help: https://getfoundry.sh/forge/linting/boolean-cst
 
 warning[boolean-cst]: misuse of a boolean constant
    ╭▸ ROOT/testdata/BooleanCst.sol:LL:CC
@@ -12,7 +12,7 @@ warning[boolean-cst]: misuse of a boolean constant
 LL │         if (flag || true) {}
    │                     ━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#boolean-cst
+   ╰ help: https://getfoundry.sh/forge/linting/boolean-cst
 
 warning[boolean-cst]: misuse of a boolean constant
    ╭▸ ROOT/testdata/BooleanCst.sol:LL:CC
@@ -20,7 +20,7 @@ warning[boolean-cst]: misuse of a boolean constant
 LL │         if (flag ? true : false) {}
    │                    ━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#boolean-cst
+   ╰ help: https://getfoundry.sh/forge/linting/boolean-cst
 
 warning[boolean-cst]: misuse of a boolean constant
    ╭▸ ROOT/testdata/BooleanCst.sol:LL:CC
@@ -28,7 +28,7 @@ warning[boolean-cst]: misuse of a boolean constant
 LL │         if (flag ? true : false) {}
    │                           ━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#boolean-cst
+   ╰ help: https://getfoundry.sh/forge/linting/boolean-cst
 
 warning[boolean-cst]: misuse of a boolean constant
    ╭▸ ROOT/testdata/BooleanCst.sol:LL:CC
@@ -36,5 +36,5 @@ warning[boolean-cst]: misuse of a boolean constant
 LL │         return assigned && false;
    │                            ━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#boolean-cst
+   ╰ help: https://getfoundry.sh/forge/linting/boolean-cst
 

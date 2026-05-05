@@ -22,7 +22,7 @@ foundry-evm-core.workspace = true
 foundry-evm-coverage.workspace = true
 foundry-evm-fuzz.workspace = true
 foundry-evm-sancov.workspace = true
-foundry-evm-hardforks.workspace = true
+foundry-evm-hardforks = { workspace = true, features = ["optimism"] }
 foundry-evm-networks.workspace = true
 foundry-evm-traces.workspace = true
 

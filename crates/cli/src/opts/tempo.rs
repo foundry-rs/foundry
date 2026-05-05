@@ -1,12 +1,17 @@
 use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, ruint::aliases::U256};
-use alloy_signer::Signature;
+use alloy_signer::{Signature, Signer};
 use clap::Parser;
-use foundry_common::FoundryTransactionBuilder;
+use eyre::Result;
+use foundry_common::{
+    FoundryTransactionBuilder,
+    tempo::{TempoSponsor, resolve_tempo_sponsor_signer},
+};
 use std::{
     num::NonZeroU64,
     path::PathBuf,
     str::FromStr,
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -92,18 +97,44 @@ pub struct TempoOpts {
     #[arg(long = "tempo.lanes-file", value_name = "PATH")]
     pub lanes_file: Option<PathBuf>,
 
+    /// Sponsor (fee payer) address for Tempo sponsored transactions.
+    #[arg(long = "tempo.sponsor", value_name = "ADDRESS")]
+    pub sponsor: Option<Address>,
+
+    /// Sign Tempo sponsor digests in-band with the given signer URI.
+    ///
+    /// Supported forms include `env://VAR`, `keystore://PATH`, `account://NAME`,
+    /// `ledger://`, `trezor://`, `aws://`, `gcp://`, `turnkey://`, and
+    /// `private-key://KEY`.
+    #[arg(
+        long = "tempo.sponsor-signer",
+        value_name = "SIGNER",
+        requires = "sponsor",
+        conflicts_with = "sponsor_sig"
+    )]
+    pub sponsor_signer: Option<String>,
+
     /// Sponsor (fee payer) signature for Tempo sponsored transactions.
     ///
     /// The sponsor signs the `fee_payer_signature_hash` to commit to paying gas fees
     /// on behalf of the sender. Provide as a hex-encoded signature.
-    #[arg(long = "tempo.sponsor-signature", value_parser = parse_signature)]
-    pub sponsor_signature: Option<Signature>,
+    #[arg(
+        long = "tempo.sponsor-sig",
+        alias = "tempo.sponsor-signature",
+        value_parser = parse_signature,
+        requires = "sponsor",
+        conflicts_with = "sponsor_signer"
+    )]
+    pub sponsor_sig: Option<Signature>,
 
     /// Print the sponsor signature hash and exit.
     ///
     /// Computes the `fee_payer_signature_hash` for the transaction so that a sponsor
     /// knows what hash to sign. The transaction is not sent.
-    #[arg(long = "tempo.print-sponsor-hash")]
+    #[arg(
+        long = "tempo.print-sponsor-hash",
+        conflicts_with_all = &["sponsor", "sponsor_signer", "sponsor_sig"]
+    )]
     pub print_sponsor_hash: bool,
 
     /// Access key ID for Tempo Keychain signature transactions.
@@ -141,7 +172,9 @@ impl TempoOpts {
         self.common.is_tempo()
             || self.nonce_key.is_some()
             || self.lane.is_some()
-            || self.sponsor_signature.is_some()
+            || self.sponsor.is_some()
+            || self.sponsor_signer.is_some()
+            || self.sponsor_sig.is_some()
             || self.print_sponsor_hash
             || self.key_id.is_some()
             || self.expiring_nonce
@@ -152,6 +185,41 @@ impl TempoOpts {
     /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.
     pub fn expires_at(&self) -> Option<u64> {
         self.common.expires_at()
+    }
+
+    /// Returns `true` if a sponsor signature should be attached before submission.
+    pub const fn has_sponsor_submission(&self) -> bool {
+        self.sponsor.is_some() || self.sponsor_signer.is_some() || self.sponsor_sig.is_some()
+    }
+
+    /// Resolves sponsor CLI options into a reusable sponsor config for transaction submission.
+    pub async fn sponsor_config(&self) -> Result<Option<TempoSponsor>> {
+        let Some(sponsor) = self.sponsor else {
+            return Ok(None);
+        };
+
+        let signer = if let Some(spec) = &self.sponsor_signer {
+            Some(Arc::new(Box::pin(resolve_tempo_sponsor_signer(spec)).await?))
+        } else {
+            None
+        };
+
+        if let Some(signer) = &signer {
+            let signer_address = signer.address();
+            if signer_address != sponsor {
+                eyre::bail!(
+                    "Tempo sponsor signer address {signer_address} does not match --tempo.sponsor {sponsor}"
+                );
+            }
+        }
+
+        if signer.is_none() && self.sponsor_sig.is_none() {
+            eyre::bail!(
+                "--tempo.sponsor requires either --tempo.sponsor-signer or --tempo.sponsor-sig"
+            );
+        }
+
+        Ok(Some(TempoSponsor::new(sponsor, signer, self.sponsor_sig)))
     }
 
     /// Applies Tempo-specific options to a transaction request.
@@ -202,8 +270,7 @@ impl TempoOpts {
         // gas estimation so that `--tempo.print-sponsor-hash` and
         // `--tempo.sponsor-signature` produce identical gas estimates. Callers
         // should call `set_fee_payer_signature` on the built tx request.
-        if (self.sponsor_signature.is_some() || self.print_sponsor_hash) && tx.nonce_key().is_none()
-        {
+        if (self.has_sponsor_submission() || self.print_sponsor_hash) && tx.nonce_key().is_none() {
             tx.set_nonce_key(U256::ZERO);
         }
     }
@@ -290,6 +357,59 @@ mod tests {
         assert_eq!(
             opts_with_id.common.fee_token,
             Some(address!("0x20C0000000000000000000000000000000000001")),
+        );
+    }
+
+    #[test]
+    fn parse_sponsor_signer() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.sponsor",
+            "0x1111111111111111111111111111111111111111",
+            "--tempo.sponsor-signer",
+            "env://TEMPO_SPONSOR_PK",
+        ])
+        .unwrap();
+
+        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert_eq!(opts.sponsor_signer.as_deref(), Some("env://TEMPO_SPONSOR_PK"));
+        assert!(opts.sponsor_sig.is_none());
+        assert!(opts.is_tempo());
+        assert!(opts.has_sponsor_submission());
+    }
+
+    #[test]
+    fn sponsor_signer_requires_sponsor() {
+        assert!(
+            TempoOpts::try_parse_from(["", "--tempo.sponsor-signer", "env://SPONSOR"]).is_err()
+        );
+    }
+
+    #[test]
+    fn parse_sponsor_signature_alias() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.sponsor",
+            "0x1111111111111111111111111111111111111111",
+            "--tempo.sponsor-signature",
+            "0x0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b",
+        ])
+        .unwrap();
+
+        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+        assert!(opts.sponsor_sig.is_some());
+    }
+
+    #[test]
+    fn print_sponsor_hash_conflicts_with_sponsor_submission() {
+        assert!(
+            TempoOpts::try_parse_from([
+                "",
+                "--tempo.print-sponsor-hash",
+                "--tempo.sponsor",
+                "0x1111111111111111111111111111111111111111",
+            ])
+            .is_err()
         );
     }
 }

@@ -4,7 +4,7 @@ note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other versi
 LL │ pragma solidity ^0.8.20;
    │ ━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#pragma-inconsistent
+   ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
 
 note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
    ╭▸ ROOT/testdata/PragmaInconsistentCaretMatchesExact.sol:LL:CC
@@ -12,5 +12,5 @@ note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other versio
 LL │ pragma solidity 0.8.20;
    │ ━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#pragma-inconsistent
+   ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
 

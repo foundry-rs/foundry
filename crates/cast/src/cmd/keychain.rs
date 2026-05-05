@@ -987,7 +987,7 @@ async fn run_remaining_limit(
     };
 
     if shell::is_json() {
-        sh_println!("{}", serde_json::to_string(&remaining.to_string())?)?;
+        sh_println!("{}", serde_json::json!({ "remaining": remaining.to_string() }))?;
     } else {
         sh_println!("{remaining}")?;
     }
@@ -1081,7 +1081,14 @@ async fn run_policy_add_call(
     };
 
     if !changed {
-        sh_println!("Allowed call already present for {}", address_label_with_address(target))?;
+        if shell::is_json() {
+            sh_println!(
+                "{}",
+                serde_json::json!({ "status": "already_present", "target": target.to_string() })
+            )?;
+        } else {
+            sh_println!("Allowed call already present for {}", address_label_with_address(target))?;
+        }
         return Ok(());
     }
 
@@ -1119,7 +1126,8 @@ async fn send_keychain_tx(
 ) -> Result<()> {
     let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
-    let sponsor_signature = tx_opts.tempo.sponsor_signature;
+    let tempo_sponsor =
+        if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
 
     let config = send_tx.eth.load_config()?;
     let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
@@ -1163,7 +1171,11 @@ async fn send_keychain_tx(
         let hash = tx
             .compute_sponsor_hash(from)
             .ok_or_else(|| eyre::eyre!("This network does not support sponsored transactions"))?;
-        sh_println!("{hash:?}")?;
+        if shell::is_json() {
+            sh_println!("{}", serde_json::json!({ "sponsor_hash": format!("{hash:?}") }))?;
+        } else {
+            sh_println!("{hash:?}")?;
+        }
         return Ok(());
     }
 
@@ -1175,8 +1187,8 @@ async fn send_keychain_tx(
         {
             tx.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
         }
-        if let Some(sig) = sponsor_signature {
-            tx.set_fee_payer_signature(sig);
+        if let Some(sponsor) = &tempo_sponsor {
+            sponsor.attach_and_print::<TempoNetwork>(&mut tx, browser.address()).await?;
         }
 
         let tx_hash = browser.send_transaction_via_browser(tx).await?;
@@ -1197,8 +1209,8 @@ async fn send_keychain_tx(
         let from = signer.address();
         let (mut tx, _) = builder.build(from).await?;
         maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-        if let Some(sig) = sponsor_signature {
-            tx.set_fee_payer_signature(sig);
+        if let Some(sponsor) = &tempo_sponsor {
+            sponsor.attach_and_print::<TempoNetwork>(&mut tx, from).await?;
         }
 
         let wallet = EthereumWallet::from(signer);

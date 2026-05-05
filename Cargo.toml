@@ -33,7 +33,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.6.0"
+version = "1.7.1"
 edition = "2024"
 rust-version = "1.89"
 authors = ["Foundry Contributors"]
@@ -328,8 +328,8 @@ foundry-evm = { path = "crates/evm/evm" }
 foundry-evm-abi = { path = "crates/evm/abi" }
 foundry-evm-core = { path = "crates/evm/core" }
 foundry-evm-coverage = { path = "crates/evm/coverage" }
-foundry-evm-hardforks = { path = "crates/evm/hardforks" }
-foundry-evm-networks = { path = "crates/evm/networks" }
+foundry-evm-hardforks = { path = "crates/evm/hardforks", default-features = false }
+foundry-evm-networks = { path = "crates/evm/networks", default-features = false }
 foundry-evm-fuzz = { path = "crates/evm/fuzz" }
 foundry-evm-sancov = { path = "crates/evm/sancov" }
 foundry-evm-traces = { path = "crates/evm/traces" }
@@ -337,7 +337,7 @@ foundry-macros = { path = "crates/macros" }
 foundry-test-utils = { path = "crates/test-utils" }
 foundry-wallets = { version = "0.1.0", default-features = false }
 foundry-linking = { path = "crates/linking" }
-foundry-primitives = { path = "crates/primitives" }
+foundry-primitives = { path = "crates/primitives", default-features = false }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.23.0", default-features = false }
