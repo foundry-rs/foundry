@@ -89,7 +89,12 @@ fn release_version(pkg_version: &str, tag_name: &str) -> String {
         return version.to_owned();
     }
 
-    format!("{pkg_version}-{tag_name}")
+    // Normalize `nightly-<sha>` to `nightly` so tarball and Docker nightly
+    // artifacts produce the same version string. The commit identifier is
+    // already included in the SemVer build metadata (after `+`).
+    let normalized = if tag_name.starts_with("nightly-") { "nightly" } else { tag_name };
+
+    format!("{pkg_version}-{normalized}")
 }
 
 fn try_env_var(name: &str) -> Option<String> {
