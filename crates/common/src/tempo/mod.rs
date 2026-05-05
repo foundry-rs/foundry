@@ -113,17 +113,17 @@ pub struct TempoSponsorPreview {
 
 impl TempoSponsorPreview {
     pub fn print(&self) -> Result<()> {
-        crate::sh_println!("Tempo sponsor: {}", self.sponsor)?;
-        crate::sh_println!(
+        crate::sh_eprintln!("Tempo sponsor: {}", self.sponsor)?;
+        crate::sh_eprintln!(
             "Tempo fee token: {}",
             self.fee_token.map_or_else(|| "network default".to_string(), |addr| addr.to_string())
         )?;
-        crate::sh_println!(
+        crate::sh_eprintln!(
             "Tempo validity: after {}, before {}",
             self.valid_after.map_or_else(|| "none".to_string(), |v| v.to_string()),
             self.valid_before.map_or_else(|| "none".to_string(), |v| v.to_string())
         )?;
-        crate::sh_println!("Tempo sponsor digest: {:?}", self.digest)?;
+        crate::sh_eprintln!("Tempo sponsor digest: {:?}", self.digest)?;
         Ok(())
     }
 }
