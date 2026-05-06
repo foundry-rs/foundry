@@ -7,12 +7,12 @@
 //! * `replace_inline_links`: rewrites `{Ident}` to markdown links.
 
 use solar::{
-    ast::{ContractKind, DocComments, FunctionKind, NatSpecKind},
+    ast::{ContractKind, DocComments, FunctionKind, NatSpecKind, ParameterList},
     interface::source_map::FileName,
     sema::{Gcx, hir},
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -26,7 +26,14 @@ pub type NameToPage = HashMap<String, PathBuf>;
 ///
 /// This mirrors the path computation in `render::source` so links can be resolved
 /// before rendering begins.
-pub fn build_name_to_page(gcx: Gcx<'_>, root: &Path) -> NameToPage {
+///
+/// Only items whose source file is contained in `allowed_sources` (absolute paths)
+/// are included, so cross-references cannot resolve to pages that won't be emitted.
+pub fn build_name_to_page(
+    gcx: Gcx<'_>,
+    root: &Path,
+    allowed_sources: &HashSet<PathBuf>,
+) -> NameToPage {
     let mut map = NameToPage::new();
 
     for item_id in gcx.hir.item_ids() {
@@ -59,7 +66,7 @@ pub fn build_name_to_page(gcx: Gcx<'_>, root: &Path) -> NameToPage {
             }
             hir::ItemId::Udvt(id) => {
                 let u = gcx.hir.udvt(id);
-                (u.name, u.source, u.contract, "udvt")
+                (u.name, u.source, u.contract, "type")
             }
             hir::ItemId::Function(_) | hir::ItemId::Variable(_) => continue,
         };
@@ -70,7 +77,10 @@ pub fn build_name_to_page(gcx: Gcx<'_>, root: &Path) -> NameToPage {
             continue;
         }
 
-        if let Some(rel) = source_rel_path(gcx, source, root) {
+        if let Some((abs, rel)) = source_paths(gcx, source, root) {
+            if !allowed_sources.contains(&abs) {
+                continue;
+            }
             let out_dir = rel.parent().unwrap_or(Path::new("")).to_owned();
             let page = out_dir.join(format!("{prefix}.{}.mdx", name.as_str()));
             map.insert(name.as_str().to_string(), page);
@@ -80,11 +90,11 @@ pub fn build_name_to_page(gcx: Gcx<'_>, root: &Path) -> NameToPage {
     map
 }
 
-fn source_rel_path(gcx: Gcx<'_>, source_id: hir::SourceId, root: &Path) -> Option<PathBuf> {
+fn source_paths(gcx: Gcx<'_>, source_id: hir::SourceId, root: &Path) -> Option<(PathBuf, PathBuf)> {
     let file = &gcx.hir.source(source_id).file;
     if let FileName::Real(p) = &file.name {
-        let rel = p.strip_prefix(root).unwrap_or(p);
-        Some(rel.to_owned())
+        let rel = p.strip_prefix(root).unwrap_or(p).to_owned();
+        Some((p.clone(), rel))
     } else {
         None
     }
@@ -135,13 +145,18 @@ pub struct InheritedDoc {
 }
 
 /// Resolve `@inheritdoc BaseContract` for a function named `fn_name` inside
-/// `contract_id` (the current contract). Walks the linearized bases to find the
-/// first matching function and returns its natspec if found.
+/// `contract_id` (the current contract). Walks the linearized bases to find a
+/// matching function and returns its natspec if found.
+///
+/// When `param_types` is `Some`, the resolver prefers a function whose parameter
+/// type signature matches exactly; this disambiguates overloads. If no exact
+/// signature match is found, it falls back to the first name match.
 pub fn resolve_inheritdoc(
     gcx: Gcx<'_>,
     contract_id: hir::ContractId,
     fn_name: &str,
     base_name: &str,
+    param_types: Option<&[String]>,
 ) -> Option<InheritedDoc> {
     let contract = gcx.hir.contract(contract_id);
 
@@ -152,8 +167,9 @@ pub fn resolve_inheritdoc(
         .copied()
         .find(|&bid| gcx.hir.contract(bid).name.as_str() == base_name)?;
 
-    // Walk the base's own items to find a function with matching name.
+    // Collect all name-matching candidates.
     let base_contract = gcx.hir.contract(base_id);
+    let mut name_matches: Vec<hir::FunctionId> = Vec::new();
     for &item_id in base_contract.items {
         if let hir::ItemId::Function(fid) = item_id {
             let f = gcx.hir.function(fid);
@@ -164,12 +180,67 @@ pub fn resolve_inheritdoc(
                 _ => f.name.map(|n| n.as_str() == fn_name).unwrap_or(false),
             };
             if matches {
+                name_matches.push(fid);
+            }
+        }
+    }
+
+    // Prefer an exact signature match when overloads exist.
+    if let Some(want) = param_types
+        && name_matches.len() > 1
+    {
+        for &fid in &name_matches {
+            if let Some(got) = function_param_types(gcx, fid)
+                && got.len() == want.len()
+                && got.iter().zip(want).all(|(a, b)| a == b)
+            {
                 return extract_inherited_doc(gcx, fid);
             }
         }
     }
 
-    None
+    name_matches.first().copied().and_then(|fid| extract_inherited_doc(gcx, fid))
+}
+
+/// Extract the parameter type strings (in source order) for a function.
+///
+/// Returns `None` if the function's AST item cannot be located.
+fn function_param_types(gcx: Gcx<'_>, fid: hir::FunctionId) -> Option<Vec<String>> {
+    let f = gcx.hir.function(fid);
+    let ast_source = gcx.sources.get(f.source)?;
+    let ast = ast_source.ast.as_ref()?;
+    let fn_span = f.span;
+
+    let params = ast.items.iter().find_map(|item| match &item.kind {
+        solar::ast::ItemKind::Function(func) if item.span == fn_span => {
+            Some(&func.header.parameters)
+        }
+        solar::ast::ItemKind::Contract(c) => c.body.iter().find_map(|m| match &m.kind {
+            solar::ast::ItemKind::Function(func) if m.span == fn_span => {
+                Some(&func.header.parameters)
+            }
+            _ => None,
+        }),
+        _ => None,
+    })?;
+
+    Some(parameter_type_strings(gcx, params))
+}
+
+/// Compute the parameter type strings of a [`ParameterList`] from the source map.
+pub fn parameter_type_strings(gcx: Gcx<'_>, params: &ParameterList<'_>) -> Vec<String> {
+    let sm = gcx.sess.source_map();
+    params
+        .vars
+        .iter()
+        .map(|v| {
+            sm.span_to_snippet(v.ty.span)
+                .unwrap_or_default()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect()
 }
 
 fn extract_inherited_doc(gcx: Gcx<'_>, fid: hir::FunctionId) -> Option<InheritedDoc> {
@@ -338,9 +409,11 @@ fn parse_inline_link(s: &str) -> Option<(usize, &str, Option<&str>, Option<&str>
 
 /// Produce a vocs-style link from `page` relative to `current_page`.
 ///
-/// vocs uses root-relative links (starting with `/`).
+/// vocs uses root-relative links (starting with `/`). Forward slashes are
+/// always used so the URL stays correct on Windows.
 fn page_link(page: &Path, _current_page: &Path) -> String {
+    use path_slash::PathExt;
     // Strip .mdx extension and produce an absolute path from the pages root.
     let without_ext = page.with_extension("");
-    format!("/{}", without_ext.display())
+    format!("/{}", without_ext.to_slash_lossy())
 }

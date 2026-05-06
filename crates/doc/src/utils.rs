@@ -17,11 +17,14 @@ use std::{
 ///
 /// Returns `None` if `item_path` is not under `root` (i.e. for absolute external paths).
 /// `commit` falls back to `"master"` when empty.
+///
+/// Path components are joined with `/` so the URL is well-formed on Windows.
 pub fn git_source_url(repo: &str, commit: &str, root: &Path, item_path: &Path) -> Option<String> {
+    use path_slash::PathExt;
     let repo = repo.trim_end_matches('/');
     let commit = if commit.is_empty() { "master" } else { commit };
     let rel = item_path.strip_prefix(root).ok()?;
-    Some(format!("{repo}/blob/{commit}/{}", rel.display()))
+    Some(format!("{repo}/blob/{commit}/{}", rel.to_slash_lossy()))
 }
 
 // ── deployments ──────────────────────────────────────────────────────────────

@@ -4645,6 +4645,7 @@ dependencies = [
  "eyre",
  "foundry-compilers",
  "foundry-config",
+ "path-slash",
  "rayon",
  "serde",
  "serde_json",

@@ -8,7 +8,11 @@ use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_it
 use foundry_config::{DocConfig, filter::expand_globs};
 use rayon::prelude::*;
 use solar::sema::Compiler;
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::PathBuf,
+};
 
 /// Build Solidity documentation for a project from natspec comments using [`solar`].
 #[derive(Debug)]
@@ -94,25 +98,34 @@ impl DocBuilder {
 
             let gcx = compiler.gcx();
 
-            let name_to_page = hir_ext::build_name_to_page(gcx, &root);
+            // Restrict cross-reference resolution to files we'll actually emit pages for.
+            let allowed_sources: HashSet<PathBuf> = sources
+                .iter()
+                .map(|(p, _)| if p.is_absolute() { p.clone() } else { root.join(p) })
+                .collect();
+
+            let name_to_page = hir_ext::build_name_to_page(gcx, &root, &allowed_sources);
 
             // Render each source in parallel.
-            let pages: Vec<Vec<(PathBuf, String)>> = sources
+            // Each entry is `(rendered_pages, panicked_user_source)`. A panicked
+            // non-library source is recorded so we can fail the build at the end.
+            type RenderResult = (Option<Vec<(PathBuf, String)>>, Option<PathBuf>);
+            let results: Vec<RenderResult> = sources
                 .par_iter()
-                .filter_map(|(path, from_library)| {
+                .map(|(path, from_library)| -> RenderResult {
                     let abs_path = if path.is_absolute() { path.clone() } else { root.join(path) };
 
                     let Some((_, ast_source)) = gcx.get_ast_source(&abs_path) else {
                         if !from_library {
                             warn!("AST source not found for {}", abs_path.display());
                         }
-                        return None;
+                        return (None, None);
                     };
                     let Some(ast) = &ast_source.ast else {
                         if !from_library {
                             warn!("AST missing for {}", abs_path.display());
                         }
-                        return None;
+                        return (None, None);
                     };
 
                     let rel_path =
@@ -165,34 +178,54 @@ impl DocBuilder {
                         )
                     }));
                     match result {
-                        Ok(pages) => Some(pages),
+                        Ok(pages) => (Some(pages), None),
                         Err(_) => {
                             // Ignore failures from library files; surface user errors.
                             if *from_library {
                                 debug!("rendering failed for library file {}", abs_path.display());
+                                (None, None)
                             } else {
                                 error!("rendering panicked for {}", abs_path.display());
+                                (None, Some(abs_path))
                             }
-                            None
                         }
                     }
                 })
                 .collect();
 
-            // Write MDX pages to disk and collect their relative paths for the sidebar.
+            // Split rendered pages from panicked user sources.
+            let mut failed: Vec<PathBuf> = Vec::new();
             let mut all_rel: Vec<PathBuf> = Vec::new();
-            for page_list in pages {
-                for (rel_out_path, content) in page_list {
-                    let abs_out = pages_dir.join(&rel_out_path);
-                    if let Some(parent) = abs_out.parent() {
-                        fs::create_dir_all(parent)?;
+            for (pages, panicked) in results {
+                if let Some(p) = panicked {
+                    failed.push(p);
+                }
+                if let Some(page_list) = pages {
+                    for (rel_out_path, content) in page_list {
+                        let abs_out = pages_dir.join(&rel_out_path);
+                        if let Some(parent) = abs_out.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        fs::write(&abs_out, content)?;
+                        info!("wrote {}", abs_out.display());
+                        all_rel.push(rel_out_path);
                     }
-                    fs::write(&abs_out, content)?;
-                    info!("wrote {}", abs_out.display());
-                    all_rel.push(rel_out_path);
                 }
             }
             all_rel.sort();
+
+            // Fail the build if any non-library source panicked during render.
+            if !failed.is_empty() {
+                let list = failed
+                    .iter()
+                    .map(|p| format!("  - {}", p.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                eyre::bail!(
+                    "forge doc: rendering panicked for {} source file(s):\n{list}",
+                    failed.len()
+                );
+            }
 
             Ok(all_rel)
         })?;

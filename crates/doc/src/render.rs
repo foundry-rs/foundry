@@ -274,7 +274,10 @@ fn render_contract<'ast, 'gcx>(
             // Attempt inheritdoc resolution.
             let inherited = fn_name.as_deref().and_then(|fname| {
                 let base = inheritdoc_base(docs)?;
-                hir_id.and_then(|cid| hir_ext::resolve_inheritdoc(gcx, cid, fname, &base))
+                let param_types = hir_ext::parameter_type_strings(gcx, &f.header.parameters);
+                hir_id.and_then(|cid| {
+                    hir_ext::resolve_inheritdoc(gcx, cid, fname, &base, Some(&param_types))
+                })
             });
             render_function_section(
                 &mut out,
@@ -771,21 +774,38 @@ fn first_notice(data: &CommentData) -> Option<String> {
 
 fn write_frontmatter(out: &mut String, title: &str, description: Option<&str>) {
     writeln!(out, "---").unwrap();
-    writeln!(out, "title: {title}").unwrap();
+    writeln!(out, "title: \"{}\"", yaml_escape_double_quoted(title)).unwrap();
     if let Some(desc) = description {
-        writeln!(out, "description: \"{}\"", yaml_escape_description(desc, 120)).unwrap();
+        // Collapse whitespace so multi-line notices stay on one line, then escape.
+        let collapsed: String = desc.split_whitespace().collect::<Vec<_>>().join(" ");
+        writeln!(out, "description: \"{}\"", yaml_escape_double_quoted(&collapsed)).unwrap();
     }
     writeln!(out, "---").unwrap();
     writeln!(out).unwrap();
 }
 
-/// Sanitize a natspec description for use as a YAML double-quoted scalar in vocs frontmatter:
-/// collapse whitespace (notices may span multiple lines after continuation joining), escape
-/// `\` and `"`, then truncate to `max_chars` characters.
-fn yaml_escape_description(desc: &str, max_chars: usize) -> String {
-    let collapsed: String = desc.split_whitespace().collect::<Vec<_>>().join(" ");
-    let truncated: String = collapsed.chars().take(max_chars).collect();
-    truncated.replace('\\', "\\\\").replace('"', "\\\"")
+/// Escape a string for use as a YAML double-quoted scalar.
+///
+/// Per the YAML 1.2 spec, double-quoted scalars must escape `"` and `\`, and
+/// any control character (including newline, tab, carriage return) must be
+/// represented via an escape sequence rather than embedded literally.
+fn yaml_escape_double_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{0}' => out.push_str("\\0"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\x{:02x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn write_comment_block(out: &mut String, data: &CommentData) {

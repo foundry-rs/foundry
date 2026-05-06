@@ -4,6 +4,7 @@
 //! from the emitted MDX pages.
 
 use foundry_config::DocConfig;
+use path_slash::PathExt;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -92,7 +93,8 @@ fn build_sidebar(pages: &[PathBuf]) -> String {
     > = Default::default();
 
     for page in &sorted {
-        let link = format!("/{}", page.with_extension("").display());
+        // Always emit forward-slash URLs so links work on Windows.
+        let link = format!("/{}", page.with_extension("").to_slash_lossy());
         let stem = page.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
 
         // Split `type.Name` -> (kind, display_name).
@@ -101,9 +103,9 @@ fn build_sidebar(pages: &[PathBuf]) -> String {
 
         let dir = page
             .parent()
-            .and_then(|p| if p == Path::new("") { None } else { p.to_str() })
-            .unwrap_or("")
-            .to_string();
+            .and_then(|p| if p == Path::new("") { None } else { Some(p.to_slash_lossy()) })
+            .map(|s| s.to_string())
+            .unwrap_or_default();
 
         groups.entry(dir).or_default().entry(cat).or_default().push((name.to_string(), link));
     }
