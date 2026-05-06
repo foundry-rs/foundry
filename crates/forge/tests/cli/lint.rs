@@ -1439,6 +1439,71 @@ note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other versi
     ]);
 });
 
+const NAME_REUSED_FOO_A: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Foo {}
+contract OnlyInA {}
+"#;
+
+const NAME_REUSED_FOO_B: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Foo {}
+contract OnlyInB {}
+"#;
+
+const NAME_REUSED_BAR: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Bar {}
+"#;
+
+// Two files defining the same contract name produce a diagnostic at each definition.
+forgetest!(name_reused_cross_file, |prj, cmd| {
+    prj.add_source("FooA", NAME_REUSED_FOO_A);
+    prj.add_source("FooB", NAME_REUSED_FOO_B);
+    prj.add_source("Bar", NAME_REUSED_BAR);
+
+    cmd.arg("lint").args(["--only-lint", "name-reused"]).assert_success().stderr_eq(str![[r#"
+note[name-reused]: contract name `Foo` is also defined in: FooB.sol
+  [FILE]:5:10
+  │
+5 │ contract Foo {}
+  │          ━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/name-reused
+
+note[name-reused]: contract name `Foo` is also defined in: FooA.sol
+  [FILE]:5:10
+  │
+5 │ contract Foo {}
+  │          ━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/name-reused
+
+
+"#]]);
+});
+
+// A single file cannot collide with itself; no diagnostics expected.
+forgetest!(name_reused_single_file_no_warning, |prj, cmd| {
+    prj.add_source("FooA", NAME_REUSED_FOO_A);
+
+    cmd.arg("lint").args(["--only-lint", "name-reused"]).assert_success().stderr_eq(str![[r#""#]]);
+});
+
+// Files with disjoint contract names must not produce any diagnostics.
+forgetest!(name_reused_unique_names_no_warning, |prj, cmd| {
+    prj.add_source("FooA", NAME_REUSED_FOO_A);
+    prj.add_source("Bar", NAME_REUSED_BAR);
+
+    cmd.arg("lint").args(["--only-lint", "name-reused"]).assert_success().stderr_eq(str![[r#""#]]);
+});
+
 // Files without a `pragma solidity` directive must not affect the conflict computation.
 // Note: `add_raw_source` is used here to bypass the helper that would otherwise inject a default
 // `pragma solidity =<SOLC_VERSION>;` for files that omit one.
