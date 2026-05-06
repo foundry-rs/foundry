@@ -139,6 +139,10 @@ impl RunArgs {
     async fn run_with_evm<FEN: FoundryEvmNetwork>(self) -> Result<()> {
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let evm_opts = figment.extract::<EvmOpts>()?;
+        let disable_block_gas_limit =
+            evm_opts.disable_block_gas_limit || self.disable_block_gas_limit;
+        let enable_tx_gas_limit =
+            resolve_enable_tx_gas_limit(evm_opts.enable_tx_gas_limit, self.enable_tx_gas_limit);
         let mut config = Config::from_provider(figment)?.sanitized();
 
         let label = self.label;
@@ -190,13 +194,8 @@ impl RunArgs {
 
         let mut evm_version = self.evm_version;
 
-        evm_env.cfg_env.disable_block_gas_limit = self.disable_block_gas_limit;
-
-        // By default do not enforce transaction gas limits imposed by Osaka (EIP-7825).
-        // Users can opt-in to enable these limits by setting `enable_tx_gas_limit` to true.
-        if !self.enable_tx_gas_limit {
-            evm_env.cfg_env.tx_gas_limit_cap = Some(u64::MAX);
-        }
+        evm_env.cfg_env.disable_block_gas_limit = disable_block_gas_limit;
+        evm_env.cfg_env.tx_gas_limit_cap = tx_gas_limit_cap_from_toggle(enable_tx_gas_limit);
 
         evm_env.cfg_env.limit_contract_code_size = None;
         evm_env.block_env.set_number(U256::from(tx_block_number));
@@ -353,6 +352,14 @@ impl RunArgs {
     }
 }
 
+fn resolve_enable_tx_gas_limit(from_config: bool, from_cli: bool) -> bool {
+    from_config || from_cli
+}
+
+fn tx_gas_limit_cap_from_toggle(enable_tx_gas_limit: bool) -> Option<u64> {
+    if enable_tx_gas_limit { None } else { Some(u64::MAX) }
+}
+
 pub fn fetch_contracts_bytecode_from_trace<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     result: &TraceResult,
@@ -409,5 +416,23 @@ impl figment::Provider for RunArgs {
         }
 
         Ok(Map::from([(Config::selected_profile(), map)]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_enable_tx_gas_limit, tx_gas_limit_cap_from_toggle};
+
+    #[test]
+    fn tx_gas_limit_enable_uses_cli_or_config() {
+        assert!(!resolve_enable_tx_gas_limit(false, false));
+        assert!(resolve_enable_tx_gas_limit(true, false));
+        assert!(resolve_enable_tx_gas_limit(false, true));
+    }
+
+    #[test]
+    fn tx_gas_limit_cap_matches_toggle() {
+        assert_eq!(tx_gas_limit_cap_from_toggle(true), None);
+        assert_eq!(tx_gas_limit_cap_from_toggle(false), Some(u64::MAX));
     }
 }
