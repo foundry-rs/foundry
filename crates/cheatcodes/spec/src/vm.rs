@@ -1082,6 +1082,9 @@ interface Vm {
     /// Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).
     /// Call this function, then emit an event, then call a function. Internally after the call, we check if
     /// logs were emitted in the expected order with the expected topics and data (as specified by the booleans).
+    /// Must be placed immediately before the call you want to assert on. If the next call reverts and the
+    /// revert is caught by the caller (low-level call or try/catch), the expectation remains active and may
+    /// be satisfied by a log emitted from a later call.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;
 
@@ -1093,6 +1096,9 @@ interface Vm {
     /// Prepare an expected log with all topic and data checks enabled.
     /// Call this function, then emit an event, then call a function. Internally after the call, we check if
     /// logs were emitted in the expected order with the expected topics and data.
+    /// Must be placed immediately before the call you want to assert on. If the next call reverts and the
+    /// revert is caught by the caller (low-level call or try/catch), the expectation remains active and may
+    /// be satisfied by a log emitted from a later call.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectEmit() external;
 
