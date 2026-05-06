@@ -783,6 +783,40 @@ ParserError: Source "Missing.sol" not found: File not found. Searched the follow
 "#]]);
 });
 
+// https://github.com/foundry-rs/foundry/issues/10463
+forgetest_init!(issue_10463, |prj, cmd| {
+    prj.add_test(
+        "Issue10463.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Issue10463Test is Test {
+    event Foo();
+
+    function revertingBefore(bool shouldRevert) external {
+        if (shouldRevert) revert();
+        emit Foo();
+    }
+
+    function testExpectEmitPreservesRevertWhenCallRevertsBeforeLog() public {
+        vm.expectEmit();
+        emit Foo();
+
+        this.revertingBefore(true);
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Issue10463.t.sol:Issue10463Test
+[FAIL: EvmError: Revert] testExpectEmitPreservesRevertWhenCallRevertsBeforeLog() ([GAS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/12803
 // Test gas underflow prevention on Cancun (no EIP-7702 gas floor)
 forgetest_init!(issue_12803_cancun, |prj, cmd| {
