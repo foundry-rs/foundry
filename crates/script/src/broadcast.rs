@@ -1,8 +1,8 @@
 use std::{cmp::Ordering, num::NonZeroU64, sync::Arc, time::Duration};
 
 use crate::{
-    ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
-    sequence::ScriptSequenceKind, verify::BroadcastedState,
+    ScriptArgs, ScriptConfig, build::LinkedBuildData, needs_script_rpc_estimate,
+    progress::ScriptProgress, sequence::ScriptSequenceKind, verify::BroadcastedState,
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{SignableTransaction, Signed};
@@ -21,7 +21,7 @@ use alloy_signer::Signature;
 use eyre::{Context, Result, bail};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
-use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
+use foundry_cli::utils::has_batch_support;
 use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
     provider::{ProviderBuilder, try_get_http_provider},
@@ -553,9 +553,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     })
                     .collect::<Result<Vec<_>>>()?;
 
-                let estimate_via_rpc = has_different_gas_calc(sequence.chain)
-                    || self.script_config.evm_opts.networks.is_tempo()
-                    || self.args.skip_simulation;
+                let estimate_via_rpc = needs_script_rpc_estimate(
+                    sequence.chain,
+                    self.script_config.evm_opts.networks.is_tempo(),
+                    self.script_config.batch,
+                    &self.script_config.tempo,
+                    self.args.skip_simulation,
+                );
 
                 // We only wait for a transaction receipt before sending the next transaction, if
                 // there is more than one signer. There would be no way of assuring
@@ -893,6 +897,7 @@ impl BundledState<TempoEvmNetwork> {
         self.script_config.tempo.apply::<TempoNetwork>(&mut batch_tx, None);
 
         if let BatchSigner::TempoKeychain(_, ak) = &batch_signer {
+            batch_tx.key_id = Some(ak.key_address);
             batch_tx
                 .prepare_access_key_authorization(
                     provider.as_ref(),
@@ -924,8 +929,6 @@ impl BundledState<TempoEvmNetwork> {
                 *pending.tx_hash()
             }
             BatchSigner::TempoKeychain(signer, access_key) => {
-                batch_tx.key_id = Some(access_key.key_address);
-
                 let raw_tx = batch_tx
                     .sign_with_access_key(
                         provider.as_ref(),

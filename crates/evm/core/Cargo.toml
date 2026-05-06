@@ -56,6 +56,7 @@ revm = { workspace = true, features = [
 revm-inspectors.workspace = true
 op-alloy-consensus = { workspace = true, features = ["k256"], optional = true }
 op-alloy-network = { workspace = true, optional = true }
+op-alloy-rpc-types = { workspace = true, optional = true }
 op-revm = { workspace = true, optional = true }
 tempo-revm.workspace = true
 tempo-alloy.workspace = true
@@ -77,8 +78,6 @@ url.workspace = true
 
 [dev-dependencies]
 alloy-serde.workspace = true
-op-alloy-consensus.workspace = true
-op-alloy-rpc-types.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
 
@@ -87,8 +86,10 @@ default = ["optimism"]
 optimism = [
     "dep:op-alloy-consensus",
     "dep:op-alloy-network",
+    "dep:op-alloy-rpc-types",
     "dep:alloy-op-evm",
     "dep:op-revm",
+    "foundry-common/optimism",
     "foundry-evm-hardforks/optimism",
     "foundry-evm-networks/optimism",
 ]

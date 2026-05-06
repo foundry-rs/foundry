@@ -17,17 +17,17 @@ use mpp::{
 use reqwest::{StatusCode, header::HeaderMap};
 use std::{
     collections::HashMap,
-    fmt,
+    env, fmt, io,
     io::IsTerminal,
     process::{Command, Stdio},
     sync::{
-        Mutex, OnceLock,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     task,
     time::Duration,
 };
-use tokio::sync::OwnedMutexGuard;
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use tower::Service;
 use tracing::{Instrument, debug, debug_span, trace};
 use url::Url;
@@ -45,7 +45,7 @@ const MPP_RETRY_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Resolve the deposit amount from `MPP_DEPOSIT` env var or the default.
 fn default_deposit() -> u128 {
-    std::env::var("MPP_DEPOSIT").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_DEPOSIT)
+    env::var("MPP_DEPOSIT").ok().and_then(|s| s.parse().ok()).unwrap_or(DEFAULT_DEPOSIT)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -251,8 +251,8 @@ fn format_mpp_payment_failure(
 ///
 /// Created eagerly so the lock exists before the first provider init,
 /// preventing concurrent first-402 races.
-static GLOBAL_PAY_LOCKS: OnceLock<Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>> =
-    OnceLock::new();
+static GLOBAL_PAY_LOCKS: LazyLock<Mutex<HashMap<String, Arc<AsyncMutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Production transport: lazily discovers MPP keys from the Tempo wallet on
 /// first 402 response.
@@ -262,24 +262,21 @@ pub type LazyMppHttpTransport = MppHttpTransport<LazySessionProvider>;
 /// Tempo wallet configuration on first use.
 #[derive(Clone, Debug)]
 pub struct LazySessionProvider {
-    inner: std::sync::Arc<Mutex<Option<SessionProvider>>>,
+    inner: Arc<Mutex<Option<SessionProvider>>>,
     /// Eagerly-created, process-wide payment serialization lock for this origin.
-    pay_lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    pay_lock: Arc<AsyncMutex<()>>,
     origin: String,
 }
 
 impl LazySessionProvider {
     pub(super) fn new(origin: String) -> Self {
-        let pay_lock = {
-            let global = GLOBAL_PAY_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
-            global
-                .lock()
-                .unwrap()
-                .entry(origin.clone())
-                .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
-                .clone()
-        };
-        Self { inner: std::sync::Arc::new(Mutex::new(None)), pay_lock, origin }
+        let pay_lock = GLOBAL_PAY_LOCKS
+            .lock()
+            .unwrap()
+            .entry(origin.clone())
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone();
+        Self { inner: Arc::new(Mutex::new(None)), pay_lock, origin }
     }
 
     fn set_key_provisioned(&self, provisioned: bool) {
@@ -312,6 +309,14 @@ impl LazySessionProvider {
         }
     }
 
+    /// Drop the cached `SessionProvider` so the next `get_or_init` re-runs
+    /// discovery. Called after the device-code flow writes a fresh
+    /// `keys.toml` entry, so a long-lived transport doesn't keep paying with
+    /// the superseded key.
+    fn invalidate(&self) {
+        *self.inner.lock().unwrap() = None;
+    }
+
     pub(super) fn get_or_init(&self, opts: DiscoverOptions) -> TransportResult<SessionProvider> {
         let mut guard = self.inner.lock().unwrap();
         if let Some(ref provider) = *guard {
@@ -319,21 +324,20 @@ impl LazySessionProvider {
         }
 
         let config = discover_mpp_config(opts).ok_or_else(|| {
-            TransportErrorKind::custom(std::io::Error::other(
+            TransportErrorKind::custom(io::Error::other(
                 "RPC endpoint returned HTTP 402 Payment Required. \
                  This endpoint requires payment via the Machine Payments Protocol (MPP).\n\n\
-                 To configure MPP, install the Tempo wallet CLI and create a key:\n\
-                 \n  curl -sSL https://tempo.xyz/install.sh | bash\
-                 \n  tempo wallet login\
-                 \n  tempo wallet fund\
-                 \n\nIf this CLI is running on a remote or headless host, use:\
-                 \n  tempo wallet fund --no-browser\
+                 Authorize an access key against your Tempo wallet:\n\
+                 \n  cast tempo login\
+                 \n\nIn headless environments, pass `--no-browser` to print the authorization \
+                 URL instead of launching a browser:\n\
+                 \n  cast tempo login --no-browser\
                  \n\nSee https://docs.tempo.xyz for more information.",
             ))
         })?;
 
         let signer: mpp::PrivateKeySigner = config.key.parse().map_err(|e| {
-            TransportErrorKind::custom(std::io::Error::other(format!("invalid MPP key: {e}")))
+            TransportErrorKind::custom(io::Error::other(format!("invalid MPP key: {e}")))
         })?;
 
         let signing_mode = if let Some(wallet) = config.wallet_address {
@@ -342,7 +346,7 @@ impl LazySessionProvider {
                 .as_ref()
                 .map(|hex_str| {
                     crate::tempo::decode_key_authorization(hex_str).map(Box::new).map_err(|e| {
-                        TransportErrorKind::custom(std::io::Error::other(format!(
+                        TransportErrorKind::custom(io::Error::other(format!(
                             "invalid MPP key_authorization: {e}"
                         )))
                     })
@@ -447,7 +451,23 @@ where
         // held until the retry response is fully handled.
         let _pay_guard = self.provider.lock_pay().await;
 
-        let (resolved, challenge) = Self::select_challenge(&resp, &self.provider)?;
+        // No local key for any offered challenge → run device-code flow,
+        // invalidate the cached provider, and fetch a fresh 402 (the original
+        // may have expired during the browser/passkey flow).
+        let (resolved, challenge) =
+            if let Some(chain_id) = tempo_chain_needing_auth(&self.url, &resp) {
+                debug!(chain_id, "launching wallet.tempo authorization");
+                let cfg = crate::tempo::EnsureAccessKeyConfig::from_env(chain_id);
+                crate::tempo::ensure_access_key(cfg).await.map_err(|e| {
+                    TransportErrorKind::custom(io::Error::other(format!(
+                        "tempo access key authorization failed: {e}"
+                    )))
+                })?;
+                self.provider.invalidate_cached_provider();
+                self.fetch_fresh_challenge(&headers, &body).await?
+            } else {
+                Self::select_challenge(&resp, &self.provider)?
+            };
         let funding_ctx = self.provider.funding_context(&challenge);
 
         debug!(id = %challenge.id, method = %challenge.method, intent = %challenge.intent, "received MPP 402 challenge, paying");
@@ -538,7 +558,7 @@ where
             self.provider.rollback_pending();
             self.provider.clear_channels();
 
-            return Err(TransportErrorKind::custom(std::io::Error::other(
+            return Err(TransportErrorKind::custom(io::Error::other(
                 "MPP channel not found on server (410 Gone). \
                  The server may have restarted or the channel was closed externally.\n\
                  Local channel state has been cleared. Re-run to open a new channel.",
@@ -717,7 +737,7 @@ where
 
         let auth_header = format_authorization(&credential).map_err(|e| {
             self.provider.rollback_pending();
-            TransportErrorKind::custom(std::io::Error::other(format!(
+            TransportErrorKind::custom(io::Error::other(format!(
                 "failed to format MPP credential: {e}"
             )))
         })?;
@@ -797,7 +817,7 @@ where
             // Non-402 → return whatever the server sent (could be success or error).
             let result = Self::handle_response(fresh_resp).await;
             return Err(result.err().unwrap_or_else(|| {
-                TransportErrorKind::custom(std::io::Error::other(
+                TransportErrorKind::custom(io::Error::other(
                     "unexpected success on unauthenticated fresh probe",
                 ))
             }));
@@ -812,24 +832,13 @@ where
         resp: &reqwest::Response,
         provider: &P,
     ) -> TransportResult<(P::Provider, mpp::protocol::core::PaymentChallenge)> {
-        let www_auth_values: Vec<&str> = resp
-            .headers()
-            .get_all(WWW_AUTHENTICATE_HEADER)
-            .iter()
-            .filter_map(|v| v.to_str().ok())
-            .collect();
-
-        if www_auth_values.is_empty() {
-            return Err(TransportErrorKind::custom(std::io::Error::other(format!(
+        let challenges = parse_challenges(resp);
+        if challenges.is_empty() && resp.headers().get(WWW_AUTHENTICATE_HEADER).is_none() {
+            return Err(TransportErrorKind::custom(io::Error::other(format!(
                 "402 response missing WWW-Authenticate header{}",
                 format_http_diagnostics(resp.headers())
             ))));
         }
-
-        let challenges: Vec<_> = parse_www_authenticate_all(www_auth_values)
-            .into_iter()
-            .filter_map(|r| r.ok())
-            .collect();
 
         let mut last_resolve_err: Option<TransportError> = None;
         let resolved_pair = challenges.iter().find_map(|c| {
@@ -850,7 +859,7 @@ where
             }
             let offered: Vec<_> =
                 challenges.iter().map(|c| format!("{}.{}", c.method, c.intent)).collect();
-            TransportErrorKind::custom(std::io::Error::other(format!(
+            TransportErrorKind::custom(io::Error::other(format!(
                 "no supported MPP challenge; server offered [{}]",
                 offered.join(", "),
             )))
@@ -902,6 +911,57 @@ where
     }
 }
 
+/// Returns `Some(chain_id)` when a 402 response should trigger the
+/// `wallet.tempo.xyz` device-code authorization flow.
+///
+/// Conditions: known Tempo endpoint, interactive (TTY, not `CI`), and no
+/// offered Tempo challenge resolves against a local key on `(chain, currency)`.
+/// The picked chain matches the first unresolved challenge — same iteration
+/// order [`MppHttpTransport::select_challenge`] uses.
+fn tempo_chain_needing_auth(url: &Url, resp: &reqwest::Response) -> Option<u64> {
+    if !io::stderr().is_terminal() || env::var_os("CI").is_some() {
+        return None;
+    }
+    pick_chain_needing_auth(url, &parse_challenges(resp))
+}
+
+/// Extract all parseable MPP challenges from a 402 response's `WWW-Authenticate` headers.
+fn parse_challenges(resp: &reqwest::Response) -> Vec<mpp::protocol::core::PaymentChallenge> {
+    let values: Vec<&str> = resp
+        .headers()
+        .get_all(WWW_AUTHENTICATE_HEADER)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .collect();
+    parse_www_authenticate_all(values).into_iter().filter_map(|r| r.ok()).collect()
+}
+
+/// Inner logic of [`tempo_chain_needing_auth`], factored out for testing.
+fn pick_chain_needing_auth(
+    url: &Url,
+    challenges: &[mpp::protocol::core::PaymentChallenge],
+) -> Option<u64> {
+    if !crate::tempo::is_known_tempo_endpoint(url) {
+        return None;
+    }
+
+    let tempo_challenges: Vec<_> =
+        challenges.iter().filter(|c| c.method.as_str() == "tempo").collect();
+
+    // If any challenge already resolves with a local key, no auth needed.
+    let any_resolvable = tempo_challenges.iter().any(|c| {
+        let (chain_id, currency) = extract_challenge_chain_and_currency(c);
+        let currency = currency.and_then(|s| s.parse().ok());
+        super::keys::discover_mpp_config(super::keys::DiscoverOptions { chain_id, currency })
+            .is_some()
+    });
+    if any_resolvable {
+        return None;
+    }
+
+    tempo_challenges.iter().find_map(|c| extract_challenge_chain_and_currency(c).0)
+}
+
 /// Extract `(chainId, currency)` from a parsed MPP challenge.
 pub(super) fn extract_challenge_chain_and_currency(
     c: &mpp::protocol::core::PaymentChallenge,
@@ -931,6 +991,10 @@ pub(crate) trait ResolveProvider {
     fn flush_pending(&self) {}
     fn rollback_pending(&self) {}
     fn commit_topup_and_track_voucher(&self) {}
+    /// Drop any cached payment provider so the next `resolve_for` re-runs
+    /// discovery. Called after the device-code flow writes a fresh
+    /// `keys.toml` entry.
+    fn invalidate_cached_provider(&self) {}
     fn funding_wallet_address(&self) -> Option<alloy_primitives::Address> {
         None
     }
@@ -948,7 +1012,7 @@ pub(crate) trait ResolveProvider {
     /// Acquire the payment serialization lock. The returned guard must be held
     /// across the entire 402 → pay → retry → response cycle to prevent
     /// concurrent channel opens and colliding expiring-nonce transactions.
-    fn lock_pay(&self) -> impl std::future::Future<Output = Option<OwnedMutexGuard<()>>> + Send {
+    fn lock_pay(&self) -> impl Future<Output = Option<OwnedMutexGuard<()>>> + Send {
         async { None }
     }
 }
@@ -968,7 +1032,7 @@ impl ResolveProvider for LazySessionProvider {
         // regardless of opts. Re-check that the provider's key is compatible
         // with this challenge's chain/currency.
         if !provider.matches_challenge(opts.chain_id, opts.currency) {
-            return Err(TransportErrorKind::custom(std::io::Error::other(
+            return Err(TransportErrorKind::custom(io::Error::other(
                 "cached provider does not match challenge chain/currency",
             )));
         }
@@ -992,13 +1056,16 @@ impl ResolveProvider for LazySessionProvider {
     fn commit_topup_and_track_voucher(&self) {
         Self::commit_topup_and_track_voucher(self)
     }
+    fn invalidate_cached_provider(&self) {
+        Self::invalidate(self)
+    }
     fn funding_wallet_address(&self) -> Option<alloy_primitives::Address> {
         self.inner.lock().unwrap().as_ref().map(|p| p.funding_wallet_address())
     }
     fn funding_chain_id(&self) -> Option<u64> {
         self.inner.lock().unwrap().as_ref().and_then(|p| p.key_chain_id())
     }
-    fn lock_pay(&self) -> impl std::future::Future<Output = Option<OwnedMutexGuard<()>>> + Send {
+    fn lock_pay(&self) -> impl Future<Output = Option<OwnedMutexGuard<()>>> + Send {
         let lock = self.pay_lock.clone();
         async move { Some(lock.lock_owned().await) }
     }
@@ -1060,7 +1127,7 @@ mod tests {
         fn pay(
             &self,
             challenge: &PaymentChallenge,
-        ) -> impl std::future::Future<Output = Result<PaymentCredential, MppError>> + Send {
+        ) -> impl Future<Output = Result<PaymentCredential, MppError>> + Send {
             let echo = challenge.to_echo();
             async move {
                 Ok(PaymentCredential::with_source(
@@ -1474,6 +1541,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_plain_http_402_shows_mpp_setup_instructions() {
+        let _g = crate::tempo::test_env_mutex().lock().await;
         let (_, www_auth) = test_challenge();
 
         let app = axum::Router::new().route(
@@ -1539,6 +1607,32 @@ mod tests {
         );
     }
 
+    /// `invalidate_cached_provider` clears the cache so the next
+    /// `get_or_init` re-runs discovery — the path `do_request` takes after
+    /// `ensure_access_key` writes a fresh `keys.toml` entry.
+    #[tokio::test]
+    async fn lazy_session_provider_invalidate_clears_cache() {
+        let _g = crate::tempo::test_env_mutex().lock().await;
+        // TEMPO_PRIVATE_KEY lets discovery succeed without a keys.toml.
+        let key_hex = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        unsafe {
+            std::env::set_var(crate::tempo::TEMPO_PRIVATE_KEY_ENV, key_hex);
+            std::env::remove_var(crate::tempo::TEMPO_HOME_ENV);
+        }
+
+        let lazy = LazySessionProvider::new("https://rpc.example.com".into());
+        let _ = lazy.get_or_init(Default::default()).expect("discovery succeeds");
+        assert!(lazy.inner.lock().unwrap().is_some(), "expected provider to be cached");
+
+        ResolveProvider::invalidate_cached_provider(&lazy);
+        assert!(lazy.inner.lock().unwrap().is_none(), "expected cache to be cleared");
+
+        let _ = lazy.get_or_init(Default::default()).expect("re-discovery succeeds");
+        assert!(lazy.inner.lock().unwrap().is_some(), "expected re-init to repopulate cache");
+
+        unsafe { std::env::remove_var(crate::tempo::TEMPO_PRIVATE_KEY_ENV) };
+    }
+
     #[test]
     fn challenge_chain_and_currency_extraction() {
         let extract = |headers: Vec<&str>| -> Vec<(Option<u64>, Option<String>)> {
@@ -1573,5 +1667,74 @@ mod tests {
             b64(serde_json::json!({"amount":"1000","currency":"0x20c0","recipient":"0xabc"}))
         );
         assert_eq!(extract(vec![&no_details]), vec![(None, Some("0x20c0".into()))]);
+    }
+
+    /// Auth must trigger when a key matches the chain but not the currency.
+    #[test]
+    fn pick_chain_needing_auth_currency_aware() {
+        let _g = crate::tempo::test_env_mutex().blocking_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let wallet = dir.path().join("wallet");
+        std::fs::create_dir_all(&wallet).unwrap();
+        std::fs::write(
+            wallet.join("keys.toml"),
+            r#"
+[[keys]]
+wallet_type = "passkey"
+wallet_address = "0x0000000000000000000000000000000000000001"
+key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+chain_id = 4217
+
+[[keys.limits]]
+currency = "0x20c0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+limit = "1000"
+"#,
+        )
+        .unwrap();
+        unsafe {
+            std::env::set_var(crate::tempo::TEMPO_HOME_ENV, dir.path());
+            std::env::remove_var(crate::tempo::TEMPO_PRIVATE_KEY_ENV);
+        }
+
+        let url = Url::parse("https://rpc.mpp.tempo.xyz").unwrap();
+        let mk = |currency: &str| -> PaymentChallenge {
+            PaymentChallenge {
+                id: "x".into(),
+                realm: "api".into(),
+                method: MethodName::new("tempo"),
+                intent: IntentName::new("charge"),
+                request: Base64UrlJson::from_value(&serde_json::json!({
+                    "amount": "1",
+                    "currency": currency,
+                    "recipient": "0xabc",
+                    "methodDetails": { "chainId": 4217 }
+                }))
+                .unwrap(),
+                expires: None,
+                description: None,
+                digest: None,
+                opaque: None,
+            }
+        };
+
+        // Currency mismatch → auth needed.
+        let mismatched = mk("0x20c0bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        assert_eq!(pick_chain_needing_auth(&url, &[mismatched]), Some(4217));
+
+        // Currency match → no auth.
+        let matched = mk("0x20c0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(pick_chain_needing_auth(&url, &[matched]), None);
+
+        // Non-Tempo host → never triggers, even without a key.
+        let stripe_url = Url::parse("https://api.stripe.com").unwrap();
+        assert_eq!(
+            pick_chain_needing_auth(
+                &stripe_url,
+                &[mk("0x20c0bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")]
+            ),
+            None,
+        );
+
+        unsafe { std::env::remove_var(crate::tempo::TEMPO_HOME_ENV) };
     }
 }

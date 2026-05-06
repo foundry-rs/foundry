@@ -1,5 +1,7 @@
 //! Tempo network utilities.
 
+pub mod auth;
+
 use crate::FoundryTransactionBuilder;
 use alloy_network::Network;
 use alloy_primitives::{Address, B256, Signature};
@@ -9,7 +11,13 @@ use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use std::sync::Arc;
 
 mod keystore;
+
+pub(crate) use auth::is_known_tempo_endpoint;
+pub use auth::{AccessKeyOutcome, EnsureAccessKeyConfig, ensure_access_key};
 pub use keystore::*;
+
+#[cfg(test)]
+pub(crate) use keystore::test_env_mutex;
 
 #[cfg(test)]
 mod tests;
