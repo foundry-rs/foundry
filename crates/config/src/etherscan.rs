@@ -307,13 +307,7 @@ impl ResolvedEtherscanConfig {
             }
         }
 
-        // Disable automatic proxy detection. In sandboxed environments (e.g., Cursor IDE,
-        // macOS App Sandbox), reqwest's system proxy lookup via SCDynamicStore can crash
-        // when the API returns NULL. See: https://github.com/foundry-rs/foundry/issues/12733
-        let http_client = reqwest::Client::builder().no_proxy().build()?;
-
         let mut client_builder = foundry_block_explorers::Client::builder()
-            .with_client(http_client)
             .with_api_key(api_key)
             .with_cache(cache, Duration::from_secs(24 * 60 * 60));
         if let Some(ref browser_url) = browser_url {
