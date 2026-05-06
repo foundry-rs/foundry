@@ -13,21 +13,24 @@ use std::{
 /// Write all vocs site scaffolding into `out_dir`.
 ///
 /// `pages` is the list of relative MDX paths emitted by the render step (relative to
-/// `out_dir/pages/`). `root` is the project root, used to find README files.
+/// `out_dir/pages/`). `root` is the project root and `sources` is the Solidity
+/// sources directory; both are searched for a README to use as the homepage.
 pub fn write_site_files(
     out_dir: &Path,
     config: &DocConfig,
     pages: &[PathBuf],
     root: &Path,
+    sources: &Path,
+    branch: Option<&str>,
 ) -> eyre::Result<()> {
     fs::create_dir_all(out_dir)?;
 
     fs::write(out_dir.join(".gitignore"), "dist\nnode_modules\n")?;
     fs::write(out_dir.join("package.json"), package_json())?;
-    fs::write(out_dir.join("vocs.config.ts"), vocs_config(config, pages))?;
+    fs::write(out_dir.join("vocs.config.ts"), vocs_config(config, pages, branch))?;
 
     // Homepage: config.homepage -> <sources>/README.md -> <root>/README.md -> empty.
-    let homepage_content = find_homepage(config, root);
+    let homepage_content = find_homepage(config, root, sources);
     let index_path = out_dir.join("src").join("pages").join("index.mdx");
     if let Some(parent) = index_path.parent() {
         fs::create_dir_all(parent)?;
@@ -39,7 +42,7 @@ pub fn write_site_files(
 
 // ── vocs.config.ts ────────────────────────────────────────────────────────────
 
-fn vocs_config(config: &DocConfig, pages: &[PathBuf]) -> String {
+fn vocs_config(config: &DocConfig, pages: &[PathBuf], branch: Option<&str>) -> String {
     let title = if config.title.is_empty() { "Documentation" } else { &config.title };
 
     let sidebar = build_sidebar(pages);
@@ -50,8 +53,12 @@ fn vocs_config(config: &DocConfig, pages: &[PathBuf]) -> String {
     ts.push_str(&format!("  title: {},\n", json_str(title)));
 
     if let Some(repo) = &config.repository {
+        // GitHub `edit/<branch>/<path>` requires a real branch name (it does not
+        // accept `HEAD`). Use the detected current branch when available, else
+        // fall back to `main`.
+        let edit_branch = branch.unwrap_or("main");
         ts.push_str(&format!(
-            "  editLink: {{ pattern: '{}/edit/main/{{path}}' }},\n",
+            "  editLink: {{ pattern: '{}/edit/{edit_branch}/{{path}}' }},\n",
             repo.trim_end_matches('/')
         ));
     }
@@ -202,7 +209,7 @@ const fn type_category_label(cat: u8) -> &'static str {
 
 // ── homepage ──────────────────────────────────────────────────────────────────
 
-fn find_homepage(config: &DocConfig, root: &Path) -> String {
+fn find_homepage(config: &DocConfig, root: &Path, sources: &Path) -> String {
     // 1. Explicit homepage from config.
     if let Some(hp) = &config.homepage {
         let path = if hp.is_absolute() { hp.clone() } else { root.join(hp) };
@@ -211,13 +218,23 @@ fn find_homepage(config: &DocConfig, root: &Path) -> String {
         }
     }
 
-    // 2. <root>/README.md
+    // 2. <sources>/README.md (e.g. `src/README.md`).
+    let src_readme = if sources.is_absolute() {
+        sources.join("README.md")
+    } else {
+        root.join(sources).join("README.md")
+    };
+    if let Ok(content) = fs::read_to_string(&src_readme) {
+        return content;
+    }
+
+    // 3. <root>/README.md
     let readme = root.join("README.md");
     if let Ok(content) = fs::read_to_string(&readme) {
         return content;
     }
 
-    // 3. Empty fallback.
+    // 4. Empty fallback.
     String::new()
 }
 

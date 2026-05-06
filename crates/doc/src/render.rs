@@ -32,6 +32,7 @@ pub fn source<'ast, 'gcx>(
     file: &Arc<SourceFile>,
     _sm: &SourceMap,
     rel_sol_path: &Path,
+    root: &Path,
     gcx: Gcx<'gcx>,
     name_to_page: &NameToPage,
     git_url: Option<&str>,
@@ -60,7 +61,7 @@ pub fn source<'ast, 'gcx>(
                 let fname = format!("{kind_str}.{}.mdx", c.name.as_str());
                 let page_path = out_dir.join(&fname);
                 // Look up HIR contract id for inheritance/inheritdoc.
-                let hir_id = find_contract_id(gcx, c.name.as_str(), rel_sol_path);
+                let hir_id = find_contract_id(gcx, c.name.as_str(), rel_sol_path, root);
                 // Deployments only apply to non-abstract, non-interface, non-library contracts.
                 let contract_deployments = if matches!(c.kind, ContractKind::Contract) {
                     deployments.get(c.name.as_str()).map(Vec::as_slice).unwrap_or(&[])
@@ -865,6 +866,17 @@ fn write_git_source(out: &mut String, git_url: Option<&str>) {
     }
 }
 
+/// Escape a value so it is safe inside a markdown (GFM) table cell:
+/// - replace `|` with `\|` (column separator)
+/// - replace newlines with `<br/>` (cells must be one logical line)
+/// - replace `\r` so CRLF natspec doesn't create stray spaces
+fn escape_table_cell(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('|', "\\|")
+        .replace("\r\n", "<br/>")
+        .replace(['\n', '\r'], "<br/>")
+}
+
 /// Write the **Deployments** table for a contract page.
 fn write_deployments_table(out: &mut String, deployments: &[Deployment]) {
     if deployments.is_empty() {
@@ -911,6 +923,8 @@ fn write_param_table(
         } else {
             comments.params.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str()).unwrap_or("")
         };
+        let name = escape_table_cell(&name);
+        let desc = escape_table_cell(desc);
         writeln!(out, "| {name} | {ty} | {desc} |").unwrap();
     }
     writeln!(out).unwrap();
@@ -934,6 +948,8 @@ fn write_struct_properties_table(
         let ty = format!("`{}`", ctx.snippet(field.ty.span).trim());
         let desc =
             comments.params.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str()).unwrap_or("");
+        let name = escape_table_cell(&name);
+        let desc = escape_table_cell(desc);
         writeln!(out, "| {name} | {ty} | {desc} |").unwrap();
     }
     writeln!(out).unwrap();
@@ -951,6 +967,8 @@ fn write_enum_variants_table(out: &mut String, variants: &[Ident], comments: &Co
         let name = variant.as_str();
         let desc =
             comments.params.iter().find(|(n, _)| n == name).map(|(_, d)| d.as_str()).unwrap_or("");
+        let name = escape_table_cell(name);
+        let desc = escape_table_cell(desc);
         writeln!(out, "| {name} | {desc} |").unwrap();
     }
     writeln!(out).unwrap();
@@ -965,24 +983,24 @@ const fn contract_kind_str(kind: ContractKind) -> &'static str {
     }
 }
 
-/// Find the HIR `ContractId` for a contract by name, preferring contracts in the same
-/// source file (to handle shadowing across files).
+/// Find the HIR `ContractId` for a contract by name, requiring the contract to
+/// live in the source file currently being rendered (compared via absolute path)
+/// so contracts that share a file stem across `src/` and `lib/` cannot collide.
 fn find_contract_id<'gcx>(
     gcx: Gcx<'gcx>,
     name: &str,
     rel_sol_path: &Path,
+    root: &Path,
 ) -> Option<hir::ContractId> {
+    let want = root.join(rel_sol_path);
     gcx.hir.contract_ids().find(|&id| {
         let c = gcx.hir.contract(id);
         if c.name.as_str() != name {
             return false;
         }
-        // Prefer same file.
-        if let solar::interface::source_map::FileName::Real(p) = &gcx.hir.source(c.source).file.name
-        {
-            p.ends_with(rel_sol_path)
-        } else {
-            true
+        match &gcx.hir.source(c.source).file.name {
+            solar::interface::source_map::FileName::Real(p) => p == &want,
+            _ => false,
         }
     })
 }

@@ -11,7 +11,7 @@ use solar::sema::Compiler;
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 /// Build Solidity documentation for a project from natspec comments using [`solar`].
@@ -27,6 +27,9 @@ pub struct DocBuilder {
     pub include_libraries: bool,
     /// Optional commit hash (HEAD) used when building Git Source links.
     pub commit: Option<String>,
+    /// Optional current branch name; used as the `<branch>` segment of vocs
+    /// editLink URLs (which require an actual branch, not a commit/`HEAD`).
+    pub branch: Option<String>,
     /// Optional path to the deployments directory (relative to `root`).
     /// `Some(None)` enables the preprocessor with the default `deployments`
     /// path; `Some(Some(p))` overrides; `None` disables it entirely.
@@ -49,6 +52,7 @@ impl DocBuilder {
             libraries,
             include_libraries,
             commit: None,
+            branch: None,
             deployments: None,
             config: DocConfig::default(),
         }
@@ -136,12 +140,7 @@ impl DocBuilder {
                         None
                     } else {
                         repo.as_deref().and_then(|r| {
-                            git_source_url(
-                                r,
-                                commit.as_deref().unwrap_or("master"),
-                                &root,
-                                &abs_path,
-                            )
+                            git_source_url(r, commit.as_deref().unwrap_or("HEAD"), &root, &abs_path)
                         })
                     };
 
@@ -171,6 +170,7 @@ impl DocBuilder {
                             &ast_source.file,
                             gcx.sess.source_map(),
                             &rel_path,
+                            &root,
                             gcx,
                             &name_to_page,
                             git_url.as_deref(),
@@ -227,13 +227,69 @@ impl DocBuilder {
                 );
             }
 
+            // Prune stale `.mdx` pages left behind by previous runs (renames,
+            // deletions). The vocs scaffold's own `index.mdx` is preserved.
+            let kept: HashSet<PathBuf> = all_rel.iter().cloned().collect();
+            prune_stale_pages(&pages_dir, &kept)?;
+
             Ok(all_rel)
         })?;
 
         // Generate vocs site scaffolding.
-        vocs::write_site_files(&out, &self.config, &all_pages, &self.root)?;
+        vocs::write_site_files(
+            &out,
+            &self.config,
+            &all_pages,
+            &self.root,
+            &self.sources,
+            self.branch.as_deref(),
+        )?;
         info!("wrote vocs site files to {}", out.display());
 
         Ok(())
     }
+}
+
+/// Recursively delete `.mdx` files under `pages_dir` whose path (relative to
+/// `pages_dir`) is not in `kept`. Empty directories left behind are removed.
+///
+/// The top-level `index.mdx` is always preserved (vocs writes it as the
+/// homepage scaffold).
+fn prune_stale_pages(pages_dir: &Path, kept: &HashSet<PathBuf>) -> eyre::Result<()> {
+    if !pages_dir.exists() {
+        return Ok(());
+    }
+    prune_dir(pages_dir, pages_dir, kept)?;
+    Ok(())
+}
+
+fn prune_dir(dir: &Path, pages_dir: &Path, kept: &HashSet<PathBuf>) -> eyre::Result<bool> {
+    let mut any_left = false;
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            let dir_empty = prune_dir(&path, pages_dir, kept)?;
+            if dir_empty {
+                let _ = fs::remove_dir(&path);
+            } else {
+                any_left = true;
+            }
+        } else if file_type.is_file() {
+            let rel = path.strip_prefix(pages_dir).unwrap_or(&path).to_path_buf();
+            let is_top_level_index = rel.parent().is_none_or(|p| p.as_os_str().is_empty())
+                && rel.file_name() == Some(std::ffi::OsStr::new("index.mdx"));
+            let is_mdx = path.extension().and_then(|e| e.to_str()) == Some("mdx");
+            if !is_top_level_index && is_mdx && !kept.contains(&rel) {
+                debug!("pruning stale page {}", path.display());
+                let _ = fs::remove_file(&path);
+            } else {
+                any_left = true;
+            }
+        } else {
+            any_left = true;
+        }
+    }
+    Ok(!any_left)
 }

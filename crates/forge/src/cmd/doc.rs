@@ -29,14 +29,14 @@ pub struct DocArgs {
 
     /// Document external library sources as well as the project's own sources.
     #[arg(long, short)]
-    include_libraries: bool,
+    pub include_libraries: bool,
 
     /// Path to the `hardhat-deploy` or `forge-deploy` artifact directory.
     ///
     /// Leave blank to use the default (`<root>/deployments`).
     /// Omit the flag entirely to disable deployment address injection.
     #[arg(long, value_name = "PATH", num_args(0..=1))]
-    deployments: Option<Option<PathBuf>>,
+    pub deployments: Option<Option<PathBuf>>,
 
     #[command(flatten)]
     pub watch: WatchArgs,
@@ -68,7 +68,11 @@ impl DocArgs {
                 Some(format!("https://{brand}.{tld}/{}", project_path.trim_end_matches(".git")));
         }
 
-        let commit = Git::new(root).commit_hash(false, "HEAD").ok();
+        let git = Git::new(root);
+        let commit = git.commit_hash(false, "HEAD").ok();
+        // Best-effort branch detection for editLink. May yield "HEAD" when in
+        // detached HEAD state; treat that as unknown.
+        let branch = git.current_rev_branch(root).ok().map(|(_, b)| b).filter(|b| b != "HEAD");
 
         let mut builder = DocBuilder::new(
             root.clone(),
@@ -77,6 +81,7 @@ impl DocArgs {
             self.include_libraries,
         );
         builder.commit = commit;
+        builder.branch = branch;
         builder.deployments = self.deployments;
         builder.config = doc_cfg.clone();
 
