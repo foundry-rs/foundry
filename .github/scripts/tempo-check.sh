@@ -614,6 +614,8 @@ if [[ "$NUMBER_AFTER_REVERT" != "$NUMBER_BEFORE_REVERT" ]]; then
 fi
 echo "OK: forge script --batch correctly reverted atomically"
 
+# Skip high-gas and large-contract tests on mainnet (validated through other means)
+if [[ -z "${PRIVATE_KEY:-}" ]]; then
 echo -e "\n=== DEPLOY HIGH GAS CONTRACT ==="
 # Deploy a contract that can burn ~15M gas via cold storage writes (mapping)
 # Each cold SSTORE to a new slot costs ~22,000 gas; ~650 iterations ≈ 15M gas
@@ -691,6 +693,9 @@ if [[ "$PING_RESULT" != "1" ]]; then
   exit 1
 fi
 echo "OK: MaxSizeContract ping() returned 1"
+else
+  echo -e "\n=== SKIPPING HIGH GAS & LARGE CONTRACT TESTS (mainnet) ==="
+fi
 
 # Skip DEX/liquidity tests when using custom fee token (they assume multiple fee tokens)
 if [[ ${#FEE_TOKEN_ARG[@]} -eq 0 ]]; then
