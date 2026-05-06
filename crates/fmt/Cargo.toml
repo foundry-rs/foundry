@@ -26,3 +26,7 @@ foundry-test-utils.workspace = true
 
 toml.workspace = true
 snapbox.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = ["foundry-common/optimism"]

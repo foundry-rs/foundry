@@ -116,4 +116,5 @@ optimism = [
     "foundry-common/optimism",
     "foundry-evm-networks/optimism",
     "foundry-evm/optimism",
+    "foundry-cli/optimism",
 ]

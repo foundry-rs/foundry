@@ -12,7 +12,9 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-use foundry_evm::hardfork::{EthereumHardfork, OpHardfork};
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
+use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -240,15 +242,7 @@ impl NodeArgs {
         }
 
         let hardfork = match &self.hardfork {
-            Some(hf) => {
-                if self.evm.networks.is_optimism() {
-                    Some(OpHardfork::from_str(hf)?.into())
-                } else if self.evm.networks.is_tempo() {
-                    Some(TempoHardfork::from_str(hf)?.into())
-                } else {
-                    Some(EthereumHardfork::from_str(hf)?.into())
-                }
-            }
+            Some(hf) => Some(parse_hardfork(hf, &self.evm.networks)?),
             None => None,
         };
 
@@ -846,6 +840,19 @@ impl FromStr for ForkUrl {
             }
         }
         Ok(Self { url: s.to_string(), block: None })
+    }
+}
+
+/// Parses a hardfork string against the active network configuration.
+fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHardfork> {
+    #[cfg(feature = "optimism")]
+    if networks.is_optimism() {
+        return Ok(OpHardfork::from_str(hf)?.into());
+    }
+    if networks.is_tempo() {
+        Ok(TempoHardfork::from_str(hf)?.into())
+    } else {
+        Ok(EthereumHardfork::from_str(hf)?.into())
     }
 }
 
