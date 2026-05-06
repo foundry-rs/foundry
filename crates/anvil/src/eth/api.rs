@@ -3380,13 +3380,27 @@ impl EthApi<FoundryNetwork> {
         let this = self.clone();
 
         tokio::spawn(async move {
-            while let Some(hash) = hashes.next().await {
-                if let Ok(Some(txn)) = this.transaction_by_hash(hash).await
-                    && tx.send(txn).is_err()
-                {
-                    break;
+            let tx_closed = tx.clone();
+
+            loop {
+                tokio::select! {
+                    _ = tx_closed.closed() => break,
+                    maybe_hash = hashes.next() => {
+                        let Some(hash) = maybe_hash else {
+                            break;
+                        };
+
+                        if let Ok(Some(txn)) = this.transaction_by_hash(hash).await
+                            && tx.send(txn).is_err()
+                        {
+                            break;
+                        }
+                    }
                 }
             }
+
+            hashes.close();
+            this.pool.prune_closed_ready_listeners();
         });
 
         rx

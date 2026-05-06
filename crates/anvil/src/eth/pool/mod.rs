@@ -90,6 +90,11 @@ impl<T> Pool<T> {
         rx
     }
 
+    /// Removes ready transaction listeners whose receiving ends were closed.
+    pub(crate) fn prune_closed_ready_listeners(&self) {
+        self.transaction_listener.lock().retain(|tx| !tx.is_closed());
+    }
+
     /// Returns true if this pool already contains the transaction
     pub fn contains(&self, tx_hash: &TxHash) -> bool {
         self.inner.read().contains(tx_hash)
@@ -515,5 +520,23 @@ impl<T> AddedTransaction<T> {
             Self::Ready(tx) => &tx.hash,
             Self::Pending { hash } => hash,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prunes_closed_ready_listeners() {
+        let pool = Pool::<()>::default();
+        let mut listener = pool.add_ready_listener();
+
+        assert_eq!(pool.transaction_listener.lock().len(), 1);
+
+        listener.close();
+        pool.prune_closed_ready_listeners();
+
+        assert!(pool.transaction_listener.lock().is_empty());
     }
 }
