@@ -69,4 +69,8 @@ optimism = [
     "foundry-evm/optimism",
     "foundry-evm-networks/optimism",
     "foundry-common/optimism",
+    "foundry-cheatcodes/optimism",
+    "foundry-cli/optimism",
+    "forge-script-sequence/optimism",
+    "forge-verify/optimism",
 ]

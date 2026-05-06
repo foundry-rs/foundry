@@ -42,4 +42,8 @@ thiserror.workspace = true
 
 [features]
 default = ["optimism"]
-optimism = ["foundry-primitives/optimism"]
+optimism = [
+    "foundry-primitives/optimism",
+    "foundry-common/optimism",
+    "foundry-evm/optimism",
+]

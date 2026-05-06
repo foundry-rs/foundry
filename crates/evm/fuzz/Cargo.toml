@@ -50,3 +50,12 @@ rand.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-common/optimism",
+    "foundry-evm-core/optimism",
+    "foundry-evm-coverage/optimism",
+    "foundry-evm-traces/optimism",
+]
