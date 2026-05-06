@@ -3,6 +3,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(feature = "optimism")]
+use op_alloy_rpc_types as _;
+
 use crate::{
     error::{NodeError, NodeResult},
     eth::{

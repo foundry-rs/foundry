@@ -29,6 +29,7 @@ use foundry_common::{
     shell, stdin,
 };
 use foundry_evm_networks::NetworkVariant;
+#[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 use std::time::Instant;
 use tempo_alloy::TempoNetwork;
@@ -351,6 +352,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             // Can use either --raw or specify raw as a field
             let output = if raw || fields.contains(&"raw".into()) {
                 match network {
+                    #[cfg(feature = "optimism")]
                     Some(NetworkVariant::Optimism) => {
                         let provider =
                             ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
@@ -569,6 +571,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             // Can use either --raw or specify raw as a field
             let is_raw = raw || field.as_ref().is_some_and(|f| f == "raw");
             let output = match network {
+                #[cfg(feature = "optimism")]
                 Some(NetworkVariant::Optimism) => {
                     let provider = ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
 
@@ -791,6 +794,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::DecodeTransaction { tx, network } => {
             let tx = stdin::unwrap_line(tx)?;
             let decoded_tx = match network {
+                #[cfg(feature = "optimism")]
                 Some(NetworkVariant::Optimism) => {
                     SimpleCast::decode_raw_transaction::<Optimism>(&tx)?
                 }
@@ -809,6 +813,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::Tip20Token { command } => command.run().await?,
         CastSubcommand::Keychain { command } => command.run().await?,
+        CastSubcommand::Tempo { command } => command.run().await?,
+        CastSubcommand::VirtualAddress { command } => command.run().await?,
         #[cfg(feature = "optimism")]
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;

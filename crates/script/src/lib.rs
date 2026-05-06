@@ -28,8 +28,8 @@ use eyre::{ContextCompat, Result};
 use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
-    opts::{BuildOpts, EvmArgs, GlobalArgs, TempoCommonOpts},
-    utils::LoadConfig,
+    opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts},
+    utils::{LoadConfig, has_different_gas_calc},
 };
 use foundry_common::{
     CONTRACT_MAX_SIZE, ContractsByArtifact, SELECTOR_LEN,
@@ -44,11 +44,13 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
         tempo::PATH_USD_ADDRESS,
     },
     executors::ExecutorBuilder,
@@ -142,7 +144,7 @@ pub struct ScriptArgs {
 
     /// Tempo transaction options.
     #[command(flatten)]
-    pub tempo: TempoCommonOpts,
+    pub tempo: TempoOpts,
 
     /// Skips on-chain simulation.
     #[arg(long)]
@@ -246,6 +248,36 @@ pub struct ScriptArgs {
     pub retry: RetryArgs,
 }
 
+const fn should_default_tempo_fee_token(
+    is_tempo_network: bool,
+    batch: bool,
+    tempo: &TempoOpts,
+) -> bool {
+    // Plain `--network tempo` should stay an ordinary transaction; only Tempo AA opts get defaults.
+    is_tempo_network && tempo.common.fee_token.is_none() && (batch || tempo.is_tempo())
+}
+
+const fn needs_tempo_aa_rpc_estimate(
+    is_tempo_network: bool,
+    batch: bool,
+    tempo: &TempoOpts,
+) -> bool {
+    is_tempo_network && (batch || tempo.is_tempo())
+}
+
+pub(crate) fn needs_script_rpc_estimate(
+    chain_id: u64,
+    is_tempo_network: bool,
+    batch: bool,
+    tempo: &TempoOpts,
+    skip_simulation: bool,
+) -> bool {
+    // Tempo AA needs RPC estimation; plain Tempo scripts can use the local simulation result.
+    (has_different_gas_calc(chain_id) && !is_tempo_network)
+        || needs_tempo_aa_rpc_estimate(is_tempo_network, batch, tempo)
+        || skip_simulation
+}
+
 impl ScriptArgs {
     /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
@@ -285,16 +317,14 @@ impl ScriptArgs {
             }
         }
 
-        let fee_token = if evm_opts.networks.is_tempo() && self.tempo.fee_token.is_none() {
-            Some(PATH_USD_ADDRESS)
-        } else {
-            self.tempo.fee_token
-        };
+        let mut tempo = self.tempo.clone();
+        tempo.resolve_expires();
 
-        let expires_at = self.tempo.expires_at();
+        if should_default_tempo_fee_token(evm_opts.networks.is_tempo(), self.batch, &tempo) {
+            tempo.common.fee_token = Some(PATH_USD_ADDRESS);
+        }
 
-        let script_config =
-            ScriptConfig::new(config, evm_opts, self.batch, fee_token, expires_at).await?;
+        let script_config = ScriptConfig::new(config, evm_opts, self.batch, tempo).await?;
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
 
@@ -323,12 +353,15 @@ impl ScriptArgs {
             if broadcasted.args.verify {
                 broadcasted.verify().await?;
             }
-            Ok(())
-        } else if evm_opts.networks.is_optimism() {
-            self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await
-        } else {
-            self.run_generic_script::<EthEvmNetwork>(config, evm_opts).await
+            return Ok(());
         }
+
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
+            return self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await;
+        }
+
+        self.run_generic_script::<EthEvmNetwork>(config, evm_opts).await
     }
 
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
@@ -711,10 +744,8 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub backends: HashMap<String, Backend<FEN>>,
     /// Whether to batch all broadcast transactions into a single Tempo batch transaction.
     pub batch: bool,
-    /// Tempo fee token address for paying transaction fees.
-    pub fee_token: Option<Address>,
-    /// TIP-1009 expiring-nonce valid_before unix timestamp, derived from `--tempo.expires`.
-    pub expires_at: Option<u64>,
+    /// Tempo transaction options applied to broadcast transactions.
+    pub tempo: TempoOpts,
 }
 
 impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
@@ -722,8 +753,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         config: Config,
         evm_opts: EvmOpts,
         batch: bool,
-        fee_token: Option<Address>,
-        expires_at: Option<u64>,
+        tempo: TempoOpts,
     ) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
             next_nonce(evm_opts.sender, fork_url, evm_opts.fork_block_number).await?
@@ -732,15 +762,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             1
         };
 
-        Ok(Self {
-            config,
-            evm_opts,
-            sender_nonce,
-            backends: HashMap::default(),
-            batch,
-            fee_token,
-            expires_at,
-        })
+        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default(), batch, tempo })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
@@ -816,7 +838,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                             self.evm_opts.clone(),
                             Some(known_contracts),
                             Some(target),
-                            self.fee_token,
+                            self.tempo.common.fee_token,
                         )
                         .into(),
                     )
@@ -827,7 +849,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
         // Propagate fee token to the transaction environment so that internal EVM calls
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
-        tx_env.set_fee_token(self.fee_token);
+        tx_env.set_fee_token(self.tempo.common.fee_token);
 
         Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
     }
@@ -861,18 +883,36 @@ mod tests {
         ]);
 
         assert_eq!(
-            args.tempo.fee_token,
+            args.tempo.common.fee_token,
             Some(address!("0x20C0000000000000000000000000000000000001"))
         );
-        assert_eq!(args.tempo.expires, Some(10));
+        assert_eq!(args.tempo.common.expires, Some(10));
     }
 
     #[test]
-    fn does_not_parse_unsupported_tempo_opts() {
-        assert!(
-            ScriptArgs::try_parse_from(["foundry-cli", "Contract.sol", "--tempo.nonce-key", "1"])
-                .is_err()
+    fn can_parse_sponsor_tempo_opts() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--tempo.sponsor",
+            "0x1111111111111111111111111111111111111111",
+            "--tempo.sponsor-signer",
+            "env://TEMPO_SPONSOR_PK",
+        ]);
+
+        assert_eq!(
+            args.tempo.sponsor,
+            Some(address!("0x1111111111111111111111111111111111111111"))
         );
+        assert_eq!(args.tempo.sponsor_signer.as_deref(), Some("env://TEMPO_SPONSOR_PK"));
+    }
+
+    #[test]
+    fn can_parse_full_tempo_opts() {
+        let args =
+            ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--tempo.nonce-key", "1"]);
+
+        assert_eq!(args.tempo.nonce_key, Some(U256::from(1)));
     }
 
     #[test]

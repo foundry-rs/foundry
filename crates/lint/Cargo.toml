@@ -24,3 +24,7 @@ eyre.workspace = true
 heck.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = ["foundry-common/optimism"]
