@@ -305,6 +305,39 @@ contract ExpectRevertWithReverterTest is Test {
         vm.expectRevert(address(cContract));
         aContract.createDContractThroughCContract();
     }
+
+    // <https://github.com/foundry-rs/foundry/issues/14613>
+    // Regression: when the next operation is a top-level CREATE whose constructor
+    // reverts directly, the reverter address argument must be enforced (it used to
+    // be silently ignored). The matched reverter is the would-be-deployed address.
+    function testExpectRevertsWithReverterTopLevelCreate() public {
+        address expected = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.expectRevert(expected);
+        new DContract();
+
+        expected = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.expectRevert(abi.encodePacked("Reverted by DContract"), expected);
+        new DContract();
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/14613>
+    // Regression: when the next operation is a top-level CREATE whose constructor
+    // synchronously creates another contract that reverts (i.e. innermost frame is
+    // a CREATE), the matched reverter is the outer would-be-deployed address (the
+    // contract whose deployment failed).
+    function testExpectRevertsWithReverterNestedCreate() public {
+        address expected = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.expectRevert(expected);
+        new NestedDContractCreator();
+    }
+}
+
+// Used by `testExpectRevertsWithReverterNestedCreate`: a contract whose constructor
+// directly creates another contract that reverts.
+contract NestedDContractCreator {
+    constructor() {
+        new DContract();
+    }
 }
 
 contract ExpectRevertCount is Test {

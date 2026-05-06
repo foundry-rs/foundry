@@ -233,6 +233,14 @@ contract ExpectRevertWithReverterFailureTest is DSTest {
         aContract.doNotRevert();
         aContract.callAndRevert();
     }
+
+    // <https://github.com/foundry-rs/foundry/issues/14613>
+    // Regression: must fail because 0xdead is not the actual reverter when a
+    // top-level CREATE constructor reverts directly.
+    function testShouldFailExpectRevertWrongReverterTopLevelCreate() public {
+        vm.expectRevert(address(0xdead));
+        new DContract();
+    }
 }
 
 contract ExpectRevertCountFailureTest is DSTest {
