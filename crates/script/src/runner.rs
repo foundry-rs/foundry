@@ -6,7 +6,7 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
-use foundry_common::TransactionMaybeSigned;
+use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
 use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
@@ -84,7 +84,12 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     .with_input(code.clone())
                     .with_nonce(sender_nonce + library_transactions.len() as u64);
 
-                script_config.tempo.apply::<FEN::Network>(&mut tx_req, None);
+                // Only set fee_token for library deploys — do NOT call tempo.apply()
+                // which would overwrite the sequential nonce and set fields (nonce_key,
+                // valid_before, key_id, sponsor) that are only meant for user broadcast txs.
+                if let Some(fee_token) = script_config.tempo.common.fee_token {
+                    tx_req.set_fee_token(fee_token);
+                }
 
                 library_transactions.push_back(BroadcastableTransaction {
                     rpc: self.evm_opts.fork_url.clone(),
@@ -120,7 +125,10 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                         .with_nonce(sender_nonce + library_transactions.len() as u64)
                         .with_to(create2_deployer);
 
-                    script_config.tempo.apply::<FEN::Network>(&mut tx_req, None);
+                    // Only set fee_token for library deploys (see comment above).
+                    if let Some(fee_token) = script_config.tempo.common.fee_token {
+                        tx_req.set_fee_token(fee_token);
+                    }
 
                     library_transactions.push_back(BroadcastableTransaction {
                         rpc: self.evm_opts.fork_url.clone(),
