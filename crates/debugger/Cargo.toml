@@ -29,3 +29,11 @@ ratatui = { version = "0.30", default-features = false, features = [
 revm.workspace = true
 tracing.workspace = true
 serde.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-common/optimism",
+    "foundry-evm-core/optimism",
+    "foundry-evm-traces/optimism",
+]

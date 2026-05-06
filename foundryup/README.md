@@ -30,10 +30,10 @@ To install the latest **nightly** version:
 foundryup --install nightly
 ```
 
-To install a specific version (e.g. `v1.6.0`):
+To install a specific version (e.g. `v1.7.0`):
 
 ```sh
-foundryup --install v1.6.0
+foundryup --install v1.7.0
 ```
 
 To **list** all **versions** installed:

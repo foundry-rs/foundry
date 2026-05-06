@@ -57,3 +57,12 @@ contract AnotherContract is
 {}
 
 contract WithLayoutAndBase layout at 69 is Base {}
+
+contract ERC7201Short layout at erc7201("s") is Base {}
+
+contract ERC7201Mid layout at erc7201("openzeppelin.med") is Base {}
+
+contract ERC7201OverMax layout at erc7201("openzeppelin.storage.exceeds.max")
+    is
+    Base
+{}

@@ -4,7 +4,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function setOwner(address newOwner) external {
    │                       ━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -12,7 +12,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     constructor(address initialOwner) {
    │                 ━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -20,7 +20,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function pay(address payable to) external {
    │                  ━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -28,7 +28,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function lowLevel(address payable to, bytes calldata data) external {
    │                       ━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -36,7 +36,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function withUselessModifier(address a) external doesNothing(a) {
    │                                  ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -44,7 +44,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function setOwnerViaAlias(address a) external {
    │                               ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -52,7 +52,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function setOwnerViaReassign(address a) external {
    │                                  ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -60,7 +60,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function setOwnerViaCast(address a) external {
    │                              ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -68,7 +68,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function payViaAlias(address payable a) external {
    │                          ━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -76,7 +76,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function mixedParams(address a, address b) external {
    │                                     ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -84,7 +84,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function bothSinks(address payable a) external {
    │                        ━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -92,7 +92,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function ternaryAlias(address a, bool flag) external {
    │                           ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -100,7 +100,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function payableWrap(address a) external {
    │                          ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -108,7 +108,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function modifierWithExpr(address a) external nonZero(addrIdentity(a)) {
    │                               ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -116,7 +116,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function delegateCallSink(address a) external {
    │                               ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -124,7 +124,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function sendSinkStmt(address payable a) external {
    │                           ━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -132,7 +132,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function sendSinkDecl(address payable a) external {
    │                           ━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -140,7 +140,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function multiHopTaint(address a) external {
    │                            ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -148,7 +148,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function guardAfterSink(address a) external {
    │                             ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -156,7 +156,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function guardOnOneBranch(address a, bool flag) external {
    │                               ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -164,7 +164,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function guardInForLoop(address a, uint256 n) external {
    │                             ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -172,7 +172,7 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function guardInWhileLoop(address a, bool flag) external {
    │                               ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
    ╭▸ ROOT/testdata/MissingZeroCheck.sol:LL:CC
@@ -180,5 +180,5 @@ warning[missing-zero-check]: address parameter is used in a state write or value
 LL │     function guardInTryClause(address a, address payable target) external {
    │                               ━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#missing-zero-check
+   ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 

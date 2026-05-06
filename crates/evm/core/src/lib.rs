@@ -5,6 +5,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(feature = "optimism")]
+use op_alloy_rpc_types as _;
+
 use crate::constants::DEFAULT_CREATE2_DEPLOYER;
 use alloy_primitives::{Address, map::HashMap};
 use auto_impl::auto_impl;
