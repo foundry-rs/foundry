@@ -340,6 +340,39 @@ contract ExpectRevertWithReverterTest is Test {
         vm.expectPartialRevert(bytes4(keccak256("Error(string)")), expected);
         new DContract();
     }
+
+    // <https://github.com/foundry-rs/foundry/issues/14613>
+    // Regression: `expectRevert(bytes4, address)` (exact 4-byte selector + reverter)
+    // overload must enforce the reverter address argument for a top-level CREATE.
+    function testExpectRevertWithBytes4SelectorAndReverterTopLevelCreate() public {
+        address expected = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.expectRevert(DCustomErrorContract.CustomError.selector, expected);
+        new DCustomErrorContract();
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/14613>
+    // Regression: `expectRevert(address, uint64)` count-bearing overload must
+    // exercise the `count > 1` branch in `create_end`. Use CREATE2 with the same
+    // salt so both deploys would resolve to the same would-be address (each
+    // constructor reverts so no contract is ever actually placed there).
+    function testExpectRevertsWithReverterCountTopLevelCreate2() public {
+        bytes32 salt = bytes32(uint256(0x42));
+        address expected =
+            vm.computeCreate2Address(salt, keccak256(type(DContract).creationCode), address(this));
+        vm.expectRevert(expected, 2);
+        new DContract{salt: salt}();
+        new DContract{salt: salt}();
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/14613>
+    // Regression: CREATE2 deploys must also enforce the reverter address argument.
+    function testExpectRevertsWithReverterTopLevelCreate2() public {
+        bytes32 salt = bytes32(uint256(0xC0FFEE));
+        address expected =
+            vm.computeCreate2Address(salt, keccak256(type(DContract).creationCode), address(this));
+        vm.expectRevert(expected);
+        new DContract{salt: salt}();
+    }
 }
 
 // Used by `testExpectRevertsWithReverterNestedCreate`: a contract whose constructor
@@ -347,6 +380,17 @@ contract ExpectRevertWithReverterTest is Test {
 contract NestedDContractCreator {
     constructor() {
         new DContract();
+    }
+}
+
+// Used by `testExpectRevertWithBytes4SelectorAndReverterTopLevelCreate`: constructor
+// reverts with a parameter-less custom error so the full revert data is exactly the
+// 4-byte selector.
+contract DCustomErrorContract {
+    error CustomError();
+
+    constructor() {
+        revert CustomError();
     }
 }
 
