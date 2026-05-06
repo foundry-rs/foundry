@@ -1897,10 +1897,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         // Handle expected reverts
-        if let Some(expected_revert) = &self.expected_revert
+        if let Some(expected_revert) = &mut self.expected_revert
             && curr_depth <= expected_revert.depth
             && matches!(expected_revert.kind, ExpectedRevertKind::Default)
         {
+            // Mirror the logic in `call_end`: when an expected reverter address is set
+            // and we don't yet have one (or we're matching multiple reverts), record the
+            // would-be deployed address as the reverter. revm guarantees `outcome.address`
+            // is `Some(_)` whenever the constructor actually ran (including the revert
+            // case); it is only `None` for pre-frame rejection (depth/balance/nonce),
+            // for which a reverter address is meaningless.
+            if outcome.result.is_revert()
+                && expected_revert.reverter.is_some()
+                && (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
+                && let Some(addr) = outcome.address
+            {
+                expected_revert.reverted_by = Some(addr);
+            }
             let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
             return match revert_handlers::handle_expect_revert(
                 false,
