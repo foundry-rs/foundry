@@ -1896,36 +1896,50 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             }
         }
 
-        // Handle expected reverts
-        if let Some(expected_revert) = &self.expected_revert
-            && curr_depth <= expected_revert.depth
-            && matches!(expected_revert.kind, ExpectedRevertKind::Default)
-        {
-            let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-            return match revert_handlers::handle_expect_revert(
-                false,
-                true,
-                self.config.internal_expect_revert,
-                &expected_revert,
-                outcome.result.result,
-                outcome.result.output.clone(),
-                &self.config.available_artifacts,
-            ) {
-                Ok((address, retdata)) => {
-                    expected_revert.actual_count += 1;
-                    if expected_revert.actual_count < expected_revert.count {
-                        self.expected_revert = Some(expected_revert.clone());
-                    }
+        // Handle expected reverts.
+        if let Some(expected_revert) = &mut self.expected_revert {
+            // Record the would-be deployed address as the reverter, mirroring `call_end`.
+            // Runs at every depth so the innermost CREATE wins (deepest frame fires first
+            // and the `is_none()` lock pins it). `outcome.address` is `None` only when the
+            // constructor never ran (pre-frame rejection), in which case the surrounding
+            // `call_end` records the caller.
+            if outcome.result.is_revert()
+                && expected_revert.reverter.is_some()
+                && (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
+                && let Some(addr) = outcome.address
+            {
+                expected_revert.reverted_by = Some(addr);
+            }
 
-                    outcome.result.result = InstructionResult::Return;
-                    outcome.result.output = retdata;
-                    outcome.address = address;
-                }
-                Err(err) => {
-                    outcome.result.result = InstructionResult::Revert;
-                    outcome.result.output = err.abi_encode().into();
-                }
-            };
+            if curr_depth <= expected_revert.depth
+                && matches!(expected_revert.kind, ExpectedRevertKind::Default)
+            {
+                let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                return match revert_handlers::handle_expect_revert(
+                    false,
+                    true,
+                    self.config.internal_expect_revert,
+                    &expected_revert,
+                    outcome.result.result,
+                    outcome.result.output.clone(),
+                    &self.config.available_artifacts,
+                ) {
+                    Ok((address, retdata)) => {
+                        expected_revert.actual_count += 1;
+                        if expected_revert.actual_count < expected_revert.count {
+                            self.expected_revert = Some(expected_revert.clone());
+                        }
+
+                        outcome.result.result = InstructionResult::Return;
+                        outcome.result.output = retdata;
+                        outcome.address = address;
+                    }
+                    Err(err) => {
+                        outcome.result.result = InstructionResult::Revert;
+                        outcome.result.output = err.abi_encode().into();
+                    }
+                };
+            }
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the

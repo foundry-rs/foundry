@@ -288,22 +288,59 @@ contract ExpectRevertWithReverterTest is Test {
         aContract.callAndRevertInCContract();
     }
 
+    // The reverter for a CREATE that reverts is the would-be deployed address
+    // (innermost-wins, mirroring CALL semantics).
     function testExpectRevertsWithReverterInConstructor() public {
-        // Test expect revert with reverter when constructor reverts.
-        vm.expectRevert(abi.encodePacked("Reverted by DContract"), address(cContract));
+        address expected;
+
+        expected = vm.computeCreateAddress(address(cContract), vm.getNonce(address(cContract)));
+        vm.expectRevert(abi.encodePacked("Reverted by DContract"), expected);
         cContract.createDContract();
 
-        vm.expectRevert(address(bContract));
+        expected = vm.computeCreateAddress(address(bContract), vm.getNonce(address(bContract)));
+        vm.expectRevert(expected);
         bContract.createDContract();
-        vm.expectRevert(address(cContract));
+        expected = vm.computeCreateAddress(address(cContract), vm.getNonce(address(cContract)));
+        vm.expectRevert(expected);
         bContract.createDContractThroughCContract();
 
-        vm.expectRevert(address(aContract));
+        expected = vm.computeCreateAddress(address(aContract), vm.getNonce(address(aContract)));
+        vm.expectRevert(expected);
         aContract.createDContract();
-        vm.expectRevert(address(bContract));
+        expected = vm.computeCreateAddress(address(bContract), vm.getNonce(address(bContract)));
+        vm.expectRevert(expected);
         aContract.createDContractThroughBContract();
-        vm.expectRevert(address(cContract));
+        expected = vm.computeCreateAddress(address(cContract), vm.getNonce(address(cContract)));
+        vm.expectRevert(expected);
         aContract.createDContractThroughCContract();
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/14613
+    // Top-level CREATE that reverts: reverter is the would-be deployed address.
+    function testExpectRevertsWithReverterTopLevelCreate() public {
+        address expected = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.expectRevert(expected);
+        new DContract();
+
+        expected = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.expectRevert(abi.encodePacked("Reverted by DContract"), expected);
+        new DContract();
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/14613
+    // Nested CREATE chain: innermost reverter wins, matching CALL semantics.
+    function testExpectRevertsWithReverterNestedCreate() public {
+        address outer = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        // Contracts start at nonce 1; the inner DContract is outer's first creation.
+        address innerReverter = vm.computeCreateAddress(outer, 1);
+        vm.expectRevert(innerReverter);
+        new NestedDContractCreator();
+    }
+}
+
+contract NestedDContractCreator {
+    constructor() {
+        new DContract();
     }
 }
 

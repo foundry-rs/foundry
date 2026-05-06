@@ -233,6 +233,13 @@ contract ExpectRevertWithReverterFailureTest is DSTest {
         aContract.doNotRevert();
         aContract.callAndRevert();
     }
+
+    // https://github.com/foundry-rs/foundry/issues/14613
+    // Wrong reverter for a top-level CREATE that reverts must fail.
+    function testShouldFailExpectRevertWrongReverterTopLevelCreate() public {
+        vm.expectRevert(address(0xdead));
+        new DContract();
+    }
 }
 
 contract ExpectRevertCountFailureTest is DSTest {
