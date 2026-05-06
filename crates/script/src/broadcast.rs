@@ -39,7 +39,7 @@ use itertools::Itertools;
 use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 use tempo_primitives::transaction::Call;
 
-fn pending_sequence_index(
+const fn pending_sequence_index(
     already_broadcasted: usize,
     batch_number: usize,
     batch_size: usize,
