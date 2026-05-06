@@ -357,8 +357,7 @@ contract ExpectRevertWithReverterTest is Test {
     // constructor reverts so no contract is ever actually placed there).
     function testExpectRevertsWithReverterCountTopLevelCreate2() public {
         bytes32 salt = bytes32(uint256(0x42));
-        address expected =
-            vm.computeCreate2Address(salt, keccak256(type(DContract).creationCode), address(this));
+        address expected = vm.computeCreate2Address(salt, keccak256(type(DContract).creationCode), address(this));
         vm.expectRevert(expected, 2);
         new DContract{salt: salt}();
         new DContract{salt: salt}();
@@ -368,8 +367,7 @@ contract ExpectRevertWithReverterTest is Test {
     // Regression: CREATE2 deploys must also enforce the reverter address argument.
     function testExpectRevertsWithReverterTopLevelCreate2() public {
         bytes32 salt = bytes32(uint256(0xC0FFEE));
-        address expected =
-            vm.computeCreate2Address(salt, keccak256(type(DContract).creationCode), address(this));
+        address expected = vm.computeCreate2Address(salt, keccak256(type(DContract).creationCode), address(this));
         vm.expectRevert(expected);
         new DContract{salt: salt}();
     }
