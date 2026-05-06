@@ -469,11 +469,12 @@ list() {
 use() {
   [ -z "$FOUNDRYUP_VERSION" ] && err "no version provided"
 
-  # If the requested version is a channel (`latest`, `stable`, `nightly`), resolve it to the immutable
-  # tag directory created by `--install`.
+  # If the requested version is a channel (`latest`, `stable`, `nightly`) or a bare semver
+  # version (e.g. `1.7.0`, `1.6.0-rc1`), resolve it to the immutable tag directory created by
+  # `--install` (channels hit the GitHub API; semver versions get a `v` prefix).
   # Falls back to the literal value for locally-built versions (branches, PRs, commits, custom names).
   case "$FOUNDRYUP_VERSION" in
-    latest|stable|nightly)
+    latest|stable|nightly|[0-9]*.[0-9]*.[0-9]*)
       resolve_version_and_tag
       FOUNDRYUP_VERSION="$FOUNDRYUP_TAG"
       ;;
