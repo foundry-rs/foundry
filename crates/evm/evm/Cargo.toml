@@ -22,7 +22,7 @@ foundry-evm-core.workspace = true
 foundry-evm-coverage.workspace = true
 foundry-evm-fuzz.workspace = true
 foundry-evm-sancov.workspace = true
-foundry-evm-hardforks = { workspace = true, features = ["optimism"] }
+foundry-evm-hardforks.workspace = true
 foundry-evm-networks.workspace = true
 foundry-evm-traces.workspace = true
 
@@ -61,3 +61,16 @@ serde.workspace = true
 uuid.workspace = true
 rayon.workspace = true
 tokio.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-evm-core/optimism",
+    "foundry-evm-hardforks/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+    "foundry-cheatcodes/optimism",
+    "foundry-evm-coverage/optimism",
+    "foundry-evm-fuzz/optimism",
+    "foundry-evm-traces/optimism",
+]

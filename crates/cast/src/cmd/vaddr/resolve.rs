@@ -1,7 +1,8 @@
 use alloy_primitives::{Address, hex};
 use eyre::Result;
 use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
-use foundry_common::provider::ProviderBuilder;
+use foundry_common::{provider::ProviderBuilder, shell};
+use serde_json::json;
 use tempo_alloy::{
     TempoNetwork,
     contracts::precompiles::{ADDRESS_REGISTRY_ADDRESS, IAddressRegistry},
@@ -25,13 +26,26 @@ pub(super) async fn run(addr: Address, rpc: RpcOpts) -> Result<()> {
     let user_tag = decoded.userTag;
     let master: Address = master;
 
-    sh_println!("Virtual address: {addr}")?;
-    sh_println!("Master ID:       0x{}", hex::encode(master_id))?;
-    sh_println!("User tag:        0x{}", hex::encode(user_tag))?;
-    if master.is_zero() {
-        sh_println!("Master address:  (unregistered)")?;
+    if shell::is_json() {
+        let master_address = if master.is_zero() { None } else { Some(format!("{master}")) };
+        sh_println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "address": format!("{addr}"),
+                "master_id": format!("0x{}", hex::encode(master_id)),
+                "user_tag": format!("0x{}", hex::encode(user_tag)),
+                "master_address": master_address,
+            }))?
+        )?;
     } else {
-        sh_println!("Master address:  {master}")?;
+        sh_println!("Virtual address: {addr}")?;
+        sh_println!("Master ID:       0x{}", hex::encode(master_id))?;
+        sh_println!("User tag:        0x{}", hex::encode(user_tag))?;
+        if master.is_zero() {
+            sh_println!("Master address:  (unregistered)")?;
+        } else {
+            sh_println!("Master address:  {master}")?;
+        }
     }
 
     Ok(())

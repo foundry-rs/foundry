@@ -99,8 +99,11 @@ impl GasSnapshotArgs {
     }
 
     pub async fn run(mut self) -> Result<()> {
-        // Set fuzz seed so gas snapshots are deterministic
-        self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        // Default to a static fuzz seed so gas snapshots are deterministic,
+        // but allow the user to override it via `--fuzz-seed`.
+        if self.test.fuzz_seed.is_none() {
+            self.test.fuzz_seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        }
 
         let outcome = self.test.compile_and_run().await?;
         outcome.ensure_ok(false)?;

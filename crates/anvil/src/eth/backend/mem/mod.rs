@@ -533,8 +533,17 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns true if op-stack deposits are active
+    #[cfg(feature = "optimism")]
     pub const fn is_optimism(&self) -> bool {
         self.networks.is_optimism()
+    }
+
+    /// Returns true if op-stack deposits are active.
+    ///
+    /// Always `false` when built without the `optimism` feature.
+    #[cfg(not(feature = "optimism"))]
+    pub const fn is_optimism(&self) -> bool {
+        false
     }
 
     /// Returns true if Tempo network mode is active
@@ -632,6 +641,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if op-stack deposits are not active
+    #[cfg(feature = "optimism")]
     pub const fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
             return Ok(());

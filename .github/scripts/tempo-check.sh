@@ -445,7 +445,7 @@ echo -e "\n=== CAST SEND WITH SPONSOR (--tempo.sponsor-signature) ==="
 # Test sponsored transactions using pre-signed signature.
 # Step 1: Get the fee_payer_signature_hash using --tempo.print-sponsor-hash
 # Step 2: Sign it with the sponsor's private key
-# Step 3: Send with --tempo.sponsor-signature
+# Step 3: Send with --tempo.sponsor and --tempo.sponsor-signature
 
 # Step 1: Get the hash that the sponsor needs to sign
 FEE_PAYER_HASH=$(cast mktx ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
@@ -460,7 +460,7 @@ printf "Sponsor signature: %s\n" "$SPONSOR_SIG"
 # Step 3: Send the sponsored transaction with the signature
 RECEIPT=$(cast send ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} --rpc-url "$ETH_RPC_URL" \
   0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D 'increment()' --private-key "$PK" \
-  --tempo.sponsor-signature "$SPONSOR_SIG" --json)
+  --tempo.sponsor "$SPONSOR_ADDR" --tempo.sponsor-signature "$SPONSOR_SIG" --json)
 
 # Verify the fee_payer in the receipt matches the sponsor address
 RECEIPT_FEE_PAYER=$(echo "$RECEIPT" | jq -r '.feePayer // .fee_payer // empty')

@@ -3,7 +3,8 @@ use alloy_provider::Provider;
 use alloy_rpc_types::{BlockNumberOrTag, Filter};
 use eyre::Result;
 use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
-use foundry_common::provider::ProviderBuilder;
+use foundry_common::{provider::ProviderBuilder, shell};
+use serde_json::json;
 use std::sync::LazyLock;
 use tempo_alloy::TempoNetwork;
 use tempo_primitives::TempoAddressExt;
@@ -41,7 +42,9 @@ pub(super) async fn run(
         filter = filter.address(tok);
     }
 
-    sh_println!("Watching transfers to {addr}... (Ctrl-C to stop)")?;
+    if !shell::is_json() {
+        sh_println!("Watching transfers to {addr}... (Ctrl-C to stop)")?;
+    }
 
     // Fetch logs from the requested start block (historical when from_block is set)
     let logs = provider.get_logs(&filter).await?;
@@ -84,9 +87,22 @@ fn print_transfer_log(log: &alloy_rpc_types::Log) -> Result<()> {
         alloy_primitives::U256::ZERO
     };
 
-    sh_println!(
-        "block={block} tx={tx} token={token} from={} amount={amount}",
-        from.map(|a| a.to_string()).unwrap_or_default(),
-    )?;
+    if shell::is_json() {
+        sh_println!(
+            "{}",
+            serde_json::to_string(&json!({
+                "block": block,
+                "tx": format!("{tx}"),
+                "token": format!("{token}"),
+                "from": from.map(|a| format!("{a}")).unwrap_or_default(),
+                "amount": amount.to_string(),
+            }))?
+        )?;
+    } else {
+        sh_println!(
+            "block={block} tx={tx} token={token} from={} amount={amount}",
+            from.map(|a| a.to_string()).unwrap_or_default(),
+        )?;
+    }
     Ok(())
 }
