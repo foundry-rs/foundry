@@ -297,8 +297,7 @@ fn render_contract<'ast, 'gcx>(
             writeln!(out).unwrap();
             let c = collect_comments(docs, name_to_page, page_path);
             write_comment_block(&mut out, &c);
-            let snippet = ctx.dedented_snippet(*span);
-            write_code_block(&mut out, &format!("{snippet};"));
+            write_code_block(&mut out, &ctx.dedented_snippet(*span));
             write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
         }
     }
@@ -311,8 +310,7 @@ fn render_contract<'ast, 'gcx>(
             writeln!(out).unwrap();
             let c = collect_comments(docs, name_to_page, page_path);
             write_comment_block(&mut out, &c);
-            let snippet = ctx.dedented_snippet(*span);
-            write_code_block(&mut out, &format!("{snippet};"));
+            write_code_block(&mut out, &ctx.dedented_snippet(*span));
             write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
         }
     }
@@ -492,7 +490,7 @@ fn render_error<'ast>(
     writeln!(out).unwrap();
     write_git_source(&mut out, git_url);
     write_comment_block(&mut out, &c);
-    write_code_block(&mut out, &format!("{};", ctx.dedented_snippet(span)));
+    write_code_block(&mut out, &ctx.dedented_snippet(span));
     write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
     out
 }
@@ -514,7 +512,7 @@ fn render_event<'ast>(
     writeln!(out).unwrap();
     write_git_source(&mut out, git_url);
     write_comment_block(&mut out, &c);
-    write_code_block(&mut out, &format!("{};", ctx.dedented_snippet(span)));
+    write_code_block(&mut out, &ctx.dedented_snippet(span));
     write_param_table(&mut out, "Parameters", &e.parameters, &c, ctx);
     out
 }
