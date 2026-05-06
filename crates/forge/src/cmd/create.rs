@@ -13,7 +13,10 @@ use eyre::{Context, ContextCompat, Result};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
-    utils::{LoadConfig, find_contract_artifacts, read_constructor_args_file},
+    utils::{
+        LoadConfig, ResolvedLane, find_contract_artifacts, maybe_print_resolved_lane,
+        read_constructor_args_file, resolve_lane,
+    },
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -203,6 +206,11 @@ impl CreateArgs {
             self.tx.tempo.key_id = Some(ak.key_address);
         }
 
+        // Resolve `--tempo.lane <name>` against the lanes file (default
+        // `<root>/tempo.lanes.toml`) and populate `self.tx.tempo.nonce_key` from the lane.
+        // Must happen before `self.deploy(...)` so `TempoOpts::apply` picks up the nonce_key.
+        let resolved_lane = resolve_lane(&mut self.tx.tempo, &config.root)?;
+
         // Whether to broadcast the transaction or not
         let dry_run = !self.broadcast;
 
@@ -223,6 +231,7 @@ impl CreateArgs {
                 dry_run,
                 None,
                 Some(browser),
+                resolved_lane,
             )
             .await
         } else if self.unlocked {
@@ -239,6 +248,7 @@ impl CreateArgs {
                 dry_run,
                 None,
                 None,
+                resolved_lane,
             )
             .await
         } else if let Some(ak) = access_key {
@@ -259,6 +269,7 @@ impl CreateArgs {
                 dry_run,
                 Some((signer, ak)),
                 None,
+                resolved_lane,
             )
             .await
         } else {
@@ -282,6 +293,7 @@ impl CreateArgs {
                 dry_run,
                 None,
                 None,
+                resolved_lane,
             )
             .await
         }
@@ -362,6 +374,7 @@ impl CreateArgs {
         dry_run: bool,
         tempo_keychain: Option<(WalletSigner, TempoAccessKeyConfig)>,
         browser_signer: Option<BrowserSigner<N>>,
+        resolved_lane: Option<ResolvedLane>,
     ) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
@@ -398,7 +411,7 @@ impl CreateArgs {
 
         // If Tempo chain fee token must be set
         if chain.is_tempo() {
-            if let Some(fee_token) = self.tx.tempo.fee_token {
+            if let Some(fee_token) = self.tx.tempo.common.fee_token {
                 deployer.tx.set_fee_token(fee_token);
             } else {
                 deployer.tx.set_fee_token(DEFAULT_FEE_TOKEN);
@@ -408,20 +421,37 @@ impl CreateArgs {
         // Apply user-provided gas, fee, nonce, and Tempo options.
         self.tx.apply::<N>(&mut deployer.tx, is_legacy);
 
-        // For keychain mode, set key_id and nonce_key before gas estimation.
         // Convert the CREATE into an AA-compatible call entry since Tempo AA
         // transactions use a `calls` list instead of `to`+`input`.
+        if chain.is_tempo() {
+            deployer.tx.convert_create_to_call();
+        }
+
+        // For keychain mode, set key_id and nonce_key before gas estimation.
         if let Some((_, ref ak)) = tempo_keychain {
             deployer.tx.set_key_id(ak.key_address);
             if deployer.tx.nonce_key().is_none() {
                 deployer.tx.set_nonce_key(U256::ZERO);
             }
-            deployer.tx.convert_create_to_call();
         }
 
         // Fetch defaults from provider for values not specified by user.
         if self.tx.nonce.is_none() && !self.tx.tempo.expiring_nonce {
             deployer.tx.set_nonce(provider.get_transaction_count(deployer_address).await?);
+        }
+
+        maybe_print_resolved_lane(resolved_lane.as_ref(), deployer.tx.nonce().unwrap_or_default())?;
+
+        if let Some((_, ref ak)) = tempo_keychain {
+            deployer
+                .tx
+                .prepare_access_key_authorization(
+                    provider.as_ref(),
+                    ak.wallet_address,
+                    ak.key_address,
+                    ak.key_authorization.as_ref(),
+                )
+                .await?;
         }
 
         // set access list if specified
@@ -498,6 +528,11 @@ impl CreateArgs {
             }
 
             return Ok(());
+        }
+
+        let tempo_sponsor = self.tx.tempo.sponsor_config().await?;
+        if let Some(sponsor) = &tempo_sponsor {
+            sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
         }
 
         // Deploy the actual contract

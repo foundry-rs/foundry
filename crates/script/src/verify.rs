@@ -129,7 +129,7 @@ impl VerifyBundle {
                     path: Some(artifact.source.to_string_lossy().to_string()),
                     name: artifact
                         .name
-                        .strip_suffix(&format!(".{}", &artifact.profile))
+                        .strip_suffix(&format!(".{}", artifact.profile))
                         .unwrap_or_else(|| &artifact.name)
                         .to_string(),
                 };

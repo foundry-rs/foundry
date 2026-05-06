@@ -1882,6 +1882,7 @@ impl EthApi<FoundryNetwork> {
 
     fn sign_request(&self, from: &Address, typed_tx: FoundryTypedTx) -> Result<FoundryTxEnvelope> {
         match typed_tx {
+            #[cfg(feature = "optimism")]
             FoundryTypedTx::Deposit(_) => return Ok(build_impersonated(typed_tx)),
             _ => {
                 for signer in self.signers.iter() {
@@ -2210,9 +2211,13 @@ impl EthApi<FoundryNetwork> {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let requires = required_marker(nonce, on_chain_nonce, from);
-        let provides = vec![to_marker(nonce, from)];
-        debug_assert!(requires != provides);
+        let (requires, provides) = if let Some((requires, provides)) =
+            tempo_parallel_nonce_markers(&pending_transaction)
+        {
+            (requires, provides)
+        } else {
+            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
+        };
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -2288,11 +2293,10 @@ impl EthApi<FoundryNetwork> {
         let priority = self.transaction_priority(&pending_transaction.transaction);
 
         // Tempo txs use a 2D nonce system — no sequential ordering by account nonce.
-        let (requires, provides) = if let FoundryTxEnvelope::Tempo(aa_tx) =
-            pending_transaction.transaction.as_ref()
-            && !aa_tx.tx().nonce_key.is_zero()
+        let (requires, provides) = if let Some((requires, provides)) =
+            tempo_parallel_nonce_markers(&pending_transaction)
         {
-            (vec![], vec![pending_transaction.hash().to_vec()])
+            (requires, provides)
         } else {
             let on_chain_nonce = self.backend.current_nonce(from).await?;
             let nonce = pending_transaction.transaction.nonce();
@@ -3192,8 +3196,13 @@ impl EthApi<FoundryNetwork> {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let requires = required_marker(nonce, on_chain_nonce, from);
-        let provides = vec![to_marker(nonce, from)];
+        let (requires, provides) = if let Some((requires, provides)) =
+            tempo_parallel_nonce_markers(&pending_transaction)
+        {
+            (requires, provides)
+        } else {
+            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
+        };
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -3549,6 +3558,7 @@ impl EthApi<FoundryNetwork> {
         requires: Vec<TxMarker>,
         provides: Vec<TxMarker>,
     ) -> Result<TxHash> {
+        debug_assert!(requires != provides);
         let from = *pending_transaction.sender();
         let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction =
@@ -3565,7 +3575,9 @@ impl EthApi<FoundryNetwork> {
             FoundryTxEnvelope::Eip1559(_) => self.backend.ensure_eip1559_active(),
             FoundryTxEnvelope::Eip4844(_) => self.backend.ensure_eip4844_active(),
             FoundryTxEnvelope::Eip7702(_) => self.backend.ensure_eip7702_active(),
+            #[cfg(feature = "optimism")]
             FoundryTxEnvelope::Deposit(_) => self.backend.ensure_op_deposits_active(),
+            #[cfg(feature = "optimism")]
             FoundryTxEnvelope::PostExec(_) => Err(BlockchainError::InvalidTransactionRequest(
                 "not implemented for post-exec tx".to_string(),
             )),
@@ -3632,6 +3644,20 @@ fn required_marker(provided_nonce: u64, on_chain_nonce: u64, from: Address) -> V
     }
     let prev_nonce = provided_nonce.saturating_sub(1);
     if on_chain_nonce <= prev_nonce { vec![to_marker(prev_nonce, from)] } else { Vec::new() }
+}
+
+fn tempo_parallel_nonce_markers(
+    pending_transaction: &PendingTransaction<FoundryTxEnvelope>,
+) -> Option<(Vec<TxMarker>, Vec<TxMarker>)> {
+    // Tempo txs with non-zero nonce_key use a 2D nonce system and should not
+    // be sequenced by account nonce markers.
+    if let FoundryTxEnvelope::Tempo(aa_tx) = pending_transaction.transaction.as_ref()
+        && !aa_tx.tx().nonce_key.is_zero()
+    {
+        Some((vec![], vec![pending_transaction.hash().to_vec()]))
+    } else {
+        None
+    }
 }
 
 fn convert_transact_out(out: &Option<Output>) -> Bytes {

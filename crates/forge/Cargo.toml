@@ -117,7 +117,7 @@ tempfile.workspace = true
 alloy-signer-local.workspace = true
 
 [features]
-default = ["jemalloc", "asm-keccak"]
+default = ["jemalloc", "asm-keccak", "optimism"]
 asm-keccak = ["alloy-primitives/asm-keccak", "revm/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
@@ -126,3 +126,15 @@ aws-kms = ["foundry-wallets/aws-kms"]
 gcp-kms = ["foundry-wallets/gcp-kms"]
 turnkey = ["foundry-wallets/turnkey"]
 isolate-by-default = ["foundry-config/isolate-by-default"]
+optimism = [
+    "foundry-evm/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+    "foundry-cli/optimism",
+    "forge-script/optimism",
+    "forge-verify/optimism",
+    "forge-doc/optimism",
+    "forge-fmt/optimism",
+    "forge-lint/optimism",
+    "forge-sol-macro-gen/optimism",
+]
