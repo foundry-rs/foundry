@@ -1527,6 +1527,21 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             }
         }
 
+        // this will ensure we don't have false positives when trying to diagnose reverts in fork
+        // mode
+        let diag = self.fork_revert_diagnostic.take();
+
+        // If the call already reverted, preserve that primary failure and skip post-call
+        // expect* validation so it cannot overwrite the original revert.
+        if outcome.result.is_revert() {
+            // if there's a revert and a previous call was diagnosed as fork related revert then we
+            // can return a better error here
+            if let Some(err) = diag {
+                outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
+            }
+            return;
+        }
+
         // At the end of the call,
         // we need to check if we've found all the emits.
         // We know we've found all the expected emits in the right order
@@ -1602,19 +1617,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // Clear the queue, as we expect the user to declare more events for the next call
             // if they wanna match further events.
             self.expected_emits.clear()
-        }
-
-        // this will ensure we don't have false positives when trying to diagnose reverts in fork
-        // mode
-        let diag = self.fork_revert_diagnostic.take();
-
-        // if there's a revert and a previous call was diagnosed as fork related revert then we can
-        // return a better error here
-        if outcome.result.is_revert()
-            && let Some(err) = diag
-        {
-            outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
-            return;
         }
 
         // try to diagnose reverts in multi-fork mode where a call is made to an address that does
