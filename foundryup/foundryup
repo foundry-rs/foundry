@@ -665,12 +665,12 @@ resolve_version_and_tag() {
   FOUNDRYUP_REPO=${FOUNDRYUP_REPO:-foundry-rs/foundry}
   if [[ "$FOUNDRYUP_VERSION" == "latest" || "$FOUNDRYUP_VERSION" == "stable" ]]; then
     # Resolve to the latest release (non-prerelease) via the GitHub API.
-    say "fetching latest release from ${FOUNDRYUP_REPO}..."
+    say "fetching latest release tag from ${FOUNDRYUP_REPO}..."
     FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases/latest" | awk '
       /"tag_name"[[:space:]]*:/ && !found { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); print; found=1 }
-    ') || err "failed to fetch releases from GitHub API"
+    ') || err "failed to fetch release tags from GitHub API"
     if [ -z "$FOUNDRYUP_TAG" ]; then
-      err "could not find a latest release for ${FOUNDRYUP_REPO}"
+      err "could not find a latest release tag for ${FOUNDRYUP_REPO}"
     fi
     say "resolved release tag: ${FOUNDRYUP_TAG}"
     FOUNDRYUP_VERSION="$FOUNDRYUP_TAG"
@@ -679,7 +679,7 @@ resolve_version_and_tag() {
     # The GitHub API does not guarantee that releases are returned in
     # chronological order, so we collect all matching nightlies along with
     # their `published_at` timestamps and sort them ourselves.
-    say "fetching latest nightly releases from ${FOUNDRYUP_REPO}..."
+    say "fetching latest nightly release tags from ${FOUNDRYUP_REPO}..."
     FOUNDRYUP_TAG=$(fetch "https://api.github.com/repos/${FOUNDRYUP_REPO}/releases" | awk '
       /"tag_name"[[:space:]]*:/ { gsub(/.*"tag_name"[[:space:]]*:[[:space:]]*"/, ""); gsub(/".*/, ""); tag=$0 }
       /"published_at"[[:space:]]*:[[:space:]]*"/ {
@@ -689,9 +689,9 @@ resolve_version_and_tag() {
         if (tag ~ /^nightly-/) print pub "\t" tag
         tag=""
       }
-    ' | sort -r | awk -F '\t' 'NR==1 { print $2 }') || err "failed to fetch releases from GitHub API"
+    ' | sort -r | awk -F '\t' 'NR==1 { print $2 }') || err "failed to fetch release tags from GitHub API"
     if [ -z "$FOUNDRYUP_TAG" ]; then
-      err "could not find a nightly release for ${FOUNDRYUP_REPO}"
+      err "could not find a nightly release tag for ${FOUNDRYUP_REPO}"
     fi
     say "resolved nightly release tag: ${FOUNDRYUP_TAG}"
     FOUNDRYUP_VERSION="nightly"
