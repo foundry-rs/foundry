@@ -4,7 +4,7 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 LL │         result = 2 << stateValue;
    │                  ━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
    ╭▸ ROOT/testdata/IncorrectShift.sol:LL:CC
@@ -12,7 +12,7 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 LL │         result = 8 >> localValue;
    │                  ━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
    ╭▸ ROOT/testdata/IncorrectShift.sol:LL:CC
@@ -20,7 +20,7 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 LL │         result = 16 << (stateValue + 1);
    │                  ━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
    ╭▸ ROOT/testdata/IncorrectShift.sol:LL:CC
@@ -28,7 +28,7 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 LL │         result = 32 >> getAmount();
    │                  ━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 
 warning[incorrect-shift]: the order of args in a shift operation is incorrect
    ╭▸ ROOT/testdata/IncorrectShift.sol:LL:CC
@@ -36,5 +36,5 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 LL │ …     result = 1 << (localValue > 10 ? localShiftAmount : stateShiftAmount);
    │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 
