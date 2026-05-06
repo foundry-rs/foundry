@@ -336,6 +336,45 @@ contract ExpectRevertWithReverterTest is Test {
         vm.expectRevert(innerReverter);
         new NestedDContractCreator();
     }
+
+    // https://github.com/foundry-rs/foundry/issues/14613
+    // `expectPartialRevert(bytes4, address)` must enforce the reverter for a
+    // top-level CREATE.
+    function testExpectPartialRevertWithReverterTopLevelCreate() public {
+        address expected = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        // `Reverted by DContract` triggers Solidity's `Error(string)` selector.
+        vm.expectPartialRevert(bytes4(keccak256("Error(string)")), expected);
+        new DContract();
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/14613
+    // `expectRevert(bytes4, address)` must enforce the reverter for a top-level CREATE.
+    function testExpectRevertWithBytes4SelectorAndReverterTopLevelCreate() public {
+        address expected = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.expectRevert(DCustomErrorContract.CustomError.selector, expected);
+        new DCustomErrorContract();
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/14613
+    // `expectRevert(address, uint64)` exercises the `count > 1` branch in
+    // `create_end`. CREATE2 with the same salt resolves to the same would-be
+    // address for both reverting deploys.
+    function testExpectRevertsWithReverterCountTopLevelCreate2() public {
+        bytes32 salt = bytes32(uint256(0x42));
+        address expected = vm.computeCreate2Address(salt, keccak256(type(DContract).creationCode), address(this));
+        vm.expectRevert(expected, 2);
+        new DContract{salt: salt}();
+        new DContract{salt: salt}();
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/14613
+    // CREATE2 deploys must also enforce the reverter address argument.
+    function testExpectRevertsWithReverterTopLevelCreate2() public {
+        bytes32 salt = bytes32(uint256(0xC0FFEE));
+        address expected = vm.computeCreate2Address(salt, keccak256(type(DContract).creationCode), address(this));
+        vm.expectRevert(expected);
+        new DContract{salt: salt}();
+    }
 }
 
 contract NestedDContractCreator {
@@ -343,6 +382,18 @@ contract NestedDContractCreator {
         new DContract();
     }
 }
+
+// Used by `testExpectRevertWithBytes4SelectorAndReverterTopLevelCreate`: constructor
+// reverts with a parameter-less custom error so the full revert data is exactly the
+// 4-byte selector.
+contract DCustomErrorContract {
+    error CustomError();
+
+    constructor() {
+        revert CustomError();
+    }
+}
+
 
 contract ExpectRevertCount is Test {
     function testRevertCountAny() public {

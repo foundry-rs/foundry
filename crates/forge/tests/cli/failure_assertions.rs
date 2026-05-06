@@ -70,9 +70,13 @@ Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
         .stdout_eq(
             r#"No files changed, compilation skipped
 ...
+[FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectPartialRevertWrongReverterTopLevelCreate() ([GAS])
+[FAIL: Reverter != expected reverter: [..] != [..]] testShouldFailExpectRevertNestedCreateOuterAddress() ([GAS])
+[FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectRevertWithBytesWrongReverterTopLevelCreate() ([GAS])
+[FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectRevertWrongReverterNestedCreate() ([GAS])
 [FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectRevertWrongReverterTopLevelCreate() ([GAS])
 [FAIL: next call did not revert as expected] testShouldFailExpectRevertsNotOnImmediateNextCall() ([GAS])
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
 ...
 "#,
         );

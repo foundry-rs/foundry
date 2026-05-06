@@ -97,13 +97,13 @@ impl BatchSendArgs {
 
         sh_println!("Building batch transaction with {} call(s)...", tempo_calls.len())?;
 
+        // Preserve key_id for modes that do not call build_with_access_key, such as unlocked.
+        if let Some(ref access_key) = tempo_access_key {
+            tx.tempo.key_id = Some(access_key.key_address);
+        }
+
         // Build transaction request with calls
         let mut builder = CastTxBuilder::<TempoNetwork, _, _>::new(&provider, tx, &config).await?;
-
-        // Set key_id for access key transactions
-        if let Some(ref access_key) = tempo_access_key {
-            builder.tx.set_key_id(access_key.key_address);
-        }
 
         // Access the inner tx and set calls
         builder.tx.calls = tempo_calls;
@@ -137,7 +137,8 @@ impl BatchSendArgs {
             };
 
             if let Some(ref access_key) = tempo_access_key {
-                let (tx_request, _) = builder.build(access_key.wallet_address).await?;
+                let (tx_request, _) =
+                    builder.build_with_access_key(access_key.wallet_address, access_key).await?;
                 maybe_print_resolved_lane(
                     resolved_lane.as_ref(),
                     tx_request.nonce().unwrap_or_default(),

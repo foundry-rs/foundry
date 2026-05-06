@@ -240,6 +240,42 @@ contract ExpectRevertWithReverterFailureTest is DSTest {
         vm.expectRevert(address(0xdead));
         new DContract();
     }
+
+    // https://github.com/foundry-rs/foundry/issues/14613
+    // Reverter is enforced even when an exact-bytes pattern is also supplied.
+    function testShouldFailExpectRevertWithBytesWrongReverterTopLevelCreate() public {
+        vm.expectRevert(abi.encodePacked("Reverted by DContract"), address(0xdead));
+        new DContract();
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/14613
+    // Reverter is enforced for `expectPartialRevert(bytes4, address)`.
+    function testShouldFailExpectPartialRevertWrongReverterTopLevelCreate() public {
+        vm.expectPartialRevert(bytes4(keccak256("Error(string)")), address(0xdead));
+        new DContract();
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/14613
+    // Wrong reverter for a nested CREATE chain must fail.
+    function testShouldFailExpectRevertWrongReverterNestedCreate() public {
+        vm.expectRevert(address(0xdead));
+        new NestedDContractCreator();
+    }
+
+    // https://github.com/foundry-rs/foundry/issues/14613
+    // Innermost-wins semantics: supplying the *outer* would-be address must
+    // fail; only the *innermost* (DContract) address matches.
+    function testShouldFailExpectRevertNestedCreateOuterAddress() public {
+        address outer = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.expectRevert(outer);
+        new NestedDContractCreator();
+    }
+}
+
+contract NestedDContractCreator {
+    constructor() {
+        new DContract();
+    }
 }
 
 contract ExpectRevertCountFailureTest is DSTest {
