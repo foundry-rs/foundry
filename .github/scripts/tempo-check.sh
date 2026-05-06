@@ -75,11 +75,18 @@ echo -e "\n=== FORGE SCRIPT (DEVNET) ==="
 forge script ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} script/Mail.s.sol --sig "run(string)" "$(date +%s%N)" --rpc-url "$ETH_RPC_URL"
 
 echo -e "\n=== CREATE AND FUND ADDRESS ==="
-wallet_json="$(cast wallet new --json)"
-ADDR="$(jq -r '.[0].address' <<<"$wallet_json")"
-PK="$(jq -r '.[0].private_key' <<<"$wallet_json")"
-printf "address: %s\nprivate_key: %s\n" "$ADDR" "$PK"
-fund_and_wait "$ADDR"
+if [[ -n "${PRIVATE_KEY:-}" ]]; then
+  echo "Using provided PRIVATE_KEY"
+  PK="$PRIVATE_KEY"
+  ADDR="$(cast wallet address "$PK")"
+  printf "address: %s\n" "$ADDR"
+else
+  wallet_json="$(cast wallet new --json)"
+  ADDR="$(jq -r '.[0].address' <<<"$wallet_json")"
+  PK="$(jq -r '.[0].private_key' <<<"$wallet_json")"
+  printf "address: %s\nprivate_key: %s\n" "$ADDR" "$PK"
+  fund_and_wait "$ADDR"
+fi
 
 echo -e "\n=== ADD AlphaUSD FEE TOKEN LIQUIDITY ==="
 if [[ ${#FEE_TOKEN_ARG[@]} -eq 0 ]]; then
