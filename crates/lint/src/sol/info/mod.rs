@@ -39,8 +39,8 @@ use pragma_directive::PRAGMA_INCONSISTENT;
 mod inline_assembly;
 use inline_assembly::INLINE_ASSEMBLY;
 
-mod contract_name_reused;
-use contract_name_reused::CONTRACT_NAME_REUSED;
+mod name_reused;
+use name_reused::NAME_REUSED;
 
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
@@ -57,5 +57,5 @@ register_lints!(
     (TooManyDigits, early, (TOO_MANY_DIGITS)),
     (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
     (InlineAssembly, early, (INLINE_ASSEMBLY)),
-    (ContractNameReused, project, (CONTRACT_NAME_REUSED)),
+    (NameReused, project, (NAME_REUSED)),
 );

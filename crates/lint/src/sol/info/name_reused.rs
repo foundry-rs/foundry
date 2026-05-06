@@ -1,20 +1,20 @@
 use crate::{
     linter::{Lint, ProjectLintEmitter, ProjectLintPass, ProjectSource},
-    sol::{Severity, SolLint, info::ContractNameReused},
+    sol::{Severity, SolLint, info::NameReused},
 };
 use solar::{ast::ItemKind, interface::Span};
 use std::collections::BTreeMap;
 
 declare_forge_lint!(
-    CONTRACT_NAME_REUSED,
+    NAME_REUSED,
     Severity::Info,
     "name-reused",
     "contract name is reused across multiple source files"
 );
 
-impl<'ast> ProjectLintPass<'ast> for ContractNameReused {
+impl<'ast> ProjectLintPass<'ast> for NameReused {
     fn check_project(&mut self, ctx: &ProjectLintEmitter<'_, '_>, sources: &[ProjectSource<'ast>]) {
-        if !ctx.is_lint_enabled(CONTRACT_NAME_REUSED.id()) {
+        if !ctx.is_lint_enabled(NAME_REUSED.id()) {
             return;
         }
 
@@ -59,7 +59,7 @@ impl<'ast> ProjectLintPass<'ast> for ContractNameReused {
                     .collect::<Vec<_>>()
                     .join(", ");
                 let msg = format!("contract name `{name}` is also defined in: {others}");
-                ctx.emit_with_msg(&sources[*idx], &CONTRACT_NAME_REUSED, *span, msg);
+                ctx.emit_with_msg(&sources[*idx], &NAME_REUSED, *span, msg);
             }
         }
     }

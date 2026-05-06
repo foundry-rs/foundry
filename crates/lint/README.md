@@ -37,6 +37,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `interface-file-naming`: Interface file names should be prefixed with `I`.
   - `interface-naming`: Interface names should be prefixed with `I`.
   - `pragma-inconsistent`: Flags projects whose source files declare different Solidity pragma version requirements.
+  - `name-reused`: Flags contract, interface, library, or abstract contract names that are reused across multiple source files in the project.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
