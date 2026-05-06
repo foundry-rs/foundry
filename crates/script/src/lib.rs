@@ -271,6 +271,29 @@ const fn should_default_tempo_fee_token(
     is_tempo_network && tempo.common.fee_token.is_none() && (batch || tempo.is_tempo())
 }
 
+/// Returns whether script broadcasts on a Tempo network should force `eth_estimateGas`
+/// re-estimation against the RPC node before submitting each transaction.
+///
+/// Plain `--network tempo` produces an ordinary EIP-1559/legacy transaction (see
+/// `tempo-alloy::TempoTransactionRequest::output_tx_type`), and the local simulation gas
+/// estimate is sufficient for those flows. Forcing RPC re-estimation in that case can
+/// surface node-side errors (e.g. `gas required exceeds allowance (0)` when the sender's
+/// native balance is at or near zero relative to `--gas-price`) on flows that previously
+/// worked fine, including Ledger-signed broadcasts.
+///
+/// Re-estimation is only forced when the user has actually opted into Tempo AA semantics:
+///
+/// - `--batch` (Tempo batch transactions are AA), or
+/// - any explicit `--tempo.*` flag (sponsor, expiring nonce, nonce key/lane, etc.) which
+///   forces a Tempo AA transaction shape and benefits from node-side gas estimation.
+pub(crate) const fn needs_tempo_aa_rpc_estimate(
+    is_tempo_network: bool,
+    batch: bool,
+    tempo: &TempoOpts,
+) -> bool {
+    is_tempo_network && (batch || tempo.is_tempo())
+}
+
 impl ScriptArgs {
     /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
@@ -964,6 +987,44 @@ mod tests {
         let tempo = TempoOpts::default();
         assert!(!should_default_tempo_fee_token(false, false, &tempo));
         assert!(!should_default_tempo_fee_token(false, true, &tempo));
+    }
+
+    /// Plain `--network tempo` must NOT force `eth_estimateGas` re-estimation. The local
+    /// simulation gas estimate is enough for plain EIP-1559/legacy Tempo txs and forcing
+    /// node-side estimation can surface "gas required exceeds allowance (0)" failures on
+    /// flows that previously worked, including Ledger-signed broadcasts.
+    #[test]
+    fn network_tempo_alone_does_not_force_rpc_estimate() {
+        let tempo = TempoOpts::default();
+        assert!(!needs_tempo_aa_rpc_estimate(true, false, &tempo));
+    }
+
+    /// `--batch` requires Tempo AA semantics, so RPC re-estimation must remain on.
+    #[test]
+    fn batch_forces_rpc_estimate() {
+        let tempo = TempoOpts::default();
+        assert!(needs_tempo_aa_rpc_estimate(true, true, &tempo));
+    }
+
+    /// Explicit Tempo AA opt-ins keep RPC re-estimation on.
+    #[test]
+    fn explicit_tempo_aa_opts_force_rpc_estimate() {
+        let tempo = TempoOpts::try_parse_from(["", "--tempo.fee-token", "1"]).unwrap();
+        assert!(needs_tempo_aa_rpc_estimate(true, false, &tempo));
+
+        let tempo = TempoOpts::try_parse_from(["", "--tempo.nonce-key", "1"]).unwrap();
+        assert!(needs_tempo_aa_rpc_estimate(true, false, &tempo));
+
+        let tempo = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
+        assert!(needs_tempo_aa_rpc_estimate(true, false, &tempo));
+    }
+
+    /// Non-Tempo networks must never force Tempo-specific RPC re-estimation.
+    #[test]
+    fn non_tempo_network_never_forces_rpc_estimate() {
+        let tempo = TempoOpts::default();
+        assert!(!needs_tempo_aa_rpc_estimate(false, false, &tempo));
+        assert!(!needs_tempo_aa_rpc_estimate(false, true, &tempo));
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use std::{cmp::Ordering, num::NonZeroU64, sync::Arc, time::Duration};
 
 use crate::{
-    ScriptArgs, ScriptConfig, build::LinkedBuildData, progress::ScriptProgress,
-    sequence::ScriptSequenceKind, verify::BroadcastedState,
+    ScriptArgs, ScriptConfig, build::LinkedBuildData, needs_tempo_aa_rpc_estimate,
+    progress::ScriptProgress, sequence::ScriptSequenceKind, verify::BroadcastedState,
 };
 use alloy_chains::{Chain, NamedChain};
 use alloy_consensus::{SignableTransaction, Signed};
@@ -554,7 +554,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     .collect::<Result<Vec<_>>>()?;
 
                 let estimate_via_rpc = has_different_gas_calc(sequence.chain)
-                    || self.script_config.evm_opts.networks.is_tempo()
+                    || needs_tempo_aa_rpc_estimate(
+                        self.script_config.evm_opts.networks.is_tempo(),
+                        self.script_config.batch,
+                        &self.script_config.tempo,
+                    )
                     || self.args.skip_simulation;
 
                 // We only wait for a transaction receipt before sending the next transaction, if
