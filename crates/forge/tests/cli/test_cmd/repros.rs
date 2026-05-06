@@ -793,9 +793,19 @@ import {Test} from "forge-std/Test.sol";
 contract Issue10463Test is Test {
     event Foo();
 
+    error CustomError(uint256 code);
+
     function revertingBefore(bool shouldRevert) external {
         if (shouldRevert) revert();
         emit Foo();
+    }
+
+    function revertingWithReason() external pure {
+        revert("revert reason");
+    }
+
+    function revertingWithCustomError() external pure {
+        revert CustomError(42);
     }
 
     function testExpectEmitPreservesRevertWhenCallRevertsBeforeLog() public {
@@ -804,15 +814,31 @@ contract Issue10463Test is Test {
 
         this.revertingBefore(true);
     }
+
+    function testExpectEmitPreservesRevertReason() public {
+        vm.expectEmit();
+        emit Foo();
+
+        this.revertingWithReason();
+    }
+
+    function testExpectEmitPreservesCustomError() public {
+        vm.expectEmit();
+        emit Foo();
+
+        this.revertingWithCustomError();
+    }
 }
 "#,
     );
 
     cmd.arg("test").assert_failure().stdout_eq(str![[r#"
 ...
-Ran 1 test for test/Issue10463.t.sol:Issue10463Test
+Ran 3 tests for test/Issue10463.t.sol:Issue10463Test
+[FAIL: CustomError(42)] testExpectEmitPreservesCustomError() ([GAS])
+[FAIL: revert reason] testExpectEmitPreservesRevertReason() ([GAS])
 [FAIL: EvmError: Revert] testExpectEmitPreservesRevertWhenCallRevertsBeforeLog() ([GAS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 });

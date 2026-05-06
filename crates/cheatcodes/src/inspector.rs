@@ -1531,9 +1531,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // mode
         let diag = self.fork_revert_diagnostic.take();
 
-        // If we already have a revert, we shouldn't run the below logic as we want to
-        // preserve the original revert before running expect* validations that can only report
-        // secondary failures about successful calls.
+        // If the call already reverted, preserve that primary failure and skip post-call
+        // expect* validation so it cannot overwrite the original revert.
         if outcome.result.is_revert() {
             // if there's a revert and a previous call was diagnosed as fork related revert then we
             // can return a better error here
