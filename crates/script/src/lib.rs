@@ -248,6 +248,29 @@ pub struct ScriptArgs {
     pub retry: RetryArgs,
 }
 
+/// Returns whether script broadcasts on a Tempo network should default the Tempo
+/// `fee_token` to [`PATH_USD_ADDRESS`].
+///
+/// Plain `--network tempo` (or any other selection that just sets the network to Tempo) does
+/// **not** by itself imply a Tempo AA / type `0x76` transaction. We must only default the fee
+/// token when the user has actually opted into Tempo AA semantics, otherwise routing every
+/// unsigned broadcast tx through `TempoOpts::apply` would force ordinary EVM-style script
+/// transactions into Tempo AA, which breaks signers that only know how to sign ordinary
+/// Ethereum transactions (notably the Ledger Ethereum app, which returns an empty response).
+///
+/// We therefore gate defaulting on:
+///
+/// - `--batch` (Tempo batch transactions are themselves Tempo AA and require a fee token), or
+/// - any explicit `--tempo.*` flag (sponsor, expiring nonce, nonce key/lane, etc.) which already
+///   forces a Tempo AA transaction shape and benefits from a sensible default fee token.
+const fn should_default_tempo_fee_token(
+    is_tempo_network: bool,
+    batch: bool,
+    tempo: &TempoOpts,
+) -> bool {
+    is_tempo_network && tempo.common.fee_token.is_none() && (batch || tempo.is_tempo())
+}
+
 impl ScriptArgs {
     /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
@@ -290,7 +313,7 @@ impl ScriptArgs {
         let mut tempo = self.tempo.clone();
         tempo.resolve_expires();
 
-        if evm_opts.networks.is_tempo() && tempo.common.fee_token.is_none() {
+        if should_default_tempo_fee_token(evm_opts.networks.is_tempo(), self.batch, &tempo) {
             tempo.common.fee_token = Some(PATH_USD_ADDRESS);
         }
 
@@ -883,6 +906,64 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--tempo.nonce-key", "1"]);
 
         assert_eq!(args.tempo.nonce_key, Some(U256::from(1)));
+    }
+
+    /// Plain `--network tempo` must NOT default `tempo.common.fee_token` to
+    /// `PATH_USD_ADDRESS`, otherwise every unsigned broadcast transaction is forced
+    /// into Tempo AA / type `0x76` and signers that only know ordinary Ethereum
+    /// transactions (e.g. the Ledger Ethereum app) reject it with
+    /// "received an unexpected empty response".
+    #[test]
+    fn network_tempo_alone_does_not_default_fee_token() {
+        let tempo = TempoOpts::default();
+        assert!(!should_default_tempo_fee_token(true, false, &tempo));
+    }
+
+    /// `--batch` requires Tempo AA semantics, so we still default the fee token.
+    #[test]
+    fn batch_defaults_fee_token() {
+        let tempo = TempoOpts::default();
+        assert!(should_default_tempo_fee_token(true, true, &tempo));
+    }
+
+    /// Explicit `--tempo.fee-token` from the user must always win over the default.
+    #[test]
+    fn explicit_fee_token_is_preserved() {
+        let tempo = TempoOpts::try_parse_from(["", "--tempo.fee-token", "1"]).unwrap();
+        assert!(tempo.common.fee_token.is_some());
+        // Even with `--batch` the predicate should report "no default needed", since the
+        // user already supplied a fee token.
+        assert!(!should_default_tempo_fee_token(true, true, &tempo));
+        assert!(!should_default_tempo_fee_token(true, false, &tempo));
+    }
+
+    /// Explicit Tempo AA opt-ins (sponsor, expiring-nonce, nonce-key, lane, ...) keep the
+    /// default fee-token convenience that existed before the regression fix.
+    #[test]
+    fn explicit_tempo_aa_opts_default_fee_token() {
+        let tempo = TempoOpts::try_parse_from([
+            "",
+            "--tempo.sponsor",
+            "0x1111111111111111111111111111111111111111",
+            "--tempo.sponsor-signer",
+            "env://TEMPO_SPONSOR_PK",
+        ])
+        .unwrap();
+        assert!(should_default_tempo_fee_token(true, false, &tempo));
+
+        let tempo = TempoOpts::try_parse_from(["", "--tempo.nonce-key", "1"]).unwrap();
+        assert!(should_default_tempo_fee_token(true, false, &tempo));
+
+        let tempo = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
+        assert!(should_default_tempo_fee_token(true, false, &tempo));
+    }
+
+    /// Non-Tempo networks must never default the fee token regardless of other flags.
+    #[test]
+    fn non_tempo_network_never_defaults_fee_token() {
+        let tempo = TempoOpts::default();
+        assert!(!should_default_tempo_fee_token(false, false, &tempo));
+        assert!(!should_default_tempo_fee_token(false, true, &tempo));
     }
 
     #[test]
