@@ -531,7 +531,7 @@ fn render_function_section(
     page_path: &Path,
     inherited: Option<&hir_ext::InheritedDoc>,
 ) {
-    let heading = function_heading(f);
+    let heading = function_heading(f, ctx);
     writeln!(out, "### {heading}").unwrap();
     writeln!(out).unwrap();
     let mut c = collect_comments(docs, name_to_page, page_path);
@@ -542,14 +542,10 @@ fn render_function_section(
             inherited.notices.iter().map(|s| sanitize(s)).collect();
         let inherited_devs: Vec<String> = inherited.devs.iter().map(|s| sanitize(s)).collect();
         if c.notices.is_empty() {
-            let mut new_desc: Vec<String> = inherited_notices.clone();
-            new_desc.append(&mut c.descriptions);
-            c.descriptions = new_desc;
-            c.notices.extend_from_slice(&inherited_notices);
+            c.notices = inherited_notices;
         }
         if c.devs.is_empty() {
-            c.devs.extend_from_slice(&inherited_devs);
-            c.descriptions.extend_from_slice(&inherited_devs);
+            c.devs = inherited_devs;
         }
         for (name, desc) in &inherited.params {
             if !c.params.iter().any(|(n, _)| n == name) {
@@ -572,15 +568,40 @@ fn render_function_section(
     }
 }
 
-fn function_heading(f: &ItemFunction<'_>) -> String {
+fn function_heading(f: &ItemFunction<'_>, ctx: &Ctx<'_>) -> String {
     match f.kind {
-        FunctionKind::Constructor => "constructor".to_string(),
+        FunctionKind::Constructor => {
+            format!("constructor{}", param_type_signature(&f.header.parameters, ctx))
+        }
         FunctionKind::Fallback => "fallback".to_string(),
         FunctionKind::Receive => "receive".to_string(),
         FunctionKind::Function | FunctionKind::Modifier => {
-            f.header.name.map(|n| n.as_str().to_string()).unwrap_or_else(|| "function".to_string())
+            let name = f
+                .header
+                .name
+                .map(|n| n.as_str().to_string())
+                .unwrap_or_else(|| "function".to_string());
+            // Include parameter type signature so overloads (same name, different
+            // parameter list) are visually distinct in headings and the vocs sidebar.
+            format!("{name}{}", param_type_signature(&f.header.parameters, ctx))
         }
     }
+}
+
+/// Build a `(type1, type2, ...)` signature string from a parameter list, useful for
+/// disambiguating overloaded functions in headings.
+fn param_type_signature(params: &ParameterList<'_>, ctx: &Ctx<'_>) -> String {
+    let mut out = String::from("(");
+    let mut first = true;
+    for var in params.iter() {
+        if !first {
+            out.push_str(", ");
+        }
+        first = false;
+        out.push_str(ctx.snippet(var.ty.span).trim());
+    }
+    out.push(')');
+    out
 }
 
 // ── natspec comment collection ────────────────────────────────────────────────
@@ -588,13 +609,10 @@ fn function_heading(f: &ItemFunction<'_>) -> String {
 struct CommentData {
     titles: Vec<String>,
     authors: Vec<String>,
-    /// Real `@notice` items (used for inheritdoc merging and frontmatter description).
+    /// `@notice` paragraphs, in source order, with continuation lines joined.
     notices: Vec<String>,
-    /// Real `@dev` items (used for inheritdoc merging).
+    /// `@dev` paragraphs, in source order, with continuation lines joined.
     devs: Vec<String>,
-    /// All notice/dev text in source order, with continuation lines joined to their parent.
-    /// Used for rendering to preserve correct paragraph ordering.
-    descriptions: Vec<String>,
     params: Vec<(String, String)>,
     returns: Vec<(String, String)>,
     customs: Vec<(String, String)>,
@@ -602,12 +620,20 @@ struct CommentData {
     unnamed_param_names: Vec<String>,
 }
 
+/// Tracks which description vec received the most recent push, so that solar continuation
+/// lines (synthetic `@notice` items with no `@` tag) can be appended to the right paragraph.
+#[derive(Clone, Copy)]
+enum LastDesc {
+    Notice,
+    Dev,
+}
+
 /// Collect natspec from doc comments, applying inline link replacement.
 ///
 /// Solar emits each `///` line as a separate `DocComment`. Lines without a `@` tag become
 /// synthetic `@notice` items with leading whitespace in their raw content. We detect these
-/// continuation lines and join them to the previous description paragraph so that multi-line
-/// natspec tags appear as a single coherent block in the right source order.
+/// continuation lines and join them to the previous description paragraph (notice or dev)
+/// so that multi-line natspec tags appear as a single coherent block.
 fn collect_comments(
     docs: &DocComments<'_>,
     name_to_page: &NameToPage,
@@ -618,7 +644,6 @@ fn collect_comments(
         authors: Vec::new(),
         notices: Vec::new(),
         devs: Vec::new(),
-        descriptions: Vec::new(),
         params: Vec::new(),
         returns: Vec::new(),
         customs: Vec::new(),
@@ -633,6 +658,8 @@ fn collect_comments(
     // Track whether the previous DocComment was blank (empty natspec), which signals a
     // paragraph break even between continuation lines.
     let mut prev_doc_was_blank = false;
+    // Which vec received the most recent description push (for continuation joining).
+    let mut last_desc: Option<LastDesc> = None;
 
     for doc in docs.iter() {
         if doc.natspec.is_empty() {
@@ -658,13 +685,19 @@ fn collect_comments(
             // Apply inline {Ident} -> markdown link replacement.
             let content = hir_ext::replace_inline_links(trimmed, name_to_page, page_path);
 
-            if is_continuation && !prev_doc_was_blank && !data.descriptions.is_empty() {
-                // Append to the previous description paragraph (same tag, no blank between).
-                let last = data.descriptions.last_mut().unwrap();
-                last.push('\n');
-                last.push_str(&content);
-                prev_doc_was_blank = false;
-                continue;
+            if is_continuation
+                && !prev_doc_was_blank
+                && let Some(kind) = last_desc
+            {
+                let last = match kind {
+                    LastDesc::Notice => data.notices.last_mut(),
+                    LastDesc::Dev => data.devs.last_mut(),
+                };
+                if let Some(last) = last {
+                    last.push('\n');
+                    last.push_str(&content);
+                    continue;
+                }
             }
 
             prev_doc_was_blank = false;
@@ -673,12 +706,12 @@ fn collect_comments(
                 NatSpecKind::Title => data.titles.push(content),
                 NatSpecKind::Author => data.authors.push(content),
                 NatSpecKind::Notice => {
-                    data.notices.push(content.clone());
-                    data.descriptions.push(content);
+                    data.notices.push(content);
+                    last_desc = Some(LastDesc::Notice);
                 }
                 NatSpecKind::Dev => {
-                    data.devs.push(content.clone());
-                    data.descriptions.push(content);
+                    data.devs.push(content);
+                    last_desc = Some(LastDesc::Dev);
                 }
                 NatSpecKind::Param { name } => {
                     data.params.push((name.as_str().to_string(), content))
@@ -742,11 +775,19 @@ fn write_frontmatter(out: &mut String, title: &str, description: Option<&str>) {
     writeln!(out, "---").unwrap();
     writeln!(out, "title: {title}").unwrap();
     if let Some(desc) = description {
-        let truncated: String = desc.chars().take(120).collect();
-        writeln!(out, "description: \"{truncated}\"").unwrap();
+        writeln!(out, "description: \"{}\"", yaml_escape_description(desc, 120)).unwrap();
     }
     writeln!(out, "---").unwrap();
     writeln!(out).unwrap();
+}
+
+/// Sanitize a natspec description for use as a YAML double-quoted scalar in vocs frontmatter:
+/// collapse whitespace (notices may span multiple lines after continuation joining), escape
+/// `\` and `"`, then truncate to `max_chars` characters.
+fn yaml_escape_description(desc: &str, max_chars: usize) -> String {
+    let collapsed: String = desc.split_whitespace().collect::<Vec<_>>().join(" ");
+    let truncated: String = collapsed.chars().take(max_chars).collect();
+    truncated.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn write_comment_block(out: &mut String, data: &CommentData) {
@@ -760,9 +801,24 @@ fn write_comment_block(out: &mut String, data: &CommentData) {
         writeln!(out, "**{label}:** {}", data.authors.join(", ")).unwrap();
         writeln!(out).unwrap();
     }
-    // Render descriptions in source order (notices and devs interleaved, continuations joined).
-    for desc in &data.descriptions {
-        writeln!(out, "{desc}").unwrap();
+    // Render `@notice` paragraphs first (plain), then `@dev` paragraphs (italic) so that
+    // dev notes are visually distinct from primary documentation.
+    for notice in &data.notices {
+        writeln!(out, "{notice}").unwrap();
+        writeln!(out).unwrap();
+    }
+    for dev in &data.devs {
+        // Italicize each non-empty line so multi-line `@dev` blocks remain a single
+        // italic paragraph in markdown.
+        let italic = dev
+            .lines()
+            .map(|l| {
+                let t = l.trim();
+                if t.is_empty() { String::new() } else { format!("_{t}_") }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        writeln!(out, "{italic}").unwrap();
         writeln!(out).unwrap();
     }
     if !data.customs.is_empty() {
