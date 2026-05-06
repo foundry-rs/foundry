@@ -241,6 +241,39 @@ contract ExpectRevertWithReverterFailureTest is DSTest {
         vm.expectRevert(address(0xdead));
         new DContract();
     }
+
+    // <https://github.com/foundry-rs/foundry/issues/14613>
+    // Regression: must fail because the reverter address argument is enforced
+    // even when an exact-bytes pattern is also supplied for a top-level CREATE.
+    function testShouldFailExpectRevertWithBytesWrongReverterTopLevelCreate() public {
+        vm.expectRevert(abi.encodePacked("Reverted by DContract"), address(0xdead));
+        new DContract();
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/14613>
+    // Regression: must fail because the reverter address argument is enforced
+    // for `expectPartialRevert(bytes4, address)` against a top-level CREATE.
+    function testShouldFailExpectPartialRevertWrongReverterTopLevelCreate() public {
+        vm.expectPartialRevert(bytes4(keccak256("Error(string)")), address(0xdead));
+        new DContract();
+    }
+
+    // <https://github.com/foundry-rs/foundry/issues/14613>
+    // Regression: must fail when the innermost reverting frame is a nested
+    // CREATE and the reverter address argument does not match the would-be
+    // deployed address of the failed deployment.
+    function testShouldFailExpectRevertWrongReverterNestedCreate() public {
+        vm.expectRevert(address(0xdead));
+        new NestedDContractCreator();
+    }
+}
+
+// Used by `testShouldFailExpectRevertWrongReverterNestedCreate`: a contract whose
+// constructor directly creates another contract that reverts.
+contract NestedDContractCreator {
+    constructor() {
+        new DContract();
+    }
 }
 
 contract ExpectRevertCountFailureTest is DSTest {

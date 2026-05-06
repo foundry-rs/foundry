@@ -330,6 +330,16 @@ contract ExpectRevertWithReverterTest is Test {
         vm.expectRevert(expected);
         new NestedDContractCreator();
     }
+
+    // <https://github.com/foundry-rs/foundry/issues/14613>
+    // Regression: `expectPartialRevert(bytes4, address)` overload must enforce
+    // the reverter address argument when matching a top-level CREATE revert.
+    function testExpectPartialRevertWithReverterTopLevelCreate() public {
+        address expected = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        // `Reverted by DContract` triggers Solidity's `Error(string)` selector.
+        vm.expectPartialRevert(bytes4(keccak256("Error(string)")), expected);
+        new DContract();
+    }
 }
 
 // Used by `testExpectRevertsWithReverterNestedCreate`: a contract whose constructor
