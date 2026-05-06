@@ -57,20 +57,19 @@ pub async fn check_tx_status<N: Network>(
 
                     // Receipt is pending, try to sleep and retry a few times
                     match provider.get_transaction_by_hash(hash).await {
-                        Ok(_) => {
+                        Ok(Some(_)) => {
                             // Sleep for a short time to allow the transaction to be mined
                             tokio::time::sleep(Duration::from_millis(500)).await;
                             // Transaction is still known to the node, retry
                             Err(RetryError::Retry(PendingReceiptError { tx_hash: hash }.into()))
                         }
-                        Err(_) => {
-                            // Transaction is not known to the node, mark it as dropped
-                            Ok(TxStatus::Dropped)
-                        }
+                        // Tx unknown to the node (rejected/dropped) or transport error: mark
+                        // dropped instead of polling forever.
+                        Ok(None) | Err(_) => Ok(TxStatus::Dropped),
                     }
                 }
                 Err(e) => match provider.get_transaction_by_hash(hash).await {
-                    Ok(_) => match e {
+                    Ok(Some(_)) => match e {
                         PendingTransactionError::TxWatcher(WatchTxError::Timeout) => {
                             Err(RetryError::Continue(eyre!(
                                 "tx is still known to the node, waiting for receipt"
@@ -78,7 +77,7 @@ pub async fn check_tx_status<N: Network>(
                         }
                         _ => Err(RetryError::Retry(e.into())),
                     },
-                    Err(_) => Ok(TxStatus::Dropped),
+                    Ok(None) | Err(_) => Ok(TxStatus::Dropped),
                 },
             }
         })
