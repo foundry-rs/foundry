@@ -1531,18 +1531,15 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // mode
         let diag = self.fork_revert_diagnostic.take();
 
-        // if there's a revert and a previous call was diagnosed as fork related revert then we can
-        // return a better error here
-        if outcome.result.is_revert()
-            && let Some(err) = diag
-        {
-            outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
-            return;
-        }
-
-        // Preserve the original revert before running expect* validations that can only report
+        // If we already have a revert, we shouldn't run the below logic as we want to
+        // preserve the original revert before running expect* validations that can only report
         // secondary failures about successful calls.
         if outcome.result.is_revert() {
+            // if there's a revert and a previous call was diagnosed as fork related revert then we can
+            // return a better error here
+            if let Some(err) = diag {
+                outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
+            }
             return;
         }
 
