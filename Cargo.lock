@@ -5219,7 +5219,6 @@ dependencies = [
  "path-slash",
  "rayon",
  "regex",
- "reqwest 0.13.3",
  "semver 1.0.28",
  "serde",
  "serde_json",
