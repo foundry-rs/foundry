@@ -115,6 +115,17 @@ impl EvmFuzzState {
         }
     }
 
+    /// Collects typed trace-cmp operands from sancov-instrumented code.
+    /// Values are inserted into both persistent state values (survive reverts) and typed
+    /// sample buckets (for ABI-aware mutation).
+    pub fn collect_typed_cmp_values(&self, values: impl IntoIterator<Item = (u8, B256)>) {
+        let mut dict = self.inner.write();
+        for (width, value) in values {
+            dict.insert_persistent_value(value);
+            dict.insert_typed_cmp_value(width, value);
+        }
+    }
+
     /// Removes all newly added entries from the dictionary.
     ///
     /// Should be called between fuzz/invariant runs to avoid accumulating data derived from fuzz
@@ -141,6 +152,9 @@ impl EvmFuzzState {
 
 // We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
 // for performance when iterating over the sets.
+/// Maximum number of persistent values from sancov trace-cmp.
+const MAX_PERSISTENT_VALUES: usize = 2048;
+
 pub struct FuzzDictionary {
     /// Collected state values.
     state_values: B256IndexSet,
@@ -164,6 +178,8 @@ pub struct FuzzDictionary {
     /// Set to `true` on first call to `seed_samples()`. Before seeding, `samples()` checks both
     /// maps separately. After seeding, literals are merged in, so only `sample_values` is checked.
     samples_seeded: bool,
+    /// Persistent values from sancov trace-cmp that survive `revert()` across runs.
+    persistent_values: B256IndexSet,
 
     misses: usize,
     hits: usize,
@@ -174,6 +190,7 @@ impl fmt::Debug for FuzzDictionary {
         f.debug_struct("FuzzDictionary")
             .field("state_values", &self.state_values.len())
             .field("addresses", &self.addresses)
+            .field("persistent_values", &self.persistent_values.len())
             .finish()
     }
 }
@@ -196,6 +213,7 @@ impl FuzzDictionary {
             db_addresses: Default::default(),
             sample_values: Default::default(),
             literal_values: Default::default(),
+            persistent_values: Default::default(),
             misses: Default::default(),
             hits: Default::default(),
         };
@@ -319,7 +337,8 @@ impl FuzzDictionary {
             self.insert_push_bytes_values(address, &account.info);
             // Insert storage values.
             if self.config.include_storage {
-                let storage_layout = storage_layouts.get(address).cloned();
+                let slot_identifier =
+                    storage_layouts.get(address).map(|layout| SlotIdentifier::new(layout.clone()));
                 trace!(
                     "{address:?} has mapping_slots {}",
                     mapping_slots.is_some_and(|m| m.contains_key(address))
@@ -329,7 +348,7 @@ impl FuzzDictionary {
                     self.insert_storage_value(
                         slot,
                         &value.present_value,
-                        storage_layout.as_deref(),
+                        slot_identifier.as_ref(),
                         mapping_slots,
                     );
                 }
@@ -372,7 +391,7 @@ impl FuzzDictionary {
         &mut self,
         slot: &U256,
         value: &U256,
-        layout: Option<&StorageLayout>,
+        slot_identifier: Option<&SlotIdentifier>,
         mapping_slots: Option<&MappingSlots>,
     ) {
         let slot = B256::from(*slot);
@@ -381,11 +400,11 @@ impl FuzzDictionary {
         // Always insert the slot itself
         self.insert_value(slot);
 
-        // If we have a storage layout, use SlotIdentifier for better type identification
-        if let Some(slot_identifier) =
-            layout.map(|l| SlotIdentifier::new(l.clone().into()))
-            // Identify Slot Type
-            && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots) && slot_info.decode(value).is_some()
+        // If we have a storage layout, use SlotIdentifier for better type identification.
+        if let Some(slot_identifier) = slot_identifier
+            // Identify slot type.
+            && let Some(slot_info) = slot_identifier.identify(&slot, mapping_slots)
+            && slot_info.decode(value).is_some()
         {
             trace!(?slot_info, "inserting typed storage value");
             if !self.samples_seeded {
@@ -418,6 +437,50 @@ impl FuzzDictionary {
             *counter += 1;
         }
         insert
+    }
+
+    /// Insert a persistent value that survives `revert()` across invariant runs.
+    /// Used for trace-cmp operands that should compound over time.
+    fn insert_persistent_value(&mut self, value: B256) {
+        if self.persistent_values.len() >= MAX_PERSISTENT_VALUES {
+            return;
+        }
+        if self.persistent_values.insert(value) && self.state_values.insert(value) {
+            self.db_state_values += 1;
+        }
+    }
+
+    /// Insert a typed trace-cmp value into the `sample_values` map.
+    /// Maps sancov width to `DynSolType` buckets and promotes to larger types.
+    fn insert_typed_cmp_value(&mut self, width: u8, value: B256) {
+        if !self.samples_seeded {
+            self.seed_samples();
+        }
+
+        const MAX_TYPED_CMP_PER_BUCKET: usize = 1024;
+
+        let native_type = match width {
+            8 => DynSolType::Uint(8),
+            16 => DynSolType::Uint(16),
+            32 => DynSolType::Uint(32),
+            64 => DynSolType::Uint(64),
+            _ => DynSolType::Uint(256),
+        };
+
+        let insert = |map: &mut HashMap<DynSolType, B256IndexSet>, ty: DynSolType, val: B256| {
+            let bucket = map.entry(ty).or_default();
+            if bucket.len() < MAX_TYPED_CMP_PER_BUCKET {
+                bucket.insert(val);
+            }
+        };
+
+        insert(&mut self.sample_values, native_type, value);
+
+        if width <= 64 {
+            insert(&mut self.sample_values, DynSolType::Uint(128), value);
+            insert(&mut self.sample_values, DynSolType::Uint(256), value);
+            insert(&mut self.sample_values, DynSolType::Int(256), value);
+        }
     }
 
     fn insert_value_u256(&mut self, value: U256) -> bool {
@@ -459,7 +522,7 @@ impl FuzzDictionary {
         }
     }
 
-    pub fn values(&self) -> &B256IndexSet {
+    pub const fn values(&self) -> &B256IndexSet {
         &self.state_values
     }
 
@@ -498,7 +561,7 @@ impl FuzzDictionary {
     }
 
     #[inline]
-    pub fn addresses(&self) -> &AddressIndexSet {
+    pub const fn addresses(&self) -> &AddressIndexSet {
         &self.addresses
     }
 

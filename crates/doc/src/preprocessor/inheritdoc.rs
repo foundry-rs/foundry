@@ -1,7 +1,6 @@
 use super::{Preprocessor, PreprocessorId};
 use crate::{
     Comments, Document, ParseItem, ParseSource, PreprocessorOutput, document::DocumentContent,
-    solang_ext::SafeUnwrap,
 };
 use alloy_primitives::map::HashMap;
 
@@ -72,7 +71,7 @@ impl Inheritdoc {
         for candidate in documents {
             if let DocumentContent::Single(ref item) = candidate.content
                 && let ParseSource::Contract(ref contract) = item.source
-                && base == contract.name.safe_unwrap().name
+                && base == contract.name
             {
                 // Not matched for the contract because it's a noop
                 // https://docs.soliditylang.org/en/v0.8.17/natspec-format.html#tags

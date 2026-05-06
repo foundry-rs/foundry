@@ -29,11 +29,19 @@ const SETTINGS_OVERRIDES_KEYS: &[&str] =
 /// causing the default serialization to produce an empty dict.
 const VYPER_KEYS: &[&str] = &["optimize", "path", "experimental_codegen"];
 
+/// Allowed keys for DocConfig.
+/// Required because DocConfig uses `skip_serializing_if = "Option::is_none"` on some fields
+/// (`repository`, `path`), whose defaults are `None` and thus excluded from serialization.
+const DOC_KEYS: &[&str] = &["out", "title", "book", "homepage", "repository", "path", "ignore"];
+
 /// Reserved keys that should not trigger unknown key warnings.
 const RESERVED_KEYS: &[&str] = &["extends"];
 
 /// Keys kept for backward compatibility that should not trigger unknown key warnings.
-const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version"];
+///
+/// `tempo` and `optimism` are legacy aliases for `network = "tempo"` / `network = "optimism"` —
+/// still accepted on input but no longer serialized in the default config.
+const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version", "tempo", "optimism"];
 
 /// Generate warnings for unknown sections and deprecated keys
 pub struct WarningsProvider<P> {
@@ -84,14 +92,10 @@ impl<P: Provider> WarningsProvider<P> {
         // Add warning for deprecated keys.
         let deprecated_key_warning = |key| {
             DEPRECATIONS.iter().find_map(|(deprecated_key, new_value)| {
-                if key == *deprecated_key {
-                    Some(Warning::DeprecatedKey {
-                        old: deprecated_key.to_string(),
-                        new: new_value.to_string(),
-                    })
-                } else {
-                    None
-                }
+                (key == *deprecated_key).then(|| Warning::DeprecatedKey {
+                    old: deprecated_key.to_string(),
+                    new: new_value.to_string(),
+                })
             })
         };
         let profiles = data
@@ -192,6 +196,8 @@ impl<P: Provider> WarningsProvider<P> {
             // so the default serialization produces an empty dict. Use explicit keys instead.
             let allowed_keys: BTreeSet<String> = if *section_name == "vyper" {
                 VYPER_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if *section_name == "doc" {
+                DOC_KEYS.iter().map(|s| s.to_string()).collect()
             } else {
                 let Some(default_section_value) = default_dict.get(*section_name) else {
                     continue;
@@ -262,6 +268,8 @@ impl<P: Provider> WarningsProvider<P> {
             // so the default serialization produces an empty dict. Use explicit keys instead.
             let allowed_keys: BTreeSet<String> = if key == "vyper" {
                 VYPER_KEYS.iter().map(|s| s.to_string()).collect()
+            } else if key == "doc" {
+                DOC_KEYS.iter().map(|s| s.to_string()).collect()
             } else {
                 let Some(default_value) = default_dict.get(key) else {
                     continue;

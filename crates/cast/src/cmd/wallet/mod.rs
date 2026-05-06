@@ -54,6 +54,10 @@ pub enum WalletSubcommands {
         /// Number of wallets to generate.
         #[arg(long, short, default_value = "1")]
         number: u32,
+
+        /// Overwrite existing keystore files without prompting.
+        #[arg(long)]
+        force: bool,
     },
 
     /// Generates a random BIP39 mnemonic phrase
@@ -306,10 +310,10 @@ pub enum WalletSubcommands {
 impl WalletSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
-            Self::New { path, account_name, unsafe_password, number, password } => {
+            Self::New { path, account_name, unsafe_password, number, password, force } => {
                 let mut rng = thread_rng();
 
-                let mut json_values = if shell::is_json() { Some(vec![]) } else { None };
+                let mut json_values = shell::is_json().then(std::vec::Vec::new);
 
                 let path = if let Some(path) = path {
                     match dunce::canonicalize(&path) {
@@ -346,6 +350,42 @@ impl WalletSubcommands {
                             rpassword::prompt_password("Enter secret: ")?
                         };
 
+                        // Prevent accidental overwriting: check all target files upfront
+                        if !force && let Some(ref acc_name) = account_name {
+                            let mut existing_files = Vec::new();
+
+                            for i in 0..number {
+                                let name = match number {
+                                    1 => acc_name.clone(),
+                                    _ => format!("{}_{}", acc_name, i + 1),
+                                };
+                                let file_path = path.join(&name);
+                                if file_path.exists() {
+                                    existing_files.push(name);
+                                }
+                            }
+
+                            if !existing_files.is_empty() {
+                                use std::io::Write;
+
+                                sh_eprintln!("The following keystore file(s) already exist:")?;
+                                for file in &existing_files {
+                                    sh_eprintln!("   - {file}")?;
+                                }
+                                sh_print!(
+                                    "\nDo you want to overwrite all {} file(s)? [y/N]: ",
+                                    existing_files.len()
+                                )?;
+                                std::io::stdout().flush()?;
+
+                                let mut input = String::new();
+                                std::io::stdin().read_line(&mut input)?;
+
+                                if !input.trim().eq_ignore_ascii_case("y") {
+                                    eyre::bail!("Operation cancelled. No keystores were modified.");
+                                }
+                            }
+                        }
                         for i in 0..number {
                             let account_name_ref =
                                 account_name.as_deref().map(|name| match number {
@@ -649,7 +689,7 @@ impl WalletSubcommands {
                         )?;
                     } else {
                         sh_println!(
-                            "Successfully signed!\n   Nonce: {}\n   Chain ID: {}\n   Address: {}\n   Signature: 0x{}",
+                            "Successfully signed!\n   Nonce: {}\n   Chain ID: {}\n   Address: {}\n   Signature: {}",
                             nonce,
                             chain_id,
                             wallet.address(),
@@ -739,8 +779,7 @@ flag to set your key via:
                 )?;
                 let address = wallet.address();
                 let success_message = format!(
-                    "`{}` keystore was saved successfully. Address: {:?}",
-                    &account_name, address,
+                    "`{account_name}` keystore was saved successfully. Address: {address:?}",
                 );
                 sh_println!("{}", success_message.green())?;
             }
@@ -775,7 +814,7 @@ flag to set your key via:
                     format!("Failed to remove keystore file at {}", keystore_path.display())
                 })?;
 
-                let success_message = format!("`{}` keystore was removed successfully.", &name);
+                let success_message = format!("`{name}` keystore was removed successfully.");
                 sh_println!("{}", success_message.green())?;
             }
             Self::PrivateKey {
@@ -846,8 +885,7 @@ flag to set your key via:
 
                 let private_key = B256::from_slice(&wallet.credential().to_bytes());
 
-                let success_message =
-                    format!("{}'s private key is: {}", &account_name, private_key);
+                let success_message = format!("{account_name}'s private key is: {private_key}");
 
                 sh_println!("{}", success_message.green())?;
             }
@@ -905,10 +943,9 @@ flag to set your key via:
                     Some(&account_name),
                 )?;
 
+                let address = wallet.address();
                 let success_message = format!(
-                    "Password for keystore `{}` was changed successfully. Address: {:?}",
-                    &account_name,
-                    wallet.address(),
+                    "Password for keystore `{account_name}` was changed successfully. Address: {address:?}",
                 );
                 sh_println!("{}", success_message.green())?;
             }

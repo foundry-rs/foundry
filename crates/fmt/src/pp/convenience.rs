@@ -76,7 +76,7 @@ impl Printer {
             return true;
         }
 
-        self.out.ends_with(" ")
+        self.out.ends_with(' ')
     }
 
     pub fn is_beginning_of_line(&self) -> bool {
@@ -138,14 +138,14 @@ impl Printer {
 }
 
 impl Token {
-    pub(crate) fn is_neverbreak(&self) -> bool {
+    pub(crate) const fn is_neverbreak(&self) -> bool {
         if let Self::Break(BreakToken { never_break, .. }) = *self {
             return never_break;
         }
         false
     }
 
-    pub(crate) fn is_hardbreak(&self) -> bool {
+    pub(crate) const fn is_hardbreak(&self) -> bool {
         if let Self::Break(BreakToken { blank_space, never_break, .. }) = *self {
             return blank_space == SIZE_INFINITY as usize && !never_break;
         }

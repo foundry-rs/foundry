@@ -12,11 +12,12 @@ use foundry_evm_core::{
     Breakpoints,
     constants::{CHEATCODE_ADDRESS, MAGIC_ASSUME},
     decode::{RevertDecoder, SkipReason},
+    evm::FoundryEvmNetwork,
 };
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::{
     BaseCounterExample, BasicTxDetails, CallDetails, CounterExample, FuzzCase, FuzzError,
-    FuzzFixtures, FuzzTestResult,
+    FuzzFixtures, FuzzRunMetadata, FuzzTestResult,
     strategies::{EvmFuzzState, fuzz_calldata, fuzz_calldata_from_state},
 };
 use foundry_evm_traces::SparsedTraceArena;
@@ -45,8 +46,7 @@ const SYNC_INTERVAL: u32 = 1000;
 /// This is mainly to reduce the overall number of rayon jobs.
 const MIN_RUNS_PER_WORKER: u32 = 64;
 
-#[derive(Default)]
-struct WorkerState {
+struct WorkerState<FEN: FoundryEvmNetwork> {
     /// Worker identifier
     id: usize,
     /// First fuzz case this worker encountered (with global run number)
@@ -54,7 +54,7 @@ struct WorkerState {
     /// Gas usage for all cases this worker ran
     gas_by_case: Vec<(u64, u64)>,
     /// Counterexample if this worker found one
-    counterexample: (Bytes, RawCallResult),
+    counterexample: (Bytes, RawCallResult<FEN>),
     /// Traces collected by this worker
     ///
     /// Stores up to `max_traces_to_collect` which is `config.gas_report_samples / num_workers`
@@ -71,6 +71,8 @@ struct WorkerState {
     runs: u32,
     /// Failure reason if this worker failed
     failure: Option<TestCaseError>,
+    /// Fuzz run metadata that produced the failure.
+    failure_run: Option<FuzzRunMetadata>,
     /// Last run timestamp in milliseconds
     ///
     /// Used to identify which worker ran last and collect its traces and call breakpoints
@@ -79,9 +81,24 @@ struct WorkerState {
     failed_corpus_replays: usize,
 }
 
-impl WorkerState {
+impl<FEN: FoundryEvmNetwork> WorkerState<FEN> {
     fn new(worker_id: usize) -> Self {
-        Self { id: worker_id, ..Default::default() }
+        Self {
+            id: worker_id,
+            first_case: None,
+            gas_by_case: Vec::new(),
+            counterexample: (Bytes::new(), RawCallResult::default()),
+            traces: Vec::new(),
+            breakpoints: None,
+            coverage: None,
+            logs: Vec::new(),
+            deprecated_cheatcodes: HashMap::default(),
+            runs: 0,
+            failure: None,
+            failure_run: None,
+            last_run_timestamp: 0,
+            failed_corpus_replays: 0,
+        }
     }
 }
 
@@ -158,9 +175,9 @@ impl SharedFuzzState {
 /// After instantiation, calling `fuzz` will proceed to hammer the deployed smart contract with
 /// inputs, until it finds a counterexample. The provided [`TestRunner`] contains all the
 /// configuration which can be overridden via [environment variables](proptest::test_runner::Config)
-pub struct FuzzedExecutor {
+pub struct FuzzedExecutor<FEN: FoundryEvmNetwork> {
     /// The EVM executor.
-    executor_f: Executor,
+    executor_f: Executor<FEN>,
     /// The fuzzer
     runner: TestRunner,
     /// The account that calls tests.
@@ -173,19 +190,23 @@ pub struct FuzzedExecutor {
     num_workers: usize,
 }
 
-impl FuzzedExecutor {
+impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
     /// Instantiates a fuzzed executor given a testrunner
     pub fn new(
-        executor: Executor,
+        executor: Executor<FEN>,
         runner: TestRunner,
         sender: Address,
         config: FuzzConfig,
         persisted_failure: Option<BaseCounterExample>,
     ) -> Self {
-        let mut max_workers = Ord::max(1, config.runs / MIN_RUNS_PER_WORKER);
-        if config.runs == 0 {
-            max_workers = 0;
-        }
+        let run_limit = if config.run.is_some() { 1 } else { config.runs };
+        let max_workers = if run_limit == 0 {
+            0
+        } else if config.run.is_some() {
+            1
+        } else {
+            Ord::max(1, run_limit / MIN_RUNS_PER_WORKER)
+        };
         let num_workers = Ord::min(rayon::current_num_threads(), max_workers as usize);
         Self { executor_f: executor, runner, sender, config, persisted_failure, num_workers }
     }
@@ -209,8 +230,9 @@ impl FuzzedExecutor {
     ) -> Result<FuzzTestResult> {
         let shared_state = SharedFuzzState::new(state, self.config.timeout, early_exit.clone());
 
-        debug!(n = self.num_workers, "spawning workers");
-        let workers = (0..self.num_workers)
+        let worker_ids = self.worker_ids();
+        debug!(n = worker_ids.len(), "spawning workers");
+        let workers = worker_ids
             .into_par_iter()
             .map(|worker_id| {
                 let _guard = tokio_handle.enter();
@@ -237,11 +259,11 @@ impl FuzzedExecutor {
     /// or a `CounterExampleOutcome`
     fn single_fuzz(
         &self,
-        executor: &Executor,
+        executor: &Executor<FEN>,
         address: Address,
         calldata: Bytes,
         coverage_metrics: &mut WorkerCorpus,
-    ) -> Result<FuzzOutcome, TestCaseError> {
+    ) -> Result<FuzzOutcome<FEN>, TestCaseError> {
         let mut call = executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
@@ -254,6 +276,7 @@ impl FuzzedExecutor {
                 call_details: CallDetails { target: address, calldata: calldata.clone() },
             }],
             new_coverage,
+            None,
         );
 
         // Handle `vm.assume`.
@@ -299,7 +322,7 @@ impl FuzzedExecutor {
     /// Aggregates the results from all workers
     fn aggregate_results(
         &self,
-        mut workers: Vec<WorkerState>,
+        mut workers: Vec<WorkerState<FEN>>,
         func: &Function,
         shared_state: &SharedFuzzState,
     ) -> FuzzTestResult {
@@ -351,8 +374,14 @@ impl FuzzedExecutor {
                     } else {
                         vec![]
                     };
+                    let fuzz = failed_worker.failure_run.unwrap_or_default();
                     result.counterexample = Some(CounterExample::Single(
-                        BaseCounterExample::from_fuzz_call(calldata, args, call.traces),
+                        BaseCounterExample::from_fuzz_call(calldata, args, call.traces)
+                            .with_fuzz_metadata(FuzzRunMetadata::new(
+                                fuzz.seed.or(self.config.seed),
+                                fuzz.run,
+                                fuzz.worker,
+                            )),
                     ));
                 }
                 Some(TestCaseError::Reject(reason)) => {
@@ -403,7 +432,7 @@ impl FuzzedExecutor {
         rd: &RevertDecoder,
         shared_state: &SharedFuzzState,
         progress: Option<&ProgressBar>,
-    ) -> Result<WorkerState> {
+    ) -> Result<WorkerState<FEN>> {
         // Prepare
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
@@ -422,7 +451,7 @@ impl FuzzedExecutor {
             self.config.corpus.clone(),
             strategy.boxed(),
             // Master worker replays the persisted corpus using the executor
-            if worker_id == 0 { Some(&self.executor_f) } else { None },
+            (worker_id == 0).then_some(&self.executor_f),
             Some(func),
             None, // fuzzed_contracts for invariant tests
         )?;
@@ -440,16 +469,7 @@ impl FuzzedExecutor {
         runner_config.cases = worker_runs;
 
         let mut runner = if let Some(seed) = self.config.seed {
-            // For deterministic parallel fuzzing, derive a unique seed for each worker
-            let worker_seed = if worker_id == 0 {
-                // Master worker uses the provided seed as is.
-                seed
-            } else {
-                // Derive a worker-specific seed using keccak256(seed || worker_id)
-                let seed_data =
-                    [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
-                U256::from_be_bytes(keccak256(seed_data).0)
-            };
+            let worker_seed = Self::fuzz_worker_seed(seed, worker_id);
             trace!(target: "forge::test", ?worker_seed, "deterministic seed for worker {worker_id}");
             let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &worker_seed.to_be_bytes::<32>());
             TestRunner::new_with_rng(runner_config, rng)
@@ -457,11 +477,25 @@ impl FuzzedExecutor {
             TestRunner::new(runner_config)
         };
 
-        let mut persisted_failure = self.persisted_failure.as_ref().filter(|_| worker_id == 0);
+        if let Some(target_run) = self.config.run {
+            for _ in 1..target_run {
+                if let Err(err) = corpus.new_input(&mut runner, &shared_state.state, func) {
+                    worker.failure = Some(TestCaseError::fail(format!(
+                        "failed to generate fuzzed input in worker {}: {err}",
+                        worker.id
+                    )));
+                    shared_state.try_claim_failure(worker_id);
+                    return Ok(worker);
+                }
+            }
+        }
+
+        let mut persisted_failure =
+            self.persisted_failure.as_ref().filter(|_| worker_id == 0 && self.config.run.is_none());
 
         // Offset to stagger corpus syncs across workers; so that workers don't sync at the same
         // time.
-        let sync_offset = worker_id as u32 * 100;
+        let sync_offset = (worker_id as u32).saturating_mul(100);
         let sync_threshold = SYNC_INTERVAL + sync_offset;
         let mut runs_since_sync = sync_threshold; // Always sync at the start.
         let mut last_metrics_report = Instant::now();
@@ -470,11 +504,27 @@ impl FuzzedExecutor {
         // 2. Worker hasn't reached its specific run limit
         'stop: while shared_state.should_continue() && worker.runs < worker_runs {
             // If counterexample recorded, replay it first, without incrementing runs.
-            let input = if worker_id == 0
+            let (input, fuzz_run) = if worker_id == 0
                 && let Some(failure) = persisted_failure.take()
                 && failure.calldata.get(..4).is_some_and(|selector| func.selector() == selector)
             {
-                failure.calldata.clone()
+                let seed = failure.fuzz.seed.or(self.config.seed);
+                if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
+                    && let Some(seed) = seed
+                {
+                    let run = failure.fuzz.run.unwrap_or(1);
+                    let worker = failure.fuzz.worker.unwrap_or(worker_id as u32) as usize;
+                    cheats.set_seed(Self::fuzz_run_seed(seed, worker, run));
+                }
+
+                (
+                    failure.calldata.clone(),
+                    Some(FuzzRunMetadata::new(
+                        seed,
+                        failure.fuzz.run,
+                        Some(failure.fuzz.worker.unwrap_or(worker_id as u32)),
+                    )),
+                )
             } else {
                 runs_since_sync += 1;
                 if runs_since_sync >= sync_threshold {
@@ -490,13 +540,14 @@ impl FuzzedExecutor {
                     runs_since_sync = 0;
                 }
 
+                let fuzz_run = self.config.run.unwrap_or(worker.runs + 1);
                 if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
                     && let Some(seed) = self.config.seed
                 {
-                    cheats.set_seed(seed.wrapping_add(U256::from(worker.runs)));
+                    cheats.set_seed(Self::fuzz_run_seed(seed, worker_id, fuzz_run));
                 }
 
-                match corpus.new_input(&mut runner, &shared_state.state, func) {
+                let input = match corpus.new_input(&mut runner, &shared_state.state, func) {
                     Ok(input) => input,
                     Err(err) => {
                         worker.failure = Some(TestCaseError::fail(format!(
@@ -506,13 +557,24 @@ impl FuzzedExecutor {
                         shared_state.try_claim_failure(worker_id);
                         break 'stop;
                     }
-                }
+                };
+
+                (
+                    input,
+                    Some(FuzzRunMetadata::new(
+                        self.config.seed,
+                        Some(fuzz_run),
+                        Some(worker_id as u32),
+                    )),
+                )
             };
 
             let mut inc_runs = || {
                 let total_runs = shared_state.increment_runs();
                 debug_assert!(
-                    shared_state.timer.is_enabled() || total_runs <= self.config.runs,
+                    shared_state.timer.is_enabled()
+                        || total_runs
+                            <= if self.config.run.is_some() { 1 } else { self.config.runs },
                     "worker runs were not distributed correctly"
                 );
                 worker.runs += 1;
@@ -582,8 +644,17 @@ impl FuzzedExecutor {
                         ..
                     }) => {
                         inc_runs();
+                        worker.failure_run = fuzz_run;
 
-                        let reason = rd.maybe_decode(&outcome.1.result, status);
+                        // Only classify magic skip payloads when the revert originates from the
+                        // cheatcode address.
+                        let reason = if outcome.1.reverter == Some(CHEATCODE_ADDRESS) {
+                            SkipReason::decode(&outcome.1.result)
+                                .map(|reason| reason.to_string())
+                                .or_else(|| rd.maybe_decode(&outcome.1.result, status))
+                        } else {
+                            rd.maybe_decode(&outcome.1.result, status)
+                        };
                         worker.logs.extend(outcome.1.logs.clone());
                         worker.counterexample = outcome;
                         worker.failure = Some(TestCaseError::fail(reason.unwrap_or_default()));
@@ -633,14 +704,39 @@ impl FuzzedExecutor {
     }
 
     /// Determines the number of runs per worker.
-    fn runs_per_worker(&self, worker_id: usize) -> u32 {
+    const fn runs_per_worker(&self, worker_id: usize) -> u32 {
         let worker_id = worker_id as u32;
-        let total_runs = self.config.runs;
+        let total_runs = if self.config.run.is_some() { 1 } else { self.config.runs };
         let n = self.num_workers as u32;
         let runs = total_runs / n;
         let remainder = total_runs % n;
         // Distribute the remainder evenly among the first `remainder` workers,
         // assuming `worker_id` is in `0..n`.
         if worker_id < remainder { runs + 1 } else { runs }
+    }
+
+    /// Returns the worker IDs to execute.
+    fn worker_ids(&self) -> Vec<usize> {
+        if self.config.run.is_some() {
+            vec![self.config.worker.unwrap_or(0) as usize]
+        } else {
+            (0..self.num_workers).collect()
+        }
+    }
+
+    /// Derives the deterministic RNG seed for a fuzz worker.
+    fn fuzz_worker_seed(seed: U256, worker_id: usize) -> U256 {
+        if worker_id == 0 {
+            seed
+        } else {
+            let worker_id = worker_id as u32;
+            let seed_data = [&seed.to_be_bytes::<32>()[..], &worker_id.to_be_bytes()[..]].concat();
+            U256::from_be_bytes(keccak256(seed_data).0)
+        }
+    }
+
+    /// Derives the deterministic RNG seed for cheatcode randomness in a worker-local run.
+    fn fuzz_run_seed(seed: U256, worker_id: usize, run: u32) -> U256 {
+        Self::fuzz_worker_seed(seed, worker_id).wrapping_add(U256::from(run.saturating_sub(1)))
     }
 }

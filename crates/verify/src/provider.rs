@@ -5,18 +5,24 @@ use crate::{
 };
 use alloy_json_abi::JsonAbi;
 use async_trait::async_trait;
-use eyre::{OptionExt, Result};
+use eyre::{Context, OptionExt, Result};
 use foundry_common::compile::ProjectCompiler;
 use foundry_compilers::{
-    Graph, Project,
-    artifacts::{Metadata, Source, output_selection::OutputSelection},
+    Project,
+    artifacts::{
+        Source, StandardJsonCompilerInput, output_selection::OutputSelection, vyper::VyperInput,
+    },
     compilers::solc::SolcCompiler,
-    multi::{MultiCompilerParser, MultiCompilerSettings},
-    solc::Solc,
+    multi::MultiCompilerSettings,
+    solc::{Solc, SolcLanguage},
 };
 use foundry_config::{Chain, Config, EtherscanConfigError};
 use semver::Version;
-use std::{fmt, path::PathBuf, str::FromStr};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 /// Container with data required for contract verification.
 #[derive(Debug, Clone)]
@@ -46,11 +52,43 @@ impl VerificationContext {
         Ok(Self { config, project, target_name, target_path, compiler_version, compiler_settings })
     }
 
+    pub fn get_solc_standard_json_input(&self) -> Result<StandardJsonCompilerInput> {
+        let mut input: StandardJsonCompilerInput = self
+            .project
+            .standard_json_input(&self.target_path)
+            .wrap_err("Failed to get standard json input")?
+            .normalize_evm_version(&self.compiler_version);
+
+        let mut settings = self.compiler_settings.solc.settings.clone();
+        settings.libraries.libs = input
+            .settings
+            .libraries
+            .libs
+            .into_iter()
+            .map(|(f, libs)| {
+                (f.strip_prefix(self.project.root()).unwrap_or(&f).to_path_buf(), libs)
+            })
+            .collect();
+
+        settings.remappings = input.settings.remappings;
+        settings.sanitize(&self.compiler_version, SolcLanguage::Solidity);
+        input.settings = settings;
+
+        Ok(input)
+    }
+
+    /// Creates Vyper standard JSON input for verification.
+    pub fn get_vyper_standard_json_input(&self) -> Result<VyperInput> {
+        let path = Path::new(&self.target_path);
+        let sources = Source::read_all_from(path, &["vy", "vyi"])?;
+        Ok(VyperInput::new(sources, self.compiler_settings.vyper.clone(), &self.compiler_version))
+    }
+
     /// Compiles target contract requesting only ABI and returns it.
     pub fn get_target_abi(&self) -> Result<JsonAbi> {
         let mut project = self.project.clone();
         project.update_output_selection(|selection| {
-            *selection = OutputSelection::common_output_selection(["abi".to_string()])
+            *selection = OutputSelection::common_output_selection(["abi".to_string()]);
         });
 
         let output = ProjectCompiler::new()
@@ -63,34 +101,6 @@ impl VerificationContext {
             .ok_or_eyre("failed to find target artifact when compiling for abi")?;
 
         artifact.abi.clone().ok_or_eyre("target artifact does not have an ABI")
-    }
-
-    /// Compiles target file requesting only metadata and returns it.
-    pub fn get_target_metadata(&self) -> Result<Metadata> {
-        let mut project = self.project.clone();
-        project.update_output_selection(|selection| {
-            *selection = OutputSelection::common_output_selection(["metadata".to_string()]);
-        });
-
-        let output = ProjectCompiler::new()
-            .quiet(true)
-            .files([self.target_path.clone()])
-            .compile(&project)?;
-
-        let artifact = output
-            .find(&self.target_path, &self.target_name)
-            .ok_or_eyre("failed to find target artifact when compiling for metadata")?;
-
-        artifact.metadata.clone().ok_or_eyre("target artifact does not have metadata")
-    }
-
-    /// Returns [Vec] containing imports of the target file.
-    pub fn get_target_imports(&self) -> Result<Vec<PathBuf>> {
-        let mut sources = self.project.paths.read_input_files()?;
-        sources.insert(self.target_path.clone(), Source::read(&self.target_path)?);
-        let graph = Graph::<MultiCompilerParser>::resolve_sources(&self.project.paths, sources)?;
-
-        Ok(graph.imports(&self.target_path).into_iter().map(Into::into).collect())
     }
 }
 
@@ -189,6 +199,7 @@ impl VerificationProviderType {
         if self.is_etherscan() {
             if let Some(chain) = chain
                 && chain.etherscan_urls().is_none()
+                && !has_url
             {
                 eyre::bail!(EtherscanConfigError::UnknownChain(
                     "when using Etherscan verifier".to_string(),
@@ -212,6 +223,10 @@ impl VerificationProviderType {
 
         // 4. If no `--verifier` is specified but `ETHERSCAN_API_KEY` is set, default to Etherscan.
         if has_key {
+            sh_eprintln!(
+                "ETHERSCAN_API_KEY is set, defaulting to Etherscan verifier. \
+                 Unset it or pass `--verifier sourcify` (or another provider) to override."
+            )?;
             return Ok(Box::<EtherscanVerificationProvider>::default());
         }
 
@@ -221,11 +236,35 @@ impl VerificationProviderType {
         )
     }
 
-    pub fn is_sourcify(&self) -> bool {
+    pub const fn is_sourcify(&self) -> bool {
         matches!(self, Self::Sourcify)
     }
 
-    pub fn is_etherscan(&self) -> bool {
+    pub const fn is_etherscan(&self) -> bool {
         matches!(self, Self::Etherscan)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn etherscan_allows_unknown_chain_with_verifier_url() {
+        let chain = Chain::from(3658348u64);
+        let res = VerificationProviderType::Etherscan.client(Some("key"), Some(chain), true);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn etherscan_rejects_unknown_chain_without_verifier_url() {
+        let chain = Chain::from(3658348u64);
+        let res = VerificationProviderType::Etherscan.client(Some("key"), Some(chain), false);
+        match res {
+            Ok(_) => panic!("expected unknown-chain error"),
+            Err(err) => {
+                assert!(err.to_string().contains("No known Etherscan API URL"));
+            }
+        }
     }
 }

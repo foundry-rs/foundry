@@ -3,7 +3,7 @@ use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
     gas_report::GasReport,
-    multi_runner::matches_artifact,
+    multi_runner::{MultiNetworkConfig, matches_artifact},
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -23,7 +23,7 @@ use foundry_cli::{
 use foundry_common::{EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell};
 use foundry_compilers::{
     ProjectCompileOutput,
-    artifacts::output_selection::OutputSelection,
+    artifacts::{Libraries, output_selection::OutputSelection},
     compilers::{
         Language,
         multi::{MultiCompiler, MultiCompilerLanguage},
@@ -31,7 +31,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, figment,
+    Config, InlineConfig, figment,
     figment::{
         Metadata, Profile, Provider,
         value::{Dict, Map},
@@ -39,12 +39,18 @@ use foundry_config::{
     filter::GlobMatcher,
 };
 use foundry_debugger::Debugger;
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
+    core::evm::{
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
+    },
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
 use rand::Rng;
 use regex::Regex;
+use revm::context::Transaction;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -163,6 +169,14 @@ pub struct TestArgs {
 
     #[arg(long, env = "FOUNDRY_FUZZ_RUNS", value_name = "RUNS")]
     pub fuzz_runs: Option<u64>,
+
+    /// Run only the fuzz case at the given 1-based run index.
+    #[arg(long, env = "FOUNDRY_FUZZ_RUN", value_name = "RUN")]
+    pub fuzz_run: Option<u32>,
+
+    /// Run the fuzz case from the given worker. Requires `--fuzz-run`.
+    #[arg(long, env = "FOUNDRY_FUZZ_WORKER", value_name = "WORKER", requires = "fuzz_run")]
+    pub fuzz_worker: Option<u32>,
 
     /// Timeout for each fuzz run in seconds.
     #[arg(long, env = "FOUNDRY_FUZZ_TIMEOUT", value_name = "TIMEOUT")]
@@ -296,6 +310,10 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
         coverage: bool,
     ) -> Result<TestOutcome> {
+        if config.fuzz.run == Some(0) {
+            bail!("`fuzz.run` must be greater than 0");
+        }
+
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
             evm_opts.isolate = true;
@@ -315,13 +333,10 @@ impl TestArgs {
         let should_debug = self.debug;
         let should_draw = self.flamegraph || self.flamechart;
 
-        // Determine print verbosity and executor verbosity.
-        let verbosity = evm_opts.verbosity;
+        // Determine executor verbosity.
         if (self.gas_report && evm_opts.verbosity < 3) || self.flamegraph || self.flamechart {
             evm_opts.verbosity = 3;
         }
-
-        let env = evm_opts.evm_env().await?;
 
         // Enable internal tracing for more informative flamegraph.
         if should_draw && !self.decode_internal {
@@ -337,23 +352,84 @@ impl TestArgs {
             InternalTraceMode::None
         };
 
-        // Prepare the test builder.
-        let config = Arc::new(config);
-        let runner = MultiContractRunnerBuilder::new(config.clone())
-            .set_debug(should_debug)
-            .set_decode_internal(decode_internal)
-            .initial_balance(evm_opts.initial_balance)
-            .evm_spec(config.evm_spec_id())
-            .sender(evm_opts.sender)
-            .with_fork(evm_opts.get_fork(&config, env.clone()))
-            .enable_isolation(evm_opts.isolate)
-            .networks(evm_opts.networks)
-            .fail_fast(self.fail_fast)
-            .set_coverage(coverage)
-            .build::<MultiCompiler>(output, env, evm_opts)?;
+        // Auto-detect network from fork chain ID when not explicitly configured.
+        evm_opts.infer_network_from_fork().await;
 
-        let libraries = runner.libraries.clone();
-        let mut outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
+        // Parse inline config early to detect per-test network annotations.
+        let inline_config = InlineConfig::new_parsed(output, &config)?;
+        let override_networks = inline_config.referenced_override_networks(&config.profile);
+
+        let (libraries, mut outcome) = if override_networks.is_empty() {
+            // Single-pass: no per-test network overrides, use global network setting.
+            self.dispatch_network(
+                &evm_opts,
+                config,
+                evm_opts.clone(),
+                output,
+                filter,
+                coverage,
+                should_debug,
+                decode_internal,
+                MultiNetworkConfig::default(),
+            )
+            .await?
+        } else {
+            // Multi-pass: run each distinct network separately and merge results.
+            let all_override_networks = override_networks.clone();
+            let multi_pass_timer = Instant::now();
+
+            // Default pass: global network, runs tests without an explicit network annotation.
+            let (libraries, mut outcome) = self
+                .dispatch_network(
+                    &evm_opts,
+                    config.clone(),
+                    evm_opts.clone(),
+                    output,
+                    filter,
+                    coverage,
+                    should_debug,
+                    decode_internal,
+                    MultiNetworkConfig {
+                        all_override_networks: all_override_networks.clone(),
+                        pass_network: None,
+                    },
+                )
+                .await?;
+
+            // Override passes: one per annotated network.
+            for &network in &override_networks {
+                let mut pass_evm_opts = evm_opts.clone();
+                pass_evm_opts.networks = network.into();
+                let (_, pass_outcome) = self
+                    .dispatch_network(
+                        &pass_evm_opts,
+                        config.clone(),
+                        pass_evm_opts.clone(),
+                        output,
+                        filter,
+                        coverage,
+                        should_debug,
+                        decode_internal,
+                        MultiNetworkConfig {
+                            all_override_networks: all_override_networks.clone(),
+                            pass_network: Some(network),
+                        },
+                    )
+                    .await?;
+                merge_outcomes(&mut outcome, pass_outcome);
+            }
+
+            // Print the merged summary (per-pass summaries are suppressed in `run_tests_inner`).
+            if !self.summary && !shell::is_json() {
+                sh_println!("{}", outcome.summary(multi_pass_timer.elapsed()))?;
+            }
+            if self.summary && !outcome.results.is_empty() {
+                let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
+                sh_println!("{}", &summary_report)?;
+            }
+
+            (libraries, outcome)
+        };
 
         if should_draw {
             let (suite_name, test_name, mut test_result) =
@@ -427,10 +503,101 @@ impl TestArgs {
         Ok(outcome)
     }
 
-    /// Run all tests that matches the filter predicate from a test runner
-    async fn run_tests_inner(
+    /// Build the test runner and execute tests for a specific network type.
+    #[allow(clippy::too_many_arguments)]
+    async fn build_and_run_tests<FEN: FoundryEvmNetwork>(
         &self,
-        mut runner: MultiContractRunner,
+        config: Config,
+        evm_opts: EvmOpts,
+        output: &ProjectCompileOutput,
+        filter: &ProjectPathsAwareFilter,
+        coverage: bool,
+        should_debug: bool,
+        decode_internal: InternalTraceMode,
+        multi_network: MultiNetworkConfig,
+    ) -> eyre::Result<(Libraries, TestOutcome)> {
+        let verbosity = evm_opts.verbosity;
+        let (evm_env, tx_env, fork_block) =
+            evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
+
+        let config = Arc::new(config);
+        let runner = MultiContractRunnerBuilder::new(config.clone())
+            .set_debug(should_debug)
+            .set_decode_internal(decode_internal)
+            .initial_balance(evm_opts.initial_balance)
+            .sender(evm_opts.sender)
+            .with_fork(evm_opts.get_fork(&config, evm_env.cfg_env.chain_id, fork_block))
+            .enable_isolation(evm_opts.isolate)
+            .fail_fast(self.fail_fast)
+            .set_coverage(coverage)
+            .with_multi_network(multi_network)
+            .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
+
+        let libraries = runner.libraries.clone();
+        let outcome = self.run_tests_inner(runner, config, verbosity, filter, output).await?;
+        Ok((libraries, outcome))
+    }
+
+    /// Dispatches `build_and_run_tests` to the correct network type based on `evm_opts.networks`.
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_network(
+        &self,
+        dispatch_opts: &EvmOpts,
+        config: Config,
+        evm_opts: EvmOpts,
+        output: &ProjectCompileOutput,
+        filter: &ProjectPathsAwareFilter,
+        coverage: bool,
+        should_debug: bool,
+        decode_internal: InternalTraceMode,
+        multi_network: MultiNetworkConfig,
+    ) -> eyre::Result<(Libraries, TestOutcome)> {
+        if dispatch_opts.networks.is_tempo() {
+            self.build_and_run_tests::<TempoEvmNetwork>(
+                config,
+                evm_opts,
+                output,
+                filter,
+                coverage,
+                should_debug,
+                decode_internal,
+                multi_network,
+            )
+            .await
+        } else {
+            #[cfg(feature = "optimism")]
+            if dispatch_opts.networks.is_optimism() {
+                return self
+                    .build_and_run_tests::<OpEvmNetwork>(
+                        config,
+                        evm_opts,
+                        output,
+                        filter,
+                        coverage,
+                        should_debug,
+                        decode_internal,
+                        multi_network,
+                    )
+                    .await;
+            }
+            self.build_and_run_tests::<EthEvmNetwork>(
+                config,
+                evm_opts,
+                output,
+                filter,
+                coverage,
+                should_debug,
+                decode_internal,
+                multi_network,
+            )
+            .await
+        }
+    }
+
+    /// Run all tests that matches the filter predicate from a test runner
+    async fn run_tests_inner<FEN: FoundryEvmNetwork>(
+        &self,
+        mut runner: MultiContractRunner<FEN>,
         config: Arc<Config>,
         verbosity: u8,
         filter: &ProjectPathsAwareFilter,
@@ -449,10 +616,11 @@ impl TestArgs {
         let num_filtered = runner.matching_test_functions(filter).count();
 
         if num_filtered == 0 {
-            let mut total_tests = num_filtered;
-            if !filter.is_empty() {
-                total_tests = runner.matching_test_functions(&EmptyTestFilter::default()).count();
-            }
+            let total_tests = if filter.is_empty() {
+                num_filtered
+            } else {
+                runner.matching_test_functions(&EmptyTestFilter::default()).count()
+            };
             if total_tests == 0 {
                 sh_println!(
                     "No tests found in project! Forge looks for functions that start with `test`"
@@ -470,7 +638,7 @@ impl TestArgs {
                 }
                 sh_warn!("{msg}")?;
             }
-            return Ok(TestOutcome::empty(Some(runner), false));
+            return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
 
         if num_filtered != 1 && (self.debug || self.flamegraph || self.flamechart) {
@@ -500,7 +668,7 @@ impl TestArgs {
         // Run tests in a non-streaming fashion and collect results for serialization.
         if !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
-            results.values_mut().for_each(|suite_result| {
+            for suite_result in results.values_mut() {
                 for test_result in suite_result.test_results.values_mut() {
                     if verbosity >= 2 {
                         // Decode logs at level 2 and above.
@@ -510,22 +678,29 @@ impl TestArgs {
                         test_result.logs = vec![];
                     }
                 }
-            });
+            }
             sh_println!("{}", serde_json::to_string(&results)?)?;
-            return Ok(TestOutcome::new(Some(runner), results, self.allow_failure, fuzz_seed));
+            let kc = runner.known_contracts.clone();
+            return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
         }
 
         if self.junit {
             let results = runner.test_collect(filter)?;
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
-            return Ok(TestOutcome::new(Some(runner), results, self.allow_failure, fuzz_seed));
+            let kc = runner.known_contracts.clone();
+            return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
         }
 
         let remote_chain =
-            if runner.fork.is_some() { runner.env.tx.chain_id.map(Into::into) } else { None };
+            if runner.fork.is_some() { runner.tx_env.chain_id().map(Into::into) } else { None };
         let known_contracts = runner.known_contracts.clone();
 
         let libraries = runner.libraries.clone();
+
+        // Capture multi-pass state before moving `runner` into the spawn task.
+        // In multi-pass mode the per-pass summary is suppressed; the merged summary is
+        // printed once by the caller after all passes complete.
+        let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
 
         // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -550,7 +725,8 @@ impl TestArgs {
         let mut builder = CallTraceDecoderBuilder::new()
             .with_known_contracts(&known_contracts)
             .with_label_disabled(self.disable_labels)
-            .with_verbosity(verbosity);
+            .with_verbosity(verbosity)
+            .with_chain_id(remote_chain.map(|c| c.id()));
         // Signatures are of no value for gas reports.
         if !self.gas_report {
             builder =
@@ -582,6 +758,13 @@ impl TestArgs {
         for (contract_name, mut suite_result) in rx {
             let tests = &mut suite_result.test_results;
             let has_tests = !tests.is_empty();
+
+            // In multi-pass (per-test network override) mode, skip suites that contributed no
+            // tests to this pass so we don't emit a stray blank line in the suite header or
+            // pollute the outcome with empty entries.
+            if is_multi_pass && !has_tests && suite_result.warnings.is_empty() {
+                continue;
+            }
 
             // Clear the addresses and labels from previous test.
             decoder.clear_addresses();
@@ -682,7 +865,9 @@ impl TestArgs {
                     }
                 }
 
-                // Extract and display backtrace for failed tests when verbosity >= 3
+                // Extract and display backtrace for failed tests when verbosity >= 3.
+                // At verbosity 3-4 backtraces show contract/function names only.
+                // At verbosity 5 backtraces include source file locations.
                 if !silent
                     && result.status.is_failure()
                     && verbosity >= 3
@@ -750,12 +935,11 @@ impl TestArgs {
                 //
                 // Exiting early with code 1 if differences are found.
                 if self.gas_snapshot_check.unwrap_or(config.gas_snapshot_check) {
-                    let differences_found = gas_snapshots.clone().into_iter().fold(
-                        false,
-                        |mut found, (group, snapshots)| {
+                    let differences_found =
+                        gas_snapshots.iter().fold(false, |mut found, (group, snapshots)| {
                             // If the snapshot file doesn't exist, we can't compare so we skip.
                             if !&config.snapshots.join(format!("{group}.json")).exists() {
-                                return false;
+                                return found;
                             }
 
                             let previous_snapshots: BTreeMap<String, String> =
@@ -766,14 +950,9 @@ impl TestArgs {
                                 .iter()
                                 .filter_map(|(k, v)| {
                                     previous_snapshots.get(k).and_then(|previous_snapshot| {
-                                        if previous_snapshot != v {
-                                            Some((
-                                                k.clone(),
-                                                (previous_snapshot.clone(), v.clone()),
-                                            ))
-                                        } else {
-                                            None
-                                        }
+                                        (previous_snapshot != v).then(|| {
+                                            (k.clone(), (previous_snapshot.clone(), v.clone()))
+                                        })
                                     })
                                 })
                                 .collect();
@@ -795,8 +974,7 @@ impl TestArgs {
                             }
 
                             found
-                        },
-                    );
+                        });
 
                     if differences_found {
                         sh_eprintln!()?;
@@ -818,13 +996,13 @@ impl TestArgs {
                     fs::create_dir_all(&config.snapshots)?;
 
                     // Write gas snapshots to disk per group.
-                    gas_snapshots.clone().into_iter().for_each(|(group, snapshots)| {
+                    for (group, snapshots) in &gas_snapshots {
                         fs::write_pretty_json_file(
                             &config.snapshots.join(format!("{group}.json")),
                             &snapshots,
                         )
                         .expect("Failed to write gas snapshots to disk");
-                    });
+                    }
                 }
             }
 
@@ -848,22 +1026,25 @@ impl TestArgs {
 
         if let Some(gas_report) = gas_report {
             let finalized = gas_report.finalize();
-            sh_println!("{}", &finalized)?;
+            sh_println!("{finalized}")?;
             outcome.gas_report = Some(finalized);
         }
 
-        if !self.summary && !shell::is_json() {
+        if !is_multi_pass && !self.summary && !shell::is_json() {
             sh_println!("{}", outcome.summary(duration))?;
         }
 
-        if self.summary && !outcome.results.is_empty() {
+        if !is_multi_pass && self.summary && !outcome.results.is_empty() {
             let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
-            sh_println!("{}", &summary_report)?;
+            sh_println!("{summary_report}")?;
         }
 
         // Reattach the task.
         match handle.await {
-            Ok(result) => outcome.runner = Some(result?),
+            Ok(result) => {
+                let runner = result?;
+                outcome.known_contracts = Some(runner.known_contracts);
+            }
             Err(e) => match e.try_into_panic() {
                 Ok(payload) => std::panic::resume_unwind(payload),
                 Err(e) => return Err(e.into()),
@@ -894,7 +1075,7 @@ impl TestArgs {
     }
 
     /// Returns whether `BuildArgs` was configured with `--watch`
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.watch.watch.is_some()
     }
 
@@ -922,6 +1103,12 @@ impl Provider for TestArgs {
         if let Some(fuzz_runs) = self.fuzz_runs {
             fuzz_dict.insert("runs".to_string(), fuzz_runs.into());
         }
+        if let Some(fuzz_run) = self.fuzz_run {
+            fuzz_dict.insert("run".to_string(), fuzz_run.into());
+        }
+        if let Some(fuzz_worker) = self.fuzz_worker {
+            fuzz_dict.insert("worker".to_string(), fuzz_worker.into());
+        }
         if let Some(fuzz_timeout) = self.fuzz_timeout {
             fuzz_dict.insert("timeout".to_string(), fuzz_timeout.into());
         }
@@ -933,7 +1120,7 @@ impl Provider for TestArgs {
         if let Some(etherscan_api_key) =
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())
         {
-            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.to_string().into());
+            dict.insert("etherscan_api_key".to_string(), etherscan_api_key.clone().into());
         }
 
         if self.show_progress {
@@ -945,7 +1132,10 @@ impl Provider for TestArgs {
 }
 
 /// Lists all matching tests
-fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result<TestOutcome> {
+fn list<FEN: FoundryEvmNetwork>(
+    runner: MultiContractRunner<FEN>,
+    filter: &ProjectPathsAwareFilter,
+) -> Result<TestOutcome> {
     let results = runner.list(filter);
 
     if shell::is_json() {
@@ -959,7 +1149,30 @@ fn list(runner: MultiContractRunner, filter: &ProjectPathsAwareFilter) -> Result
             }
         }
     }
-    Ok(TestOutcome::empty(Some(runner), false))
+    Ok(TestOutcome::empty(Some(runner.known_contracts), false))
+}
+
+/// Merges `other` into `base` by extending suite results.
+///
+/// For suites that appear in both, test results are combined (function-level pass routing ensures
+/// each function appears in exactly one pass, so there are no key conflicts in practice).
+fn merge_outcomes(base: &mut TestOutcome, other: TestOutcome) {
+    for (suite_id, other_suite) in other.results {
+        match base.results.entry(suite_id) {
+            std::collections::btree_map::Entry::Vacant(e) => {
+                e.insert(other_suite);
+            }
+            std::collections::btree_map::Entry::Occupied(mut e) => {
+                let base_suite = e.get_mut();
+                base_suite.test_results.extend(other_suite.test_results);
+                base_suite.warnings.extend(other_suite.warnings);
+                base_suite.duration = base_suite.duration.max(other_suite.duration);
+            }
+        }
+    }
+    if let Some(decoder) = other.last_run_decoder {
+        base.last_run_decoder = Some(decoder);
+    }
 }
 
 /// Load persisted filter (with last test run failures) from file.
@@ -984,7 +1197,7 @@ fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
         let mut failures = outcome.failures().peekable();
         while let Some((test_name, _)) = failures.next() {
             if test_name.is_any_test()
-                && let Some(test_match) = test_name.split("(").next()
+                && let Some(test_match) = test_name.split('(').next()
             {
                 filter.push_str(test_match);
                 if failures.peek().is_some() {
@@ -1068,6 +1281,14 @@ mod tests {
         let args: TestArgs =
             TestArgs::parse_from(["foundry-cli", "-vvv", "--gas-report", "--fuzz-seed", "0x10"]);
         assert!(args.fuzz_seed.is_some());
+    }
+
+    #[test]
+    fn fuzz_run() {
+        let args: TestArgs =
+            TestArgs::parse_from(["foundry-cli", "--fuzz-run", "10", "--fuzz-worker", "2"]);
+        assert_eq!(args.fuzz_run, Some(10));
+        assert_eq!(args.fuzz_worker, Some(2));
     }
 
     #[test]

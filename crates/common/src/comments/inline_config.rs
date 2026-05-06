@@ -46,7 +46,7 @@ impl InlineConfigItem<Vec<String>> {
             vec!["all".to_string()]
         } else {
             match relevant.split_once(')') {
-                Some((id_str, _)) => id_str.split(",").map(|s| s.trim().to_string()).collect(),
+                Some((id_str, _)) => id_str.split(',').map(|s| s.trim().to_string()).collect(),
                 None => return Err(InvalidInlineConfigItem::Syntax(s.into())),
             }
         };
@@ -205,6 +205,7 @@ impl<I: ItemIdIterator> InlineConfig<I> {
         let comment_range = result.data;
         let src = file.src.as_str();
 
+        #[allow(clippy::collapsible_match)]
         match item {
             InlineConfigItem::DisableNextItem(ids) => {
                 if let Some(next_item) = find_next_item(span.hi()) {
@@ -330,7 +331,7 @@ struct NextItemFinder {
 }
 
 impl NextItemFinder {
-    fn new(offset: BytePos) -> Self {
+    const fn new(offset: BytePos) -> Self {
         Self { offset }
     }
 

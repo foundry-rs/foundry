@@ -6,6 +6,7 @@
 use alloy_primitives::{Address, Bytes, Log, U256, map::AddressHashMap};
 use eyre::Result;
 use foundry_evm::{
+    core::evm::EthEvmNetwork,
     executors::{DeployResult, Executor, RawCallResult},
     traces::{TraceKind, Traces},
 };
@@ -20,7 +21,7 @@ static RUN_SELECTOR: [u8; 4] = [0xc0, 0x40, 0x62, 0x26];
 #[derive(Debug)]
 pub struct ChiselRunner {
     /// The Executor
-    pub executor: Executor,
+    pub executor: Executor<EthEvmNetwork>,
     /// An initial balance
     pub initial_balance: U256,
     /// The sender
@@ -61,8 +62,8 @@ impl ChiselRunner {
     /// ### Returns
     ///
     /// A new [ChiselRunner]
-    pub fn new(
-        executor: Executor,
+    pub const fn new(
+        executor: Executor<EthEvmNetwork>,
         initial_balance: U256,
         sender: Address,
         input: Option<Vec<u8>>,

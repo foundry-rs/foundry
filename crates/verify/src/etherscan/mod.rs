@@ -281,11 +281,11 @@ impl EtherscanVerificationProvider {
         builder = if let Some(api_url) = api_url {
             // we don't want any trailing slashes because this can cause cloudflare issues: <https://github.com/foundry-rs/foundry/pull/6079>
             let api_url = api_url.trim_end_matches('/');
-            let base_url = if !is_etherscan {
+            let base_url = if is_etherscan {
+                base_url.unwrap_or(api_url)
+            } else {
                 // If verifier is not Etherscan then set base url as api url without /api suffix.
                 api_url.strip_suffix("/api").unwrap_or(api_url)
-            } else {
-                base_url.unwrap_or(api_url)
             };
             builder.with_api_url(api_url)?.with_url(base_url)?
         } else {
@@ -383,7 +383,7 @@ impl EtherscanVerificationProvider {
             };
             let encoded_args = encode_function_args(
                 &func,
-                read_constructor_args_file(constructor_args_path.to_path_buf())?,
+                read_constructor_args_file(constructor_args_path.clone())?,
             )?;
             let encoded_args = hex::encode(encoded_args);
             return Ok(Some(encoded_args[8..].into()));
@@ -418,9 +418,9 @@ impl EtherscanVerificationProvider {
             .ok_or_eyre("Couldn't fetch transaction receipt from RPC")?;
 
         let maybe_creation_code = if receipt.contract_address == Some(args.address) {
-            transaction.inner.inner.input()
+            transaction.input()
         } else if transaction.to() == Some(DEFAULT_CREATE2_DEPLOYER) {
-            &transaction.inner.inner.input()[32..]
+            &transaction.input()[32..]
         } else {
             eyre::bail!(
                 "Fetching of constructor arguments is not supported for contracts created by contracts"

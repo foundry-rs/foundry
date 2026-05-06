@@ -55,7 +55,6 @@ pub struct CoverageArgs {
     /// If not specified, the report will be stored in the root of the project.
     #[arg(
         long,
-        short,
         value_hint = ValueHint::FilePath,
         value_name = "PATH"
     )]
@@ -88,8 +87,11 @@ impl CoverageArgs {
             config = self.load_config()?;
         }
 
-        // Set fuzz seed so coverage reports are deterministic
-        config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        // Default to a static fuzz seed so coverage reports are deterministic,
+        // but allow the user to override it via `--fuzz-seed` or `[fuzz] seed` in config.
+        if config.fuzz.seed.is_none() {
+            config.fuzz.seed = Some(U256::from_be_bytes(STATIC_FUZZ_SEED));
+        }
 
         let (paths, mut output) = {
             let (project, output) = self.build(&config)?;
@@ -252,10 +254,10 @@ impl CoverageArgs {
         let outcome =
             self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
 
-        let known_contracts = outcome.runner.as_ref().unwrap().known_contracts.clone();
+        let known_contracts = outcome.known_contracts.as_ref().unwrap().clone();
 
         // Add hit data to the coverage report
-        let data = outcome.results.iter().flat_map(|(_, suite)| {
+        let data = outcome.results.values().flat_map(|suite| {
             let mut hits = Vec::new();
             for result in suite.test_results.values() {
                 let Some(hit_maps) = result.line_coverage.as_ref() else { continue };
@@ -316,11 +318,11 @@ impl CoverageArgs {
         Ok(())
     }
 
-    pub fn is_watch(&self) -> bool {
+    pub const fn is_watch(&self) -> bool {
         self.test.is_watch()
     }
 
-    pub fn watch(&self) -> &WatchArgs {
+    pub const fn watch(&self) -> &WatchArgs {
         &self.test.watch
     }
 }

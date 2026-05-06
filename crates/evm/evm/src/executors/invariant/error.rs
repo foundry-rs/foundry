@@ -2,7 +2,10 @@ use super::InvariantContract;
 use crate::executors::RawCallResult;
 use alloy_primitives::{Address, Bytes};
 use foundry_config::InvariantConfig;
-use foundry_evm_core::decode::RevertDecoder;
+use foundry_evm_core::{
+    decode::{ASSERTION_FAILED_PREFIX, EMPTY_REVERT_DATA, RevertDecoder},
+    evm::FoundryEvmNetwork,
+};
 use foundry_evm_fuzz::{BasicTxDetails, Reason, invariant::FuzzRunIdentifiedContracts};
 use proptest::test_runner::TestError;
 
@@ -65,15 +68,17 @@ pub struct FailedInvariantCaseData {
     pub shrink_run_limit: u32,
     /// Fail on revert, used to check sequence when shrinking.
     pub fail_on_revert: bool,
+    /// Whether this failure originated from a handler assertion.
+    pub assertion_failure: bool,
 }
 
 impl FailedInvariantCaseData {
-    pub fn new(
+    pub fn new<FEN: FoundryEvmNetwork>(
         invariant_contract: &InvariantContract<'_>,
         invariant_config: &InvariantConfig,
         targeted_contracts: &FuzzRunIdentifiedContracts,
         calldata: &[BasicTxDetails],
-        call_result: RawCallResult,
+        call_result: RawCallResult<FEN>,
         inner_sequence: &[Option<BasicTxDetails>],
     ) -> Self {
         // Collect abis of fuzzed and invariant contracts to decode custom error.
@@ -81,6 +86,14 @@ impl FailedInvariantCaseData {
             .with_abis(targeted_contracts.targets.lock().values().map(|c| &c.abi))
             .with_abi(invariant_contract.abi)
             .decode(call_result.result.as_ref(), call_result.exit_reason);
+        // Non-reverting assertion failures surface through Foundry's failure flags instead of
+        // revert data. Use a stable fallback so invariant output is not blank.
+        let revert_reason =
+            if !call_result.reverted && matches!(revert_reason.as_str(), "" | EMPTY_REVERT_DATA) {
+                ASSERTION_FAILED_PREFIX.to_string()
+            } else {
+                revert_reason
+            };
 
         let func = invariant_contract.invariant_function;
         debug_assert!(func.inputs.is_empty());
@@ -97,6 +110,17 @@ impl FailedInvariantCaseData {
             inner_sequence: inner_sequence.to_vec(),
             shrink_run_limit: invariant_config.shrink_run_limit,
             fail_on_revert: invariant_config.fail_on_revert,
+            assertion_failure: false,
         }
+    }
+
+    /// Marks this case as assertion-originated and normalizes empty decoded revert data from
+    /// non-reverting assertion paths into a stable user-facing message.
+    pub fn with_assertion_failure(mut self, assertion_failure: bool) -> Self {
+        self.assertion_failure = assertion_failure;
+        if assertion_failure && matches!(self.revert_reason.as_str(), "" | EMPTY_REVERT_DATA) {
+            self.revert_reason = ASSERTION_FAILED_PREFIX.to_string();
+        }
+        self
     }
 }

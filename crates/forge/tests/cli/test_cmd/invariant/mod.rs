@@ -422,9 +422,9 @@ Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
 	[Sequence] (original: 3, shrunk: 3)
-		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x0000000000000000000000000000000000001490 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x00000000000000000000000000000000000016Ac addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
+		sender=0x00000000000000000000000000000000000016C5 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
  invariant_increment() (runs: 0, calls: 0, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
@@ -448,11 +448,11 @@ Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
 	[Sequence] (original: 3, shrunk: 3)
-		vm.prank(0x00000000000000000000000000000000000014aD);
+		vm.prank(0x0000000000000000000000000000000000001490);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
 		vm.prank(0x8ef7F804bAd9183981A366EA618d9D47D3124649);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
-		vm.prank(0x00000000000000000000000000000000000016Ac);
+		vm.prank(0x00000000000000000000000000000000000016C5);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(284406551521730736391345481857560031052359183671404042152984097777);
  invariant_increment() (runs: 0, calls: 0, reverts: 0)
 
@@ -474,11 +474,11 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 ...
 Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
-[FAIL: invariant_increment replay failure]
+[FAIL: invariant increment failure]
 	[Sequence] (original: 3, shrunk: 3)
-		sender=0x00000000000000000000000000000000000014aD addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=0x0000000000000000000000000000000000001490 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x00000000000000000000000000000000000016Ac addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
+		sender=0x00000000000000000000000000000000000016C5 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
  invariant_increment() (runs: 1, calls: 1, reverts: 1)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
@@ -542,7 +542,7 @@ contract OwnableTest is Test {
     // Should replay failure if same test.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: invariant_never_owner replay failure]
+[FAIL: never owner]
 ...
 "#]]);
 
@@ -572,12 +572,152 @@ contract OwnableTest is Test {
     );
     cmd.assert_success().stderr_eq(str![[r#"
 ...
-Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because test contract bytecode has changed.
+Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because invariant test settings have changed: target selectors changed
 ...
 "#]])
     .stdout_eq(str![[r#"
 ...
 [PASS] invariant_never_owner() (runs: 5, calls: 25, reverts: 0)
+...
+"#]]);
+});
+
+forgetest_init!(invariant_replay_preserves_fail_reason, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+    });
+    prj.add_test(
+        "InvariantReplayFailReason.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantReplayFailReason is Test {
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function callTarget(uint256) external {}
+
+    function invariant_fail_reason() public {
+        fail();
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_fail_reason"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: assertion failed][..]
+...
+"#]]);
+
+    // Replay should preserve failure reason instead of generic replay message.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: assertion failed][..]
+...
+"#]]);
+});
+
+forgetest_init!(invariant_replay_preserves_custom_error_reason, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+        config.invariant.fail_on_revert = true;
+    });
+    prj.add_test(
+        "InvariantReplayCustomError.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract CustomErrorTarget {
+    error InvariantCustomError(uint256, string);
+
+    function breakInvariant() external {
+        revert InvariantCustomError(111, "custom");
+    }
+}
+
+contract CustomErrorHandler is Test {
+    CustomErrorTarget target;
+
+    constructor() {
+        target = new CustomErrorTarget();
+    }
+
+    function callTarget() external {
+        target.breakInvariant();
+    }
+}
+
+contract InvariantReplayCustomError is Test {
+    CustomErrorHandler handler;
+
+    function setUp() public {
+        handler = new CustomErrorHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_custom_error_reason() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_custom_error_reason"]).assert_failure().stdout_eq(str![[
+        r#"
+...
+[FAIL: [..]custom[..]][..]
+...
+"#
+    ]]);
+
+    // Replay should preserve custom error string too.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: [..]custom[..]][..]
+...
+"#]]);
+});
+
+forgetest_init!(invariant_replay_preserves_invariant_custom_error_reason, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 1;
+    });
+    prj.add_test(
+        "InvariantReplayInvariantCustomError.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract InvariantReplayInvariantCustomError is Test {
+    error InvariantCustomError(uint256, string);
+
+    function setUp() public {
+        targetContract(address(this));
+    }
+
+    function touch(uint256) external {}
+
+    function invariant_custom_error_reason_from_invariant() public pure {
+        revert InvariantCustomError(222, "invariant custom");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_custom_error_reason_from_invariant"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: InvariantCustomError(222, "invariant custom")][..]
+...
+"#]]);
+
+    // Replay should preserve invariant-level custom error string too.
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: failed to set up invariant testing environment: InvariantCustomError(222, "invariant custom")][..]
 ...
 "#]]);
 });

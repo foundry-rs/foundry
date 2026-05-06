@@ -1,5 +1,10 @@
-use forge_lint::{linter::Lint, sol::med::REGISTERED_LINTS};
-use foundry_config::{DenyLevel, LintSeverity, LinterConfig, SolidityErrorCode};
+use forge_lint::{
+    linter::Lint,
+    sol::{self, SolLint},
+};
+use foundry_config::{
+    DenyLevel, LintSeverity, LinterConfig, SolidityErrorCode, lint::LintSpecificConfig,
+};
 
 mod geiger;
 
@@ -112,6 +117,74 @@ contract CounterTest {
 }
 "#;
 
+const MULTI_CONTRACT_FILE: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IToken {
+    function transfer(address to, uint256 amount) external returns (bool);
+}
+
+library MathLib {
+    function add(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a + b;
+    }
+}
+
+contract FirstContract {
+    uint256 public value;
+    
+    function setValue(uint256 _value) public {
+        value = _value;
+    }
+}
+
+abstract contract BaseContract {
+    function baseFunction() public virtual;
+}
+
+interface IERC20 {
+    function balanceOf(address account) external view returns (uint256);
+}
+
+contract SecondContract {
+    address public owner;
+    
+    constructor() {
+        owner = msg.sender;
+    }
+}
+
+library StringLib {
+    function toUpperCase(string memory str) internal pure returns (string memory) {
+        return str;
+    }
+}
+
+abstract contract AbstractStorage {
+    mapping(address => uint256) internal balances;
+    
+    function getBalance(address account) public view virtual returns (uint256);
+}
+
+interface Token {
+    function transfer(address to, uint256 amount) external returns (bool);
+}
+"#;
+
+const SOLO_INTERFACES: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface ERC20 {
+    function balanceOf(address account) external view returns (uint256);
+}
+
+interface IToken {
+    function transfer(address to, uint256 amount) external returns (bool);
+}
+"#;
+
 forgetest!(can_use_config, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
@@ -133,7 +206,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 16 │         (1 / 2) * 3;
    │         ━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 
 "#]]);
@@ -160,7 +233,7 @@ note[mixed-case-function]: function names should use mixedCase
 9 │     function functionMIXEDCaseInfo() public {}
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
   │
-  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
 
 "#]]);
@@ -189,10 +262,334 @@ forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
             exclude_lints: vec![],
             ignore: vec!["src/ContractWithLints.sol".into()],
             lint_on_build: true,
-            mixed_case_exceptions: vec!["MIXED".to_string()],
+            lint_specific: LintSpecificConfig {
+                mixed_case_exceptions: vec!["MIXED".to_string()],
+                ..Default::default()
+            },
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
+});
+
+forgetest!(multi_contract_file_no_exceptions, |prj, cmd| {
+    prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
+
+    // Without exceptions, should flag all 8 contract-like items
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            lint_on_build: true,
+            severity: vec![
+                LintSeverity::High,
+                LintSeverity::Med,
+                LintSeverity::Low,
+                LintSeverity::Info,
+            ],
+            ..Default::default()
+        };
+    });
+
+    let output = cmd.arg("lint").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    // Should see 9 instances of multi-contract-file lint
+    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 9);
+    assert!(stderr.contains("IToken"));
+    assert!(stderr.contains("IERC20"));
+    assert!(stderr.contains("Token"));
+    assert!(stderr.contains("MathLib"));
+    assert!(stderr.contains("StringLib"));
+    assert!(stderr.contains("BaseContract"));
+    assert!(stderr.contains("AbstractStorage"));
+    assert!(stderr.contains("FirstContract"));
+    assert!(stderr.contains("SecondContract"));
+});
+
+forgetest!(multi_contract_file_interface_exception, |prj, cmd| {
+    use foundry_config::lint::ContractException;
+
+    prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
+
+    // With interface exception, should flag 6 items
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            lint_on_build: true,
+            severity: vec![
+                LintSeverity::High,
+                LintSeverity::Med,
+                LintSeverity::Low,
+                LintSeverity::Info,
+            ],
+            exclude_lints: vec!["interface-naming".into()],
+            lint_specific: LintSpecificConfig {
+                multi_contract_file_exceptions: vec![ContractException::Interface],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+    });
+
+    let output = cmd.arg("lint").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    // Should see 6 instances (3 interfaces excluded: IToken, IERC20, Token)
+    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 6);
+    assert!(!stderr.contains("IToken"));
+    assert!(!stderr.contains("IERC20"));
+    assert!(!stderr.contains("Token"));
+    assert!(stderr.contains("MathLib"));
+    assert!(stderr.contains("FirstContract"));
+});
+
+forgetest!(multi_contract_file_library_exception, |prj, cmd| {
+    use foundry_config::lint::ContractException;
+
+    prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
+
+    // With library exception, should flag 7 items
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            lint_on_build: true,
+            severity: vec![
+                LintSeverity::High,
+                LintSeverity::Med,
+                LintSeverity::Low,
+                LintSeverity::Info,
+            ],
+            lint_specific: LintSpecificConfig {
+                multi_contract_file_exceptions: vec![ContractException::Library],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+    });
+
+    let output = cmd.arg("lint").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    // Should see 7 instances (2 libraries excluded)
+    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 7);
+    assert!(stderr.contains("IToken"));
+    assert!(!stderr.contains("MathLib"));
+    assert!(!stderr.contains("StringLib"));
+    assert!(stderr.contains("FirstContract"));
+});
+
+forgetest!(multi_contract_file_abstract_exception, |prj, cmd| {
+    use foundry_config::lint::ContractException;
+
+    prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
+
+    // With abstract contract exception, should flag 7 items
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            lint_on_build: true,
+            severity: vec![
+                LintSeverity::High,
+                LintSeverity::Med,
+                LintSeverity::Low,
+                LintSeverity::Info,
+            ],
+            lint_specific: LintSpecificConfig {
+                multi_contract_file_exceptions: vec![ContractException::AbstractContract],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+    });
+
+    let output = cmd.arg("lint").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    // Should see 7 instances (2 abstract contracts excluded)
+    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 7);
+    assert!(stderr.contains("IToken"));
+    assert!(stderr.contains("MathLib"));
+    assert!(stderr.contains("FirstContract"));
+    assert!(!stderr.contains("BaseContract"));
+    assert!(!stderr.contains("AbstractStorage"));
+});
+
+forgetest!(multi_contract_file_multiple_exceptions, |prj, cmd| {
+    use foundry_config::lint::ContractException;
+
+    prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
+
+    // With interface + library exceptions, should flag 4 items
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            lint_on_build: true,
+            severity: vec![
+                LintSeverity::High,
+                LintSeverity::Med,
+                LintSeverity::Low,
+                LintSeverity::Info,
+            ],
+            exclude_lints: vec!["interface-naming".into()],
+            lint_specific: LintSpecificConfig {
+                multi_contract_file_exceptions: vec![
+                    ContractException::Interface,
+                    ContractException::Library,
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+    });
+
+    let output = cmd.arg("lint").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    // Should see 4 instances (3 interfaces + 2 libraries excluded)
+    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 4);
+    assert!(!stderr.contains("IToken"));
+    assert!(!stderr.contains("IERC20"));
+    assert!(!stderr.contains("Token"));
+    assert!(!stderr.contains("MathLib"));
+    assert!(stderr.contains("BaseContract"));
+    assert!(stderr.contains("FirstContract"));
+});
+
+forgetest!(multi_contract_file_all_exceptions, |prj, cmd| {
+    use foundry_config::lint::ContractException;
+
+    prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
+
+    // With all exceptions, should still flag 2 regular contracts
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            lint_on_build: true,
+            severity: vec![
+                LintSeverity::High,
+                LintSeverity::Med,
+                LintSeverity::Low,
+                LintSeverity::Info,
+            ],
+            lint_specific: LintSpecificConfig {
+                multi_contract_file_exceptions: vec![
+                    ContractException::Interface,
+                    ContractException::Library,
+                    ContractException::AbstractContract,
+                ],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+    });
+
+    let output = cmd.arg("lint").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    // Should see 2 instances (only the 2 regular contracts)
+    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 2);
+    assert!(!stderr.contains("IToken"));
+    assert!(!stderr.contains("MathLib"));
+    assert!(!stderr.contains("BaseContract"));
+    assert!(stderr.contains("FirstContract"));
+    assert!(stderr.contains("SecondContract"));
+});
+
+forgetest!(multi_contract_file_invalid_toml_value, |prj, cmd| {
+    use std::fs;
+
+    prj.add_source("Simple", "contract Simple {}");
+
+    // Write invalid TOML config with invalid enum value
+    let config_path = prj.root().join("foundry.toml");
+    let invalid_config = r#"
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+[profile.default.lint.lint_specific]
+multi_contract_file_exceptions = ["interface", "bad_contract_type", "library"]
+"#;
+
+    fs::write(&config_path, invalid_config).unwrap();
+
+    // Should fail with deserialization error
+    let output = cmd.arg("lint").assert_failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    // Assert specific error message for invalid enum variant
+    assert!(stderr.contains("unknown variant"));
+    assert!(stderr.contains("expected `one of `interface`, `library`, `abstract_contract`"));
+});
+
+forgetest!(multi_contract_file_valid_toml_values, |prj, cmd| {
+    use std::fs;
+
+    prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
+
+    // Write valid TOML config with all valid enum values
+    let config_path = prj.root().join("foundry.toml");
+    let valid_config = r#"
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+[profile.default.lint]
+lint_on_build = true
+severity = ["high", "medium", "low", "info"]
+
+[profile.default.lint.lint_specific]
+multi_contract_file_exceptions = ["interface", "library", "abstract_contract"]
+"#;
+
+    fs::write(&config_path, valid_config).unwrap();
+
+    // Should succeed and only flag the 2 regular contracts
+    let output = cmd.arg("lint").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    assert_eq!(stderr.matches("note[multi-contract-file]").count(), 2);
+    assert!(stderr.contains("FirstContract"));
+    assert!(stderr.contains("SecondContract"));
+});
+
+forgetest!(interface_naming_fails_for_non_prefixed, |prj, cmd| {
+    prj.add_source("MixedFile", MULTI_CONTRACT_FILE);
+
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec!["multi-contract-file".into()],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+
+    let output = cmd.arg("lint").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    // Should flag only the interface that doesn't start with 'I': Token
+    assert_eq!(stderr.matches("note[interface-naming]").count(), 1);
+    assert!(stderr.contains("Token"));
+});
+
+forgetest!(interface_file_naming_fails_for_non_prefixed_file, |prj, cmd| {
+    prj.add_source("SoloInterfaces", SOLO_INTERFACES);
+
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![],
+            exclude_lints: vec!["multi-contract-file".into()],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+
+    let output = cmd.arg("lint").assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    // File name "SoloInterfaces" doesn't start with 'I', so interface-file-naming should trigger
+    assert_eq!(stderr.matches("note[interface-file-naming]").count(), 1);
+    // ERC20 is not prefixed with 'I', so interface-naming should trigger
+    assert_eq!(stderr.matches("note[interface-naming]").count(), 1);
+    assert!(stderr.contains("ERC20"));
 });
 
 forgetest!(can_override_config_severity, |prj, cmd| {
@@ -216,7 +613,7 @@ note[mixed-case-function]: function names should use mixedCase
 9 │     function functionMIXEDCaseInfo() public {}
   │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
   │
-  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-function
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
 
 
 "#]]);
@@ -243,7 +640,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 16 │         (1 / 2) * 3;
    │         ━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 
 "#]]);
@@ -271,7 +668,7 @@ warning[incorrect-shift]: the order of args in a shift operation is incorrect
 13 │         uint256 result = 8 >> localValue;
    │                          ━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#incorrect-shift
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
 
 
 "#
@@ -300,7 +697,7 @@ warning[divide-before-multiply]: multiplication should occur before division to 
 16 │         (1 / 2) * 3;
    │         ━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#divide-before-multiply
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 
 "#]]).stdout_eq(str![[r#"
@@ -461,7 +858,7 @@ note[unused-import]: unused imports should be removed
 8 │ import { _PascalCaseInfo } from "./ContractWithLints.sol";
   │          ━━━━━━━━━━━━━━━
   │
-  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unused-import
+  ╰ help: https://getfoundry.sh/forge/linting/unused-import
 
 
 "#]]);
@@ -493,7 +890,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
 6 │     uint256 public CounterB_Fail_Lint;
   │                    ━━━━━━━━━━━━━━━━━━ help: consider using: `counterBFailLint`
   │
-  ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#mixed-case-variable
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
 
 
 "#]]);
@@ -598,7 +995,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
     ],
     "children": [
     {
-        "message": "https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic",
+        "message": "https://getfoundry.sh/forge/linting/unwrapped-modifier-logic",
         "code": null,
         "level": "help",
         "spans": [],
@@ -654,7 +1051,7 @@ forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
         "rendered": null
     }
     ],
-    "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
+    "rendered": "note[unwrapped-modifier-logic]: wrap modifier logic to reduce code size\n\nhelp: wrap modifier logic to reduce code size\n 9 +                 _onlyOwner();\n10 +                 _;\n11 +             }\n12 + \n13 +             function _onlyOwner() internal {\n14 +                 require(isOwner[msg.sender], \"Not owner\");\n15 +                 require(msg.sender != address(0), \"Zero address\");\n16 +             }\n   ╭▸ src/UnwrappedModifierTest.sol:8:13\n   │\n 8 │ ┏             modifier onlyOwner() {\n 9 │ ┃                 require(isOwner[msg.sender], \"Not owner\");\n10 │ ┃                 require(msg.sender != address(0), \"Zero address\");\n11 │ ┃                 _;\n12 │ ┃             }\n   │ ┗━━━━━━━━━━━━━┛\n   │\n   ╰ help: https://getfoundry.sh/forge/linting/unwrapped-modifier-logic\n   ╭╴\n 8 ±             modifier onlyOwner() {\n   ╰╴\n"
 }
 "#]],
 );
@@ -735,47 +1132,46 @@ Warning: Key `deny_warnings` is being deprecated in favor of `deny = warnings`. 
 
 #[tokio::test]
 async fn ensure_lint_rule_docs() {
-    const FOUNDRY_BOOK_LINT_PAGE_URL: &str = "https://book.getfoundry.sh/forge/linting";
+    let client = reqwest::Client::new();
+    let mut failures = Vec::new();
 
-    // Fetch the content of the lint reference
-    let content = match reqwest::get(FOUNDRY_BOOK_LINT_PAGE_URL).await {
-        Ok(resp) => {
-            if !resp.status().is_success() {
-                panic!(
-                    "Failed to fetch Foundry Book lint page ({FOUNDRY_BOOK_LINT_PAGE_URL}). Status: {status}",
-                    status = resp.status()
-                );
+    for lint in registered_lints() {
+        let url = lint.help();
+        let response = match client.get(url).send().await {
+            Ok(response) => response,
+            Err(err) => {
+                failures.push(format!("{} ({url}) could not be fetched: {err}", lint.id()));
+                continue;
             }
-            match resp.text().await {
-                Ok(text) => text,
-                Err(e) => {
-                    panic!("Failed to read response text: {e}");
-                }
-            }
-        }
-        Err(e) => {
-            panic!("Failed to fetch Foundry Book lint page ({FOUNDRY_BOOK_LINT_PAGE_URL}): {e}",);
-        }
-    };
+        };
 
-    // Ensure no missing lints
-    let mut missing_lints = Vec::new();
-    for lint in REGISTERED_LINTS {
+        if !response.status().is_success() {
+            failures.push(format!("{} ({url}) returned HTTP {}", lint.id(), response.status()));
+            continue;
+        }
+
+        let content = match response.text().await {
+            Ok(content) => content.to_lowercase(),
+            Err(err) => {
+                failures
+                    .push(format!("{} ({url}) response body could not be read: {err}", lint.id()));
+                continue;
+            }
+        };
+
         let selector = lint.id().to_lowercase();
-        let selector_with_space = selector.replace("-", " ");
-        if !content.to_lowercase().contains(&selector)
-            && !content.to_lowercase().contains(&selector_with_space)
-        {
-            missing_lints.push(lint.id());
+        let selector_with_space = selector.replace('-', " ");
+        if !content.contains(&selector) && !content.contains(&selector_with_space) {
+            failures.push(format!("{} ({url}) did not mention the lint id", lint.id()));
         }
     }
 
-    if !missing_lints.is_empty() {
+    if !failures.is_empty() {
         let mut msg = String::from(
-            "Foundry Book lint validation failed. The following lints must be added to the docs:\n",
+            "Foundry Book lint validation failed. The following lint pages are missing or invalid:\n",
         );
-        for lint in missing_lints {
-            msg.push_str(&format!("  - {lint}\n"));
+        for failure in failures {
+            msg.push_str(&format!("  - {failure}\n"));
         }
         msg.push_str("Please open a PR: https://github.com/foundry-rs/book");
         panic!("{msg}");
@@ -784,9 +1180,19 @@ async fn ensure_lint_rule_docs() {
 
 #[test]
 fn ensure_no_privileged_lint_id() {
-    for lint in REGISTERED_LINTS {
+    for lint in registered_lints() {
         assert_ne!(lint.id(), "all", "lint-id 'all' is reserved. Please use a different id");
     }
+}
+
+fn registered_lints() -> impl Iterator<Item = &'static SolLint> {
+    sol::high::REGISTERED_LINTS
+        .iter()
+        .chain(sol::med::REGISTERED_LINTS)
+        .chain(sol::low::REGISTERED_LINTS)
+        .chain(sol::info::REGISTERED_LINTS)
+        .chain(sol::gas::REGISTERED_LINTS)
+        .chain(sol::codesize::REGISTERED_LINTS)
 }
 
 // <https://github.com/foundry-rs/foundry/issues/13107>
@@ -860,15 +1266,207 @@ contract OldContract {
 
     // Run forge build - should SUCCEED without linting
     cmd.arg("build").assert_success().stderr_eq(str![[
-        r#"Warning: unable to lint. Solar only supports Solidity versions prior to 0.8.0
+        r#"Warning: unable to lint. Solar only supports Solidity versions >=0.8.0
 
 "#
     ]]);
 
     // Run forge lint - should FAIL
     cmd.forge_fuse().arg("lint").assert_failure().stderr_eq(str![[
-        r#"Error: unable to lint. Solar only supports Solidity versions prior to 0.8.0
+        r#"Error: unable to lint. Solar only supports Solidity versions >=0.8.0
 
 "#
     ]]);
+});
+
+const PRAGMA_INCONSISTENT_ALPHA: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract Alpha {}
+"#;
+
+const PRAGMA_INCONSISTENT_BETA: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+contract Beta {}
+"#;
+
+forgetest!(pragma_inconsistent_cross_file, |prj, cmd| {
+    prj.add_source("Alpha", PRAGMA_INCONSISTENT_ALPHA);
+    prj.add_source("Beta", PRAGMA_INCONSISTENT_BETA);
+
+    cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
+        [r#"
+note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity ^0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity 0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+
+"#]
+    ]);
+});
+
+const PRAGMA_EXACT_A: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+contract A {}
+"#;
+
+const PRAGMA_EXACT_B: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+contract B {}
+"#;
+
+const PRAGMA_EXACT_C: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity 0.8.20;
+
+contract C {}
+"#;
+
+const PRAGMA_CARET_A: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract A {}
+"#;
+
+const PRAGMA_CARET_B: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract B {}
+"#;
+
+const PRAGMA_CARET_C: &str = r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract C {}
+"#;
+
+const NO_PRAGMA_C: &str = r#"
+// SPDX-License-Identifier: MIT
+
+contract C {}
+"#;
+
+// Multiple files all using the exact same pragma must NOT warn.
+forgetest!(pragma_inconsistent_consistent_exact_no_warning, |prj, cmd| {
+    prj.add_source("A", PRAGMA_EXACT_A);
+    prj.add_source("B", PRAGMA_EXACT_B);
+    prj.add_source("C", PRAGMA_EXACT_C);
+
+    cmd.arg("lint")
+        .args(["--only-lint", "pragma-inconsistent"])
+        .assert_success()
+        .stderr_eq(str![[r#""#]]);
+});
+
+// Multiple files all using the exact same caret pragma must NOT warn.
+forgetest!(pragma_inconsistent_consistent_caret_no_warning, |prj, cmd| {
+    prj.add_source("A", PRAGMA_CARET_A);
+    prj.add_source("B", PRAGMA_CARET_B);
+
+    cmd.arg("lint")
+        .args(["--only-lint", "pragma-inconsistent"])
+        .assert_success()
+        .stderr_eq(str![[r#""#]]);
+});
+
+// A single file in the project cannot conflict with itself.
+forgetest!(pragma_inconsistent_single_file_no_warning, |prj, cmd| {
+    prj.add_source("A", PRAGMA_CARET_A);
+
+    cmd.arg("lint")
+        .args(["--only-lint", "pragma-inconsistent"])
+        .assert_success()
+        .stderr_eq(str![[r#""#]]);
+});
+
+// Even files that share a requirement still emit when ANY other variant exists.
+// Two files with `0.8.20` plus one file with `^0.8.20` => 3 emits total.
+forgetest!(pragma_inconsistent_duplicates_among_conflict, |prj, cmd| {
+    prj.add_source("A", PRAGMA_EXACT_A);
+    prj.add_source("B", PRAGMA_EXACT_B);
+    prj.add_source("C", PRAGMA_CARET_C);
+
+    cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
+        [r#"
+note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity 0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity 0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity ^0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+
+"#]
+    ]);
+});
+
+// Files without a `pragma solidity` directive must not affect the conflict computation.
+// Note: `add_raw_source` is used here to bypass the helper that would otherwise inject a default
+// `pragma solidity =<SOLC_VERSION>;` for files that omit one.
+forgetest!(pragma_inconsistent_files_without_pragma, |prj, cmd| {
+    prj.add_raw_source("A", PRAGMA_EXACT_A);
+    prj.add_raw_source("B", PRAGMA_CARET_B);
+    // C has no pragma at all; should be ignored by the cross-file check.
+    prj.add_raw_source("C", NO_PRAGMA_C);
+
+    cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
+        [r#"
+note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity 0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
+  [FILE]:3:1
+  │
+3 │ pragma solidity ^0.8.20;
+  │ ━━━━━━━━━━━━━━━━━━━━━━━━
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/pragma-inconsistent
+
+
+"#]
+    ]);
 });

@@ -21,9 +21,9 @@ use anvil_core::{
     eth::EthRequest,
     types::{ReorgOptions, TransactionData},
 };
+use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
 use foundry_evm::hardfork::EthereumHardfork;
 
-use revm::primitives::hardfork::SpecId;
 use std::{
     str::FromStr,
     time::{Duration, SystemTime},
@@ -440,13 +440,13 @@ async fn can_get_node_info() {
 
     let block_number = provider.get_block_number().await.unwrap();
     let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
-    let hard_fork: &str = SpecId::OSAKA.into();
+    let hard_fork = NodeConfig::test().get_hardfork().name();
 
     let expected_node_info = NodeInfo {
         current_block_number: 0_u64,
         current_block_timestamp: 1,
         current_block_hash: block.header.hash,
-        hard_fork: hard_fork.to_string(),
+        hard_fork,
         transaction_order: "fees".to_owned(),
         environment: NodeEnvironment {
             base_fee: U256::from_str("0x3b9aca00").unwrap().to(),
@@ -459,6 +459,7 @@ async fn can_get_node_info() {
             fork_block_number: None,
             fork_retry_backoff: None,
         },
+        network: None,
     };
 
     assert_eq!(node_info, expected_node_info);
@@ -481,6 +482,8 @@ async fn can_get_metadata() {
         latest_block_number: block_number,
         chain_id,
         client_version: CLIENT_VERSION.to_string(),
+        client_semver: Some(SEMVER_VERSION.to_string()),
+        client_commit_sha: Some(COMMIT_SHA.to_string()),
         instance_id: api.instance_id(),
         forked_network: None,
         snapshots: Default::default(),
@@ -506,6 +509,8 @@ async fn can_get_metadata_on_fork() {
         latest_block_number: block_number,
         chain_id,
         client_version: CLIENT_VERSION.to_string(),
+        client_semver: Some(SEMVER_VERSION.to_string()),
+        client_commit_sha: Some(COMMIT_SHA.to_string()),
         instance_id: api.instance_id(),
         forked_network: Some(ForkedNetwork {
             chain_id,
@@ -708,7 +713,8 @@ async fn flaky_test_reorg() {
 
     // Verify that historic blocks are still accessible
     for num in (0..14).rev() {
-        let _ = provider.get_block_by_number(num.into()).full().await.unwrap();
+        let block = provider.get_block_by_number(num.into()).full().await.unwrap();
+        assert!(block.is_some(), "Historic block {num} should be accessible after reorg");
     }
 
     // Send a few more transaction to verify the chain can still progress
@@ -817,10 +823,20 @@ async fn test_reorg_blockhash_opcode_consistency() {
 
     api.mine_one().await;
 
-    for (block_num, _rpc_before, _opcode_before) in &cached_hashes {
+    for (block_num, rpc_before, opcode_before) in &cached_hashes {
         let rpc_after =
             provider.get_block_by_number((*block_num).into()).await.unwrap().unwrap().header.hash;
         let opcode_after = multicall.getBlockHash(U256::from(*block_num)).call().await.unwrap();
+        if *block_num <= tip_before_reorg.saturating_sub(5) {
+            assert_eq!(
+                rpc_after, *rpc_before,
+                "Block {block_num}: hash should not change for non-reorged blocks"
+            );
+            assert_eq!(
+                opcode_after, *opcode_before,
+                "Block {block_num}: BLOCKHASH should not change for non-reorged blocks"
+            );
+        }
         assert_eq!(
             rpc_after, opcode_after,
             "Block {block_num}: RPC ({rpc_after}) and BLOCKHASH opcode ({opcode_after}) should match after reorg"
@@ -866,7 +882,7 @@ async fn test_reorg_deep_blockhash_consistency() {
     let tip_after_reorg = api.block_number().unwrap().to::<u64>();
 
     // Verify blocks still in the 256 window have consistent hashes
-    for (block_num, _rpc_before) in &cached_hashes {
+    for (block_num, rpc_before) in &cached_hashes {
         // Skip blocks that were reorged
         if *block_num > tip_after_reorg - 50 {
             continue;
@@ -874,6 +890,10 @@ async fn test_reorg_deep_blockhash_consistency() {
         let rpc_after =
             provider.get_block_by_number((*block_num).into()).await.unwrap().unwrap().header.hash;
         let opcode_after = multicall.getBlockHash(U256::from(*block_num)).call().await.unwrap();
+        assert_eq!(
+            rpc_after, *rpc_before,
+            "Block {block_num}: hash should not change for non-reorged blocks"
+        );
         assert_eq!(
             rpc_after, opcode_after,
             "Block {block_num}: RPC and BLOCKHASH should match after deep reorg"
@@ -983,7 +1003,6 @@ async fn test_mine_blk_with_prev_timestamp() {
 }
 
 // increase time by 0 seconds i.e next_block_timestamp = prev_block_timestamp
-// api.evm_increase_time(0).unwrap();
 #[tokio::test(flavor = "multi_thread")]
 async fn test_increase_time_by_zero() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -994,7 +1013,7 @@ async fn test_increase_time_by_zero() {
     let init_number = init_blk.header.number;
     let init_timestamp = init_blk.header.timestamp;
 
-    let _ = api.evm_increase_time(U256::ZERO).await;
+    api.evm_set_next_block_timestamp(init_timestamp).unwrap();
 
     api.mine_one().await;
 
@@ -1174,4 +1193,120 @@ async fn test_anvil_reset_fork_to_non_fork() {
     api.mine_one().await;
     let new_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
     assert_eq!(new_block.header.number, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_node_info_tempo_t0() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
+
+    let expected_node_info = NodeInfo {
+        current_block_number: 0_u64,
+        current_block_timestamp: 1,
+        current_block_hash: block.header.hash,
+        hard_fork: "T0".to_string(),
+        transaction_order: "fees".to_owned(),
+        environment: NodeEnvironment {
+            base_fee: 10_000_000_000,
+            chain_id: 31337,
+            gas_limit: 30_000_000,
+            gas_price: 11_000_000_000,
+        },
+        fork_config: NodeForkConfig {
+            fork_url: None,
+            fork_block_number: None,
+            fork_retry_backoff: None,
+        },
+        network: Some("tempo".to_string()),
+    };
+
+    assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_node_info_tempo_t1() {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T1.into()));
+    let (api, handle) = spawn(config).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
+
+    let expected_node_info = NodeInfo {
+        current_block_number: 0_u64,
+        current_block_timestamp: 1,
+        current_block_hash: block.header.hash,
+        hard_fork: "T1".to_string(),
+        transaction_order: "fees".to_owned(),
+        environment: NodeEnvironment {
+            base_fee: 20_000_000_000,
+            chain_id: 31337,
+            gas_limit: 30_000_000,
+            gas_price: 21_000_000_000,
+        },
+        fork_config: NodeForkConfig {
+            fork_url: None,
+            fork_block_number: None,
+            fork_retry_backoff: None,
+        },
+        network: Some("tempo".to_string()),
+    };
+
+    assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_deal_erc20_tempo() {
+    use alloy_primitives::address;
+    use foundry_evm::core::tempo::PATH_USD_ADDRESS;
+
+    const ALPHA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000001");
+
+    let (api, _handle) = spawn(NodeConfig::test_tempo()).await;
+
+    let target = Address::random();
+
+    // TIP20 tokens are precompile-backed — anvil_dealERC20 uses access-list slot probing
+    // which doesn't discover precompile storage slots. Verify this fails gracefully.
+    for token_addr in [PATH_USD_ADDRESS, ALPHA_USD_ADDRESS] {
+        let amount = U256::from(5_000_000); // 5 tokens (6 decimals)
+
+        let result = api.anvil_deal_erc20(target, token_addr, amount).await;
+        assert!(
+            result.is_err(),
+            "anvil_dealERC20 should fail for precompile-based TIP20 {token_addr}"
+        );
+
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no slot found"),
+            "Error should mention slot discovery failure, got: {err}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_default_base_fee_tempo() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    api.mine_one().await;
+
+    let block = provider.get_block(BlockNumberOrTag::Latest.into()).await.unwrap().unwrap();
+    assert_eq!(
+        block.header.base_fee_per_gas,
+        Some(10_000_000_000),
+        "T0 base fee should be 10 billion attodollars"
+    );
 }

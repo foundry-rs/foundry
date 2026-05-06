@@ -60,6 +60,7 @@ optimizer_runs = 200
 verbosity = 0
 eth_rpc_accept_invalid_certs = false
 eth_rpc_no_proxy = false
+eth_rpc_curl = false
 ignored_error_codes = [
     "license",
     "code-size",
@@ -68,11 +69,13 @@ ignored_error_codes = [
     "transfer-deprecated",
     "natspec-memory-safe-assembly-deprecated",
 ]
+ignored_error_codes_from = []
 ignored_warnings_from = []
 deny = "never"
 test_failures_file = "cache/test-failures"
 show_progress = false
 ffi = false
+live_logs = false
 allow_internal_expect_revert = false
 always_use_create_2_factory = false
 prompt_timeout = 120
@@ -154,6 +157,8 @@ severity = [
 exclude_lints = []
 ignore = []
 lint_on_build = true
+
+[lint.lint_specific]
 mixed_case_exceptions = [
     "ERC",
     "URI",
@@ -166,6 +171,7 @@ mixed_case_exceptions = [
     "HTTP",
     "HTTPS",
 ]
+multi_contract_file_exceptions = []
 
 [doc]
 out = "docs"
@@ -189,6 +195,8 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+sancov_edges = false
+sancov_trace_cmp = false
 failure_persist_dir = "cache/fuzz"
 show_logs = false
 
@@ -210,6 +218,8 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+sancov_edges = false
+sancov_trace_cmp = false
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
@@ -249,6 +259,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
+        hardfork: None,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
         gas_reports_include_tests: false,
@@ -296,6 +307,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             ..Default::default()
         },
         ffi: true,
+        live_logs: true,
         allow_internal_expect_revert: false,
         always_use_create_2_factory: false,
         prompt_timeout: 0,
@@ -323,6 +335,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         eth_rpc_jwt: None,
         eth_rpc_timeout: None,
         eth_rpc_headers: None,
+        eth_rpc_curl: false,
         etherscan_api_key: None,
         etherscan: Default::default(),
         verbosity: 4,
@@ -331,6 +344,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),
         ],
         ignored_error_codes: vec![],
+        ignored_error_codes_from: vec![],
         ignored_file_paths: vec![],
         deny: foundry_config::DenyLevel::Never,
         deny_warnings: false,
@@ -561,6 +575,32 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
     unsafe {
         std::env::remove_var("FOUNDRY_ETH_RPC_URL");
     }
+});
+
+// Regression test for <https://github.com/foundry-rs/foundry/issues/14538>:
+// the bare `ETH_RPC_URL` env var must NOT cause `forge` commands to set
+// `eth_rpc_url` (which would silently fork all `forge test` runs).
+// Only `--rpc-url`, `foundry.toml`, the `FOUNDRY_ETH_RPC_URL` env var, or
+// cheatcodes should configure forking.
+forgetest_init!(eth_rpc_url_env_does_not_set_fork_url, |prj, _cmd| {
+    prj.initialize_default_contracts();
+    let url = "http://127.0.0.1:8545";
+
+    let mut cmd = prj.forge_bin();
+    cmd.arg("config")
+        .arg("--root")
+        .arg(prj.root())
+        .arg("--json")
+        .env("ETH_RPC_URL", url)
+        // Make sure the figment-style env var is not set in the test environment.
+        .env_remove("FOUNDRY_ETH_RPC_URL");
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let config: Config = serde_json::from_str(stdout.as_ref()).unwrap();
+    assert_eq!(
+        config.eth_rpc_url, None,
+        "bare ETH_RPC_URL must not propagate to forge config (regression #14538)"
+    );
 });
 
 // checks that we can set various config values
@@ -1210,6 +1250,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "skip": [],
   "force": false,
   "evm_version": "osaka",
+  "hardfork": null,
   "gas_reports": [
     "*"
   ],
@@ -1229,6 +1270,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "eth_rpc_jwt": null,
   "eth_rpc_timeout": null,
   "eth_rpc_headers": null,
+  "eth_rpc_curl": false,
   "etherscan_api_key": null,
   "ignored_error_codes": [
     "license",
@@ -1238,6 +1280,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "transfer-deprecated",
     "natspec-memory-safe-assembly-deprecated"
   ],
+  "ignored_error_codes_from": [],
   "ignored_warnings_from": [],
   "deny": "never",
   "match_test": null,
@@ -1252,6 +1295,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "show_progress": false,
   "fuzz": {
     "runs": 256,
+    "run": null,
+    "worker": null,
     "fail_on_revert": true,
     "max_test_rejects": 65536,
     "seed": null,
@@ -1267,6 +1312,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "sancov_edges": false,
+    "sancov_trace_cmp": false,
     "failure_persist_dir": "cache/fuzz",
     "show_logs": false,
     "timeout": null
@@ -1290,6 +1337,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "sancov_edges": false,
+    "sancov_trace_cmp": false,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
@@ -1299,6 +1348,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "check_interval": 1
   },
   "ffi": false,
+  "live_logs": false,
   "allow_internal_expect_revert": false,
   "always_use_create_2_factory": false,
   "prompt_timeout": 120,
@@ -1368,18 +1418,21 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "exclude_lints": [],
     "ignore": [],
     "lint_on_build": true,
-    "mixed_case_exceptions": [
-      "ERC",
-      "URI",
-      "ID",
-      "URL",
-      "API",
-      "JSON",
-      "XML",
-      "HTML",
-      "HTTP",
-      "HTTPS"
-    ]
+    "lint_specific": {
+      "mixed_case_exceptions": [
+        "ERC",
+        "URI",
+        "ID",
+        "URL",
+        "API",
+        "JSON",
+        "XML",
+        "HTML",
+        "HTTP",
+        "HTTPS"
+      ],
+      "multi_contract_file_exceptions": []
+    }
   },
   "doc": {
     "out": "docs",
@@ -1411,6 +1464,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "soldeer": null,
   "assertions_revert": true,
   "legacy_assertions": false,
+  "network": null,
   "celo": false,
   "bypass_prevrandao": false,
   "transaction_timeout": 120,

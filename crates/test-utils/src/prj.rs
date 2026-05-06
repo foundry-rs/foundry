@@ -41,9 +41,7 @@ pub fn clone_remote(repo_url: &str, target_dir: &str, recursive: bool) {
     cmd.args([repo_url, target_dir]);
     test_debug!("{cmd:?}");
     let status = cmd.status().unwrap();
-    if !status.success() {
-        panic!("git clone failed: {status}");
-    }
+    assert!(status.success(), "git clone failed: {status}")
 }
 
 /// Setup an empty test project and return a command pointing to the forge
@@ -81,13 +79,13 @@ impl RemoteProject {
     }
 
     /// Whether to run `forge build`
-    pub fn set_build(mut self, run_build: bool) -> Self {
+    pub const fn set_build(mut self, run_build: bool) -> Self {
         self.run_build = run_build;
         self
     }
 
     /// Configures the project's pathstyle
-    pub fn path_style(mut self, path_style: PathStyle) -> Self {
+    pub const fn path_style(mut self, path_style: PathStyle) -> Self {
         self.path_style = path_style;
         self
     }
@@ -365,9 +363,7 @@ impl TestProject {
     /// file will be deleted when the project is dropped.
     pub fn create_file(&self, path: impl AsRef<Path>, contents: &str) -> PathBuf {
         let path = path.as_ref();
-        if !path.is_relative() {
-            panic!("create_file(): file path is absolute");
-        }
+        assert!(path.is_relative(), "create_file(): file path is absolute");
         let path = self.root().join(path);
         if let Some(parent) = path.parent() {
             pretty_err(parent, std::fs::create_dir_all(parent));
@@ -549,7 +545,7 @@ pub struct TestCommand {
 
 impl TestCommand {
     /// Returns a mutable reference to the underlying command.
-    pub fn cmd(&mut self) -> &mut Command {
+    pub const fn cmd(&mut self) -> &mut Command {
         &mut self.cmd
     }
 
@@ -772,7 +768,7 @@ impl TestCommand {
     }
 
     /// Does not apply [`snapbox`] redactions to the command output.
-    pub fn with_no_redact(&mut self) -> &mut Self {
+    pub const fn with_no_redact(&mut self) -> &mut Self {
         self.redact_output = false;
         self
     }

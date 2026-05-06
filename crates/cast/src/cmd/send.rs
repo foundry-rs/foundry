@@ -1,21 +1,31 @@
 use std::{path::PathBuf, str::FromStr, time::Duration};
 
-use alloy_eips::Encodable2718;
+use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
-use alloy_network::{AnyNetwork, EthereumWallet, TransactionBuilder};
-use alloy_provider::{Provider, ProviderBuilder};
-use alloy_rpc_types::TransactionRequest;
-use alloy_serde::WithOtherFields;
-use alloy_signer::Signer;
+use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
+use alloy_primitives::Address;
+use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
+use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{LoadConfig, get_provider_with_curl},
+    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
-use foundry_wallets::WalletSigner;
+use foundry_common::{
+    FoundryTransactionBuilder,
+    fmt::{UIfmt, UIfmtReceiptExt},
+    provider::ProviderBuilder,
+    tempo::TEMPO_BROWSER_GAS_BUFFER,
+};
+use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
+use tempo_alloy::TempoNetwork;
 
-use crate::tx::{self, CastTxBuilder, CastTxSender, SendTxOpts};
+use crate::{
+    cmd::tip20::iso4217_warning_message,
+    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
+};
+use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 
 /// CLI arguments for `cast send`.
 #[derive(Debug, Parser)]
@@ -50,6 +60,10 @@ pub struct SendTxArgs {
     #[arg(long, requires = "from")]
     unlocked: bool,
 
+    /// Skip confirmation prompts (e.g. non-ISO 4217 currency warnings).
+    #[arg(long)]
+    force: bool,
+
     #[command(flatten)]
     tx: TransactionOpts,
 
@@ -82,8 +96,35 @@ pub enum SendTxSubcommands {
 }
 
 impl SendTxArgs {
-    pub async fn run(self) -> eyre::Result<()> {
-        let Self { to, mut sig, mut args, data, send_tx, tx, command, unlocked, path } = self;
+    pub async fn run(self) -> Result<()> {
+        // Resolve the signer early so we know if it's a Tempo access key.
+        let (signer, tempo_access_key) = self.send_tx.eth.wallet.maybe_signer().await?;
+
+        if tempo_access_key.is_some() || self.tx.tempo.is_tempo() {
+            self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
+        } else {
+            self.run_generic::<Ethereum>(signer, None).await
+        }
+    }
+
+    pub async fn run_generic<N: Network>(
+        self,
+        pre_resolved_signer: Option<WalletSigner>,
+        access_key: Option<TempoAccessKeyConfig>,
+    ) -> Result<()>
+    where
+        N::TxEnvelope: From<Signed<N::UnsignedTx>>,
+        N::UnsignedTx: SignableTransaction<Signature>,
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+        N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+    {
+        let Self { to, mut sig, mut args, data, send_tx, mut tx, command, unlocked, force, path } =
+            self;
+
+        let print_sponsor_hash = tx.tempo.print_sponsor_hash;
+        let expires_at = tx.tempo.resolve_expires();
+        let tempo_sponsor =
+            if print_sponsor_hash { None } else { tx.tempo.sponsor_config().await? };
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -119,11 +160,43 @@ impl SendTxArgs {
             None
         };
 
+        // Validate ISO 4217 currency code for TIP20Factory createToken calls.
+        if let Some(ref to_addr) = to {
+            let is_factory = match to_addr {
+                NameOrAddress::Address(addr) => *addr == TIP20_FACTORY_ADDRESS,
+                NameOrAddress::Name(name) => {
+                    Address::from_str(name).ok() == Some(TIP20_FACTORY_ADDRESS)
+                }
+            };
+
+            if !force
+                && is_factory
+                && let Some(ref sig_str) = sig
+                && sig_str.starts_with("createToken")
+                && let Some(currency) = args.get(2)
+                && !is_iso4217_currency(currency)
+            {
+                sh_warn!("{}", iso4217_warning_message(currency))?;
+                let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
+                if !matches!(response.trim(), "y" | "Y") {
+                    sh_println!("Aborted.")?;
+                    return Ok(());
+                }
+            }
+        }
+
         let config = send_tx.eth.load_config()?;
-        let provider = get_provider_with_curl(&config, send_tx.eth.rpc.curl)?;
+        let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+
+        let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
 
         if let Some(interval) = send_tx.poll_interval {
             provider.client().set_poll_interval(Duration::from_secs(interval))
+        }
+
+        // Inject access key ID into TempoOpts so it's set before gas estimation.
+        if let Some(ref ak) = access_key {
+            tx.tempo.key_id = Some(ak.key_address);
         }
 
         let builder = CastTxBuilder::new(&provider, tx, &config)
@@ -134,21 +207,42 @@ impl SendTxArgs {
             .await?
             .with_blob_data(blob_data)?;
 
+        // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
+        if print_sponsor_hash {
+            let (tx, from) = if let Some(ref ak) = access_key {
+                let (tx, _) = builder.build_with_access_key(ak.wallet_address, ak).await?;
+                (tx, ak.wallet_address)
+            } else {
+                // Use the pre-resolved signer to derive the actual sender address, since the
+                // sponsor hash commits to the sender.
+                let signer = pre_resolved_signer.as_ref().ok_or_else(|| {
+                    eyre!("--tempo.print-sponsor-hash requires a signer (e.g. --private-key)")
+                })?;
+                let from = signer.address();
+                let (tx, _) = builder.build(from).await?;
+                (tx, from)
+            };
+            let hash = tx
+                .compute_sponsor_hash(from)
+                .ok_or_else(|| eyre!("This network does not support sponsored transactions"))?;
+            sh_println!("{hash:?}")?;
+            return Ok(());
+        }
+
+        if let Some(ts) = expires_at {
+            sh_println!("Transaction expires at unix timestamp {ts}")?;
+        }
+
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
 
-        // Check if this is a Tempo transaction - requires special handling for local signing
-        let is_tempo = builder.is_tempo();
-
-        // Tempo transactions with browser wallets are not supported
-        if is_tempo && send_tx.eth.wallet.browser {
-            return Err(eyre!("Tempo transactions are not supported with browser wallets."));
-        }
+        // Launch browser signer if `--browser` flag is set
+        let browser = send_tx.browser.run::<N>().await?;
 
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
         // or remote RPC with unlocked accounts.
-        if unlocked && !send_tx.eth.wallet.browser {
+        if unlocked && browser.is_none() {
             // only check current chain id if it was specified in the config
             if let Some(config_chain) = config.chain {
                 let current_chain_id = provider.get_chain_id().await?;
@@ -168,11 +262,18 @@ impl SendTxArgs {
                 }
             }
 
-            let (tx, _) = builder.build(config.sender).await?;
+            let (mut tx_request, _) = builder.build(config.sender).await?;
+            maybe_print_resolved_lane(
+                resolved_lane.as_ref(),
+                tx_request.nonce().unwrap_or_default(),
+            )?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx_request, config.sender).await?;
+            }
 
             cast_send(
                 provider,
-                tx.into_inner().into(),
+                tx_request,
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -180,100 +281,88 @@ impl SendTxArgs {
             )
             .await
         // Case 2:
+        // Browser wallet signs and sends the transaction in one step.
+        } else if let Some(browser) = browser {
+            let chain = builder.chain();
+            let (mut tx_request, _) = builder.build(browser.address()).await?;
+            maybe_print_resolved_lane(
+                resolved_lane.as_ref(),
+                tx_request.nonce().unwrap_or_default(),
+            )?;
+
+            // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
+            // costs more gas for signature verification on Tempo chains. Add a
+            // conservative buffer since we can't determine the signature type beforehand.
+            if chain.is_tempo()
+                && let Some(gas) = tx_request.gas_limit()
+            {
+                tx_request.set_gas_limit(gas + TEMPO_BROWSER_GAS_BUFFER);
+            }
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx_request, browser.address()).await?;
+            }
+
+            let tx_hash = browser.send_transaction_via_browser(tx_request).await?;
+
+            let cast = CastTxSender::new(&provider);
+            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
+        // Case 3:
+        // Tempo access key (keychain) signing. Uses `sign_with_access_key` which
+        // handles the provisioning check and embeds `key_authorization` when needed.
+        } else if let Some(ak) = access_key {
+            let signer = match pre_resolved_signer {
+                Some(s) => s,
+                None => send_tx.eth.wallet.signer().await?,
+            };
+            let (mut tx_request, _) = builder.build_with_access_key(ak.wallet_address, &ak).await?;
+            maybe_print_resolved_lane(
+                resolved_lane.as_ref(),
+                tx_request.nonce().unwrap_or_default(),
+            )?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx_request, ak.wallet_address).await?;
+            }
+            cast_send_with_access_key(
+                &provider,
+                tx_request,
+                &signer,
+                &ak,
+                send_tx.cast_async,
+                send_tx.confirmations,
+                timeout,
+            )
+            .await
+        // Case 4:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
         // enough information to sign and we must bail.
         } else {
-            // Retrieve the signer, and bail if it can't be constructed.
-            let signer = send_tx.eth.wallet.signer().await?;
+            let signer = match pre_resolved_signer {
+                Some(s) => s,
+                None => send_tx.eth.wallet.signer().await?,
+            };
             let from = signer.address();
 
             tx::validate_from_address(send_tx.eth.wallet.from, from)?;
 
-            // Browser wallets work differently as they sign and send the transaction in one step.
-            if send_tx.eth.wallet.browser
-                && let WalletSigner::Browser(ref browser_signer) = signer
-            {
-                let (tx_request, _) = builder.build(from).await?;
-                let tx_hash =
-                    browser_signer.send_transaction_via_browser(tx_request.into_inner()).await?;
+            let (mut tx_request, _) = builder.build(&signer).await?;
+            maybe_print_resolved_lane(
+                resolved_lane.as_ref(),
+                tx_request.nonce().unwrap_or_default(),
+            )?;
 
-                if send_tx.cast_async {
-                    sh_println!("{tx_hash:#x}")?;
-                } else {
-                    let receipt = CastTxSender::new(&provider)
-                        .receipt(
-                            format!("{tx_hash:#x}"),
-                            None,
-                            send_tx.confirmations,
-                            Some(timeout),
-                            false,
-                        )
-                        .await?;
-                    sh_println!("{receipt}")?;
-                }
-
-                return Ok(());
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx_request, from).await?;
             }
-
-            // Tempo transactions need to be signed locally and sent as raw transactions
-            // because EthereumWallet doesn't understand type 0x76
-            // TODO(onbjerg): All of this is a side effect of a few things, most notably that we do
-            // not use `FoundryNetwork` and `FoundryTransactionRequest` everywhere, which is
-            // downstream of the fact that we use `EthereumWallet` everywhere.
-            if is_tempo {
-                let (ftx, _) = builder.build(&signer).await?;
-
-                let signed_tx = ftx.build(&EthereumWallet::new(signer)).await?;
-
-                // Encode and send raw
-                let mut raw_tx = Vec::with_capacity(signed_tx.encode_2718_len());
-                signed_tx.encode_2718(&mut raw_tx);
-
-                let cast = CastTxSender::new(&provider);
-                let pending_tx = cast.send_raw(&raw_tx).await?;
-                let tx_hash = pending_tx.inner().tx_hash();
-
-                if send_tx.cast_async {
-                    sh_println!("{tx_hash:#x}")?;
-                } else if send_tx.sync {
-                    // For sync mode, we already have the hash, just wait for receipt
-                    let receipt = cast
-                        .receipt(
-                            format!("{tx_hash:#x}"),
-                            None,
-                            send_tx.confirmations,
-                            Some(timeout),
-                            false,
-                        )
-                        .await?;
-                    sh_println!("{receipt}")?;
-                } else {
-                    let receipt = cast
-                        .receipt(
-                            format!("{tx_hash:#x}"),
-                            None,
-                            send_tx.confirmations,
-                            Some(timeout),
-                            false,
-                        )
-                        .await?;
-                    sh_println!("{receipt}")?;
-                }
-
-                return Ok(());
-            }
-
-            let (tx_request, _) = builder.build(&signer).await?;
 
             let wallet = EthereumWallet::from(signer);
-            let provider = ProviderBuilder::<_, _, AnyNetwork>::default()
+            let provider = AlloyProviderBuilder::<_, _, N>::default()
                 .wallet(wallet)
                 .connect_provider(&provider);
 
             cast_send(
                 provider,
-                tx_request.into_inner().into(),
+                tx_request,
                 send_tx.cast_async,
                 send_tx.sync,
                 send_tx.confirmations,
@@ -284,15 +373,19 @@ impl SendTxArgs {
     }
 }
 
-pub(crate) async fn cast_send<P: Provider<AnyNetwork>>(
+pub(crate) async fn cast_send<N: Network, P: Provider<N>>(
     provider: P,
-    tx: WithOtherFields<TransactionRequest>,
+    tx: N::TransactionRequest,
     cast_async: bool,
     sync: bool,
     confs: u64,
     timeout: u64,
-) -> Result<()> {
-    let cast = CastTxSender::new(&provider);
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+{
+    let cast = CastTxSender::new(provider);
 
     if sync {
         // Send transaction and wait for receipt synchronously
@@ -300,16 +393,43 @@ pub(crate) async fn cast_send<P: Provider<AnyNetwork>>(
         sh_println!("{receipt}")?;
     } else {
         let pending_tx = cast.send(tx).await?;
-        let tx_hash = pending_tx.inner().tx_hash();
-
-        if cast_async {
-            sh_println!("{tx_hash:#x}")?;
-        } else {
-            let receipt =
-                cast.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
-            sh_println!("{receipt}")?;
-        }
+        let tx_hash = *pending_tx.inner().tx_hash();
+        cast.print_tx_result(tx_hash, cast_async, confs, timeout).await?;
     }
 
     Ok(())
+}
+
+/// Signs a transaction with a Tempo access key and sends it via `send_raw_transaction`.
+///
+/// Sets `from` and `key_id` on the transaction before signing, making it idempotent for txs built
+/// with [`CastTxBuilder`] (fields already set) and also with sol!-bindings (fields not yet set).
+///
+/// NOTE: The default implementation returns an error. Only `TempoNetwork` supports this.
+pub(crate) async fn cast_send_with_access_key<N: Network, P: Provider<N>>(
+    provider: &P,
+    mut tx: N::TransactionRequest,
+    signer: &WalletSigner,
+    access_key: &TempoAccessKeyConfig,
+    cast_async: bool,
+    confirmations: u64,
+    timeout: u64,
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+    N::ReceiptResponse: UIfmt + UIfmtReceiptExt,
+{
+    tx.set_from(access_key.wallet_address);
+    tx.set_key_id(access_key.key_address);
+    let raw_tx = tx
+        .sign_with_access_key(
+            provider,
+            signer,
+            access_key.wallet_address,
+            access_key.key_address,
+            access_key.key_authorization.as_ref(),
+        )
+        .await?;
+    let tx_hash = *provider.send_raw_transaction(&raw_tx).await?.tx_hash();
+    CastTxSender::new(provider).print_tx_result(tx_hash, cast_async, confirmations, timeout).await
 }

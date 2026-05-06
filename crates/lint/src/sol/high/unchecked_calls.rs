@@ -150,10 +150,10 @@ impl<'ast> Visit<'ast> for UncheckedCallChecker<'_, '_> {
                 }
             }
             // Check multi-variable declarations: `(bool success, ) = target.call(data);`
-            StmtKind::DeclMulti(vars, expr) => {
-                if is_low_level_call(expr) && vars.first().is_none_or(|v| v.is_none()) {
-                    self.ctx.emit(&UNCHECKED_CALL, stmt.span);
-                }
+            StmtKind::DeclMulti(vars, expr)
+                if is_low_level_call(expr) && vars.first().is_none_or(|v| v.is_none()) =>
+            {
+                self.ctx.emit(&UNCHECKED_CALL, stmt.span);
             }
             _ => {}
         }
@@ -168,7 +168,7 @@ impl<'ast> Visit<'ast> for UncheckedCallChecker<'_, '_> {
 /// - `target.delegatecall(...)`
 /// - `target.staticcall(...)`
 /// - `target.call{value: x}(...)`
-fn is_low_level_call(expr: &Expr<'_>) -> bool {
+const fn is_low_level_call(expr: &Expr<'_>) -> bool {
     if let ExprKind::Call(call_expr, _args) = &expr.kind {
         // Check the callee expression
         let callee = match &call_expr.kind {
