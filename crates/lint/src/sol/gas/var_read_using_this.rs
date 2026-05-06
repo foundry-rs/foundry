@@ -6,7 +6,7 @@ use crate::{
 use solar::{
     ast::{ContractKind, StateMutability},
     interface::{Symbol, diagnostics::Applicability, sym},
-    sema::hir::{self, ExprKind, Res},
+    sema::hir::{self, ExprKind, Res, StmtKind},
 };
 use std::collections::HashMap;
 
@@ -97,7 +97,6 @@ fn walk_stmt<'hir>(
     stmt: &'hir hir::Stmt<'hir>,
     callable: &HashMap<Symbol, Vec<&'hir hir::Function<'hir>>>,
 ) {
-    use hir::StmtKind;
     match &stmt.kind {
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
             walk_block(ctx, hir, *block, callable);
