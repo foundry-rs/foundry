@@ -39,6 +39,9 @@ use pragma_directive::PRAGMA_INCONSISTENT;
 mod inline_assembly;
 use inline_assembly::INLINE_ASSEMBLY;
 
+mod redundant_base_constructor_call;
+use redundant_base_constructor_call::REDUNDANT_BASE_CONSTRUCTOR_CALL;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -54,4 +57,5 @@ register_lints!(
     (TooManyDigits, early, (TOO_MANY_DIGITS)),
     (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
     (InlineAssembly, early, (INLINE_ASSEMBLY)),
+    (RedundantBaseConstructorCall, late, (REDUNDANT_BASE_CONSTRUCTOR_CALL)),
 );
