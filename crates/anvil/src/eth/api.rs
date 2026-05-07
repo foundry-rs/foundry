@@ -264,10 +264,13 @@ impl<N: Network> EthApi<N> {
         } else {
             let block_time = Duration::from_secs(secs);
 
+            let miner = FixedBlockTimeMiner::checked_new(block_time)
+                .ok_or_else(|| RpcError::invalid_params("The interval is too big"))?;
+
             // This ensures that memory limits are stricter in interval-mine mode
             self.backend.update_interval_mine_block_time(block_time);
 
-            MiningMode::FixedBlockTime(FixedBlockTimeMiner::new(block_time))
+            MiningMode::FixedBlockTime(miner)
         };
         self.miner.set_mining_mode(mining_mode);
         Ok(())
@@ -1705,7 +1708,7 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_set_auto_mine(enabled).await.to_rpc_result()
             }
             EthRequest::SetIntervalMining(interval) => {
-                if interval >= U256::from(u64::MAX) {
+                if interval > U256::from(u64::MAX) {
                     return ResponseResult::Error(RpcError::invalid_params(
                         "The interval is too big",
                     ));
@@ -1746,7 +1749,7 @@ impl EthApi<FoundryNetwork> {
             }
             EthRequest::SetCoinbase(addr) => self.anvil_set_coinbase(addr).await.to_rpc_result(),
             EthRequest::SetChainId(id) => {
-                if id >= U256::from(u64::MAX) {
+                if id > U256::from(u64::MAX) {
                     return ResponseResult::Error(RpcError::invalid_params(
                         "The chain id is too big",
                     ));
@@ -1800,7 +1803,7 @@ impl EthApi<FoundryNetwork> {
                 self.evm_set_block_gas_limit(gas_limit).to_rpc_result()
             }
             EthRequest::EvmSetBlockTimeStampInterval(time) => {
-                if time >= U256::from(u64::MAX) {
+                if time > U256::from(u64::MAX) {
                     return ResponseResult::Error(RpcError::invalid_params(
                         "The interval is too big",
                     ));
@@ -1878,7 +1881,7 @@ impl EthApi<FoundryNetwork> {
             EthRequest::Rollback(depth) => {
                 let depth = match depth {
                     Some(d) => {
-                        if d >= U256::from(u64::MAX) {
+                        if d > U256::from(u64::MAX) {
                             return ResponseResult::Error(RpcError::invalid_params(
                                 "The depth is too big",
                             ));
