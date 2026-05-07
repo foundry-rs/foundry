@@ -2503,8 +2503,14 @@ impl EthApi<FoundryNetwork> {
 
         let raw = tx.encoded_2718().into();
 
-        let mut tx =
-            transaction_build(None, MaybeImpersonatedTransaction::new(tx), None, None, None);
+        let mut tx = transaction_build(
+            None,
+            None,
+            MaybeImpersonatedTransaction::new(tx),
+            None,
+            None,
+            None,
+        );
 
         // Set the correct `from` address (overrides the recovered zero address from dummy
         // signature)
@@ -2529,20 +2535,14 @@ impl EthApi<FoundryNetwork> {
         node_info!("eth_getTransactionByHash");
         let mut tx = self.pool.get_transaction(hash).map(|pending| {
             let from = *pending.sender();
-            let tx = transaction_build(
+            transaction_build(
                 Some(*pending.hash()),
+                Some(from),
                 pending.transaction,
                 None,
                 None,
                 Some(self.backend.base_fee()),
-            );
-
-            let WithOtherFields { inner: mut tx, other } = tx.0;
-            // we set the from field here explicitly to the set sender of the pending transaction,
-            // in case the transaction is impersonated.
-            tx.inner = Recovered::new_unchecked(tx.inner.into_inner(), from);
-
-            AnyRpcTransaction(WithOtherFields { inner: tx, other })
+            )
         });
         if tx.is_none() {
             tx = self.backend.transaction_by_hash(hash).await?
@@ -2571,19 +2571,14 @@ impl EthApi<FoundryNetwork> {
             {
                 let tx = transaction_build(
                     Some(*pending_tx.pending_transaction.hash()),
+                    Some(*pending_tx.pending_transaction.sender()),
                     pending_tx.pending_transaction.transaction.clone(),
                     None,
                     None,
                     Some(self.backend.base_fee()),
                 );
 
-                let WithOtherFields { inner: mut tx, other } = tx.0;
-                // we set the from field here explicitly to the set sender of the pending
-                // transaction, in case the transaction is impersonated.
-                let from = *pending_tx.pending_transaction.sender();
-                tx.inner = Recovered::new_unchecked(tx.inner.into_inner(), from);
-
-                return Ok(Some(AnyRpcTransaction(WithOtherFields { inner: tx, other })));
+                return Ok(Some(tx));
             }
         }
 
@@ -3258,19 +3253,12 @@ impl EthApi<FoundryNetwork> {
             let from = *tx.pending_transaction.sender();
             let tx = transaction_build(
                 Some(tx.hash()),
+                Some(from),
                 tx.pending_transaction.transaction.clone(),
                 None,
                 None,
                 None,
             );
-
-            let WithOtherFields { inner: mut tx, other } = tx.0;
-
-            // we set the from field here explicitly to the set sender of the pending transaction,
-            // in case the transaction is impersonated.
-            tx.inner = Recovered::new_unchecked(tx.inner.into_inner(), from);
-
-            let tx = AnyRpcTransaction(WithOtherFields { inner: tx, other });
 
             Ok(tx)
         }
@@ -3424,6 +3412,7 @@ impl EthApi<FoundryNetwork> {
 
             let tx = transaction_build(
                 Some(info.transaction_hash),
+                Some(info.from),
                 tx,
                 Some(&block),
                 Some(info),

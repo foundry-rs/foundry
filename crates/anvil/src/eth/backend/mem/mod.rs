@@ -980,7 +980,9 @@ impl<N: Network> Backend<N> {
             let info = storage.transactions.get(&hash)?.info.clone();
             let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
-            let tx = transaction_build(Some(hash), tx, Some(block), Some(info), base_fee);
+            let from = info.from;
+            let tx =
+                transaction_build(Some(hash), Some(from), tx, Some(block), Some(info), base_fee);
             transactions.push(tx);
         }
         Some(transactions)
@@ -1685,6 +1687,7 @@ impl<N: Network> Backend<N> {
 
         Some(transaction_build(
             Some(info.transaction_hash),
+            Some(info.from),
             tx,
             Some(&block),
             Some(info),
@@ -1723,6 +1726,7 @@ impl<N: Network> Backend<N> {
 
         Some(transaction_build(
             Some(info.transaction_hash),
+            Some(info.from),
             tx,
             Some(&block),
             Some(info),
@@ -4095,6 +4099,7 @@ impl Backend<FoundryNetwork> {
                     let tx_hash = tx.hash();
                     let rpc_tx = transaction_build(
                         None,
+                        Some(from),
                         MaybeImpersonatedTransaction::impersonated(tx, from),
                         None,
                         None,
@@ -4621,11 +4626,19 @@ where
 /// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
 pub fn transaction_build(
     tx_hash: Option<B256>,
+    from: Option<Address>,
     eth_transaction: MaybeImpersonatedTransaction<FoundryTxEnvelope>,
     block: Option<&Block>,
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
 ) -> AnyRpcTransaction {
+    // If a specific hash was provided we reuse it; otherwise compute it.
+    // This is important for impersonated transactions since they all use the
+    // `BYPASS_SIGNATURE` which would result in different hashes
+    // Note: for impersonated transactions this only concerns pending transactions because
+    // there's no `info` yet.
+    let hash = tx_hash.unwrap_or_else(|| eth_transaction.hash());
+
     #[cfg(feature = "optimism")]
     if let FoundryTxEnvelope::Deposit(deposit_tx) = eth_transaction.as_ref() {
         let dep_tx = deposit_tx;
@@ -4648,10 +4661,7 @@ pub fn transaction_build(
                     memo: Default::default(),
                 };
 
-                let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
-                    hash: eth_transaction.hash(),
-                    inner,
-                });
+                let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope { hash, inner });
 
                 let tx = Transaction {
                     inner: Recovered::new_unchecked(envelope, deposit_tx.from),
@@ -4673,7 +4683,7 @@ pub fn transaction_build(
     }
 
     if let FoundryTxEnvelope::Tempo(tempo_tx) = eth_transaction.as_ref() {
-        let from = eth_transaction.recover().unwrap_or_default();
+        let from = from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
         let ser = serde_json::to_value(tempo_tx).expect("could not serialize Tempo transaction");
         let maybe_tempo_fields = OtherFields::try_from(ser);
 
@@ -4685,10 +4695,7 @@ pub fn transaction_build(
                     memo: Default::default(),
                 };
 
-                let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope {
-                    hash: eth_transaction.hash(),
-                    inner,
-                });
+                let envelope = AnyTxEnvelope::Unknown(UnknownTxEnvelope { hash, inner });
 
                 let tx = Transaction {
                     inner: Recovered::new_unchecked(envelope, from),
@@ -4707,15 +4714,8 @@ pub fn transaction_build(
         }
     }
 
-    let from = eth_transaction.recover().unwrap_or_default();
+    let from = from.unwrap_or_else(|| eth_transaction.recover().unwrap_or_default());
     let effective_gas_price = eth_transaction.effective_gas_price(base_fee);
-
-    // if a specific hash was provided we update the transaction's hash
-    // This is important for impersonated transactions since they all use the
-    // `BYPASS_SIGNATURE` which would result in different hashes
-    // Note: for impersonated transactions this only concerns pending transactions because
-    // there's no `info` yet.
-    let hash = tx_hash.unwrap_or_else(|| eth_transaction.hash());
 
     let eth_envelope = FoundryTxEnvelope::from(eth_transaction)
         .try_into_eth()
