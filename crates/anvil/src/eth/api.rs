@@ -1705,7 +1705,12 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_set_auto_mine(enabled).await.to_rpc_result()
             }
             EthRequest::SetIntervalMining(interval) => {
-                self.anvil_set_interval_mining(interval).to_rpc_result()
+                if interval >= U256::from(u64::MAX) {
+                    return ResponseResult::Error(RpcError::invalid_params(
+                        "The interval is too big",
+                    ));
+                }
+                self.anvil_set_interval_mining(interval.to::<u64>()).to_rpc_result()
             }
             EthRequest::GetIntervalMining(()) => self.anvil_get_interval_mining().to_rpc_result(),
             EthRequest::DropTransaction(tx) => {
@@ -1740,7 +1745,14 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_set_storage_at(addr, slot, val).await.to_rpc_result()
             }
             EthRequest::SetCoinbase(addr) => self.anvil_set_coinbase(addr).await.to_rpc_result(),
-            EthRequest::SetChainId(id) => self.anvil_set_chain_id(id).await.to_rpc_result(),
+            EthRequest::SetChainId(id) => {
+                if id >= U256::from(u64::MAX) {
+                    return ResponseResult::Error(RpcError::invalid_params(
+                        "The chain id is too big",
+                    ));
+                }
+                self.anvil_set_chain_id(id.to::<u64>()).await.to_rpc_result()
+            }
             EthRequest::SetLogging(log) => self.anvil_set_logging(log).await.to_rpc_result(),
             EthRequest::SetMinGasPrice(gas) => {
                 self.anvil_set_min_gas_price(gas).await.to_rpc_result()
@@ -1788,7 +1800,12 @@ impl EthApi<FoundryNetwork> {
                 self.evm_set_block_gas_limit(gas_limit).to_rpc_result()
             }
             EthRequest::EvmSetBlockTimeStampInterval(time) => {
-                self.evm_set_block_timestamp_interval(time).to_rpc_result()
+                if time >= U256::from(u64::MAX) {
+                    return ResponseResult::Error(RpcError::invalid_params(
+                        "The interval is too big",
+                    ));
+                }
+                self.evm_set_block_timestamp_interval(time.to::<u64>()).to_rpc_result()
             }
             EthRequest::EvmRemoveBlockTimeStampInterval(()) => {
                 self.evm_remove_block_timestamp_interval().to_rpc_result()
@@ -1858,7 +1875,20 @@ impl EthApi<FoundryNetwork> {
             EthRequest::Reorg(reorg_options) => {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
-            EthRequest::Rollback(depth) => self.anvil_rollback(depth).await.to_rpc_result(),
+            EthRequest::Rollback(depth) => {
+                let depth = match depth {
+                    Some(d) => {
+                        if d >= U256::from(u64::MAX) {
+                            return ResponseResult::Error(RpcError::invalid_params(
+                                "The depth is too big",
+                            ));
+                        }
+                        Some(d.to::<u64>())
+                    }
+                    None => None,
+                };
+                self.anvil_rollback(depth).await.to_rpc_result()
+            }
             EthRequest::SetFeeToken(user, token) => {
                 self.anvil_set_fee_token(user, token).await.to_rpc_result()
             }

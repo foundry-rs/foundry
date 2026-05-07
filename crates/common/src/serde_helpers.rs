@@ -114,6 +114,22 @@ where
     Ok(num)
 }
 
+/// Deserializes an optional integer from a single-element params sequence.
+/// Accepts `[]`, `[null]`, `[n]`, `["0x.."]`.
+pub fn deserialize_number_seq_opt<'de, D>(deserializer: D) -> Result<Option<U256>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let seq = Vec::<Option<Numeric>>::deserialize(deserializer)?;
+    if seq.len() > 1 {
+        return Err(de::Error::custom(format!(
+            "expected params sequence with length 0 or 1 but got {}",
+            seq.len()
+        )));
+    }
+    Ok(seq.into_iter().next().flatten().map(Into::into))
+}
+
 pub mod duration {
     use serde::{Deserialize, Deserializer};
     use std::time::Duration;

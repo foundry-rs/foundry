@@ -18,7 +18,7 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use foundry_common::serde_helpers::{
-    deserialize_number, deserialize_number_opt, deserialize_number_seq,
+    deserialize_number, deserialize_number_opt, deserialize_number_seq, deserialize_number_seq_opt,
 };
 
 pub mod block;
@@ -397,8 +397,12 @@ pub enum EthRequest {
     SetAutomine(bool),
 
     /// Sets the mining behavior to interval with the given interval (seconds)
-    #[serde(rename = "anvil_setIntervalMining", alias = "evm_setIntervalMining", with = "sequence")]
-    SetIntervalMining(u64),
+    #[serde(
+        rename = "anvil_setIntervalMining",
+        alias = "evm_setIntervalMining",
+        deserialize_with = "deserialize_number_seq"
+    )]
+    SetIntervalMining(U256),
 
     /// Gets the current mining behavior
     #[serde(rename = "anvil_getIntervalMining", with = "empty_params")]
@@ -480,8 +484,8 @@ pub enum EthRequest {
     SetCoinbase(Address),
 
     /// Sets the chain id
-    #[serde(rename = "anvil_setChainId", with = "sequence")]
-    SetChainId(u64),
+    #[serde(rename = "anvil_setChainId", deserialize_with = "deserialize_number_seq")]
+    SetChainId(U256),
 
     /// Enable or disable logging
     #[serde(
@@ -579,8 +583,11 @@ pub enum EthRequest {
     /// Similar to `evm_increaseTime` but takes sets a block timestamp `interval`.
     ///
     /// The timestamp of the next block will be computed as `lastBlock_timestamp + interval`.
-    #[serde(rename = "anvil_setBlockTimestampInterval", with = "sequence")]
-    EvmSetBlockTimeStampInterval(u64),
+    #[serde(
+        rename = "anvil_setBlockTimestampInterval",
+        deserialize_with = "deserialize_number_seq"
+    )]
+    EvmSetBlockTimeStampInterval(U256),
 
     /// Removes a `anvil_setBlockTimestampInterval` if it exists
     #[serde(rename = "anvil_removeBlockTimestampInterval", with = "empty_params")]
@@ -722,8 +729,8 @@ pub enum EthRequest {
     Reorg(ReorgOptions),
 
     /// Rollback the chain
-    #[serde(rename = "anvil_rollback", with = "sequence")]
-    Rollback(Option<u64>),
+    #[serde(rename = "anvil_rollback", deserialize_with = "deserialize_number_seq_opt")]
+    Rollback(Option<U256>),
 
     /// Sets the fee token for a user (Tempo-only)
     #[serde(rename = "anvil_setFeeToken")]
@@ -924,6 +931,33 @@ mod tests {
         let s = r#"{"method": "evm_setIntervalMining", "params": [100]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_numeric_params_accept_hex_and_decimal_strings() {
+        // Standard JSON-RPC clients (web3.js / ethers / viem) encode numeric params as hex
+        // strings. Plain `u64` deserialization rejects those, so the four anvil methods below
+        // accept `U256` via `deserialize_number_seq[_opt]` and bound-check at the dispatch site.
+        let inputs = [
+            // raw decimal number
+            r#"{"method": "anvil_setIntervalMining", "params": [100]}"#,
+            // 0x-prefixed hex string
+            r#"{"method": "anvil_setIntervalMining", "params": ["0x64"]}"#,
+            // decimal string
+            r#"{"method": "anvil_setIntervalMining", "params": ["100"]}"#,
+            // value larger than u64::MAX — accepted at parse time, rejected at dispatch
+            r#"{"method": "anvil_setIntervalMining", "params": ["0x10000000000000000"]}"#,
+            r#"{"method": "anvil_setChainId", "params": ["0x539"]}"#,
+            r#"{"method": "anvil_setBlockTimestampInterval", "params": ["0xa"]}"#,
+            r#"{"method": "anvil_rollback", "params": ["0x5"]}"#,
+            r#"{"method": "anvil_rollback", "params": []}"#,
+            r#"{"method": "anvil_rollback", "params": [null]}"#,
+        ];
+        for s in &inputs {
+            let value: serde_json::Value = serde_json::from_str(s).unwrap();
+            serde_json::from_value::<EthRequest>(value)
+                .unwrap_or_else(|e| panic!("failed to parse {s}: {e}"));
+        }
     }
 
     #[test]
