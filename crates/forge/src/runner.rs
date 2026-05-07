@@ -18,7 +18,7 @@ use foundry_config::{Config, FuzzCorpusConfig};
 use foundry_evm::{
     constants::CALLER,
     core::evm::FoundryEvmNetwork,
-    decode::RevertDecoder,
+    decode::{RevertDecoder, SkipReason},
     executors::{
         CallResult, EvmError, Executor, ITest, RawCallResult,
         fuzz::FuzzedExecutor,
@@ -554,6 +554,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             TestFunctionKind::TableTest => self.run_table_test(func),
             TestFunctionKind::InvariantTest => {
                 self.run_invariant_test(func, call_after_invariant, identified_contracts.unwrap())
+            }
+            // Symbolic tests are recognized but no symbolic backend is wired up yet.
+            // Skip with a clear reason rather than fail or fall back to a misleading concrete
+            // execution.
+            TestFunctionKind::SymbolicTest { mode, .. } => {
+                self.result.single_skip(SkipReason(Some(format!(
+                    "symbolic backend not enabled (no engine compiled in): cannot run `{mode}_*` test",
+                ))));
+                self.result
             }
             _ => unreachable!(),
         }

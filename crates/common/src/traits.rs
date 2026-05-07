@@ -3,7 +3,10 @@
 use alloy_json_abi::Function;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolError;
-use std::{fmt, path::Path};
+use std::{
+    fmt::{self, Display, Formatter},
+    path::Path,
+};
 
 /// Test filter.
 pub trait TestFilter: Send + Sync {
@@ -83,6 +86,11 @@ pub trait TestFunctionExt {
         self.test_function_kind().is_invariant_test()
     }
 
+    /// Returns `true` if this function is a symbolic test (`check_*` or `prove_*`).
+    fn is_symbolic_test(&self) -> bool {
+        self.test_function_kind().is_symbolic_test()
+    }
+
     /// Returns `true` if this function is an `afterInvariant` function.
     fn is_after_invariant(&self) -> bool {
         self.test_function_kind().is_after_invariant()
@@ -151,12 +159,56 @@ pub enum TestFunctionKind {
     InvariantTest,
     /// `table*`, with arguments.
     TableTest,
+    /// `check_*` / `prove_*` (symbolic test).
+    ///
+    /// `should_fail` is `true` for `checkFail_*` / `proveFail_*`.
+    /// `mode` distinguishes the soundness contract (see [`SymbolicMode`]).
+    SymbolicTest { mode: SymbolicMode, should_fail: bool },
     /// `afterInvariant`.
     AfterInvariant,
     /// `fixture*`.
     Fixture,
     /// Unknown kind.
     Unknown,
+}
+
+/// The soundness mode of a [`TestFunctionKind::SymbolicTest`].
+///
+/// `check_*` is permissive: a partial proof (loop bound hit, depth bound, etc.) is reported as
+/// success with a `[BOUNDED]` annotation. `prove_*` is strict: any partial result is a failure.
+///
+/// Verdict-acceptance is defined in `docs/symbolic`; this enum only carries the
+/// classification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SymbolicMode {
+    /// `check_*` — permissive: bounded proofs count as success.
+    Check,
+    /// `prove_*` — strict: bounded/timeout/unsupported are failures.
+    Prove,
+}
+
+impl SymbolicMode {
+    /// Returns the canonical prefix for this mode (without the trailing `_`).
+    pub const fn prefix(self) -> &'static str {
+        match self {
+            Self::Check => "check",
+            Self::Prove => "prove",
+        }
+    }
+
+    /// Returns the canonical "should-fail" prefix for this mode (without the trailing `_`).
+    pub const fn fail_prefix(self) -> &'static str {
+        match self {
+            Self::Check => "checkFail",
+            Self::Prove => "proveFail",
+        }
+    }
+}
+
+impl Display for SymbolicMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(self.prefix())
+    }
 }
 
 impl TestFunctionKind {
@@ -175,6 +227,20 @@ impl TestFunctionKind {
                 Self::InvariantTest
             }
             _ if name.starts_with("table") => Self::TableTest,
+            // Symbolic tests. The trailing `_` is required to avoid collisions with regular
+            // identifiers that happen to start with "check"/"prove" (e.g. `checkout`).
+            _ if name.starts_with("checkFail_") => {
+                Self::SymbolicTest { mode: SymbolicMode::Check, should_fail: true }
+            }
+            _ if name.starts_with("check_") => {
+                Self::SymbolicTest { mode: SymbolicMode::Check, should_fail: false }
+            }
+            _ if name.starts_with("proveFail_") => {
+                Self::SymbolicTest { mode: SymbolicMode::Prove, should_fail: true }
+            }
+            _ if name.starts_with("prove_") => {
+                Self::SymbolicTest { mode: SymbolicMode::Prove, should_fail: false }
+            }
             _ if name.eq_ignore_ascii_case("setup") && !has_inputs => Self::Setup,
             _ if name.eq_ignore_ascii_case("afterinvariant") => Self::AfterInvariant,
             _ if name.starts_with("fixture") => Self::Fixture,
@@ -192,6 +258,10 @@ impl TestFunctionKind {
             Self::FuzzTest { should_fail: true } => "fuzz fail",
             Self::InvariantTest => "invariant",
             Self::TableTest => "table",
+            Self::SymbolicTest { mode: SymbolicMode::Check, should_fail: false } => "check",
+            Self::SymbolicTest { mode: SymbolicMode::Check, should_fail: true } => "check fail",
+            Self::SymbolicTest { mode: SymbolicMode::Prove, should_fail: false } => "prove",
+            Self::SymbolicTest { mode: SymbolicMode::Prove, should_fail: true } => "prove fail",
             Self::AfterInvariant => "afterInvariant",
             Self::Fixture => "fixture",
             Self::Unknown => "unknown",
@@ -204,19 +274,28 @@ impl TestFunctionKind {
         matches!(self, Self::Setup)
     }
 
-    /// Returns `true` if this function is a unit, fuzz, or invariant test.
+    /// Returns `true` if this function is a unit, fuzz, invariant, table, or symbolic test.
     #[inline]
     pub const fn is_any_test(&self) -> bool {
         matches!(
             self,
-            Self::UnitTest { .. } | Self::FuzzTest { .. } | Self::TableTest | Self::InvariantTest
+            Self::UnitTest { .. }
+                | Self::FuzzTest { .. }
+                | Self::TableTest
+                | Self::InvariantTest
+                | Self::SymbolicTest { .. }
         )
     }
 
     /// Returns `true` if this function is a test that should fail.
     #[inline]
     pub const fn is_any_test_fail(&self) -> bool {
-        matches!(self, Self::UnitTest { should_fail: true } | Self::FuzzTest { should_fail: true })
+        matches!(
+            self,
+            Self::UnitTest { should_fail: true }
+                | Self::FuzzTest { should_fail: true }
+                | Self::SymbolicTest { should_fail: true, .. }
+        )
     }
 
     /// Returns `true` if this function is a unit test.
@@ -235,6 +314,21 @@ impl TestFunctionKind {
     #[inline]
     pub const fn is_invariant_test(&self) -> bool {
         matches!(self, Self::InvariantTest)
+    }
+
+    /// Returns `true` if this function is a symbolic test (`check_*` or `prove_*`).
+    #[inline]
+    pub const fn is_symbolic_test(&self) -> bool {
+        matches!(self, Self::SymbolicTest { .. })
+    }
+
+    /// Returns the [`SymbolicMode`] if this is a symbolic test, otherwise `None`.
+    #[inline]
+    pub const fn symbolic_mode(&self) -> Option<SymbolicMode> {
+        match self {
+            Self::SymbolicTest { mode, .. } => Some(*mode),
+            _ => None,
+        }
     }
 
     /// Returns `true` if this function is a table test.
@@ -268,8 +362,8 @@ impl TestFunctionKind {
     }
 }
 
-impl fmt::Display for TestFunctionKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Display for TestFunctionKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         self.name().fmt(f)
     }
 }
@@ -298,5 +392,54 @@ mod tests {
         // setUp(bytes memory) with params should NOT be classified as Setup
         // This is common in Gnosis Safe/Zodiac modules
         assert_eq!(TestFunctionKind::classify("setUp", true), TestFunctionKind::Unknown);
+    }
+
+    #[test]
+    fn test_symbolic_classification() {
+        use TestFunctionKind::SymbolicTest;
+        // Plain prefixes.
+        assert_eq!(
+            TestFunctionKind::classify("check_invariant", false),
+            SymbolicTest { mode: SymbolicMode::Check, should_fail: false }
+        );
+        assert_eq!(
+            TestFunctionKind::classify("prove_overflow", true),
+            SymbolicTest { mode: SymbolicMode::Prove, should_fail: false }
+        );
+        // Fail variants.
+        assert_eq!(
+            TestFunctionKind::classify("checkFail_revert", false),
+            SymbolicTest { mode: SymbolicMode::Check, should_fail: true }
+        );
+        assert_eq!(
+            TestFunctionKind::classify("proveFail_revert", true),
+            SymbolicTest { mode: SymbolicMode::Prove, should_fail: true }
+        );
+
+        // Trailing `_` is required: bare `check`/`prove` and look-alikes don't classify as
+        // symbolic tests, to avoid hijacking unrelated identifiers.
+        assert_eq!(TestFunctionKind::classify("checkout", false), TestFunctionKind::Unknown);
+        assert_eq!(TestFunctionKind::classify("proven", false), TestFunctionKind::Unknown);
+        assert_eq!(TestFunctionKind::classify("check", false), TestFunctionKind::Unknown);
+
+        // Symbolic tests are tests and are reserved.
+        let kind = TestFunctionKind::classify("check_x", false);
+        assert!(kind.is_any_test());
+        assert!(kind.is_symbolic_test());
+        assert_eq!(kind.symbolic_mode(), Some(SymbolicMode::Check));
+        assert!(!kind.is_any_test_fail());
+
+        // Fail-variant flips is_any_test_fail.
+        let kind_fail = TestFunctionKind::classify("proveFail_x", false);
+        assert!(kind_fail.is_any_test_fail());
+        assert_eq!(kind_fail.symbolic_mode(), Some(SymbolicMode::Prove));
+
+        // `invariant_*` stays an invariant test (not symbolic) — open question
+        // resolved in favor of "no silent behavior changes".
+        assert_eq!(
+            TestFunctionKind::classify("invariant_total_supply", false),
+            TestFunctionKind::InvariantTest
+        );
+        assert!(!TestFunctionKind::classify("invariant_total_supply", false).is_symbolic_test());
     }
 }
