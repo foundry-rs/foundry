@@ -81,7 +81,7 @@ pub struct EthSubscriptionResponse {
 }
 
 impl EthSubscriptionResponse {
-    pub fn new(params: EthSubscriptionParams) -> Self {
+    pub const fn new(params: EthSubscriptionParams) -> Self {
         Self { jsonrpc: Version::V2, method: "eth_subscription", params }
     }
 }

@@ -1,6 +1,6 @@
 use alloy_consensus::Transaction;
 use alloy_eips::eip7702::SignedAuthorization;
-use alloy_network::{Network, TransactionBuilder};
+use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_common_fmt::UIfmt;
 use serde::{Deserialize, Serialize};
@@ -23,15 +23,15 @@ pub enum TransactionMaybeSigned<N: Network> {
 
 impl<N: Network> TransactionMaybeSigned<N> {
     /// Creates a new (unsigned) transaction for broadcast
-    pub fn new(tx: N::TransactionRequest) -> Self {
+    pub const fn new(tx: N::TransactionRequest) -> Self {
         Self::Unsigned(tx)
     }
 
-    pub fn is_unsigned(&self) -> bool {
+    pub const fn is_unsigned(&self) -> bool {
         matches!(self, Self::Unsigned(_))
     }
 
-    pub fn as_unsigned_mut(&mut self) -> Option<&mut N::TransactionRequest> {
+    pub const fn as_unsigned_mut(&mut self) -> Option<&mut N::TransactionRequest> {
         match self {
             Self::Unsigned(tx) => Some(tx),
             _ => None,
@@ -128,7 +128,7 @@ value                {}",
                 tx.max_priority_fee_per_gas().pretty(),
                 tx.nonce().pretty(),
                 tx.to().pretty(),
-                tx.output_tx_type(),
+                NetworkTransactionBuilder::<N>::output_tx_type(tx),
                 tx.value().pretty(),
             ),
         }

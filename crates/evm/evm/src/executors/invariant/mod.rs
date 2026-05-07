@@ -11,7 +11,7 @@ use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{
     TestFunctionExt,
     contracts::{ContractsByAddress, ContractsByArtifact},
-    sh_println,
+    sh_eprintln, sh_println,
 };
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
@@ -34,12 +34,12 @@ use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
-use result::{assert_after_invariant, assert_invariants, can_continue};
+use result::{assert_after_invariant, assert_invariants, can_continue, did_fail_on_assert};
 use revm::{context::Block, state::Account};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    collections::{HashMap as Map, btree_map::Entry},
+    collections::{HashMap as Map, HashSet, btree_map::Entry},
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -130,7 +130,7 @@ struct InvariantThroughputMetrics {
 }
 
 impl InvariantThroughputMetrics {
-    fn record_call(&mut self, gas_used: u64) {
+    const fn record_call(&mut self, gas_used: u64) {
         self.total_txs += 1;
         self.total_gas += gas_used;
     }
@@ -153,6 +153,32 @@ fn rate_per_sec(total: f64, elapsed: Duration) -> f64 {
     if elapsed_secs > 0.0 { total / elapsed_secs } else { 0.0 }
 }
 
+/// Tracks invariant failure counts during a campaign.
+#[derive(Debug, Default)]
+struct InvariantFailureMetrics {
+    failures: u64,
+    unique_failures: HashSet<String>,
+}
+
+impl InvariantFailureMetrics {
+    /// Records a failure and emits a structured JSON `"failure"` event.
+    fn record_failure(&mut self, invariant_name: &str, target: &str, reason: &str) {
+        self.failures += 1;
+        self.unique_failures.insert(invariant_name.to_string());
+
+        let timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let event = json!({
+            "timestamp": timestamp,
+            "event": "failure",
+            "invariant": invariant_name,
+            "target": target,
+            "reason": reason,
+        });
+        let _ = sh_eprintln!("{}", serde_json::to_string(&event).unwrap_or_default());
+    }
+}
+
 /// Builds the machine-readable invariant progress payload emitted during a
 /// campaign.
 ///
@@ -165,12 +191,20 @@ fn build_invariant_progress_json<M: Serialize>(
     corpus_metrics: &M,
     optimization_best: Option<I256>,
     throughput: InvariantThroughputMetrics,
+    failure_metrics: &InvariantFailureMetrics,
     elapsed: Duration,
 ) -> serde_json::Value {
+    let mut metrics = serde_json::to_value(corpus_metrics).unwrap_or_default();
+    if let Some(obj) = metrics.as_object_mut() {
+        obj.insert("failures".to_string(), json!(failure_metrics.failures));
+        obj.insert("unique_failures".to_string(), json!(failure_metrics.unique_failures.len()));
+    }
+
     let mut payload = json!({
         "timestamp": timestamp_secs,
+        "event": "pulse",
         "invariant": invariant_name,
-        "metrics": corpus_metrics,
+        "metrics": metrics,
         "total_txs": throughput.total_txs,
         "total_gas": throughput.total_gas,
         "tx_per_sec": throughput.tx_per_sec(elapsed),
@@ -252,12 +286,12 @@ impl<FEN: FoundryEvmNetwork> InvariantTest<FEN> {
     }
 
     /// Returns number of invariant test reverts.
-    fn reverts(&self) -> usize {
+    const fn reverts(&self) -> usize {
         self.test_data.failures.reverts
     }
 
     /// Whether invariant test has errors or not.
-    fn has_errors(&self) -> bool {
+    const fn has_errors(&self) -> bool {
         self.test_data.failures.error.is_some()
     }
 
@@ -434,6 +468,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let mut last_metrics_report = Instant::now();
         let campaign_start = Instant::now();
         let mut throughput = InvariantThroughputMetrics::default();
+        let mut failure_metrics = InvariantFailureMetrics::default();
         let continue_campaign = |runs: u32| {
             if early_exit.should_stop() {
                 return false;
@@ -505,6 +540,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         break 'stop;
                     }
                 } else {
+                    let assertion_failure =
+                        did_fail_on_assert(&call_result, &call_result.state_changeset);
+
                     // Commit executed call result.
                     current_run.executor.commit(&mut call_result);
 
@@ -578,31 +616,35 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         // Skip invariant check but still track reverts
                         if call_result.reverted {
                             invariant_test.test_data.failures.reverts += 1;
-                            if self.config.fail_on_revert {
-                                let case_data = error::FailedInvariantCaseData::new(
-                                    &invariant_contract,
-                                    &self.config,
-                                    &invariant_test.targeted_contracts,
-                                    &current_run.inputs,
-                                    call_result,
-                                    &[],
-                                );
-                                invariant_test.test_data.failures.revert_reason =
-                                    Some(case_data.revert_reason.clone());
-                                invariant_test.test_data.failures.error =
-                                    Some(InvariantFuzzError::Revert(case_data));
-                                result::RichInvariantResults::new(false, None)
-                            } else if !invariant_contract.is_optimization()
-                                && !self.config.has_delay()
-                            {
-                                // Delay-enabled campaigns keep reverted calls so shrinking can
-                                // preserve their warp/roll contribution when building the final
-                                // counterexample.
-                                current_run.inputs.pop();
-                                result::RichInvariantResults::new(true, None)
+                        }
+                        if assertion_failure || (call_result.reverted && self.config.fail_on_revert)
+                        {
+                            let case_data = error::FailedInvariantCaseData::new(
+                                &invariant_contract,
+                                &self.config,
+                                &invariant_test.targeted_contracts,
+                                &current_run.inputs,
+                                call_result,
+                                &[],
+                            )
+                            .with_assertion_failure(assertion_failure);
+                            invariant_test.test_data.failures.revert_reason =
+                                Some(case_data.revert_reason.clone());
+                            invariant_test.test_data.failures.error = Some(if assertion_failure {
+                                InvariantFuzzError::BrokenInvariant(case_data)
                             } else {
-                                result::RichInvariantResults::new(true, None)
-                            }
+                                InvariantFuzzError::Revert(case_data)
+                            });
+                            result::RichInvariantResults::new(false, None)
+                        } else if call_result.reverted
+                            && !invariant_contract.is_optimization()
+                            && !self.config.has_delay()
+                        {
+                            // Delay-enabled campaigns keep reverted calls so shrinking can
+                            // preserve their warp/roll contribution when building the final
+                            // counterexample.
+                            current_run.inputs.pop();
+                            result::RichInvariantResults::new(true, None)
                         } else {
                             result::RichInvariantResults::new(true, None)
                         }
@@ -613,6 +655,18 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     }
                     // If test cannot continue then stop current run and exit test suite.
                     if !result.can_continue {
+                        let reason = invariant_test
+                            .test_data
+                            .failures
+                            .error
+                            .as_ref()
+                            .and_then(|e| e.revert_reason())
+                            .unwrap_or_default();
+                        failure_metrics.record_failure(
+                            &invariant_contract.invariant_function.name,
+                            invariant_contract.name,
+                            &reason,
+                        );
                         break 'stop;
                     }
 
@@ -643,13 +697,27 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
             // Call `afterInvariant` only if it is declared and test didn't fail already.
             if invariant_contract.call_after_invariant && !invariant_test.has_errors() {
-                assert_after_invariant(
+                let success = assert_after_invariant(
                     &invariant_contract,
                     &mut invariant_test,
                     &current_run,
                     &self.config,
                 )
                 .map_err(|_| eyre!("Failed to call afterInvariant"))?;
+                if !success {
+                    let reason = invariant_test
+                        .test_data
+                        .failures
+                        .error
+                        .as_ref()
+                        .and_then(|e| e.revert_reason())
+                        .unwrap_or_default();
+                    failure_metrics.record_failure(
+                        &invariant_contract.invariant_function.name,
+                        invariant_contract.name,
+                        &reason,
+                    );
+                }
             }
 
             // End current invariant test run.
@@ -668,7 +736,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         if !msg.is_empty() {
                             msg.push_str(", ");
                         }
-                        msg.push_str(&format!("{}", &corpus_manager.metrics));
+                        msg.push_str(&format!("{}", corpus_manager.metrics));
                     }
                     progress.set_message(msg);
                 }
@@ -682,6 +750,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &corpus_manager.metrics,
                     invariant_test.test_data.optimization_best_value,
                     throughput,
+                    &failure_metrics,
                     campaign_start.elapsed(),
                 );
                 let _ = sh_println!("{}", serde_json::to_string(&metrics)?);
@@ -1143,7 +1212,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
     /// Computes the current invariant settings for the given invariant contract address.
     ///
-    /// This extracts the target contracts, selectors, senders, and fail_on_revert setting
+    /// This extracts the target contracts, selectors, senders, and failure settings
     /// that are used to determine if a persisted counterexample is still valid.
     pub fn compute_settings(&mut self, invariant_address: Address) -> Result<InvariantSettings> {
         self.select_contract_artifacts(invariant_address)?;
@@ -1165,18 +1234,16 @@ fn collect_data<FEN: FoundryEvmNetwork>(
     run_depth: u32,
 ) {
     // Verify it has no code.
-    let mut has_code = false;
-    if let Some(Some(code)) =
+    let has_code = if let Some(Some(code)) =
         state_changeset.get(&tx.sender).map(|account| account.info.code.as_ref())
     {
-        has_code = !code.is_empty();
-    }
+        !code.is_empty()
+    } else {
+        false
+    };
 
     // We keep the nonce changes to apply later.
-    let mut sender_changeset = None;
-    if !has_code {
-        sender_changeset = state_changeset.remove(&tx.sender);
-    }
+    let sender_changeset = if has_code { None } else { state_changeset.remove(&tx.sender) };
 
     // Collect values from fuzzed call result and add them to fuzz dictionary.
     invariant_test.fuzz_state.collect_values_from_call(
@@ -1187,6 +1254,13 @@ fn collect_data<FEN: FoundryEvmNetwork>(
         &*state_changeset,
         run_depth,
     );
+
+    // Inject typed sancov trace-cmp operands into the fuzz dictionary.
+    if let Some(cmp_values) = &call_result.sancov_cmp_values {
+        invariant_test.fuzz_state.collect_typed_cmp_values(
+            cmp_values.iter().map(|s| (s.width, alloy_primitives::B256::from(s.value))),
+        );
+    }
 
     // Re-add changes
     if let Some(changed) = sender_changeset {
@@ -1272,6 +1346,7 @@ mod tests {
             &json!({ "corpus_count": 7 }),
             Some(I256::try_from(42).unwrap()),
             throughput,
+            &InvariantFailureMetrics::default(),
             Duration::from_secs(10),
         );
 
@@ -1296,11 +1371,53 @@ mod tests {
             &json!({ "corpus_count": 1 }),
             None,
             throughput,
+            &InvariantFailureMetrics::default(),
             Duration::ZERO,
         );
 
         assert_eq!(payload["tx_per_sec"], json!(0.0));
         assert_eq!(payload["gas_per_sec"], json!(0.0));
         assert!(payload.get("optimization_best").is_none());
+    }
+
+    #[test]
+    fn invariant_progress_json_includes_failure_counts() {
+        let mut failure_metrics = InvariantFailureMetrics::default();
+        failure_metrics.record_failure("invariant_a", "TestContract", "revert");
+        failure_metrics.record_failure("invariant_a", "TestContract", "revert");
+        failure_metrics.record_failure("invariant_b", "TestContract", "assertion failed");
+
+        let payload = build_invariant_progress_json(
+            789,
+            "invariant_a",
+            &json!({ "corpus_count": 5 }),
+            None,
+            InvariantThroughputMetrics::default(),
+            &failure_metrics,
+            Duration::from_secs(1),
+        );
+
+        assert_eq!(payload["metrics"]["failures"], json!(3));
+        assert_eq!(payload["metrics"]["unique_failures"], json!(2));
+    }
+
+    #[test]
+    fn failure_metrics_tracks_total_and_unique_failures() {
+        let mut metrics = InvariantFailureMetrics::default();
+        metrics.record_failure("invariant_a", "TestContract", "revert");
+        metrics.record_failure("invariant_a", "TestContract", "revert");
+        metrics.record_failure("invariant_b", "TestContract", "assertion failed");
+
+        assert_eq!(metrics.failures, 3);
+        assert_eq!(metrics.unique_failures.len(), 2);
+        assert!(metrics.unique_failures.contains("invariant_a"));
+        assert!(metrics.unique_failures.contains("invariant_b"));
+    }
+
+    #[test]
+    fn failure_metrics_default_is_zero() {
+        let metrics = InvariantFailureMetrics::default();
+        assert_eq!(metrics.failures, 0);
+        assert!(metrics.unique_failures.is_empty());
     }
 }

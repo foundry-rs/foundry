@@ -398,7 +398,7 @@ struct PreprocessorVisitor {
 }
 
 impl PreprocessorVisitor {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self { updates: Vec::new() }
     }
 

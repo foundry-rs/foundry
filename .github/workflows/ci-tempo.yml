@@ -1,0 +1,155 @@
+name: CI Tempo
+
+permissions: {}
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: "0 2 * * *" # Run daily at 2 AM UTC (offset from other nightlies)
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Tempo network to check"
+        required: true
+        type: choice
+        options:
+          - testnet
+          - devnet
+          - mainnet
+          - all
+      scripts:
+        description: "Which scripts to run"
+        required: false
+        type: choice
+        default: "both"
+        options:
+          - check
+          - deploy
+          - both
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  tempo-check:
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      # Checkout the repository
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        with:
+          toolchain: stable
+
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+
+      # Build and install binaries
+      - name: Build and install Foundry binaries
+        run: |
+          cargo build --profile dev --locked -p forge -p cast -p anvil -p chisel
+          echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
+
+      - name: Check Tempo fork schedule compatibility
+        env:
+          TEMPO_MAINNET_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+          TEMPO_TESTNET_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+          TEMPO_DEVNET_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+        run: |
+          cargo test --locked -p foundry-common --lib tempo::tests::test_fork_schedule_parses_configured_rpcs -- --exact --nocapture
+
+      - name: Run Tempo check on mainnet
+        if: |
+          github.event_name == 'schedule' ||
+          github.event.inputs.network == 'mainnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_MAINNET_RPC_URL }}
+          TEMPO_FEE_TOKEN: "0x20c0000000000000000000000000000000000000"
+          VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
+          PRIVATE_KEY: ${{ secrets.THROW_AWAY_MAINNET_PKEY }}
+          SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
+        run: |
+          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-check.sh
+          fi
+          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-deploy.sh
+          fi
+
+      - name: Run Tempo check on testnet
+        if: |
+          github.event_name == 'schedule' ||
+          github.event.inputs.network == 'testnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_TESTNET_RPC_URL }}
+          VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
+          SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
+        run: |
+          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-check.sh
+          fi
+          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-deploy.sh
+          fi
+
+      - name: Run Tempo check on devnet
+        if: |
+          github.event_name == 'push' ||
+          github.event_name == 'pull_request' ||
+          github.event.inputs.network == 'devnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+          SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
+        run: |
+          if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-check.sh
+          fi
+          if [ "$SCRIPTS" = "deploy" ] || [ "$SCRIPTS" = "both" ]; then
+            ./.github/scripts/tempo-deploy.sh
+          fi
+
+      - name: Run Tempo wallet tests on devnet
+        if: |
+          github.event_name == 'push' ||
+          github.event_name == 'pull_request' ||
+          github.event.inputs.network == 'devnet' ||
+          github.event.inputs.network == 'all'
+        env:
+          ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
+        run: ./.github/scripts/tempo-wallet.sh
+
+  # If the nightly run fails, this will create an issue to signal so.
+  issue:
+    name: Open an issue
+    runs-on: ubuntu-latest
+    needs: [tempo-check]
+    if: failure() && github.event_name == 'schedule'
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: JasonEtco/create-an-issue@1b14a70e4d8dc185e5cc76d3bec9eab20257b2c5 # v2.9.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_URL: |
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          update_existing: true
+          filename: .github/TEMPO_NIGHTLY_FAILURE_TEMPLATE.md

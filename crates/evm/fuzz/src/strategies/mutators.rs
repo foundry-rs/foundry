@@ -485,7 +485,9 @@ fn apply_scale_to_bytes(bytes: &mut [u8], scale_factor: f64) -> Option<()> {
         let scaled = (byte_val + carry_down * 256.0) * scale_factor;
 
         if i == 0 && scaled >= 256.0 {
-            bytes.iter_mut().for_each(|b| *b = 0xFF);
+            for b in bytes.iter_mut() {
+                *b = 0xFF;
+            }
             return Some(());
         }
 
@@ -500,7 +502,9 @@ fn apply_scale_to_bytes(bytes: &mut [u8], scale_factor: f64) -> Option<()> {
             j -= 1;
             let new_val = bytes[j] as f64 + carry_up;
             if j == 0 && new_val >= 256.0 {
-                bytes.iter_mut().for_each(|b| *b = 0xFF);
+                for b in bytes.iter_mut() {
+                    *b = 0xFF;
+                }
                 return Some(());
             }
             bytes[j] = (new_val % 256.0).floor() as u8;
@@ -521,7 +525,7 @@ fn validate_uint_mutation(original: U256, mutated: U256, size: usize) -> Option<
 
     // Check if mutated value fits the given size.
     let max = if size < 256 { (U256::from(1) << size) - U256::from(1) } else { U256::MAX };
-    (mutated < max).then_some(mutated)
+    (mutated <= max).then_some(mutated)
 }
 
 /// Returns mutated int value if different from the original value and if it fits in the given size,
@@ -545,6 +549,22 @@ fn validate_int_mutation(original: I256, mutated: I256, size: usize) -> Option<I
 mod tests {
     use super::*;
     use proptest::test_runner::Config;
+
+    #[test]
+    fn validate_uint_mutation_accepts_inclusive_max() {
+        // For width `size`, valid unsigned values are 0..=max where max = 2^size - 1.
+        // Regression: `< max` incorrectly rejected `mutated == max`; must use `<= max`.
+        for size in [8usize, 16, 32, 64, 128] {
+            let max = (U256::from(1) << size) - U256::from(1);
+            assert_eq!(
+                super::validate_uint_mutation(U256::ZERO, max, size),
+                Some(max),
+                "size={size}"
+            );
+        }
+        let original = U256::from(1);
+        assert_eq!(super::validate_uint_mutation(original, U256::MAX, 256), Some(U256::MAX));
+    }
 
     #[test]
     fn test_mutate_uint() {

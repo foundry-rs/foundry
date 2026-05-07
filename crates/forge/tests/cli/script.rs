@@ -136,6 +136,21 @@ contract FailingScript is Script {
 }
 "#;
 
+static OUT_OF_GAS_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+contract OutOfGasScript is Script {
+    function run() external {
+        uint256 i;
+        while (true) {
+            unchecked {
+                ++i;
+            }
+        }
+    }
+}
+"#;
+
 // Tests that execution throws upon encountering a revert in the script.
 forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -163,6 +178,32 @@ forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
 Error: script failed: failed
+
+"#]]);
+});
+
+// Tests that script failures surface halt reasons for empty revert data.
+forgetest_async!(assert_exit_code_error_on_out_of_gas_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
+
+    cmd.arg("script").arg(script);
+
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: script failed: EvmError: OutOfGas
+
+"#]]);
+});
+
+// Tests that --json script failures also surface halt reasons for empty revert data.
+forgetest_async!(assert_exit_code_error_on_out_of_gas_script_with_json, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
+
+    cmd.arg("script").arg(script).arg("--json");
+
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: script failed: EvmError: OutOfGas
 
 "#]]);
 });
@@ -3200,7 +3241,7 @@ contract CounterScript is Script {
 error: the following required arguments were not provided:
   --broadcast
 
-Usage: [..] script --broadcast --verify --rpc-url <RPC_URL> <PATH> [ARGS]...
+Usage: [..] script --broadcast --verify --rpc-url <URL> <PATH> [ARGS]...
 
 For more information, try '--help'.
 
@@ -3529,3 +3570,23 @@ contract ArbScript is Script {
         cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvv"]).assert_success();
     }
 );
+
+// Tests that `forge script` works in Tempo mode without CreateCollision.
+// Tempo genesis pre-deploys the Arachnid CREATE2 factory at the same address as the default
+// CREATE2 deployer, so `deploy_create2_deployer` must be skipped to avoid a collision.
+forgetest!(can_execute_script_command_with_tempo, |prj, cmd| {
+    prj.wipe();
+
+    // Initialize a Tempo project (installs forge-std, tempo-std, generates Mail template).
+    cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success();
+
+    // Run the generated Mail.s.sol script with a salt argument.
+    cmd.forge_fuse()
+        .arg("script")
+        .arg("script/Mail.s.sol")
+        .arg("temposalt")
+        .arg("--tempo")
+        .arg("--root")
+        .arg(prj.root())
+        .assert_success();
+});

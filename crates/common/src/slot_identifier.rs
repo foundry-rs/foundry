@@ -124,7 +124,7 @@ impl SlotInfo {
     }
 
     /// Slot is of type [`DynSolType::Bytes`] or [`DynSolType::String`]
-    pub fn is_bytes_or_string(&self) -> bool {
+    pub const fn is_bytes_or_string(&self) -> bool {
         matches!(self.slot_type.dyn_sol_type, DynSolType::Bytes | DynSolType::String)
     }
 
@@ -377,7 +377,7 @@ pub struct SlotIdentifier {
 
 impl SlotIdentifier {
     /// Creates a new SlotIdentifier with the given storage layout.
-    pub fn new(storage_layout: Arc<StorageLayout>) -> Self {
+    pub const fn new(storage_layout: Arc<StorageLayout>) -> Self {
         Self { storage_layout }
     }
 

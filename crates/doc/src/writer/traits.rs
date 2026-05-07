@@ -1,58 +1,23 @@
 //! Helper traits for writing documentation.
 
-use solang_parser::pt::Expression;
+use crate::ParamInfo;
 
-/// Helper trait to abstract over a solang type that can be documented as parameter
+/// Helper trait to abstract over a type that can be documented as a parameter.
 pub(crate) trait ParamLike {
-    /// Returns the type of the parameter.
-    fn ty(&self) -> &Expression;
-
     /// Returns the type as a string.
-    fn type_name(&self) -> String {
-        self.ty().to_string()
-    }
+    fn type_name(&self) -> &str;
 
     /// Returns the identifier of the parameter.
     fn name(&self) -> Option<&str>;
 }
 
-impl ParamLike for solang_parser::pt::Parameter {
-    fn ty(&self) -> &Expression {
+impl ParamLike for ParamInfo {
+    fn type_name(&self) -> &str {
         &self.ty
     }
 
     fn name(&self) -> Option<&str> {
-        self.name.as_ref().map(|id| id.name.as_str())
-    }
-}
-
-impl ParamLike for solang_parser::pt::VariableDeclaration {
-    fn ty(&self) -> &Expression {
-        &self.ty
-    }
-
-    fn name(&self) -> Option<&str> {
-        self.name.as_ref().map(|id| id.name.as_str())
-    }
-}
-
-impl ParamLike for solang_parser::pt::EventParameter {
-    fn ty(&self) -> &Expression {
-        &self.ty
-    }
-
-    fn name(&self) -> Option<&str> {
-        self.name.as_ref().map(|id| id.name.as_str())
-    }
-}
-
-impl ParamLike for solang_parser::pt::ErrorParameter {
-    fn ty(&self) -> &Expression {
-        &self.ty
-    }
-
-    fn name(&self) -> Option<&str> {
-        self.name.as_ref().map(|id| id.name.as_str())
+        self.name.as_deref()
     }
 }
 
@@ -60,8 +25,8 @@ impl<T> ParamLike for &T
 where
     T: ParamLike,
 {
-    fn ty(&self) -> &Expression {
-        T::ty(*self)
+    fn type_name(&self) -> &str {
+        T::type_name(*self)
     }
 
     fn name(&self) -> Option<&str> {

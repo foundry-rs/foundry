@@ -69,6 +69,7 @@ ignored_error_codes = [
     "transfer-deprecated",
     "natspec-memory-safe-assembly-deprecated",
 ]
+ignored_error_codes_from = []
 ignored_warnings_from = []
 deny = "never"
 test_failures_file = "cache/test-failures"
@@ -112,7 +113,6 @@ create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c"
 assertions_revert = true
 legacy_assertions = false
 celo = false
-tempo = false
 bypass_prevrandao = false
 transaction_timeout = 120
 additional_compiler_profiles = []
@@ -196,6 +196,8 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+sancov_edges = false
+sancov_trace_cmp = false
 failure_persist_dir = "cache/fuzz"
 show_logs = false
 
@@ -217,6 +219,8 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+sancov_edges = false
+sancov_trace_cmp = false
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
@@ -260,6 +264,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         broadcast: "broadcast".into(),
         force: true,
         evm_version: EvmVersion::Byzantium,
+        hardfork: None,
         gas_reports: vec!["Contract".to_string()],
         gas_reports_ignore: vec![],
         gas_reports_include_tests: false,
@@ -346,6 +351,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             "src/DssSpell.sol:DssExecLib:0x8De6DDbCd5053d32292AAA0D2105A32d108484a6".to_string(),
         ],
         ignored_error_codes: vec![],
+        ignored_error_codes_from: vec![],
         ignored_file_paths: vec![],
         deny: foundry_config::DenyLevel::Never,
         deny_warnings: false,
@@ -576,6 +582,32 @@ forgetest_init!(can_get_evm_opts, |prj, _cmd| {
     unsafe {
         std::env::remove_var("FOUNDRY_ETH_RPC_URL");
     }
+});
+
+// Regression test for <https://github.com/foundry-rs/foundry/issues/14538>:
+// the bare `ETH_RPC_URL` env var must NOT cause `forge` commands to set
+// `eth_rpc_url` (which would silently fork all `forge test` runs).
+// Only `--rpc-url`, `foundry.toml`, the `FOUNDRY_ETH_RPC_URL` env var, or
+// cheatcodes should configure forking.
+forgetest_init!(eth_rpc_url_env_does_not_set_fork_url, |prj, _cmd| {
+    prj.initialize_default_contracts();
+    let url = "http://127.0.0.1:8545";
+
+    let mut cmd = prj.forge_bin();
+    cmd.arg("config")
+        .arg("--root")
+        .arg(prj.root())
+        .arg("--json")
+        .env("ETH_RPC_URL", url)
+        // Make sure the figment-style env var is not set in the test environment.
+        .env_remove("FOUNDRY_ETH_RPC_URL");
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let config: Config = serde_json::from_str(stdout.as_ref()).unwrap();
+    assert_eq!(
+        config.eth_rpc_url, None,
+        "bare ETH_RPC_URL must not propagate to forge config (regression #14538)"
+    );
 });
 
 // checks that we can set various config values
@@ -1225,6 +1257,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "skip": [],
   "force": false,
   "evm_version": "osaka",
+  "hardfork": null,
   "gas_reports": [
     "*"
   ],
@@ -1254,6 +1287,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "transfer-deprecated",
     "natspec-memory-safe-assembly-deprecated"
   ],
+  "ignored_error_codes_from": [],
   "ignored_warnings_from": [],
   "deny": "never",
   "match_test": null,
@@ -1269,6 +1303,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "show_progress": false,
   "fuzz": {
     "runs": 256,
+    "run": null,
+    "worker": null,
     "fail_on_revert": true,
     "max_test_rejects": 65536,
     "seed": null,
@@ -1284,6 +1320,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "sancov_edges": false,
+    "sancov_trace_cmp": false,
     "failure_persist_dir": "cache/fuzz",
     "show_logs": false,
     "timeout": null
@@ -1307,6 +1345,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "sancov_edges": false,
+    "sancov_trace_cmp": false,
     "failure_persist_dir": "cache/invariant",
     "show_metrics": true,
     "timeout": null,
@@ -1436,8 +1476,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "soldeer": null,
   "assertions_revert": true,
   "legacy_assertions": false,
+  "network": null,
   "celo": false,
-  "tempo": false,
   "bypass_prevrandao": false,
   "transaction_timeout": 120,
   "additional_compiler_profiles": [],

@@ -27,6 +27,7 @@ use foundry_evm::{
     opts::EvmOpts,
     traces::{InternalTraceMode, TraceMode},
 };
+use foundry_evm_networks::NetworkVariant;
 
 use foundry_linking::{LinkOutput, Linker};
 use rayon::prelude::*;
@@ -222,9 +223,9 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
 
             tests_progress.inner.lock().clear();
 
-            results.iter().for_each(|result| {
+            for result in &results {
                 let _ = tx.send(result.to_owned());
-            });
+            }
         } else {
             contracts.par_iter().for_each(|&(id, contract)| {
                 let _guard = tokio_handle.enter();
@@ -246,11 +247,11 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         progress: Option<&TestsProgress>,
     ) -> SuiteResult {
         let identifier = artifact_id.identifier();
-        let mut span_name = identifier.as_str();
-
-        if !enabled!(tracing::Level::TRACE) {
-            span_name = get_contract_name(&identifier);
-        }
+        let span_name = if enabled!(tracing::Level::TRACE) {
+            identifier.as_str()
+        } else {
+            get_contract_name(&identifier)
+        };
         let span = debug_span!("suite", name = %span_name);
         let span_local = span.clone();
         let _guard = span_local.enter();
@@ -278,6 +279,25 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
 
         r
     }
+}
+
+/// Tracks network assignment across a multi-network test run.
+///
+/// When inline config specifies different networks for different tests, the runner performs one
+/// pass per distinct network. This struct encodes which pass we're in so each `ContractRunner`
+/// can skip tests that belong to a different pass.
+///
+/// Default (empty `all_override_networks`, `None` pass) = single-pass mode, every test runs.
+#[derive(Clone, Debug, Default)]
+pub struct MultiNetworkConfig {
+    /// All networks explicitly referenced in inline config annotations across the whole suite.
+    /// Empty means single-pass mode (no per-test network overrides present).
+    pub all_override_networks: Vec<NetworkVariant>,
+    /// The network this pass is responsible for.
+    /// `None` = default pass: runs tests *without* an explicit network annotation (or annotated
+    /// with a network not in `all_override_networks`).
+    /// `Some(v)` = override pass: runs only tests annotated with exactly `v`.
+    pub pass_network: Option<NetworkVariant>,
 }
 
 /// Configuration for the test runner.
@@ -311,6 +331,9 @@ pub struct TestRunnerConfig<FEN: FoundryEvmNetwork> {
     pub isolation: bool,
     /// Whether to exit early on test failure or if test run interrupted.
     pub early_exit: EarlyExit,
+
+    /// Multi-network pass configuration. Default = single-pass mode.
+    pub multi_network: MultiNetworkConfig,
 }
 
 impl<FEN: FoundryEvmNetwork> TestRunnerConfig<FEN> {
@@ -423,6 +446,8 @@ pub struct MultiContractRunnerBuilder {
     pub isolation: bool,
     /// Whether to exit early on test failure.
     pub fail_fast: bool,
+    /// Multi-network pass configuration.
+    pub multi_network: MultiNetworkConfig,
 }
 
 impl MultiContractRunnerBuilder {
@@ -437,15 +462,16 @@ impl MultiContractRunnerBuilder {
             isolation: Default::default(),
             decode_internal: Default::default(),
             fail_fast: false,
+            multi_network: Default::default(),
         }
     }
 
-    pub fn sender(mut self, sender: Address) -> Self {
+    pub const fn sender(mut self, sender: Address) -> Self {
         self.sender = Some(sender);
         self
     }
 
-    pub fn initial_balance(mut self, initial_balance: U256) -> Self {
+    pub const fn initial_balance(mut self, initial_balance: U256) -> Self {
         self.initial_balance = initial_balance;
         self
     }
@@ -455,27 +481,32 @@ impl MultiContractRunnerBuilder {
         self
     }
 
-    pub fn set_coverage(mut self, enable: bool) -> Self {
+    pub const fn set_coverage(mut self, enable: bool) -> Self {
         self.line_coverage = enable;
         self
     }
 
-    pub fn set_debug(mut self, enable: bool) -> Self {
+    pub const fn set_debug(mut self, enable: bool) -> Self {
         self.debug = enable;
         self
     }
 
-    pub fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
+    pub const fn set_decode_internal(mut self, mode: InternalTraceMode) -> Self {
         self.decode_internal = mode;
         self
     }
 
-    pub fn fail_fast(mut self, fail_fast: bool) -> Self {
+    pub fn with_multi_network(mut self, multi_network: MultiNetworkConfig) -> Self {
+        self.multi_network = multi_network;
+        self
+    }
+
+    pub const fn fail_fast(mut self, fail_fast: bool) -> Self {
         self.fail_fast = fail_fast;
         self
     }
 
-    pub fn enable_isolation(mut self, enable: bool) -> Self {
+    pub const fn enable_isolation(mut self, enable: bool) -> Self {
         self.isolation = enable;
         self
     }
@@ -594,6 +625,7 @@ impl MultiContractRunnerBuilder {
                 inline_config: Arc::new(InlineConfig::new_parsed(output, &self.config)?),
                 isolation: self.isolation,
                 early_exit: EarlyExit::new(self.fail_fast),
+                multi_network: self.multi_network,
                 config: self.config,
             },
 

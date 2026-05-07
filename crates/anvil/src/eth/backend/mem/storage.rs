@@ -85,7 +85,7 @@ impl InMemoryBlockStates {
     }
 
     /// Configures no disk caching
-    pub fn memory_only(mut self) -> Self {
+    pub const fn memory_only(mut self) -> Self {
         self.max_on_disk_limit = 0;
         self
     }
@@ -112,7 +112,7 @@ impl InMemoryBlockStates {
     }
 
     /// Returns true if only memory caching is supported.
-    fn is_memory_only(&self) -> bool {
+    const fn is_memory_only(&self) -> bool {
         self.max_on_disk_limit == 0
     }
 
@@ -197,7 +197,7 @@ impl InMemoryBlockStates {
     }
 
     /// Sets the maximum number of stats we keep in memory
-    pub fn set_cache_limit(&mut self, limit: usize) {
+    pub const fn set_cache_limit(&mut self, limit: usize) {
         self.in_memory_limit = limit;
     }
 
@@ -605,14 +605,15 @@ impl<N: Network> MinedTransaction<N> {
                     CallKind::Create2 => OperationType::OpCreate2,
                     _ => return None,
                 };
-                let mut from = node.trace.caller;
-                let mut to = node.trace.address;
-                let mut value = node.trace.value;
-                if node.is_selfdestruct() {
-                    from = node.trace.address;
-                    to = node.trace.selfdestruct_refund_target.unwrap_or_default();
-                    value = node.trace.selfdestruct_transferred_value.unwrap_or_default();
-                }
+                let (from, to, value) = if node.is_selfdestruct() {
+                    (
+                        node.trace.address,
+                        node.trace.selfdestruct_refund_target.unwrap_or_default(),
+                        node.trace.selfdestruct_transferred_value.unwrap_or_default(),
+                    )
+                } else {
+                    (node.trace.caller, node.trace.address, node.trace.value)
+                };
                 Some(InternalOperation { r#type, from, to, value })
             })
             .collect()

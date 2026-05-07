@@ -162,4 +162,19 @@ contract RecordDebugTraceTest is Test {
         }
         assertTrue(isOOG, "should OOG");
     }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function testCannotRestartDebugTraceRecordingWhileActive() public {
+        MStoreAndMLoadCaller testContract = new MStoreAndMLoadCaller();
+
+        vm.startDebugTraceRecording();
+
+        vm.expectRevert("vm.startDebugTraceRecording: debug trace recording was already started");
+        vm.startDebugTraceRecording();
+
+        testContract.storeAndLoadValueFromMemory();
+
+        Vm.DebugStep[] memory steps = vm.stopAndReturnDebugTraceRecording();
+        assertGt(steps.length, 0, "first recording should remain active after failed restart");
+    }
 }

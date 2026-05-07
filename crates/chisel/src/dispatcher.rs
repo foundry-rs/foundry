@@ -72,12 +72,12 @@ impl ChiselDispatcher {
     }
 
     /// Returns the [`SessionSource`].
-    pub fn source(&self) -> &SessionSource {
+    pub const fn source(&self) -> &SessionSource {
         &self.session.source
     }
 
     /// Returns the [`SessionSource`].
-    pub fn source_mut(&mut self) -> &mut SessionSource {
+    pub const fn source_mut(&mut self) -> &mut SessionSource {
         &mut self.session.source
     }
 

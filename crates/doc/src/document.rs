@@ -89,7 +89,7 @@ pub enum DocumentContent {
 }
 
 impl DocumentContent {
-    pub(crate) fn len(&self) -> usize {
+    pub(crate) const fn len(&self) -> usize {
         match self {
             Self::Empty => 0,
             Self::Single(_) => 1,

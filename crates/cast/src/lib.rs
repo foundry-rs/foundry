@@ -40,6 +40,7 @@ use foundry_common::{
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
 use futures::{FutureExt, StreamExt, future::Either};
+#[cfg(feature = "optimism")]
 use op_alloy_consensus as _;
 
 use rayon::prelude::*;
@@ -60,6 +61,7 @@ pub use foundry_evm::*;
 pub mod args;
 pub mod cmd;
 pub mod opts;
+pub mod tempo;
 
 pub mod base;
 pub mod call_spec;
@@ -93,7 +95,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(provider: P) -> Self {
+    pub const fn new(provider: P) -> Self {
         Self { provider, _phantom: PhantomData }
     }
 
@@ -155,11 +157,9 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         }
 
         let res = call.await?;
-        let mut decoded = vec![];
-
-        if let Some(func) = func {
+        let decoded = if let Some(func) = func {
             // decode args into tokens
-            decoded = match func.abi_decode_output(res.as_ref()) {
+            match func.abi_decode_output(res.as_ref()) {
                 Ok(decoded) => decoded,
                 Err(err) => {
                     // ensure the address is a contract
@@ -185,8 +185,10 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                         "could not decode output; did you specify the wrong function return data type?"
                     );
                 }
-            };
-        }
+            }
+        } else {
+            vec![]
+        };
 
         // handle case when return type is not specified
         Ok(if decoded.is_empty() {
@@ -246,7 +248,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
             let mut s =
                 vec![format!("gas used: {}", access_list.gas_used), "access list:".to_string()];
             for al in access_list.access_list.0 {
-                s.push(format!("- address: {}", &al.address.to_checksum(None)));
+                s.push(format!("- address: {}", al.address.to_checksum(None)));
                 if !al.storage_keys.is_empty() {
                     s.push("  keys:".to_string());
                     for key in al.storage_keys {

@@ -29,10 +29,12 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
@@ -123,12 +125,15 @@ impl RunArgs {
         evm_opts.infer_network_from_fork().await;
 
         if evm_opts.networks.is_tempo() {
-            self.run_with_evm::<TempoEvmNetwork>().await
-        } else if evm_opts.networks.is_optimism() {
-            self.run_with_evm::<OpEvmNetwork>().await
-        } else {
-            self.run_with_evm::<EthEvmNetwork>().await
+            return self.run_with_evm::<TempoEvmNetwork>().await;
         }
+
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
+            return self.run_with_evm::<OpEvmNetwork>().await;
+        }
+
+        self.run_with_evm::<EthEvmNetwork>().await
     }
 
     async fn run_with_evm<FEN: FoundryEvmNetwork>(self) -> Result<()> {
@@ -207,7 +212,7 @@ impl RunArgs {
                     evm_env.cfg_env.chain_id,
                     block.header().timestamp(),
                 ) {
-                    evm_env.cfg_env.set_spec(hardfork.into());
+                    evm_env.cfg_env.set_spec_and_mainnet_gas_params(hardfork.into());
                 } else if block.header().excess_blob_gas().is_some() {
                     // TODO: add glamsterdam header field checks in the future
                     evm_version = Some(EvmVersion::Cancun);

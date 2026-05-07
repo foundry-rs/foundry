@@ -178,11 +178,8 @@ impl Provider for EvmArgs {
 
         // Only insert network flags when explicitly set via CLI to avoid overriding
         // values from foundry.toml (NetworkConfigs is flattened in Config).
-        if self.networks.is_tempo() {
-            dict.insert("tempo".to_string(), true.into());
-        }
-        if self.networks.is_optimism() {
-            dict.insert("optimism".to_string(), true.into());
+        if let Some(name) = self.networks.active_network_name() {
+            dict.insert("network".to_string(), name.into());
         }
         if self.networks.is_celo() {
             dict.insert("celo".to_string(), true.into());
@@ -308,6 +305,17 @@ mod tests {
         let dict = data.get(&Config::selected_profile()).expect("profile dict");
         let val = dict.get("compute_units_per_second").expect("cups present");
         assert_eq!(val, &Value::from(1000u64));
+    }
+
+    #[test]
+    fn rpc_url_arg_does_not_read_eth_rpc_url_env() {
+        use clap::CommandFactory;
+
+        let command = EvmArgs::command();
+        let rpc_url =
+            command.get_arguments().find(|arg| arg.get_id() == "rpc_url").expect("rpc_url arg");
+
+        assert!(rpc_url.get_env().is_none());
     }
 
     #[test]

@@ -137,8 +137,12 @@ impl EvmOpts {
     /// [`NetworkConfigs::with_chain_id`] to auto-enable the correct network
     /// (e.g. Tempo, OP Stack) based on the chain ID.
     pub async fn infer_network_from_fork(&mut self) {
+        #[cfg(feature = "optimism")]
+        let already_op = self.networks.is_optimism();
+        #[cfg(not(feature = "optimism"))]
+        let already_op = false;
         if !self.networks.is_tempo()
-            && !self.networks.is_optimism()
+            && !already_op
             && let Some(ref fork_url) = self.fork_url
             && let Ok(provider) = self.fork_provider_with_url::<AnyNetwork>(fork_url)
             && let Ok(chain_id) = provider.get_chain_id().await
@@ -254,7 +258,7 @@ impl EvmOpts {
     }
 
     /// Returns the [`EvmEnv`] configured with only local settings.
-    fn local_evm_env<SPEC: Into<SpecId> + Default, BLOCK: FoundryBlock + Default>(
+    fn local_evm_env<SPEC: Into<SpecId> + Default + Clone, BLOCK: FoundryBlock + Default>(
         &self,
     ) -> EvmEnv<SPEC, BLOCK> {
         let cfg_env = self.cfg_env(self.env.chain_id.unwrap_or(foundry_common::DEV_CHAIN_ID));
@@ -298,7 +302,7 @@ impl EvmOpts {
     }
 
     /// Builds a [`CfgEnv`] from the options, using the provided [`ChainId`].
-    fn cfg_env<SPEC: Into<SpecId> + Default>(&self, chain_id: ChainId) -> CfgEnv<SPEC> {
+    fn cfg_env<SPEC: Into<SpecId> + Default + Clone>(&self, chain_id: ChainId) -> CfgEnv<SPEC> {
         let mut cfg = CfgEnv::default();
         cfg.chain_id = chain_id;
         cfg.memory_limit = self.memory_limit;
@@ -361,7 +365,7 @@ impl EvmOpts {
     /// - u64::MAX, if `no_rpc_rate_limit` if set (as rate limiting is disabled)
     /// - the assigned compute units, if `compute_units_per_second` is set
     /// - ALCHEMY_FREE_TIER_CUPS (330) otherwise
-    fn get_compute_units_per_second(&self) -> u64 {
+    const fn get_compute_units_per_second(&self) -> u64 {
         if self.no_rpc_rate_limit {
             u64::MAX
         } else if let Some(cups) = self.compute_units_per_second {
@@ -474,6 +478,7 @@ mod tests {
 
         // Plain anvil (chain id 31337) without tempo flag -> Ethereum (no network flags set).
         assert!(!evm_opts.networks.is_tempo());
+        #[cfg(feature = "optimism")]
         assert!(!evm_opts.networks.is_optimism());
         assert!(!evm_opts.networks.is_celo());
         assert_eq!(evm_opts.networks, NetworkConfigs::default());

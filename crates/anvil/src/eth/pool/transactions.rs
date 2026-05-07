@@ -91,7 +91,7 @@ pub struct PoolTransaction<T> {
 // == impl PoolTransaction ==
 
 impl<T> PoolTransaction<T> {
-    pub fn new(transaction: PendingTransaction<T>) -> Self {
+    pub const fn new(transaction: PendingTransaction<T>) -> Self {
         Self {
             pending_transaction: transaction,
             requires: vec![],
@@ -101,7 +101,7 @@ impl<T> PoolTransaction<T> {
     }
 
     /// Returns the hash of this transaction
-    pub fn hash(&self) -> TxHash {
+    pub const fn hash(&self) -> TxHash {
         *self.pending_transaction.hash()
     }
 }
@@ -123,10 +123,10 @@ impl<T: Typed2718> PoolTransaction<T> {
 impl<T: fmt::Debug> fmt::Debug for PoolTransaction<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(fmt, "Transaction {{ ")?;
-        write!(fmt, "hash: {:?}, ", &self.pending_transaction.hash())?;
+        write!(fmt, "hash: {:?}, ", self.pending_transaction.hash())?;
         write!(fmt, "requires: [{}], ", hex_fmt_many(self.requires.iter()))?;
         write!(fmt, "provides: [{}], ", hex_fmt_many(self.provides.iter()))?;
-        write!(fmt, "raw tx: {:?}", &self.pending_transaction)?;
+        write!(fmt, "raw tx: {:?}", self.pending_transaction)?;
         write!(fmt, "}}")?;
         Ok(())
     }
@@ -466,11 +466,11 @@ impl<T> ReadyTransactions<T> {
         self.ready_tx.read().get(hash).cloned()
     }
 
-    pub fn provided_markers(&self) -> &HashMap<TxMarker, TxHash> {
+    pub const fn provided_markers(&self) -> &HashMap<TxMarker, TxHash> {
         &self.provided_markers
     }
 
-    fn next_id(&mut self) -> u64 {
+    const fn next_id(&mut self) -> u64 {
         let id = self.id;
         self.id = self.id.wrapping_add(1);
         id

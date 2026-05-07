@@ -198,7 +198,7 @@ pub struct TargetedContract {
 
 impl TargetedContract {
     /// Returns a new `TargetedContract` instance.
-    pub fn new(identifier: String, abi: JsonAbi) -> Self {
+    pub const fn new(identifier: String, abi: JsonAbi) -> Self {
         Self {
             identifier,
             abi,
@@ -264,6 +264,8 @@ impl TargetedContract {
 pub struct InvariantContract<'a> {
     /// Address of the test contract.
     pub address: Address,
+    /// Name of the test contract.
+    pub name: &'a str,
     /// Invariant function present in the test contract.
     pub invariant_function: &'a Function,
     /// If true, `afterInvariant` function is called after each invariant run.
@@ -274,13 +276,14 @@ pub struct InvariantContract<'a> {
 
 impl<'a> InvariantContract<'a> {
     /// Creates a new invariant contract.
-    pub fn new(
+    pub const fn new(
         address: Address,
+        name: &'a str,
         invariant_function: &'a Function,
         call_after_invariant: bool,
         abi: &'a JsonAbi,
     ) -> Self {
-        Self { address, invariant_function, call_after_invariant, abi }
+        Self { address, name, invariant_function, call_after_invariant, abi }
     }
 
     /// Returns true if this is an optimization mode invariant (returns int256).
@@ -405,7 +408,7 @@ impl fmt::Display for InvariantSettings {
             self.target_selectors.values().map(|v| v.len()).sum::<usize>(),
             self.target_senders.len(),
             self.excluded_senders.len(),
-            self.fail_on_revert
+            self.fail_on_revert,
         )
     }
 }

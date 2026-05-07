@@ -223,6 +223,10 @@ impl VerificationProviderType {
 
         // 4. If no `--verifier` is specified but `ETHERSCAN_API_KEY` is set, default to Etherscan.
         if has_key {
+            sh_eprintln!(
+                "ETHERSCAN_API_KEY is set, defaulting to Etherscan verifier. \
+                 Unset it or pass `--verifier sourcify` (or another provider) to override."
+            )?;
             return Ok(Box::<EtherscanVerificationProvider>::default());
         }
 
@@ -232,11 +236,11 @@ impl VerificationProviderType {
         )
     }
 
-    pub fn is_sourcify(&self) -> bool {
+    pub const fn is_sourcify(&self) -> bool {
         matches!(self, Self::Sourcify)
     }
 
-    pub fn is_etherscan(&self) -> bool {
+    pub const fn is_etherscan(&self) -> bool {
         matches!(self, Self::Etherscan)
     }
 }

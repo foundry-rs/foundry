@@ -383,16 +383,14 @@ impl ContractsByArtifact {
         &self,
         id: &str,
     ) -> Result<Option<ArtifactWithContractRef<'_>>> {
-        let contracts = self
-            .iter()
-            .filter(|(artifact, _)| artifact.name == id || artifact.identifier() == id)
-            .collect::<Vec<_>>();
-
-        if contracts.len() > 1 {
+        let mut iter =
+            self.iter().filter(|(artifact, _)| artifact.name == id || artifact.identifier() == id);
+        let first = iter.next();
+        if first.is_some() && iter.next().is_some() {
             eyre::bail!("{id} has more than one implementation.");
         }
 
-        Ok(contracts.first().copied())
+        Ok(first)
     }
 
     /// Finds abi by name or source path
@@ -411,7 +409,7 @@ impl ContractsByArtifact {
         let mut funcs = BTreeMap::new();
         let mut events = BTreeMap::new();
         let mut errors_abi = JsonAbi::new();
-        for (_name, contract) in self.iter() {
+        for contract in self.values() {
             for func in contract.abi.functions() {
                 funcs.insert(func.selector(), func.clone());
             }
@@ -484,7 +482,7 @@ pub fn bytecode_diff_score<'a>(mut a: &'a [u8], mut b: &'a [u8]) -> f64 {
 /// # Safety
 ///
 /// `a` must be at least as long as `b`.
-unsafe fn count_different_bytes(a: &[u8], b: &[u8]) -> usize {
+const unsafe fn count_different_bytes(a: &[u8], b: &[u8]) -> usize {
     // This could've been written as `std::iter::zip(a, b).filter(|(x, y)| x != y).count()`,
     // however this function is very hot, and has been written to be as primitive as
     // possible for lower optimization levels.
