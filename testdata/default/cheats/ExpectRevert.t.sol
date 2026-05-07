@@ -379,6 +379,25 @@ contract ExpectRevertWithReverterTest is Test {
         vm.expectRevert(expected);
         new DContract{salt: salt}();
     }
+
+    // <https://github.com/foundry-rs/foundry/issues/14613>
+    // Regression: `count > 1` with a nested CREATE chain must still report the
+    // innermost reverter, not the outer frame. Uses fixed outer+inner CREATE2 salts
+    // so both iterations resolve to the same would-be addresses.
+    function testExpectRevertsWithReverterCountNestedCreate2() public {
+        bytes32 outerSalt = bytes32(uint256(0xBEEF));
+        bytes32 innerSalt = NESTED_DCONTRACT_CREATOR2_INNER_SALT;
+        address outer = vm.computeCreate2Address(
+            outerSalt, keccak256(type(NestedDContractCreator2).creationCode), address(this)
+        );
+        address inner = vm.computeCreate2Address(
+            innerSalt, keccak256(type(DContract).creationCode), outer
+        );
+
+        vm.expectRevert(inner, 2);
+        new NestedDContractCreator2{salt: outerSalt}();
+        new NestedDContractCreator2{salt: outerSalt}();
+    }
 }
 
 // Used by `testExpectRevertsWithReverterNestedCreate`: a contract whose constructor
@@ -386,6 +405,17 @@ contract ExpectRevertWithReverterTest is Test {
 contract NestedDContractCreator {
     constructor() {
         new DContract();
+    }
+}
+
+// File-level constant shared between NestedDContractCreator2 and its test.
+bytes32 constant NESTED_DCONTRACT_CREATOR2_INNER_SALT = bytes32(uint256(0xDEAD));
+
+// Used by `testExpectRevertsWithReverterCountNestedCreate2`: fixed inner salt so
+// both CREATE2 iterations produce the same inner would-be address.
+contract NestedDContractCreator2 {
+    constructor() {
+        new DContract{salt: NESTED_DCONTRACT_CREATOR2_INNER_SALT}();
     }
 }
 

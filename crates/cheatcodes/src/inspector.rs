@@ -1907,7 +1907,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // `call_end` records the caller.
             if outcome.result.is_revert()
                 && expected_revert.reverter.is_some()
-                && (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
+                && expected_revert.reverted_by.is_none()
                 && let Some(addr) = outcome.address
             {
                 expected_revert.reverted_by = Some(addr);
@@ -1929,6 +1929,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                     Ok((address, retdata)) => {
                         expected_revert.actual_count += 1;
                         if expected_revert.actual_count < expected_revert.count {
+                            // Reset so the next iteration's innermost CREATE wins again.
+                            expected_revert.reverted_by = None;
                             self.expected_revert = Some(expected_revert.clone());
                         }
 
