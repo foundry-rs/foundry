@@ -540,13 +540,15 @@ where
 
     /// Builds a transaction that will be signed by a Tempo access key.
     ///
-    /// If the access key needs on-chain provisioning, its authorization is embedded before
-    /// access-list/gas estimation and before any sponsor digest can be computed.
+    /// The access-key id is set before gas estimation. If the access key needs on-chain
+    /// provisioning, its authorization is embedded before access-list/gas estimation and before
+    /// any sponsor digest can be computed.
     pub async fn build_with_access_key(
-        self,
+        mut self,
         sender: impl Into<SenderKind<'_>>,
         access_key: &TempoAccessKeyConfig,
     ) -> Result<(N::TransactionRequest, Option<Function>)> {
+        self.tx.set_key_id(access_key.key_address);
         let fill = self.fill;
         self._build(sender, fill, Some(access_key)).await
     }

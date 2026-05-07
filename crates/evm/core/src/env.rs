@@ -763,7 +763,7 @@ mod tests {
     use std::num::NonZeroU64;
 
     use super::*;
-    use alloy_consensus::{Sealed, Signed, TxEip1559, transaction::Recovered};
+    use alloy_consensus::{Signed, TxEip1559, transaction::Recovered};
     use alloy_evm::{EthEvmFactory, EvmFactory};
     use alloy_network::{AnyTxType, UnknownTxEnvelope, UnknownTypedTransaction};
     use alloy_primitives::Signature;
@@ -941,6 +941,7 @@ mod tests {
     #[cfg(feature = "optimism")]
     mod optimism {
         use super::*;
+        use alloy_consensus::Sealed;
         use alloy_op_evm::{OpEvmFactory, OpTx};
         use op_alloy_consensus::{OpTxEnvelope, TxDeposit, transaction::OpTransactionInfo};
         use op_alloy_rpc_types::Transaction as OpRpcTransaction;
