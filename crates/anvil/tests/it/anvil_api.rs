@@ -1003,7 +1003,6 @@ async fn test_mine_blk_with_prev_timestamp() {
 }
 
 // increase time by 0 seconds i.e next_block_timestamp = prev_block_timestamp
-// api.evm_increase_time(0).unwrap();
 #[tokio::test(flavor = "multi_thread")]
 async fn test_increase_time_by_zero() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -1014,7 +1013,7 @@ async fn test_increase_time_by_zero() {
     let init_number = init_blk.header.number;
     let init_timestamp = init_blk.header.timestamp;
 
-    let _ = api.evm_increase_time(U256::ZERO).await;
+    api.evm_set_next_block_timestamp(init_timestamp).unwrap();
 
     api.mine_one().await;
 

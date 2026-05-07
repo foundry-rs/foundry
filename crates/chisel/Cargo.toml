@@ -19,7 +19,6 @@ path = "bin/main.rs"
 
 [dependencies]
 # forge
-forge-doc.workspace = true
 forge-fmt.workspace = true
 foundry-cli.workspace = true
 foundry-common.workspace = true
@@ -50,7 +49,6 @@ itertools.workspace = true
 semver.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-solang-parser.workspace = true
 time = { version = "0.3", features = ["formatting"] }
 yansi.workspace = true
 tracing.workspace = true
@@ -65,8 +63,13 @@ foundry-test-utils.workspace = true
 rexpect = "0.6"
 
 [features]
-default = ["jemalloc", "asm-keccak"]
+default = ["jemalloc", "asm-keccak", "optimism"]
 asm-keccak = ["alloy-primitives/asm-keccak"]
 jemalloc = ["foundry-cli/jemalloc"]
 mimalloc = ["foundry-cli/mimalloc"]
 tracy-allocator = ["foundry-cli/tracy-allocator"]
+optimism = [
+    "foundry-common/optimism",
+    "foundry-evm/optimism",
+    "foundry-cli/optimism",
+]

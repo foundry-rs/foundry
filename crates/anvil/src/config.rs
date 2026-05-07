@@ -37,7 +37,7 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    hardfork::{FoundryHardfork, OpHardfork},
+    hardfork::FoundryHardfork,
     utils::{
         apply_chain_and_block_specific_env_changes, block_env_from_header,
         get_blob_base_fee_update_fraction,
@@ -580,8 +580,9 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
+        #[cfg(feature = "optimism")]
         if self.networks.is_optimism() {
-            return OpHardfork::default().into();
+            return foundry_evm::hardforks::OpHardfork::default().into();
         }
         if self.networks.is_tempo() {
             return TempoHardfork::default().into();
@@ -1082,6 +1083,7 @@ impl NodeConfig {
     }
 
     /// Enable Optimism network features.
+    #[cfg(feature = "optimism")]
     #[must_use]
     pub fn with_optimism(mut self) -> Self {
         self.networks = NetworkConfigs::with_optimism();

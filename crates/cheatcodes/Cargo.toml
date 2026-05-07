@@ -68,3 +68,13 @@ tracing.workspace = true
 walkdir.workspace = true
 proptest.workspace = true
 serde.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-common/optimism",
+    "foundry-evm-core/optimism",
+    "foundry-evm-fuzz/optimism",
+    "foundry-evm-traces/optimism",
+    "forge-script-sequence/optimism",
+]

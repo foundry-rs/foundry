@@ -856,42 +856,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         }
 
-        // Handle mocked calls
-        if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
-            let ctx = MockCallDataContext {
-                calldata: call.input.bytes(ecx),
-                value: call.transfer_value(),
-            };
-
-            if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
-                Some(queue) => Some(queue),
-                None => mocks
-                    .iter_mut()
-                    .find(|(mock, _)| {
-                        call.input.bytes(ecx).get(..mock.calldata.len()) == Some(&mock.calldata[..])
-                            && mock.value.is_none_or(|value| Some(value) == call.transfer_value())
-                    })
-                    .map(|(_, v)| v),
-            } && let Some(return_data) = if return_data_queue.len() == 1 {
-                // If the mocked calls stack has a single element in it, don't empty it
-                return_data_queue.front().map(|x| x.to_owned())
-            } else {
-                // Else, we pop the front element
-                return_data_queue.pop_front()
-            } {
-                return Some(CallOutcome {
-                    result: InterpreterResult {
-                        result: return_data.ret_type,
-                        output: return_data.data,
-                        gas,
-                    },
-                    memory_offset: call.return_memory_offset.clone(),
-                    was_precompile_called: true,
-                    precompile_call_logs: vec![],
-                });
-            }
-        }
-
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth) {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
@@ -929,6 +893,72 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
                     self.pranks.insert(curr_depth, applied_prank);
                 }
+            }
+        }
+
+        // Handle mocked calls
+        if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
+            let ctx = MockCallDataContext {
+                calldata: call.input.bytes(ecx),
+                value: call.transfer_value(),
+            };
+
+            if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
+                Some(queue) => Some(queue),
+                None => mocks
+                    .iter_mut()
+                    .find(|(mock, _)| {
+                        call.input.bytes(ecx).get(..mock.calldata.len()) == Some(&mock.calldata[..])
+                            && mock.value.is_none_or(|value| Some(value) == call.transfer_value())
+                    })
+                    .map(|(_, v)| v),
+            } && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
+            {
+                if let Some(value) = call.transfer_value() {
+                    let checkpoint = ecx.journal_mut().checkpoint();
+                    match ecx.journal_mut().transfer_loaded(
+                        call.transfer_from(),
+                        call.transfer_to(),
+                        value,
+                    ) {
+                        None => {
+                            if return_data.ret_type.is_ok() {
+                                ecx.journal_mut().checkpoint_commit();
+                            } else {
+                                ecx.journal_mut().checkpoint_revert(checkpoint);
+                            }
+                        }
+                        Some(err) => {
+                            ecx.journal_mut().checkpoint_revert(checkpoint);
+                            return Some(CallOutcome {
+                                result: InterpreterResult {
+                                    result: err.into(),
+                                    output: Bytes::new(),
+                                    gas,
+                                },
+                                memory_offset: call.return_memory_offset.clone(),
+                                was_precompile_called: false,
+                                precompile_call_logs: vec![],
+                            });
+                        }
+                    }
+                }
+
+                // If the mocked calls stack has a single element in it, don't empty it
+                if return_data_queue.len() > 1 {
+                    return_data_queue.pop_front();
+                }
+
+                return Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: return_data.ret_type,
+                        output: return_data.data,
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                    was_precompile_called: true,
+                    precompile_call_logs: vec![],
+                });
             }
         }
 
@@ -1497,6 +1527,21 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             }
         }
 
+        // this will ensure we don't have false positives when trying to diagnose reverts in fork
+        // mode
+        let diag = self.fork_revert_diagnostic.take();
+
+        // If the call already reverted, preserve that primary failure and skip post-call
+        // expect* validation so it cannot overwrite the original revert.
+        if outcome.result.is_revert() {
+            // if there's a revert and a previous call was diagnosed as fork related revert then we
+            // can return a better error here
+            if let Some(err) = diag {
+                outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
+            }
+            return;
+        }
+
         // At the end of the call,
         // we need to check if we've found all the emits.
         // We know we've found all the expected emits in the right order
@@ -1572,19 +1617,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // Clear the queue, as we expect the user to declare more events for the next call
             // if they wanna match further events.
             self.expected_emits.clear()
-        }
-
-        // this will ensure we don't have false positives when trying to diagnose reverts in fork
-        // mode
-        let diag = self.fork_revert_diagnostic.take();
-
-        // if there's a revert and a previous call was diagnosed as fork related revert then we can
-        // return a better error here
-        if outcome.result.is_revert()
-            && let Some(err) = diag
-        {
-            outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
-            return;
         }
 
         // try to diagnose reverts in multi-fork mode where a call is made to an address that does
@@ -1867,10 +1899,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         // Handle expected reverts
-        if let Some(expected_revert) = &self.expected_revert
+        if let Some(expected_revert) = &mut self.expected_revert
             && curr_depth <= expected_revert.depth
             && matches!(expected_revert.kind, ExpectedRevertKind::Default)
         {
+            // Mirror the logic in `call_end`: when an expected reverter address is set
+            // and we don't yet have one (or we're matching multiple reverts), record the
+            // would-be deployed address as the reverter. revm guarantees `outcome.address`
+            // is `Some(_)` whenever the constructor actually ran (including the revert
+            // case); it is only `None` for pre-frame rejection (depth/balance/nonce),
+            // for which a reverter address is meaningless.
+            if outcome.result.is_revert()
+                && expected_revert.reverter.is_some()
+                && (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
+                && let Some(addr) = outcome.address
+            {
+                expected_revert.reverted_by = Some(addr);
+            }
             let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
             return match revert_handlers::handle_expect_revert(
                 false,

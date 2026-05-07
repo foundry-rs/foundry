@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::Config;
 use alloy_primitives::map::HashMap;
 use figment::{
@@ -5,6 +7,7 @@ use figment::{
     value::{Dict, Map, Value},
 };
 use foundry_compilers::ProjectCompileOutput;
+use foundry_evm_networks::NetworkVariant;
 use itertools::Itertools;
 
 mod natspec;
@@ -121,6 +124,42 @@ impl InlineConfig {
     /// Does not include contract-level configurations.
     pub fn contains_function(&self, contract: &str, function: &str) -> bool {
         self.get_function(contract, function).is_some_and(|map| !map.is_empty())
+    }
+
+    /// Returns the configured [`NetworkVariant`] for a given test, checking function-level first
+    /// then contract-level. Returns `None` if no network annotation is present.
+    pub fn network_for(
+        &self,
+        profile: &Profile,
+        contract: &str,
+        function: &str,
+    ) -> Option<NetworkVariant> {
+        let data = self.provide(contract, function).data().ok()?;
+        let dict = data.get(profile).or_else(|| data.get(&Profile::Default))?;
+        if let Some(Value::Dict(_, networks)) = dict.get("networks")
+            && let Some(Value::String(_, s)) = networks.get("network")
+        {
+            return s.parse().ok();
+        }
+        None
+    }
+
+    /// Returns all distinct [`NetworkVariant`]s referenced in any inline config annotation.
+    ///
+    /// This is used to determine whether a multi-network test pass is needed.
+    pub fn referenced_override_networks(&self, profile: &Profile) -> Vec<NetworkVariant> {
+        let mut seen = BTreeSet::new();
+        for (contract, function) in self.fn_level.keys() {
+            if let Some(v) = self.network_for(profile, contract, function) {
+                seen.insert(v);
+            }
+        }
+        for contract in self.contract_level.keys() {
+            if let Some(v) = self.network_for(profile, contract, "") {
+                seen.insert(v);
+            }
+        }
+        seen.into_iter().collect()
     }
 
     fn get_contract(&self, contract: &str) -> Option<&DataMap> {

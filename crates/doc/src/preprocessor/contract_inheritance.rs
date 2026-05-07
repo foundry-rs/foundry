@@ -1,7 +1,5 @@
 use super::{Preprocessor, PreprocessorId};
-use crate::{
-    Document, ParseSource, PreprocessorOutput, document::DocumentContent, solang_ext::SafeUnwrap,
-};
+use crate::{Document, ParseSource, PreprocessorOutput, document::DocumentContent};
 use alloy_primitives::map::HashMap;
 use std::path::PathBuf;
 
@@ -11,7 +9,7 @@ pub const CONTRACT_INHERITANCE_ID: PreprocessorId = PreprocessorId("contract_inh
 /// The contract inheritance preprocessor.
 ///
 /// It matches the documents with inner [`ParseSource::Contract`](crate::ParseSource) elements,
-/// iterates over their [Base](solang_parser::pt::Base)s and attempts
+/// iterates over their base contracts and attempts
 /// to link them with the paths of the other contract documents.
 ///
 /// This preprocessor writes to [Document]'s context.
@@ -34,8 +32,8 @@ impl Preprocessor for ContractInheritance {
                 let mut links = HashMap::default();
 
                 // Attempt to match bases to other contracts
-                for base in &contract.base {
-                    let base_ident = base.name.identifiers.last().unwrap().name.clone();
+                for base in &contract.bases {
+                    let base_ident = base.ident.clone();
                     if let Some(linked) = self.try_link_base(&base_ident, &documents) {
                         links.insert(base_ident, linked);
                     }
@@ -60,7 +58,7 @@ impl ContractInheritance {
             }
             if let DocumentContent::Single(ref item) = candidate.content
                 && let ParseSource::Contract(ref contract) = item.source
-                && base == contract.name.safe_unwrap().name
+                && base == contract.name
             {
                 return Some(candidate.relative_output_path().to_path_buf());
             }
