@@ -208,7 +208,7 @@ pub struct NodeConfig {
     /// This does not affect the fork RPC cache location.
     pub cache_path: Option<PathBuf>,
     /// Accounts to fund with specific balances on startup (address -> balance in wei).
-    pub funded_accounts: std::collections::HashMap<Address, U256>,
+    pub funded_accounts: HashMap<Address, U256>,
 }
 
 impl NodeConfig {
@@ -515,7 +515,7 @@ impl Default for NodeConfig {
             networks: Default::default(),
             silent: false,
             cache_path: None,
-            funded_accounts: std::collections::HashMap::new(),
+            funded_accounts: HashMap::default(),
         }
     }
 }
@@ -1114,7 +1114,7 @@ impl NodeConfig {
     #[must_use]
     pub fn with_funded_accounts(
         mut self,
-        accounts: std::collections::HashMap<Address, U256>,
+        accounts: HashMap<Address, U256>,
     ) -> Self {
         self.funded_accounts = accounts;
         self

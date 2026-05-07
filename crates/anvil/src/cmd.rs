@@ -5,7 +5,7 @@ use crate::{
 };
 use alloy_genesis::Genesis;
 use alloy_network::Network;
-use alloy_primitives::{Address, B256, U256, utils::Unit};
+use alloy_primitives::{Address, B256, U256, map::HashMap, utils::Unit};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
@@ -323,8 +323,8 @@ impl NodeArgs {
             .with_funded_accounts(funded_accounts))
     }
 
-    fn parse_funded_accounts(&self) -> eyre::Result<std::collections::HashMap<Address, U256>> {
-        let mut accounts = std::collections::HashMap::new();
+    fn parse_funded_accounts(&self) -> eyre::Result<HashMap<Address, U256>> {
+        let mut accounts = HashMap::default();
         for entry in &self.fund_accounts {
             let parts: Vec<&str> = entry.split(':').collect();
             if parts.len() != 2 {
