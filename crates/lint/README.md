@@ -43,6 +43,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
   - `custom-errors`: Recommends using custom errors instead of strings and plain reverts for potential gas savings.
   - `unused-state-variables`: State variables that are never used should be removed.
+  - `var-read-using-this`: Reads of state variables (or other `view`/`pure` functions) via `this` cause an unnecessary `STATICCALL`; access them directly.
 - **Code Size:**
   - `unwrapped-modifier-logic`: Recommends wrapping modifier logic to reduce contract code size.
 
