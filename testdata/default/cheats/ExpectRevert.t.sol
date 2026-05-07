@@ -387,12 +387,9 @@ contract ExpectRevertWithReverterTest is Test {
     function testExpectRevertsWithReverterCountNestedCreate2() public {
         bytes32 outerSalt = bytes32(uint256(0xBEEF));
         bytes32 innerSalt = NESTED_DCONTRACT_CREATOR2_INNER_SALT;
-        address outer = vm.computeCreate2Address(
-            outerSalt, keccak256(type(NestedDContractCreator2).creationCode), address(this)
-        );
-        address inner = vm.computeCreate2Address(
-            innerSalt, keccak256(type(DContract).creationCode), outer
-        );
+        address outer =
+            vm.computeCreate2Address(outerSalt, keccak256(type(NestedDContractCreator2).creationCode), address(this));
+        address inner = vm.computeCreate2Address(innerSalt, keccak256(type(DContract).creationCode), outer);
 
         vm.expectRevert(inner, 2);
         new NestedDContractCreator2{salt: outerSalt}();
