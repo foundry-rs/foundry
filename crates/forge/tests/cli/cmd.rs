@@ -366,6 +366,20 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert!(!prj.root().join("lib/forge-std/.git").exists());
 });
 
+// Checks that `--no-commit` is accepted as a noop backwards-compatibility flag
+forgetest!(can_init_with_no_commit, |prj, cmd| {
+    prj.wipe();
+
+    cmd.arg("init").arg(prj.root()).arg("--no-commit").assert_success().stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+    Installed forge-std[..]
+    Initialized forge project
+
+"#]]);
+    prj.assert_config_exists();
+});
+
 // Checks that quiet mode does not print anything
 forgetest!(can_init_quiet, |prj, cmd| {
     prj.wipe();
