@@ -33,7 +33,7 @@ use foundry_primitives::FoundryNetwork;
 use futures::{FutureExt, TryFutureExt};
 use parking_lot::Mutex;
 use revm::primitives::hardfork::SpecId;
-use server::try_spawn_ipc;
+use server::try_spawn_ipc_with_shutdown;
 use std::{
     net::SocketAddr,
     pin::Pin,
@@ -240,9 +240,18 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
         transaction_order,
     );
 
+    let tokio_handle = Handle::current();
+    let (signal, on_shutdown) = shutdown::signal();
+
     // spawn the node service
-    let node_service =
-        tokio::task::spawn(NodeService::new(pool, backend, miner, fee_history_service, filters));
+    let node_service = tokio::task::spawn(NodeService::new(
+        pool,
+        backend,
+        miner,
+        fee_history_service,
+        filters,
+        on_shutdown.clone(),
+    ));
 
     let mut servers = Vec::with_capacity(config.host.len());
     let mut addresses = Vec::with_capacity(config.host.len());
@@ -255,16 +264,21 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
         addresses.push(tcp_listener.local_addr()?);
 
         // Spawn the server future on a new task.
-        let srv = server::serve_on(tcp_listener, api.clone(), server_config.clone());
+        let srv = server::serve_on_with_shutdown(
+            tcp_listener,
+            api.clone(),
+            server_config.clone(),
+            on_shutdown.clone(),
+        );
         servers.push(tokio::task::spawn(srv.map_err(Into::into)));
     }
 
-    let tokio_handle = Handle::current();
-    let (signal, on_shutdown) = shutdown::signal();
-    let task_manager = TaskManager::new(tokio_handle, on_shutdown);
+    let task_manager = TaskManager::new(tokio_handle, on_shutdown.clone());
 
-    let ipc_task =
-        config.get_ipc_path().map(|path| try_spawn_ipc(api.clone(), path)).transpose()?;
+    let ipc_task = config
+        .get_ipc_path()
+        .map(|path| try_spawn_ipc_with_shutdown(api.clone(), path, on_shutdown.clone()))
+        .transpose()?;
 
     let handle = NodeHandle {
         config,

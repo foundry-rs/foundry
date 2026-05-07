@@ -10,6 +10,7 @@ use crate::{
     },
     filter::Filters,
     mem::{Backend, storage::MinedBlockOutcome},
+    shutdown::Shutdown,
 };
 use alloy_consensus::TxReceipt;
 use alloy_network::Network;
@@ -45,6 +46,8 @@ where
     filters: Filters<N>,
     /// The interval at which to check for filters that need to be evicted
     filter_eviction_interval: Interval,
+    /// Resolves when the owning node handle starts shutdown.
+    on_shutdown: Shutdown,
 }
 
 impl<N: Network> NodeService<N>
@@ -58,6 +61,7 @@ where
         miner: Miner<N::TxEnvelope>,
         fee_history: FeeHistoryService<N>,
         filters: Filters<N>,
+        on_shutdown: Shutdown,
     ) -> Self {
         let start = tokio::time::Instant::now() + filters.keep_alive();
         let filter_eviction_interval = tokio::time::interval_at(start, filters.keep_alive());
@@ -68,6 +72,7 @@ where
             fee_history,
             filter_eviction_interval,
             filters,
+            on_shutdown,
         }
     }
 }
@@ -81,6 +86,10 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let pin = self.get_mut();
+
+        if pin.on_shutdown.poll_unpin(cx).is_ready() {
+            return Poll::Ready(Ok(()));
+        }
 
         // this drives block production and feeds new sets of ready transactions to the block
         // producer
