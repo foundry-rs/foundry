@@ -196,6 +196,12 @@ impl CreateArgs {
                 constructor_args.as_deref().unwrap_or(&self.constructor_args),
             )?
         } else {
+            if !self.constructor_args.is_empty() || self.constructor_args_path.is_some() {
+                sh_warn!(
+                    "`{}` has no constructor; ignoring provided constructor arguments",
+                    self.contract.name
+                )?;
+            }
             vec![]
         };
 
@@ -411,7 +417,7 @@ impl CreateArgs {
 
         // If Tempo chain fee token must be set
         if chain.is_tempo() {
-            if let Some(fee_token) = self.tx.tempo.common.fee_token {
+            if let Some(fee_token) = self.tx.tempo.fee_token {
                 deployer.tx.set_fee_token(fee_token);
             } else {
                 deployer.tx.set_fee_token(DEFAULT_FEE_TOKEN);
