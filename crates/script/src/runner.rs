@@ -6,7 +6,7 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
-use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
+use foundry_common::TransactionMaybeSigned;
 use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
@@ -19,7 +19,7 @@ use foundry_evm::{
     revm::interpreter::{InstructionResult, return_ok},
     traces::{TraceKind, Traces},
 };
-use std::{collections::VecDeque, num::NonZeroU64};
+use std::collections::VecDeque;
 
 /// Drives script execution
 #[derive(Debug)]
@@ -84,10 +84,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     .with_input(code.clone())
                     .with_nonce(sender_nonce + library_transactions.len() as u64);
 
-                if let Some(fee_token) = script_config.fee_token {
-                    tx_req.set_fee_token(fee_token);
-                }
-                apply_expires::<FEN>(&mut tx_req, script_config.expires_at);
+                script_config.tempo.apply::<FEN::Network>(&mut tx_req, None);
 
                 library_transactions.push_back(BroadcastableTransaction {
                     rpc: self.evm_opts.fork_url.clone(),
@@ -123,10 +120,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                         .with_nonce(sender_nonce + library_transactions.len() as u64)
                         .with_to(create2_deployer);
 
-                    if let Some(fee_token) = script_config.fee_token {
-                        tx_req.set_fee_token(fee_token);
-                    }
-                    apply_expires::<FEN>(&mut tx_req, script_config.expires_at);
+                    script_config.tempo.apply::<FEN::Network>(&mut tx_req, None);
 
                     library_transactions.push_back(BroadcastableTransaction {
                         rpc: self.evm_opts.fork_url.clone(),
@@ -431,22 +425,5 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
             self.executor.tx_env_mut().set_gas_limit(init_gas_limit);
         }
         Ok(gas_used)
-    }
-}
-
-/// Applies TIP-1009 expiring-nonce fields to a transaction request when `expires_at` is set.
-///
-/// Sets `nonce = 0`, `nonce_key = U256::MAX`, and `valid_before = expires_at`.
-fn apply_expires<FEN: FoundryEvmNetwork>(
-    tx: &mut TransactionRequestFor<FEN>,
-    expires_at: Option<u64>,
-) where
-    TransactionRequestFor<FEN>: FoundryTransactionBuilder<FEN::Network>,
-{
-    let Some(ts) = expires_at else { return };
-    tx.set_nonce(0);
-    tx.set_nonce_key(U256::MAX);
-    if let Some(v) = NonZeroU64::new(ts) {
-        tx.set_valid_before(v);
     }
 }

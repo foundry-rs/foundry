@@ -155,9 +155,12 @@ impl EthApi<FoundryNetwork> {
 
         let best = self.backend.best_number();
         // we go from given block (defaulting to best) down to first block
-        // considering only post-fork
+        // considering only post-fork (or post-genesis in non-fork mode)
         let from = if block_number == 0 { best } else { block_number - 1 };
-        let to = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
+        let to = self
+            .get_fork()
+            .map(|f| f.block_number() + 1)
+            .unwrap_or_else(|| self.backend.genesis_number() + 1);
 
         let first_page = from >= best;
         let mut last_page = false;
@@ -198,8 +201,11 @@ impl EthApi<FoundryNetwork> {
         node_info!("ots_searchTransactionsAfter");
 
         let best = self.backend.best_number();
-        // we go from the first post-fork block, up to the tip
-        let first_block = self.get_fork().map(|f| f.block_number() + 1).unwrap_or(1);
+        // we go from the first post-fork (or post-genesis) block, up to the tip
+        let first_block = self
+            .get_fork()
+            .map(|f| f.block_number() + 1)
+            .unwrap_or_else(|| self.backend.genesis_number() + 1);
         let from = if block_number == 0 { first_block } else { block_number + 1 };
         let to = best;
 
@@ -248,7 +254,10 @@ impl EthApi<FoundryNetwork> {
     ) -> Result<Option<B256>> {
         node_info!("ots_getTransactionBySenderAndNonce");
 
-        let from = self.get_fork().map(|f| f.block_number() + 1).unwrap_or_default();
+        let from = self
+            .get_fork()
+            .map(|f| f.block_number() + 1)
+            .unwrap_or_else(|| self.backend.genesis_number() + 1);
         let to = self.backend.best_number();
 
         for n in (from..=to).rev() {

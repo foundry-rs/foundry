@@ -44,3 +44,7 @@ idna_adapter.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = ["foundry-common/optimism"]

@@ -524,9 +524,13 @@ impl<T: Serialize> ToRpcResponseResult for Result<T> {
                         err => RpcError::internal_error_with(format!("Fork Error: {err:?}")),
                     }
                 }
-                err @ BlockchainError::EvmError(_) => {
-                    RpcError::internal_error_with(err.to_string())
-                }
+                err @ BlockchainError::EvmError(_) => RpcError {
+                    // VM halts are execution failures, not JSON-RPC server faults. REVERT has a
+                    // dedicated code/data path above; other halts, such as invalid opcode, do not.
+                    code: ErrorCode::TransactionRejected,
+                    message: err.to_string().into(),
+                    data: None,
+                },
                 err @ BlockchainError::EvmOverrideError(_) => {
                     RpcError::invalid_params(err.to_string())
                 }

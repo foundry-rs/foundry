@@ -100,7 +100,7 @@ impl MakeTxArgs {
             self;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
-        let expires_at = tx.tempo.expires_at();
+        let expires_at = tx.tempo.resolve_expires();
         let tempo_sponsor =
             if print_sponsor_hash { None } else { tx.tempo.sponsor_config().await? };
 

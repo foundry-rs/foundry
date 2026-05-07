@@ -86,6 +86,10 @@ mpp.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }
 tokio-tungstenite.workspace = true
 futures.workspace = true
+alloy-signer-local.workspace = true
+base64.workspace = true
+sha2 = "0.10"
+tempfile.workspace = true
 
 [build-dependencies]
 chrono.workspace = true
@@ -95,7 +99,7 @@ vergen = { workspace = true, features = ["build", "emit_and_set"] }
 foundry-evm-hardforks.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 axum = { workspace = true }
-tempfile.workspace = true
+k256 = { workspace = true }
 
 [features]
 default = ["optimism"]

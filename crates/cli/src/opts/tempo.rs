@@ -187,6 +187,18 @@ impl TempoOpts {
         self.common.expires_at()
     }
 
+    /// Resolves `--tempo.expires` into concrete expiring-nonce fields.
+    ///
+    /// This computes the relative deadline once so later calls to [`Self::apply`] reuse the same
+    /// `valid_before` timestamp instead of deriving a fresh one.
+    pub fn resolve_expires(&mut self) -> Option<u64> {
+        let ts = self.expires_at()?;
+        self.expiring_nonce = true;
+        self.valid_before = Some(ts);
+        self.common.expires = None;
+        Some(ts)
+    }
+
     /// Returns `true` if a sponsor signature should be attached before submission.
     pub const fn has_sponsor_submission(&self) -> bool {
         self.sponsor.is_some() || self.sponsor_signer.is_some() || self.sponsor_sig.is_some()
@@ -337,6 +349,24 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn resolve_expires_materializes_valid_before() {
+        let before =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards").as_secs();
+        let mut opts = TempoOpts::try_parse_from(["", "--tempo.expires", "10"]).unwrap();
+
+        let resolved = opts.resolve_expires().unwrap();
+        let after =
+            SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards").as_secs();
+
+        assert!(resolved >= before + 10);
+        assert!(resolved <= after + 10);
+        assert!(opts.expiring_nonce);
+        assert_eq!(opts.valid_before, Some(resolved));
+        assert_eq!(opts.common.expires, None);
+        assert_eq!(opts.expires_at(), None);
     }
 
     #[test]

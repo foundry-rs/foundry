@@ -36,6 +36,9 @@ use too_many_digits::TOO_MANY_DIGITS;
 mod pragma_directive;
 use pragma_directive::PRAGMA_INCONSISTENT;
 
+mod inline_assembly;
+use inline_assembly::INLINE_ASSEMBLY;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -50,4 +53,5 @@ register_lints!(
     (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING)),
     (TooManyDigits, early, (TOO_MANY_DIGITS)),
     (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
+    (InlineAssembly, early, (INLINE_ASSEMBLY)),
 );

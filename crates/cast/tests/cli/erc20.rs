@@ -1,7 +1,7 @@
 //! Contains various tests for checking cast erc20 subcommands
 
 use alloy_primitives::U256;
-use anvil::NodeConfig;
+use anvil::{NodeConfig, NodeHandle};
 use foundry_test_utils::util::OutputExt;
 
 mod anvil_const {
@@ -68,7 +68,7 @@ fn deploy_test_token(
 async fn setup_token_test(
     prj: &foundry_test_utils::TestProject,
     cmd: &mut foundry_test_utils::TestCommand,
-) -> (String, String) {
+) -> (String, String, NodeHandle) {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;
     let rpc = handle.http_endpoint();
 
@@ -77,12 +77,12 @@ async fn setup_token_test(
     prj.add_source("TestToken.sol", include_str!("../fixtures/TestToken.sol"));
     let token = deploy_test_token(cmd, &rpc, anvil_const::PK1);
 
-    (rpc, token)
+    (rpc, token, handle)
 }
 
 // tests that `balance` and `transfer` commands works correctly
 forgetest_async!(erc20_transfer_approve_success, |prj, cmd| {
-    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     // Test constants
     let transfer_amount = U256::from(100_000_000_000_000_000_000u128); // 100 tokens (18 decimals)
@@ -118,7 +118,7 @@ forgetest_async!(erc20_transfer_approve_success, |prj, cmd| {
 
 // tests that `approve` and `allowance` commands works correctly
 forgetest_async!(erc20_approval_allowance, |prj, cmd| {
-    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     // ADDR1 approves ADDR2 to spend their tokens
     let approve_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
@@ -143,7 +143,7 @@ forgetest_async!(erc20_approval_allowance, |prj, cmd| {
 
 // tests that `name`, `symbol`, `decimals`, and `totalSupply` commands work correctly
 forgetest_async!(erc20_metadata_success, |prj, cmd| {
-    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     // Test name
     let output = cmd
@@ -185,7 +185,7 @@ forgetest_async!(erc20_metadata_success, |prj, cmd| {
 
 // tests that `mint` command works correctly
 forgetest_async!(erc20_mint_success, |prj, cmd| {
-    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     let mint_amount = U256::from(500_000_000_000_000_000_000u128); // 500 tokens
     let initial_supply = U256::from(1_000_000_000_000_000_000_000u128); // 1000 tokens
@@ -226,7 +226,7 @@ forgetest_async!(erc20_mint_success, |prj, cmd| {
 
 // tests that `burn` command works correctly
 forgetest_async!(erc20_burn_success, |prj, cmd| {
-    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     let burn_amount = U256::from(200_000_000_000_000_000_000u128); // 200 tokens
     let initial_supply = U256::from(1_000_000_000_000_000_000_000u128); // 1000 tokens
@@ -266,7 +266,7 @@ forgetest_async!(erc20_burn_success, |prj, cmd| {
 
 // tests that `transfer` command works with gas options
 forgetest_async!(erc20_transfer_with_gas_opts, |prj, cmd| {
-    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     let transfer_amount = U256::from(100_000_000_000_000_000_000u128); // 100 tokens
 
@@ -296,7 +296,7 @@ forgetest_async!(erc20_transfer_with_gas_opts, |prj, cmd| {
 
 // tests that `transfer` command fails with insufficient gas limit
 forgetest_async!(erc20_transfer_insufficient_gas, |prj, cmd| {
-    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     let transfer_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
 
@@ -324,7 +324,7 @@ forgetest_async!(erc20_transfer_insufficient_gas, |prj, cmd| {
 
 // tests that `transfer` command fails with incorrect nonce
 forgetest_async!(erc20_transfer_incorrect_nonce, |prj, cmd| {
-    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     let transfer_amount = U256::from(50_000_000_000_000_000_000u128); // 50 tokens
 
@@ -504,7 +504,7 @@ casttest!(erc20_curl_total_supply, |_prj, cmd| {
 
 // tests that `balance` command works correctly with --json flag
 forgetest_async!(erc20_balance_json, |prj, cmd| {
-    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     let output = cmd
         .cast_fuse()
@@ -520,7 +520,7 @@ forgetest_async!(erc20_balance_json, |prj, cmd| {
 
 // tests that `allowance` command works correctly with --json flag
 forgetest_async!(erc20_allowance_json, |prj, cmd| {
-    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     // First approve some tokens
     let approve_amount = U256::from(50_000_000_000_000_000_000u128);
@@ -563,7 +563,7 @@ forgetest_async!(erc20_allowance_json, |prj, cmd| {
 // tests that `name`, `symbol`, `decimals`, and `totalSupply` commands work correctly with --json
 // flag
 forgetest_async!(erc20_metadata_json, |prj, cmd| {
-    let (rpc, token) = setup_token_test(&prj, &mut cmd).await;
+    let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
 
     // Test name with --json
     let output = cmd

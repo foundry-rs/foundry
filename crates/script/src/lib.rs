@@ -44,11 +44,13 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
         tempo::PATH_USD_ADDRESS,
     },
     executors::ExecutorBuilder,
@@ -286,21 +288,13 @@ impl ScriptArgs {
         }
 
         let mut tempo = self.tempo.clone();
-        let expires_at = tempo.expires_at();
-        if let Some(ts) = expires_at {
-            tempo.expiring_nonce = true;
-            tempo.valid_before = Some(ts);
-            tempo.common.expires = None;
+        tempo.resolve_expires();
+
+        if evm_opts.networks.is_tempo() && tempo.common.fee_token.is_none() {
+            tempo.common.fee_token = Some(PATH_USD_ADDRESS);
         }
 
-        let fee_token = if evm_opts.networks.is_tempo() && tempo.common.fee_token.is_none() {
-            Some(PATH_USD_ADDRESS)
-        } else {
-            tempo.common.fee_token
-        };
-
-        let script_config =
-            ScriptConfig::new(config, evm_opts, self.batch, fee_token, expires_at, tempo).await?;
+        let script_config = ScriptConfig::new(config, evm_opts, self.batch, tempo).await?;
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
 
@@ -329,12 +323,15 @@ impl ScriptArgs {
             if broadcasted.args.verify {
                 broadcasted.verify().await?;
             }
-            Ok(())
-        } else if evm_opts.networks.is_optimism() {
-            self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await
-        } else {
-            self.run_generic_script::<EthEvmNetwork>(config, evm_opts).await
+            return Ok(());
         }
+
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
+            return self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await;
+        }
+
+        self.run_generic_script::<EthEvmNetwork>(config, evm_opts).await
     }
 
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
@@ -717,10 +714,6 @@ pub struct ScriptConfig<FEN: FoundryEvmNetwork> {
     pub backends: HashMap<String, Backend<FEN>>,
     /// Whether to batch all broadcast transactions into a single Tempo batch transaction.
     pub batch: bool,
-    /// Tempo fee token address for paying transaction fees.
-    pub fee_token: Option<Address>,
-    /// TIP-1009 expiring-nonce valid_before unix timestamp, derived from `--tempo.expires`.
-    pub expires_at: Option<u64>,
     /// Tempo transaction options applied to broadcast transactions.
     pub tempo: TempoOpts,
 }
@@ -730,8 +723,6 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         config: Config,
         evm_opts: EvmOpts,
         batch: bool,
-        fee_token: Option<Address>,
-        expires_at: Option<u64>,
         tempo: TempoOpts,
     ) -> Result<Self> {
         let sender_nonce = if let Some(fork_url) = evm_opts.fork_url.as_ref() {
@@ -741,16 +732,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
             1
         };
 
-        Ok(Self {
-            config,
-            evm_opts,
-            sender_nonce,
-            backends: HashMap::default(),
-            batch,
-            fee_token,
-            expires_at,
-            tempo,
-        })
+        Ok(Self { config, evm_opts, sender_nonce, backends: HashMap::default(), batch, tempo })
     }
 
     pub async fn update_sender(&mut self, sender: Address) -> Result<()> {
@@ -826,7 +808,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                             self.evm_opts.clone(),
                             Some(known_contracts),
                             Some(target),
-                            self.fee_token,
+                            self.tempo.common.fee_token,
                         )
                         .into(),
                     )
@@ -837,7 +819,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
         // Propagate fee token to the transaction environment so that internal EVM calls
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
-        tx_env.set_fee_token(self.fee_token);
+        tx_env.set_fee_token(self.tempo.common.fee_token);
 
         Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
     }
