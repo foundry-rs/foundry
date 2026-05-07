@@ -5627,7 +5627,7 @@
     {
       "func": {
         "id": "expectPartialRevert_1",
-        "description": "Expects an error on next call to reverter address, that starts with the revert data.",
+        "description": "Expects an error on next call to reverter address, that starts with the revert data.\nSee `expectRevert(address)` for `reverter` matching semantics.",
         "declaration": "function expectPartialRevert(bytes4 revertData, address reverter) external;",
         "visibility": "external",
         "mutability": "",
@@ -5687,7 +5687,7 @@
     {
       "func": {
         "id": "expectRevert_10",
-        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address that match the revert data.",
+        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address that match the revert data.\nSee `expectRevert(address)` for `reverter` matching semantics.",
         "declaration": "function expectRevert(bytes4 revertData, address reverter, uint64 count) external;",
         "visibility": "external",
         "mutability": "",
@@ -5707,7 +5707,7 @@
     {
       "func": {
         "id": "expectRevert_11",
-        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address that exactly match the revert data.",
+        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address that exactly match the revert data.\nSee `expectRevert(address)` for `reverter` matching semantics.",
         "declaration": "function expectRevert(bytes calldata revertData, address reverter, uint64 count) external;",
         "visibility": "external",
         "mutability": "",
@@ -5747,7 +5747,7 @@
     {
       "func": {
         "id": "expectRevert_3",
-        "description": "Expects an error with any revert data on next call to reverter address.",
+        "description": "Expects an error with any revert data on next call to reverter address.\nThe `reverter` argument is matched against the address of the innermost\nframe that produced the revert:\n  - For a CALL: the address that was called.\n  - For a CREATE / CREATE2: the would-be deployed address of the failed\n    deployment (computed from the deployer + nonce, or salt + initcode).\nIn a nested chain the deepest reverting frame wins, regardless of whether\nthe chain is composed of CALLs, CREATEs, or a mix. With `count > 1` the\nsame rule applies independently to each iteration.",
         "declaration": "function expectRevert(address reverter) external;",
         "visibility": "external",
         "mutability": "",
@@ -5767,7 +5767,7 @@
     {
       "func": {
         "id": "expectRevert_4",
-        "description": "Expects an error from reverter address on next call, with any revert data.",
+        "description": "Expects an error from reverter address on next call, with any revert data.\nSee `expectRevert(address)` for `reverter` matching semantics.",
         "declaration": "function expectRevert(bytes4 revertData, address reverter) external;",
         "visibility": "external",
         "mutability": "",
@@ -5787,7 +5787,7 @@
     {
       "func": {
         "id": "expectRevert_5",
-        "description": "Expects an error from reverter address on next call, that exactly matches the revert data.",
+        "description": "Expects an error from reverter address on next call, that exactly matches the revert data.\nSee `expectRevert(address)` for `reverter` matching semantics.",
         "declaration": "function expectRevert(bytes calldata revertData, address reverter) external;",
         "visibility": "external",
         "mutability": "",
@@ -5867,7 +5867,7 @@
     {
       "func": {
         "id": "expectRevert_9",
-        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address.",
+        "description": "Expects a `count` number of reverts from the upcoming calls from the reverter address.\nSee `expectRevert(address)` for `reverter` matching semantics.",
         "declaration": "function expectRevert(address reverter, uint64 count) external;",
         "visibility": "external",
         "mutability": "",

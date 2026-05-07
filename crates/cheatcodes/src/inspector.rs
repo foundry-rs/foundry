@@ -1900,11 +1900,19 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
         // Handle expected reverts.
         if let Some(expected_revert) = &mut self.expected_revert {
-            // Record the would-be deployed address as the reverter, mirroring `call_end`.
-            // Runs at every depth so the innermost CREATE wins (deepest frame fires first
-            // and the `is_none()` lock pins it). `outcome.address` is `None` only when the
-            // constructor never ran (pre-frame rejection), in which case the surrounding
-            // `call_end` records the caller.
+            // Record the would-be deployed address as the reverter. We run at every depth
+            // (no depth gate here) so the deepest reverting CREATE fires first; the
+            // `is_none()` lock then pins it as the innermost. For `count > 1` the lock is
+            // released after each successful iteration (see below) so each iteration
+            // independently records its own innermost CREATE.
+            //
+            // Differs from `call_end` for `count > 1`: `call_end` overwrites every frame
+            // (outermost wins per iteration). The CREATE-side rule here is "innermost wins
+            // per iteration" — see <https://github.com/foundry-rs/foundry/issues/14613>.
+            //
+            // `outcome.address` is `None` only for pre-frame rejection
+            // (depth/balance/nonce). In that case the surrounding `call_end` records the
+            // caller as the reverter.
             if outcome.result.is_revert()
                 && expected_revert.reverter.is_some()
                 && expected_revert.reverted_by.is_none()
