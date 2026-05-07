@@ -870,16 +870,20 @@ impl<'ast> State<'_, 'ast> {
                     this.end();
                 };
 
-                // Binary expressions: check if we need to break and indent
+                // Binary expressions: check if we need to break and indent.
+                // The inline path keeps callee heads on the assignment line; restrict the
+                // force_break-only entry to call-as-lhs cases so homogeneous binary chains
+                // keep their original `=`-then-break formatting.
                 let lhs_overflows = self.estimate_lhs_size(rhs, op) + lhs_size > space_left;
+                let lhs_is_call = matches!(lhs.kind, ast::ExprKind::Call(..));
                 if force_break || lhs_overflows {
-                    if has_complex_successor(&rhs.kind, true)
+                    if (lhs_overflows || lhs_is_call)
+                        && has_complex_successor(&rhs.kind, true)
                         && get_callee_head_size(lhs) + lhs_size <= space_left
                     {
-                        // Keep complex exprs (where callee fits) inline, as they will have breaks.
                         // De-indent only when the call's args themselves are expected to break,
                         // so that the closing `)` returns to the assignment's base indent.
-                        if lhs_overflows && matches!(lhs.kind, ast::ExprKind::Call(..)) {
+                        if lhs_overflows && lhs_is_call {
                             self.s.ibox(-self.ind);
                             print_inline(self);
                             self.end();
