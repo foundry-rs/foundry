@@ -195,7 +195,7 @@ pub fn get_deposit_tx_parts(
             missing.push("mint");
             Default::default()
         })
-        .map(|value| value.to::<u128>());
+        .map(|value| value.saturating_to::<u128>());
     let is_system_transaction =
         other.get_deserialized::<bool>("isSystemTx").transpose().ok().flatten().unwrap_or_else(
             || {
