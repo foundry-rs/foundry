@@ -19,6 +19,7 @@ mod pubsub;
 mod revert;
 mod sign;
 mod simulate;
+#[cfg(feature = "cmd")]
 mod state;
 mod tempo;
 mod traces;
