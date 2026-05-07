@@ -5395,7 +5395,7 @@ mod vaddr_e2e {
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
         let expected = format!(
             "token={} from={} amount={}",
-            &DEFAULT_FEE_TOKEN.to_string().to_lowercase(),
+            DEFAULT_FEE_TOKEN.to_string().to_lowercase(),
             sender_addr,
             amount
         );
