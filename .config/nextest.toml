@@ -12,7 +12,7 @@ slow-timeout = { period = "5m", terminate-after = 4 }
 
 # `cast vaddr` end-to-end tests mine a 4-byte TIP-1022 PoW salt (CPU-bound,
 # minutes in debug mode) before exercising register/resolve/forward/watch
-# against an in-process Anvil Tempo node. Give them headroom.
+# against an in-process Anvil Tempo node.
 [[profile.default.overrides]]
 filter = "test(/vaddr_e2e::/)"
 slow-timeout = { period = "5m", terminate-after = 4 }

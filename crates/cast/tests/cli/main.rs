@@ -5199,8 +5199,8 @@ Virtual addresses:
 // End-to-end `cast vaddr` tests against a local Anvil Tempo node.
 //
 // These tests exercise the full TIP-1022 lifecycle. Mining a 4-byte PoW salt is CPU-bound;
-// we force `-j 32` so each test does not stall a single nextest worker long enough to trip its
-// per-test timeout.
+// we use all available CPUs so each test does not stall a nextest worker long enough to trip
+// its per-test timeout.
 mod vaddr_e2e {
     use super::*;
     use std::{
@@ -5216,9 +5216,11 @@ mod vaddr_e2e {
         anvil::NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T3.into()))
     }
 
-    /// Number of mining threads. Keep high enough to avoid nextest timeouts on
-    /// hosts with limited per-test parallelism.
-    const MINING_THREADS: &str = "32";
+    /// Number of mining threads — use all available CPUs to keep wall time
+    /// down on hosts where nextest limits per-test parallelism.
+    fn mining_threads() -> String {
+        std::thread::available_parallelism().map_or(8, |n| n.get()).to_string()
+    }
 
     /// Run `cast vaddr create` (mine + register) and parse the user-tag-zero virtual
     /// address from the plain-text output.
@@ -5239,7 +5241,7 @@ mod vaddr_e2e {
                 "--private-key",
                 &owner_pk,
                 "-j",
-                MINING_THREADS,
+                &mining_threads(),
                 "--rpc-url",
                 rpc,
             ])
