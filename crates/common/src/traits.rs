@@ -416,7 +416,7 @@ mod tests {
             SymbolicTest { mode: SymbolicMode::Prove, should_fail: true }
         );
 
-        // Trailing `_` is required: bare `check`/`prove` and look-alikes don't classify as
+        // Trailing `_` is required: bare `check`/`prove` and similar names don't classify as
         // symbolic tests, to avoid hijacking unrelated identifiers.
         assert_eq!(TestFunctionKind::classify("checkout", false), TestFunctionKind::Unknown);
         assert_eq!(TestFunctionKind::classify("proven", false), TestFunctionKind::Unknown);
