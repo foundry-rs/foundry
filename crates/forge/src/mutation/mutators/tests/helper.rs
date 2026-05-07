@@ -76,3 +76,35 @@ pub trait MutatorTester {
 
 // Implement for unit test module
 impl MutatorTester for () {}
+
+/// Generates one `#[test]` function per case for a [`Mutator`].
+///
+/// Each case becomes a standalone test (parallel execution, individual reporting,
+/// IDE run buttons), without pulling in `rstest`.
+///
+/// # Example
+///
+/// ```ignore
+/// mutator_tests!(UnaryOpMutator;
+///     pre_inc:    "++x"       => Some(vec!["--x", "~x", "-x", "x++", "x--"]);
+///     non_unary:  "a = b + c" => None;
+/// );
+/// ```
+macro_rules! mutator_tests {
+    ($mutator:expr; $($name:ident: $input:expr => $expected:expr);+ $(;)?) => {
+        $(
+            #[test]
+            fn $name() {
+                <() as $crate::mutation::mutators::tests::helper::MutatorTester>::test_mutator(
+                    $mutator,
+                    $crate::mutation::mutators::tests::helper::MutatorTestCase {
+                        input: $input,
+                        expected_mutations: $expected,
+                    },
+                );
+            }
+        )+
+    };
+}
+
+pub(crate) use mutator_tests;

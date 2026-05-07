@@ -115,7 +115,8 @@ impl Mutator for AssignmentMutator {
 fn extract_rhs_info<'ast>(context: &MutationContext<'ast>) -> Option<(AssignVarTypes, Span)> {
     let relevant_expr_for_rhs = if let Some(var_definition) = context.var_definition {
         var_definition.initializer.as_ref()?
-    } else if let Some(expr) = context.expr {
+    } else {
+        let expr = context.expr?;
         match &expr.kind {
             ExprKind::Assign(_lhs, _op_opt, rhs_actual_expr) => &**rhs_actual_expr,
             // If the context.expr is already what we want to get the type from
@@ -123,8 +124,6 @@ fn extract_rhs_info<'ast>(context: &MutationContext<'ast>) -> Option<(AssignVarT
             ExprKind::Lit(..) | ExprKind::Ident(..) => expr,
             _ => return None,
         }
-    } else {
-        return None; // No var_definition or expr in context (shouldn't happen?)
     };
 
     match &relevant_expr_for_rhs.kind {

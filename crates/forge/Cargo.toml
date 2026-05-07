@@ -110,7 +110,6 @@ foundry-test-utils.workspace = true
 
 mockall = "0.14"
 globset = "0.4"
-rstest = "0.26"
 similar-asserts.workspace = true
 svm.workspace = true
 tempfile.workspace = true
