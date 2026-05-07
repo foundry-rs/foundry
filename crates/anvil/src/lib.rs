@@ -291,9 +291,9 @@ pub struct NodeHandle {
     /// The address of the running rpc server.
     addresses: Vec<SocketAddr>,
     /// Join handle for the Node Service.
-    pub node_service: JoinHandle<Result<(), NodeError>>,
+    node_service: JoinHandle<Result<(), NodeError>>,
     /// Join handles (one per socket) for the Anvil server.
-    pub servers: Vec<JoinHandle<Result<(), NodeError>>>,
+    servers: Vec<JoinHandle<Result<(), NodeError>>>,
     /// The future that joins the ipc server, if any.
     ipc_task: Option<IpcTask>,
     /// A signal that fires the shutdown, fired on drop.
@@ -307,6 +307,13 @@ impl Drop for NodeHandle {
         // Fire shutdown signal to make sure anvil instance is terminated.
         if let Some(signal) = self._signal.take() {
             let _ = signal.fire();
+        }
+        self.node_service.abort();
+        for server in &self.servers {
+            server.abort();
+        }
+        if let Some(ipc_task) = &self.ipc_task {
+            ipc_task.abort();
         }
     }
 }
