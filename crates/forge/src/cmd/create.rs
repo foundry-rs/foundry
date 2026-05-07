@@ -196,6 +196,12 @@ impl CreateArgs {
                 constructor_args.as_deref().unwrap_or(&self.constructor_args),
             )?
         } else {
+            if !self.constructor_args.is_empty() || self.constructor_args_path.is_some() {
+                sh_warn!(
+                    "`{}` has no constructor; ignoring provided constructor arguments",
+                    self.contract.name
+                )?;
+            }
             vec![]
         };
 
