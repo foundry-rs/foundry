@@ -1112,10 +1112,7 @@ impl NodeConfig {
 
     /// Sets accounts to fund with custom balances on startup.
     #[must_use]
-    pub fn with_funded_accounts(
-        mut self,
-        accounts: HashMap<Address, U256>,
-    ) -> Self {
+    pub fn with_funded_accounts(mut self, accounts: HashMap<Address, U256>) -> Self {
         self.funded_accounts = accounts;
         self
     }
