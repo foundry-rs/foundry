@@ -188,8 +188,7 @@ impl CloneArgs {
                     sh_warn!("Waiting for 5 seconds to avoid rate limit...")?;
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
-                let client =
-                    etherscan_config.into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
+                let client = etherscan_config.into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
                 Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
             }
             SourceExplorer::Sourcify => {

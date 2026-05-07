@@ -340,7 +340,7 @@ foundry-linking = { path = "crates/linking" }
 foundry-primitives = { path = "crates/primitives", default-features = false }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.23.0", default-features = false }
+foundry-block-explorers = { version = "0.23.1", default-features = false }
 foundry-compilers = { version = "0.20.0", default-features = false, features = [
     "rustls",
     "svm-solc",
