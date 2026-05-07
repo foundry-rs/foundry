@@ -847,12 +847,15 @@ impl Config {
         // Check if the selected profile exists.
         if config.profiles.contains(&selected_profile) {
             config.profile = selected_profile;
-        } else if strict_profile {
-            return Err(ExtractConfigError::new(Error::from(format!(
-                "selected profile `{selected_profile}` does not exist"
-            ))));
         } else {
-            // Fall back to default profile for nested lib configs.
+            // Fall back to the default profile. In strict mode (top-level loads), emit a warning
+            // so users are informed when an unknown profile (e.g. via `FOUNDRY_PROFILE`) is
+            // selected; the silent fallback is reserved for nested lib configs.
+            if strict_profile {
+                config
+                    .warnings
+                    .push(Warning::UnknownProfile { profile: selected_profile.to_string() });
+            }
             config.profile = Self::DEFAULT_PROFILE;
         }
 
@@ -2861,19 +2864,35 @@ impl BasicConfig {
     ///
     /// This serializes to a table with the name of the profile
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        let mut value = toml::Value::try_from(self)?;
+        let mut profile_body = toml::Value::try_from(self)?;
         if let Some(ref network) = self.network
-            && let toml::Value::Table(ref mut table) = value
+            && let toml::Value::Table(ref mut table) = profile_body
         {
-            table.insert(network.clone(), toml::Value::Boolean(true));
+            table.insert("network".to_string(), toml::Value::String(network.clone()));
         }
-        let s = toml::to_string_pretty(&value)?;
+
+        let mut profile_section = toml::value::Table::new();
+        profile_section.insert(self.profile.to_string(), profile_body);
+
+        let mut document = toml::value::Table::new();
+        document.insert("profile".to_string(), toml::Value::Table(profile_section));
+
+        if self.network.as_deref() == Some("tempo") {
+            let mut endpoints = toml::value::Table::new();
+            endpoints.insert(
+                "tempo".to_string(),
+                toml::Value::String("https://rpc.tempo.xyz/".to_string()),
+            );
+            endpoints.insert(
+                "moderato".to_string(),
+                toml::Value::String("https://rpc.moderato.tempo.xyz/".to_string()),
+            );
+            document.insert("rpc_endpoints".to_string(), toml::Value::Table(endpoints));
+        }
+
+        let body = toml::to_string_pretty(&toml::Value::Table(document))?;
         Ok(format!(
-            "\
-[profile.{}]
-{s}
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n",
-            self.profile
+            "{body}\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n"
         ))
     }
 }
@@ -6679,6 +6698,55 @@ mod tests {
     }
 
     #[test]
+    fn no_unknown_key_warning_for_network_field() {
+        // Regression test: `network` is a flattened `Option` field of `NetworkConfigs`. It must
+        // not trigger an unknown-key warning, regardless of whether it is set.
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                network = "tempo"
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings.iter().any(
+                    |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "network")
+                ),
+                "did not expect UnknownKey warning for `network`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn no_unknown_key_warning_for_legacy_tempo_alias() {
+        // Regression test: the legacy `tempo = true` alias must keep working without warnings.
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                tempo = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "tempo")),
+                "did not expect UnknownKey warning for `tempo`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     fn fails_on_ambiguous_version_in_compilation_restrictions() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -7024,9 +7092,9 @@ mod tests {
         });
     }
 
-    // Test for issue #12844: FOUNDRY_PROFILE=nonexistent should fail
+    // Test for issue #12844: FOUNDRY_PROFILE=nonexistent should warn and fall back to default.
     #[test]
-    fn fails_on_unknown_profile() {
+    fn warns_on_unknown_profile() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
@@ -7037,11 +7105,15 @@ mod tests {
             )?;
 
             jail.set_env("FOUNDRY_PROFILE", "nonexistent");
-            let err = Config::load().expect_err("expected unknown profile to fail");
-            let err_msg = err.to_string();
+            let cfg = Config::load().expect("expected unknown profile to fall back to default");
+            assert_eq!(cfg.profile, Config::DEFAULT_PROFILE);
             assert!(
-                err_msg.contains("selected profile `nonexistent` does not exist"),
-                "Expected error about nonexistent profile, got: {err_msg}"
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::UnknownProfile { profile } if profile == "nonexistent"
+                )),
+                "Expected UnknownProfile warning, got: {:?}",
+                cfg.warnings
             );
 
             Ok(())
