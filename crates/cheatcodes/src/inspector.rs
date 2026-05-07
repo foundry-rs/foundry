@@ -1408,12 +1408,11 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // Record current reverter address and call scheme before processing the expect revert
             // if call reverted.
             if outcome.result.is_revert() {
-                // Record current reverter address if expect revert is set with expected reverter
-                // address and no actual reverter was set yet or if we're expecting more than one
-                // revert.
-                if expected_revert.reverter.is_some()
-                    && (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
-                {
+                // Record current reverter address. The deepest reverting frame fires
+                // `call_end` first and the `is_none()` lock pins it as the innermost; the
+                // lock is released after each successful iteration (see below) so
+                // `count > 1` keeps "innermost per iteration", matching `create_end`.
+                if expected_revert.reverter.is_some() && expected_revert.reverted_by.is_none() {
                     expected_revert.reverted_by = Some(call.target_address);
                 }
             }
@@ -1448,6 +1447,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         Ok((_, retdata)) => {
                             expected_revert.actual_count += 1;
                             if expected_revert.actual_count < expected_revert.count {
+                                // Reset so the next iteration's innermost frame wins again.
+                                expected_revert.reverted_by = None;
                                 self.expected_revert = Some(expected_revert);
                             }
                             outcome.result.result = InstructionResult::Return;
