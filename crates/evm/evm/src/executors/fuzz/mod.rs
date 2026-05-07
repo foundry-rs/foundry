@@ -73,10 +73,10 @@ struct WorkerState<FEN: FoundryEvmNetwork> {
     failure: Option<TestCaseError>,
     /// Fuzz run metadata that produced the failure.
     failure_run: Option<FuzzRunMetadata>,
-    /// Last run timestamp in milliseconds
+    /// Monotonic global run sequence of this worker's last completed run.
     ///
-    /// Used to identify which worker ran last and collect its traces and call breakpoints
-    last_run_timestamp: u128,
+    /// Used to identify which worker ran last and collect its traces and call breakpoints.
+    last_run_seq: u32,
     /// Failed corpus replays
     failed_corpus_replays: usize,
 }
@@ -96,7 +96,7 @@ impl<FEN: FoundryEvmNetwork> WorkerState<FEN> {
             runs: 0,
             failure: None,
             failure_run: None,
-            last_run_timestamp: 0,
+            last_run_seq: 0,
             failed_corpus_replays: 0,
         }
     }
@@ -342,8 +342,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 first_case_candidate = Some((run, case.clone()));
             }
 
-            if last_run_worker.is_none_or(|(t, _)| worker.last_run_timestamp > t) {
-                last_run_worker = Some((worker.last_run_timestamp, i));
+            if last_run_worker.is_none_or(|(seq, _)| worker.last_run_seq > seq) {
+                last_run_worker = Some((worker.last_run_seq, i));
             }
 
             // Only set replays from master which is responsible for replaying persisted corpus.
@@ -578,13 +578,13 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     "worker runs were not distributed correctly"
                 );
                 worker.runs += 1;
+                worker.last_run_seq = total_runs;
                 if let Some(progress) = progress {
                     progress.inc(1);
                 }
                 total_runs
             };
 
-            worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
             match self.single_fuzz(&executor, address, input, &mut corpus) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
