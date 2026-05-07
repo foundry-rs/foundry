@@ -188,6 +188,7 @@ jobs:
       - test
       - docs
       - doctest
+      - no-default-features
       - typos
       - clippy
       - rustfmt

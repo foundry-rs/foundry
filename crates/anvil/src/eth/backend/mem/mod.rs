@@ -462,6 +462,11 @@ impl<N: Network> Backend<N> {
         self.genesis.timestamp
     }
 
+    /// Returns the configured genesis block number.
+    pub const fn genesis_number(&self) -> u64 {
+        self.genesis.number
+    }
+
     /// Returns balance of the given account.
     pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
         Ok(self.get_account(address).await?.balance)
@@ -1494,7 +1499,7 @@ impl<N: Network> Backend<N> {
         let op_deposit = {
             // `other` carries OP-only deposit fields; consumed only when feature is enabled.
             let _ = &other;
-            OpCallDepositInfo::default()
+            OpCallDepositInfo
         };
 
         (evm_env, tx_env, op_deposit)
