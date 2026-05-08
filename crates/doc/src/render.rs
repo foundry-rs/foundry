@@ -1,14 +1,14 @@
 //! Rendering: `solar` AST -> vocs MDX.
 
 use crate::{
-    hir_ext::{self, NameToPage},
+    hir_ext::{self, NameToPage, clean_block_doc_content},
     utils::Deployment,
 };
 use solar::{
     ast::{
-        ContractKind, DocComments, FunctionKind, ItemContract, ItemEnum, ItemError, ItemEvent,
-        ItemFunction, ItemKind, ItemStruct, ItemUdvt, NatSpecKind, ParameterList, SourceUnit, Span,
-        VariableDefinition,
+        CommentKind, ContractKind, DocComments, FunctionKind, ItemContract, ItemEnum, ItemError,
+        ItemEvent, ItemFunction, ItemKind, ItemStruct, ItemUdvt, NatSpecKind, ParameterList,
+        SourceUnit, Span, VariableDefinition,
     },
     interface::{
         Ident,
@@ -644,6 +644,10 @@ fn collect_comments(
 
         for item in doc.natspec.iter() {
             let raw = doc.natspec_content(item);
+            // For /** */ block comments Solar preserves raw ` * ` line decorations inside the
+            // content range. Strip them so multi-line content renders cleanly.
+            let raw: &str =
+                if doc.kind == CommentKind::Block { &clean_block_doc_content(raw) } else { raw };
 
             // Detect a solar "synthetic" @notice: a continuation line with no `@` tag.
             // Solar produces these when a `///` line has no tag; the raw content starts

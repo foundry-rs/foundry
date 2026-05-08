@@ -7,7 +7,7 @@
 //! * `replace_inline_links`: rewrites `{Ident}` to markdown links.
 
 use solar::{
-    ast::{ContractKind, DocComments, FunctionKind, NatSpecKind, ParameterList},
+    ast::{CommentKind, ContractKind, DocComments, FunctionKind, NatSpecKind, ParameterList},
     interface::source_map::FileName,
     sema::{Gcx, hir},
 };
@@ -289,6 +289,9 @@ fn collect_inherited_doc(docs: &DocComments<'_>) -> InheritedDoc {
         }
         for item in doc.natspec.iter() {
             let raw = doc.natspec_content(item);
+            // For /** */ block comments Solar preserves raw ` * ` line decorations; strip them.
+            let raw: &str =
+                if doc.kind == CommentKind::Block { &clean_block_doc_content(raw) } else { raw };
             // Solar emits lines without a `@` tag as synthetic @notice with leading whitespace.
             let is_continuation = matches!(item.kind, NatSpecKind::Notice)
                 && raw.starts_with(|c: char| c.is_whitespace());
@@ -330,6 +333,23 @@ fn collect_inherited_doc(docs: &DocComments<'_>) -> InheritedDoc {
         }
     }
     result
+}
+
+/// Strip the ` * ` block-comment line decoration from each line of a `/** */` NatSpec item's
+/// content. Solar preserves raw source bytes, so continuation lines look like ` * text` and blank
+/// separator lines look like ` *`. This normalises them to plain text / empty lines.
+pub(crate) fn clean_block_doc_content(raw: &str) -> String {
+    raw.lines()
+        .map(|line| {
+            let t = line.trim_start();
+            if let Some(rest) = t.strip_prefix('*') {
+                rest.strip_prefix(' ').unwrap_or(rest)
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // ── inline link replacement ───────────────────────────────────────────────────

@@ -255,3 +255,124 @@ contract CounterMixedVariables {
         );
     }
 );
+
+// Test that /** */ style block comments render without stray `*` decoration and
+// without any raw `{` that would break MDX parsing.
+forgetest_init!(block_comment_strips_star_decoration, |prj, cmd| {
+    prj.add_source(
+        "ECDSA.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/**
+ * @notice Library for verifying ECDSA signatures.
+ * @dev Elliptic Curve Digital Signature Algorithm (ECDSA) operations.
+ *
+ * These functions can be used to verify that a message was signed by the holder
+ * of the private keys of a given address.
+ */
+library ECDSA {
+    /**
+     * @notice Recover the signer address from a signed message hash.
+     * @dev Returns the address that signed a hashed message (`hash`) with
+     * `signature` or error string.
+     *
+     * The `ecrecover` EVM opcode allows for malleable (non-unique) signatures:
+     * this function rejects them by requiring the `s` value to be in the lower
+     * half order, and the `v` value to be either 27 or 28.
+     *
+     * @param hash The hash of the signed message.
+     * @return signer The recovered signer address.
+     */
+    function tryRecover(bytes32 hash, bytes memory signature) internal pure returns (address signer) {}
+
+    /**
+     * @notice Recover the signer address from `v`, `r`, `s` components.
+     * @dev Overload of {ECDSA-tryRecover} that receives the `v`,
+     * `r` and `s` signature fields separately.
+     */
+    function tryRecover(bytes32 hash, uint8 v, bytes32 r, bytes32 s) internal pure returns (address signer) {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/library.ECDSA.mdx");
+    let content = std::fs::read_to_string(&doc_path).unwrap();
+
+    let expected = r#"---
+title: "ECDSA"
+description: "Library for verifying ECDSA signatures."
+---
+
+# ECDSA
+
+Library for verifying ECDSA signatures.
+
+Elliptic Curve Digital Signature Algorithm (ECDSA) operations.
+
+These functions can be used to verify that a message was signed by the holder
+of the private keys of a given address.
+
+## Functions
+
+### tryRecover
+
+Recover the signer address from a signed message hash.
+
+Returns the address that signed a hashed message (`hash`) with
+`signature` or error string.
+
+The `ecrecover` EVM opcode allows for malleable (non-unique) signatures:
+this function rejects them by requiring the `s` value to be in the lower
+half order, and the `v` value to be either 27 or 28.
+
+```solidity
+function tryRecover(bytes32 hash, bytes memory signature) internal pure returns (address signer);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| hash | `bytes32` | The hash of the signed message. |
+| signature | `bytes` |  |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| signer | `address` | The recovered signer address. |
+
+### tryRecover
+
+Recover the signer address from `v`, `r`, `s` components.
+
+Overload of [ECDSA](/src/library.ECDSA) that receives the `v`,
+`r` and `s` signature fields separately.
+
+```solidity
+function tryRecover(bytes32 hash, uint8 v, bytes32 r, bytes32 s) internal pure returns (address signer);
+```
+
+**Parameters**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| hash | `bytes32` |  |
+| v | `uint8` |  |
+| r | `bytes32` |  |
+| s | `bytes32` |  |
+
+**Returns**
+
+| Name | Type | Description |
+| ---- | ---- | ----------- |
+| signer | `address` |  |
+
+"#;
+
+    similar_asserts::assert_eq!(content, expected);
+});
