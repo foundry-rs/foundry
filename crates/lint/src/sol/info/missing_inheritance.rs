@@ -6,7 +6,7 @@ use solar::{
     interface::{Span, source_map::FileName},
     sema::{
         Gcx,
-        hir::{ContractId, ContractKind, FunctionKind, SourceId},
+        hir::{ContractId, ContractKind, FunctionKind, ItemId, SourceId},
     },
 };
 use std::collections::{BTreeSet, HashMap};
@@ -45,21 +45,23 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
             return;
         }
 
-        // Classify every contract in input sources into "candidate interface" or
-        // "analysis target", and precompute its external selector set.
+        // Targets are restricted to user input; candidates span the whole HIR so dependency
+        // interfaces (e.g. OpenZeppelin's `IERC20`) are still matched.
         let mut candidates: Vec<(ContractId, BTreeSet<[u8; 4]>)> = Vec::new();
         let mut targets: Vec<ContractId> = Vec::new();
         let mut selectors_by_contract: HashMap<ContractId, BTreeSet<[u8; 4]>> = HashMap::new();
 
         for cid in hir.contract_ids() {
             let contract = hir.contract(cid);
-            if contract.linearization_failed() || !input_source_idx.contains_key(&contract.source) {
+            if contract.linearization_failed() {
                 continue;
             }
 
             let selectors: BTreeSet<[u8; 4]> =
                 gcx.interface_functions(cid).all().iter().map(|f| f.selector.0).collect();
             selectors_by_contract.insert(cid, selectors.clone());
+
+            let in_input = input_source_idx.contains_key(&contract.source);
 
             match contract.kind {
                 ContractKind::Library => {}
@@ -73,11 +75,15 @@ impl<'ast> ProjectLintPass<'ast> for MissingInheritance {
                         if !selectors.is_empty() {
                             candidates.push((cid, selectors));
                         }
-                    } else {
+                    } else if in_input {
                         targets.push(cid);
                     }
                 }
-                ContractKind::Contract => targets.push(cid),
+                ContractKind::Contract => {
+                    if in_input {
+                        targets.push(cid);
+                    }
+                }
             }
         }
 
@@ -170,8 +176,8 @@ fn is_signature_only<'gcx>(gcx: Gcx<'gcx>, cid: ContractId) -> bool {
     let mut has_function = false;
     for &item_id in contract.items {
         match item_id {
-            solar::sema::hir::ItemId::Variable(_) => return false,
-            solar::sema::hir::ItemId::Function(fid) => {
+            ItemId::Variable(_) => return false,
+            ItemId::Function(fid) => {
                 let func = hir.function(fid);
                 match func.kind {
                     FunctionKind::Constructor | FunctionKind::Receive | FunctionKind::Fallback => {

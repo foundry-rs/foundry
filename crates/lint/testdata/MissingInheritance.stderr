@@ -46,3 +46,11 @@ LL │ contract MultiNoInherit {
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
 
+note[missing-inheritance]: contract `External` implements interface `IExternalThing`'s external API but does not explicitly inherit from it
+   ╭▸ ROOT/testdata/MissingInheritance.sol:LL:CC
+   │
+LL │ contract External {
+   │          ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-inheritance
+

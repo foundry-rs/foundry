@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {IExternalThing} from "./auxiliary/MissingInheritanceExternal.sol";
+
 interface ISomething {
     function f1() external returns (uint256);
 }
@@ -111,5 +113,19 @@ contract MultiNoInherit { //~NOTE: contract `MultiNoInherit` implements interfac
     }
     function g() external pure returns (uint256) {
         return 2;
+    }
+}
+
+// SHOULD FAIL: Implements an interface declared in an external dependency without inheriting it.
+contract External { //~NOTE: contract `External` implements interface `IExternalThing`'s external API but does not explicitly inherit from it
+    function doExternalThing() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+// SHOULD PASS: Explicitly inherits the external dependency interface.
+contract ExternalExplicit is IExternalThing {
+    function doExternalThing() external pure override returns (uint256) {
+        return 1;
     }
 }
