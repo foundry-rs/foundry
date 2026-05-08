@@ -290,8 +290,8 @@ impl ScriptArgs {
         let mut tempo = self.tempo.clone();
         tempo.resolve_expires();
 
-        if evm_opts.networks.is_tempo() && tempo.common.fee_token.is_none() {
-            tempo.common.fee_token = Some(PATH_USD_ADDRESS);
+        if evm_opts.networks.is_tempo() && tempo.fee_token.is_none() {
+            tempo.fee_token = Some(PATH_USD_ADDRESS);
         }
 
         let script_config = ScriptConfig::new(config, evm_opts, self.batch, tempo).await?;
@@ -808,7 +808,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                             self.evm_opts.clone(),
                             Some(known_contracts),
                             Some(target),
-                            self.tempo.common.fee_token,
+                            self.tempo.fee_token,
                         )
                         .into(),
                     )
@@ -819,7 +819,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
         // Propagate fee token to the transaction environment so that internal EVM calls
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
-        tx_env.set_fee_token(self.tempo.common.fee_token);
+        tx_env.set_fee_token(self.tempo.fee_token);
 
         Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
     }
@@ -853,10 +853,10 @@ mod tests {
         ]);
 
         assert_eq!(
-            args.tempo.common.fee_token,
+            args.tempo.fee_token,
             Some(address!("0x20C0000000000000000000000000000000000001"))
         );
-        assert_eq!(args.tempo.common.expires, Some(10));
+        assert_eq!(args.tempo.expires, Some(10));
     }
 
     #[test]

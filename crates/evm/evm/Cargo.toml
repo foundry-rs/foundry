@@ -69,4 +69,8 @@ optimism = [
     "foundry-evm-hardforks/optimism",
     "foundry-evm-networks/optimism",
     "foundry-common/optimism",
+    "foundry-cheatcodes/optimism",
+    "foundry-evm-coverage/optimism",
+    "foundry-evm-fuzz/optimism",
+    "foundry-evm-traces/optimism",
 ]

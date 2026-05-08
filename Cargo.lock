@@ -4857,9 +4857,9 @@ dependencies = [
 
 [[package]]
 name = "foundry-block-explorers"
-version = "0.23.0"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c41211d5c69c92070d2e2174eff99ffb259d0d568d2e4f789d2a7251b4416ccd"
+checksum = "786287256b3da26184e25d66685d33fd208d0b6e2098895cf7e880f3ce18eca1"
 dependencies = [
  "alloy-chains",
  "alloy-json-abi",
@@ -5017,6 +5017,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-rpc-types-engine",
  "alloy-signer",
+ "alloy-signer-local",
  "alloy-sol-types",
  "alloy-transport",
  "alloy-transport-ipc",
@@ -5024,6 +5025,7 @@ dependencies = [
  "anstream 0.6.21",
  "anstyle",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "ciborium",
  "clap",
@@ -5041,6 +5043,7 @@ dependencies = [
  "futures",
  "itertools 0.14.0",
  "jiff",
+ "k256",
  "mpp",
  "num-format",
  "op-alloy-network",
@@ -5053,6 +5056,7 @@ dependencies = [
  "semver 1.0.28",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "solar-compiler",
  "tempfile",
  "tempo-alloy",

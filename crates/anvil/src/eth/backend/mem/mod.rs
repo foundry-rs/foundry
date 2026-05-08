@@ -462,6 +462,11 @@ impl<N: Network> Backend<N> {
         self.genesis.timestamp
     }
 
+    /// Returns the configured genesis block number.
+    pub const fn genesis_number(&self) -> u64 {
+        self.genesis.number
+    }
+
     /// Returns balance of the given account.
     pub async fn current_balance(&self, address: Address) -> DatabaseResult<U256> {
         Ok(self.get_account(address).await?.balance)
@@ -533,8 +538,17 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns true if op-stack deposits are active
+    #[cfg(feature = "optimism")]
     pub const fn is_optimism(&self) -> bool {
         self.networks.is_optimism()
+    }
+
+    /// Returns true if op-stack deposits are active.
+    ///
+    /// Always `false` when built without the `optimism` feature.
+    #[cfg(not(feature = "optimism"))]
+    pub const fn is_optimism(&self) -> bool {
+        false
     }
 
     /// Returns true if Tempo network mode is active
@@ -632,6 +646,7 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns an error if op-stack deposits are not active
+    #[cfg(feature = "optimism")]
     pub const fn ensure_op_deposits_active(&self) -> Result<(), BlockchainError> {
         if self.is_optimism() {
             return Ok(());
@@ -1484,7 +1499,7 @@ impl<N: Network> Backend<N> {
         let op_deposit = {
             // `other` carries OP-only deposit fields; consumed only when feature is enabled.
             let _ = &other;
-            OpCallDepositInfo::default()
+            OpCallDepositInfo
         };
 
         (evm_env, tx_env, op_deposit)
