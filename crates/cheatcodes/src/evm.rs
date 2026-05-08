@@ -583,7 +583,13 @@ impl Cheatcode for getBlobhashesCall {
             "`getBlobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        Ok(ccx.ecx.tx().blob_versioned_hashes().to_vec().abi_encode())
+        let hashes = ccx
+            .state
+            .env_overrides
+            .blob_hashes
+            .as_deref()
+            .unwrap_or_else(|| ccx.ecx.tx().blob_versioned_hashes());
+        Ok(hashes.to_vec().abi_encode())
     }
 }
 

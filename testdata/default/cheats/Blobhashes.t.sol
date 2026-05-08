@@ -16,6 +16,25 @@ contract BlobhashesTest is Test {
     }
 }
 
+/// `vm.getBlobhashes` must reflect the rolled-back value after `revertToState`.
+contract BlobhashesSnapshotTest is Test {
+    function test_getBlobhashes_after_revertToState() public {
+        bytes32[] memory a = new bytes32[](1);
+        a[0] = bytes32(uint256(0xAAAA));
+        bytes32[] memory b = new bytes32[](1);
+        b[0] = bytes32(uint256(0xBBBB));
+
+        vm.blobhashes(a);
+        uint256 id = vm.snapshotState();
+        vm.blobhashes(b);
+        vm.revertToState(id);
+
+        bytes32[] memory got = vm.getBlobhashes();
+        assertEq(got.length, 1);
+        assertEq(got[0], a[0]);
+    }
+}
+
 /// `vm.blobhashes` must remain visible to a *called* contract under
 /// `--isolate`, where the synthetic inner transaction would otherwise be
 /// rejected (left over EIP-4844 type + zero gas price) and `BLOBHASH` would
