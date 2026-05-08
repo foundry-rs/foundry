@@ -31,20 +31,20 @@ contract ContractD {}
 "#;
 
 const VYPER_INTERFACE: &str = r#"
-# pragma version >=0.4.0
+# pragma version >=0.5.0a1
 
 @external
 @view
 def number() -> uint256:
-    return empty(uint256)
+    ...
 
 @external
 def set_number(new_number: uint256):
-    pass
+    ...
 
 @external
 def increment() -> uint256:
-    return empty(uint256)
+    ...
 "#;
 
 const VYPER_CONTRACT: &str = r#"
@@ -156,7 +156,7 @@ Solidity:
 - 0.8.33
 
 Vyper:
-- 0.4.3
+- 0.5.0
 
 
 "#]]);
@@ -174,7 +174,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped, |prj, cmd| {
         r#"
 Vyper:
 
-0.4.3:
+0.5.0:
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
@@ -206,7 +206,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_skipped_json, |prj, cmd|
   ],
   "Vyper": [
     {
-      "version": "0.4.3",
+      "version": "0.5.0",
       "paths": [
         "src/Counter.vy",
         "src/ICounter.vyi"
@@ -242,7 +242,7 @@ Solidity:
 
 Vyper:
 
-0.4.3 (<= prague):
+0.5.0 (<= constantinople):
 ├── src/Counter.vy
 └── src/ICounter.vyi
 
@@ -287,7 +287,7 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd|
   ],
   "Vyper": [
     {
-      "version": "0.4.3",
+      "version": "0.5.0",
       "evm_version": "[..]",
       "paths": [
         "src/Counter.vy",
@@ -303,10 +303,10 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd|
 
 // Vyper `pragma version` regression coverage for foundry-rs/foundry-core#59. The released
 // `foundry-compilers` silently dropped every Vyper version constraint; these tests pin the
-// fixed parser end-to-end through the resolver.
+// fixed parser end-to-end through the resolver against an installed Vyper 0.5.0a1 binary.
 
 const VYPER_PEP440_COMPAT_RELEASE: &str = r#"
-# pragma version ~=0.4.0
+# pragma version ~=0.5.0a1
 
 number: public(uint256)
 
@@ -316,7 +316,7 @@ def setNumber(newNumber: uint256):
 "#;
 
 const VYPER_LEGACY_AT_VERSION: &str = r#"
-#@version ^0.4.0
+#@version >=0.5.0a1
 
 number: public(uint256)
 
@@ -331,13 +331,14 @@ const VYPER_UNSATISFIABLE_PRAGMA: &str = r#"
 number: public(uint256)
 "#;
 
-// `~=0.4.0` (PEP 440 "compatible release") translates to `>=0.4.0, <0.5.0`, satisfied by 0.4.3.
+// `~=0.5.0a1` (PEP 440 "compatible release") translates to `>=0.5.0-a1, <0.6.0`, satisfied by
+// the installed Vyper 0.5.0a1.
 forgetest!(vyper_pep440_compatible_release_pragma_resolves, |prj, cmd| {
     prj.add_raw_source("Counter.vy", VYPER_PEP440_COMPAT_RELEASE);
 
     cmd.args(["compiler", "resolve"]).assert_success().stdout_eq(str![[r#"
 Vyper:
-- 0.4.3
+- 0.5.0
 
 
 "#]]);
@@ -349,7 +350,7 @@ forgetest!(vyper_legacy_at_version_pragma_resolves, |prj, cmd| {
 
     cmd.args(["compiler", "resolve"]).assert_success().stdout_eq(str![[r#"
 Vyper:
-- 0.4.3
+- 0.5.0
 
 
 "#]]);
@@ -366,25 +367,8 @@ Error: Encountered invalid compiler version in src/Counter.vy: No compiler versi
 "#]]);
 });
 
-// PEP 440 → semver translation cases for the upcoming Vyper 0.5 line. CI has no Vyper 0.5
-// binary, so we assert the *translated* requirement string surfaces in the resolver error.
-
-// `~=0.5.0a1` → `>=0.5.0-a1, <0.6.0`
-forgetest!(vyper_pep440_compatible_release_alpha_pragma_is_translated, |prj, cmd| {
-    prj.add_raw_source(
-        "Counter.vy",
-        r#"
-# pragma version ~=0.5.0a1
-
-number: public(uint256)
-"#,
-    );
-
-    cmd.args(["build"]).assert_failure().stderr_eq(str![[r#"
-Error: Encountered invalid compiler version in src/Counter.vy: No compiler version exists that matches the version requirement: >=0.5.0-a1, <0.6.0
-
-"#]]);
-});
+// Beta and rc cases below: Vyper 0.5.0a1 cannot satisfy `=0.5.0-b1` or `=0.5.0-rc1`, so we
+// assert the *translated* requirement string surfaces in the resolver error.
 
 // `==0.5.0b1` → `=0.5.0-b1`
 forgetest!(vyper_pep440_exact_beta_pragma_is_translated, |prj, cmd| {
