@@ -11,6 +11,7 @@ mod gas;
 mod genesis;
 mod ipc;
 mod logs;
+#[cfg(feature = "optimism")]
 mod optimism;
 mod otterscan;
 mod proof;
@@ -18,6 +19,7 @@ mod pubsub;
 mod revert;
 mod sign;
 mod simulate;
+#[cfg(feature = "cmd")]
 mod state;
 mod tempo;
 mod traces;

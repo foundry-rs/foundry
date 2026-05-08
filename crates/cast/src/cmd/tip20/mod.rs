@@ -6,7 +6,7 @@ use std::str::FromStr;
 
 mod create;
 pub(crate) use create::iso4217_warning_message;
-mod mine;
+pub(crate) mod mine;
 
 /// TIP-20 token operations (Tempo).
 #[derive(Debug, Parser, Clone)]

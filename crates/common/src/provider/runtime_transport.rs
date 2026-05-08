@@ -36,7 +36,11 @@ fn is_known_mpp_endpoint(url: &Url) -> bool {
 /// Only meant to be used internally by [RuntimeTransport].
 #[derive(Clone, Debug)]
 pub enum InnerTransport {
-    /// HTTP transport with lazy MPP 402 handling
+    /// HTTP transport with lazy MPP 402 handling.
+    ///
+    /// For known Tempo endpoints, the MPP layer additionally runs the
+    /// `wallet.tempo.xyz` device-code flow on a 402 when no local access key
+    /// is configured (see [`crate::tempo::ensure_access_key`]).
     Http(LazyMppHttpTransport),
     /// WebSocket transport
     Ws(PubSubFrontend),
