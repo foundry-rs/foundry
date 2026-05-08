@@ -1,6 +1,6 @@
 //! `forge doc`
 
-use crate::cmd::watch::WatchArgs;
+use crate::cmd::{install, watch::WatchArgs};
 use clap::{Parser, ValueHint};
 use eyre::Result;
 use forge_doc::DocBuilder;
@@ -43,8 +43,15 @@ pub struct DocArgs {
 }
 
 impl DocArgs {
-    pub fn run(self) -> Result<()> {
-        let config = self.config()?;
+    pub async fn run(self) -> Result<()> {
+        let mut config = self.config()?;
+
+        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        {
+            // need to re-configure here to also catch additional remappings
+            config = self.config()?;
+        }
+
         let root = &config.root;
         let project = config.project()?;
 
