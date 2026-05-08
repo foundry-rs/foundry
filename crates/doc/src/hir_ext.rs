@@ -278,15 +278,47 @@ fn collect_inherited_doc(docs: &DocComments<'_>) -> InheritedDoc {
         params: Vec::new(),
         returns: Vec::new(),
     };
+    let mut prev_doc_was_blank = false;
+    // true = last push was to notices, false = devs
+    let mut last_desc: Option<bool> = None;
+
     for doc in docs.iter() {
+        if doc.natspec.is_empty() {
+            prev_doc_was_blank = true;
+            continue;
+        }
         for item in doc.natspec.iter() {
-            let content = doc.natspec_content(item).trim().to_string();
+            let raw = doc.natspec_content(item);
+            // Solar emits lines without a `@` tag as synthetic @notice with leading whitespace.
+            let is_continuation = matches!(item.kind, NatSpecKind::Notice)
+                && raw.starts_with(|c: char| c.is_whitespace());
+            let content = raw.trim().to_string();
             if content.is_empty() {
+                prev_doc_was_blank = true;
                 continue;
             }
+            if is_continuation && !prev_doc_was_blank {
+                let last = match last_desc {
+                    Some(true) => result.notices.last_mut(),
+                    Some(false) => result.devs.last_mut(),
+                    None => None,
+                };
+                if let Some(last) = last {
+                    last.push('\n');
+                    last.push_str(&content);
+                    continue;
+                }
+            }
+            prev_doc_was_blank = false;
             match item.kind {
-                NatSpecKind::Notice => result.notices.push(content),
-                NatSpecKind::Dev => result.devs.push(content),
+                NatSpecKind::Notice => {
+                    result.notices.push(content);
+                    last_desc = Some(true);
+                }
+                NatSpecKind::Dev => {
+                    result.devs.push(content);
+                    last_desc = Some(false);
+                }
                 NatSpecKind::Param { name } => {
                     result.params.push((name.as_str().to_string(), content))
                 }
