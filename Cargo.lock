@@ -3027,7 +3027,7 @@ dependencies = [
  "terminfo",
  "thiserror 2.0.18",
  "which",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3180,7 +3180,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3984,7 +3984,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4280,7 +4280,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5100,8 +5100,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a46823427db611c6b97506ee8f26b4424058366abcc9a97ac5c4c3419798518"
+source = "git+https://github.com/figtracer/foundry-core?rev=63698079e3971a83fe643c4f14b8c5cd3fbed206#63698079e3971a83fe643c4f14b8c5cd3fbed206"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5125,15 +5124,14 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
- "winnow 0.7.15",
+ "winnow 1.0.2",
  "yansi",
 ]
 
 [[package]]
 name = "foundry-compilers-artifacts"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c29c6a49e82684909549e8e3a63a9dea4c92dfeb1b5b3a5e3ad683db42324ac3"
+source = "git+https://github.com/figtracer/foundry-core?rev=63698079e3971a83fe643c4f14b8c5cd3fbed206#63698079e3971a83fe643c4f14b8c5cd3fbed206"
 dependencies = [
  "foundry-compilers-artifacts-solc",
  "foundry-compilers-artifacts-vyper",
@@ -5142,8 +5140,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-solc"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02d3e554932001133f433473b3bdb37c74b4a648750ab61cd7966e7db0ead16d"
+source = "git+https://github.com/figtracer/foundry-core?rev=63698079e3971a83fe643c4f14b8c5cd3fbed206#63698079e3971a83fe643c4f14b8c5cd3fbed206"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5163,8 +5160,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-artifacts-vyper"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "583168b6df6b73cc3de8d205a922dca58a9c0b4c2774f6b115b3ff7e79d23900"
+source = "git+https://github.com/figtracer/foundry-core?rev=63698079e3971a83fe643c4f14b8c5cd3fbed206#63698079e3971a83fe643c4f14b8c5cd3fbed206"
 dependencies = [
  "alloy-json-abi",
  "alloy-primitives",
@@ -5177,8 +5173,7 @@ dependencies = [
 [[package]]
 name = "foundry-compilers-core"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9f80dd5d9f3ed065e412ecef2da3904ea21708d53f79fac29a3547c10ae947f"
+source = "git+https://github.com/figtracer/foundry-core?rev=63698079e3971a83fe643c4f14b8c5cd3fbed206#63698079e3971a83fe643c4f14b8c5cd3fbed206"
 dependencies = [
  "alloy-primitives",
  "dunce",
@@ -6608,7 +6603,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7499,7 +7494,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8457,7 +8452,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -8626,7 +8621,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9891,7 +9886,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -9950,7 +9945,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10732,7 +10727,7 @@ dependencies = [
  "derive_more",
  "dunce",
  "inturn",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "itoa",
  "normalize-path",
  "once_map",
@@ -10744,7 +10739,7 @@ dependencies = [
  "solar-config",
  "solar-data-structures",
  "solar-macros",
- "thiserror 2.0.18",
+ "thiserror 1.0.69",
  "tracing",
  "unicode-width 0.2.2",
 ]
@@ -10767,7 +10762,7 @@ dependencies = [
  "alloy-primitives",
  "bitflags 2.11.1",
  "bumpalo",
- "itertools 0.14.0",
+ "itertools 0.12.1",
  "memchr",
  "num-bigint",
  "num-rational",
@@ -11065,7 +11060,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror 1.0.69",
  "url",
  "zip",
 ]
@@ -11179,7 +11174,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11387,7 +11382,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -12635,7 +12630,7 @@ dependencies = [
  "watchexec-events",
  "watchexec-signals",
  "watchexec-supervisor",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -12785,7 +12780,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
