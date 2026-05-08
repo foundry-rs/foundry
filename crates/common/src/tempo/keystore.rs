@@ -39,6 +39,13 @@ pub enum KeyType {
     WebAuthn,
 }
 
+impl KeyType {
+    /// Whether this key type can be used by the current MPP private-key signer path.
+    pub const fn supports_private_key_signer(self) -> bool {
+        matches!(self, Self::Secp256k1)
+    }
+}
+
 /// Per-token spending limit stored in `keys.toml`.
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct StoredTokenLimit {
@@ -86,6 +93,11 @@ impl KeyEntry {
     /// Whether this entry has a non-empty inline private key.
     pub fn has_inline_key(&self) -> bool {
         self.key.as_ref().is_some_and(|k| !k.trim().is_empty())
+    }
+
+    /// Whether this entry can be used by the MPP private-key signer path.
+    pub fn has_compatible_inline_key(&self) -> bool {
+        self.key_type.supports_private_key_signer() && self.has_inline_key()
     }
 }
 

@@ -2,10 +2,10 @@
 //!
 //! Uses the shared Tempo keystore types from [`crate::tempo`] and adds
 //! MPP-specific primary key selection logic (passkey > first entry with
-//! inline key > first entry, mirroring `Keystore::primary_key()` in
+//! a compatible inline key > first entry, mirroring `Keystore::primary_key()` in
 //! `tempo-common`).
 
-use crate::tempo::{TEMPO_PRIVATE_KEY_ENV, WalletType, read_tempo_keys_file};
+use crate::tempo::{KeyType, TEMPO_PRIVATE_KEY_ENV, WalletType, read_tempo_keys_file};
 use alloy_primitives::Address;
 use std::env;
 use tracing::debug;
@@ -36,6 +36,9 @@ pub struct MppKeyConfig {
     /// Chain ID from the key entry in `keys.toml`. `None` when discovered from
     /// the `TEMPO_PRIVATE_KEY` env var (no keychain metadata available).
     pub chain_id: Option<u64>,
+    /// Cryptographic key type from `keys.toml`.
+    /// `None` when discovered from `TEMPO_PRIVATE_KEY`.
+    pub key_type: Option<KeyType>,
     /// Currencies from the key's spending limits.
     pub currencies: Vec<Address>,
 }
@@ -66,6 +69,7 @@ pub fn discover_mpp_config(opts: DiscoverOptions) -> Option<MppKeyConfig> {
                 key_address: None,
                 key_authorization: None,
                 chain_id: None,
+                key_type: None,
                 currencies: vec![],
             });
         }
@@ -82,8 +86,8 @@ pub fn discover_mpp_config(opts: DiscoverOptions) -> Option<MppKeyConfig> {
 
     // Pick primary key using the same deterministic order as
     // `Keystore::primary_key()` in tempo-common:
-    //   passkey > first entry with inline key > first entry
-    // Only entries with a usable inline key can provide a signing key.
+    //   passkey > first entry with compatible inline key > first entry
+    // We only consider key types that match the current signer implementation.
     // Filter by chain_id, currency, and freshness when provided.
     let candidates: Vec<_> = keys_file
         .keys
@@ -94,12 +98,13 @@ pub fn discover_mpp_config(opts: DiscoverOptions) -> Option<MppKeyConfig> {
                 .is_none_or(|cur| k.limits.is_empty() || k.limits.iter().any(|l| l.currency == cur))
         })
         .filter(|k| k.expiry.is_none_or(|e| e == 0 || e > now))
+        .filter(|k| k.key_type.supports_private_key_signer())
         .collect();
 
     let primary = candidates
         .iter()
-        .find(|k| k.wallet_type == WalletType::Passkey && k.has_inline_key())
-        .or_else(|| candidates.iter().find(|k| k.has_inline_key()))
+        .find(|k| k.wallet_type == WalletType::Passkey && k.has_compatible_inline_key())
+        .or_else(|| candidates.iter().find(|k| k.has_compatible_inline_key()))
         .or(candidates.first())
         .copied();
 
@@ -115,6 +120,7 @@ pub fn discover_mpp_config(opts: DiscoverOptions) -> Option<MppKeyConfig> {
                 key_address: entry.key_address,
                 key_authorization: entry.key_authorization.clone(),
                 chain_id: Some(entry.chain_id),
+                key_type: Some(entry.key_type),
                 currencies: entry.limits.iter().map(|l| l.currency).collect(),
             });
         }
@@ -236,6 +242,74 @@ chain_id = 4217
 
         let discovered = discover_mpp_key();
         assert_eq!(discovered.as_deref(), Some(key));
+
+        unsafe { std::env::remove_var("TEMPO_HOME") };
+    }
+
+    #[test]
+    fn discover_skips_incompatible_key_types() {
+        let _g = crate::tempo::test_env_mutex().blocking_lock();
+        let key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let toml_content = format!(
+            r#"
+[[keys]]
+wallet_type = "passkey"
+wallet_address = "0x0000000000000000000000000000000000000001"
+key_type = "webauthn"
+key = "0xincompatible_key"
+chain_id = 4217
+
+[[keys]]
+wallet_type = "local"
+wallet_address = "0x0000000000000000000000000000000000000002"
+key_type = "secp256k1"
+key = "{key}"
+chain_id = 4217
+"#
+        );
+        let (dir, _) = setup_keys_toml(&toml_content);
+
+        unsafe {
+            std::env::set_var("TEMPO_HOME", dir.path());
+            std::env::remove_var("TEMPO_PRIVATE_KEY");
+        }
+
+        let config = discover_mpp_config(Default::default()).expect("compatible key should win");
+        assert_eq!(config.key, key);
+        assert_eq!(config.key_type, Some(KeyType::Secp256k1));
+
+        unsafe { std::env::remove_var("TEMPO_HOME") };
+    }
+
+    #[test]
+    fn discover_returns_none_when_only_incompatible_key_types() {
+        let _g = crate::tempo::test_env_mutex().blocking_lock();
+        let toml_content = r#"
+[[keys]]
+wallet_type = "passkey"
+wallet_address = "0x0000000000000000000000000000000000000001"
+key_type = "p256"
+key = "0xp256_key"
+chain_id = 4217
+
+[[keys]]
+wallet_type = "local"
+wallet_address = "0x0000000000000000000000000000000000000002"
+key_type = "webauthn"
+key = "0xwebauthn_key"
+chain_id = 4217
+"#;
+        let (dir, _) = setup_keys_toml(toml_content);
+
+        unsafe {
+            std::env::set_var("TEMPO_HOME", dir.path());
+            std::env::remove_var("TEMPO_PRIVATE_KEY");
+        }
+
+        assert!(
+            discover_mpp_config(Default::default()).is_none(),
+            "incompatible-only keys.toml must not yield an MPP signer key"
+        );
 
         unsafe { std::env::remove_var("TEMPO_HOME") };
     }

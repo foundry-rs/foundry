@@ -336,6 +336,14 @@ impl LazySessionProvider {
             ))
         })?;
 
+        if let Some(key_type) = config.key_type
+            && !key_type.supports_private_key_signer()
+        {
+            return Err(TransportErrorKind::custom(io::Error::other(format!(
+                "unsupported MPP key type {key_type:?}; expected secp256k1",
+            ))));
+        }
+
         let signer: mpp::PrivateKeySigner = config.key.parse().map_err(|e| {
             TransportErrorKind::custom(io::Error::other(format!("invalid MPP key: {e}")))
         })?;
