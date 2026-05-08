@@ -284,7 +284,7 @@ impl<'a> InvariantContract<'a> {
     /// Creates a new invariant contract.
     ///
     /// Caller must ensure `invariant_fns` is non-empty and `anchor_idx < invariant_fns.len()`.
-    pub fn new(
+    pub const fn new(
         address: Address,
         name: &'a str,
         invariant_fns: Vec<(&'a Function, bool)>,
@@ -292,8 +292,6 @@ impl<'a> InvariantContract<'a> {
         call_after_invariant: bool,
         abi: &'a JsonAbi,
     ) -> Self {
-        debug_assert!(!invariant_fns.is_empty(), "invariant_fns must be non-empty");
-        debug_assert!(anchor_idx < invariant_fns.len(), "anchor_idx out of bounds");
         Self { address, name, invariant_fns, anchor_idx, call_after_invariant, abi }
     }
 

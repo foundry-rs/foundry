@@ -437,10 +437,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
     ) -> Result<InvariantFuzzTestResult> {
-        // Throw an error to abort test run if the invariant function accepts input params
-        if !invariant_contract.anchor().inputs.is_empty() {
-            return Err(eyre!("Invariant test function should have no inputs"));
-        }
+        // Note: invariant function signatures (no inputs) are validated upstream in the
+        // suite runner so parameterized `invariant_*` functions are rejected with a per-test
+        // failure entry before any campaign runs.
 
         let (mut invariant_test, mut corpus_manager) =
             self.prepare_test(&invariant_contract, fuzz_fixtures, fuzz_state)?;

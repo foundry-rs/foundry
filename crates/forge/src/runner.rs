@@ -366,6 +366,32 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         // We also want to disable `debug` for setup since we won't be using those traces.
         let invariant_fns: Vec<_> =
             self.contract.abi.functions().filter(|func| func.is_invariant_test()).collect();
+
+        // Validate signatures up front: invariant functions must take no parameters. Without
+        // this, parameterized `invariant_*` functions would slip into `assert_all` secondaries
+        // and fail with a confusing "selector not found" / decode error mid-campaign. Reject
+        // here with a per-function result so the failure is obvious to the user.
+        let invalid_invariants: Vec<_> = invariant_fns
+            .iter()
+            .filter(|f| !f.inputs.is_empty())
+            .map(|f| {
+                (
+                    f.signature(),
+                    TestResult::fail(format!(
+                        "invariant `{}` must take no parameters",
+                        f.signature()
+                    )),
+                )
+            })
+            .collect();
+        if !invalid_invariants.is_empty() {
+            return SuiteResult::new(
+                start.elapsed(),
+                invalid_invariants.into_iter().collect(),
+                warnings,
+            );
+        }
+
         let has_invariants = !invariant_fns.is_empty();
 
         let prev_tracer = self.executor.inspector_mut().tracer.take();

@@ -30,7 +30,7 @@ pub struct InvariantRunCtx<'a> {
 impl<'a> InvariantRunCtx<'a> {
     /// Builds a [`FailedInvariantCaseData`] attributed to `broken_fn`.
     ///
-    /// `fail_on_revert` is taken separately because [`assert_invariants`] overrides it with
+    /// `fail_on_revert` is taken separately because `assert_invariants` overrides it with
     /// the per-invariant flag, while every other call site forwards `self.config.fail_on_revert`.
     /// `assertion_failure` is set when the failure originated from a Solidity `assert`/
     /// `vm.assert*` path; it normalizes empty decoded revert data into a stable user-facing
@@ -58,7 +58,6 @@ impl<'a> InvariantRunCtx<'a> {
             revert_reason
         };
 
-        debug_assert!(broken_fn.inputs.is_empty());
         let origin = broken_fn.name.as_str();
         FailedInvariantCaseData {
             test_error: TestError::Fail(
@@ -117,7 +116,6 @@ impl InvariantFailures {
     }
 
     pub fn can_continue(&self, invariants: usize) -> bool {
-        debug_assert!(invariants > 0, "invariant_fns must not be empty");
         self.errors.len() < invariants
     }
 }
