@@ -17,7 +17,7 @@ pub struct InvariantFailures {
     pub reverts: usize,
     /// The latest revert reason of a run.
     pub revert_reason: Option<String>,
-    /// Maps a broken invariant to its specific error.
+    /// Maps each broken invariant (by function name) to its specific error.
     pub errors: HashMap<String, InvariantFuzzError>,
 }
 
