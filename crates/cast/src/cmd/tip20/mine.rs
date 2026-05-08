@@ -20,11 +20,11 @@ use tempo_primitives::{MasterId, TempoAddressExt, UserTag};
 
 const POW_BYTES: usize = 4;
 
-pub(super) struct Output {
-    pub(super) salt: B256,
-    pub(super) registration_hash: B256,
-    pub(super) master_id: MasterId,
-    pub(super) zero_tag_virtual_address: Address,
+pub(crate) struct Output {
+    pub(crate) salt: B256,
+    pub(crate) registration_hash: B256,
+    pub(crate) master_id: MasterId,
+    pub(crate) zero_tag_virtual_address: Address,
 }
 
 pub(super) fn run(
@@ -127,7 +127,12 @@ pub(super) async fn register(
     Ok(())
 }
 
-fn mine(master: Address, salt: B256, n_threads: usize, pow_bytes: usize) -> Result<Output> {
+pub(crate) fn mine(
+    master: Address,
+    salt: B256,
+    n_threads: usize,
+    pow_bytes: usize,
+) -> Result<Output> {
     let mut packed = [0u8; 52];
     packed[..20].copy_from_slice(master.as_slice());
 
@@ -144,7 +149,7 @@ fn mine(master: Address, salt: B256, n_threads: usize, pow_bytes: usize) -> Resu
     .ok_or_else(|| eyre::eyre!("virtual master mining failed: all threads panicked"))
 }
 
-fn derive(master: Address, salt: B256) -> Output {
+pub(crate) fn derive(master: Address, salt: B256) -> Output {
     let registration_hash = registration_hash(master, salt);
     let master_id = MasterId::from_slice(&registration_hash[4..8]);
     let zero_tag_virtual_address = Address::new_virtual(master_id, UserTag::ZERO);
@@ -152,14 +157,14 @@ fn derive(master: Address, salt: B256) -> Output {
     Output { salt, registration_hash, master_id, zero_tag_virtual_address }
 }
 
-fn registration_hash(master: Address, salt: B256) -> B256 {
+pub(crate) fn registration_hash(master: Address, salt: B256) -> B256 {
     let mut packed = [0u8; 52];
     packed[..20].copy_from_slice(master.as_slice());
     packed[20..].copy_from_slice(salt.as_slice());
     keccak256(packed)
 }
 
-fn has_pow(registration_hash: &B256, pow_bytes: usize) -> bool {
+pub(crate) fn has_pow(registration_hash: &B256, pow_bytes: usize) -> bool {
     registration_hash[..pow_bytes].iter().all(|byte| *byte == 0)
 }
 

@@ -5447,7 +5447,7 @@
     {
       "func": {
         "id": "expectEmit_0",
-        "description": "Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).",
+        "description": "Prepare an expected log with (bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData.).\nCall this function, then emit an event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data (as specified by the booleans).\nMust be placed immediately before the call you want to assert on. If the next call reverts and the\nrevert is caught by the caller (low-level call or try/catch), the expectation remains active and may\nbe satisfied by a log emitted from a later call.",
         "declaration": "function expectEmit(bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData) external;",
         "visibility": "external",
         "mutability": "",
@@ -5487,7 +5487,7 @@
     {
       "func": {
         "id": "expectEmit_2",
-        "description": "Prepare an expected log with all topic and data checks enabled.\nCall this function, then emit an event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data.",
+        "description": "Prepare an expected log with all topic and data checks enabled.\nCall this function, then emit an event, then call a function. Internally after the call, we check if\nlogs were emitted in the expected order with the expected topics and data.\nMust be placed immediately before the call you want to assert on. If the next call reverts and the\nrevert is caught by the caller (low-level call or try/catch), the expectation remains active and may\nbe satisfied by a log emitted from a later call.",
         "declaration": "function expectEmit() external;",
         "visibility": "external",
         "mutability": "",
