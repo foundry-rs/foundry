@@ -40,6 +40,7 @@ use foundry_common::{
 use foundry_config::Chain;
 use foundry_evm::core::bytecode::InstIter;
 use futures::{FutureExt, StreamExt, future::Either};
+#[cfg(feature = "optimism")]
 use op_alloy_consensus as _;
 
 use rayon::prelude::*;
@@ -60,6 +61,7 @@ pub use foundry_evm::*;
 pub mod args;
 pub mod cmd;
 pub mod opts;
+pub mod tempo;
 
 pub mod base;
 pub mod call_spec;

@@ -4,7 +4,7 @@ note[could-be-immutable]: state variable could be declared immutable
 LL │     address public owner;
    │                    ━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#could-be-immutable
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
 note[could-be-immutable]: state variable could be declared immutable
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
@@ -12,7 +12,7 @@ note[could-be-immutable]: state variable could be declared immutable
 LL │     address public deployer = msg.sender;
    │                    ━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#could-be-immutable
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
 note[could-be-immutable]: state variable could be declared immutable
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
@@ -20,7 +20,7 @@ note[could-be-immutable]: state variable could be declared immutable
 LL │     uint256 private configured;
    │                     ━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#could-be-immutable
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
 note[could-be-immutable]: state variable could be declared immutable
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
@@ -28,7 +28,7 @@ note[could-be-immutable]: state variable could be declared immutable
 LL │     bytes32 internal salt = keccak256(abi.encodePacked(block.timestamp));
    │                      ━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#could-be-immutable
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
 note[could-be-immutable]: state variable could be declared immutable
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
@@ -36,7 +36,7 @@ note[could-be-immutable]: state variable could be declared immutable
 LL │     CouldBeImmutable private peer;
    │                              ━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#could-be-immutable
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
 note[could-be-immutable]: state variable could be declared immutable
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
@@ -44,7 +44,7 @@ note[could-be-immutable]: state variable could be declared immutable
 LL │     uint256 internal inheritedBase;
    │                      ━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#could-be-immutable
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 
 note[could-be-immutable]: state variable could be declared immutable
    ╭▸ ROOT/testdata/CouldBeImmutable.sol:LL:CC
@@ -52,5 +52,5 @@ note[could-be-immutable]: state variable could be declared immutable
 LL │     uint256 internal baseConfigured;
    │                      ━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#could-be-immutable
+   ╰ help: https://getfoundry.sh/forge/linting/could-be-immutable
 

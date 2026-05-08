@@ -6,7 +6,7 @@ use alloy_network::TransactionBuilder;
 use alloy_primitives::{Address, Bytes, U256};
 use eyre::Result;
 use foundry_cheatcodes::BroadcastableTransaction;
-use foundry_common::{FoundryTransactionBuilder, TransactionMaybeSigned};
+use foundry_common::TransactionMaybeSigned;
 use foundry_config::Config;
 use foundry_evm::{
     constants::CALLER,
@@ -84,9 +84,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                     .with_input(code.clone())
                     .with_nonce(sender_nonce + library_transactions.len() as u64);
 
-                if let Some(fee_token) = script_config.fee_token {
-                    tx_req.set_fee_token(fee_token);
-                }
+                script_config.tempo.apply::<FEN::Network>(&mut tx_req, None);
 
                 library_transactions.push_back(BroadcastableTransaction {
                     rpc: self.evm_opts.fork_url.clone(),
@@ -122,9 +120,7 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
                         .with_nonce(sender_nonce + library_transactions.len() as u64)
                         .with_to(create2_deployer);
 
-                    if let Some(fee_token) = script_config.fee_token {
-                        tx_req.set_fee_token(fee_token);
-                    }
+                    script_config.tempo.apply::<FEN::Network>(&mut tx_req, None);
 
                     library_transactions.push_back(BroadcastableTransaction {
                         rpc: self.evm_opts.fork_url.clone(),

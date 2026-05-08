@@ -4,7 +4,7 @@ warning[rtlo]: U+202A (Left-to-Right Embedding) detected
 LL │     string public lre = unicode"�_�";
    │                                 ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202C (Pop Directional Formatting) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -12,7 +12,7 @@ warning[rtlo]: U+202C (Pop Directional Formatting) detected
 LL │     string public lre = unicode"�_�";
    │                                   ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202B (Right-to-Left Embedding) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -20,7 +20,7 @@ warning[rtlo]: U+202B (Right-to-Left Embedding) detected
 LL │     string public rle = unicode"�_�";
    │                                 ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202C (Pop Directional Formatting) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -28,7 +28,7 @@ warning[rtlo]: U+202C (Pop Directional Formatting) detected
 LL │     string public rle = unicode"�_�";
    │                                   ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202A (Left-to-Right Embedding) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -36,7 +36,7 @@ warning[rtlo]: U+202A (Left-to-Right Embedding) detected
 LL │     string public pdf = unicode"��";
    │                                 ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202C (Pop Directional Formatting) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -44,7 +44,7 @@ warning[rtlo]: U+202C (Pop Directional Formatting) detected
 LL │     string public pdf = unicode"��";
    │                                  ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202D (Left-to-Right Override) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -52,7 +52,7 @@ warning[rtlo]: U+202D (Left-to-Right Override) detected
 LL │     string public lro = unicode"�_�";
    │                                 ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202C (Pop Directional Formatting) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -60,7 +60,7 @@ warning[rtlo]: U+202C (Pop Directional Formatting) detected
 LL │     string public lro = unicode"�_�";
    │                                   ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202E (Right-to-Left Override) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -68,7 +68,7 @@ warning[rtlo]: U+202E (Right-to-Left Override) detected
 LL │     string public rlo = unicode"�_�";
    │                                 ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202C (Pop Directional Formatting) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -76,7 +76,7 @@ warning[rtlo]: U+202C (Pop Directional Formatting) detected
 LL │     string public rlo = unicode"�_�";
    │                                   ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+2066 (Left-to-Right Isolate) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -84,7 +84,7 @@ warning[rtlo]: U+2066 (Left-to-Right Isolate) detected
 LL │     string public lri = unicode"�_�";
    │                                 ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+2069 (Pop Directional Isolate) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -92,7 +92,7 @@ warning[rtlo]: U+2069 (Pop Directional Isolate) detected
 LL │     string public lri = unicode"�_�";
    │                                   ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+2067 (Right-to-Left Isolate) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -100,7 +100,7 @@ warning[rtlo]: U+2067 (Right-to-Left Isolate) detected
 LL │     string public rli = unicode"�_�";
    │                                 ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+2069 (Pop Directional Isolate) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -108,7 +108,7 @@ warning[rtlo]: U+2069 (Pop Directional Isolate) detected
 LL │     string public rli = unicode"�_�";
    │                                   ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+2068 (First Strong Isolate) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -116,7 +116,7 @@ warning[rtlo]: U+2068 (First Strong Isolate) detected
 LL │     string public fsi = unicode"�_�";
    │                                 ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+2069 (Pop Directional Isolate) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -124,7 +124,7 @@ warning[rtlo]: U+2069 (Pop Directional Isolate) detected
 LL │     string public fsi = unicode"�_�";
    │                                   ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+2066 (Left-to-Right Isolate) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -132,7 +132,7 @@ warning[rtlo]: U+2066 (Left-to-Right Isolate) detected
 LL │     string public pdi = unicode"��";
    │                                 ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+2069 (Pop Directional Isolate) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -140,7 +140,7 @@ warning[rtlo]: U+2069 (Pop Directional Isolate) detected
 LL │     string public pdi = unicode"��";
    │                                  ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202E (Right-to-Left Override) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -148,7 +148,7 @@ warning[rtlo]: U+202E (Right-to-Left Override) detected
 LL │     /* hidden� /* text � */ uint256 inBlockComment;
    │              ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202C (Pop Directional Formatting) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -156,7 +156,7 @@ warning[rtlo]: U+202C (Pop Directional Formatting) detected
 LL │     /* hidden� /* text � */ uint256 inBlockComment;
    │                        ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202E (Right-to-Left Override) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -164,7 +164,7 @@ warning[rtlo]: U+202E (Right-to-Left Override) detected
 LL │     // sneaky� payload � trailing
    │              ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+202C (Pop Directional Formatting) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -172,7 +172,7 @@ warning[rtlo]: U+202C (Pop Directional Formatting) detected
 LL │     // sneaky� payload � trailing
    │                        ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+200E (Left-to-Right Mark) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -180,7 +180,7 @@ warning[rtlo]: U+200E (Left-to-Right Mark) detected
 LL │     string public marks = unicode"left‎right‏end";
    │                                       ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
 warning[rtlo]: U+200F (Right-to-Left Mark) detected
    ╭▸ ROOT/testdata/Rtlo.sol:LL:CC
@@ -188,5 +188,5 @@ warning[rtlo]: U+200F (Right-to-Left Mark) detected
 LL │     string public marks = unicode"left‎right‏end";
    │                                            ━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#rtlo
+   ╰ help: https://getfoundry.sh/forge/linting/rtlo
 
