@@ -163,7 +163,7 @@ jobs:
         id: compare
         run: |
           DATE=$(date -u +%Y-%m-%d)
-          PREV_JSON=$(ls prev-results/nightly-*.json 2>/dev/null | head -1 || true)
+          PREV_JSON=$(find prev-results/ -type f 2>/dev/null | grep -E 'nightly-....-..-..\.json$' | head -1 || true)
           TODAY_JSON="benches/nightly-${DATE}.json"
           if ./.github/scripts/compare-nightly.sh "$PREV_JSON" "$TODAY_JSON" > regression.md 2>&1; then
             echo "has_regression=false" >> "$GITHUB_OUTPUT"
