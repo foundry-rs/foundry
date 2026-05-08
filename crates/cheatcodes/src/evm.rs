@@ -1386,6 +1386,32 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
     Ok(id.abi_encode())
 }
 
+/// Syncs the real `tx` fields to match restored `env_overrides`.
+///
+/// `evm_clone` / `set_evm` only save/restore cfg+block, not tx. When a
+/// cheatcode like `vm.blobhashes` or `vm.txGasPrice` mutates both the
+/// override and the real tx, reverting to a snapshot where the override was
+/// absent would leave the real tx field stale. This brings them back into
+/// sync so callers that read the tx directly also see the rolled-back state.
+fn sync_tx_after_env_override_restore<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) {
+    match ccx.state.env_overrides.gas_price {
+        Some(p) if !ccx.state.in_isolation_context => ccx.ecx.tx_mut().set_gas_price(p),
+        None => ccx.ecx.tx_mut().set_gas_price(0),
+        _ => {}
+    }
+    match &ccx.state.env_overrides.blob_hashes {
+        Some(h) if !ccx.state.in_isolation_context => {
+            let hashes = h.clone();
+            ccx.ecx.tx_mut().set_blob_hashes(hashes);
+            ccx.ecx.tx_mut().set_tx_type(EIP4844_TX_TYPE_ID);
+        }
+        None => {
+            ccx.ecx.tx_mut().set_blob_hashes(vec![]);
+        }
+        _ => {}
+    }
+}
+
 fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ccx: &mut CheatsCtxt<'_, '_, FEN>,
     snapshot_id: U256,
@@ -1407,6 +1433,7 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
         if let Some(snap) = ccx.state.env_overrides_snapshots.get(&snapshot_id) {
             ccx.state.env_overrides = snap.clone();
         }
+        sync_tx_after_env_override_restore(ccx);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())
@@ -1432,6 +1459,7 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
         if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
             ccx.state.env_overrides = snap;
         }
+        sync_tx_after_env_override_restore(ccx);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())

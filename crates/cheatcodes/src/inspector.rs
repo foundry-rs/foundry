@@ -291,10 +291,9 @@ pub struct RecordDebugStepInfo {
 ///
 /// - the override **does** persist for subsequent `BASEFEE`, `GASPRICE` and `BLOBHASH` reads (this
 ///   hook fires in `step_end` regardless of isolation),
+/// - `vm.getBlobhashes()` also consults these overrides, so it returns the correct value.
 /// - but the real `block.basefee` / `tx.gas_price` / `tx.blob_hashes` do **not** reflect the
-///   cheatcode value, so non-opcode env consumers will not see it. In particular,
-///   `vm.getBlobhashes()` reads `ecx.tx().blob_versioned_hashes()` directly and will return the
-///   pre-isolation value.
+///   cheatcode value, so other non-opcode env consumers will not see it.
 ///
 /// Calling these cheatcodes outside isolation behaves as before (real env
 /// is also mutated and the override mirrors it).

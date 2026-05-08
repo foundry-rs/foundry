@@ -35,6 +35,53 @@ contract BlobhashesSnapshotTest is Test {
     }
 }
 
+/// `snapshot -> B -> revert` must clear the override back to empty (no A set before snapshot).
+contract BlobhashesSnapshotClearTest is Test {
+    function test_getBlobhashes_cleared_after_revertToState() public {
+        bytes32[] memory b = new bytes32[](1);
+        b[0] = bytes32(uint256(0xBBBB));
+
+        // Take snapshot with no blobhashes set.
+        uint256 id = vm.snapshotState();
+        vm.blobhashes(b);
+
+        bytes32[] memory got = vm.getBlobhashes();
+        assertEq(got.length, 1, "should have B before revert");
+
+        vm.revertToState(id);
+
+        bytes32[] memory after_ = vm.getBlobhashes();
+        assertEq(after_.length, 0, "should be empty after revert to pre-set snapshot");
+    }
+}
+
+/// `vm.txGasPrice` override must be rolled back by `revertToState`.
+contract TxGasPriceSnapshotTest is Test {
+    function test_txGasPrice_after_revertToState() public {
+        uint256 a = 111 gwei;
+        uint256 b = 222 gwei;
+
+        vm.txGasPrice(a);
+        uint256 id = vm.snapshotState();
+        vm.txGasPrice(b);
+        vm.revertToState(id);
+
+        assertEq(tx.gasprice, a, "GASPRICE should equal a after revert");
+    }
+
+    function test_txGasPrice_cleared_after_revertToState() public {
+        uint256 b = 222 gwei;
+
+        // Take snapshot with no override.
+        uint256 id = vm.snapshotState();
+        vm.txGasPrice(b);
+        vm.revertToState(id);
+
+        // GASPRICE should be back to the default (0 in tests).
+        assertEq(tx.gasprice, 0, "GASPRICE should be cleared after revert to pre-set snapshot");
+    }
+}
+
 /// `vm.blobhashes` must remain visible to a *called* contract under
 /// `--isolate`, where the synthetic inner transaction would otherwise be
 /// rejected (left over EIP-4844 type + zero gas price) and `BLOBHASH` would
