@@ -1499,7 +1499,7 @@ impl<N: Network> Backend<N> {
         let op_deposit = {
             // `other` carries OP-only deposit fields; consumed only when feature is enabled.
             let _ = &other;
-            OpCallDepositInfo::default()
+            OpCallDepositInfo
         };
 
         (evm_env, tx_env, op_deposit)
