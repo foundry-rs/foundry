@@ -24,8 +24,8 @@ with open(os.environ["TODAY_JSON"]) as f:
     today = json.load(f)
 
 print("## Nightly Benchmark Regression Report\n")
-print("| Benchmark | Previous | Today | Δ | Status |")
-print("|-----------|----------|-------|---|--------|")
+print("| Benchmark | Stable | Nightly | Δ | Status |")
+print("|-----------|--------|---------|---|--------|")
 
 has_regression = False
 all_keys = sorted(prev.keys() | today.keys())
