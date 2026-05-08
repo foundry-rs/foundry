@@ -256,9 +256,11 @@ contract CounterMixedVariables {
     }
 );
 
-// Test that /** */ style block comments render without stray `*` decoration and
-// without any raw `{` that would break MDX parsing.
-forgetest_init!(block_comment_strips_star_decoration, |prj, cmd| {
+// Test two rendering behaviors together:
+// 1. /** */ block comments are stripped of their ` * ` line decoration.
+// 2. `@dev` paragraphs are wrapped in `<i>...</i>` so multi-paragraph content and embedded lists
+//    render as italic without breaking block-level markdown.
+forgetest_init!(block_comments_strip_star_and_dev_renders_italic, |prj, cmd| {
     prj.add_source(
         "ECDSA.sol",
         r#"
@@ -291,6 +293,11 @@ library ECDSA {
      * @notice Recover the signer address from `v`, `r`, `s` components.
      * @dev Overload of {ECDSA-tryRecover} that receives the `v`,
      * `r` and `s` signature fields separately.
+     *
+     * Documentation for signature generation:
+     *
+     * - with https://web3js.readthedocs.io/en/v1.3.4/web3-eth-accounts.html#sign[Web3.js]
+     * - with https://docs.ethers.io/v5/api/signer/#Signer-signMessage[ethers]
      */
     function tryRecover(bytes32 hash, uint8 v, bytes32 r, bytes32 s) internal pure returns (address signer) {}
 }
@@ -311,10 +318,14 @@ description: "Library for verifying ECDSA signatures."
 
 Library for verifying ECDSA signatures.
 
+<i>
+
 Elliptic Curve Digital Signature Algorithm (ECDSA) operations.
 
 These functions can be used to verify that a message was signed by the holder
 of the private keys of a given address.
+
+</i>
 
 ## Functions
 
@@ -322,12 +333,16 @@ of the private keys of a given address.
 
 Recover the signer address from a signed message hash.
 
+<i>
+
 Returns the address that signed a hashed message (`hash`) with
 `signature` or error string.
 
 The `ecrecover` EVM opcode allows for malleable (non-unique) signatures:
 this function rejects them by requiring the `s` value to be in the lower
 half order, and the `v` value to be either 27 or 28.
+
+</i>
 
 ```solidity
 function tryRecover(bytes32 hash, bytes memory signature) internal pure returns (address signer);
@@ -350,8 +365,17 @@ function tryRecover(bytes32 hash, bytes memory signature) internal pure returns 
 
 Recover the signer address from `v`, `r`, `s` components.
 
+<i>
+
 Overload of [ECDSA](/src/library.ECDSA) that receives the `v`,
 `r` and `s` signature fields separately.
+
+Documentation for signature generation:
+
+- with https://web3js.readthedocs.io/en/v1.3.4/web3-eth-accounts.html#sign[Web3.js]
+- with https://docs.ethers.io/v5/api/signer/#Signer-signMessage[ethers]
+
+</i>
 
 ```solidity
 function tryRecover(bytes32 hash, uint8 v, bytes32 r, bytes32 s) internal pure returns (address signer);

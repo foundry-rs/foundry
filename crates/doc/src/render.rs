@@ -544,14 +544,21 @@ fn render_function_section(
             inherited.notices.iter().map(|s| sanitize(s)).collect();
         let inherited_devs: Vec<String> = inherited.devs.iter().map(|s| sanitize(s)).collect();
         if c.notices.is_empty() {
-            let mut new_desc: Vec<String> = inherited_notices.clone();
+            let mut new_desc: Vec<Description> = inherited_notices
+                .iter()
+                .map(|s| Description { kind: DescKind::Notice, content: s.clone() })
+                .collect();
             new_desc.append(&mut c.descriptions);
             c.descriptions = new_desc;
             c.notices.extend_from_slice(&inherited_notices);
         }
         if c.devs.is_empty() {
             c.devs.extend_from_slice(&inherited_devs);
-            c.descriptions.extend_from_slice(&inherited_devs);
+            c.descriptions.extend(
+                inherited_devs
+                    .iter()
+                    .map(|s| Description { kind: DescKind::Dev, content: s.clone() }),
+            );
         }
         for (name, desc) in &inherited.params {
             if !c.params.iter().any(|(n, _)| n == name) {
@@ -587,6 +594,17 @@ fn function_heading(f: &ItemFunction<'_>) -> String {
 
 // ── natspec comment collection ────────────────────────────────────────────────
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DescKind {
+    Notice,
+    Dev,
+}
+
+struct Description {
+    kind: DescKind,
+    content: String,
+}
+
 struct CommentData {
     titles: Vec<String>,
     authors: Vec<String>,
@@ -594,9 +612,10 @@ struct CommentData {
     notices: Vec<String>,
     /// Real `@dev` items (used for inheritdoc merging).
     devs: Vec<String>,
-    /// All notice/dev text in source order, with continuation lines joined to their parent.
-    /// Used for rendering to preserve correct paragraph ordering.
-    descriptions: Vec<String>,
+    /// All notice/dev text in source order, tagged with their kind, with continuation
+    /// lines joined to their parent. Used for rendering to preserve correct paragraph
+    /// ordering and to italicize `@dev` paragraphs as a whole.
+    descriptions: Vec<Description>,
     params: Vec<(String, String)>,
     returns: Vec<(String, String)>,
     customs: Vec<(String, String)>,
@@ -667,8 +686,8 @@ fn collect_comments(
             if is_continuation && !prev_doc_was_blank && !data.descriptions.is_empty() {
                 // Append to the previous description paragraph (same tag, no blank between).
                 let last = data.descriptions.last_mut().unwrap();
-                last.push('\n');
-                last.push_str(&content);
+                last.content.push('\n');
+                last.content.push_str(&content);
                 prev_doc_was_blank = false;
                 continue;
             }
@@ -680,11 +699,11 @@ fn collect_comments(
                 NatSpecKind::Author => data.authors.push(content),
                 NatSpecKind::Notice => {
                     data.notices.push(content.clone());
-                    data.descriptions.push(content);
+                    data.descriptions.push(Description { kind: DescKind::Notice, content });
                 }
                 NatSpecKind::Dev => {
                     data.devs.push(content.clone());
-                    data.descriptions.push(content);
+                    data.descriptions.push(Description { kind: DescKind::Dev, content });
                 }
                 NatSpecKind::Param { name } => {
                     data.params.push((name.as_str().to_string(), content))
@@ -780,6 +799,14 @@ fn yaml_escape_double_quoted(s: &str) -> String {
     out
 }
 
+/// Italicize a `@dev` block by wrapping it in `<i>...</i>` HTML tags. Surrounding
+/// blank lines around the tags ensure MDX/CommonMark parses the inner content as
+/// block-level markdown (lists, code fences, multiple paragraphs all work).
+fn italicize_dev(content: &str) -> String {
+    let trimmed = content.trim_matches('\n');
+    if trimmed.is_empty() { String::new() } else { format!("<i>\n\n{trimmed}\n\n</i>") }
+}
+
 fn write_comment_block(out: &mut String, data: &CommentData) {
     if !data.titles.is_empty() {
         let label = if data.titles.len() == 1 { "Title" } else { "Titles" };
@@ -792,8 +819,13 @@ fn write_comment_block(out: &mut String, data: &CommentData) {
         writeln!(out).unwrap();
     }
     // Render descriptions in source order (notices and devs interleaved, continuations joined).
+    // `@dev` paragraphs are wrapped in `_..._` per paragraph so each multi-line block renders
+    // as a single italic span (markdown emphasis cannot cross blank lines).
     for desc in &data.descriptions {
-        writeln!(out, "{desc}").unwrap();
+        match desc.kind {
+            DescKind::Notice => writeln!(out, "{}", desc.content).unwrap(),
+            DescKind::Dev => writeln!(out, "{}", italicize_dev(&desc.content)).unwrap(),
+        }
         writeln!(out).unwrap();
     }
     if !data.customs.is_empty() {
