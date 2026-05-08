@@ -152,7 +152,7 @@ impl CloneArgs {
                     .ok_or_else(|| {
                         eyre::eyre!("No Etherscan API key configured for chain {chain}")
                     })?
-                    .into_client()?;
+                    .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
                 sh_println!("Downloading the source code of {address} from Etherscan...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
                 (meta, "Etherscan", None)
@@ -188,7 +188,7 @@ impl CloneArgs {
                     sh_warn!("Waiting for 5 seconds to avoid rate limit...")?;
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
-                let client = etherscan_config.into_client()?;
+                let client = etherscan_config.into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
                 Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
             }
             SourceExplorer::Sourcify => {
