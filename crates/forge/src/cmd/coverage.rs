@@ -28,7 +28,7 @@ foundry_config::impl_figment_convert!(CoverageArgs, test);
 ///
 /// Most flags here have a corresponding `[profile.<name>.coverage]` config
 /// option in `foundry.toml`. CLI flags take precedence over config; the helper
-/// [`Self::resolve_with`] merges them after the config is loaded.
+/// `resolve_with` merges them after the config is loaded.
 #[derive(Parser)]
 pub struct CoverageArgs {
     /// The report type to use for coverage.
@@ -49,9 +49,9 @@ pub struct CoverageArgs {
     /// - `2.2`: Changes the format of functions.
     ///
     /// Falls back to the `[profile.<name>.coverage] lcov_version` config value
-    /// when not provided (default: `1`).
-    #[arg(long, value_parser = parse_lcov_version)]
-    lcov_version: Option<Version>,
+    /// when left at the default.
+    #[arg(long, value_parser = parse_lcov_version, default_value = "1")]
+    lcov_version: Version,
 
     /// Enable viaIR with minimum optimization
     ///
@@ -133,16 +133,17 @@ impl CoverageArgs {
     ///
     /// After this returns:
     /// - `self.report` is non-empty.
-    /// - `self.lcov_version` is `Some(_)`.
-    /// - boolean flags reflect `cli || config` (CLI cannot disable a flag set
-    ///   to `true` in config; this matches the pre-existing flag-only
-    ///   semantics where booleans defaulted to `false`).
+    /// - boolean flags reflect `cli || config` (CLI cannot disable a flag set to `true` in config;
+    ///   this matches the pre-existing flag-only semantics where booleans defaulted to `false`).
     fn resolve_with(&mut self, config: &CoverageConfig) {
         if self.report.is_empty() {
             self.report.clone_from(&config.report);
         }
-        if self.lcov_version.is_none() {
-            self.lcov_version = Some(config.lcov_version.clone());
+        // CLI default for `lcov_version` matches the config default (`1.0.0`),
+        // so a user passing nothing is indistinguishable from passing `--lcov-version 1`.
+        // In both cases prefer the config value if it differs.
+        if self.lcov_version == Version::new(1, 0, 0) {
+            self.lcov_version.clone_from(&config.lcov_version);
         }
         if !self.ir_minimum {
             self.ir_minimum = config.ir_minimum;
@@ -162,8 +163,6 @@ impl CoverageArgs {
     }
 
     fn populate_reporters(&mut self, root: &Path) {
-        // `resolve_with` guarantees `lcov_version` is `Some` before we get here.
-        let lcov_version = self.lcov_version.clone().unwrap_or_else(|| Version::new(1, 0, 0));
         self.reporters = self
             .report
             .iter()
@@ -174,7 +173,7 @@ impl CoverageArgs {
                 CoverageReportKind::Lcov => {
                     let path =
                         root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
-                    Box::new(LcovReporter::new(path, lcov_version.clone()))
+                    Box::new(LcovReporter::new(path, self.lcov_version.clone()))
                 }
                 CoverageReportKind::Bytecode => Box::new(BytecodeReporter::new(
                     root.to_path_buf(),
