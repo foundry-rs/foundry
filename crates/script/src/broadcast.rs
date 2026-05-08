@@ -767,49 +767,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy_network::Ethereum;
-    use alloy_primitives::B256;
-    use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
-    use std::collections::VecDeque;
-
-    #[test]
-    fn pending_hashes_keep_original_sequence_indices_when_completions_are_unordered() {
-        let mut sequence = ScriptSequence::<Ethereum> {
-            transactions: (0..4)
-                .map(|_| {
-                    TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::Unsigned(
-                        TransactionRequest::default(),
-                    ))
-                })
-                .collect::<VecDeque<_>>(),
-            ..Default::default()
-        };
-
-        let already_broadcasted = 1;
-        let batch_number = 0;
-        let batch_size = 100;
-        let completions = [
-            (2, B256::repeat_byte(0x22)),
-            (0, B256::repeat_byte(0x00)),
-            (1, B256::repeat_byte(0x11)),
-        ];
-
-        for (batch_index, tx_hash) in completions {
-            let sequence_index =
-                pending_sequence_index(already_broadcasted, batch_number, batch_size, batch_index);
-            sequence.add_pending(sequence_index, tx_hash);
-        }
-
-        assert_eq!(sequence.transactions[0].hash, None);
-        assert_eq!(sequence.transactions[1].hash, Some(B256::repeat_byte(0x00)));
-        assert_eq!(sequence.transactions[2].hash, Some(B256::repeat_byte(0x11)));
-        assert_eq!(sequence.transactions[3].hash, Some(B256::repeat_byte(0x22)));
-    }
-}
-
 impl BundledState<TempoEvmNetwork> {
     /// Broadcasts all transactions as a single Tempo batch transaction (type 0x76).
     ///
@@ -1094,5 +1051,48 @@ impl BundledState<TempoEvmNetwork> {
             build_data: self.build_data,
             sequence: self.sequence,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::Ethereum;
+    use alloy_primitives::B256;
+    use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
+    use std::collections::VecDeque;
+
+    #[test]
+    fn pending_hashes_keep_original_sequence_indices_when_completions_are_unordered() {
+        let mut sequence = ScriptSequence::<Ethereum> {
+            transactions: (0..4)
+                .map(|_| {
+                    TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::Unsigned(
+                        TransactionRequest::default(),
+                    ))
+                })
+                .collect::<VecDeque<_>>(),
+            ..Default::default()
+        };
+
+        let already_broadcasted = 1;
+        let batch_number = 0;
+        let batch_size = 100;
+        let completions = [
+            (2, B256::repeat_byte(0x22)),
+            (0, B256::repeat_byte(0x00)),
+            (1, B256::repeat_byte(0x11)),
+        ];
+
+        for (batch_index, tx_hash) in completions {
+            let sequence_index =
+                pending_sequence_index(already_broadcasted, batch_number, batch_size, batch_index);
+            sequence.add_pending(sequence_index, tx_hash);
+        }
+
+        assert_eq!(sequence.transactions[0].hash, None);
+        assert_eq!(sequence.transactions[1].hash, Some(B256::repeat_byte(0x00)));
+        assert_eq!(sequence.transactions[2].hash, Some(B256::repeat_byte(0x11)));
+        assert_eq!(sequence.transactions[3].hash, Some(B256::repeat_byte(0x22)));
     }
 }
