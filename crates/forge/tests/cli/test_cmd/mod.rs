@@ -80,6 +80,63 @@ forgetest!(testdata, |_prj, cmd| {
     orig_assert.success();
 });
 
+forgetest!(execute_transaction_restores_cfg_with_isolate, |prj, cmd| {
+    prj.insert_utils();
+    prj.add_test(
+        "ExecuteTransactionRestore.t.sol",
+        r#"
+pragma solidity ^0.8.18;
+
+import "./utils/Test.sol";
+
+contract AlwaysReverts {
+    fallback() external payable {
+        revert("boom");
+    }
+}
+
+contract ExecuteTransactionRestoreTest is Test {
+    function test_execute_revert_restores_cfg_for_follow_up() public {
+        vm.fee(1);
+        vm.chainId(1);
+
+        address alice = 0x7ED31830602f9F7419307235c0610Fb262AA0375;
+        address random = address(uint160(uint256(keccak256(abi.encodePacked("revert-random")))));
+        address target = address(uint160(uint256(keccak256(abi.encodePacked("mytoken")))));
+
+        vm.etch(target, address(new AlwaysReverts()).code);
+        vm.deal(alice, 10 ether);
+
+        vm._expectCheatcodeRevert();
+        vm.executeTransaction(
+            hex"f8a5806483030d40945bf11839f61ef5cceeaf1f4153e44df5d02825f780b844095ea7b300000000000000000000000070cf146ab98ffd5de24e75dd7423f16181da8e13000000000000000000000000000000000000000000000000000000000000003225a0e25b9ef561d9a413b21755cc0e4bb6e80f2a88a8a52305690956130d612074dfa07bfd418bc2ad3c3f435fa531cdcdc64887f64ed3fb0d347d6b0086e320ad4eb1"
+        );
+
+        vm.prank(alice);
+        (bool success,) = random.call("");
+        require(success);
+
+        bytes memory initcode = new bytes(49153);
+        address deployed;
+        assembly {
+            deployed := create(0, add(initcode, 0x20), mload(initcode))
+        }
+        assertTrue(deployed != address(0), "oversized initcode deployment failed");
+    }
+}
+     "#,
+    );
+    cmd.args([
+        "test",
+        "--match-test",
+        "test_execute_revert_restores_cfg_for_follow_up",
+        "--isolate",
+        "--evm-version",
+        "osaka",
+    ])
+    .assert_success();
+});
+
 // Run flaky testdata contracts excluded from the main `testdata` test above.
 // Picked up by the nightly `test-flaky` workflow via `cargo nextest run --profile flaky`.
 forgetest!(flaky_testdata, |_prj, cmd| {

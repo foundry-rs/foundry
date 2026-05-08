@@ -141,6 +141,81 @@ contract ExecuteTransactionTest is Test {
         assertEq(address(to).balance, 17 - value);
         assertEq(address(random).balance, value);
     }
+
+    function test_execute_restores_initcode_limit_after_success() public {
+        vm.fee(1);
+        vm.chainId(1);
+
+        address from = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
+
+        vm.deal(from, 1 ether);
+
+        vm.executeTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+
+        _deployOversizedInitcode();
+    }
+
+    /// forge-config: default.isolate = true
+    function test_execute_restores_cfg_for_isolated_follow_up() public {
+        vm.fee(1);
+        vm.chainId(1);
+
+        address from = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
+        address to = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
+        address random = address(uint160(uint256(keccak256(abi.encodePacked("isolated-random")))));
+
+        vm.deal(from, 1 ether);
+
+        vm.executeTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+
+        vm.prank(to);
+        (bool success,) = random.call{value: 5}("");
+        require(success);
+
+        _deployOversizedInitcode();
+    }
+
+    /// forge-config: default.isolate = true
+    function test_execute_revert_restores_cfg_for_follow_up() public {
+        vm.fee(1);
+        vm.chainId(1);
+
+        address alice = 0x7ED31830602f9F7419307235c0610Fb262AA0375;
+        address random = address(uint160(uint256(keccak256(abi.encodePacked("revert-random")))));
+        MyERC20 token = MyERC20(address(uint160(uint256(keccak256(abi.encodePacked("mytoken"))))));
+
+        vm.etch(address(token), address(new AlwaysReverts()).code);
+        vm.deal(alice, 10 ether);
+
+        vm._expectCheatcodeRevert();
+        vm.executeTransaction(
+            hex"f8a5806483030d40945bf11839f61ef5cceeaf1f4153e44df5d02825f780b844095ea7b300000000000000000000000070cf146ab98ffd5de24e75dd7423f16181da8e13000000000000000000000000000000000000000000000000000000000000003225a0e25b9ef561d9a413b21755cc0e4bb6e80f2a88a8a52305690956130d612074dfa07bfd418bc2ad3c3f435fa531cdcdc64887f64ed3fb0d347d6b0086e320ad4eb1"
+        );
+
+        vm.prank(alice);
+        (bool success,) = random.call("");
+        require(success);
+
+        _deployOversizedInitcode();
+    }
+
+    function _deployOversizedInitcode() internal returns (address deployed) {
+        bytes memory initcode = new bytes(49153);
+        assembly {
+            deployed := create(0, add(initcode, 0x20), mload(initcode))
+        }
+        assertTrue(deployed != address(0), "oversized initcode deployment failed");
+    }
+}
+
+contract AlwaysReverts {
+    fallback() external payable {
+        revert("boom");
+    }
 }
 
 contract MyERC20 {
