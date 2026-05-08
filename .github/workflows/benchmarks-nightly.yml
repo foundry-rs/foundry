@@ -1,4 +1,4 @@
-name: Nightly Benchmarks (AAVE v4)
+name: Nightly Benchmarks
 
 permissions: {}
 
@@ -17,7 +17,6 @@ jobs:
     runs-on: depot-ubuntu-24.04-32
     permissions:
       contents: read
-      actions: read # needed to download artifacts from previous runs
     outputs:
       has_regression: ${{ steps.compare.outputs.has_regression }}
     steps:
@@ -62,27 +61,76 @@ jobs:
           sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
           rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
 
-      - name: Download previous benchmark results
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p prev-results
-          PREV_RUN_ID=$(gh run list \
-            --workflow=benchmarks-nightly.yml \
-            --status=success \
-            --limit=1 \
-            --json databaseId \
-            -q '.[0].databaseId // empty' 2>/dev/null || true)
-          if [[ -n "$PREV_RUN_ID" ]]; then
-            echo "Downloading results from previous run $PREV_RUN_ID"
-            gh run download "$PREV_RUN_ID" \
-              --name nightly-bench-results \
-              --dir prev-results/ || true
-          else
-            echo "No previous successful run found, skipping download."
-          fi
+      # --- Stable benchmarks ---
 
-      - name: Run forge test benchmarks
+      - name: Run forge test benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches --force-install \
+            --versions stable \
+            --repos "$AAVE_V4_REPO" \
+            --benchmarks forge_test \
+            --json-output "stable-${DATE}-forge_test.json" \
+            --verbose
+
+      - name: Run forge fuzz test benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions stable \
+            --repos "$AAVE_V4_REPO" \
+            --benchmarks forge_fuzz_test \
+            --json-output "stable-${DATE}-forge_fuzz_test.json" \
+            --verbose
+
+      - name: Run forge isolate test benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions stable \
+            --repos "$AAVE_V4_REPO" \
+            --benchmarks forge_isolate_test \
+            --json-output "stable-${DATE}-forge_isolate_test.json" \
+            --verbose
+
+      - name: Run forge build benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions stable \
+            --repos "$AAVE_V4_REPO" \
+            --benchmarks forge_build_no_cache,forge_build_with_cache \
+            --json-output "stable-${DATE}-forge_build.json" \
+            --verbose
+
+      - name: Run forge coverage benchmarks (stable)
+        continue-on-error: true
+        env:
+          FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions stable \
+            --repos "$AAVE_V4_REPO" \
+            --benchmarks forge_coverage \
+            --json-output "stable-${DATE}-forge_coverage.json" \
+            --verbose
+
+      # --- Nightly benchmarks ---
+
+      - name: Run forge test benchmarks (nightly)
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
@@ -95,7 +143,7 @@ jobs:
             --json-output "nightly-${DATE}-forge_test.json" \
             --verbose
 
-      - name: Run forge fuzz test benchmarks
+      - name: Run forge fuzz test benchmarks (nightly)
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
@@ -108,7 +156,7 @@ jobs:
             --json-output "nightly-${DATE}-forge_fuzz_test.json" \
             --verbose
 
-      - name: Run forge isolate test benchmarks
+      - name: Run forge isolate test benchmarks (nightly)
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
@@ -121,7 +169,7 @@ jobs:
             --json-output "nightly-${DATE}-forge_isolate_test.json" \
             --verbose
 
-      - name: Run forge build benchmarks
+      - name: Run forge build benchmarks (nightly)
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
@@ -134,7 +182,7 @@ jobs:
             --json-output "nightly-${DATE}-forge_build.json" \
             --verbose
 
-      - name: Run forge coverage benchmarks
+      - name: Run forge coverage benchmarks (nightly)
         continue-on-error: true
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
@@ -151,21 +199,32 @@ jobs:
         run: |
           DATE=$(date -u +%Y-%m-%d)
           shopt -s nullglob
-          parts=( benches/nightly-${DATE}-*.json )
-          if [[ ${#parts[@]} -eq 0 ]]; then
+
+          stable_parts=( benches/stable-${DATE}-*.json )
+          nightly_parts=( benches/nightly-${DATE}-*.json )
+
+          if [[ ${#stable_parts[@]} -eq 0 && ${#nightly_parts[@]} -eq 0 ]]; then
             echo "No benchmark results produced — all steps failed."
             exit 1
           fi
-          jq -s 'add' "${parts[@]}" > "benches/nightly-${DATE}.json"
-          echo "Merged ${#parts[@]} result file(s) into nightly-${DATE}.json"
 
-      - name: Compare with previous results
+          if [[ ${#stable_parts[@]} -gt 0 ]]; then
+            jq -s 'add' "${stable_parts[@]}" > "benches/stable-${DATE}.json"
+            echo "Merged ${#stable_parts[@]} stable result file(s) into stable-${DATE}.json"
+          fi
+
+          if [[ ${#nightly_parts[@]} -gt 0 ]]; then
+            jq -s 'add' "${nightly_parts[@]}" > "benches/nightly-${DATE}.json"
+            echo "Merged ${#nightly_parts[@]} nightly result file(s) into nightly-${DATE}.json"
+          fi
+
+      - name: Compare stable vs nightly results
         id: compare
         run: |
           DATE=$(date -u +%Y-%m-%d)
-          PREV_JSON=$(find prev-results/ -type f 2>/dev/null | grep -E 'nightly-....-..-..\.json$' | head -1 || true)
-          TODAY_JSON="benches/nightly-${DATE}.json"
-          if ./.github/scripts/compare-nightly.sh "$PREV_JSON" "$TODAY_JSON" > regression.md 2>&1; then
+          STABLE_JSON="benches/stable-${DATE}.json"
+          NIGHTLY_JSON="benches/nightly-${DATE}.json"
+          if ./.github/scripts/compare-nightly.sh "$STABLE_JSON" "$NIGHTLY_JSON" > regression.md 2>&1; then
             echo "has_regression=false" >> "$GITHUB_OUTPUT"
           else
             echo "has_regression=true" >> "$GITHUB_OUTPUT"
@@ -175,9 +234,10 @@ jobs:
       - name: Upload benchmark results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: nightly-bench-results
+          name: bench-results
           retention-days: 7
           path: |
+            benches/stable-*.json
             benches/nightly-*.json
             regression.md
 
@@ -192,7 +252,7 @@ jobs:
       - name: Download benchmark results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: nightly-bench-results
+          name: bench-results
           path: results/
 
       - name: Open regression issue
