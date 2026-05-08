@@ -33,10 +33,12 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     },
     executors::TracingExecutor,
     opts::EvmOpts,
@@ -222,18 +224,19 @@ impl CallArgs {
             return self.run_curl().await;
         }
         if self.tx.tempo.is_tempo() {
-            self.run_with_network::<TempoEvmNetwork>().await
-        } else {
-            let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-            let mut evm_opts = figment.extract::<EvmOpts>()?;
-            evm_opts.infer_network_from_fork().await;
-
-            if evm_opts.networks.is_optimism() {
-                self.run_with_network::<OpEvmNetwork>().await
-            } else {
-                self.run_with_network::<EthEvmNetwork>().await
-            }
+            return self.run_with_network::<TempoEvmNetwork>().await;
         }
+
+        let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
+        let mut evm_opts = figment.extract::<EvmOpts>()?;
+        evm_opts.infer_network_from_fork().await;
+
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
+            return self.run_with_network::<OpEvmNetwork>().await;
+        }
+
+        self.run_with_network::<EthEvmNetwork>().await
     }
 
     pub async fn run_with_network<FEN: FoundryEvmNetwork>(self) -> Result<()>

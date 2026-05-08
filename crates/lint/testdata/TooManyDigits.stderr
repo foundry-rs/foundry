@@ -1,0 +1,72 @@
+note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+   ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
+   │
+LL │     uint256 stateA = 1000000000000000000;
+   │                      ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
+
+note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+   ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
+   │
+LL │     uint256 stateB = 100000;
+   │                      ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
+
+note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+   ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
+   │
+LL │ …     return 10000000;
+   │              ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
+
+note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+   ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
+   │
+LL │ …     return x == 1000000;
+   │                   ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
+
+note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+   ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
+   │
+LL │ …     _send(to, 50000000000);
+   │                 ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
+
+note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+   ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
+   │
+LL │ …     uint256[100000] memory _arr;
+   │               ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
+
+note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+   ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
+   │
+LL │     uint256 middleZeros = 123000007;
+   │                           ━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
+
+note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+   ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
+   │
+LL │     uint256 badGrouping = 1_000000;
+   │                           ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
+
+note[too-many-digits]: numeric literal with many digits is error-prone; use scientific notation, sub-denominations, or underscore separators
+   ╭▸ ROOT/testdata/TooManyDigits.sol:LL:CC
+   │
+LL │     uint256 badGrouping2 = 1_00000;
+   │                            ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/too-many-digits
+

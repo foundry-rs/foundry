@@ -60,6 +60,8 @@ Next, choose whether you want an [early or late lint pass](#choosing-between-ear
 
 - Implement the appropriate trait logic (`EarlyLintPass` or `LateLintPass`) for your lint. Do it in a new file within the relevant severity module (e.g., `src/sol/med/my_new_lint.rs`).
 
+- Add a markdown documentation file for the lint at `crates/lint/docs/<str_id>.md`. The file is referenced by the lint's `help` URL (`https://getfoundry.sh/forge/linting/<str_id>`) and is consumed by the [Foundry book](https://github.com/foundry-rs/book) to render the lint reference page. Use [`crates/lint/docs/_template.md`](../../crates/lint/docs/_template.md) as a starting point. The presence of this file is enforced by the `registered_lints_have_docs` unit test in `crates/lint/src/sol/mod.rs`.
+
 ### Choosing Between Early and Late Passes
 
 - **Use `EarlyLintPass`** for:

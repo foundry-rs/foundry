@@ -55,6 +55,13 @@ pub struct InitArgs {
     #[arg(long, conflicts_with = "template")]
     pub empty: bool,
 
+    /// Do not create an initial commit.
+    ///
+    /// This is a noop flag kept for backwards compatibility, as `forge init` no longer commits by
+    /// default. Use `--commit` to opt into creating a commit.
+    #[arg(long, hide = true)]
+    pub no_commit: bool,
+
     #[command(flatten)]
     pub install: DependencyInstallOpts,
 }
@@ -73,6 +80,7 @@ impl InitArgs {
             vyper,
             network,
             empty,
+            no_commit: _,
         } = self;
         let DependencyInstallOpts { shallow, no_git, commit } = install;
 
