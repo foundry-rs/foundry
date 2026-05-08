@@ -6,7 +6,7 @@ use crate::{
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
-    result::{InvariantSecondaryFailure, SuiteResult, TestResult, TestSetup},
+    result::{InvariantFailure, SuiteResult, TestResult, TestSetup},
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -866,19 +866,28 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 );
             }
         }
+        // Build the invariant list in source declaration order, retaining the anchor (`func`)
+        // and — under `assert_all` — every other invariant that doesn't already have a
+        // compatible persisted failure. Track the anchor's index so downstream consumers can
+        // resolve the campaign-anchor without searching by name.
+        let invariant_fns: Vec<(&Function, bool)> = invariants
+            .into_iter()
+            .filter(|(invariant_fn, _)| {
+                *invariant_fn == func
+                    || (!is_optimization
+                        && invariant_config.assert_all
+                        && !secondary_has_compatible_persisted(invariant_fn))
+            })
+            .collect();
+        let anchor_idx = invariant_fns
+            .iter()
+            .position(|(invariant_fn, _)| *invariant_fn == func)
+            .expect("anchor must be present in invariant_fns");
         let invariant_contract = InvariantContract::new(
             self.address,
             self.cr.name,
-            func,
-            invariants
-                .into_iter()
-                .filter(|(invariant_fn, _)| {
-                    *invariant_fn == func
-                        || (!is_optimization
-                            && invariant_config.assert_all
-                            && !secondary_has_compatible_persisted(invariant_fn))
-                })
-                .collect(),
+            invariant_fns,
+            anchor_idx,
             call_after_invariant,
             &self.cr.contract.abi,
         );
@@ -917,7 +926,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 &txes,
                 (0..min(txes.len(), invariant_config.depth as usize)).collect(),
                 invariant_contract.address,
-                invariant_contract.primary_invariant_fn.selector().to_vec().into(),
+                invariant_contract.anchor().selector().to_vec().into(),
                 CheckSequenceOptions {
                     accumulate_warp_roll: invariant_config.has_delay(),
                     fail_on_revert: invariant_config.fail_on_revert,
@@ -948,7 +957,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     assertion_failure,
                     None, // check mode
                     &invariant_contract,
-                    invariant_contract.primary_invariant_fn,
+                    invariant_contract.anchor(),
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
                     &mut self.result.logs,
@@ -978,7 +987,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
                 self.result.invariant_replay_fail(
                     replayed_entirely,
-                    &invariant_contract.primary_invariant_fn.name,
+                    &invariant_contract.anchor().name,
                     replay_reason,
                     call_sequence,
                 );
@@ -1004,12 +1013,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         let mut counterexample = None;
         let success = invariant_result.errors.is_empty();
-        let reason = invariant_result
-            .errors
-            .get(&invariant_contract.primary_invariant_fn.name)
-            .and_then(|err| err.revert_reason());
-        let mut invariant_secondary_failures = vec![];
-        let mut any_secondary_persisted = false;
+        let mut invariant_failures: Vec<InvariantFailure> = vec![];
+        let mut any_failure_persisted = false;
 
         if success {
             if let Some(best_value) = invariant_result.optimization_best_value {
@@ -1022,7 +1027,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     false,
                     Some(best_value),
                     &invariant_contract,
-                    invariant_contract.primary_invariant_fn,
+                    invariant_contract.anchor(),
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
                     &mut self.result.logs,
@@ -1048,7 +1053,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 // Standard check mode: replay last run for traces.
                 if let Err(err) = replay_run(
                     &invariant_contract,
-                    invariant_contract.primary_invariant_fn,
+                    invariant_contract.anchor(),
                     self.clone_executor(),
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
@@ -1065,59 +1070,65 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         } else {
             // Total broken invariants in this campaign — used to decorate the shrink progress
             // bar with `[i/N]` so users see how many shrinkers are queued behind the current
-            // one. `errors` keys cover both the primary and any broken secondaries.
+            // one. `errors` keys cover both the anchor and any broken secondaries.
             let total_broken = invariant_result.errors.len();
-            // Check if primary invariant was broken and replay error.
-            if let Some(error) =
-                invariant_result.errors.get(&invariant_contract.primary_invariant_fn.name)
-                && let InvariantFuzzError::BrokenInvariant(case_data)
-                | InvariantFuzzError::Revert(case_data) = error
-                && let TestError::Fail(_, ref calls) = case_data.test_error
-            {
-                match replay_error(
-                    evm.config(),
-                    self.clone_executor(),
-                    calls,
-                    Some(case_data.inner_sequence.clone()),
-                    case_data.assertion_failure,
-                    None, // check mode
-                    &invariant_contract,
-                    invariant_contract.primary_invariant_fn,
-                    &self.cr.mcr.known_contracts,
-                    identified_contracts.clone(),
-                    &mut self.result.logs,
-                    &mut self.result.traces,
-                    &mut self.result.line_coverage,
-                    &mut self.result.deprecated_cheatcodes,
-                    progress.as_ref(),
-                    &self.tcfg.early_exit,
-                    Some((1, total_broken)),
-                ) {
-                    Ok(call_sequence) if !call_sequence.is_empty() => {
-                        // Persist error in invariant failure dir.
-                        record_invariant_failure(
-                            failure_dir.as_path(),
-                            failure_file.as_path(),
-                            &call_sequence,
-                            &current_settings,
+            // Replay-and-shrink the anchor's failure first (gets [1/N] on the progress bar),
+            // then push it into `invariant_failures` as the first entry. Non-replayable error
+            // variants (e.g. `MaxAssumeRejects`) still get an entry — without a counterexample
+            // — so the reason is rendered.
+            if let Some(error) = invariant_result.errors.get(&invariant_contract.anchor().name) {
+                let anchor_counterexample = match error {
+                    InvariantFuzzError::BrokenInvariant(case_data)
+                    | InvariantFuzzError::Revert(case_data) => {
+                        let TestError::Fail(_, ref calls) = case_data.test_error else {
+                            unreachable!("FailedInvariantCaseData::new always sets TestError::Fail")
+                        };
+                        match replay_error(
+                            evm.config(),
+                            self.clone_executor(),
+                            calls,
+                            Some(case_data.inner_sequence.clone()),
                             case_data.assertion_failure,
-                        );
-
-                        let original_seq_len =
-                            if let TestError::Fail(_, calls) = &case_data.test_error {
-                                calls.len()
-                            } else {
-                                call_sequence.len()
-                            };
-
-                        counterexample =
-                            Some(CounterExample::Sequence(original_seq_len, call_sequence))
+                            None, // check mode
+                            &invariant_contract,
+                            invariant_contract.anchor(),
+                            &self.cr.mcr.known_contracts,
+                            identified_contracts.clone(),
+                            &mut self.result.logs,
+                            &mut self.result.traces,
+                            &mut self.result.line_coverage,
+                            &mut self.result.deprecated_cheatcodes,
+                            progress.as_ref(),
+                            &self.tcfg.early_exit,
+                            Some((1, total_broken)),
+                        ) {
+                            Ok(call_sequence) if !call_sequence.is_empty() => {
+                                record_invariant_failure(
+                                    failure_dir.as_path(),
+                                    failure_file.as_path(),
+                                    &call_sequence,
+                                    &current_settings,
+                                    case_data.assertion_failure,
+                                );
+                                any_failure_persisted = true;
+                                Some(CounterExample::Sequence(calls.len(), call_sequence))
+                            }
+                            Ok(_) => None,
+                            Err(err) => {
+                                error!(%err, "Failed to replay invariant error");
+                                None
+                            }
+                        }
                     }
-                    Ok(_) => {}
-                    Err(err) => {
-                        error!(%err, "Failed to replay invariant error");
-                    }
-                }
+                    InvariantFuzzError::MaxAssumeRejects(_) => None,
+                };
+                invariant_failures.push(InvariantFailure {
+                    name: invariant_contract.anchor().name.clone(),
+                    reason: error.revert_reason().unwrap_or_default(),
+                    counterexample: anchor_counterexample,
+                    persisted_path: failure_file,
+                    is_anchor: true,
+                });
             }
 
             // Shrink each broken non-primary invariant in turn so users get a ready-to-debug
@@ -1129,8 +1140,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             // 1, secondaries follow). Only incremented when a secondary is actually shrunk so
             // the bar's `[i/N]` counter matches user-visible progress.
             let mut next_position = 2usize;
-            for (invariant, _) in &invariant_contract.invariant_fns {
-                if invariant.name == invariant_contract.primary_invariant_fn.name {
+            // Iterate every invariant; skip the anchor (handled in the primary path above).
+            for (idx, (invariant, _)) in invariant_contract.invariant_fns.iter().enumerate() {
+                if idx == invariant_contract.anchor_idx {
                     continue;
                 }
 
@@ -1170,7 +1182,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             &current_settings,
                             case_data.assertion_failure,
                         );
-                        any_secondary_persisted = true;
+                        any_failure_persisted = true;
                         None
                     } else {
                         let position = next_position;
@@ -1202,7 +1214,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                                     &current_settings,
                                     case_data.assertion_failure,
                                 );
-                                any_secondary_persisted = true;
+                                any_failure_persisted = true;
                                 Some(CounterExample::Sequence(original_seq_len, call_sequence))
                             }
                             Ok(_) => None,
@@ -1212,17 +1224,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             }
                         }
                     };
-                    invariant_secondary_failures.push(InvariantSecondaryFailure {
+                    invariant_failures.push(InvariantFailure {
                         name: invariant.name.clone(),
                         reason: error.revert_reason().unwrap_or_default(),
                         counterexample: secondary_counterexample,
                         persisted_path: persisted_failure.clone(),
+                        is_anchor: false,
                     });
                 }
             }
         }
 
-        let invariant_failure_dir = any_secondary_persisted.then(|| failure_dir.clone());
+        let invariant_failure_dir = any_failure_persisted.then(|| failure_dir.clone());
         // Only attach a suite-level roll-up when `assert_all` actually exercised >1 invariant.
         // Single-invariant runs (no assert_all, or filter-narrowed to one) get the legacy
         // single-block render with no roll-up line.
@@ -1232,8 +1245,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.result.invariant_result(
             invariant_result.gas_report_traces,
             success,
-            reason,
-            invariant_secondary_failures,
+            invariant_failures,
             invariant_failure_dir,
             assert_all_invariant_count,
             counterexample,

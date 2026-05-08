@@ -1385,11 +1385,10 @@ contract CounterTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/CounterTest.t.sol:CounterTest
-[FAIL: condition 3 met]
-	[Sequence] (original: 5, shrunk: 5)
+[FAIL: condition 3 met] invariant_cond3
+	[Sequence] (original: [..], shrunk: [..])
 ...
 
-Suite assert_all: 4/5 invariants broken
 [FAIL: condition 1 met] invariant_cond1
 	[Sequence] (original: [..], shrunk: [..])
 ...
@@ -1399,9 +1398,10 @@ Suite assert_all: 4/5 invariants broken
 [FAIL: EvmError: Revert] invariant_cond5
 	[Sequence] (original: [..], shrunk: [..])
 ...
-3 invariant failures persisted to cache/invariant/failures/CounterTest — rerun to shrink
-...
 
+Suite assert_all: 4/5 invariants broken
+4 invariant failure(s) persisted to cache/invariant/failures/CounterTest — rerun to shrink
+...
 "#]]);
 
     // Re-running the same target replays cond3's persisted counterexample and exits without
@@ -1535,13 +1535,15 @@ contract AssertAllAssertTest is Test {
     cmd.args(["test", "--mt", "invariant_a"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/AssertAllAssertTest.t.sol:AssertAllAssertTest
-[FAIL: panic: assertion failed (0x01)]
+[FAIL: panic: assertion failed (0x01)] invariant_a
+	[Sequence] (original: [..], shrunk: [..])
+...
+
+[FAIL: panic: assertion failed (0x01)] invariant_b
 	[Sequence] (original: [..], shrunk: [..])
 ...
 
 Suite assert_all: 2/2 invariants broken
-[FAIL: panic: assertion failed (0x01)] invariant_b
-	[Sequence] (original: [..], shrunk: [..])
 ...
 "#]]);
 });
@@ -1786,8 +1788,10 @@ contract SecondaryOnlyTest is Test {
 
     cmd.args(["test", "--mt", "invariant_safe"]).assert_failure().stdout_eq(str![[r#"
 ...
-Suite assert_all: 1/2 invariants broken
 [FAIL: breakable broken] invariant_breakable
+...
+Suite assert_all: 1/2 invariants broken
+ invariant_safe() (runs: 5, calls: 250, reverts: 0)
 ...
 "#]]);
 });
