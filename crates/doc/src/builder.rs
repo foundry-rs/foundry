@@ -12,7 +12,22 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
+
+/// Summary stats produced by [`DocBuilder::build`], surfaced to the user as
+/// progress feedback by `forge doc`.
+#[derive(Debug, Default, Clone)]
+pub struct BuildStats {
+    /// Number of Solidity sources considered for rendering.
+    pub sources: usize,
+    /// Number of MDX pages written to disk.
+    pub pages: usize,
+    /// Total time spent generating MDX pages and pruning stale ones.
+    pub render_elapsed: Duration,
+    /// Total time spent writing the vocs site scaffold.
+    pub site_elapsed: Duration,
+}
 
 /// Build Solidity documentation for a project from natspec comments using [`solar`].
 #[derive(Debug)]
@@ -68,9 +83,10 @@ impl DocBuilder {
     }
 
     /// Run the documentation pipeline.
-    pub fn build(self, compiler: &mut Compiler) -> Result<()> {
+    pub fn build(self, compiler: &mut Compiler) -> Result<BuildStats> {
         let out = self.out_dir();
         let pages_dir = out.join("src").join("pages");
+        let render_started = Instant::now();
 
         let ignored = expand_globs(&self.root, self.config.ignore.iter()).unwrap_or_default();
 
@@ -89,6 +105,7 @@ impl DocBuilder {
         }
 
         sources.sort_by(|(a, _), (b, _)| a.cmp(b));
+        let sources_count = sources.len();
 
         let repo = self.config.repository.clone();
         let commit = self.commit.clone();
@@ -234,8 +251,10 @@ impl DocBuilder {
 
             Ok(all_rel)
         })?;
+        let render_elapsed = render_started.elapsed();
 
         // Generate vocs site scaffolding.
+        let site_started = Instant::now();
         vocs::write_site_files(
             &out,
             &self.config,
@@ -245,8 +264,14 @@ impl DocBuilder {
             self.branch.as_deref(),
         )?;
         info!("wrote vocs site files to {}", out.display());
+        let site_elapsed = site_started.elapsed();
 
-        Ok(())
+        Ok(BuildStats {
+            sources: sources_count,
+            pages: all_pages.len(),
+            render_elapsed,
+            site_elapsed,
+        })
     }
 }
 

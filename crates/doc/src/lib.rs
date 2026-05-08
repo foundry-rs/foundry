@@ -11,4 +11,4 @@ mod render;
 mod utils;
 mod vocs;
 
-pub use builder::DocBuilder;
+pub use builder::{BuildStats, DocBuilder};
