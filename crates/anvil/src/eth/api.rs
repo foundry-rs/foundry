@@ -2503,14 +2503,8 @@ impl EthApi<FoundryNetwork> {
 
         let raw = tx.encoded_2718().into();
 
-        let mut tx = transaction_build(
-            None,
-            None,
-            MaybeImpersonatedTransaction::new(tx),
-            None,
-            None,
-            None,
-        );
+        let mut tx =
+            transaction_build(None, MaybeImpersonatedTransaction::new(tx), None, None, None, None);
 
         // Set the correct `from` address (overrides the recovered zero address from dummy
         // signature)
@@ -2537,8 +2531,8 @@ impl EthApi<FoundryNetwork> {
             let from = *pending.sender();
             transaction_build(
                 Some(*pending.hash()),
-                Some(from),
                 pending.transaction,
+                Some(from),
                 None,
                 None,
                 Some(self.backend.base_fee()),
@@ -2571,8 +2565,8 @@ impl EthApi<FoundryNetwork> {
             {
                 let tx = transaction_build(
                     Some(*pending_tx.pending_transaction.hash()),
-                    Some(*pending_tx.pending_transaction.sender()),
                     pending_tx.pending_transaction.transaction.clone(),
+                    Some(*pending_tx.pending_transaction.sender()),
                     None,
                     None,
                     Some(self.backend.base_fee()),
@@ -3253,8 +3247,8 @@ impl EthApi<FoundryNetwork> {
             let from = *tx.pending_transaction.sender();
             let tx = transaction_build(
                 Some(tx.hash()),
-                Some(from),
                 tx.pending_transaction.transaction.clone(),
+                Some(from),
                 None,
                 None,
                 None,
@@ -3412,8 +3406,8 @@ impl EthApi<FoundryNetwork> {
 
             let tx = transaction_build(
                 Some(info.transaction_hash),
-                Some(info.from),
                 tx,
+                Some(info.from),
                 Some(&block),
                 Some(info),
                 Some(base_fee),

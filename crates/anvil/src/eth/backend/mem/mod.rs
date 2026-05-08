@@ -980,9 +980,14 @@ impl<N: Network> Backend<N> {
             let info = storage.transactions.get(&hash)?.info.clone();
             let tx = block.body.transactions.get(info.transaction_index as usize)?.clone();
 
-            let from = info.from;
-            let tx =
-                transaction_build(Some(hash), Some(from), tx, Some(block), Some(info), base_fee);
+            let tx = transaction_build(
+                Some(hash),
+                tx,
+                Some(info.from),
+                Some(block),
+                Some(info),
+                base_fee,
+            );
             transactions.push(tx);
         }
         Some(transactions)
@@ -1687,8 +1692,8 @@ impl<N: Network> Backend<N> {
 
         Some(transaction_build(
             Some(info.transaction_hash),
-            Some(info.from),
             tx,
+            Some(info.from),
             Some(&block),
             Some(info),
             block.header.base_fee_per_gas(),
@@ -1726,8 +1731,8 @@ impl<N: Network> Backend<N> {
 
         Some(transaction_build(
             Some(info.transaction_hash),
-            Some(info.from),
             tx,
+            Some(info.from),
             Some(&block),
             Some(info),
             block.header.base_fee_per_gas(),
@@ -4099,8 +4104,8 @@ impl Backend<FoundryNetwork> {
                     let tx_hash = tx.hash();
                     let rpc_tx = transaction_build(
                         None,
-                        Some(from),
                         MaybeImpersonatedTransaction::impersonated(tx, from),
+                        Some(from),
                         None,
                         None,
                         Some(block_env.basefee),
@@ -4626,8 +4631,8 @@ where
 /// Creates a `AnyRpcTransaction` as it's expected for the `eth` RPC api from storage data
 pub fn transaction_build(
     tx_hash: Option<B256>,
-    from: Option<Address>,
     eth_transaction: MaybeImpersonatedTransaction<FoundryTxEnvelope>,
+    from: Option<Address>,
     block: Option<&Block>,
     info: Option<TransactionInfo>,
     base_fee: Option<u64>,
