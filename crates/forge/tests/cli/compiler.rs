@@ -300,3 +300,140 @@ forgetest!(can_list_resolved_multiple_compiler_versions_verbose_json, |prj, cmd|
         .is_json(),
     );
 });
+
+// Regression coverage for https://github.com/foundry-rs/foundry-core/pull/59:
+// the upstream `foundry-compilers` previously dropped *every* Vyper `pragma version` constraint
+// silently (the regex did not accept a space after `#`, and even when it matched, the parser
+// passed the outer regex match instead of the named `version` group to `VersionReq::parse`).
+// The tests below exercise pragma syntaxes that round-trip through the fixed parser end-to-end.
+//
+// Verified by reverting the `[patch.crates-io]` entry in this branch:
+// `vyper_pragma_version_constraint_is_enforced` fails against released `foundry-compilers`
+// (the broken parser silently picks Vyper 0.4.3, then `vyper` itself rejects the pragma later
+// with a different message), while it passes once the fix is pulled in. The other two tests
+// guard against accidental regressions of the new and legacy pragma spellings.
+
+const VYPER_PEP440_COMPAT_RELEASE: &str = r#"
+# pragma version ~=0.4.0
+
+number: public(uint256)
+
+@external
+def setNumber(newNumber: uint256):
+    self.number = newNumber
+"#;
+
+const VYPER_LEGACY_AT_VERSION: &str = r#"
+#@version ^0.4.0
+
+number: public(uint256)
+
+@external
+def setNumber(newNumber: uint256):
+    self.number = newNumber
+"#;
+
+const VYPER_UNSATISFIABLE_PRAGMA: &str = r#"
+# pragma version ==0.3.10
+
+number: public(uint256)
+"#;
+
+// `~=0.4.0` is PEP 440's "compatible release" operator (snekmate-style). The fixed parser
+// translates it to `>=0.4.0, <0.5.0`, which the locally-installed Vyper 0.4.3 satisfies.
+forgetest!(vyper_pep440_compatible_release_pragma_resolves, |prj, cmd| {
+    prj.add_raw_source("Counter.vy", VYPER_PEP440_COMPAT_RELEASE);
+
+    cmd.args(["compiler", "resolve"]).assert_success().stdout_eq(str![[r#"
+Vyper:
+- 0.4.3
+
+
+"#]]);
+});
+
+// The legacy `#@version <req>` spelling (the only form Vyper supported prior to 0.3.10) must
+// keep resolving so existing contracts in the wild are not broken by the parser change.
+forgetest!(vyper_legacy_at_version_pragma_resolves, |prj, cmd| {
+    prj.add_raw_source("Counter.vy", VYPER_LEGACY_AT_VERSION);
+
+    cmd.args(["compiler", "resolve"]).assert_success().stdout_eq(str![[r#"
+Vyper:
+- 0.4.3
+
+
+"#]]);
+});
+
+// Distinguishing test: with the old code, `version_req` was always `None`, so the resolver
+// silently picked the only installed Vyper (0.4.3) and the build only failed later inside the
+// Vyper compiler with a different error. With the fix the constraint `==0.3.10` is honoured
+// and resolution fails up front.
+forgetest!(vyper_pragma_version_constraint_is_enforced, |prj, cmd| {
+    prj.add_raw_source("Counter.vy", VYPER_UNSATISFIABLE_PRAGMA);
+
+    cmd.args(["build"]).assert_failure().stderr_eq(str![[r#"
+Error: Encountered invalid compiler version in src/Counter.vy: No compiler version exists that matches the version requirement: =0.3.10
+
+"#]]);
+});
+
+// PEP 440 pre-release coverage for the upcoming Vyper 0.5 line. The resolver only has Vyper
+// 0.4.3 available in CI, so the build is expected to fail; the value of these tests is asserting
+// the *translated* version requirement that surfaces in the error, which proves the PEP 440 →
+// semver translation in `foundry-compilers` runs end-to-end through foundry. Without the fix,
+// these requirements would be silently dropped and the resolver would just pick 0.4.3.
+
+// Compatible-release operator with a bare alpha tag (snekmate-style):
+// `~=0.5.0a1`  →  `>=0.5.0-a1, <0.6.0`
+forgetest!(vyper_pep440_compatible_release_alpha_pragma_is_translated, |prj, cmd| {
+    prj.add_raw_source(
+        "Counter.vy",
+        r#"
+# pragma version ~=0.5.0a1
+
+number: public(uint256)
+"#,
+    );
+
+    cmd.args(["build"]).assert_failure().stderr_eq(str![[r#"
+Error: Encountered invalid compiler version in src/Counter.vy: No compiler version exists that matches the version requirement: >=0.5.0-a1, <0.6.0
+
+"#]]);
+});
+
+// Exact-equality operator with a bare beta tag:
+// `==0.5.0b1`  →  `=0.5.0-b1`
+forgetest!(vyper_pep440_exact_beta_pragma_is_translated, |prj, cmd| {
+    prj.add_raw_source(
+        "Counter.vy",
+        r#"
+# pragma version ==0.5.0b1
+
+number: public(uint256)
+"#,
+    );
+
+    cmd.args(["build"]).assert_failure().stderr_eq(str![[r#"
+Error: Encountered invalid compiler version in src/Counter.vy: No compiler version exists that matches the version requirement: =0.5.0-b1
+
+"#]]);
+});
+
+// Exact-equality operator with a bare release-candidate tag:
+// `==0.5.0rc1`  →  `=0.5.0-rc1`
+forgetest!(vyper_pep440_exact_rc_pragma_is_translated, |prj, cmd| {
+    prj.add_raw_source(
+        "Counter.vy",
+        r#"
+# pragma version ==0.5.0rc1
+
+number: public(uint256)
+"#,
+    );
+
+    cmd.args(["build"]).assert_failure().stderr_eq(str![[r#"
+Error: Encountered invalid compiler version in src/Counter.vy: No compiler version exists that matches the version requirement: =0.5.0-rc1
+
+"#]]);
+});
