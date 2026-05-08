@@ -646,7 +646,7 @@ async fn run_remaining_limit(
     };
 
     if shell::is_json() {
-        sh_println!("{}", serde_json::to_string(&remaining.to_string())?)?;
+        sh_println!("{}", serde_json::json!({ "remaining": remaining.to_string() }))?;
     } else {
         sh_println!("{remaining}")?;
     }

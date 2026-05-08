@@ -905,7 +905,7 @@ impl TestArgs {
 
         if let Some(gas_report) = gas_report {
             let finalized = gas_report.finalize();
-            sh_println!("{}", &finalized)?;
+            sh_println!("{finalized}")?;
             outcome.gas_report = Some(finalized);
         }
 
@@ -915,7 +915,7 @@ impl TestArgs {
 
         if self.summary && !outcome.results.is_empty() {
             let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
-            sh_println!("{}", &summary_report)?;
+            sh_println!("{summary_report}")?;
         }
 
         // Reattach the task.
