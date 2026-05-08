@@ -10,6 +10,7 @@ use alloy_rpc_types::{Authorization, BlockNumberOrTag, Index, TransactionRequest
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::NodeConfig;
+use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
@@ -4416,6 +4417,30 @@ casttest!(can_disassemble_contract_code, |_prj, cmd| {
 0000002e: PUSH1 0x00
 ...
 "#]]);
+});
+
+// tests that cast call --trace selects TempoEvmNetwork when Tempo is inferred from
+// the fork RPC, or when a Tempo chain ID is provided explicitly via --chain.
+casttest!(cast_call_trace_selects_tempo_network, async |_prj, cmd| {
+    let (_, tempo_handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let (_, eth_handle) = anvil::spawn(NodeConfig::test()).await;
+
+    let token = PATH_USD_ADDRESS.to_string();
+    for (name, rpc, extra_args) in [
+        ("inferred Tempo RPC", tempo_handle.http_endpoint(), Vec::<&str>::new()),
+        ("explicit Tempo --chain", eth_handle.http_endpoint(), vec!["--chain", "4217"]),
+    ] {
+        cmd.cast_fuse();
+        let mut args = vec!["call", &token, "decimals()(uint8)", "--rpc-url", &rpc, "--trace"];
+        args.extend(extra_args);
+
+        let output = cmd.args(args).assert_success().get_output().stdout_lossy();
+
+        assert!(
+            output.contains("PathUSD::decimals()") && output.contains("← [Return] 6"),
+            "expected traced Tempo TIP20 call to execute successfully for {name}, got:\n{output}"
+        );
+    }
 });
 
 // tests that cast call properly applies state diff override
