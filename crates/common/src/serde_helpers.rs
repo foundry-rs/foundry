@@ -1,6 +1,6 @@
 //! Misc Serde helpers for foundry crates.
 
-use alloy_primitives::U256;
+use alloy_primitives::{U64, U256};
 use serde::{Deserialize, Deserializer, de};
 use std::str::FromStr;
 
@@ -33,6 +33,25 @@ impl FromStr for Numeric {
             U256::from_str_radix(s, 16).map(Numeric::U256).map_err(|err| err.to_string())
         } else {
             U256::from_str(s).map(Numeric::U256).map_err(|err| err.to_string())
+        }
+    }
+}
+
+/// Helper type to parse both raw `u64` and hex/decimal string `U64` values.
+#[derive(Copy, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum Numeric64 {
+    /// A native `u64` value.
+    Num(u64),
+    /// A [U64] value.
+    U64(U64),
+}
+
+impl From<Numeric64> for u64 {
+    fn from(n: Numeric64) -> Self {
+        match n {
+            Numeric64::Num(n) => n,
+            Numeric64::U64(n) => n.to::<u64>(),
         }
     }
 }
@@ -78,6 +97,16 @@ pub enum NumericSeq {
     Num(u64),
 }
 
+/// Helper type to deserialize sequence of `u64` numbers.
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub enum Numeric64Seq {
+    /// Single parameter sequence (e.g `[1]`).
+    Seq([Numeric64; 1]),
+    /// Single value.
+    Value(Numeric64),
+}
+
 /// Deserializes a number from hex or int
 pub fn deserialize_number<'de, D>(deserializer: D) -> Result<U256, D::Error>
 where
@@ -114,13 +143,26 @@ where
     Ok(num)
 }
 
-/// Deserializes an optional integer from a single-element params sequence.
-/// Accepts `[]`, `[null]`, `[n]`, `["0x.."]`.
-pub fn deserialize_number_seq_opt<'de, D>(deserializer: D) -> Result<Option<U256>, D::Error>
+/// Deserializes single `u64` params: `1, [1], ["0x01"]`.
+pub fn deserialize_u64_seq<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let seq = Vec::<Option<Numeric>>::deserialize(deserializer)?;
+    let num = match Numeric64Seq::deserialize(deserializer)? {
+        Numeric64Seq::Seq(seq) => seq[0].into(),
+        Numeric64Seq::Value(num) => num.into(),
+    };
+
+    Ok(num)
+}
+
+/// Deserializes an optional integer from a single-element params sequence.
+/// Accepts `[]`, `[null]`, `[n]`, `["0x.."]`.
+pub fn deserialize_u64_seq_opt<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let seq = Vec::<Option<Numeric64>>::deserialize(deserializer)?;
     if seq.len() > 1 {
         return Err(de::Error::custom(format!(
             "expected params sequence with length 0 or 1 but got {}",

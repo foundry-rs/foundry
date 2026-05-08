@@ -227,17 +227,12 @@ pub struct FixedBlockTimeMiner {
 impl FixedBlockTimeMiner {
     /// Creates a new instance with an interval of `duration`
     pub fn new(duration: Duration) -> Self {
-        Self::checked_new(duration).expect("fixed block time interval is too large")
-    }
-
-    /// Creates a new instance if `duration` can be represented as a future tick.
-    pub fn checked_new(duration: Duration) -> Option<Self> {
-        let start = tokio::time::Instant::now().checked_add(duration)?;
+        let start = tokio::time::Instant::now() + duration;
         let mut interval = tokio::time::interval_at(start, duration);
         // we use delay here, to ensure ticks are not shortened and to tick at multiples of interval
         // from when tick was called rather than from start
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        Some(Self { interval })
+        Self { interval }
     }
 
     fn poll<T>(

@@ -21,7 +21,6 @@ use anvil_core::{
     eth::EthRequest,
     types::{ReorgOptions, TransactionData},
 };
-use anvil_rpc::response::ResponseResult;
 use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
 use foundry_evm::hardfork::EthereumHardfork;
 
@@ -69,54 +68,6 @@ async fn can_set_storage() {
 
     let storage_value = api.storage_at(addr, slot, None).await.unwrap();
     assert_eq!(val, storage_value);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn numeric_rpc_params_allow_u64_max_and_reject_larger_values() {
-    let (api, _handle) = spawn(NodeConfig::test()).await;
-    let max = U256::from(u64::MAX);
-    let too_big = max + U256::from(1);
-
-    assert!(matches!(api.execute(EthRequest::SetChainId(max)).await, ResponseResult::Success(_)));
-    assert!(matches!(
-        api.execute(EthRequest::EvmSetBlockTimeStampInterval(max)).await,
-        ResponseResult::Success(_)
-    ));
-
-    let rollback_at_max = api.execute(EthRequest::Rollback(Some(max))).await;
-    assert!(matches!(
-        rollback_at_max,
-        ResponseResult::Error(ref err)
-            if err.message.contains("Rollback depth must not exceed current chain height")
-    ));
-
-    expect_invalid_params(
-        api.execute(EthRequest::SetIntervalMining(max)).await,
-        "The interval is too big",
-    );
-    expect_invalid_params(
-        api.execute(EthRequest::SetIntervalMining(too_big)).await,
-        "The interval is too big",
-    );
-    expect_invalid_params(
-        api.execute(EthRequest::SetChainId(too_big)).await,
-        "The chain id is too big",
-    );
-    expect_invalid_params(
-        api.execute(EthRequest::EvmSetBlockTimeStampInterval(too_big)).await,
-        "The interval is too big",
-    );
-    expect_invalid_params(
-        api.execute(EthRequest::Rollback(Some(too_big))).await,
-        "The depth is too big",
-    );
-}
-
-fn expect_invalid_params(response: ResponseResult, message: &str) {
-    match response {
-        ResponseResult::Error(err) => assert_eq!(err.message, message),
-        response => panic!("expected invalid params error, got {response:?}"),
-    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
