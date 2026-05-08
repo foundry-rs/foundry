@@ -710,6 +710,56 @@ async fn can_get_pending_transaction() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn impersonated_transaction_keeps_from_in_rpc_responses() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let from = Address::random();
+    let to = handle.dev_wallets().next().unwrap().address();
+    api.anvil_set_balance(from, U256::from(1_000_000_000_000_000_000u128)).await.unwrap();
+    api.anvil_impersonate_account(from).await.unwrap();
+
+    let tx = TransactionRequest::default()
+        .from(from)
+        .to(to)
+        .value(U256::from(1337))
+        .with_gas_limit(21_000);
+    let tx = WithOtherFields::new(tx);
+    let pending = provider.send_transaction(tx).await.unwrap();
+
+    let pending_block = provider.get_block(BlockId::pending()).full().await.unwrap().unwrap();
+    let pending_txs = pending_block.transactions.as_transactions().unwrap();
+    assert_eq!(pending_txs.len(), 1);
+    assert_eq!(pending_txs[0].from(), from);
+
+    api.mine_one().await;
+
+    let mined = provider.get_transaction_by_hash(*pending.tx_hash()).await.unwrap().unwrap();
+    assert_eq!(mined.from(), from);
+
+    let mined_block = provider.get_block(BlockId::latest()).full().await.unwrap().unwrap();
+    let mined_txs = mined_block.transactions.as_transactions().unwrap();
+    assert_eq!(mined_txs.len(), 1);
+    assert_eq!(mined_txs[0].from(), from);
+
+    let tx_by_block_hash = api
+        .transaction_by_block_hash_and_index(mined_block.header.hash, 0.into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(tx_by_block_hash.from(), from);
+
+    let tx_by_block_number = api
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, 0.into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(tx_by_block_number.from(), from);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_listen_full_pending_transaction() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 
