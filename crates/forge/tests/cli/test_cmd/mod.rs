@@ -96,6 +96,42 @@ contract AlwaysReverts {
 }
 
 contract ExecuteTransactionRestoreTest is Test {
+    function test_execute_restores_initcode_limit_after_success() public {
+        vm.fee(1);
+        vm.chainId(1);
+
+        address from = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
+
+        vm.deal(from, 1 ether);
+
+        vm.executeTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+
+        _deployOversizedInitcode();
+    }
+
+    function test_execute_restores_cfg_for_isolated_follow_up() public {
+        vm.fee(1);
+        vm.chainId(1);
+
+        address from = 0x5316812db67073C4d4af8BB3000C5B86c2877e94;
+        address to = 0x6Fd0A0CFF9A87aDF51695b40b4fA267855a8F4c6;
+        address random = address(uint160(uint256(keccak256(abi.encodePacked("isolated-random")))));
+
+        vm.deal(from, 1 ether);
+
+        vm.executeTransaction(
+            hex"f860806483030d40946fd0a0cff9a87adf51695b40b4fa267855a8f4c6118025a03ebeabbcfe43c2c982e99b376b5fb6e765059d7f215533c8751218cac99bbd80a00a56cf5c382442466770a756e81272d06005c9e90fb8dbc5b53af499d5aca856"
+        );
+
+        vm.prank(to);
+        (bool success,) = random.call{value: 5}("");
+        require(success);
+
+        _deployOversizedInitcode();
+    }
+
     function test_execute_revert_restores_cfg_for_follow_up() public {
         vm.fee(1);
         vm.chainId(1);
@@ -116,8 +152,11 @@ contract ExecuteTransactionRestoreTest is Test {
         (bool success,) = random.call("");
         require(success);
 
+        _deployOversizedInitcode();
+    }
+
+    function _deployOversizedInitcode() internal returns (address deployed) {
         bytes memory initcode = new bytes(49153);
-        address deployed;
         assembly {
             deployed := create(0, add(initcode, 0x20), mload(initcode))
         }
@@ -128,8 +167,8 @@ contract ExecuteTransactionRestoreTest is Test {
     );
     cmd.args([
         "test",
-        "--match-test",
-        "test_execute_revert_restores_cfg_for_follow_up",
+        "--match-contract",
+        "ExecuteTransactionRestoreTest",
         "--isolate",
         "--evm-version",
         "osaka",
