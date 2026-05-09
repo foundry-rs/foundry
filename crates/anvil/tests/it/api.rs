@@ -678,3 +678,36 @@ async fn test_fill_transaction_reverts_on_gas_estimation_failure() {
         "Error should indicate a revert, got: {error_message}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_send_transaction_surfaces_gas_estimation_error_on_osaka() {
+    let (api, handle) =
+        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()))).await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let from = accounts[0].address();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    // Deploy VendingMachine contract.
+    let contract = VendingMachine::deploy(&provider).await.unwrap();
+    let contract_address = *contract.address();
+
+    // Call buy with insufficient ether and without gas limit.
+    let tx_req = TransactionRequest::default()
+        .with_from(from)
+        .with_to(contract_address)
+        .with_input(VendingMachine::buyCall { amount: U256::from(10) }.abi_encode());
+
+    let err = api.send_transaction(WithOtherFields::new(tx_req)).await.unwrap_err().to_string();
+
+    assert!(
+        err.contains("execution reverted"),
+        "send_transaction should return the original estimation revert, got: {err}"
+    );
+    assert!(
+        !err.contains("intrinsic gas too high -- tx.gas_limit > env.cfg.tx_gas_limit_cap"),
+        "send_transaction should not mask estimation revert with tx gas cap error: {err}"
+    );
+}

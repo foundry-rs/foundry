@@ -2489,9 +2489,7 @@ impl EthApi<FoundryNetwork> {
             self.request_nonce(&request, from).await?.0
         };
 
-        // Prefill gas limit with estimated gas, bubble up the error if the gas estimation fails
-        // This is a workaround to avoid the error being swallowed by the `build_tx_request`
-        // function
+        // Prefill gas limit with estimated gas and bubble up estimation errors directly.
         if request.as_ref().gas_limit().is_none() {
             let estimated_gas =
                 self.estimate_gas(request.clone(), None, EvmOverrides::default()).await?;
@@ -3459,8 +3457,7 @@ impl EthApi<FoundryNetwork> {
                     EvmOverrides::default(),
                 )
                 .await
-                .map(|v| v as u64)
-                .unwrap_or(self.backend.gas_limit()),
+                .map(|v| v as u64)?,
             );
         }
 
