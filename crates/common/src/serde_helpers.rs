@@ -51,7 +51,7 @@ impl From<Numeric64> for u64 {
     fn from(n: Numeric64) -> Self {
         match n {
             Numeric64::Num(n) => n,
-            Numeric64::U64(n) => n.to::<u64>(),
+            Numeric64::U64(n) => n.to::<Self>(),
         }
     }
 }
