@@ -321,9 +321,9 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
 /// the receiver's underlying variable id when available (used for permit correlation).
 ///
 /// Recognised:
-/// - `recv.transferFrom(from, to, amt)` / `recv.safeTransferFrom(from, to, amt)` where `recv`
-///   is typed as a contract declaring ERC20's `transferFrom(address,address,uint256)→bool`
-///   (ERC721's same-named, no-return overload is excluded).
+/// - `recv.transferFrom(from, to, amt)` / `recv.safeTransferFrom(from, to, amt)` where `recv` is
+///   typed as a contract declaring ERC20's `transferFrom(address,address,uint256)→bool` (ERC721's
+///   same-named, no-return overload is excluded).
 /// - `Lib.safeTransferFrom(token, from, to, amt)` library form.
 fn match_sink<'hir>(
     hir: &'hir hir::Hir<'hir>,
