@@ -3,7 +3,7 @@ use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
     gas_report::GasReport,
-    multi_runner::{MultiNetworkConfig, matches_artifact},
+    multi_runner::{MultiNetworkConfig, ShowmapConfig, matches_artifact},
     result::{SuiteResult, TestOutcome, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
@@ -14,7 +14,7 @@ use crate::{
 };
 use alloy_primitives::U256;
 use chrono::Utc;
-use clap::{Parser, ValueHint};
+use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs},
@@ -45,6 +45,7 @@ use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
+    executors::ShowmapDomain,
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
@@ -69,6 +70,26 @@ use summary::{TestSummaryReport, format_invariant_metrics_table};
 
 // Loads project's figment and merges the build cli arguments into it
 foundry_config::merge_impl_figment_convert!(TestArgs, build, evm);
+
+/// CLI mirror of `foundry_evm::executors::ShowmapDomain`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
+#[clap(rename_all = "lowercase")]
+pub enum ShowmapDomainArg {
+    #[default]
+    Evm,
+    Sancov,
+    Both,
+}
+
+impl From<ShowmapDomainArg> for ShowmapDomain {
+    fn from(d: ShowmapDomainArg) -> Self {
+        match d {
+            ShowmapDomainArg::Evm => Self::Evm,
+            ShowmapDomainArg::Sancov => Self::Sancov,
+            ShowmapDomainArg::Both => Self::Both,
+        }
+    }
+}
 
 /// CLI arguments for `forge test`.
 #[derive(Clone, Debug, Parser)]
@@ -207,6 +228,52 @@ pub struct TestArgs {
     #[arg(long, help_heading = "Display options")]
     pub disable_labels: bool,
 
+    /// Replay the persisted corpus and emit AFL-`afl-showmap`-style coverage
+    /// files at the given output directory. Disables the regular fuzz/invariant
+    /// campaign and skips unit tests.
+    #[arg(
+        long,
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath,
+        help_heading = "Showmap replay",
+        conflicts_with_all = ["debug", "flamegraph", "flamechart", "rerun", "fuzz_input_file", "gas_report"],
+    )]
+    pub showmap_out: Option<PathBuf>,
+
+    /// Emit one showmap file per corpus entry (default: one aggregated file per test).
+    #[arg(long, help_heading = "Showmap replay", requires = "showmap_out")]
+    pub showmap_per_input: bool,
+
+    /// Coverage domain(s) to dump.
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = ShowmapDomainArg::Evm,
+        help_heading = "Showmap replay",
+        requires = "showmap_out",
+    )]
+    pub showmap_domain: ShowmapDomainArg,
+
+    /// Approach name (used as a subdirectory of `--showmap-out`).
+    #[arg(
+        long,
+        default_value = "replay",
+        help_heading = "Showmap replay",
+        requires = "showmap_out"
+    )]
+    pub showmap_approach: String,
+
+    /// Override the corpus directory to replay (defaults to the per-test
+    /// `corpus_dir` resolved from config).
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = ValueHint::DirPath,
+        help_heading = "Showmap replay",
+        requires = "showmap_out",
+    )]
+    pub showmap_corpus_dir: Option<PathBuf>,
+
     #[command(flatten)]
     filter: FilterArgs,
 
@@ -224,6 +291,17 @@ impl TestArgs {
     pub async fn run(mut self) -> Result<TestOutcome> {
         trace!(target: "forge::test", "executing test command");
         self.compile_and_run().await
+    }
+
+    /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
+    fn showmap_config(&self) -> Option<ShowmapConfig> {
+        Some(ShowmapConfig {
+            out_dir: self.showmap_out.clone()?,
+            approach: self.showmap_approach.clone(),
+            per_input: self.showmap_per_input,
+            domain: self.showmap_domain.into(),
+            corpus_dir: self.showmap_corpus_dir.clone(),
+        })
     }
 
     /// Returns a list of files that need to be compiled in order to run all the tests that match
@@ -521,6 +599,7 @@ impl TestArgs {
             evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
 
         let config = Arc::new(config);
+        let showmap = self.showmap_config();
         let runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(should_debug)
             .set_decode_internal(decode_internal)
@@ -531,6 +610,7 @@ impl TestArgs {
             .fail_fast(self.fail_fast)
             .set_coverage(coverage)
             .with_multi_network(multi_network)
+            .with_showmap(showmap)
             .build::<FEN, MultiCompiler>(output, evm_env, tx_env, evm_opts)?;
 
         let libraries = runner.libraries.clone();

@@ -20,12 +20,13 @@ use foundry_evm::{
     core::evm::FoundryEvmNetwork,
     decode::RevertDecoder,
     executors::{
-        CallResult, EvmError, Executor, ITest, RawCallResult,
+        CallResult, EvmError, Executor, ITest, RawCallResult, ShowmapOpts,
         fuzz::FuzzedExecutor,
         invariant::{
             CheckSequenceOptions, InvariantExecutor, InvariantFuzzError, check_sequence,
             replay_error, replay_run,
         },
+        replay_corpus_to_showmap,
     },
     fuzz::{
         BasicTxDetails, CallDetails, CounterExample, FuzzFixtures, fixture_name,
@@ -548,6 +549,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             return self.result;
         }
 
+        // In showmap replay mode, only fuzz/invariant tests are runnable.
+        if self.cr.mcr.tcfg.showmap.is_some()
+            && matches!(kind, TestFunctionKind::UnitTest { .. } | TestFunctionKind::TableTest)
+        {
+            self.result.replay_skip("not runnable in showmap mode");
+            return self.result;
+        }
+
         match kind {
             TestFunctionKind::UnitTest { .. } => self.run_unit_test(func),
             TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func),
@@ -771,6 +780,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.cr.name,
             &func.name,
         );
+        // Snapshot the per-test corpus dir before `config` is moved into `InvariantExecutor`.
+        let resolved_corpus_dir = config.corpus.corpus_dir.clone();
 
         let mut evm = InvariantExecutor::new(
             executor,
@@ -779,6 +790,26 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             identified_contracts,
             &self.cr.mcr.known_contracts,
         );
+
+        // Showmap replay mode: replay the persisted corpus and emit coverage
+        // files instead of running the invariant campaign.
+        if let Some(showmap) = self.cr.mcr.tcfg.showmap.clone() {
+            let corpus_dir = showmap.corpus_dir.clone().or(resolved_corpus_dir);
+
+            // Reconstruct the per-test target selection that the campaign loop normally builds.
+            if let Err(e) = evm.select_contract_artifacts(self.address) {
+                self.result.invariant_setup_fail(e);
+                return self.result;
+            }
+            let targeted = match evm.select_contracts_and_senders(self.address) {
+                Ok((_, t)) => t,
+                Err(e) => {
+                    self.result.invariant_setup_fail(e);
+                    return self.result;
+                }
+            };
+            return self.run_showmap(func, corpus_dir, &showmap, None, Some(&targeted));
+        }
         let invariant_contract = InvariantContract::new(
             self.address,
             self.cr.name,
@@ -1067,6 +1098,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &func.name,
         );
 
+        // Showmap replay mode: replay the persisted corpus and emit coverage
+        // files instead of running the fuzz campaign.
+        if let Some(showmap) = self.cr.mcr.tcfg.showmap.clone() {
+            let corpus_dir =
+                showmap.corpus_dir.clone().or_else(|| fuzz_config.corpus.corpus_dir.clone());
+            return self.run_showmap(func, corpus_dir, &showmap, Some(func), None);
+        }
+
         let progress = start_fuzz_progress(
             self.cr.progress,
             self.cr.name,
@@ -1176,6 +1215,75 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     fn fuzz_runner(&self) -> TestRunner {
         let config = &self.config.fuzz;
         fuzzer_with_cases(config.seed, config.runs, config.max_test_rejects)
+    }
+
+    /// Replays the persisted corpus and writes AFL-`afl-showmap`-style files.
+    fn run_showmap(
+        mut self,
+        func: &Function,
+        corpus_dir: Option<PathBuf>,
+        showmap: &crate::multi_runner::ShowmapConfig,
+        fuzzed_function: Option<&Function>,
+        fuzzed_contracts: Option<&foundry_evm::fuzz::invariant::FuzzRunIdentifiedContracts>,
+    ) -> TestResult {
+        let Some(corpus_dir) = corpus_dir else {
+            self.result.replay_skip("no corpus_dir configured for this test");
+            return self.result;
+        };
+
+        // Configure executor with the requested coverage collectors. Showmap
+        // ignores fuzz config defaults: the CLI domain is the source of truth.
+        // For EVM we enable line coverage rather than edge coverage so the IDs
+        // (bytecode_hash, pc) are deterministic across forge processes —
+        // `EdgeCovInspector` uses a per-process random hash and would yield
+        // non-comparable IDs across approaches.
+        let mut executor = self.clone_executor();
+        let domain = showmap.domain;
+        executor.inspector_mut().collect_line_coverage(domain.includes_evm());
+        executor.inspector_mut().collect_sancov_edges(domain.includes_sancov());
+
+        // Strip the source path prefix from the contract name to mirror what
+        // `test_paths` does when resolving the per-test corpus dir, and to
+        // ensure the trial name is a single-segment filename stem.
+        let contract = self.cr.name.split(':').next_back().unwrap_or(self.cr.name);
+        let opts = ShowmapOpts {
+            out_dir: showmap.out_dir.clone(),
+            approach: showmap.approach.clone(),
+            trial: format!("{contract}__{}", func.name),
+            per_input: showmap.per_input,
+            domain,
+        };
+
+        let start = std::time::Instant::now();
+        let result = replay_corpus_to_showmap(
+            &executor,
+            &corpus_dir,
+            fuzzed_function,
+            fuzzed_contracts,
+            &opts,
+        );
+        let duration = start.elapsed();
+        match result {
+            Ok(stats) => {
+                if stats.sancov_requested && !stats.sancov_observed && stats.corpus_entries > 0 {
+                    let _ = sh_warn!(
+                        "{}::{}: sancov coverage requested but no hits observed (build is likely not sancov-instrumented)",
+                        self.cr.name,
+                        func.name,
+                    );
+                }
+                self.result.replay_result(
+                    stats.corpus_entries,
+                    stats.showmap_files,
+                    stats.skipped_entries,
+                    duration,
+                );
+            }
+            Err(e) => {
+                self.result.single_fail(Some(e.to_string()));
+            }
+        }
+        self.result
     }
 
     fn invariant_runner(&self) -> TestRunner {

@@ -1,0 +1,338 @@
+//! AFL-`afl-showmap`-style corpus replay.
+//!
+//! Replays a persisted corpus through a fresh executor and emits one text file
+//! per trial (or per corpus entry). Each line has the form `<id>:<count>`:
+//!
+//! - EVM IDs use the *deterministic* `(bytecode_hash, pc)` derived from the line-coverage `HitMap`
+//!   so that IDs are stable across `forge` invocations and meaningful for cross-approach analysis.
+//!   Format: `evm_<bytecode_hash[:16]>_<pc:04x>`.
+//! - Sancov IDs use the deterministic guard index from the sancov bitmap: `sancov_0x<index:04x>`.
+//!
+//! Counts are raw saturating-summed hitcounts across the replayed corpus.
+//!
+//! Output is consumable by tools like `riesentoaster/differential-coverage`.
+
+use crate::executors::{
+    Executor,
+    corpus::WorkerCorpus,
+    corpus_io::{canonical_replay_dir, read_corpus_dir},
+    invariant::execute_tx,
+};
+use alloy_json_abi::Function;
+use alloy_primitives::{B256, hex};
+use eyre::{Result, eyre};
+use foundry_evm_core::evm::FoundryEvmNetwork;
+use foundry_evm_coverage::HitMaps;
+use foundry_evm_fuzz::invariant::FuzzRunIdentifiedContracts;
+use std::{
+    collections::BTreeMap,
+    fmt,
+    fmt::Write,
+    path::{Path, PathBuf},
+};
+
+/// Which coverage bitmap(s) to dump.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum ShowmapDomain {
+    #[default]
+    Evm,
+    Sancov,
+    Both,
+}
+
+impl ShowmapDomain {
+    pub const fn includes_evm(self) -> bool {
+        matches!(self, Self::Evm | Self::Both)
+    }
+    pub const fn includes_sancov(self) -> bool {
+        matches!(self, Self::Sancov | Self::Both)
+    }
+}
+
+impl fmt::Display for ShowmapDomain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Evm => f.write_str("evm"),
+            Self::Sancov => f.write_str("sancov"),
+            Self::Both => f.write_str("both"),
+        }
+    }
+}
+
+/// Per-replay options.
+#[derive(Clone, Debug)]
+pub struct ShowmapOpts {
+    /// Output root directory; per-trial files are written under
+    /// `<out_dir>/<approach>/`.
+    pub out_dir: PathBuf,
+    /// Approach name; used as a subdirectory under `out_dir`.
+    pub approach: String,
+    /// Trial name; used as the filename stem.
+    pub trial: String,
+    /// Whether to emit one file per corpus entry or one aggregated file.
+    pub per_input: bool,
+    /// Which bitmap(s) to dump.
+    pub domain: ShowmapDomain,
+}
+
+/// Stats returned from a single trial replay.
+#[derive(Clone, Debug, Default)]
+pub struct ShowmapStats {
+    /// Number of corpus entries successfully replayed.
+    pub corpus_entries: usize,
+    /// Number of files written to disk.
+    pub showmap_files: usize,
+    /// Number of corpus entries skipped because they couldn't be replayed
+    /// against the current target (e.g. selector mismatch).
+    pub skipped_entries: usize,
+    /// True if sancov coverage was requested. Lets the caller distinguish
+    /// "sancov not asked for" from "sancov asked for but produced nothing".
+    pub sancov_requested: bool,
+    /// True if any non-zero sancov hits were observed across the replay.
+    pub sancov_observed: bool,
+}
+
+/// Replay every corpus entry under `corpus_dir` and emit showmap files.
+///
+/// `fuzzed_function` is set for stateless fuzz tests; `fuzzed_contracts` is set
+/// for invariant tests (txs are committed between calls in that case).
+pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+    corpus_dir: &Path,
+    fuzzed_function: Option<&Function>,
+    fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+    opts: &ShowmapOpts,
+) -> Result<ShowmapStats> {
+    let replay_dir = canonical_replay_dir(corpus_dir);
+    if !replay_dir.is_dir() {
+        return Err(eyre!("corpus directory not found: {}", replay_dir.display()));
+    }
+
+    let approach_dir = opts.out_dir.join(&opts.approach);
+    foundry_common::fs::create_dir_all(&approach_dir)?;
+
+    let mut stats =
+        ShowmapStats { sancov_requested: opts.domain.includes_sancov(), ..Default::default() };
+    let mut evm_agg: BTreeMap<(B256, u32), u64> = BTreeMap::new();
+    let mut san_agg: Vec<u64> = Vec::new();
+
+    for entry in read_corpus_dir(&replay_dir) {
+        let tx_seq = match entry.read_tx_seq() {
+            Ok(seq) if !seq.is_empty() => seq,
+            Ok(_) => continue,
+            Err(err) => {
+                debug!(target: "showmap", %err, ?entry.path, "failed to read corpus entry");
+                continue;
+            }
+        };
+
+        let mut evm_entry: BTreeMap<(B256, u32), u64> = BTreeMap::new();
+        let mut san_entry: Vec<u64> = Vec::new();
+        let mut had_replayable = false;
+
+        let mut executor = executor.clone();
+        for tx in &tx_seq {
+            if !WorkerCorpus::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
+                continue;
+            }
+            had_replayable = true;
+
+            let mut call_result = execute_tx(&mut executor, tx)?;
+            // Coverage-collection asymmetry across calls within a stateful sequence:
+            // - line_coverage is per-call: `Executor::call_raw` returns a fresh HitMap each time,
+            //   so we can simply accumulate it.
+            // - sancov_coverage is the inspector's shared `Vec<u8>` buffer that keeps growing
+            //   across calls, so after consuming it we zero it out to avoid double-counting on the
+            //   next iteration.
+            if opts.domain.includes_evm() {
+                accumulate_evm(&mut evm_entry, call_result.line_coverage.as_ref());
+            }
+            if opts.domain.includes_sancov() {
+                accumulate_sancov(&mut san_entry, call_result.sancov_coverage.as_deref());
+                if let Some(buf) = call_result.sancov_coverage.as_mut() {
+                    buf.fill(0);
+                }
+            }
+
+            // Stateful tests need the tx committed so subsequent calls see its effects.
+            if fuzzed_contracts.is_some() {
+                executor.commit(&mut call_result);
+            }
+        }
+
+        if !had_replayable {
+            stats.skipped_entries += 1;
+            continue;
+        }
+        stats.corpus_entries += 1;
+        if !stats.sancov_observed && san_entry.iter().any(|&x| x != 0) {
+            stats.sancov_observed = true;
+        }
+
+        if opts.per_input {
+            let stem = format!("{}__{}-{}", opts.trial, entry.uuid, entry.timestamp);
+            stats.showmap_files += write_showmap_file(
+                &approach_dir.join(format!("{stem}.txt")),
+                &evm_entry,
+                &san_entry,
+            )?;
+        } else {
+            for (k, v) in &evm_entry {
+                let slot = evm_agg.entry(*k).or_default();
+                *slot = slot.saturating_add(*v);
+            }
+            saturating_merge_sancov(&mut san_agg, &san_entry);
+        }
+    }
+
+    if !opts.per_input {
+        stats.showmap_files += write_showmap_file(
+            &approach_dir.join(format!("{}.txt", opts.trial)),
+            &evm_agg,
+            &san_agg,
+        )?;
+    }
+
+    Ok(stats)
+}
+
+/// Saturating-add per-(bytecode, pc) hits from a `HitMaps` snapshot into `dst`.
+fn accumulate_evm(dst: &mut BTreeMap<(B256, u32), u64>, src: Option<&HitMaps>) {
+    let Some(maps) = src else { return };
+    for (hash, hitmap) in maps.iter() {
+        for (pc, hits) in hitmap.iter() {
+            let slot = dst.entry((*hash, pc)).or_default();
+            *slot = slot.saturating_add(hits as u64);
+        }
+    }
+}
+
+/// Saturating-add `src` (u8 raw counts) into `dst` (u64 aggregated counts).
+fn accumulate_sancov(dst: &mut Vec<u64>, src: Option<&[u8]>) {
+    let Some(src) = src else { return };
+    if dst.len() < src.len() {
+        dst.resize(src.len(), 0);
+    }
+    for (d, &s) in dst.iter_mut().zip(src) {
+        if s != 0 {
+            *d = d.saturating_add(s as u64);
+        }
+    }
+}
+
+/// Saturating-merge two u64 sancov aggregated bitmaps.
+fn saturating_merge_sancov(dst: &mut Vec<u64>, src: &[u64]) {
+    if dst.len() < src.len() {
+        dst.resize(src.len(), 0);
+    }
+    for (d, &s) in dst.iter_mut().zip(src) {
+        if s != 0 {
+            *d = d.saturating_add(s);
+        }
+    }
+}
+
+/// Write a single showmap file. Returns 1 if a file was written, 0 if skipped
+/// (no nonzero entries).
+fn write_showmap_file(path: &Path, evm: &BTreeMap<(B256, u32), u64>, san: &[u64]) -> Result<usize> {
+    let mut buf = String::new();
+    write_evm(&mut buf, evm);
+    write_sancov(&mut buf, san);
+    if buf.is_empty() {
+        return Ok(0);
+    }
+    foundry_common::fs::write(path, buf)?;
+    Ok(1)
+}
+
+/// Each EVM ID is `evm_<bytecode_hash[:16hex]>_<pc:04x>`. The 16-hex prefix
+/// (64 bits) of the keccak256 bytecode hash makes IDs deterministic across
+/// processes while keeping line lengths short.
+fn write_evm(out: &mut String, evm: &BTreeMap<(B256, u32), u64>) {
+    for ((hash, pc), count) in evm {
+        if *count == 0 {
+            continue;
+        }
+        let h = hex::encode(&hash.as_slice()[..8]);
+        let _ = writeln!(out, "evm_{h}_{pc:04x}:{count}");
+    }
+}
+
+fn write_sancov(out: &mut String, bitmap: &[u64]) {
+    for (idx, &count) in bitmap.iter().enumerate() {
+        if count != 0 {
+            // Underscore (not `:`) between prefix and id keeps the showmap
+            // `<id>:<count>` parser unambiguous.
+            let _ = writeln!(out, "sancov_0x{idx:04x}:{count}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("foundry-showmap-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn accumulate_sancov_resizes_and_saturating_adds() {
+        let mut dst: Vec<u64> = vec![10];
+        accumulate_sancov(&mut dst, Some(&[1u8, 2, 3]));
+        assert_eq!(dst, vec![11, 2, 3]);
+    }
+
+    #[test]
+    fn write_evm_emits_only_nonzero_deterministic_ids() {
+        let mut s = String::new();
+        let h = B256::with_last_byte(0xab);
+        let mut evm = BTreeMap::new();
+        evm.insert((h, 1u32), 0u64); // skipped (count=0)
+        evm.insert((h, 0x2au32), 3u64);
+        write_evm(&mut s, &evm);
+        let h_hex = hex::encode(&h.as_slice()[..8]);
+        assert_eq!(s, format!("evm_{h_hex}_002a:3\n"));
+    }
+
+    #[test]
+    fn write_sancov_emits_only_nonzero_hex_ids() {
+        let mut s = String::new();
+        write_sancov(&mut s, &[0, 3, 0, 1]);
+        assert_eq!(s, "sancov_0x0001:3\nsancov_0x0003:1\n");
+    }
+
+    #[test]
+    fn write_showmap_file_skips_when_empty() {
+        let dir = temp_dir();
+        let path = dir.join("trial.txt");
+        let written = write_showmap_file(&path, &BTreeMap::new(), &[]).unwrap();
+        assert_eq!(written, 0);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn write_showmap_file_writes_combined_domains() {
+        let dir = temp_dir();
+        let path = dir.join("trial.txt");
+        let h = B256::with_last_byte(0xff);
+        let mut evm = BTreeMap::new();
+        evm.insert((h, 7u32), 5u64);
+        let written = write_showmap_file(&path, &evm, &[2]).unwrap();
+        assert_eq!(written, 1);
+        let body = std::fs::read_to_string(&path).unwrap();
+        let h_hex = hex::encode(&h.as_slice()[..8]);
+        assert_eq!(body, format!("evm_{h_hex}_0007:5\nsancov_0x0000:2\n"));
+    }
+
+    #[test]
+    fn canonical_replay_dir_prefers_worker0_corpus() {
+        let dir = temp_dir();
+        let inner = dir.join("worker0").join("corpus");
+        std::fs::create_dir_all(&inner).unwrap();
+        assert_eq!(canonical_replay_dir(&dir), inner);
+    }
+}

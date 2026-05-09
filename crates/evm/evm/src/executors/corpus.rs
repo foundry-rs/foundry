@@ -34,6 +34,7 @@
 //! - This all happens periodically, there is no clear order in which workers export or import
 //!   entries since it doesn't matter as long as the corpus eventually syncs across all workers
 
+use super::corpus_io::{CorpusDirEntry, parse_corpus_filename, read_corpus_dir};
 use crate::executors::{Executor, RawCallResult, invariant::execute_tx};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -1116,7 +1117,7 @@ impl WorkerCorpus {
     }
 
     /// Helper to check if a tx can be replayed.
-    fn can_replay_tx(
+    pub(crate) fn can_replay_tx(
         tx: &BasicTxDetails,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
@@ -1129,79 +1130,6 @@ impl WorkerCorpus {
                     .is_some_and(|selector| function.selector() == selector)
             })
     }
-}
-
-fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
-    let dir = match std::fs::read_dir(path) {
-        Ok(dir) => dir,
-        Err(err) => {
-            debug!(%err, ?path, "failed to read corpus directory");
-            return vec![].into_iter();
-        }
-    };
-    dir.filter_map(|res| match res {
-        Ok(entry) => {
-            let path = entry.path();
-            if !path.is_file() {
-                return None;
-            }
-            let name = if path.is_file()
-                && let Some(name) = path.file_name()
-                && let Some(name) = name.to_str()
-            {
-                name
-            } else {
-                return None;
-            };
-
-            if let Ok((uuid, timestamp)) = parse_corpus_filename(name) {
-                Some(CorpusDirEntry { path, uuid, timestamp })
-            } else {
-                debug!(target: "corpus", ?path, "failed to parse corpus filename");
-                None
-            }
-        }
-        Err(err) => {
-            debug!(%err, "failed to read corpus directory entry");
-            None
-        }
-    })
-    .collect::<Vec<_>>()
-    .into_iter()
-}
-
-struct CorpusDirEntry {
-    path: PathBuf,
-    uuid: Uuid,
-    timestamp: u64,
-}
-
-impl CorpusDirEntry {
-    fn name(&self) -> &str {
-        self.path.file_name().unwrap().to_str().unwrap()
-    }
-
-    fn read_tx_seq(&self) -> foundry_common::fs::Result<Vec<BasicTxDetails>> {
-        let path = &self.path;
-        if path.extension() == Some("gz".as_ref()) {
-            foundry_common::fs::read_json_gzip_file(path)
-        } else {
-            foundry_common::fs::read_json_file(path)
-        }
-    }
-}
-
-/// Parses the corpus filename and returns the uuid and timestamp associated with it.
-fn parse_corpus_filename(name: &str) -> Result<(Uuid, u64)> {
-    let name = name.trim_end_matches(".gz").trim_end_matches(".json");
-
-    let (uuid_str, timestamp_str) =
-        name.rsplit_once('-').ok_or_else(|| eyre!("invalid corpus filename format: {name}"))?;
-
-    let uuid = Uuid::parse_str(uuid_str)?;
-    let timestamp = timestamp_str.parse()?;
-
-    Ok((uuid, timestamp))
 }
 
 #[cfg(test)]

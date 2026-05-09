@@ -15,6 +15,11 @@ corpus_dir = "corpus/invariant"
 
 When `sancov_edges` is enabled, the EVM `EdgeCovInspector` is automatically disabled — sancov replaces EVM bytecode coverage as the guidance signal.
 
+## Replaying a corpus to AFL-`afl-showmap` files
+
+To export coverage from a persisted corpus for cross-fuzzer comparison, use
+`forge test --showmap-out <DIR>`. See [docs/dev/showmap.md](../../../docs/dev/showmap.md).
+
 ## Build
 
 Create a `RUSTC_WRAPPER` that injects sancov flags for the crate(s) you want to instrument:

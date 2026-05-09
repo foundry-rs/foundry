@@ -16,6 +16,7 @@ mod fuzz;
 mod invariant;
 mod logs;
 mod repros;
+mod showmap;
 mod spec;
 mod table;
 mod trace;

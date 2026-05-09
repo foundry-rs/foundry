@@ -62,9 +62,12 @@ pub mod invariant;
 pub use invariant::InvariantExecutor;
 
 mod corpus;
+mod corpus_io;
 mod sancov;
+mod showmap;
 mod trace;
 
+pub use showmap::{ShowmapDomain, ShowmapOpts, ShowmapStats, replay_corpus_to_showmap};
 pub use trace::TracingExecutor;
 
 const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
