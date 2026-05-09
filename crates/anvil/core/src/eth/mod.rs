@@ -945,11 +945,23 @@ mod tests {
             EthRequest::SetIntervalMining(interval) => assert_eq!(interval, 100),
             req => panic!("unexpected request: {req:?}"),
         }
+        match parse(r#"{"method": "anvil_setIntervalMining", "params": 100}"#).unwrap() {
+            EthRequest::SetIntervalMining(interval) => assert_eq!(interval, 100),
+            req => panic!("unexpected request: {req:?}"),
+        }
         match parse(r#"{"method": "anvil_setIntervalMining", "params": ["0x64"]}"#).unwrap() {
             EthRequest::SetIntervalMining(interval) => assert_eq!(interval, 100),
             req => panic!("unexpected request: {req:?}"),
         }
+        match parse(r#"{"method": "anvil_setIntervalMining", "params": "0x64"}"#).unwrap() {
+            EthRequest::SetIntervalMining(interval) => assert_eq!(interval, 100),
+            req => panic!("unexpected request: {req:?}"),
+        }
         match parse(r#"{"method": "anvil_setIntervalMining", "params": ["100"]}"#).unwrap() {
+            EthRequest::SetIntervalMining(interval) => assert_eq!(interval, 100),
+            req => panic!("unexpected request: {req:?}"),
+        }
+        match parse(r#"{"method": "anvil_setIntervalMining", "params": "100"}"#).unwrap() {
             EthRequest::SetIntervalMining(interval) => assert_eq!(interval, 100),
             req => panic!("unexpected request: {req:?}"),
         }
