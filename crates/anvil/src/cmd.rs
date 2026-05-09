@@ -173,6 +173,13 @@ pub struct NodeArgs {
     )]
     pub load_state: Option<SerializableState>,
 
+    /// Run in offline mode when forking.
+    ///
+    /// This prevents any RPC requests and requires a previously saved state to be loaded with
+    /// `--load-state`.
+    #[arg(long, requires = "load_state", requires = "fork_url")]
+    pub offline: bool,
+
     /// Fund specific accounts with custom balances on startup.
     ///
     /// Accepts multiple address:balance pairs where balance is in ETH.
@@ -314,7 +321,8 @@ impl NodeArgs {
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm.memory_limit)
             .with_cache_path(self.cache_path)
-            .with_funded_accounts(funded_accounts))
+            .with_funded_accounts(funded_accounts)
+            .with_offline(self.offline))
     }
 
     fn parse_funded_accounts(&self) -> eyre::Result<HashMap<Address, U256>> {

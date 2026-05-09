@@ -198,6 +198,7 @@ pub mod cache;
 pub mod fork_db;
 pub mod in_memory_db;
 pub mod inspector;
+pub mod offline_fork_db;
 #[cfg(feature = "optimism")]
 pub mod optimism;
 pub mod state;
@@ -373,6 +374,11 @@ impl<N: Network> Backend<N> {
     /// Returns the configured fork, if any
     pub fn get_fork(&self) -> Option<ClientFork> {
         self.fork.read().clone()
+    }
+
+    /// Returns whether the node is in offline mode
+    pub async fn is_offline(&self) -> bool {
+        self.node_config.read().await.offline
     }
 
     /// Returns the database
@@ -1070,6 +1076,13 @@ impl<N: Network> Backend<N> {
         }
 
         if let Some(fork) = self.get_fork() {
+            if self.is_offline().await {
+                // In offline mode, only return blocks from local storage
+                if let Some(block) = self.blockchain.get_block_by_hash(&hash) {
+                    return Ok(Some(self.convert_block(block)));
+                }
+                return Ok(None);
+            }
             return Ok(fork.block_by_hash(hash).await?);
         }
 
@@ -1086,6 +1099,17 @@ impl<N: Network> Backend<N> {
         }
 
         if let Some(fork) = self.get_fork() {
+            if self.is_offline().await {
+                // In offline mode, check local storage for the block
+                if let Some(block) = self.blockchain.get_block_by_hash(&hash) {
+                    let transactions =
+                        self.mined_transactions_in_block(&block).unwrap_or_default();
+                    let mut rpc_block = self.convert_block(block);
+                    rpc_block.transactions = BlockTransactions::Full(transactions);
+                    return Ok(Some(rpc_block));
+                }
+                return Ok(None);
+            }
             return Ok(fork.block_by_hash_full(hash).await?);
         }
 
@@ -1104,6 +1128,18 @@ impl<N: Network> Backend<N> {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
+                if self.is_offline().await {
+                    // In offline mode, check local storage for the block
+                    if let Some(hash) =
+                        self.blockchain.hash(BlockId::Number(BlockNumber::Number(number)))
+                        && let Some(block) = self.blockchain.get_block_by_hash(&hash)
+                    {
+                        let mut rpc_block = self.convert_block(block);
+                        rpc_block.transactions.convert_to_hashes();
+                        return Ok(Some(rpc_block));
+                    }
+                    return Ok(None);
+                }
                 return Ok(fork.block_by_number(number).await?);
             }
         }
@@ -1123,6 +1159,20 @@ impl<N: Network> Backend<N> {
         if let Some(fork) = self.get_fork() {
             let number = self.convert_block_number(Some(number));
             if fork.predates_fork_inclusive(number) {
+                if self.is_offline().await {
+                    // In offline mode, check local storage for the block
+                    if let Some(hash) =
+                        self.blockchain.hash(BlockId::Number(BlockNumber::Number(number)))
+                        && let Some(block) = self.blockchain.get_block_by_hash(&hash)
+                    {
+                        let transactions =
+                            self.mined_transactions_in_block(&block).unwrap_or_default();
+                        let mut rpc_block = self.convert_block(block);
+                        rpc_block.transactions = BlockTransactions::Full(transactions);
+                        return Ok(Some(rpc_block));
+                    }
+                    return Ok(None);
+                }
                 return Ok(fork.block_by_number_full(number).await?);
             }
         }

@@ -18,7 +18,7 @@ use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, BlockResponse, TransactionResponse};
-use alloy_primitives::{Address, BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
+use alloy_primitives::{Address, B256, BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
@@ -48,9 +48,11 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use rand_08::thread_rng;
 use revm::{
+    bytecode::Bytecode,
     context::{BlockEnv, CfgEnv},
     context_interface::block::BlobExcessGasAndPrice,
-    primitives::hardfork::SpecId,
+    primitives::{KECCAK_EMPTY, hardfork::SpecId},
+    state::AccountInfo,
 };
 use serde_json::{Value, json};
 use std::{
@@ -209,6 +211,8 @@ pub struct NodeConfig {
     pub cache_path: Option<PathBuf>,
     /// Accounts to fund with specific balances on startup (address -> balance in wei).
     pub funded_accounts: HashMap<Address, U256>,
+    /// Run in offline mode when forking - prevents RPC calls.
+    pub offline: bool,
 }
 
 impl NodeConfig {
@@ -516,6 +520,7 @@ impl Default for NodeConfig {
             silent: false,
             cache_path: None,
             funded_accounts: HashMap::default(),
+            offline: false,
         }
     }
 }
@@ -1119,6 +1124,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets offline mode for forking
+    #[must_use]
+    pub const fn with_offline(mut self, offline: bool) -> Self {
+        self.offline = offline;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -1269,6 +1281,42 @@ impl NodeConfig {
         evm_env: &mut EvmEnv,
         fees: &FeeManager,
     ) -> Result<(Arc<TokioRwLock<Box<dyn Db>>>, Option<ClientFork>)> {
+        debug!(target: "node", ?eth_rpc_url, offline = self.offline, init_state_loaded = self.init_state.is_some(), "setting up fork db");
+
+        // In offline mode, set up the fork DB from loaded state without RPC calls
+        if self.offline {
+            if let Some(ref state) = self.init_state {
+                let (offline_db, config) = self
+                    .setup_offline_fork_db_config(
+                        eth_rpc_url,
+                        evm_env,
+                        state,
+                        self.chain_id,
+                        self.gas_limit,
+                        self.base_fee,
+                        self.fork_chain_id,
+                    )
+                    .await?;
+
+                // Apply the mutations that would have been done in normal flow
+                self.set_chain_id(Some(config.chain_id));
+                if self.gas_limit.is_none() {
+                    self.gas_limit = Some(evm_env.block_env.gas_limit);
+                }
+                if self.base_fee.is_none() && evm_env.block_env.basefee > 0 {
+                    self.base_fee = Some(evm_env.block_env.basefee);
+                }
+
+                let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(
+                    mem::fork_db::MaybeOfflineForkedDatabase::offline(offline_db),
+                )));
+                let fork = ClientFork::new(config, Arc::clone(&db));
+                return Ok((db, Some(fork)));
+            } else {
+                eyre::bail!("Offline mode requires a state to be loaded with --load-state");
+            }
+        }
+
         let (db, config) = self.setup_fork_db_config(eth_rpc_url, evm_env, fees).await?;
         let db: Arc<TokioRwLock<Box<dyn Db>>> = Arc::new(TokioRwLock::new(Box::new(db)));
         let fork = ClientFork::new(config, Arc::clone(&db));
@@ -1535,6 +1583,145 @@ latest block number: {latest_block}"
         }
 
         self.gas_limit.unwrap_or(DEFAULT_GAS_LIMIT)
+    }
+
+    /// Sets up the fork configuration in offline mode using the loaded state
+    pub async fn setup_offline_fork_db_config(
+        &self,
+        eth_rpc_url: String,
+        evm_env: &mut EvmEnv,
+        state: &SerializableState,
+        chain_id_override: Option<u64>,
+        _gas_limit_override: Option<u64>,
+        _base_fee_override: Option<u64>,
+        fork_chain_id: Option<U256>,
+    ) -> Result<(mem::offline_fork_db::OfflineForkedDatabase, ClientForkConfig)> {
+        debug!(target: "node", ?eth_rpc_url, "setting up offline fork db");
+
+        // Extract block information from the loaded state
+        let block_env = state.block.as_ref().ok_or_else(|| {
+            eyre::eyre!("Loaded state does not contain block information required for offline fork")
+        })?;
+
+        let fork_block_number = block_env.number;
+
+        // Try to get the block hash from the loaded blocks, or use zero hash
+        let fork_block_num_u64 = fork_block_number.saturating_to::<u64>();
+        let fork_block_hash = if let Some(block) = state.blocks.first() {
+            // If we have a serialized block with this number, use its hash
+            if block.header.number == fork_block_num_u64 {
+                B256::from(alloy_primitives::keccak256(alloy_rlp::encode(&block.header)))
+            } else {
+                B256::ZERO
+            }
+        } else {
+            // No blocks in state, use zero hash (will be updated when blocks are mined)
+            B256::ZERO
+        };
+
+        // Use the block information from the loaded state
+        evm_env.block_env = block_env.clone();
+
+        // Set chain id from the loaded state or config
+        let chain_id = if let Some(chain_id) = chain_id_override {
+            chain_id
+        } else if let Some(chain_id) = fork_chain_id {
+            chain_id.to()
+        } else {
+            // Default to the chain_id from the environment which should be set from state
+            evm_env.cfg_env.chain_id
+        };
+
+        // Update env with chain id
+        evm_env.cfg_env.chain_id = chain_id;
+
+        let override_chain_id = chain_id_override;
+
+        // Create a minimal provider that will fail on any RPC calls
+        let provider = Arc::new(
+            ProviderBuilder::new(&eth_rpc_url)
+                .timeout(Duration::from_millis(1)) // Minimal timeout since we won't use it
+                .max_retry(0) // No retries in offline mode
+                .build()
+                .wrap_err("failed to create offline provider")?,
+        );
+
+        let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), eth_rpc_url.clone());
+        let block_chain_db = if fork_chain_id.is_some() {
+            BlockchainDb::new_skip_check(meta, None) // No cache in offline mode
+        } else {
+            BlockchainDb::new(meta, None) // No cache in offline mode
+        };
+
+        // Create the backend
+        // In offline mode, all data should come from the loaded state
+        let backend = SharedBackend::spawn_backend_thread(
+            Arc::clone(&provider),
+            block_chain_db.clone(),
+            Some(fork_block_num_u64.into()),
+        );
+
+        let config = ClientForkConfig {
+            fork_urls: vec![eth_rpc_url],
+            block_number: fork_block_num_u64,
+            block_hash: fork_block_hash,
+            transaction_hash: None,
+            provider,
+            chain_id,
+            override_chain_id,
+            timestamp: block_env.timestamp.saturating_to::<u64>(),
+            base_fee: Some(block_env.basefee as u128),
+            timeout: Duration::from_millis(1), // Minimal timeout for offline mode
+            retries: 0,                        // No retries in offline mode
+            backoff: Duration::from_millis(0),
+            compute_units_per_second: 0,
+            headers: vec![],
+            total_difficulty: block_env.difficulty,
+            blob_gas_used: block_env
+                .blob_excess_gas_and_price
+                .as_ref()
+                .map(|bg| bg.excess_blob_gas as u128),
+            blob_excess_gas_and_price: block_env.blob_excess_gas_and_price,
+            force_transactions: None,
+        };
+
+        debug!(target: "node", fork_number=config.block_number, "set up offline fork db");
+
+        let mut forked_db = ForkedDatabase::new(backend, block_chain_db);
+
+        // Insert the forked block's hash
+        forked_db.insert_block_hash(U256::from(config.block_number), config.block_hash);
+
+        // Pre-populate the database cache with all accounts from the loaded state
+        // This prevents RPC calls when accessing this data
+        debug!(target: "node", "Pre-populating offline fork cache with {} accounts", state.accounts.len());
+        for (address, account) in &state.accounts {
+            let code = if account.code.0.is_empty() {
+                None
+            } else {
+                Some(Bytecode::new_raw(account.code.clone()))
+            };
+
+            let code_hash =
+                if code.is_some() { alloy_primitives::keccak256(&account.code) } else { KECCAK_EMPTY };
+
+            let info =
+                AccountInfo { balance: account.balance, nonce: account.nonce, code_hash, code, account_id: None };
+
+            // Insert account into the cache
+            forked_db.insert_account(*address, info);
+
+            // Insert storage slots
+            for (slot, value) in &account.storage {
+                forked_db.set_storage_at(*address, *slot, *value)?;
+            }
+        }
+        debug!(target: "node", "Offline fork cache pre-populated");
+
+        // Wrap in OfflineForkedDatabase to prevent RPC calls for missing data
+        let offline_db = mem::offline_fork_db::OfflineForkedDatabase::new(forked_db);
+
+        Ok((offline_db, config))
     }
 }
 
