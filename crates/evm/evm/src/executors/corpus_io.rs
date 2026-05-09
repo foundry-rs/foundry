@@ -44,7 +44,7 @@ impl CorpusDirEntry {
     }
 }
 
-/// Iterate corpus files in `path`, ignoring entries with unparseable names.
+/// Iterate corpus files in `path`, ignoring entries with unparsable names.
 pub fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
     let dir = match std::fs::read_dir(path) {
         Ok(dir) => dir,
