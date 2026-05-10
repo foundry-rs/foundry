@@ -23,6 +23,7 @@ use foundry_config::{
     filter::expand_globs,
 };
 use serde::Serialize;
+use solar::{interface::Session, sema::Compiler};
 use std::path::PathBuf;
 
 foundry_config::merge_impl_figment_convert!(BuildArgs, build);
@@ -131,10 +132,7 @@ impl BuildArgs {
             && let Err(err) = self.lint(&project, &config, self.paths.as_deref(), &mut output)
         {
             emit_lint_failure_notice();
-            return Err(err.wrap_err(
-                "post-build lint step failed; rerun with --no-lint or set \
-                 `lint_on_build = false` under `[lint]` in foundry.toml to bypass",
-            ));
+            return Err(err.wrap_err("post-build lint step failed"));
         }
 
         Ok(output)
@@ -203,13 +201,7 @@ impl BuildArgs {
 
             // NOTE(rusowsky): Once solar can drop unsupported versions, rather than creating a new
             // compiler, we should reuse the parser from the project output.
-            //
-            // Buffer emitter so parse-phase errors surface verbatim in `convert_solar_errors`.
-            let mut compiler = solar::sema::Compiler::new(
-                solar::interface::Session::builder()
-                    .with_buffer_emitter(Default::default())
-                    .build(),
-            );
+            let mut compiler = Compiler::new(Session::builder().with_stderr_emitter().build());
 
             // Load the solar-compatible sources to the pcx before linting
             compiler.enter_mut(|compiler| {
@@ -218,17 +210,6 @@ impl BuildArgs {
                 pcx.set_resolve_imports(true);
                 pcx.parse();
             });
-
-            // Flush buffered parse-phase warnings; on error, `convert_solar_errors` surfaces
-            // them in the returned error instead, so skip to avoid duplicates.
-            if compiler.sess().dcx.has_errors().is_ok()
-                && let Some(diags) = compiler.sess().emitted_diagnostics()
-            {
-                let s = diags.to_string();
-                if !s.is_empty() {
-                    let _ = sh_eprint!("{s}");
-                }
-            }
 
             linter.lint(&input_files, config.deny, &mut compiler)?;
         }

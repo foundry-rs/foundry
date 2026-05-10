@@ -837,9 +837,8 @@ Warning (2018): Function state mutability can be restricted to pure
 "#]]);
 });
 
-// Regression test: after switching the lint session to a buffer emitter, lint diagnostics
-// produced during `forge build` must still stream to stderr (they are emitted through a
-// separate emitter installed inside `SolidityLinter::lint`, not the session emitter).
+// Lint diagnostics produced during `forge build` must stream to stderr through the emitter
+// installed inside `SolidityLinter::lint`.
 forgetest!(build_emits_lint_diagnostics, |prj, cmd| {
     prj.add_source("CounterAWithLints", COUNTER_A);
 
