@@ -174,3 +174,27 @@ LL │ …     token.transferFrom(from, to, a);
    │
    ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20
 
+warning[arbitrary-send-erc20]: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+   ╭▸ ROOT/testdata/ArbitrarySendErc20.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20
+
+warning[arbitrary-send-erc20]: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+   ╭▸ ROOT/testdata/ArbitrarySendErc20.sol:LL:CC
+   │
+LL │ …     token.transferFrom(owner, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20
+
+warning[arbitrary-send-erc20]: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+   ╭▸ ROOT/testdata/ArbitrarySendErc20.sol:LL:CC
+   │
+LL │ …     token.transferFrom(from, to, a);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-erc20
+

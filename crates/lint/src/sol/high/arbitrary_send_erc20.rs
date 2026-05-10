@@ -125,12 +125,17 @@ impl<'hir> Analyzer<'hir> {
         })
     }
 
+    /// Updates `safe_vars` only; permit kills are caller-owned (state-var writes skip this).
     fn assign(&mut self, target: hir::VariableId, rhs: &hir::Expr<'_>) {
         if self.is_safe(rhs) {
             self.safe_vars.insert(target);
         } else {
             self.safe_vars.remove(&target);
         }
+    }
+
+    /// Drops permits referencing `target`. Sound for any variable kind.
+    fn kill_permits_for(&mut self, target: hir::VariableId) {
         self.permits.retain(|p| p.token != target && p.owner != target);
     }
 
@@ -299,14 +304,11 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                     self.hits.push(expr.span);
                 }
             }
-            // Reassigning a non-state local invalidates any permit referencing it; for
-            // address-typed locals it also updates safety tracking.
+            // Kill permits on every write; only track safety for non-state address locals.
             ExprKind::Assign(lhs, _, rhs) => {
-                if let Some(target) = underlying_var(lhs)
-                    && !self.hir.variable(target).kind.is_state()
-                {
-                    self.permits.retain(|p| p.token != target && p.owner != target);
-                    if is_address(self.hir, target) {
+                if let Some(target) = underlying_var(lhs) {
+                    self.kill_permits_for(target);
+                    if !self.hir.variable(target).kind.is_state() && is_address(self.hir, target) {
                         self.assign(target, rhs);
                     }
                 }

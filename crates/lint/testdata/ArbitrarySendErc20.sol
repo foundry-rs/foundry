@@ -32,7 +32,7 @@ library SafeERC20 {
         address to,
         uint256 value
     ) internal {
-        // Library is a passthrough: warns at *its* call site, not at the library users'.
+        // Library passthrough: warns here AND at the user's call site (see `badLibrary`).
         require(token.transferFrom(from, to, value), "SafeERC20: transferFrom failed"); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
@@ -273,6 +273,55 @@ contract ArbitrarySendErc20 {
     function badViaStateVarGuard(address from, address to, uint256 a) public {
         require(owner == msg.sender, "owner check");
         require(from == owner, "from check");
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // State-var token reassigned after permit must invalidate the record.
+    function badPermitStateTokenReassigned(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        token.permit(from, address(this), a, deadline, v, r, s);
+        token = other;
+        token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // State-var owner reassigned after permit must invalidate the record.
+    function badPermitStateOwnerReassigned(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        owner = from;
+        token.permit(owner, address(this), a, deadline, v, r, s);
+        owner = to;
+        token.transferFrom(owner, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // State-var token reassigned on only one branch: post-`if` intersection drops the permit.
+    function badPermitStateTokenMaybeReassigned(
+        bool flag,
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        token.permit(from, address(this), a, deadline, v, r, s);
+        if (flag) {
+            token = other;
+        }
         token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
