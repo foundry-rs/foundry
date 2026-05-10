@@ -57,20 +57,23 @@ pub async fn check_tx_status<N: Network>(
 
                     // Receipt is pending, try to sleep and retry a few times
                     match provider.get_transaction_by_hash(hash).await {
-                        Ok(_) => {
+                        Ok(Some(_)) => {
                             // Sleep for a short time to allow the transaction to be mined
                             tokio::time::sleep(Duration::from_millis(500)).await;
                             // Transaction is still known to the node, retry
                             Err(RetryError::Retry(PendingReceiptError { tx_hash: hash }.into()))
                         }
-                        Err(_) => {
+                        Ok(None) => {
                             // Transaction is not known to the node, mark it as dropped
                             Ok(TxStatus::Dropped)
                         }
+                        Err(err) => Err(RetryError::Retry(eyre!(
+                            "failed to check if transaction {hash} is still known to the node: {err}"
+                        ))),
                     }
                 }
                 Err(e) => match provider.get_transaction_by_hash(hash).await {
-                    Ok(_) => match e {
+                    Ok(Some(_)) => match e {
                         PendingTransactionError::TxWatcher(WatchTxError::Timeout) => {
                             Err(RetryError::Continue(eyre!(
                                 "tx is still known to the node, waiting for receipt"
@@ -78,7 +81,10 @@ pub async fn check_tx_status<N: Network>(
                         }
                         _ => Err(RetryError::Retry(e.into())),
                     },
-                    Err(_) => Ok(TxStatus::Dropped),
+                    Ok(None) => Ok(TxStatus::Dropped),
+                    Err(err) => Err(RetryError::Retry(eyre!(
+                        "failed to check if transaction {hash} is still known to the node after receipt error: {err}; receipt error: {e}"
+                    ))),
                 },
             }
         })
@@ -183,6 +189,7 @@ mod tests {
     use super::*;
     use alloy_network::Ethereum;
     use alloy_primitives::B256;
+    use alloy_provider::{ProviderBuilder, mock::Asserter};
     use alloy_rpc_types::TransactionReceipt;
     use std::collections::VecDeque;
 
@@ -270,5 +277,66 @@ mod tests {
 
         assert!(out.contains("❌  [Failed]"));
         assert!(out.contains("Contract: FailContract"));
+    }
+
+    #[tokio::test]
+    async fn check_tx_status_marks_null_transaction_lookup_as_dropped() {
+        let hash = B256::repeat_byte(0x42);
+        let asserter = Asserter::new();
+        let provider: RootProvider<Ethereum> =
+            ProviderBuilder::default().connect_mocked_client(asserter.clone());
+        let not_found: Option<serde_json::Value> = None;
+
+        for _ in 0..50_000 {
+            asserter.push_success(&not_found);
+        }
+
+        let null_responder = tokio::spawn({
+            let asserter = asserter.clone();
+            async move {
+                let not_found: Option<serde_json::Value> = None;
+                loop {
+                    for _ in 0..1_000 {
+                        asserter.push_success(&not_found);
+                    }
+                    tokio::task::yield_now().await;
+                }
+            }
+        });
+
+        let result =
+            tokio::time::timeout(Duration::from_secs(2), check_tx_status(&provider, hash, 0)).await;
+        null_responder.abort();
+
+        let (returned_hash, status) = result.expect(
+            "check_tx_status should not keep waiting when eth_getTransactionByHash returns null",
+        );
+
+        assert_eq!(returned_hash, hash);
+        assert!(matches!(status.unwrap(), TxStatus::Dropped));
+    }
+
+    #[tokio::test]
+    async fn check_tx_status_does_not_mark_lookup_errors_as_dropped() {
+        let hash = B256::repeat_byte(0x42);
+        let asserter = Asserter::new();
+        let provider: RootProvider<Ethereum> =
+            ProviderBuilder::default().connect_mocked_client(asserter.clone());
+        let not_found: Option<serde_json::Value> = None;
+
+        // Initial receipt lookup while registering the pending transaction.
+        asserter.push_success(&not_found);
+        for _ in 0..50 {
+            asserter.push_failure_msg("lookup unavailable");
+        }
+
+        let (_, status) = check_tx_status(&provider, hash, 0).await;
+        let err = match status {
+            Ok(_) => panic!("transaction lookup errors should not be marked as dropped"),
+            Err(err) => err.to_string(),
+        };
+
+        assert!(err.contains("failed to check if transaction"));
+        assert!(err.contains("lookup unavailable"));
     }
 }
