@@ -107,6 +107,44 @@ contract IsolatedBlobhashesTest is Test {
     }
 }
 
+/// After reverting to a pre-blobhashes snapshot, `vm.blobhashes` set
+/// afterwards must be visible to a called contract in isolation. Without the
+/// tx_type fix, tx_type is stuck at EIP4844 after the revert; the isolation
+/// stack then detects EIP4844 on the *outer* tx, caches it, and the
+/// subsequent call to `vm.blobhashes` sets EIP4844 again, so the recorded
+/// cached_tx has EIP4844 + new hashes.
+/// forge-config: default.isolate = true
+contract BlobhashesTxTypeResetTest is Test {
+    BlobhashRecorder internal recorder;
+
+    function setUp() public {
+        recorder = new BlobhashRecorder();
+    }
+
+    function test_blobhashes_after_clear_revert_visible_in_isolation() public {
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = bytes32(uint256(0xC0FFEE));
+
+        // Snapshot with no blobhashes set (tx_type should revert to original).
+        uint256 id = vm.snapshotState();
+        vm.blobhashes(hashes);
+
+        bytes32[] memory got = vm.getBlobhashes();
+        assertEq(got.length, 1, "should have hashes before revert");
+
+        vm.revertToState(id);
+
+        // After revert, set fresh hashes and verify they're visible via
+        // an external call (exercises the env_overrides path in isolation).
+        bytes32[] memory fresh = new bytes32[](1);
+        fresh[0] = bytes32(uint256(0xDEAD));
+        vm.blobhashes(fresh);
+
+        recorder.record();
+        assertEq(recorder.hash(0), fresh[0], "fresh blobhash must be visible after revert");
+    }
+}
+
 contract BlobhashRecorder {
     mapping(uint256 => bytes32) public hash;
 

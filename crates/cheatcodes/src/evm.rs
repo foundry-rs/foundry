@@ -1376,7 +1376,16 @@ pub(super) fn get_nonce<FEN: FoundryEvmNetwork>(
 
 fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
     let evm_env = ccx.ecx.evm_clone();
-    let env_overrides = ccx.state.env_overrides.clone();
+    let mut env_overrides = ccx.state.env_overrides.clone();
+    // Capture the pre override tx values for fields that have no active override so
+    // that `sync_tx_after_env_override_restore` can restore them faithfully on
+    // revert instead of falling back to hard-coded zeros.
+    if env_overrides.gas_price.is_none() {
+        env_overrides.pre_override_gas_price = Some(ccx.ecx.tx().gas_price());
+    }
+    if env_overrides.blob_hashes.is_none() {
+        env_overrides.pre_override_tx_type = Some(ccx.ecx.tx().tx_type());
+    }
     let (db, inner) = ccx.ecx.db_journal_inner_mut();
     let id = db.snapshot_state(inner, &evm_env);
     // Capture the cheatcode-side env overrides alongside the backend
@@ -1396,7 +1405,13 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
 fn sync_tx_after_env_override_restore<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) {
     match ccx.state.env_overrides.gas_price {
         Some(p) if !ccx.state.in_isolation_context => ccx.ecx.tx_mut().set_gas_price(p),
-        None => ccx.ecx.tx_mut().set_gas_price(0),
+        None => {
+            // Restore the pre-override gas_price recorded at snapshot time.
+            // Falling back to 0 would be wrong when the tx had a non-zero price
+            // (e.g. --gas-price flag, foundry.toml, or fork mode).
+            let pre = ccx.state.env_overrides.pre_override_gas_price.unwrap_or(0);
+            ccx.ecx.tx_mut().set_gas_price(pre);
+        }
         _ => {}
     }
     match &ccx.state.env_overrides.blob_hashes {
@@ -1407,6 +1422,10 @@ fn sync_tx_after_env_override_restore<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCt
         }
         None => {
             ccx.ecx.tx_mut().set_blob_hashes(vec![]);
+            // Restore pre-override tx_type; without this it stays at EIP4844 even
+            // after the blob hashes are cleared.
+            let pre_type = ccx.state.env_overrides.pre_override_tx_type.unwrap_or(0);
+            ccx.ecx.tx_mut().set_tx_type(pre_type);
         }
         _ => {}
     }

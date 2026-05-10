@@ -305,6 +305,14 @@ pub struct EnvOverrides {
     pub gas_price: Option<u128>,
     /// Override for the `BLOBHASH` opcode (set via `vm.blobhashes`).
     pub blob_hashes: Option<Vec<B256>>,
+    /// `tx.gas_price` captured at snapshot time when no gas_price override was
+    /// active. `sync_tx_after_env_override_restore` uses this to restore the
+    /// real pre-override value (not hardcoded 0) on revert.
+    pub pre_override_gas_price: Option<u128>,
+    /// `tx.tx_type` captured at snapshot time when no blob_hashes override was
+    /// active. Prevents tx_type being stuck at EIP4844 after reverting from a
+    /// blobhashes-set state.
+    pub pre_override_tx_type: Option<u8>,
     /// The opcode about to run (captured in `step`, consumed in `step_end`),
     /// used to know what was just executed when `step_end` fires — at that
     /// point `interpreter.bytecode.opcode()` already points at the *next*

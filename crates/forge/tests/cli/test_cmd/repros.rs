@@ -968,3 +968,44 @@ Ran 1 test for test/Issue12803Multi.t.sol:Issue12803MultiTest
 "#
     ]]);
 });
+
+// Regression: `revertToState` taken before `vm.txGasPrice` must restore the
+// configured pre override gas price, not zero.
+forgetest_init!(issue_txgasprice_pre_override_snapshot, |prj, cmd| {
+    prj.update_config(|config| {
+        config.gas_price = Some(10_000_000_000); // 10 gwei
+    });
+    prj.add_test(
+        "TxGasPricePreOverride.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract TxGasPricePreOverrideSnapshotTest is Test {
+    function test_pre_override_gas_price_restored_after_revert() public {
+        uint256 pre_override = tx.gasprice;
+        assertEq(pre_override, 10 gwei, "pre override should be 10 gwei from config");
+
+        uint256 id = vm.snapshotState();
+        vm.txGasPrice(222 gwei);
+        assertEq(tx.gasprice, 222 gwei, "override should be visible");
+
+        vm.revertToState(id);
+        assertEq(tx.gasprice, pre_override, "should restore pre override gas price after revert");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--evm-version=cancun"]).assert_success().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/TxGasPricePreOverride.t.sol:TxGasPricePreOverrideSnapshotTest
+[PASS] test_pre_override_gas_price_restored_after_revert() ([GAS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
