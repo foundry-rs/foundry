@@ -231,6 +231,7 @@ pub fn spec_id_from_ethereum_hardfork(hardfork: EthereumHardfork) -> SpecId {
         EthereumHardfork::Bpo3 | EthereumHardfork::Bpo4 | EthereumHardfork::Bpo5 => {
             unimplemented!()
         }
+        EthereumHardfork::Amsterdam => SpecId::AMSTERDAM,
         f => unreachable!("unimplemented {}", f),
     }
 }
@@ -337,6 +338,7 @@ mod tests {
         assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Cancun), SpecId::CANCUN);
         assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Prague), SpecId::PRAGUE);
         assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Osaka), SpecId::OSAKA);
+        assert_eq!(spec_id_from_ethereum_hardfork(EthereumHardfork::Amsterdam), SpecId::AMSTERDAM);
     }
 
     #[test]
