@@ -8,13 +8,13 @@ use std::str::FromStr;
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
 use foundry_compilers::artifacts::EvmVersion;
-use monad_revm::MonadHardfork;
 use op_revm::OpSpecId;
 use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Serialize};
 
 pub use alloy_hardforks::EthereumHardfork;
 pub use alloy_op_hardforks::OpHardfork;
+pub use monad_revm::MonadHardfork;
 pub use tempo_chainspec::hardfork::TempoHardfork;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]

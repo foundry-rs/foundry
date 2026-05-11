@@ -12,7 +12,7 @@ use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-use foundry_evm::hardfork::{EthereumHardfork, OpHardfork};
+use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork, MonadHardfork, OpHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -239,18 +239,15 @@ impl NodeArgs {
             }
         }
 
-        let hardfork = match &self.hardfork {
-            Some(hf) => {
-                if self.evm.networks.is_optimism() {
-                    Some(OpHardfork::from_str(hf)?.into())
-                } else if self.evm.networks.is_tempo() {
-                    Some(TempoHardfork::from_str(hf)?.into())
-                } else {
-                    Some(EthereumHardfork::from_str(hf)?.into())
-                }
-            }
-            None => None,
-        };
+        let mut networks = self.evm.networks;
+        if let Some(chain_id) = self.evm.chain_id {
+            networks = networks.with_chain_id(u64::from(chain_id));
+        }
+        let hardfork = self
+            .hardfork
+            .as_deref()
+            .map(|hardfork| parse_hardfork(hardfork, &mut networks))
+            .transpose()?;
 
         Ok(NodeConfig::default()
             .with_gas_limit(self.evm.gas_limit)
@@ -305,7 +302,7 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_max_transactions(self.max_transactions)
             .with_max_persisted_states(self.max_persisted_states)
-            .with_networks(self.evm.networks)
+            .with_networks(networks)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
@@ -428,6 +425,27 @@ impl NodeArgs {
         .expect("Error setting Ctrl-C handler");
 
         Ok(handle.await??)
+    }
+}
+
+fn parse_hardfork(hardfork: &str, networks: &mut NetworkConfigs) -> eyre::Result<FoundryHardfork> {
+    if hardfork.contains(':') {
+        let hardfork = hardfork.parse().map_err(|err| eyre::eyre!("{err}"))?;
+        *networks =
+            networks.normalize_for_hardfork(hardfork).map_err(|err| eyre::eyre!("{err}"))?;
+        return Ok(hardfork);
+    }
+
+    if networks.is_optimism() {
+        Ok(OpHardfork::from_str(hardfork)?.into())
+    } else if networks.is_tempo() {
+        Ok(TempoHardfork::from_str(hardfork)?.into())
+    } else if networks.is_monad() {
+        Ok(MonadHardfork::from_str(hardfork)
+            .map_err(|err| eyre::eyre!("unknown monad hardfork '{hardfork}': {err:?}"))?
+            .into())
+    } else {
+        Ok(EthereumHardfork::from_str(hardfork)?.into())
     }
 }
 
@@ -910,6 +928,46 @@ mod tests {
             NodeArgs::parse_from(["anvil", "--optimism", "--hardfork", "Regolith"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, Some(OpHardfork::Regolith.into()));
+    }
+
+    #[test]
+    fn can_parse_monad_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--monad", "--hardfork", "MonadNine"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, Some(MonadHardfork::MonadNine.into()));
+        assert!(config.networks.is_monad());
+    }
+
+    #[test]
+    fn can_parse_namespaced_monad_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "monad:MonadEight"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, Some(MonadHardfork::MonadEight.into()));
+        assert!(config.networks.is_monad());
+    }
+
+    #[test]
+    fn monad_uses_monad_default_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--monad"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.hardfork, None);
+        assert_eq!(config.get_hardfork(), MonadHardfork::default().into());
+        assert!(config.networks.is_monad());
+    }
+
+    #[test]
+    fn monad_chain_id_selects_monad_network() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--chain-id", "143"]);
+        let config = args.into_node_config().unwrap();
+        assert_eq!(config.get_hardfork(), MonadHardfork::default().into());
+        assert!(config.networks.is_monad());
+    }
+
+    #[test]
+    fn rejects_conflicting_network_hardfork() {
+        let args =
+            NodeArgs::parse_from(["anvil", "--network", "tempo", "--hardfork", "monad:MonadNine"]);
+        assert!(args.into_node_config().is_err());
     }
 
     #[test]

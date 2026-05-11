@@ -37,7 +37,7 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    hardfork::{FoundryHardfork, OpHardfork},
+    hardfork::{FoundryHardfork, MonadHardfork, OpHardfork},
     utils::{
         apply_chain_and_block_specific_env_changes, block_env_from_header,
         get_blob_base_fee_update_fraction,
@@ -439,6 +439,12 @@ impl NodeConfig {
         Self { networks: NetworkConfigs::with_tempo(), ..Self::test() }
     }
 
+    /// Returns a test config with Monad network enabled.
+    #[doc(hidden)]
+    pub fn test_monad() -> Self {
+        Self { networks: NetworkConfigs::with_monad(), ..Self::test() }
+    }
+
     /// Returns a new config which does not initialize any accounts on node startup.
     pub fn empty_state() -> Self {
         Self {
@@ -583,6 +589,9 @@ impl NodeConfig {
         if self.networks.is_tempo() {
             return TempoHardfork::default().into();
         }
+        if self.networks.is_monad() {
+            return MonadHardfork::default().into();
+        }
         EthereumHardfork::default().into()
     }
 
@@ -634,7 +643,7 @@ impl NodeConfig {
     pub fn set_chain_id(&mut self, chain_id: Option<impl Into<u64>>) {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
-        self.networks.with_chain_id(chain_id);
+        self.networks = self.networks.with_chain_id(chain_id);
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(Some(chain_id));
         });
@@ -1075,6 +1084,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_tempo(mut self) -> Self {
         self.networks = NetworkConfigs::with_tempo();
+        self
+    }
+
+    /// Enable Monad network features.
+    #[must_use]
+    pub fn with_monad(mut self) -> Self {
+        self.networks = NetworkConfigs::with_monad();
         self
     }
 

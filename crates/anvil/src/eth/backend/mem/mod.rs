@@ -499,6 +499,11 @@ impl<N: Network> Backend<N> {
         self.networks.is_tempo()
     }
 
+    /// Returns true if Monad network mode is active
+    pub fn is_monad(&self) -> bool {
+        self.networks.is_monad()
+    }
+
     /// Returns the active hardfork.
     pub const fn hardfork(&self) -> FoundryHardfork {
         self.hardfork
