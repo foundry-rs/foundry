@@ -18,7 +18,7 @@ use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, BlockResponse, TransactionResponse};
-use alloy_primitives::{BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
+use alloy_primitives::{Address, BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
@@ -207,6 +207,8 @@ pub struct NodeConfig {
     /// The path where persisted states are cached (used with `max_persisted_states`).
     /// This does not affect the fork RPC cache location.
     pub cache_path: Option<PathBuf>,
+    /// Accounts to fund with specific balances on startup (address -> balance in wei).
+    pub funded_accounts: HashMap<Address, U256>,
 }
 
 impl NodeConfig {
@@ -513,6 +515,7 @@ impl Default for NodeConfig {
             networks: Default::default(),
             silent: false,
             cache_path: None,
+            funded_accounts: HashMap::default(),
         }
     }
 }
@@ -1109,6 +1112,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets accounts to fund with custom balances on startup.
+    #[must_use]
+    pub fn with_funded_accounts(mut self, accounts: HashMap<Address, U256>) -> Self {
+        self.funded_accounts = accounts;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -1233,6 +1243,15 @@ impl NodeConfig {
                 .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
                 .await
                 .wrap_err("failed to create default create2 deployer")?;
+        }
+
+        if !self.funded_accounts.is_empty() {
+            for (address, balance) in &self.funded_accounts {
+                backend
+                    .set_balance(*address, *balance)
+                    .await
+                    .wrap_err_with(|| format!("failed to fund account {address}"))?;
+            }
         }
 
         Ok(backend)
