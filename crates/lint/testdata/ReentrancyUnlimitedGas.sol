@@ -112,7 +112,14 @@ contract ReentrancyUnlimitedGas {
         }
     }
 
-    function guardedByNonReentrant(address payable receiver) external nonReentrant {
+    function guardedByModifier(address payable receiver) external basicModifier {
+        uint256 amount = balances[receiver];
+        (bool ok,) = receiver.call{value: amount}(""); //~NOTE: uncapped ETH transfer can be reentered before `balances` is updated
+        require(ok, "transfer failed");
+        balances[receiver] = 0;
+    }
+
+    constructor(address payable receiver) payable {
         uint256 amount = balances[receiver];
         (bool ok,) = receiver.call{value: amount}("");
         require(ok, "transfer failed");
@@ -124,7 +131,7 @@ contract ReentrancyUnlimitedGas {
         balances[msg.sender] = 0;
     }
 
-    modifier nonReentrant() {
+    modifier basicModifier() {
         _;
     }
 

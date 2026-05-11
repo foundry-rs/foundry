@@ -21,8 +21,8 @@ If the function uses stale state read before the call and updates that state onl
 recipient may be able to repeat or reorder effects.
 
 This lint is intentionally conservative to avoid noisy findings: it does not report event-only
-ordering issues, unrelated state writes, zero-value calls, functions guarded by a modifier named
-`nonReentrant`, or calls with an explicit gas cap.
+ordering issues, unrelated state writes, zero-value calls, constructor-time calls, or calls with an
+explicit gas cap.
 
 ## Example
 

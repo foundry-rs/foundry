@@ -23,7 +23,7 @@ impl<'hir> LateLintPass<'hir> for ReentrancyUnlimitedGas {
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {
-        if !is_entry_point(hir, func) {
+        if !is_entry_point(func) {
             return;
         }
 
@@ -35,14 +35,14 @@ impl<'hir> LateLintPass<'hir> for ReentrancyUnlimitedGas {
     }
 }
 
-fn is_entry_point(hir: &hir::Hir<'_>, func: &hir::Function<'_>) -> bool {
+fn is_entry_point(func: &hir::Function<'_>) -> bool {
     if matches!(func.state_mutability, StateMutability::Pure | StateMutability::View) {
         return false;
     }
-    if has_non_reentrant_modifier(hir, func) {
+    if func.is_constructor() {
         return false;
     }
-    if func.is_constructor() || func.is_special() {
+    if func.is_special() {
         return true;
     }
     func.kind.is_function() && matches!(func.visibility, Visibility::Public | Visibility::External)
@@ -440,14 +440,6 @@ impl FlowState {
             }
         }
     }
-}
-
-fn has_non_reentrant_modifier(hir: &hir::Hir<'_>, func: &hir::Function<'_>) -> bool {
-    func.modifiers.iter().any(|modifier| {
-        modifier.id.as_function().is_some_and(|func_id| {
-            hir.function(func_id).name.is_some_and(|name| name.as_str() == "nonReentrant")
-        })
-    })
 }
 
 fn is_uncapped_value_call(callee: &hir::Expr<'_>, opts: Option<&[hir::NamedArg<'_>]>) -> bool {
