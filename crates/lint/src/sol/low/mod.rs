@@ -6,7 +6,11 @@ use block_timestamp::BLOCK_TIMESTAMP;
 mod missing_zero_check;
 use missing_zero_check::MISSING_ZERO_CHECK;
 
+mod optimism_deprecation;
+use optimism_deprecation::OPTIMISM_DEPRECATION;
+
 register_lints!(
     (BlockTimestamp, early, (BLOCK_TIMESTAMP)),
     (MissingZeroCheck, late, (MISSING_ZERO_CHECK)),
+    (OptimismDeprecation, late, (OPTIMISM_DEPRECATION)),
 );

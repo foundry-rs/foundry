@@ -22,6 +22,7 @@ It helps enforce best practices and improve code quality within Foundry projects
 - **Low Severity:**
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
+  - `optimism-deprecation`: Flags usage of Optimism predeploy addresses removed in the Bedrock upgrade and GasPriceOracle functions that revert unconditionally post-Ecotone.
 - **Informational / Style Guide:**
   - `boolean-equal`: Boolean comparisons to constants should be simplified.
   - `too-many-digits`: Numeric literals with 5+ consecutive zeros are error-prone.

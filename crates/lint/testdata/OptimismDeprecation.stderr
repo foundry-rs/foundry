@@ -1,0 +1,64 @@
+warning[optimism-deprecation]: usage of a deprecated Optimism predeploy address or GasPriceOracle function that reverts post-Ecotone
+   ╭▸ ROOT/testdata/OptimismDeprecation.sol:LL:CC
+   │
+LL │ …     address target = 0x4200000000000000000000000000000000000000;
+   │                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/optimism-deprecation
+
+warning[optimism-deprecation]: usage of a deprecated Optimism predeploy address or GasPriceOracle function that reverts post-Ecotone
+   ╭▸ ROOT/testdata/OptimismDeprecation.sol:LL:CC
+   │
+LL │ …     return address(0x4200000000000000000000000000000000000001);
+   │                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/optimism-deprecation
+
+warning[optimism-deprecation]: usage of a deprecated Optimism predeploy address or GasPriceOracle function that reverts post-Ecotone
+   ╭▸ ROOT/testdata/OptimismDeprecation.sol:LL:CC
+   │
+LL │ …     IGasPriceOracle(0x4200000000000000000000000000000000000002).baseFee();
+   │                       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/optimism-deprecation
+
+warning[optimism-deprecation]: usage of a deprecated Optimism predeploy address or GasPriceOracle function that reverts post-Ecotone
+   ╭▸ ROOT/testdata/OptimismDeprecation.sol:LL:CC
+   │
+LL │ …     return IGasPriceOracle(0x4200000000000000000000000000000000000013).baseFee();
+   │                              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/optimism-deprecation
+
+warning[optimism-deprecation]: usage of a deprecated Optimism predeploy address or GasPriceOracle function that reverts post-Ecotone
+   ╭▸ ROOT/testdata/OptimismDeprecation.sol:LL:CC
+   │
+LL │ …     return IGasPriceOracle(0x420000000000000000000000000000000000000F).overhead();
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/optimism-deprecation
+
+warning[optimism-deprecation]: usage of a deprecated Optimism predeploy address or GasPriceOracle function that reverts post-Ecotone
+   ╭▸ ROOT/testdata/OptimismDeprecation.sol:LL:CC
+   │
+LL │ …     return IGasPriceOracle(0x420000000000000000000000000000000000000F).scalar();
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/optimism-deprecation
+
+warning[optimism-deprecation]: usage of a deprecated Optimism predeploy address or GasPriceOracle function that reverts post-Ecotone
+   ╭▸ ROOT/testdata/OptimismDeprecation.sol:LL:CC
+   │
+LL │ …     return IGasPriceOracle(0x420000000000000000000000000000000000000F).getL1GasUsed(data);
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/optimism-deprecation
+
+warning[optimism-deprecation]: usage of a deprecated Optimism predeploy address or GasPriceOracle function that reverts post-Ecotone
+   ╭▸ ROOT/testdata/OptimismDeprecation.sol:LL:CC
+   │
+LL │ …     return gpo.overhead();
+   │              ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/optimism-deprecation
+
