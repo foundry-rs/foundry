@@ -6,6 +6,7 @@
 //! * `resolve_inheritdoc`: pulls natspec from a base contract member.
 //! * `replace_inline_links`: rewrites `{Ident}` to markdown links.
 
+use path_slash::PathBufExt;
 use solar::{
     ast::{CommentKind, ContractKind, DocComments, FunctionKind, NatSpecKind, ParameterList},
     interface::source_map::FileName,
@@ -464,7 +465,6 @@ fn parse_inline_link(s: &str) -> Option<(usize, &str, Option<&str>, Option<&str>
 /// vocs uses root-relative links (starting with `/`). Forward slashes are
 /// always used so the URL stays correct on Windows.
 fn page_link(page: &Path, _current_page: &Path) -> String {
-    use path_slash::PathExt;
     // Strip .mdx extension and produce an absolute path from the pages root.
     let without_ext = page.with_extension("");
     format!("/{}", without_ext.to_slash_lossy())

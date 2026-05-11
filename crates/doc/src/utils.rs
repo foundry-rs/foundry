@@ -5,6 +5,7 @@
 //! * `read_deployments`: load `<dir>/<network>/<contract>.json` artifacts.
 
 use alloy_primitives::Address;
+use path_slash::PathExt;
 use serde::Deserialize;
 use std::{
     fs,
@@ -22,7 +23,6 @@ use std::{
 ///
 /// Path components are joined with `/` so the URL is well-formed on Windows.
 pub fn git_source_url(repo: &str, commit: &str, root: &Path, item_path: &Path) -> Option<String> {
-    use path_slash::PathExt;
     let repo = repo.trim_end_matches('/');
     let commit = if commit.is_empty() { "HEAD" } else { commit };
     let rel = item_path.strip_prefix(root).ok()?;
