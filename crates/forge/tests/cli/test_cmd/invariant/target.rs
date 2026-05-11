@@ -3,9 +3,12 @@ use super::*;
 forgetest!(filters, |prj, cmd| {
     prj.insert_vm();
     prj.insert_ds_test();
+    // Disable `assert_all` so this test exercises target-filter semantics without secondary
+    // invariants in the same suite being reported alongside the filtered target.
     prj.update_config(|config| {
         config.invariant.runs = 50;
         config.invariant.depth = 10;
+        config.invariant.assert_all = false;
     });
 
     prj.add_test(
