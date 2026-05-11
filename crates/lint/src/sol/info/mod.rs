@@ -42,6 +42,9 @@ use inline_assembly::INLINE_ASSEMBLY;
 mod redundant_base_constructor_call;
 use redundant_base_constructor_call::REDUNDANT_BASE_CONSTRUCTOR_CALL;
 
+mod missing_inheritance;
+use missing_inheritance::MISSING_INHERITANCE;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -58,4 +61,5 @@ register_lints!(
     (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
     (InlineAssembly, early, (INLINE_ASSEMBLY)),
     (RedundantBaseConstructorCall, late, (REDUNDANT_BASE_CONSTRUCTOR_CALL)),
+    (MissingInheritance, project, (MISSING_INHERITANCE)),
 );
