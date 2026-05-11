@@ -9,6 +9,7 @@ use alloy_consensus::{SignableTransaction, Signed, transaction::SignerRecoverabl
 use alloy_evm::{
     EthEvmFactory, Evm, EvmEnv, EvmFactory, FromRecoveredTx, precompiles::PrecompilesMap,
 };
+use alloy_monad_evm::MonadEvmFactory;
 use alloy_network::{Ethereum, Network};
 use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Address, Signature, U256};
@@ -36,10 +37,12 @@ use tempo_evm::evm::TempoEvmFactory;
 use tempo_revm::TempoHaltReason;
 
 pub mod eth;
+pub mod monad;
 pub mod op;
 pub mod tempo;
 
 pub use eth::*;
+pub use monad::*;
 pub use op::*;
 pub use tempo::*;
 
@@ -73,6 +76,13 @@ pub struct TempoEvmNetwork;
 impl FoundryEvmNetwork for TempoEvmNetwork {
     type Network = TempoNetwork;
     type EvmFactory = TempoEvmFactory;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MonadEvmNetwork;
+impl FoundryEvmNetwork for MonadEvmNetwork {
+    type Network = Ethereum;
+    type EvmFactory = MonadEvmFactory;
 }
 
 #[derive(Clone, Copy, Debug, Default)]

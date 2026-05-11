@@ -414,6 +414,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloy-monad-evm"
+version = "0.3.0"
+source = "git+https://github.com/category-labs/alloy-monad-evm.git?branch=relax-dependency-pins#0f9aba43418572b01c2a4ff0802f9d01e49e767d"
+dependencies = [
+ "alloy-evm",
+ "alloy-primitives",
+ "monad-revm",
+ "revm",
+]
+
+[[package]]
 name = "alloy-network"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5335,6 +5346,7 @@ dependencies = [
  "alloy-genesis",
  "alloy-hardforks",
  "alloy-json-abi",
+ "alloy-monad-evm",
  "alloy-network",
  "alloy-op-evm",
  "alloy-primitives",
@@ -5356,6 +5368,7 @@ dependencies = [
  "foundry-test-utils",
  "futures",
  "itertools 0.14.0",
+ "monad-revm",
  "op-alloy-consensus",
  "op-alloy-network",
  "op-alloy-rpc-types",

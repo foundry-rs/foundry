@@ -763,7 +763,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     ) -> Option<CallOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.cfg_mut().set_spec_and_mainnet_gas_params(spec_id);
+            ecx.set_spec_and_gas_params(spec_id);
         }
 
         let gas = Gas::new(call.gas_limit);
@@ -1706,7 +1706,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
     ) -> Option<CreateOutcome> {
         // Apply custom execution evm version.
         if let Some(spec_id) = self.execution_evm_version {
-            ecx.cfg_mut().set_spec_and_mainnet_gas_params(spec_id);
+            ecx.set_spec_and_gas_params(spec_id);
         }
 
         let gas = Gas::new(input.gas_limit());
