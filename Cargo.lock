@@ -4703,6 +4703,7 @@ dependencies = [
 name = "forge-lint"
 version = "1.7.2"
 dependencies = [
+ "alloy-primitives",
  "eyre",
  "foundry-common",
  "foundry-compilers",
