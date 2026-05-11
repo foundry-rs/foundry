@@ -947,9 +947,7 @@ forgetest!(build_emits_lint_failure_notice_on_failure, |prj, cmd| {
     // Primary action: report the bug. The link must deep-link into the structured BUG-FORM
     // template (component, version, repro, etc.) — not the bare `/issues/new` page.
     assert!(
-        stderr.contains(
-            "https://github.com/foundry-rs/foundry/issues/new?template=BUG-FORM.yml"
-        ),
+        stderr.contains("https://github.com/foundry-rs/foundry/issues/new?template=BUG-FORM.yml"),
         "missing bug-form template link in stderr:\n{stderr}"
     );
     // Output-attach hint helps the maintainer reproduce the failure.
@@ -962,10 +960,7 @@ forgetest!(build_emits_lint_failure_notice_on_failure, |prj, cmd| {
     // to temporarily turn lint-on-build off while waiting for the bug fix. The framing must
     // stay temporary — we never want to hand users a verbatim `lint_on_build = false` snippet
     // they can paste into their config and forget about.
-    assert!(
-        stderr.contains("--no-lint"),
-        "missing --no-lint hint in stderr:\n{stderr}"
-    );
+    assert!(stderr.contains("--no-lint"), "missing --no-lint hint in stderr:\n{stderr}");
     assert!(
         stderr.contains("temporarily"),
         "the lint-on-build escape hatch must be framed as temporary:\n{stderr}"

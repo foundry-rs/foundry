@@ -93,10 +93,7 @@ mod tests {
         dcx.err("boom").emit();
 
         let err = convert_solar_errors(&dcx).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "solar reported 1 error; see the diagnostic printed above"
-        );
+        assert_eq!(err.to_string(), "solar reported 1 error; see the diagnostic printed above");
     }
 
     #[test]
@@ -106,10 +103,7 @@ mod tests {
         dcx.err("boom 2").emit();
 
         let err = convert_solar_errors(&dcx).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "solar reported 2 errors; see the diagnostics printed above"
-        );
+        assert_eq!(err.to_string(), "solar reported 2 errors; see the diagnostics printed above");
     }
 
     #[test]
