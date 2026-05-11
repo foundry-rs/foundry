@@ -55,12 +55,20 @@ pub struct InstallArgs {
 
     #[command(flatten)]
     opts: DependencyInstallOpts,
+
+    /// Do not create a commit after installing dependencies.
+    ///
+    /// This is a noop flag kept for backwards compatibility, as installs no longer commit by
+    /// default. Use `--commit` to opt into creating a commit.
+    #[arg(long, hide = true)]
+    no_commit: bool,
 }
 
 impl_figment_convert_basic!(InstallArgs);
 
 impl InstallArgs {
     pub async fn run(self) -> Result<()> {
+        let _ = self.no_commit;
         let mut config = self.load_config()?;
         self.opts.install(&mut config, self.dependencies).await
     }
@@ -649,6 +657,14 @@ fn match_yn(input: String) -> bool {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn can_parse_no_commit_as_noop() {
+        let args = InstallArgs::parse_from(["forge", "--no-commit"]);
+
+        assert!(args.no_commit);
+        assert!(!args.opts.commit);
+    }
 
     #[test]
     #[ignore = "slow"]
