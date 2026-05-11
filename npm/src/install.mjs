@@ -6,7 +6,7 @@ import * as NodeHttp from 'node:http'
 import * as NodeHttps from 'node:https'
 import * as NodeModule from 'node:module'
 import * as NodePath from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import * as NodeZlib from 'node:zlib'
 
 import { BINARY_NAME, colors, getRegistryUrl, PLATFORM_SPECIFIC_PACKAGE_NAME, resolveTargetTool } from './const.mjs'
@@ -32,24 +32,27 @@ const require = NodeModule.createRequire(import.meta.url)
  * @param {string} purpose
  * @returns {void}
  */
-function ensureSecureUrl(urlString, purpose) {
+export function ensureSecureUrl(urlString, purpose) {
+  let url
   try {
-    const url = new URL(urlString)
-    if (url.protocol === 'http:') {
-      const allowInsecure = process.env.ALLOW_INSECURE_REGISTRY === 'true'
-      if (
-        // Accept typical localhost variants by default
-        !['localhost', '127.0.0.1', '::1'].includes(url.hostname)
-        && !allowInsecure
-      ) {
-        throw new Error(
-          `Refusing to use insecure HTTP for ${purpose}: ${urlString}. `
-            + `Set ALLOW_INSECURE_REGISTRY=true to override (not recommended).`
-        )
-      }
-    }
+    url = new URL(urlString)
   } catch {
     // If parsing fails, the request will fail so no need to do anything here
+    return
+  }
+
+  if (url.protocol === 'http:') {
+    const allowInsecure = process.env.ALLOW_INSECURE_REGISTRY === 'true'
+    if (
+      // Accept typical localhost variants by default
+      !['localhost', '127.0.0.1', '::1', '[::1]'].includes(url.hostname)
+      && !allowInsecure
+    ) {
+      throw new Error(
+        `Refusing to use insecure HTTP for ${purpose}: ${urlString}. `
+          + `Set ALLOW_INSECURE_REGISTRY=true to override (not recommended).`
+      )
+    }
   }
 }
 
@@ -349,15 +352,23 @@ function isPlatformSpecificPackageInstalled() {
   }
 }
 
-// Skip downloading the binary if it was already installed via optionalDependencies
-if (!isPlatformSpecificPackageInstalled()) {
-  console.log('Platform specific package not found. Will manually download binary.')
-  downloadBinaryFromRegistry().catch(error => {
-    console.error(colors.red, 'Failed to download binary:', error, colors.reset)
-    process.exitCode = 1
-  })
-} else {
-  console.log(
-    'Platform specific package already installed. Skipping manual download.'
-  )
+export function main() {
+  // Skip downloading the binary if it was already installed via optionalDependencies
+  if (!isPlatformSpecificPackageInstalled()) {
+    console.log('Platform specific package not found. Will manually download binary.')
+    downloadBinaryFromRegistry().catch(error => {
+      console.error(colors.red, 'Failed to download binary:', error, colors.reset)
+      process.exitCode = 1
+    })
+  } else {
+    console.log(
+      'Platform specific package already installed. Skipping manual download.'
+    )
+  }
 }
+
+function isMainModule() {
+  return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+}
+
+if (isMainModule()) main()
