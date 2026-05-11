@@ -53,6 +53,13 @@ pub struct InstallArgs {
     #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
 
+    /// Do not create a commit after installing.
+    ///
+    /// This is a noop flag kept for backwards compatibility, as `forge install` no longer commits
+    /// by default. Use `--commit` to opt into creating a commit.
+    #[arg(long, hide = true)]
+    pub no_commit: bool,
+
     #[command(flatten)]
     opts: DependencyInstallOpts,
 }

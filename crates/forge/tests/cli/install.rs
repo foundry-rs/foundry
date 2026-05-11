@@ -702,3 +702,8 @@ forgetest_init!(sync_on_forge_update, |prj, cmd| {
         "Lockfile rev should match resolved origin/master after update"
     );
 });
+
+// Checks that `--no-commit` is accepted as a noop backwards-compatibility flag
+forgetest_init!(can_install_with_no_commit, |_prj, cmd| {
+    cmd.args(["install", "--no-commit"]).assert_success();
+});
