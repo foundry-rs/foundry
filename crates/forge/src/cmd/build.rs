@@ -336,13 +336,6 @@ impl BuildArgs {
 
 /// Notice shown on lint-on-build failure; printed separately so it survives single-line
 /// cause-chain rendering.
-///
-/// Modeled on rustc's ICE notice: short, action-first, no prose. The reporting CTA comes first
-/// because `lint_on_build` is on by default and these failures are almost always bugs in the
-/// lint engine that we want to fix. The link goes straight to the bug-report form so the user
-/// lands on the structured template (component, version, repro, etc.). Two escape hatches are
-/// offered, both framed as temporary: `--no-lint` for the current run, and a docs link for
-/// turning lint-on-build off until the bug is fixed.
 const LINT_FAILURE_NOTICE: &str = "\
 note: internal lint engine failure (compilation itself succeeded).
 note: please file a bug report at
