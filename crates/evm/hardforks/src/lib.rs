@@ -75,7 +75,7 @@ impl FromStr for FoundryHardfork {
                 .map(Self::Tempo)
                 .map_err(|_| format!("unknown tempo hardfork '{fork_raw}'")),
 
-            "m" | "monad" => MonadHardfork::from_str(fork_raw.trim())
+            "m" | "monad" => MonadHardfork::from_str(&fork)
                 .map(Self::Monad)
                 .map_err(|_| format!("unknown monad hardfork '{fork_raw}'")),
             _ => EthereumHardfork::from_str(&fork)

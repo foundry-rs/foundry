@@ -7435,7 +7435,7 @@ dependencies = [
 [[package]]
 name = "monad-revm"
 version = "0.3.0"
-source = "git+https://github.com/category-labs/monad-revm.git?branch=v1.7.0-monad#81e36517d324dc59e64094ed3403b09528eadfd5"
+source = "git+https://github.com/category-labs/monad-revm.git?branch=v1.7.0-monad#785dc2151f686ae727125bb432970d5d5cb51474"
 dependencies = [
  "alloy-sol-types",
  "auto_impl",
