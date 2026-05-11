@@ -75,7 +75,7 @@ impl FromStr for FoundryHardfork {
                 .map(Self::Tempo)
                 .map_err(|_| format!("unknown tempo hardfork '{fork_raw}'")),
 
-            "m" | "monad" => monad_hardfork_from_str(fork_raw)
+            "m" | "monad" => MonadHardfork::from_str(fork_raw.trim())
                 .map(Self::Monad)
                 .map_err(|_| format!("unknown monad hardfork '{fork_raw}'")),
             _ => EthereumHardfork::from_str(&fork)
@@ -335,19 +335,6 @@ pub fn evm_spec_id<SPEC: FromEvmVersion>(evm_version: EvmVersion) -> SPEC {
     SPEC::from_evm_version(evm_version)
 }
 
-fn monad_hardfork_from_str(s: &str) -> Result<MonadHardfork, ()> {
-    if let Ok(spec) = MonadHardfork::from_str(s.trim()) {
-        return Ok(spec);
-    }
-
-    match s.trim().to_ascii_lowercase().replace(['-', '_', ' '], "").as_str() {
-        "monadeight" => Ok(MonadHardfork::MonadEight),
-        "monadnine" => Ok(MonadHardfork::MonadNine),
-        "monadnext" => Ok(MonadHardfork::MonadNext),
-        _ => Err(()),
-    }
-}
-
 /// Convert a `BlockNumberOrTag` into an `EthereumHardfork`.
 pub fn ethereum_hardfork_from_block_tag(block: impl Into<BlockNumberOrTag>) -> EthereumHardfork {
     let num = match block.into() {
@@ -397,7 +384,7 @@ mod tests {
             FoundryHardfork::Monad(MonadHardfork::MonadNine)
         );
         assert_eq!(
-            "m:monad-next".parse::<FoundryHardfork>().unwrap(),
+            "m:MonadNext".parse::<FoundryHardfork>().unwrap(),
             FoundryHardfork::Monad(MonadHardfork::MonadNext)
         );
     }
