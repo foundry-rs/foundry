@@ -229,7 +229,14 @@ impl CallArgs {
 
         let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
         let mut evm_opts = figment.extract::<EvmOpts>()?;
+        if let Some(chain) = self.chain {
+            evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
+        }
         evm_opts.infer_network_from_fork().await;
+
+        if evm_opts.networks.is_tempo() {
+            return self.run_with_network::<TempoEvmNetwork>().await;
+        }
 
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
