@@ -46,23 +46,18 @@ impl CallSequenceShrinker {
     }
 }
 
-/// Policy for how `run_shrink_loop` reacts when its predicate returns an error.
+/// How `run_shrink_loop` handles a predicate error.
 #[derive(Clone, Copy)]
 enum ShrinkErrorPolicy {
-    /// Treat the error as "bug still present" and keep the just-removed call removed.
-    /// Matches legacy `shrink_sequence` behavior.
+    /// "Bug still present" — keep the call removed (legacy `shrink_sequence` behavior).
     KeepRemoved,
-    /// Treat the error as "bug gone" and restore the just-removed call. Used by
-    /// `shrink_handler_sequence` so a replay error can never silently produce a shrunk
-    /// sequence that no longer reproduces the asserting anchor.
+    /// "Bug gone" — restore the call. Used by handler shrink so a replay error never
+    /// produces a sequence that no longer reproduces the anchor.
     RestoreRemoved,
 }
 
-/// Per-call decision returned by callbacks driving `replay_sequence`.
-///
-/// `Continue` hands the call result back so the helper can auto-commit non-reverted
-/// calls; `Stop` short-circuits replay with a caller-defined value. The variant is large
-/// because `RawCallResult` is, but only one lives on the stack per call iteration.
+/// Per-call decision returned by callbacks driving `replay_sequence`. `Continue` hands
+/// the result back so non-reverted calls auto-commit; `Stop` short-circuits.
 #[expect(clippy::large_enum_variant)]
 enum ReplayDecision<T, FEN: FoundryEvmNetwork> {
     Stop(T),
@@ -88,15 +83,8 @@ pub struct HandlerReplayOutcome {
     pub anchor_fingerprint: B256,
 }
 
-/// Resets the progress bar for shrinking.
-///
-/// Callers (e.g. `replay_error`) are responsible for invoking this before each shrink so the
-/// bar's length and message reflect the invariant currently being shrunk. Multi-invariant
-/// campaigns can call this once per invariant to display per-target progress.
-///
-/// `position` is `Some((current, total))` when more than one invariant needs shrinking in the
-/// same campaign; the bar then reads `[i/N] Shrink: <label>` so users can see how many
-/// shrinkers are left in the queue.
+/// Resets the progress bar before each shrink. `position = Some((i, N))` renders
+/// `[i/N] Shrink: <label>` for multi-invariant campaigns.
 pub(crate) fn reset_shrink_progress(
     config: &InvariantConfig,
     progress: Option<&ProgressBar>,
@@ -186,20 +174,17 @@ fn build_shrunk_sequence(
 }
 
 /// Shared shrink loop driver. Tries to drop each call; `predicate` returns whether the
-/// candidate still triggers the bug. `skip_idx` pins positions that must not be dropped
-/// (e.g. the asserting anchor for handler bugs).
-fn run_shrink_loop<P, S>(
+/// candidate still triggers the bug.
+fn run_shrink_loop<P>(
     config: &InvariantConfig,
     calls_len: usize,
     progress: Option<&ProgressBar>,
     early_exit: &EarlyExit,
     error_policy: ShrinkErrorPolicy,
-    skip_idx: S,
     mut predicate: P,
 ) -> CallSequenceShrinker
 where
     P: FnMut(&CallSequenceShrinker) -> eyre::Result<bool>,
-    S: Fn(usize) -> bool,
 {
     let mut shrinker = CallSequenceShrinker::new(calls_len);
     let mut call_idx = 0;
@@ -209,8 +194,8 @@ where
             break;
         }
 
-        // Pinned (e.g. anchor) or already-removed indices have nothing to drop.
-        if skip_idx(call_idx) || !shrinker.included_calls.test(call_idx) {
+        // Already-removed indices have nothing to drop.
+        if !shrinker.included_calls.test(call_idx) {
             call_idx = shrinker.next_index(call_idx);
             continue;
         }
@@ -269,7 +254,6 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
         // Preserve legacy invariant-shrink behavior: errors during candidate evaluation
         // do not roll back the removal.
         ShrinkErrorPolicy::KeepRemoved,
-        |_| false,
         |shrinker| {
             let (success, _, _) = check_sequence(
                 executor.clone(),
@@ -618,7 +602,6 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
     if calls.is_empty() {
         return Ok(vec![]);
     }
-    let anchor = calls.len() - 1;
     let accumulate_warp_roll = config.has_delay();
     let shrinker = run_shrink_loop(
         config,
@@ -626,7 +609,6 @@ pub(crate) fn shrink_handler_sequence<FEN: FoundryEvmNetwork>(
         progress,
         early_exit,
         ShrinkErrorPolicy::RestoreRemoved,
-        |idx| idx == anchor,
         |shrinker| {
             handler_sequence_still_triggers_bug(
                 executor.clone(),

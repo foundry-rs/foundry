@@ -408,43 +408,68 @@ impl TestStatus {
     }
 }
 
-/// A non-primary invariant that broke during an `assert_all` campaign.
-///
-/// Carries everything needed to render the failure on its own (matching how the primary is
-/// displayed) and to point users at the persisted counterexample for re-running.
+/// A failure surfaced by an invariant test campaign — either a broken `invariant_*`
+/// predicate ([`Self::Predicate`]) or a handler-side assertion bug ([`Self::Handler`]).
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct InvariantSecondaryFailure {
-    /// Invariant function name (e.g. `invariant_cond3`).
-    pub name: String,
-    /// Revert reason or assertion failure message.
-    pub reason: String,
-    /// Counterexample sequence, when one is available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub counterexample: Option<CounterExample>,
-    /// Path where the counterexample was persisted for re-running and shrinking.
-    pub persisted_path: std::path::PathBuf,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum InvariantFailure {
+    /// A broken `invariant_*` predicate.
+    Predicate {
+        /// Invariant function name (e.g. `invariant_cond3`).
+        name: String,
+        /// Revert reason or assertion failure message.
+        reason: String,
+        /// Counterexample sequence, when one is available.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        counterexample: Option<CounterExample>,
+        /// Path where the counterexample was persisted for re-running and shrinking.
+        persisted_path: std::path::PathBuf,
+        /// Whether this failure is the campaign anchor (the `--mt`-selected invariant).
+        /// When `true` and this is the only failure, the function name is omitted on the
+        /// `[FAIL: ...]` line (the trailing summary already identifies it).
+        #[serde(default)]
+        is_anchor: bool,
+    },
+    /// A handler-side assertion bug discovered during the campaign.
+    Handler {
+        /// Best-effort human-readable name of the failing call, e.g. `Counter::increment` or
+        /// `0xabc...::0x12345678` when the contract/function cannot be resolved.
+        name: String,
+        /// Address of the handler whose call asserted/reverted with an assertion.
+        reverter: Address,
+        /// 4-byte selector of the failing handler function.
+        selector: Selector,
+        /// Decoded revert/assert reason.
+        reason: String,
+        /// Counterexample sequence leading up to (and including) the failing call.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        counterexample: Option<CounterExample>,
+    },
 }
 
-/// A handler-side assertion bug discovered during an invariant campaign.
-///
-/// Distinct from invariant predicate violations: a handler assertion failure is a bug *inside* a
-/// fuzzed handler function (e.g. an `assert(false)` reachable with malformed input), not a
-/// violation of any `invariant_*` predicate. We surface them in their own report section so they
-/// don't get conflated with invariant failures.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct InvariantHandlerFailure {
-    /// Best-effort human-readable name of the failing call, e.g. `Counter::increment` or
-    /// `0xabc...::0x12345678` when the contract/function cannot be resolved.
-    pub name: String,
-    /// Address of the handler whose call asserted/reverted with an assertion.
-    pub reverter: Address,
-    /// 4-byte selector of the failing handler function.
-    pub selector: Selector,
-    /// Decoded revert/assert reason.
-    pub reason: String,
-    /// Counterexample sequence leading up to (and including) the failing call.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub counterexample: Option<CounterExample>,
+impl InvariantFailure {
+    /// Reason rendered on the `[FAIL: ...]` line.
+    pub fn reason(&self) -> &str {
+        match self {
+            Self::Predicate { reason, .. } | Self::Handler { reason, .. } => reason,
+        }
+    }
+
+    /// Human-readable name (invariant fn name, or `Contract::function` for handler bugs).
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Predicate { name, .. } | Self::Handler { name, .. } => name,
+        }
+    }
+
+    /// Counterexample sequence, when one is available.
+    pub const fn counterexample(&self) -> Option<&CounterExample> {
+        match self {
+            Self::Predicate { counterexample, .. } | Self::Handler { counterexample, .. } => {
+                counterexample.as_ref()
+            }
+        }
+    }
 }
 
 /// The result of an executed test.
@@ -460,13 +485,13 @@ pub struct TestResult {
     /// still be successful (i.e self.success == true) when it's expected to fail.
     pub reason: Option<String>,
 
-    /// Additional broken invariants beyond the primary (the one matched by `--mt`, or the only
-    /// one if no filter was applied).
+    /// All broken invariants in this campaign — anchor (`--mt` target) and any `assert_all`
+    /// secondaries — in source declaration order.
     ///
-    /// Each entry carries the invariant's name, the failure reason, an optional counterexample,
-    /// and the path where the counterexample has been persisted for shrinking on a subsequent run.
+    /// For invariant tests, this is the single source of truth used by the renderer.
+    /// `reason` and `counterexample` are not populated for invariant tests.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub invariant_secondary_failures: Vec<InvariantSecondaryFailure>,
+    pub invariant_failures: Vec<InvariantFailure>,
 
     /// Directory where invariant failure counterexamples have been persisted (set when one or more
     /// secondary invariant failures were written, so users can locate persisted counterexamples).
@@ -480,14 +505,11 @@ pub struct TestResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assert_all_invariant_count: Option<usize>,
 
-    /// Handler-side assertion bugs discovered during the campaign. Each entry is a unique
-    /// edge-coverage fingerprint (Medusa/Echidna semantics: distinct paths to the same
-    /// `(reverter, selector)` are recorded as separate bugs). Falls back to a
-    /// `(reverter, selector)` hash when edge coverage is unavailable. The report renders a
-    /// dedicated `Suite handlers:` section listing them so they don't get conflated with
-    /// invariant predicate violations.
+    /// Handler-side assertion bugs found during the campaign, deduped by
+    /// `(reverter, selector)` site (Medusa/Echidna semantics). Rendered in a dedicated
+    /// `Suite handlers:` section.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub invariant_handler_failures: Vec<InvariantHandlerFailure>,
+    pub invariant_handler_failures: Vec<InvariantFailure>,
 
     /// Minimal reproduction test case for failing test
     pub counterexample: Option<CounterExample>,
@@ -565,26 +587,13 @@ impl fmt::Display for TestResult {
                 s.yellow().fmt(f)
             }
             TestStatus::Failure => {
-                // Primary "broke" when we have a top-level reason or counterexample. Under
-                // `assert_all`, the test can fail purely via secondaries; in that case we
-                // skip the primary `[FAIL...]` header (would otherwise render hollow
-                // `[FAIL]`). For all other failure types (DS-style, plain unit, single
-                // invariant) we keep the original `[FAIL]`/`[FAIL: ...]` header.
-                //
-                // We also suppress the primary header when the test failed *only* because of
-                // handler-side assertion bugs (no primary, no secondaries) so the output is
-                // cleanly headed by the `Suite handlers:` section instead of a hollow
-                // `[FAIL]` block.
-                let primary_broke = self.reason.is_some() || self.counterexample.is_some();
-                let only_handler_failures = !primary_broke
-                    && self.invariant_secondary_failures.is_empty()
-                    && !self.invariant_handler_failures.is_empty();
-                let render_primary_header = (primary_broke
-                    || self.assert_all_invariant_count.is_none()
-                    || self.invariant_secondary_failures.is_empty())
-                    && !only_handler_failures;
                 let mut s = String::new();
-                if render_primary_header {
+                let has_handler_failures = !self.invariant_handler_failures.is_empty();
+                let is_invariant_failure =
+                    !self.invariant_failures.is_empty() || has_handler_failures;
+                if !is_invariant_failure {
+                    // Non-invariant failure (unit / fuzz / DS-style): render from the legacy
+                    // `reason` / `counterexample` fields.
                     s.push_str("[FAIL");
                     if let Some(reason) = &self.reason {
                         write!(s, ": {reason}").unwrap();
@@ -595,13 +604,12 @@ impl fmt::Display for TestResult {
                                 write!(s, "; counterexample: {ex}]").unwrap();
                             }
                             CounterExample::Sequence(original, sequence) => {
-                                s.push_str(
-                                    format!(
-                                        "]\n\t[Sequence] (original: {original}, shrunk: {})\n",
-                                        sequence.len()
-                                    )
-                                    .as_str(),
-                                );
+                                writeln!(
+                                    s,
+                                    "]\n\t[Sequence] (original: {original}, shrunk: {})",
+                                    sequence.len()
+                                )
+                                .unwrap();
                                 for ex in sequence {
                                     writeln!(s, "{ex}").unwrap();
                                 }
@@ -610,36 +618,32 @@ impl fmt::Display for TestResult {
                     } else {
                         s.push(']');
                     }
-                }
-                // Suite-level roll-up: when `assert_all` exercised more than one invariant in
-                // this campaign, print a single `Suite assert_all: <broken>/<total> invariants
-                // broken` line above the per-invariant blocks.
-                if let Some(total) = self.assert_all_invariant_count
-                    && total > 1
-                {
-                    let broken =
-                        usize::from(primary_broke) + self.invariant_secondary_failures.len();
-                    let prefix = if render_primary_header { "\n" } else { "" };
-                    writeln!(s, "{prefix}Suite assert_all: {broken}/{total} invariants broken")
-                        .unwrap();
-                }
-                if !self.invariant_secondary_failures.is_empty() {
-                    if self.assert_all_invariant_count.is_none() {
-                        writeln!(s).unwrap();
-                    }
-                    for failure in &self.invariant_secondary_failures {
-                        // If we have a (shrunk) counterexample, render the secondary the same
-                        // way the primary is rendered: `[FAIL: reason]\n\t[Sequence] ...`.
-                        // Otherwise fall back to the terse `name: reason` one-liner so the
-                        // structure is preserved for tools while keeping output compact.
+                } else if !self.invariant_failures.is_empty() {
+                    // Render every broken invariant uniformly. Show the function name on the
+                    // `[FAIL: ...]` line when there is >1 failure or the failure isn't the
+                    // anchor (the anchor's name is already on the trailing summary).
+                    let multi = self.invariant_failures.len() > 1;
+                    for (i, failure) in self.invariant_failures.iter().enumerate() {
+                        if i > 0 {
+                            s.push('\n');
+                        }
+                        // `is_anchor` only applies to predicate failures.
+                        let is_anchor =
+                            matches!(failure, InvariantFailure::Predicate { is_anchor: true, .. });
+                        let name_suffix = if multi || !is_anchor {
+                            format!(" {}", failure.name())
+                        } else {
+                            String::new()
+                        };
+                        // With a counterexample: full `[FAIL: reason]<suffix>\n\t[Sequence] ...`
+                        // block; otherwise just `[FAIL: reason]<suffix>`.
                         if let Some(CounterExample::Sequence(original, sequence)) =
-                            &failure.counterexample
+                            failure.counterexample()
                         {
                             writeln!(
                                 s,
-                                "[FAIL: {}] {}\n\t[Sequence] (original: {original}, shrunk: {})",
-                                failure.reason,
-                                failure.name,
+                                "[FAIL: {}]{name_suffix}\n\t[Sequence] (original: {original}, shrunk: {})",
+                                failure.reason(),
                                 sequence.len()
                             )
                             .unwrap();
@@ -647,32 +651,44 @@ impl fmt::Display for TestResult {
                                 writeln!(s, "{ex}").unwrap();
                             }
                         } else {
-                            writeln!(s, "{}: {}", failure.name, failure.reason).unwrap();
+                            write!(s, "[FAIL: {}]{name_suffix}", failure.reason()).unwrap();
                         }
                     }
-                    if let Some(dir) = &self.invariant_failure_dir {
-                        writeln!(
-                            s,
-                            "{} invariant failures persisted to {} — rerun to shrink",
-                            self.invariant_secondary_failures.len(),
-                            dir.display()
-                        )
-                        .unwrap();
-                    }
                 }
-                // Phase E: handler-side assertion bug section. Distinct from invariant
-                // predicate violations (rendered above) — these are bugs *inside* a fuzzed
-                // handler function, surfaced as `Suite handlers: N assertion bug(s) found`
-                // followed by one `[FAIL: ...]` block per unique edge-coverage fingerprint.
-                if !self.invariant_handler_failures.is_empty() {
-                    let prefix = if render_primary_header
-                        || self.assert_all_invariant_count.is_some()
-                        || !self.invariant_secondary_failures.is_empty()
-                    {
-                        "\n"
-                    } else {
-                        ""
-                    };
+                // Suite roll-up: `Suite assert_all: <broken>/<total>` for multi-invariant
+                // `assert_all` campaigns.
+                if let Some(total) = self.assert_all_invariant_count
+                    && total > 1
+                    && is_invariant_failure
+                {
+                    writeln!(
+                        s,
+                        "\nSuite assert_all: {}/{total} invariants broken",
+                        self.invariant_failures.len()
+                    )
+                    .unwrap();
+                }
+                // Persistence note only for multi-invariant campaigns; rendered after the
+                // `Suite assert_all:` roll-up.
+                if self.invariant_failures.len() > 1
+                    && let Some(dir) = &self.invariant_failure_dir
+                {
+                    writeln!(
+                        s,
+                        "{} invariant failure(s) persisted to {} — rerun to shrink",
+                        self.invariant_failures.len(),
+                        dir.display()
+                    )
+                    .unwrap();
+                }
+                // Handler-side assertion bug section: bugs *inside* a fuzzed handler function,
+                // distinct from the invariant predicate violations rendered above. Surfaced as
+                // `Suite handlers: N assertion bug(s) found` + one `[FAIL: ...]` per site.
+                if has_handler_failures {
+                    // Leading blank line if a preceding section was rendered.
+                    let preceded = !self.invariant_failures.is_empty()
+                        || matches!(self.assert_all_invariant_count, Some(t) if t > 1);
+                    let prefix = if preceded { "\n" } else { "" };
                     writeln!(
                         s,
                         "{prefix}Suite handlers: {} assertion bug(s) found",
@@ -681,13 +697,13 @@ impl fmt::Display for TestResult {
                     .unwrap();
                     for failure in &self.invariant_handler_failures {
                         if let Some(CounterExample::Sequence(original, sequence)) =
-                            &failure.counterexample
+                            failure.counterexample()
                         {
                             writeln!(
                                 s,
                                 "[FAIL: {}] {}\n\t[Sequence] (original: {original}, shrunk: {})",
-                                failure.reason,
-                                failure.name,
+                                failure.reason(),
+                                failure.name(),
                                 sequence.len()
                             )
                             .unwrap();
@@ -695,7 +711,7 @@ impl fmt::Display for TestResult {
                                 writeln!(s, "{ex}").unwrap();
                             }
                         } else {
-                            writeln!(s, "[FAIL: {}] {}", failure.reason, failure.name).unwrap();
+                            writeln!(s, "[FAIL: {}] {}", failure.reason(), failure.name()).unwrap();
                         }
                     }
                 }
@@ -901,11 +917,10 @@ impl TestResult {
         &mut self,
         gas_report_traces: Vec<Vec<CallTraceArena>>,
         success: bool,
-        reason: Option<String>,
-        invariant_secondary_failures: Vec<InvariantSecondaryFailure>,
+        invariant_failures: Vec<InvariantFailure>,
         invariant_failure_dir: Option<std::path::PathBuf>,
         assert_all_invariant_count: Option<usize>,
-        invariant_handler_failures: Vec<InvariantHandlerFailure>,
+        invariant_handler_failures: Vec<InvariantFailure>,
         counterexample: Option<CounterExample>,
         cases: Vec<FuzzedCases>,
         reverts: usize,
@@ -927,11 +942,13 @@ impl TestResult {
         } else {
             TestStatus::Failure
         };
-        self.reason = reason;
-        self.invariant_secondary_failures = invariant_secondary_failures;
+        self.invariant_failures = invariant_failures;
         self.invariant_failure_dir = invariant_failure_dir;
         self.assert_all_invariant_count = assert_all_invariant_count;
         self.invariant_handler_failures = invariant_handler_failures;
+        // `counterexample` is only used by the renderer for optimization mode (the "best
+        // sequence" rendered on success). Invariant check-mode failures live entirely in
+        // `invariant_failures`; `reason`/`counterexample` stay `None` for invariant tests.
         self.counterexample = counterexample;
         self.gas_report_traces = gas_report_traces;
     }

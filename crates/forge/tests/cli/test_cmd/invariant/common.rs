@@ -1940,15 +1940,15 @@ contract InvariantShrinkWithAssert is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
-[FAIL: wrong counter assert]
+[FAIL: wrong counter [..]][..]
 	[Sequence] (original: 2, shrunk: 2)
 ...
- invariant_with_assert() ([..])
+ invariant_with_[..]() ([..])
 ...
-[FAIL: wrong counter require]
+[FAIL: wrong counter [..]][..]
 	[Sequence] (original: 2, shrunk: 2)
 ...
- invariant_with_require() ([..])
+ invariant_with_[..]() ([..])
 ...
 "#]]);
 });

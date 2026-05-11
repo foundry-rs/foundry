@@ -1386,11 +1386,10 @@ contract CounterTest is Test {
 Compiler run successful!
 
 Ran 1 test for test/CounterTest.t.sol:CounterTest
-[FAIL: condition 3 met]
-	[Sequence] (original: 5, shrunk: 5)
+[FAIL: condition 3 met] invariant_cond3
+	[Sequence] (original: [..], shrunk: [..])
 ...
 
-Suite assert_all: 4/5 invariants broken
 [FAIL: condition 1 met] invariant_cond1
 	[Sequence] (original: [..], shrunk: [..])
 ...
@@ -1400,9 +1399,10 @@ Suite assert_all: 4/5 invariants broken
 [FAIL: EvmError: Revert] invariant_cond5
 	[Sequence] (original: [..], shrunk: [..])
 ...
-3 invariant failures persisted to cache/invariant/failures/CounterTest — rerun to shrink
-...
 
+Suite assert_all: 4/5 invariants broken
+4 invariant failure(s) persisted to cache/invariant/failures/CounterTest — rerun to shrink
+...
 "#]]);
 
     // Re-running the same target replays cond3's persisted counterexample and exits without
@@ -1486,6 +1486,65 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 Suite assert_all: 1/2 invariants broken
 ...
  invariant_breakable() (runs: [..], calls: [..], reverts: [..])
+...
+"#]]);
+});
+
+// Under `assert_all` + `fail_on_revert = false`, a handler `assert(false)` is now routed to
+// the dedicated `Suite handlers:` section instead of being attributed to every live invariant
+// (handler-side assertions are decoupled from invariant predicates — see PR #14482). The live
+// invariants stay green; the campaign keeps running for its full budget. See also
+// `handler::assert_all_handler_assertion_routed_to_handler_section`.
+forgetest_init!(assert_all_handler_assertion_does_not_attribute_to_live_invariants, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "AssertHandler.sol",
+        r#"
+contract AssertHandler {
+    uint256 public calls;
+
+    function alwaysAssert() external {
+        calls++;
+        assert(false);
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "AssertAllAssertTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {AssertHandler} from "../src/AssertHandler.sol";
+
+contract AssertAllAssertTest is Test {
+    AssertHandler handler;
+
+    function setUp() public {
+        handler = new AssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_a() public view {}
+
+    function invariant_b() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_a"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/AssertAllAssertTest.t.sol:AssertAllAssertTest
+...
+Suite assert_all: 0/2 invariants broken
+
+Suite handlers: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)] src/AssertHandler.sol:AssertHandler::alwaysAssert
+	[Sequence] (original: [..], shrunk: [..])
 ...
 "#]]);
 });
@@ -1730,8 +1789,10 @@ contract SecondaryOnlyTest is Test {
 
     cmd.args(["test", "--mt", "invariant_safe"]).assert_failure().stdout_eq(str![[r#"
 ...
-Suite assert_all: 1/2 invariants broken
 [FAIL: breakable broken] invariant_breakable
+...
+Suite assert_all: 1/2 invariants broken
+ invariant_safe() (runs: 5, calls: 250, reverts: 0)
 ...
 "#]]);
 });
