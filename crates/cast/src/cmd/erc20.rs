@@ -283,16 +283,6 @@ impl Erc20Subcommand {
         }
     }
 
-    const fn uses_browser_send(&self) -> bool {
-        match self {
-            Self::Transfer { send_tx, .. }
-            | Self::Approve { send_tx, .. }
-            | Self::Mint { send_tx, .. }
-            | Self::Burn { send_tx, .. } => send_tx.browser.browser,
-            _ => false,
-        }
-    }
-
     async fn should_use_tempo_network(
         &self,
         tempo_access_key: &Option<TempoAccessKeyConfig>,
@@ -303,12 +293,8 @@ impl Erc20Subcommand {
             return Ok(true);
         }
 
-        if self.uses_browser_send() {
-            let config = self.rpc_opts().load_config()?;
-            return Ok(get_chain(config.chain, &get_provider(&config)?).await?.is_tempo());
-        }
-
-        Ok(false)
+        let config = self.rpc_opts().load_config()?;
+        Ok(get_chain(config.chain, &get_provider(&config)?).await?.is_tempo())
     }
 
     pub async fn run(self) -> eyre::Result<()> {

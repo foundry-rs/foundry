@@ -10,7 +10,7 @@ use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
+    utils::{LoadConfig, get_chain, get_provider, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -101,10 +101,15 @@ impl SendTxArgs {
         let (signer, tempo_access_key) = self.send_tx.eth.wallet.maybe_signer().await?;
 
         if tempo_access_key.is_some() || self.tx.tempo.is_tempo() {
-            self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
-        } else {
-            self.run_generic::<Ethereum>(signer, None).await
+            return self.run_generic::<TempoNetwork>(signer, tempo_access_key).await;
         }
+
+        let config = self.send_tx.eth.rpc.load_config()?;
+        if get_chain(config.chain, &get_provider(&config)?).await?.is_tempo() {
+            return self.run_generic::<TempoNetwork>(signer, tempo_access_key).await;
+        }
+
+        self.run_generic::<Ethereum>(signer, None).await
     }
 
     pub async fn run_generic<N: Network>(

@@ -12,7 +12,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
-    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
+    utils::{LoadConfig, get_chain, get_provider, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use std::{path::PathBuf, str::FromStr};
@@ -84,10 +84,15 @@ pub enum MakeTxSubcommands {
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
         if self.tx.tempo.is_tempo() {
-            self.run_generic::<TempoNetwork>().await
-        } else {
-            self.run_generic::<Ethereum>().await
+            return self.run_generic::<TempoNetwork>().await;
         }
+
+        let config = self.eth.rpc.load_config()?;
+        if get_chain(config.chain, &get_provider(&config)?).await?.is_tempo() {
+            return self.run_generic::<TempoNetwork>().await;
+        }
+
+        self.run_generic::<Ethereum>().await
     }
 
     pub async fn run_generic<N: Network>(self) -> Result<()>

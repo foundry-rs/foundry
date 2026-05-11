@@ -9,7 +9,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
-    utils::LoadConfig,
+    utils::{LoadConfig, get_chain, get_provider},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use foundry_wallets::WalletOpts;
@@ -60,10 +60,15 @@ pub struct AccessListArgs {
 impl AccessListArgs {
     pub async fn run(self) -> Result<()> {
         if self.tx.tempo.is_tempo() {
-            self.run_with_network::<TempoNetwork>().await
-        } else {
-            self.run_with_network::<Ethereum>().await
+            return self.run_with_network::<TempoNetwork>().await;
         }
+
+        let config = self.rpc.load_config()?;
+        if get_chain(config.chain, &get_provider(&config)?).await?.is_tempo() {
+            return self.run_with_network::<TempoNetwork>().await;
+        }
+
+        self.run_with_network::<Ethereum>().await
     }
 
     pub async fn run_with_network<N: Network + Unpin>(self) -> Result<()>
