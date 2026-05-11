@@ -175,6 +175,16 @@ impl SessionProvider {
         self
     }
 
+    /// Address that funds payments for this provider.
+    pub fn funding_wallet_address(&self) -> Address {
+        self.signing_mode.from_address(self.signer.address())
+    }
+
+    /// Chain ID from the selected wallet key, when known.
+    pub const fn key_chain_id(&self) -> Option<u64> {
+        self.key_chain_id
+    }
+
     /// Set the chain ID and currencies from the key entry used to initialize
     /// this provider. Used to reject challenges for incompatible chains/currencies.
     /// When `chain_id` is `None` (e.g. env var key), chain filtering is skipped.

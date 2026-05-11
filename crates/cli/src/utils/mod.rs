@@ -230,7 +230,7 @@ pub async fn fetch_abi_from_etherscan(
     let client = config
         .get_etherscan_config_with_chain(Some(chain))?
         .ok_or_else(|| eyre::eyre!("No Etherscan API key configured for chain {chain}"))?
-        .into_client()?;
+        .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
     let source = client.contract_source_code(address).await?;
     source.items.into_iter().map(|item| Ok((item.abi()?, item.contract_name))).collect()
 }
@@ -706,19 +706,54 @@ ignore them in the `.gitignore` file."
             .map(|url| Some(url.trim().to_string()))
     }
 
-    pub fn cmd(self) -> Command {
+    /// Returns the fetch URL of the given remote, or `None` if it doesn't exist.
+    pub fn remote_url(self, name: &str) -> Option<String> {
+        self.cmd().args(["remote", "get-url", name]).get_stdout_lossy().ok()
+    }
+
+    /// Sets the branch for a submodule.
+    pub fn set_submodule_branch(self, rel_path: &Path, branch: &str) -> Result<()> {
+        self.cmd().args(["submodule", "set-branch", "-b", branch]).arg(rel_path).exec().map(drop)
+    }
+
+    /// Returns remote branch names as a newline-separated string.
+    pub fn remote_branches(self) -> Result<String> {
+        self.cmd().args(["branch", "-r"]).get_stdout_lossy()
+    }
+
+    /// Fetches a branch from origin and checks out a local tracking branch at the given path.
+    pub fn fetch_and_checkout_branch(self, at: &Path, branch: &str) -> Result<()> {
+        self.cmd_at(at).args(["fetch", "origin", branch]).exec().map_err(|e| {
+            eyre::eyre!(
+                "Could not fetch latest changes for branch {branch} in submodule at {}: {e}",
+                at.display()
+            )
+        })?;
+        self.cmd_at(at)
+            .args(["checkout", "-B", branch, &format!("origin/{branch}")])
+            .exec()
+            .map_err(|e| {
+                eyre::eyre!(
+                    "Could not checkout and track origin/{branch} for submodule at {}: {e}",
+                    at.display()
+                )
+            })?;
+        Ok(())
+    }
+
+    fn cmd(self) -> Command {
         let mut cmd = Self::cmd_no_root();
         cmd.current_dir(self.root);
         cmd
     }
 
-    pub fn cmd_at(self, path: &Path) -> Command {
+    fn cmd_at(self, path: &Path) -> Command {
         let mut cmd = Self::cmd_no_root();
         cmd.current_dir(path);
         cmd
     }
 
-    pub fn cmd_no_root() -> Command {
+    fn cmd_no_root() -> Command {
         let mut cmd = Command::new("git");
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         cmd

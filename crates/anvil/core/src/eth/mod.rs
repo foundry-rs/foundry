@@ -18,7 +18,8 @@ use alloy_rpc_types::{
 };
 use alloy_serde::WithOtherFields;
 use foundry_common::serde_helpers::{
-    deserialize_number, deserialize_number_opt, deserialize_number_seq,
+    deserialize_number, deserialize_number_opt, deserialize_number_seq, deserialize_u64_seq,
+    deserialize_u64_seq_opt,
 };
 
 pub mod block;
@@ -397,7 +398,11 @@ pub enum EthRequest {
     SetAutomine(bool),
 
     /// Sets the mining behavior to interval with the given interval (seconds)
-    #[serde(rename = "anvil_setIntervalMining", alias = "evm_setIntervalMining", with = "sequence")]
+    #[serde(
+        rename = "anvil_setIntervalMining",
+        alias = "evm_setIntervalMining",
+        deserialize_with = "deserialize_u64_seq"
+    )]
     SetIntervalMining(u64),
 
     /// Gets the current mining behavior
@@ -480,7 +485,7 @@ pub enum EthRequest {
     SetCoinbase(Address),
 
     /// Sets the chain id
-    #[serde(rename = "anvil_setChainId", with = "sequence")]
+    #[serde(rename = "anvil_setChainId", deserialize_with = "deserialize_u64_seq")]
     SetChainId(u64),
 
     /// Enable or disable logging
@@ -579,7 +584,7 @@ pub enum EthRequest {
     /// Similar to `evm_increaseTime` but takes sets a block timestamp `interval`.
     ///
     /// The timestamp of the next block will be computed as `lastBlock_timestamp + interval`.
-    #[serde(rename = "anvil_setBlockTimestampInterval", with = "sequence")]
+    #[serde(rename = "anvil_setBlockTimestampInterval", deserialize_with = "deserialize_u64_seq")]
     EvmSetBlockTimeStampInterval(u64),
 
     /// Removes a `anvil_setBlockTimestampInterval` if it exists
@@ -722,7 +727,7 @@ pub enum EthRequest {
     Reorg(ReorgOptions),
 
     /// Rollback the chain
-    #[serde(rename = "anvil_rollback", with = "sequence")]
+    #[serde(rename = "anvil_rollback", deserialize_with = "deserialize_u64_seq_opt")]
     Rollback(Option<u64>),
 
     /// Sets the fee token for a user (Tempo-only)
@@ -924,6 +929,68 @@ mod tests {
         let s = r#"{"method": "evm_setIntervalMining", "params": [100]}"#;
         let value: serde_json::Value = serde_json::from_str(s).unwrap();
         let _req = serde_json::from_value::<EthRequest>(value).unwrap();
+    }
+
+    #[test]
+    fn test_numeric_params_accept_hex_and_decimal_strings() {
+        // Standard JSON-RPC clients (web3.js / ethers / viem) encode numeric params as hex
+        // strings. These methods keep their internal `u64` types, but use a U64-aware
+        // deserializer for RPC params.
+        let parse = |s: &str| {
+            let value: serde_json::Value = serde_json::from_str(s).unwrap();
+            serde_json::from_value::<EthRequest>(value)
+        };
+
+        match parse(r#"{"method": "anvil_setIntervalMining", "params": [100]}"#).unwrap() {
+            EthRequest::SetIntervalMining(interval) => assert_eq!(interval, 100),
+            req => panic!("unexpected request: {req:?}"),
+        }
+        match parse(r#"{"method": "anvil_setIntervalMining", "params": 100}"#).unwrap() {
+            EthRequest::SetIntervalMining(interval) => assert_eq!(interval, 100),
+            req => panic!("unexpected request: {req:?}"),
+        }
+        match parse(r#"{"method": "anvil_setIntervalMining", "params": ["0x64"]}"#).unwrap() {
+            EthRequest::SetIntervalMining(interval) => assert_eq!(interval, 100),
+            req => panic!("unexpected request: {req:?}"),
+        }
+        match parse(r#"{"method": "anvil_setIntervalMining", "params": "0x64"}"#).unwrap() {
+            EthRequest::SetIntervalMining(interval) => assert_eq!(interval, 100),
+            req => panic!("unexpected request: {req:?}"),
+        }
+        match parse(r#"{"method": "anvil_setIntervalMining", "params": ["100"]}"#).unwrap() {
+            EthRequest::SetIntervalMining(interval) => assert_eq!(interval, 100),
+            req => panic!("unexpected request: {req:?}"),
+        }
+        match parse(r#"{"method": "anvil_setIntervalMining", "params": "100"}"#).unwrap() {
+            EthRequest::SetIntervalMining(interval) => assert_eq!(interval, 100),
+            req => panic!("unexpected request: {req:?}"),
+        }
+        match parse(r#"{"method": "anvil_setChainId", "params": ["0x539"]}"#).unwrap() {
+            EthRequest::SetChainId(chain_id) => assert_eq!(chain_id, 1337),
+            req => panic!("unexpected request: {req:?}"),
+        }
+        match parse(r#"{"method": "anvil_setBlockTimestampInterval", "params": ["0xa"]}"#).unwrap()
+        {
+            EthRequest::EvmSetBlockTimeStampInterval(interval) => assert_eq!(interval, 10),
+            req => panic!("unexpected request: {req:?}"),
+        }
+        match parse(r#"{"method": "anvil_rollback", "params": ["0x5"]}"#).unwrap() {
+            EthRequest::Rollback(depth) => assert_eq!(depth, Some(5)),
+            req => panic!("unexpected request: {req:?}"),
+        }
+        match parse(r#"{"method": "anvil_rollback", "params": []}"#).unwrap() {
+            EthRequest::Rollback(depth) => assert_eq!(depth, None),
+            req => panic!("unexpected request: {req:?}"),
+        }
+        match parse(r#"{"method": "anvil_rollback", "params": [null]}"#).unwrap() {
+            EthRequest::Rollback(depth) => assert_eq!(depth, None),
+            req => panic!("unexpected request: {req:?}"),
+        }
+
+        assert!(
+            parse(r#"{"method": "anvil_setIntervalMining", "params": ["0x10000000000000000"]}"#)
+                .is_err()
+        );
     }
 
     #[test]
