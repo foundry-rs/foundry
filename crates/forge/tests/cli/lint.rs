@@ -914,15 +914,8 @@ Warning (2018): Function state mutability can be restricted to pure
     ]]);
 });
 
-// When the post-build lint step itself fails (e.g. an unhandled lint engine edge case, or a
-// real lint tripping the configured `deny` threshold), `forge build` must surface a notice
-// that leads with a "report this bug" CTA and offers `--no-lint` only as a temporary
-// workaround. We trigger the failure deterministically by combining a source with a lint note
-// (mixed-case variable) and `deny = notes`, which makes the linter return Err — exactly the
-// same exit path an unhandled solar edge case would take.
-//
-// `COUNTER_A` is used because it produces zero solc warnings, so `deny.warnings()`
-// (which propagates to the project compiler) does not block compilation before lint runs.
+// `deny = notes` + an info-level lint forces the linter to return Err, exercising the same
+// failure-notice path an unhandled solar edge case would take.
 forgetest!(build_emits_lint_failure_notice_on_failure, |prj, cmd| {
     prj.add_source("CounterAWithLints", COUNTER_A);
 
@@ -957,15 +950,12 @@ Context:
 "#]]);
 });
 
-// `--no-lint` must not print the failure notice, since the lint step is skipped entirely.
-// Same setup as `build_emits_lint_failure_notice_on_failure` so the only difference is the
-// `--no-lint` flag.
+// Same setup as above, but `--no-lint` skips the lint step so the failure notice never fires.
 forgetest!(build_no_lint_flag_does_not_emit_lint_failure_notice, |prj, cmd| {
     prj.add_source("CounterAWithLints", COUNTER_A);
 
     prj.update_config(|config| {
         config.lint.severity = vec![LintSeverity::Info];
-        // Without `--no-lint` this would trigger the lint Err path and the failure notice.
         config.deny = DenyLevel::Notes;
     });
 
