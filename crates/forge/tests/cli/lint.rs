@@ -914,6 +914,110 @@ Warning (2018): Function state mutability can be restricted to pure
     ]]);
 });
 
+// When the post-build lint step itself fails (e.g. an unhandled lint engine edge case, or a
+// real lint tripping the configured `deny` threshold), `forge build` must surface a notice
+// that leads with a "report this bug" CTA and offers `--no-lint` only as a temporary
+// workaround. We trigger the failure deterministically by combining a source with a lint note
+// (mixed-case variable) and `deny = notes`, which makes the linter return Err — exactly the
+// same exit path an unhandled solar edge case would take.
+//
+// `COUNTER_A` is used because it produces zero solc warnings, so `deny.warnings()`
+// (which propagates to the project compiler) does not block compilation before lint runs.
+forgetest!(build_emits_lint_failure_notice_on_failure, |prj, cmd| {
+    prj.add_source("CounterAWithLints", COUNTER_A);
+
+    prj.update_config(|config| {
+        config.lint.severity = vec![LintSeverity::Info];
+        config.deny = DenyLevel::Notes;
+    });
+
+    let output = cmd.arg("build").assert_failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    // Header makes clear compilation succeeded; the failure is internal to the lint engine.
+    assert!(
+        stderr.contains("internal lint engine failure"),
+        "missing failure header in stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("compilation itself succeeded"),
+        "header should clarify compilation succeeded:\n{stderr}"
+    );
+
+    // Primary action: report the bug. The link must deep-link into the structured BUG-FORM
+    // template (component, version, repro, etc.) — not the bare `/issues/new` page.
+    assert!(
+        stderr.contains(
+            "https://github.com/foundry-rs/foundry/issues/new?template=BUG-FORM.yml"
+        ),
+        "missing bug-form template link in stderr:\n{stderr}"
+    );
+    // Output-attach hint helps the maintainer reproduce the failure.
+    assert!(
+        stderr.contains("attach the full output above"),
+        "should tell the user to attach the full output above in stderr:\n{stderr}"
+    );
+
+    // Secondary action: per-run bypass with `--no-lint`, plus a docs link for users who want
+    // to temporarily turn lint-on-build off while waiting for the bug fix. The framing must
+    // stay temporary — we never want to hand users a verbatim `lint_on_build = false` snippet
+    // they can paste into their config and forget about.
+    assert!(
+        stderr.contains("--no-lint"),
+        "missing --no-lint hint in stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("temporarily"),
+        "the lint-on-build escape hatch must be framed as temporary:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("https://getfoundry.sh/forge/linting#disable-linting-on-build"),
+        "missing docs link for disabling lint on build:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("lint_on_build = false"),
+        "notice must not hand the user a paste-and-forget config snippet:\n{stderr}"
+    );
+
+    // We don't ask for a backtrace — the failure is an `eyre` error from a single call site,
+    // so a backtrace adds noise without signal.
+    assert!(
+        !stderr.contains("RUST_BACKTRACE"),
+        "notice must not ask for a backtrace; it adds no signal here:\n{stderr}"
+    );
+
+    // Underlying error is still wrapped so the cause chain stays intact.
+    assert!(
+        stderr.contains("post-build lint step failed"),
+        "missing wrap_err context in stderr:\n{stderr}"
+    );
+});
+
+// `--no-lint` must not print the failure notice, since the lint step is skipped entirely.
+// Same setup as `build_emits_lint_failure_notice_on_failure` so the only difference is the
+// `--no-lint` flag.
+forgetest!(build_no_lint_flag_does_not_emit_lint_failure_notice, |prj, cmd| {
+    prj.add_source("CounterAWithLints", COUNTER_A);
+
+    prj.update_config(|config| {
+        config.lint.severity = vec![LintSeverity::Info];
+        // Without `--no-lint` this would trigger the lint Err path and the failure notice.
+        config.deny = DenyLevel::Notes;
+    });
+
+    let output = cmd.args(["build", "--no-lint"]).assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    assert!(
+        !stderr.contains("internal lint engine failure"),
+        "failure notice must not appear when lint is skipped:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("BUG-FORM.yml"),
+        "bug-report CTA must not appear when lint is skipped:\n{stderr}"
+    );
+});
+
 forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);

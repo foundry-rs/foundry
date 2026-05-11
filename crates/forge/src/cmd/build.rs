@@ -336,10 +336,21 @@ impl BuildArgs {
 
 /// Notice shown on lint-on-build failure; printed separately so it survives single-line
 /// cause-chain rendering.
+///
+/// Modeled on rustc's ICE notice: short, action-first, no prose. The reporting CTA comes first
+/// because `lint_on_build` is on by default and these failures are almost always bugs in the
+/// lint engine that we want to fix. The link goes straight to the bug-report form so the user
+/// lands on the structured template (component, version, repro, etc.). Two escape hatches are
+/// offered, both framed as temporary: `--no-lint` for the current run, and a docs link for
+/// turning lint-on-build off until the bug is fixed.
 const LINT_FAILURE_NOTICE: &str = "\
-note: post-build lint failed, but compilation succeeded.
-bypass with `--no-lint` or set `lint_on_build = false` under `[lint]` in foundry.toml
-docs: https://getfoundry.sh/forge/linting#disable-linting-on-build
+note: internal lint engine failure (compilation itself succeeded).
+note: please file a bug report at
+      https://github.com/foundry-rs/foundry/issues/new?template=BUG-FORM.yml
+      and attach the full output above.
+help: rerun with `--no-lint` to skip linting for this build, or consider temporarily
+      disabling forge lint on build:
+      https://getfoundry.sh/forge/linting#disable-linting-on-build
 ";
 
 fn emit_lint_failure_notice() {

@@ -61,6 +61,7 @@ pub fn convert_solar_errors(dcx: &solar::interface::diagnostics::DiagCtxt) -> ey
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solar::interface::diagnostics::{DiagCtxt, SilentEmitter};
 
     #[test]
     fn dedups_contained() {
@@ -78,5 +79,42 @@ mod tests {
         assert_eq!(full, "my error: hello; hello");
         let chained = display_chain(&ee);
         assert_eq!(chained, "my error: hello");
+    }
+
+    /// Regression test for the "non-buffer emitter" branch of [`convert_solar_errors`].
+    ///
+    /// Simulates an unhandled solar edge case: the linter installs a non-buffer (stderr-style)
+    /// emitter, errors are emitted to it, and only the count is recoverable afterwards. The
+    /// returned eyre error must reference the count and direct the user to the diagnostics that
+    /// were already printed above.
+    #[test]
+    fn solar_non_buffer_emitter_singular() {
+        let dcx = DiagCtxt::new(Box::new(SilentEmitter::new_silent()));
+        dcx.err("boom").emit();
+
+        let err = convert_solar_errors(&dcx).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "solar reported 1 error; see the diagnostic printed above"
+        );
+    }
+
+    #[test]
+    fn solar_non_buffer_emitter_plural() {
+        let dcx = DiagCtxt::new(Box::new(SilentEmitter::new_silent()));
+        dcx.err("boom 1").emit();
+        dcx.err("boom 2").emit();
+
+        let err = convert_solar_errors(&dcx).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "solar reported 2 errors; see the diagnostics printed above"
+        );
+    }
+
+    #[test]
+    fn solar_no_errors_is_ok() {
+        let dcx = DiagCtxt::new(Box::new(SilentEmitter::new_silent()));
+        assert!(convert_solar_errors(&dcx).is_ok());
     }
 }
