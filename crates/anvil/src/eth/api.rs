@@ -2186,7 +2186,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_sendTransaction`
     pub async fn send_transaction(
         &self,
-        request: WithOtherFields<TransactionRequest>,
+        mut request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
@@ -2194,6 +2194,13 @@ impl EthApi<FoundryNetwork> {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
+
+        // Prefill gas limit with estimated gas and bubble up estimation errors directly.
+        if request.as_ref().gas_limit().is_none() {
+            let estimated_gas =
+                self.estimate_gas(request.clone(), None, EvmOverrides::default()).await?;
+            request.as_mut().set_gas_limit(estimated_gas.to());
+        }
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
@@ -3457,7 +3464,8 @@ impl EthApi<FoundryNetwork> {
                     EvmOverrides::default(),
                 )
                 .await
-                .map(|v| v as u64)?,
+                .map(|v| v as u64)
+                .unwrap_or(self.backend.gas_limit()),
             );
         }
 
