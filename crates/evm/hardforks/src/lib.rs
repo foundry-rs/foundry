@@ -108,10 +108,7 @@ impl FoundryHardfork {
             Self::Ethereum(h) => format!("{h}"),
             Self::Optimism(h) => format!("{h}"),
             Self::Tempo(h) => format!("{h}"),
-            Self::Monad(h) => {
-                let name: &'static str = (*h).into();
-                name.to_string()
-            }
+            Self::Monad(h) => format!("{h}"),
         }
     }
 
