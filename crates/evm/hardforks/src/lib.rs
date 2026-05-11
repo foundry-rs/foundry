@@ -8,7 +8,7 @@ use std::str::FromStr;
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
 use foundry_compilers::artifacts::EvmVersion;
-use monad_revm::MonadSpecId;
+use monad_revm::MonadHardfork;
 use op_revm::OpSpecId;
 use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,7 @@ pub enum FoundryHardfork {
     Ethereum(EthereumHardfork),
     Optimism(OpHardfork),
     Tempo(TempoHardfork),
-    Monad(MonadSpecId),
+    Monad(MonadHardfork),
 }
 
 impl From<FoundryHardfork> for String {
@@ -78,7 +78,7 @@ impl FromStr for FoundryHardfork {
                 .map(Self::Tempo)
                 .map_err(|_| format!("unknown tempo hardfork '{fork_raw}'")),
 
-            "m" | "monad" => monad_spec_from_str(fork_raw)
+            "m" | "monad" => monad_hardfork_from_str(fork_raw)
                 .map(Self::Monad)
                 .map_err(|_| format!("unknown monad hardfork '{fork_raw}'")),
             _ => EthereumHardfork::from_str(&fork)
@@ -101,7 +101,7 @@ impl FoundryHardfork {
         Self::Tempo(h)
     }
 
-    pub const fn monad(h: MonadSpecId) -> Self {
+    pub const fn monad(h: MonadHardfork) -> Self {
         Self::Monad(h)
     }
 
@@ -192,13 +192,13 @@ impl From<FoundryHardfork> for TempoHardfork {
     }
 }
 
-impl From<MonadSpecId> for FoundryHardfork {
-    fn from(value: MonadSpecId) -> Self {
+impl From<MonadHardfork> for FoundryHardfork {
+    fn from(value: MonadHardfork) -> Self {
         Self::Monad(value)
     }
 }
 
-impl From<FoundryHardfork> for MonadSpecId {
+impl From<FoundryHardfork> for MonadHardfork {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
             FoundryHardfork::Monad(hardfork) => hardfork,
@@ -327,7 +327,7 @@ impl FromEvmVersion for TempoHardfork {
     }
 }
 
-impl FromEvmVersion for MonadSpecId {
+impl FromEvmVersion for MonadHardfork {
     fn from_evm_version(_: EvmVersion) -> Self {
         Self::default()
     }
@@ -338,15 +338,15 @@ pub fn evm_spec_id<SPEC: FromEvmVersion>(evm_version: EvmVersion) -> SPEC {
     SPEC::from_evm_version(evm_version)
 }
 
-fn monad_spec_from_str(s: &str) -> Result<MonadSpecId, ()> {
-    if let Ok(spec) = MonadSpecId::from_str(s.trim()) {
+fn monad_hardfork_from_str(s: &str) -> Result<MonadHardfork, ()> {
+    if let Ok(spec) = MonadHardfork::from_str(s.trim()) {
         return Ok(spec);
     }
 
     match s.trim().to_ascii_lowercase().replace(['-', '_', ' '], "").as_str() {
-        "monadeight" => Ok(MonadSpecId::MonadEight),
-        "monadnine" => Ok(MonadSpecId::MonadNine),
-        "monadnext" => Ok(MonadSpecId::MonadNext),
+        "monadeight" => Ok(MonadHardfork::MonadEight),
+        "monadnine" => Ok(MonadHardfork::MonadNine),
+        "monadnext" => Ok(MonadHardfork::MonadNext),
         _ => Err(()),
     }
 }
@@ -397,31 +397,31 @@ mod tests {
     fn test_monad_hardfork_parsing() {
         assert_eq!(
             "monad:MonadNine".parse::<FoundryHardfork>().unwrap(),
-            FoundryHardfork::Monad(MonadSpecId::MonadNine)
+            FoundryHardfork::Monad(MonadHardfork::MonadNine)
         );
         assert_eq!(
             "m:monad-next".parse::<FoundryHardfork>().unwrap(),
-            FoundryHardfork::Monad(MonadSpecId::MonadNext)
+            FoundryHardfork::Monad(MonadHardfork::MonadNext)
         );
     }
 
     #[test]
     fn test_monad_hardfork_serialization() {
         assert_eq!(
-            String::from(FoundryHardfork::Monad(MonadSpecId::MonadEight)),
+            String::from(FoundryHardfork::Monad(MonadHardfork::MonadEight)),
             "monad:MonadEight"
         );
-        assert_eq!(FoundryHardfork::Monad(MonadSpecId::MonadEight).namespace(), Some("monad"));
-        assert_eq!(FoundryHardfork::Monad(MonadSpecId::MonadEight).name(), "MonadEight");
+        assert_eq!(FoundryHardfork::Monad(MonadHardfork::MonadEight).namespace(), Some("monad"));
+        assert_eq!(FoundryHardfork::Monad(MonadHardfork::MonadEight).name(), "MonadEight");
     }
 
     #[test]
-    fn test_monad_spec_id_mapping() {
-        assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadSpecId::MonadEight)), SpecId::PRAGUE);
-        assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadSpecId::MonadNine)), SpecId::OSAKA);
+    fn test_monad_hardfork_spec_id_mapping() {
+        assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadHardfork::MonadEight)), SpecId::PRAGUE);
+        assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadHardfork::MonadNine)), SpecId::OSAKA);
         assert_eq!(
-            MonadSpecId::from(FoundryHardfork::Monad(MonadSpecId::MonadNext)),
-            MonadSpecId::MonadNext
+            MonadHardfork::from(FoundryHardfork::Monad(MonadHardfork::MonadNext)),
+            MonadHardfork::MonadNext
         );
     }
 
