@@ -48,7 +48,10 @@ use foundry_evm::{
     backend::Backend,
     core::{
         Breakpoints, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{
+            EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, OpEvmNetwork, TempoEvmNetwork,
+            TxEnvFor,
+        },
         tempo::PATH_USD_ADDRESS,
     },
     executors::ExecutorBuilder,
@@ -321,6 +324,8 @@ impl ScriptArgs {
                 broadcasted.verify().await?;
             }
             Ok(())
+        } else if evm_opts.networks.is_monad() {
+            self.run_generic_script::<MonadEvmNetwork>(config, evm_opts).await
         } else if evm_opts.networks.is_optimism() {
             self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await
         } else {
