@@ -41,8 +41,8 @@ use foundry_config::{
 use foundry_debugger::Debugger;
 use foundry_evm::{
     core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, SpecFor, TempoEvmNetwork,
-        TxEnvFor,
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, OpEvmNetwork, SpecFor,
+        TempoEvmNetwork, TxEnvFor,
     },
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
@@ -345,6 +345,17 @@ impl TestArgs {
         // Dispatch based on network type.
         let (libraries, mut outcome) = if evm_opts.networks.is_tempo() {
             self.build_and_run_tests::<TempoEvmNetwork>(
+                config,
+                evm_opts,
+                output,
+                filter,
+                coverage,
+                should_debug,
+                decode_internal,
+            )
+            .await?
+        } else if evm_opts.networks.is_monad() {
+            self.build_and_run_tests::<MonadEvmNetwork>(
                 config,
                 evm_opts,
                 output,

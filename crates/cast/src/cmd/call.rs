@@ -36,7 +36,7 @@ use foundry_config::{
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, MonadEvmNetwork, OpEvmNetwork, TempoEvmNetwork},
     },
     executors::TracingExecutor,
     opts::EvmOpts,
@@ -228,7 +228,9 @@ impl CallArgs {
             let mut evm_opts = figment.extract::<EvmOpts>()?;
             evm_opts.infer_network_from_fork().await;
 
-            if evm_opts.networks.is_optimism() {
+            if evm_opts.networks.is_monad() {
+                self.run_with_network::<MonadEvmNetwork>().await
+            } else if evm_opts.networks.is_optimism() {
                 self.run_with_network::<OpEvmNetwork>().await
             } else {
                 self.run_with_network::<EthEvmNetwork>().await
