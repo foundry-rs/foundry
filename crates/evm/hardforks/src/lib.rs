@@ -1,6 +1,6 @@
 //! EVM hardfork definitions for Foundry.
 //!
-//! Provides [`FoundryHardfork`], a unified enum over Ethereum, Optimism, and Tempo hardforks
+//! Provides [`FoundryHardfork`], a unified enum over Ethereum, Optimism, Tempo, and Monad hardforks
 //! with `FromStr`/`Serialize`/`Deserialize` support for CLI and config usage.
 
 use std::str::FromStr;
@@ -8,6 +8,7 @@ use std::str::FromStr;
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
 use foundry_compilers::artifacts::EvmVersion;
+use monad_revm::MonadSpecId;
 use op_revm::OpSpecId;
 use revm::primitives::hardfork::SpecId;
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,7 @@ pub enum FoundryHardfork {
     Ethereum(EthereumHardfork),
     Optimism(OpHardfork),
     Tempo(TempoHardfork),
+    Monad(MonadSpecId),
 }
 
 impl From<FoundryHardfork> for String {
@@ -30,6 +32,10 @@ impl From<FoundryHardfork> for String {
             FoundryHardfork::Ethereum(h) => format!("{h}"),
             FoundryHardfork::Optimism(h) => format!("optimism:{h}"),
             FoundryHardfork::Tempo(h) => format!("tempo:{h}"),
+            FoundryHardfork::Monad(h) => {
+                let name: &'static str = h.into();
+                format!("monad:{name}")
+            }
         }
     }
 }
@@ -71,6 +77,10 @@ impl FromStr for FoundryHardfork {
             "t" | "tempo" => TempoHardfork::from_str(&fork)
                 .map(Self::Tempo)
                 .map_err(|_| format!("unknown tempo hardfork '{fork_raw}'")),
+
+            "m" | "monad" => monad_spec_from_str(fork_raw)
+                .map(Self::Monad)
+                .map_err(|_| format!("unknown monad hardfork '{fork_raw}'")),
             _ => EthereumHardfork::from_str(&fork)
                 .map(Self::Ethereum)
                 .map_err(|_| format!("unknown hardfork '{raw}'")),
@@ -91,12 +101,20 @@ impl FoundryHardfork {
         Self::Tempo(h)
     }
 
+    pub const fn monad(h: MonadSpecId) -> Self {
+        Self::Monad(h)
+    }
+
     /// Returns the hardfork name without a network namespace prefix.
     pub fn name(&self) -> String {
         match self {
             Self::Ethereum(h) => format!("{h}"),
             Self::Optimism(h) => format!("{h}"),
             Self::Tempo(h) => format!("{h}"),
+            Self::Monad(h) => {
+                let name: &'static str = (*h).into();
+                name.to_string()
+            }
         }
     }
 
@@ -108,6 +126,7 @@ impl FoundryHardfork {
             Self::Ethereum(_) => None,
             Self::Optimism(_) => Some("optimism"),
             Self::Tempo(_) => Some("tempo"),
+            Self::Monad(_) => Some("monad"),
         }
     }
 
@@ -173,12 +192,28 @@ impl From<FoundryHardfork> for TempoHardfork {
     }
 }
 
+impl From<MonadSpecId> for FoundryHardfork {
+    fn from(value: MonadSpecId) -> Self {
+        Self::Monad(value)
+    }
+}
+
+impl From<FoundryHardfork> for MonadSpecId {
+    fn from(fork: FoundryHardfork) -> Self {
+        match fork {
+            FoundryHardfork::Monad(hardfork) => hardfork,
+            _ => Self::default(),
+        }
+    }
+}
+
 impl From<FoundryHardfork> for SpecId {
     fn from(fork: FoundryHardfork) -> Self {
         match fork {
             FoundryHardfork::Ethereum(hardfork) => spec_id_from_ethereum_hardfork(hardfork),
             FoundryHardfork::Optimism(hardfork) => spec_id_from_optimism_hardfork(hardfork).into(),
             FoundryHardfork::Tempo(hardfork) => hardfork.into(),
+            FoundryHardfork::Monad(hardfork) => hardfork.into(),
         }
     }
 }
@@ -292,9 +327,28 @@ impl FromEvmVersion for TempoHardfork {
     }
 }
 
+impl FromEvmVersion for MonadSpecId {
+    fn from_evm_version(_: EvmVersion) -> Self {
+        Self::default()
+    }
+}
+
 /// Returns the spec id derived from [`EvmVersion`] for a given spec type.
 pub fn evm_spec_id<SPEC: FromEvmVersion>(evm_version: EvmVersion) -> SPEC {
     SPEC::from_evm_version(evm_version)
+}
+
+fn monad_spec_from_str(s: &str) -> Result<MonadSpecId, ()> {
+    if let Ok(spec) = MonadSpecId::from_str(s.trim()) {
+        return Ok(spec);
+    }
+
+    match s.trim().to_ascii_lowercase().replace(['-', '_', ' '], "").as_str() {
+        "monadeight" => Ok(MonadSpecId::MonadEight),
+        "monadnine" => Ok(MonadSpecId::MonadNine),
+        "monadnext" => Ok(MonadSpecId::MonadNext),
+        _ => Err(()),
+    }
 }
 
 /// Convert a `BlockNumberOrTag` into an `EthereumHardfork`.
@@ -337,6 +391,38 @@ mod tests {
     #[test]
     fn test_tempo_spec_id_mapping() {
         assert_eq!(SpecId::from(TempoHardfork::Genesis), SpecId::OSAKA);
+    }
+
+    #[test]
+    fn test_monad_hardfork_parsing() {
+        assert_eq!(
+            "monad:MonadNine".parse::<FoundryHardfork>().unwrap(),
+            FoundryHardfork::Monad(MonadSpecId::MonadNine)
+        );
+        assert_eq!(
+            "m:monad-next".parse::<FoundryHardfork>().unwrap(),
+            FoundryHardfork::Monad(MonadSpecId::MonadNext)
+        );
+    }
+
+    #[test]
+    fn test_monad_hardfork_serialization() {
+        assert_eq!(
+            String::from(FoundryHardfork::Monad(MonadSpecId::MonadEight)),
+            "monad:MonadEight"
+        );
+        assert_eq!(FoundryHardfork::Monad(MonadSpecId::MonadEight).namespace(), Some("monad"));
+        assert_eq!(FoundryHardfork::Monad(MonadSpecId::MonadEight).name(), "MonadEight");
+    }
+
+    #[test]
+    fn test_monad_spec_id_mapping() {
+        assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadSpecId::MonadEight)), SpecId::PRAGUE);
+        assert_eq!(SpecId::from(FoundryHardfork::Monad(MonadSpecId::MonadNine)), SpecId::OSAKA);
+        assert_eq!(
+            MonadSpecId::from(FoundryHardfork::Monad(MonadSpecId::MonadNext)),
+            MonadSpecId::MonadNext
+        );
     }
 
     #[test]

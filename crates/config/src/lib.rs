@@ -5084,6 +5084,32 @@ mod tests {
     }
 
     #[test]
+    fn monad_hardfork_infers_monad_network() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                hardfork = "monad:MonadNine"
+            "#,
+            )?;
+
+            let config = Config::load().unwrap();
+            assert_eq!(
+                config.hardfork.as_ref().and_then(FoundryHardfork::namespace),
+                Some("monad")
+            );
+            assert_eq!(
+                config.hardfork.as_ref().map(FoundryHardfork::name).as_deref(),
+                Some("MonadNine")
+            );
+            assert!(config.networks.is_monad());
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn hardfork_rejects_conflicting_network() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(

@@ -5426,6 +5426,7 @@ dependencies = [
  "alloy-op-hardforks",
  "alloy-rpc-types",
  "foundry-compilers",
+ "monad-revm",
  "op-revm",
  "revm",
  "serde",
@@ -7429,6 +7430,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "monad-revm"
+version = "0.3.0"
+source = "git+https://github.com/category-labs/monad-revm.git?branch=v1.7.0-monad#cdf5a4222ac3fd0c21a51283b0242c73f1f93828"
+dependencies = [
+ "alloy-sol-types",
+ "auto_impl",
+ "revm",
+ "revm-interpreter",
+ "serde",
 ]
 
 [[package]]
