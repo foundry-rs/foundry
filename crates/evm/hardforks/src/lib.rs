@@ -32,10 +32,7 @@ impl From<FoundryHardfork> for String {
             FoundryHardfork::Ethereum(h) => format!("{h}"),
             FoundryHardfork::Optimism(h) => format!("optimism:{h}"),
             FoundryHardfork::Tempo(h) => format!("tempo:{h}"),
-            FoundryHardfork::Monad(h) => {
-                let name: &'static str = h.into();
-                format!("monad:{name}")
-            }
+            FoundryHardfork::Monad(h) => format!("monad:{h}"),
         }
     }
 }
