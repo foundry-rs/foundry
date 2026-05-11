@@ -416,7 +416,7 @@ dependencies = [
 [[package]]
 name = "alloy-monad-evm"
 version = "0.3.0"
-source = "git+https://github.com/category-labs/alloy-monad-evm.git?branch=relax-dependency-pins#0f9aba43418572b01c2a4ff0802f9d01e49e767d"
+source = "git+https://github.com/category-labs/alloy-monad-evm.git?branch=v1.7.0-monad#36dea0199cab741938e9a7f94091e215852e13ec"
 dependencies = [
  "alloy-evm",
  "alloy-primitives",
