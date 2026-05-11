@@ -1317,3 +1317,541 @@ contract CheckIntervalInlineTest is Test {
 "#
     ]]);
 });
+
+forgetest_init!(assert_all, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 10;
+        config.invariant.depth = 100;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function work(uint256 x) public {
+        if (x % 2 != 0 && x < 9000) {
+            cond++;
+        } else {
+            revert();
+        }
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "CounterTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function invariant_cond1() public view {
+        require(counter.cond() < 10, "condition 1 met");
+    }
+
+    function invariant_cond2() public view {
+        require(counter.cond() < 15, "condition 2 met");
+    }
+
+    function invariant_cond3() public view {
+        require(counter.cond() < 5, "condition 3 met");
+    }
+
+    function invariant_cond4() public view {
+        require(counter.cond() < 111111, "condition 4 met");
+    }
+
+    /// forge-config: default.invariant.fail-on-revert = true
+    function invariant_cond5() public view {
+        require(counter.cond() < 111111, "condition 5 met");
+    }
+}
+   "#,
+    );
+
+    // Check that running single `invariant_cond3` test continue to run until it breaks all other
+    // invariants.
+    cmd.args(["test", "--mt", "invariant_cond3"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/CounterTest.t.sol:CounterTest
+[FAIL: condition 3 met] invariant_cond3
+	[Sequence] (original: [..], shrunk: [..])
+...
+
+[FAIL: condition 1 met] invariant_cond1
+	[Sequence] (original: [..], shrunk: [..])
+...
+[FAIL: condition 2 met] invariant_cond2
+	[Sequence] (original: [..], shrunk: [..])
+...
+[FAIL: EvmError: Revert] invariant_cond5
+	[Sequence] (original: [..], shrunk: [..])
+...
+
+Suite assert_all: 4/5 invariants broken
+4 invariant failure(s) persisted to cache/invariant/failures/CounterTest — rerun to shrink
+...
+"#]]);
+
+    // Re-running the same target replays cond3's persisted counterexample and exits without
+    // running a fresh campaign — only the primary block, no secondary [FAIL]s, no
+    // persisted-failures footer, no `Suite assert_all` roll-up. A stderr warning calls out
+    // the three secondaries that were skipped because they already have persisted failures
+    // (cond1, cond2, cond5) so users aren't surprised they're missing from the report.
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_cond3"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+Warning: test/CounterTest.t.sol:CounterTest: 3 invariant(s) skipped due to persisted failures: invariant_cond1, invariant_cond2, invariant_cond5. Run `forge clean` or delete files in [..]/cache/invariant/failures/CounterTest to re-include.
+...
+"#]])
+        .stdout_eq(str![[r#"
+No files changed, compilation skipped
+...
+Ran 1 test for test/CounterTest.t.sol:CounterTest
+[FAIL: condition 3 met]
+	[Sequence] (original: 5, shrunk: 5)
+...
+ invariant_cond3() (runs: 1, calls: 1, reverts: [..])
+...
+"#]]);
+});
+
+// Verifies that when `assert_all` is on but only the primary invariant breaks, the secondary
+// path stays empty: no `[FAIL: ...] <name>` blocks for the passing invariants and no
+// persisted-failures footer.
+forgetest_init!(assert_all_only_primary, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 50;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "CounterTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function invariant_breakable() public view {
+        require(counter.cond() < 3, "primary broken");
+    }
+
+    function invariant_safe() public view {
+        require(counter.cond() < 1000000, "should never break");
+    }
+}
+   "#,
+    );
+
+    // Only the primary breaks: a single [FAIL] block, the suite roll-up shows 1/2, and the
+    // never-broken `invariant_safe` produces no output.
+    cmd.args(["test", "--mt", "invariant_breakable"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/CounterTest.t.sol:CounterTest
+[FAIL: primary broken]
+	[Sequence] (original: [..], shrunk: [..])
+...
+
+Suite assert_all: 1/2 invariants broken
+...
+ invariant_breakable() (runs: [..], calls: [..], reverts: [..])
+...
+"#]]);
+});
+
+// Under `assert_all` + `fail_on_revert = false`, a handler `assert(false)` must still
+// fail the campaign and be attributed to every live invariant.
+forgetest_init!(assert_all_assertion_failure_breaks_all_live_invariants, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "AssertHandler.sol",
+        r#"
+contract AssertHandler {
+    uint256 public calls;
+
+    function alwaysAssert() external {
+        calls++;
+        assert(false);
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "AssertAllAssertTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {AssertHandler} from "../src/AssertHandler.sol";
+
+contract AssertAllAssertTest is Test {
+    AssertHandler handler;
+
+    function setUp() public {
+        handler = new AssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_a() public view {}
+
+    function invariant_b() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_a"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/AssertAllAssertTest.t.sol:AssertAllAssertTest
+[FAIL: panic: assertion failed (0x01)] invariant_a
+	[Sequence] (original: [..], shrunk: [..])
+...
+
+[FAIL: panic: assertion failed (0x01)] invariant_b
+	[Sequence] (original: [..], shrunk: [..])
+...
+
+Suite assert_all: 2/2 invariants broken
+...
+"#]]);
+});
+
+// Verifies the startup warning fired by `assert_all + optimization mode`: when the primary
+// invariant returns int256 (optimization target) the campaign loop can't also evaluate boolean
+// invariants, so they are silently dropped. Without the warning users wouldn't realize their
+// other `invariant_*` properties never ran.
+forgetest_init!(assert_all_optimization_mode_warning, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 5;
+        // assert_all defaults to true post-rename, but make it explicit for the test's intent.
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "OptHandler.sol",
+        r#"
+contract OptHandler {
+    uint256 public x;
+    function bump(uint256 v) public { x += v % 100; }
+}
+   "#,
+    );
+    prj.add_test(
+        "OptTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {OptHandler} from "../src/OptHandler.sol";
+
+contract OptTest is Test {
+    OptHandler h;
+    function setUp() public { h = new OptHandler(); targetContract(address(h)); }
+
+    /// @notice Optimization invariant — primary maximizes int256.
+    function invariant_maximize() public view returns (int256) {
+        return int256(h.x());
+    }
+
+    function invariant_boolean_one() public view {
+        require(h.x() < 1000000, "should not exceed 1M");
+    }
+
+    function invariant_boolean_two() public view {
+        require(h.x() != 42, "magic value not allowed");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_maximize"])
+        .assert_success()
+        .stderr_eq(str![[r#"
+...
+Warning: test/OptTest.t.sol:OptTest: assert_all is on but invariant_maximize is an optimization invariant; 2 boolean invariant(s) skipped: invariant_boolean_one, invariant_boolean_two. Move them to a separate contract to run them.
+...
+"#]])
+        .stdout_eq(str![[r#"
+...
+[PASS]
+	[Best sequence] [..]
+...
+ invariant_maximize() (best: [..], runs: 1, calls: 5)
+...
+"#]]);
+});
+
+// Verifies that under `assert_all` the `afterInvariant` hook keeps running on later runs even
+// after an earlier invariant has already broken.
+forgetest_init!(assert_all_after_invariant_runs_after_earlier_failure, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 20;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "AfterInvariantTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract AfterInvariantTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    // Breaks early in run 1.
+    function invariant_first() public view {
+        require(counter.cond() < 2, "first broken");
+    }
+
+    // Never breaks; keeps the campaign alive past run 1.
+    function invariant_second() public view {
+        require(counter.cond() < 1000000, "second broken");
+    }
+
+    // Always reverts; only reached on later runs if the hook isn't gated campaign-wide.
+    function afterInvariant() public pure {
+        require(false, "after_invariant_marker");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_first"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: after_invariant_marker]
+...
+"#]]);
+});
+
+// Verifies a stale persisted secondary failure (settings have changed since it was written) is
+// not silently dropped from an `assert_all` campaign — the secondary is re-evaluated instead.
+forgetest_init!(assert_all_secondary_persisted_revalidates_on_settings_change, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 50;
+        config.invariant.assert_all = true;
+        config.invariant.fail_on_revert = false;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "StaleSecondaryTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract StaleSecondaryTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    function invariant_first() public view {
+        require(counter.cond() < 2, "first broken");
+    }
+
+    function invariant_second() public view {
+        require(counter.cond() < 3, "second broken");
+    }
+}
+   "#,
+    );
+
+    // First run: both invariants break and persist their counterexamples under the current
+    // settings (fail_on_revert = false).
+    cmd.args(["test", "--mt", "invariant_first"]).assert_failure();
+
+    // Flip a tracked InvariantSettings field so the persisted secondary cache is now stale.
+    prj.update_config(|config| {
+        config.invariant.fail_on_revert = true;
+    });
+
+    // Re-run targeting the same primary. With the fix, the stale secondary cache is rejected
+    // and `invariant_second` is re-evaluated — the suite roll-up shows 2/2 broken. With the
+    // bug, the bare `.exists()` check filtered the secondary out and only the primary block
+    // would render (no roll-up).
+    cmd.forge_fuse().args(["test", "--mt", "invariant_first"]).assert_failure().stdout_eq(str![[
+        r#"
+...
+Suite assert_all: 2/2 invariants broken
+...
+"#
+    ]]);
+});
+
+// Verifies that when the selected primary invariant passes but a secondary fails under
+// `assert_all`, the report doesn't render a hollow `[FAIL]` header for the primary and the
+// suite roll-up counts only the actually-broken invariants.
+forgetest_init!(assert_all_secondary_only_failure_no_hollow_fail, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 50;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "SecondaryOnlyTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract SecondaryOnlyTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    // Selected primary; never breaks.
+    function invariant_safe() public view {
+        require(counter.cond() < 1000000, "safe broken");
+    }
+
+    // Secondary; breaks within the first run.
+    function invariant_breakable() public view {
+        require(counter.cond() < 2, "breakable broken");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_safe"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: breakable broken] invariant_breakable
+...
+Suite assert_all: 1/2 invariants broken
+ invariant_safe() (runs: 5, calls: 250, reverts: 0)
+...
+"#]]);
+});
+
+// Verifies the structured JSON failure event emitted at campaign end attributes the broken
+// invariant in declaration order (deterministic) instead of using arbitrary HashMap iteration.
+forgetest_init!(assert_all_failure_event_uses_declaration_order, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 5;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "FailureEventTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract FailureEventTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    // Declaration-order: a, b, c. All break on the same call.
+    function invariant_a() public view {
+        require(counter.cond() < 1, "a broken");
+    }
+
+    function invariant_b() public view {
+        require(counter.cond() < 1, "b broken");
+    }
+
+    function invariant_c() public view {
+        require(counter.cond() < 1, "c broken");
+    }
+}
+   "#,
+    );
+
+    // Primary is `invariant_c`, but the failure event must name `invariant_a` (first declared
+    // broken invariant) with its matching reason — not whichever entry HashMap iteration
+    // surfaces.
+    cmd.args(["test", "--mt", "invariant_c"]).assert_failure().stderr_eq(str![[r#"
+...
+{"timestamp":[..],"event":"failure","invariant":"invariant_a","target":"test/FailureEventTest.t.sol:FailureEventTest","reason":"a broken"}
+...
+"#]]);
+});

@@ -1,5 +1,6 @@
 use super::InvariantContract;
 use crate::executors::RawCallResult;
+use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
@@ -8,6 +9,72 @@ use foundry_evm_core::{
 };
 use foundry_evm_fuzz::{BasicTxDetails, Reason, invariant::FuzzRunIdentifiedContracts};
 use proptest::test_runner::TestError;
+use std::{collections::HashMap, fmt};
+
+/// Run-scoped context bundling the references that an invariant run needs in multiple places
+/// (recording failures, attributing breaks to a specific invariant, etc.).
+///
+/// Constructed once per loop iteration and passed by reference; produces failure records via
+/// [`InvariantRunCtx::failed_case`].
+pub struct InvariantRunCtx<'a> {
+    /// The invariant test contract definition.
+    pub contract: &'a InvariantContract<'a>,
+    /// Active invariant configuration (provides `shrink_run_limit`, `fail_on_revert`, ...).
+    pub config: &'a InvariantConfig,
+    /// Fuzz targets discovered for this run.
+    pub targeted_contracts: &'a FuzzRunIdentifiedContracts,
+    /// Inputs of the current run, used as the failing call sequence.
+    pub calldata: &'a [BasicTxDetails],
+}
+
+impl<'a> InvariantRunCtx<'a> {
+    /// Builds a [`FailedInvariantCaseData`] attributed to `broken_fn`.
+    ///
+    /// `fail_on_revert` is taken separately because `assert_invariants` overrides it with
+    /// the per-invariant flag, while every other call site forwards `self.config.fail_on_revert`.
+    /// `assertion_failure` is set when the failure originated from a Solidity `assert`/
+    /// `vm.assert*` path; it normalizes empty decoded revert data into a stable user-facing
+    /// message so invariant output is not blank.
+    pub fn failed_case<FEN: FoundryEvmNetwork>(
+        &self,
+        broken_fn: &Function,
+        fail_on_revert: bool,
+        assertion_failure: bool,
+        call_result: RawCallResult<FEN>,
+        inner_sequence: &[Option<BasicTxDetails>],
+    ) -> FailedInvariantCaseData {
+        // Collect abis of fuzzed and invariant contracts to decode custom error.
+        let revert_reason = RevertDecoder::new()
+            .with_abis(self.targeted_contracts.targets.lock().values().map(|c| &c.abi))
+            .with_abi(self.contract.abi)
+            .decode(call_result.result.as_ref(), call_result.exit_reason);
+        // Non-reverting assertion failures surface through Foundry's failure flags instead of
+        // revert data. Use a stable fallback so invariant output is not blank, both for the
+        // successful-call/assertion path and the explicit assertion_failure flag.
+        let needs_fallback = matches!(revert_reason.as_str(), "" | EMPTY_REVERT_DATA);
+        let revert_reason = if needs_fallback && (!call_result.reverted || assertion_failure) {
+            ASSERTION_FAILED_PREFIX.to_string()
+        } else {
+            revert_reason
+        };
+
+        let origin = broken_fn.name.as_str();
+        FailedInvariantCaseData {
+            test_error: TestError::Fail(
+                format!("{origin}, reason: {revert_reason}").into(),
+                self.calldata.to_vec(),
+            ),
+            return_reason: "".into(),
+            revert_reason,
+            addr: self.contract.address,
+            calldata: broken_fn.selector().to_vec().into(),
+            inner_sequence: inner_sequence.to_vec(),
+            shrink_run_limit: self.config.shrink_run_limit,
+            fail_on_revert,
+            assertion_failure,
+        }
+    }
+}
 
 /// Stores information about failures and reverts of the invariant tests.
 #[derive(Clone, Default)]
@@ -16,8 +83,8 @@ pub struct InvariantFailures {
     pub reverts: usize,
     /// The latest revert reason of a run.
     pub revert_reason: Option<String>,
-    /// Maps a broken invariant to its specific error.
-    pub error: Option<InvariantFuzzError>,
+    /// Maps each broken invariant (by function name) to its specific error.
+    pub errors: HashMap<String, InvariantFuzzError>,
 }
 
 impl InvariantFailures {
@@ -25,8 +92,39 @@ impl InvariantFailures {
         Self::default()
     }
 
-    pub fn into_inner(self) -> (usize, Option<InvariantFuzzError>) {
-        (self.reverts, self.error)
+    pub fn into_inner(self) -> (usize, HashMap<String, InvariantFuzzError>) {
+        (self.reverts, self.errors)
+    }
+
+    pub fn record_failure(&mut self, invariant: &Function, failure: InvariantFuzzError) {
+        self.errors.insert(invariant.name.clone(), failure);
+    }
+
+    pub fn has_failure(&self, invariant: &Function) -> bool {
+        self.errors.contains_key(&invariant.name)
+    }
+
+    pub fn get_failure(&self, invariant: &Function) -> Option<&InvariantFuzzError> {
+        self.errors.get(&invariant.name)
+    }
+
+    /// Returns the recorded revert reason for `invariant`, or an empty string if the invariant
+    /// has no recorded failure (or its failure carries no reason). Used when emitting failure
+    /// events so the metrics payload mirrors the persisted failure.
+    pub fn broken_reason(&self, invariant: &Function) -> String {
+        self.get_failure(invariant).and_then(|e| e.revert_reason()).unwrap_or_default()
+    }
+
+    pub fn can_continue(&self, invariants: usize) -> bool {
+        self.errors.len() < invariants
+    }
+}
+
+impl fmt::Display for InvariantFailures {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f)?;
+        writeln!(f, "      ❌ Failures: {}", self.errors.len())?;
+        Ok(())
     }
 }
 
@@ -70,57 +168,4 @@ pub struct FailedInvariantCaseData {
     pub fail_on_revert: bool,
     /// Whether this failure originated from a handler assertion.
     pub assertion_failure: bool,
-}
-
-impl FailedInvariantCaseData {
-    pub fn new<FEN: FoundryEvmNetwork>(
-        invariant_contract: &InvariantContract<'_>,
-        invariant_config: &InvariantConfig,
-        targeted_contracts: &FuzzRunIdentifiedContracts,
-        calldata: &[BasicTxDetails],
-        call_result: RawCallResult<FEN>,
-        inner_sequence: &[Option<BasicTxDetails>],
-    ) -> Self {
-        // Collect abis of fuzzed and invariant contracts to decode custom error.
-        let revert_reason = RevertDecoder::new()
-            .with_abis(targeted_contracts.targets.lock().values().map(|c| &c.abi))
-            .with_abi(invariant_contract.abi)
-            .decode(call_result.result.as_ref(), call_result.exit_reason);
-        // Non-reverting assertion failures surface through Foundry's failure flags instead of
-        // revert data. Use a stable fallback so invariant output is not blank.
-        let revert_reason =
-            if !call_result.reverted && matches!(revert_reason.as_str(), "" | EMPTY_REVERT_DATA) {
-                ASSERTION_FAILED_PREFIX.to_string()
-            } else {
-                revert_reason
-            };
-
-        let func = invariant_contract.invariant_function;
-        debug_assert!(func.inputs.is_empty());
-        let origin = func.name.as_str();
-        Self {
-            test_error: TestError::Fail(
-                format!("{origin}, reason: {revert_reason}").into(),
-                calldata.to_vec(),
-            ),
-            return_reason: "".into(),
-            revert_reason,
-            addr: invariant_contract.address,
-            calldata: func.selector().to_vec().into(),
-            inner_sequence: inner_sequence.to_vec(),
-            shrink_run_limit: invariant_config.shrink_run_limit,
-            fail_on_revert: invariant_config.fail_on_revert,
-            assertion_failure: false,
-        }
-    }
-
-    /// Marks this case as assertion-originated and normalizes empty decoded revert data from
-    /// non-reverting assertion paths into a stable user-facing message.
-    pub fn with_assertion_failure(mut self, assertion_failure: bool) -> Self {
-        self.assertion_failure = assertion_failure;
-        if assertion_failure && matches!(self.revert_reason.as_str(), "" | EMPTY_REVERT_DATA) {
-            self.revert_reason = ASSERTION_FAILED_PREFIX.to_string();
-        }
-        self
-    }
 }
