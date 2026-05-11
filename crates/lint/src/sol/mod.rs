@@ -225,6 +225,7 @@ impl<'a> SolidityLinter<'a> {
 
         let emitter = ProjectLintEmitter::new(
             gcx.sess,
+            gcx,
             self.with_description,
             self.with_json_emitter,
             self.lint_specific,
