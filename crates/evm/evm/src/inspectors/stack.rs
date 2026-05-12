@@ -38,7 +38,7 @@ use revm::{
     primitives::KECCAK_EMPTY,
     state::{Account, AccountStatus},
 };
-use revm_inspectors::edge_cov::EdgeCovInspector;
+use super::EdgeCovInspector;
 use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
