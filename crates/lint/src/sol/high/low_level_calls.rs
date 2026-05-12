@@ -8,7 +8,7 @@ use std::ops::ControlFlow;
 
 declare_forge_lint!(
     LOW_LEVEL_CALLS,
-    Severity::High,
+    Severity::Med,
     "low-level-calls",
     "Low-level calls should be avoided"
 );
