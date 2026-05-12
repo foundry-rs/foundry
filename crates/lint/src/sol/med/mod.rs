@@ -12,6 +12,9 @@ use incorrect_erc721_interface::INCORRECT_ERC721_INTERFACE;
 mod tx_origin;
 use tx_origin::TX_ORIGIN;
 
+mod uninitialized_local;
+use uninitialized_local::UNINITIALIZED_LOCAL;
+
 mod unsafe_typecast;
 use unsafe_typecast::UNSAFE_TYPECAST;
 
@@ -20,5 +23,6 @@ register_lints!(
     (IncorrectERC20Interface, late, (INCORRECT_ERC20_INTERFACE)),
     (IncorrectERC721Interface, late, (INCORRECT_ERC721_INTERFACE)),
     (TxOrigin, early, (TX_ORIGIN)),
+    (UninitializedLocal, late, (UNINITIALIZED_LOCAL)),
     (UnsafeTypecast, late, (UNSAFE_TYPECAST))
 );
