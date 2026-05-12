@@ -133,6 +133,11 @@ type OpCallDepositInfo = DepositTransactionParts;
 #[derive(Default, Clone, Debug)]
 struct OpCallDepositInfo;
 
+#[cfg(feature = "optimism")]
+fn op_spec_id_from_hardfork(hardfork: FoundryHardfork) -> OpSpecId {
+    hardfork.into()
+}
+
 /// Marker trait that abstracts over the per-network inspector trait bounds
 /// required by the in-memory backend. The OP bound is only included when the
 /// `optimism` feature is enabled.
@@ -1359,7 +1364,10 @@ impl<N: Network> Backend<N> {
         #[cfg(feature = "optimism")]
         if self.is_optimism() {
             let op_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
+                evm_env
+                    .cfg_env
+                    .clone()
+                    .with_spec_and_mainnet_gas_params(op_spec_id_from_hardfork(self.hardfork)),
                 evm_env.block_env.clone(),
             );
             let mut evm =
@@ -4811,6 +4819,17 @@ pub use foundry_evm::core::evm::IntoInstructionResult;
 #[cfg(test)]
 mod tests {
     use crate::{NodeConfig, spawn};
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn op_spec_id_from_hardfork_preserves_optimism_hardfork() {
+        use foundry_evm::hardfork::OpHardfork;
+        use op_revm::OpSpecId;
+
+        assert_eq!(super::op_spec_id_from_hardfork(OpHardfork::Jovian.into()), OpSpecId::JOVIAN);
+        assert_eq!(super::op_spec_id_from_hardfork(OpHardfork::Karst.into()), OpSpecId::KARST);
+        assert_eq!(super::op_spec_id_from_hardfork(OpHardfork::Interop.into()), OpSpecId::INTEROP);
+    }
 
     #[tokio::test]
     async fn test_deterministic_block_mining() {
