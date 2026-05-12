@@ -1,0 +1,72 @@
+warning[low-level-calls]: Low-level calls should be avoided
+   ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
+   │
+LL │         (bool success, bytes memory result) = target.call(data);
+   │                                               ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
+
+warning[low-level-calls]: Low-level calls should be avoided
+   ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
+   │
+LL │         (bool success, ) = target.call{value: value}("");
+   │                            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
+
+warning[low-level-calls]: Low-level calls should be avoided
+   ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
+   │
+LL │         (bool success, ) = target.delegatecall(data);
+   │                            ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
+
+warning[low-level-calls]: Low-level calls should be avoided
+   ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
+   │
+LL │         (bool success, bytes memory result) = target.staticcall(data);
+   │                                               ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
+
+warning[low-level-calls]: Low-level calls should be avoided
+   ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
+   │
+LL │         target.call(data);
+   │         ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
+
+warning[low-level-calls]: Low-level calls should be avoided
+   ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
+   │
+LL │         target.call{value: value}("");
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
+
+warning[low-level-calls]: Low-level calls should be avoided
+   ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
+   │
+LL │         target.delegatecall(data);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
+
+warning[low-level-calls]: Low-level calls should be avoided
+   ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
+   │
+LL │         target.staticcall(data);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
+
+warning[low-level-calls]: Low-level calls should be avoided
+   ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
+   │
+LL │         (, existingData) = target.call("");
+   │                            ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
+
