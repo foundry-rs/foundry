@@ -38,6 +38,13 @@ contract ReentrancyUnlimitedGas {
         delete totalPaid[receiver];
     }
 
+    function compoundAssignmentReadBeforeCall(address payable receiver) external {
+        totalPaid[receiver] += 1 ether;
+        (bool ok,) = receiver.call{value: 1 ether}(""); //~NOTE: uncapped ETH transfer can be reentered before `totalPaid` is updated
+        require(ok, "transfer failed");
+        totalPaid[receiver] = 0;
+    }
+
     function internalStateChangeAfterCall(address payable receiver) external {
         uint256 amount = totalPaid[receiver];
         (bool ok,) = receiver.call{value: amount}(""); //~NOTE: uncapped ETH transfer can be reentered before `totalPaid` is updated

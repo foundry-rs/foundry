@@ -9,6 +9,14 @@ LL │ …     (bool ok,) = payable(msg.sender).call{value: amount}("");
 note[reentrancy-unlimited-gas]: uncapped ETH transfer can be reentered before `totalPaid` is updated
    ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
    │
+LL │         (bool ok,) = receiver.call{value: 1 ether}("");
+   │                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+
+note[reentrancy-unlimited-gas]: uncapped ETH transfer can be reentered before `totalPaid` is updated
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
 LL │         (bool ok,) = receiver.call{value: amount}("");
    │                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │

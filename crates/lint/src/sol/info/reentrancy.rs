@@ -8,6 +8,7 @@ use solar::{
     interface::{Span, kw, sym},
     sema::hir::{self, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId},
 };
+use std::collections::{BTreeSet, HashSet};
 
 declare_forge_lint!(
     REENTRANCY_UNLIMITED_GAS,
@@ -50,19 +51,19 @@ fn is_entry_point(func: &hir::Function<'_>) -> bool {
 
 #[derive(Clone, Debug, Default)]
 struct FlowState {
-    state_reads: Vec<VariableId>,
+    state_reads: BTreeSet<VariableId>,
     pending_value_calls: Vec<PendingValueCall>,
 }
 
 #[derive(Clone, Debug)]
 struct PendingValueCall {
     span: Span,
-    state_reads: Vec<VariableId>,
+    state_reads: BTreeSet<VariableId>,
 }
 
 impl FlowState {
     fn push_read(&mut self, var_id: VariableId) {
-        push_unique(&mut self.state_reads, var_id);
+        self.state_reads.insert(var_id);
     }
 
     fn push_call(&mut self, span: Span) {
@@ -71,7 +72,7 @@ impl FlowState {
         }
 
         if let Some(existing) = self.pending_value_calls.iter_mut().find(|call| call.span == span) {
-            merge_ids(&mut existing.state_reads, &self.state_reads);
+            existing.state_reads.extend(self.state_reads.iter().copied());
         } else {
             self.pending_value_calls
                 .push(PendingValueCall { span, state_reads: self.state_reads.clone() });
@@ -82,13 +83,13 @@ impl FlowState {
 struct Analyzer<'ctx, 's, 'c, 'hir> {
     ctx: &'ctx LintContext<'s, 'c>,
     hir: &'hir hir::Hir<'hir>,
-    emitted: Vec<Span>,
+    emitted: HashSet<Span>,
     call_stack: Vec<FunctionId>,
 }
 
 impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
-    const fn new(ctx: &'ctx LintContext<'s, 'c>, hir: &'hir hir::Hir<'hir>) -> Self {
-        Self { ctx, hir, emitted: Vec::new(), call_stack: Vec::new() }
+    fn new(ctx: &'ctx LintContext<'s, 'c>, hir: &'hir hir::Hir<'hir>) -> Self {
+        Self { ctx, hir, emitted: HashSet::new(), call_stack: Vec::new() }
     }
 
     fn analyze_callable(
@@ -247,7 +248,10 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 
     fn analyze_expr(&mut self, expr: &'hir hir::Expr<'hir>, state: &mut FlowState) {
         match &expr.kind {
-            ExprKind::Assign(lhs, _, rhs) => {
+            ExprKind::Assign(lhs, op, rhs) => {
+                if op.is_some() {
+                    self.analyze_expr(lhs, state);
+                }
                 self.analyze_expr(rhs, state);
                 let written_vars = state_write_lhs_vars(self.hir, lhs);
                 if !written_vars.is_empty() {
@@ -416,7 +420,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     call.span,
                     format!("uncapped ETH transfer can be reentered before `{name}` is updated"),
                 );
-                self.emitted.push(call.span);
+                self.emitted.insert(call.span);
             }
         }
     }
@@ -429,12 +433,12 @@ impl FlowState {
     }
 
     fn merge(&mut self, other: &Self) {
-        merge_ids(&mut self.state_reads, &other.state_reads);
+        self.state_reads.extend(other.state_reads.iter().copied());
         for call in &other.pending_value_calls {
             if let Some(existing) =
                 self.pending_value_calls.iter_mut().find(|existing| existing.span == call.span)
             {
-                merge_ids(&mut existing.state_reads, &call.state_reads);
+                existing.state_reads.extend(call.state_reads.iter().copied());
             } else {
                 self.pending_value_calls.push(call.clone());
             }
@@ -485,15 +489,17 @@ fn gas_option_forwards_all(expr: &hir::Expr<'_>) -> bool {
     )
 }
 
-fn resolved_function_ids(callee: &hir::Expr<'_>) -> Vec<FunctionId> {
-    let ExprKind::Ident(reses) = &callee.peel_parens().kind else { return Vec::new() };
-    reses
-        .iter()
-        .filter_map(|res| match res {
-            Res::Item(ItemId::Function(func_id)) => Some(*func_id),
-            _ => None,
-        })
-        .collect()
+fn resolved_function_ids<'hir>(
+    callee: &'hir hir::Expr<'hir>,
+) -> impl Iterator<Item = FunctionId> + 'hir {
+    let reses = match &callee.peel_parens().kind {
+        ExprKind::Ident(reses) => *reses,
+        _ => &[],
+    };
+    reses.iter().filter_map(|res| match res {
+        Res::Item(ItemId::Function(func_id)) => Some(*func_id),
+        _ => None,
+    })
 }
 
 fn state_write_lhs_vars(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Vec<VariableId> {
@@ -536,11 +542,5 @@ fn collect_state_write_lhs_vars(
 fn push_unique<T: Copy + Eq>(items: &mut Vec<T>, item: T) {
     if !items.contains(&item) {
         items.push(item);
-    }
-}
-
-fn merge_ids<T: Copy + Eq>(dst: &mut Vec<T>, src: &[T]) {
-    for &item in src {
-        push_unique(dst, item);
     }
 }
