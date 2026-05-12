@@ -82,7 +82,14 @@ impl PreprocessorDependencies {
             // which used to be a mock is refactored to a non-mock implementation).
             mocks.remove(&full_path);
 
-            let is_script = script_paths.contains(path);
+            // Treat the contract as a script when its file lives under the configured script
+            // directory, or when it inherits from a `Script` base (forge-std). The inheritance
+            // check covers atypical layouts where script contracts are placed under `src/`.
+            let is_script = script_paths.contains(path)
+                || contract
+                    .linearized_bases
+                    .iter()
+                    .any(|base_id| gcx.hir.contract(*base_id).name.as_str() == "Script");
             let mut deps_collector =
                 BytecodeDependencyCollector::new(gcx, source.file.src.as_str(), src_dir, is_script);
             // Analyze current contract.
