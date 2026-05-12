@@ -262,6 +262,7 @@ impl DocBuilder {
             &self.root,
             &self.sources,
             self.branch.as_deref(),
+            self.commit.as_deref(),
         )?;
         info!("wrote vocs site files to {}", out.display());
         let site_elapsed = site_started.elapsed();
