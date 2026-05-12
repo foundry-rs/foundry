@@ -53,6 +53,7 @@ use alloy_evm::{
     overrides::{OverrideBlockHashes, apply_state_overrides},
     precompiles::{DynPrecompile, Precompile, PrecompilesMap},
 };
+use alloy_monad_evm::{MonadContext, MonadEvmFactory};
 use alloy_network::{
     AnyHeader, AnyRpcBlock, AnyRpcHeader, AnyRpcTransaction, AnyTxEnvelope, AnyTxType, Network,
     NetworkTransactionBuilder, ReceiptResponse, UnknownTxEnvelope, UnknownTypedTransaction,
@@ -113,6 +114,7 @@ use foundry_primitives::{
     FoundryTxReceipt, get_deposit_tx_parts,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
+use monad_revm::{MonadHardfork, instructions::monad_gas_params};
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
 use op_revm::{OpHaltReason, OpSpecId, OpTransaction};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -1150,7 +1152,8 @@ impl<N: Network> Backend<N> {
         DB: DatabaseRef + ?Sized,
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
             + Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
+            + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>
+            + Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         if self.is_optimism() {
@@ -1185,6 +1188,22 @@ impl<N: Network> Backend<N> {
                 inspector,
                 TempoTxEnv::from(tx_env.base),
             )
+        } else if self.is_monad() {
+            let hardfork = MonadHardfork::from(self.hardfork);
+            let monad_env = EvmEnv::new(
+                evm_env
+                    .cfg_env
+                    .clone()
+                    .with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
+                evm_env.block_env.clone(),
+            );
+            let mut evm = MonadEvmFactory::default().create_evm_with_inspector(
+                WrapDatabaseRef(db),
+                monad_env,
+                inspector,
+            );
+            self.inject_precompiles(evm.precompiles_mut());
+            Ok(evm.transact(tx_env.base)?)
         } else {
             let mut evm = EthEvmFactory::default().create_evm_with_inspector(
                 WrapDatabaseRef(db),
@@ -1210,7 +1229,8 @@ impl<N: Network> Backend<N> {
         DB: DatabaseRef + ?Sized,
         I: Inspector<EthEvmContext<WrapDatabaseRef<&'db DB>>>
             + Inspector<OpEvmContext<WrapDatabaseRef<&'db DB>>>
-            + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
+            + Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>
+            + Inspector<MonadContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
         if tx.is_tempo() {
@@ -1322,6 +1342,18 @@ impl<N: Network> Backend<N> {
             );
             let mut evm =
                 TempoEvmFactory::default().create_evm_with_inspector(db, tempo_env, inspector);
+            run!(evm)
+        } else if self.is_monad() {
+            let hardfork = MonadHardfork::from(self.hardfork);
+            let monad_env = EvmEnv::new(
+                evm_env
+                    .cfg_env
+                    .clone()
+                    .with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
+                evm_env.block_env.clone(),
+            );
+            let mut evm =
+                MonadEvmFactory::default().create_evm_with_inspector(db, monad_env, inspector);
             run!(evm)
         } else {
             let mut evm =
@@ -3195,6 +3227,7 @@ where
         for<'a> I: Inspector<EthEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
             + Inspector<OpEvmContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
             + Inspector<TempoContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
+            + Inspector<MonadContext<WrapDatabaseRef<&'a CacheDB<Box<&'a StateDb>>>>>
             + 'a,
         for<'a> F:
             FnOnce(ResultAndState<HaltReason>, CacheDB<Box<&'a StateDb>>, I, TxEnv, EvmEnv) -> T,
