@@ -46,6 +46,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `unused-state-variables`: State variables that are never used should be removed.
   - `var-read-using-this`: Reads of state variables (or other `view`/`pure` functions) via `this` cause an unnecessary `STATICCALL`; access them directly.
 - **Code Size:**
+  - `dead-code`: Internal or private functions that are unreachable should be removed.
   - `unwrapped-modifier-logic`: Recommends wrapping modifier logic to reduce contract code size.
 
 ## Configuration

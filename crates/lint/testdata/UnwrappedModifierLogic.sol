@@ -1,4 +1,4 @@
-//@compile-flags: --severity code-size
+//@compile-flags: --only-lint unwrapped-modifier-logic
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;

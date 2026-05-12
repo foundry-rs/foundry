@@ -1,0 +1,50 @@
+note[dead-code]: internal or private function is never used
+   ╭▸ ROOT/testdata/DeadCode.sol:LL:CC
+   │
+LL │ ┏ function unusedFreeFunction() pure returns (uint256) {
+LL │ ┃     return 1;
+LL │ ┃ }
+   │ ┗━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/dead-code
+
+note[dead-code]: internal or private function is never used
+   ╭▸ ROOT/testdata/DeadCode.sol:LL:CC
+   │
+LL │ ┏     function unusedInternal() internal pure returns (uint256) {
+LL │ ┃         return 3;
+LL │ ┃     }
+   │ ┗━━━━━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/dead-code
+
+note[dead-code]: internal or private function is never used
+   ╭▸ ROOT/testdata/DeadCode.sol:LL:CC
+   │
+LL │ ┏     function unusedPrivate() private pure returns (uint256) {
+LL │ ┃         return 4;
+LL │ ┃     }
+   │ ┗━━━━━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/dead-code
+
+note[dead-code]: internal or private function is never used
+   ╭▸ ROOT/testdata/DeadCode.sol:LL:CC
+   │
+LL │ ┏     function unreachableInternal() internal pure returns (uint256) {
+LL │ ┃         return unreachablePrivate();
+LL │ ┃     }
+   │ ┗━━━━━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/dead-code
+
+note[dead-code]: internal or private function is never used
+   ╭▸ ROOT/testdata/DeadCode.sol:LL:CC
+   │
+LL │ ┏     function unreachablePrivate() private pure returns (uint256) {
+LL │ ┃         return 5;
+LL │ ┃     }
+   │ ┗━━━━━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/dead-code
+
