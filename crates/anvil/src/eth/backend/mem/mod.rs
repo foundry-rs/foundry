@@ -114,7 +114,7 @@ use foundry_primitives::{
     FoundryTxReceipt, get_deposit_tx_parts,
 };
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use monad_revm::{MonadHardfork, instructions::monad_gas_params};
+use monad_revm::{MonadCfgEnv, MonadHardfork, instructions::monad_gas_params};
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
 use op_revm::{OpHaltReason, OpSpecId, OpTransaction};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -629,10 +629,33 @@ impl<N: Network> Backend<N> {
         PoolTxGasConfig {
             disable_block_gas_limit: evm_env.cfg_env.disable_block_gas_limit,
             tx_gas_limit_cap: evm_env.cfg_env.tx_gas_limit_cap,
-            tx_gas_limit_cap_resolved: evm_env.cfg_env.tx_gas_limit_cap(),
+            tx_gas_limit_cap_resolved: self.tx_gas_limit_cap(evm_env),
             max_blob_gas_per_block: blob_params.max_blob_gas_per_block(),
             is_cancun,
         }
+    }
+
+    fn monad_cfg_env(&self, evm_env: &EvmEnv) -> Option<MonadCfgEnv> {
+        if !self.is_monad() {
+            return None;
+        }
+
+        let hardfork = MonadHardfork::from(self.hardfork);
+        Some(MonadCfgEnv::from(
+            evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, monad_gas_params(hardfork)),
+        ))
+    }
+
+    fn tx_gas_limit_cap(&self, evm_env: &EvmEnv) -> u64 {
+        self.monad_cfg_env(evm_env)
+            .map(|cfg| cfg.tx_gas_limit_cap())
+            .unwrap_or_else(|| evm_env.cfg_env.tx_gas_limit_cap())
+    }
+
+    fn max_initcode_size(&self, evm_env: &EvmEnv) -> usize {
+        self.monad_cfg_env(evm_env)
+            .map(|cfg| cfg.max_initcode_size())
+            .unwrap_or_else(|| evm_env.cfg_env.max_initcode_size())
     }
 
     /// Returns the block gas limit
@@ -4405,6 +4428,10 @@ where
             return Err(InvalidTransactionError::NonceTooLow);
         }
 
+        if self.is_monad() && tx.is_eip4844() {
+            return Err(InvalidTransactionError::MonadBlobTransactionUnsupported);
+        }
+
         // EIP-4844 structural validation
         if evm_env.cfg_env.spec >= SpecId::CANCUN && tx.is_eip4844() {
             // Heavy (blob validation) checks
@@ -4436,11 +4463,7 @@ where
 
         // EIP-3860 initcode size validation, respects --code-size-limit / --disable-code-size-limit
         if evm_env.cfg_env.spec >= SpecId::SHANGHAI && tx.kind() == TxKind::Create {
-            let max_initcode_size = evm_env
-                .cfg_env
-                .limit_contract_code_size
-                .map(|limit| limit.saturating_mul(2))
-                .unwrap_or(revm::primitives::eip3860::MAX_INITCODE_SIZE);
+            let max_initcode_size = self.max_initcode_size(evm_env);
             if tx.input().len() > max_initcode_size {
                 return Err(InvalidTransactionError::MaxInitCodeSizeExceeded);
             }
@@ -4466,7 +4489,7 @@ where
 
             // Check tx gas limit against tx gas limit cap (Osaka hard fork and later).
             if evm_env.cfg_env.tx_gas_limit_cap.is_none()
-                && tx.gas_limit() > evm_env.cfg_env().tx_gas_limit_cap()
+                && tx.gas_limit() > self.tx_gas_limit_cap(evm_env)
             {
                 debug!(target: "backend", "[{:?}] gas too high", tx.hash());
                 return Err(InvalidTransactionError::GasTooHigh(ErrDetail {
