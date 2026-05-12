@@ -3,12 +3,20 @@
 //! Generates `vocs.config.ts`, `pages/index.mdx`, `package.json`, and `.gitignore`
 //! from the emitted MDX pages.
 
+use crate::utils::git_source_url;
 use foundry_config::DocConfig;
 use path_slash::PathExt;
 use std::{
+    collections::HashMap,
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
+
+/// Map from a Solidity source file location to its vocs page URL.
+///
+/// Key is `(parent_dir_with_forward_slashes, file_stem)` of the source file.
+/// Value is the root-relative vocs URL (no extension, leading `/`).
+type SourceToUrl = HashMap<(String, String), String>;
 
 /// Write all vocs site scaffolding into `out_dir`.
 ///
@@ -22,6 +30,7 @@ pub fn write_site_files(
     root: &Path,
     sources: &Path,
     branch: Option<&str>,
+    commit: Option<&str>,
 ) -> eyre::Result<()> {
     fs::create_dir_all(out_dir)?;
 
@@ -30,7 +39,22 @@ pub fn write_site_files(
     fs::write(out_dir.join("vocs.config.ts"), vocs_config(config, pages, branch))?;
 
     // Homepage: config.homepage -> <sources>/README.md -> <root>/README.md -> empty.
-    let homepage_content = find_homepage(config, root, sources);
+    // Rewrite relative links: `.sol` -> generated vocs page; everything else ->
+    // a `{repo}/blob/{commit}/...` URL when a repository is configured.
+    let (homepage_content, homepage_dir) = find_homepage(config, root, sources);
+    let src_to_url = build_source_to_url(pages);
+    let homepage_content = if let Some(base_dir) = homepage_dir.as_deref() {
+        rewrite_homepage_links(
+            &homepage_content,
+            base_dir,
+            root,
+            &src_to_url,
+            config.repository.as_deref(),
+            commit,
+        )
+    } else {
+        homepage_content
+    };
     let index_path = out_dir.join("src").join("pages").join("index.mdx");
     if let Some(parent) = index_path.parent() {
         fs::create_dir_all(parent)?;
@@ -209,12 +233,17 @@ const fn type_category_label(cat: u8) -> &'static str {
 
 // ── homepage ──────────────────────────────────────────────────────────────────
 
-fn find_homepage(config: &DocConfig, root: &Path, sources: &Path) -> String {
+/// Locate the homepage markdown.
+///
+/// Returns `(content, base_dir)` where `base_dir` is the absolute directory the
+/// homepage file lives in (used to resolve its relative links). When no
+/// homepage file is found, returns an empty string and no base dir.
+fn find_homepage(config: &DocConfig, root: &Path, sources: &Path) -> (String, Option<PathBuf>) {
     // 1. Explicit homepage from config.
     if let Some(hp) = &config.homepage {
         let path = if hp.is_absolute() { hp.clone() } else { root.join(hp) };
         if let Ok(content) = fs::read_to_string(&path) {
-            return content;
+            return (content, path.parent().map(Path::to_path_buf));
         }
     }
 
@@ -225,17 +254,128 @@ fn find_homepage(config: &DocConfig, root: &Path, sources: &Path) -> String {
         root.join(sources).join("README.md")
     };
     if let Ok(content) = fs::read_to_string(&src_readme) {
-        return content;
+        return (content, src_readme.parent().map(Path::to_path_buf));
     }
 
     // 3. <root>/README.md
     let readme = root.join("README.md");
     if let Ok(content) = fs::read_to_string(&readme) {
-        return content;
+        return (content, readme.parent().map(Path::to_path_buf));
     }
 
     // 4. Empty fallback.
-    String::new()
+    (String::new(), None)
+}
+
+// ── homepage link rewriting ───────────────────────────────────────────────────
+
+/// Build a `(parent_dir, file_stem) -> vocs_url` map from the emitted MDX pages.
+///
+/// Each page is named `<type>.<Name>.mdx`; the key mirrors the source `.sol`
+/// file (parent dir + item name), so a README link to `path/to/Name.sol`
+/// matches the page for the item whose name equals the file stem.
+fn build_source_to_url(pages: &[PathBuf]) -> SourceToUrl {
+    let mut map = SourceToUrl::new();
+    for page in pages {
+        let stem = page.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let Some((_kind, name)) = stem.split_once('.') else { continue };
+        let dir = page.parent().map(|p| p.to_slash_lossy().into_owned()).unwrap_or_default();
+        let url = format!("/{}", page.with_extension("").to_slash_lossy());
+        map.insert((dir, name.to_string()), url);
+    }
+    map
+}
+
+/// Rewrite inline `[text](url)` markdown links in the homepage:
+/// * `.sol` paths that resolve to a known page → vocs URL.
+/// * Any other relative path under `root` → `{repo}/blob/{commit}/...`.
+/// * Absolute URLs, anchors, and unresolved targets are left untouched.
+fn rewrite_homepage_links(
+    text: &str,
+    base_dir: &Path,
+    root: &Path,
+    src_to_url: &SourceToUrl,
+    repo: Option<&str>,
+    commit: Option<&str>,
+) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find("](") {
+        out.push_str(&rest[..open + 2]);
+        rest = &rest[open + 2..];
+        let Some(close) = rest.find(')') else { break };
+        let target = &rest[..close];
+        match try_rewrite_target(target, base_dir, root, src_to_url, repo, commit) {
+            Some(new) => out.push_str(&new),
+            None => out.push_str(target),
+        }
+        out.push(')');
+        rest = &rest[close + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Resolve `target` against `base_dir` and return either the matching vocs
+/// page URL (`.sol`) or a `{repo}/blob/{commit}/...` URL for any other relative
+/// path under `root`.
+fn try_rewrite_target(
+    target: &str,
+    base_dir: &Path,
+    root: &Path,
+    src_to_url: &SourceToUrl,
+    repo: Option<&str>,
+    commit: Option<&str>,
+) -> Option<String> {
+    // Skip absolute URLs and pure anchors.
+    if target.is_empty()
+        || target.starts_with('#')
+        || target.starts_with("//")
+        || target.contains("://")
+        || target.starts_with("mailto:")
+    {
+        return None;
+    }
+
+    // Split off `#fragment` / `?query`; we'll preserve the fragment on the rewrite.
+    let (path_part, suffix) = target.find(['#', '?']).map_or((target, ""), |i| target.split_at(i));
+    if path_part.is_empty() {
+        return None;
+    }
+
+    let path = Path::new(path_part);
+    let abs = if path.is_absolute() { path.to_path_buf() } else { base_dir.join(path) };
+    let rel = normalize_path(&abs).strip_prefix(root).ok()?.to_path_buf();
+
+    // `.sol` -> vocs page.
+    if path.extension().and_then(|e| e.to_str()) == Some("sol") {
+        let stem = rel.file_stem().and_then(|s| s.to_str())?;
+        let dir = rel.parent().map(|p| p.to_slash_lossy().into_owned()).unwrap_or_default();
+        if let Some(url) = src_to_url.get(&(dir, stem.to_string())) {
+            return Some(url.clone());
+        }
+    }
+
+    // Fall back to repo blob URL for everything else under the project root.
+    let repo = repo?;
+    let mut url = git_source_url(repo, commit.unwrap_or("HEAD"), root, &normalize_path(&abs))?;
+    url.push_str(suffix);
+    Some(url)
+}
+
+/// Lexically resolve `.` and `..` components without touching the filesystem.
+fn normalize_path(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in p.components() {
+        match comp {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 // ── package.json ──────────────────────────────────────────────────────────────
@@ -262,4 +402,42 @@ const fn package_json() -> &'static str {
 fn json_str(s: &str) -> String {
     // Escape double quotes and wrap.
     format!("'{}'", s.replace('\'', "\\'"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrites_links() {
+        let map = build_source_to_url(&[
+            PathBuf::from("src/contract.Morpho.mdx"),
+            PathBuf::from("src/interfaces/interface.IMorpho.mdx"),
+            PathBuf::from("src/libraries/library.MathLib.mdx"),
+        ]);
+        let root = Path::new("/repo");
+        let repo = Some("https://github.com/x/y");
+        let commit = Some("abc123");
+        let input = "[Morpho](./src/Morpho.sol), \
+                     [IMorpho](src/interfaces/IMorpho.sol#L10), \
+                     [Unknown](src/Unknown.sol), \
+                     [Contrib](./CONTRIBUTING.md), \
+                     [Logo](./img/logo.png), \
+                     [ext](https://x.com), \
+                     [anchor](#section)";
+
+        let out = rewrite_homepage_links(input, Path::new("/repo"), root, &map, repo, commit);
+        // .sol with known page -> vocs URL.
+        assert!(out.contains("[Morpho](/src/contract.Morpho)"));
+        // .sol with fragment -> vocs URL (fragment dropped, no anchor in MDX).
+        assert!(out.contains("[IMorpho](/src/interfaces/interface.IMorpho)"));
+        // .sol without a known page -> repo blob URL.
+        assert!(out.contains("[Unknown](https://github.com/x/y/blob/abc123/src/Unknown.sol)"));
+        // Other relative paths -> repo blob URL.
+        assert!(out.contains("[Contrib](https://github.com/x/y/blob/abc123/CONTRIBUTING.md)"));
+        assert!(out.contains("[Logo](https://github.com/x/y/blob/abc123/img/logo.png)"));
+        // Absolute URL and pure anchor untouched.
+        assert!(out.contains("[ext](https://x.com)"));
+        assert!(out.contains("[anchor](#section)"));
+    }
 }
