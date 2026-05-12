@@ -12,7 +12,7 @@ use std::collections::{BTreeSet, HashSet};
 
 declare_forge_lint!(
     REENTRANCY_UNLIMITED_GAS,
-    Severity::Info,
+    Severity::High,
     "reentrancy-unlimited-gas",
     "state read before uncapped ETH transfer is written after the transfer"
 );

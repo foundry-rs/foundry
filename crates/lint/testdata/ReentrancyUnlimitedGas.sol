@@ -12,7 +12,7 @@ contract ReentrancyUnlimitedGas {
 
     function withdraw() external {
         uint256 amount = balances[msg.sender];
-        (bool ok,) = payable(msg.sender).call{value: amount}(""); //~NOTE: uncapped ETH transfer can be reentered before `balances` is updated
+        (bool ok,) = payable(msg.sender).call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
         require(ok, "transfer failed");
         balances[msg.sender] = 0;
     }
@@ -40,14 +40,14 @@ contract ReentrancyUnlimitedGas {
 
     function compoundAssignmentReadBeforeCall(address payable receiver) external {
         totalPaid[receiver] += 1 ether;
-        (bool ok,) = receiver.call{value: 1 ether}(""); //~NOTE: uncapped ETH transfer can be reentered before `totalPaid` is updated
+        (bool ok,) = receiver.call{value: 1 ether}(""); //~WARN: uncapped ETH transfer can be reentered before `totalPaid` is updated
         require(ok, "transfer failed");
         totalPaid[receiver] = 0;
     }
 
     function internalStateChangeAfterCall(address payable receiver) external {
         uint256 amount = totalPaid[receiver];
-        (bool ok,) = receiver.call{value: amount}(""); //~NOTE: uncapped ETH transfer can be reentered before `totalPaid` is updated
+        (bool ok,) = receiver.call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `totalPaid` is updated
         require(ok, "transfer failed");
         recordPayment(receiver);
     }
@@ -60,14 +60,14 @@ contract ReentrancyUnlimitedGas {
 
     function gasleftIsNotACap(address payable receiver) external {
         uint256 amount = balances[receiver];
-        (bool ok,) = receiver.call{value: amount, gas: gasleft()}(""); //~NOTE: uncapped ETH transfer can be reentered before `balances` is updated
+        (bool ok,) = receiver.call{value: amount, gas: gasleft()}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
         require(ok, "transfer failed");
         balances[receiver] = 0;
     }
 
     function modifierStateChangeAfterCall() external recordAfter {
         uint256 amount = balances[msg.sender];
-        (bool ok,) = payable(msg.sender).call{value: amount}(""); //~NOTE: uncapped ETH transfer can be reentered before `balances` is updated
+        (bool ok,) = payable(msg.sender).call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
         require(ok, "transfer failed");
     }
 
@@ -121,7 +121,7 @@ contract ReentrancyUnlimitedGas {
 
     function guardedByModifier(address payable receiver) external basicModifier {
         uint256 amount = balances[receiver];
-        (bool ok,) = receiver.call{value: amount}(""); //~NOTE: uncapped ETH transfer can be reentered before `balances` is updated
+        (bool ok,) = receiver.call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
         require(ok, "transfer failed");
         balances[receiver] = 0;
     }
@@ -143,7 +143,7 @@ contract ReentrancyUnlimitedGas {
     }
 
     function sendValue(address payable receiver, uint256 amount) internal {
-        (bool ok,) = receiver.call{value: amount}(""); //~NOTE: uncapped ETH transfer can be reentered before `balances` is updated
+        (bool ok,) = receiver.call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
         require(ok, "transfer failed");
     }
 

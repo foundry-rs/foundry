@@ -1,6 +1,6 @@
 # Reentrancy through unlimited-gas ETH calls
 
-**Severity**: `Info`
+**Severity**: `High`
 **ID**: `reentrancy-unlimited-gas`
 
 Flags uncapped ETH-transferring low-level `call` operations when state read before the call is

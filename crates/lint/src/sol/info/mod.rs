@@ -42,9 +42,6 @@ use inline_assembly::INLINE_ASSEMBLY;
 mod missing_inheritance;
 use missing_inheritance::MISSING_INHERITANCE;
 
-mod reentrancy;
-use reentrancy::REENTRANCY_UNLIMITED_GAS;
-
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -61,5 +58,4 @@ register_lints!(
     (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
     (InlineAssembly, early, (INLINE_ASSEMBLY)),
     (MissingInheritance, project, (MISSING_INHERITANCE)),
-    (ReentrancyUnlimitedGas, late, (REENTRANCY_UNLIMITED_GAS)),
 );
