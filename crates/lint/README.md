@@ -9,7 +9,6 @@ It helps enforce best practices and improve code quality within Foundry projects
 
 - **High Severity:**
   - `incorrect-shift`: Warns against shift operations where operands might be in the wrong order.
-  - `low-level-calls`: Direct use of low-level calls should be avoided.
   - `unchecked-call`: Low-level calls should check the success return value.
   - `erc20-unchecked-transfer`: ERC20 `transfer` and `transferFrom` calls should check the return value.
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
@@ -18,6 +17,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
+  - `low-level-calls`: Direct use of low-level calls should be avoided.
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
 - **Low Severity:**
