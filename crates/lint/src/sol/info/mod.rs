@@ -39,6 +39,9 @@ use pragma_directive::PRAGMA_INCONSISTENT;
 mod inline_assembly;
 use inline_assembly::INLINE_ASSEMBLY;
 
+mod missing_inheritance;
+use missing_inheritance::MISSING_INHERITANCE;
+
 mod reentrancy;
 use reentrancy::REENTRANCY_UNLIMITED_GAS;
 
@@ -57,5 +60,6 @@ register_lints!(
     (TooManyDigits, early, (TOO_MANY_DIGITS)),
     (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
     (InlineAssembly, early, (INLINE_ASSEMBLY)),
+    (MissingInheritance, project, (MISSING_INHERITANCE)),
     (ReentrancyUnlimitedGas, late, (REENTRANCY_UNLIMITED_GAS)),
 );
