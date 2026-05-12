@@ -1,15 +1,15 @@
-use alloy_primitives::{map::DefaultHashBuilder, Address, U256};
+use alloy_primitives::{Address, U256, map::DefaultHashBuilder};
 use core::{
     fmt,
     hash::{BuildHasher, Hash, Hasher},
 };
 use revm::{
+    Inspector,
     bytecode::opcode,
     interpreter::{
-        interpreter_types::{InputsTr, Jumps},
         Interpreter,
+        interpreter_types::{InputsTr, Jumps},
     },
-    Inspector,
 };
 
 // This is the maximum number of edges that can be tracked. There is a tradeoff between performance
@@ -44,7 +44,7 @@ impl EdgeCovInspector {
     }
 
     /// Get an immutable reference to the hitcount.
-    pub fn get_hitcount(&self) -> &[u8] {
+    pub const fn get_hitcount(&self) -> &[u8] {
         self.hitcount.as_slice()
     }
 
@@ -79,12 +79,12 @@ impl EdgeCovInspector {
             }
             opcode::JUMPI => {
                 if let Ok(stack_value) = interp.stack.peek(1) {
-                    let jump_dest = if !stack_value.is_zero() {
-                        // branch taken
-                        interp.stack.peek(0)
-                    } else {
+                    let jump_dest = if stack_value.is_zero() {
                         // fall through
                         Ok(U256::from(current_pc + 1))
+                    } else {
+                        // branch taken
+                        interp.stack.peek(0)
                     };
 
                     if let Ok(jump_dest) = jump_dest {
