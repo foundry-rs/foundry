@@ -1,4 +1,4 @@
-/// Prints a message to [`stdout`][std::io::stdout] and reads a line from stdin into a String.
+/// Prints a message to [`stderr`][std::io::stderr] and reads a line from stdin into a String.
 ///
 /// Returns `Result<T>`, so sometimes `T` must be explicitly specified, like in `str::parse`.
 ///
@@ -20,10 +20,10 @@ macro_rules! prompt {
     };
 
     ($($tt:tt)+) => {{
-        let _ = $crate::sh_print!($($tt)+);
-        match ::std::io::Write::flush(&mut ::std::io::stdout()) {
+        let _ = $crate::sh_eprint!($($tt)+);
+        match ::std::io::Write::flush(&mut ::std::io::stderr()) {
             ::core::result::Result::Ok(()) => $crate::prompt!(),
-            ::core::result::Result::Err(e) => ::core::result::Result::Err(::eyre::eyre!("Could not flush stdout: {e}"))
+            ::core::result::Result::Err(e) => ::core::result::Result::Err(::eyre::eyre!("Could not flush stderr: {e}"))
         }
     }};
 }
@@ -102,6 +102,27 @@ macro_rules! sh_println {
     };
 }
 
+/// Prints a status message to stderr with a trailing newline.
+///
+/// Use for human-facing diagnostic prose ("Compiling…", "Deploying contract…")
+/// that is not the command's primary machine-readable result.
+#[macro_export]
+macro_rules! sh_status {
+    ($($args:tt)*) => {
+        $crate::sh_eprintln!($($args)*)
+    };
+}
+
+/// Prints a progress message to stderr with a trailing newline.
+///
+/// Use for transient progress updates outside the spinner.
+#[macro_export]
+macro_rules! sh_progress {
+    ($($args:tt)*) => {
+        $crate::sh_eprintln!($($args)*)
+    };
+}
+
 /// Prints a raw formatted message to stderr, with a trailing newline.
 ///
 /// **Note**: if `verbosity` is set to `Quiet`, this is a no-op.
@@ -175,6 +196,12 @@ mod tests {
         sh_eprintln!()?;
         sh_eprintln!("eprintln")?;
         sh_eprintln!("eprintln {}", "arg")?;
+
+        sh_status!("status")?;
+        sh_status!("status {}", "arg")?;
+
+        sh_progress!("progress")?;
+        sh_progress!("progress {}", "arg")?;
 
         sh_println!("{:?}", {
             sh_println!("hi")?;
