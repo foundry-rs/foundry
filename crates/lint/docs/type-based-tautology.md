@@ -16,6 +16,8 @@ Examples:
 
 The check also applies to explicit type casts: `uint8(x) < 256` is always true.
 
+> **Limitation:** The lint only fires when the left-hand variable is a local or state variable identifier, or an explicit cast expression (e.g. `uint8(x)`). It does not fire on struct member access (`s.field < 0`) or function return values (`foo() < 0`).
+
 ## Why is this bad?
 
 A condition that is permanently true contributes no useful logic and may hide a bug where the developer intended to compare against a different value or use a differently sized type. A condition that is permanently false creates unreachable code, which can silently suppress intended behavior such as access control checks or error handling.

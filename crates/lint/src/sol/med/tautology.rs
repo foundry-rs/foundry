@@ -57,7 +57,7 @@ const fn flip(op: BinOpKind) -> BinOpKind {
         BinOpKind::Le => BinOpKind::Ge,
         BinOpKind::Gt => BinOpKind::Lt,
         BinOpKind::Ge => BinOpKind::Le,
-        other => other,
+        _ => unreachable!(),
     }
 }
 

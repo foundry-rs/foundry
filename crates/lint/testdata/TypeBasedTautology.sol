@@ -19,7 +19,7 @@ contract TypeBasedTautology {
     }
 
     function uintLeZero(uint256 x) public pure returns (bool) {
-        return x <= 0; // ok – can be true when x == 0
+        return x <= 0; // ok, equivalent to x == 0, not a tautology
     }
 
     // --- uint: comparisons with out-of-range constants ---
