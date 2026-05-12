@@ -103,4 +103,27 @@ contract TypeBasedTautology {
         // forge-lint: disable-next-line(unsafe-typecast)
         return int8(raw) < -128; //~WARN: condition is always true or false based on the variable's type
     }
+
+    // --- eq / ne with out-of-range constants ---
+    // (solc rejects comparisons with sign-mismatched literals, e.g. uint == -1 or int8 == 128)
+
+    function uint8EqOutOfRange(uint8 x) public pure returns (bool) {
+        return x == 256; //~WARN: condition is always true or false based on the variable's type
+    }
+
+    function uint8NeOutOfRange(uint8 x) public pure returns (bool) {
+        return x != 256; //~WARN: condition is always true or false based on the variable's type
+    }
+
+    function int8EqBelowMin(int8 x) public pure returns (bool) {
+        return x == -129; //~WARN: condition is always true or false based on the variable's type
+    }
+
+    function uint8EqInRange(uint8 x) public pure returns (bool) {
+        return x == 255; // ok, 255 is the maximum of uint8, not out-of-range
+    }
+
+    function int8EqAtMin(int8 x) public pure returns (bool) {
+        return x == -128; // ok, -128 is within int8 range
+    }
 }

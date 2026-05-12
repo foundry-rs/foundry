@@ -25,8 +25,16 @@ impl<'hir> LateLintPass<'hir> for TypeBasedTautology {
     ) {
         let ExprKind::Binary(left, op, right) = &expr.kind else { return };
 
-        // Only relational comparisons can produce tautologies via type bounds.
-        if !matches!(op.kind, BinOpKind::Lt | BinOpKind::Le | BinOpKind::Gt | BinOpKind::Ge) {
+        // Only relational/equality comparisons can produce tautologies via type bounds.
+        if !matches!(
+            op.kind,
+            BinOpKind::Lt
+                | BinOpKind::Le
+                | BinOpKind::Gt
+                | BinOpKind::Ge
+                | BinOpKind::Eq
+                | BinOpKind::Ne
+        ) {
             return;
         }
 
@@ -57,6 +65,7 @@ const fn flip(op: BinOpKind) -> BinOpKind {
         BinOpKind::Le => BinOpKind::Ge,
         BinOpKind::Gt => BinOpKind::Lt,
         BinOpKind::Ge => BinOpKind::Le,
+        BinOpKind::Eq | BinOpKind::Ne => op, // symmetric
         _ => unreachable!(),
     }
 }
@@ -80,6 +89,7 @@ fn is_tautology(ty: ElementaryType, val_neg: bool, val_mag: U256, op: BinOpKind)
             match op {
                 BinOpKind::Gt | BinOpKind::Le => hi_le_val || val_lt_lo,
                 BinOpKind::Ge | BinOpKind::Lt => val_le_lo || hi_lt_val,
+                BinOpKind::Eq | BinOpKind::Ne => hi_lt_val || val_lt_lo,
                 _ => false,
             }
         }
@@ -95,6 +105,7 @@ fn is_tautology(ty: ElementaryType, val_neg: bool, val_mag: U256, op: BinOpKind)
             match op {
                 BinOpKind::Gt | BinOpKind::Le => hi_le_val || val_lt_lo,
                 BinOpKind::Ge | BinOpKind::Lt => val_le_lo || hi_lt_val,
+                BinOpKind::Eq | BinOpKind::Ne => hi_lt_val || val_lt_lo,
                 _ => false,
             }
         }

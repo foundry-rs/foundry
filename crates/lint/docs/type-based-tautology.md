@@ -7,12 +7,14 @@ Detects comparison expressions that are always true or always false due to the n
 
 ## What it does
 
-Flags binary comparisons (`<`, `<=`, `>`, `>=`) where one operand is a typed integer variable and the other is a constant that lies outside, or exactly at the boundary of the variable's representable range, making the condition unconditionally true or false.
+Flags binary comparisons (`<`, `<=`, `>`, `>=`, `==`, `!=`) where one operand is a typed integer variable and the other is a constant that lies outside, or exactly at the boundary of the variable's representable range, making the condition unconditionally true or false.
 
 Examples:
 - `uint x >= 0` is always true because unsigned integers cannot be negative.
 - `uint8 x > 255` is always false because 255 is the maximum value of `uint8`.
 - `int8 x < -128` is always false because -128 is the minimum value of `int8`.
+- `uint8 x == 256` is always false because 256 is outside the range of `uint8`.
+- `uint8 x != 256` is always true because 256 is outside the range of `uint8`.
 
 The check also applies to explicit type casts: `uint8(x) < 256` is always true.
 
@@ -37,6 +39,10 @@ function isInRange(uint8 x) public pure returns (bool) {
 
 function isBelowMin(int8 x) public pure returns (bool) {
     return x < -128; // always false, int8 min is -128
+}
+
+function isImpossible(uint8 x) public pure returns (bool) {
+    return x == 256; // always false, 256 is outside uint8 range
 }
 ```
 
