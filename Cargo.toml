@@ -29,6 +29,7 @@ members = [
     "crates/script-sequence/",
     "crates/test-utils/",
     "crates/cli-markdown/",
+    "crates/tui/",
 ]
 resolver = "2"
 
@@ -338,6 +339,7 @@ foundry-test-utils = { path = "crates/test-utils", default-features = false }
 foundry-wallets = { version = "0.1.0", default-features = false }
 foundry-linking = { path = "crates/linking" }
 foundry-primitives = { path = "crates/primitives", default-features = false }
+foundry-tui = { path = "crates/tui", default-features = false }
 
 # solc & compilation utilities
 foundry-block-explorers = { version = "0.23.1", default-features = false }
@@ -449,6 +451,7 @@ axum = "0.8"
 ciborium = "0.2"
 color-eyre = "0.6"
 comfy-table = "7"
+crossterm = "0.29"
 dirs = "6"
 dunce = "1"
 evm-disassembler = "0.6"
@@ -468,6 +471,7 @@ parking_lot = "0.12"
 proptest = "1.9.0"
 rand = "0.9"
 rand_08 = { package = "rand", version = "0.8" }
+ratatui = { version = "0.30", default-features = false }
 rayon = "1"
 regex = { version = "1", default-features = false }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
