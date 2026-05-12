@@ -54,6 +54,8 @@ pub use inspector::CheatcodeAnalysis;
 
 mod json;
 
+mod monad;
+
 mod script;
 pub use script::{Wallets, WalletsInner};
 

@@ -1,7 +1,7 @@
 //! Gas reports.
 
 use crate::{
-    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS},
+    constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MONAD_CHEATCODE_ADDRESS},
     traces::{CallTraceArena, CallTraceDecoder, CallTraceNode, DecodedCallData},
 };
 use alloy_primitives::map::HashSet;
@@ -77,7 +77,10 @@ impl GasReport {
     async fn analyze_node(&mut self, node: &CallTraceNode, decoder: &CallTraceDecoder) {
         let trace = &node.trace;
 
-        if trace.address == CHEATCODE_ADDRESS || trace.address == HARDHAT_CONSOLE_ADDRESS {
+        if trace.address == CHEATCODE_ADDRESS
+            || trace.address == MONAD_CHEATCODE_ADDRESS
+            || trace.address == HARDHAT_CONSOLE_ADDRESS
+        {
             return;
         }
 

@@ -15,6 +15,9 @@ pub const CHEATCODE_ADDRESS: Address = address!("0x7109709ECfa91a80626fF3989D68f
 pub const CHEATCODE_CONTRACT_HASH: B256 =
     b256!("0xb0450508e5a2349057c3b4c9c84524d62be4bb17e565dbe2df34725a26872291");
 
+/// The Monad cheatcode handler address.
+pub const MONAD_CHEATCODE_ADDRESS: Address = address!("0xc0FFeeCD43A10e1C2b0De63c6CDCFe5B7d0e0CEA");
+
 /// The Hardhat console address.
 ///
 /// See: <https://github.com/NomicFoundation/hardhat/blob/main/v-next/hardhat/console.sol>

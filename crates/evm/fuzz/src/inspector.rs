@@ -1,6 +1,6 @@
 use crate::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
 use foundry_common::mapping_slots::step as mapping_step;
-use foundry_evm_core::constants::CHEATCODE_ADDRESS;
+use foundry_evm_core::constants::{CHEATCODE_ADDRESS, MONAD_CHEATCODE_ADDRESS};
 use revm::{
     Inspector,
     context::{ContextTr, JournalTr, Transaction},
@@ -108,6 +108,7 @@ impl Fuzzer {
             || call.scheme != CallScheme::Call
             || call_generator.override_depth > 0
             || call.target_address == CHEATCODE_ADDRESS
+            || call.target_address == MONAD_CHEATCODE_ADDRESS
             || (!caller_is_handler && !target_is_handler)
         {
             return;

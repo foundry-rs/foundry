@@ -9,6 +9,7 @@ use crate::{
         prank::Prank,
     },
     inspector::utils::CommonCreateInput,
+    monad::{apply_monad_cheatcode as apply_monad_cheatcode_call, is_monad_cheatcode_call},
     script::{Broadcast, Wallets},
     test::{
         assume::AssumeNoRevert,
@@ -697,6 +698,25 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         )
     }
 
+    /// Decodes the input data and applies Monad-specific cheatcodes.
+    fn apply_monad_cheatcode(
+        &mut self,
+        ecx: &mut FoundryContextFor<'_, FEN>,
+        call: &CallInputs,
+    ) -> Result {
+        let input = call.input.bytes(ecx);
+        let caller = call.caller;
+
+        // ensure the caller is allowed to execute cheatcodes,
+        // but only if the backend is in forking mode
+        ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
+
+        apply_monad_cheatcode_call(
+            &mut CheatsCtxt { state: self, ecx, gas_limit: call.gas_limit, caller },
+            &input,
+        )
+    }
+
     /// Grants cheat code access for new contracts if the caller also has
     /// cheatcode access or the new contract is created in top most call.
     ///
@@ -797,6 +817,31 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
         if call.target_address == CHEATCODE_ADDRESS {
             return match self.apply_cheatcode(ecx, call, executor) {
+                Ok(retdata) => Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Return,
+                        output: retdata.into(),
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                    was_precompile_called: true,
+                    precompile_call_logs: vec![],
+                }),
+                Err(err) => Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: err.abi_encode().into(),
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                    was_precompile_called: false,
+                    precompile_call_logs: vec![],
+                }),
+            };
+        }
+
+        if is_monad_cheatcode_call::<FEN>(call.target_address) {
+            return match self.apply_monad_cheatcode(ecx, call) {
                 Ok(retdata) => Some(CallOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Return,
@@ -1301,7 +1346,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         outcome: &mut CallOutcome,
     ) {
         let cheatcode_call = call.target_address == CHEATCODE_ADDRESS
-            || call.target_address == HARDHAT_CONSOLE_ADDRESS;
+            || call.target_address == HARDHAT_CONSOLE_ADDRESS
+            || is_monad_cheatcode_call::<FEN>(call.target_address);
 
         // Clean up pranks/broadcasts if it's not a cheatcode call end. We shouldn't do
         // it for cheatcode calls because they are not applied for cheatcodes in the `call` hook.

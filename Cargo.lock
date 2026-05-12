@@ -4950,6 +4950,7 @@ dependencies = [
  "jsonpath_lib",
  "k256",
  "memchr",
+ "monad-revm",
  "p256",
  "parking_lot",
  "proptest",

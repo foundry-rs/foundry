@@ -21,12 +21,12 @@ use foundry_evm_core::{
     backend::{Backend, BackendError, BackendResult, CowBackend, DatabaseExt, GLOBAL_FAIL_SLOT},
     constants::{
         CALLER, CHEATCODE_ADDRESS, CHEATCODE_CONTRACT_HASH, DEFAULT_CREATE2_DEPLOYER,
-        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER,
+        DEFAULT_CREATE2_DEPLOYER_CODE, DEFAULT_CREATE2_DEPLOYER_DEPLOYER, MONAD_CHEATCODE_ADDRESS,
     },
     decode::{RevertDecoder, SkipReason},
     evm::{
-        EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, HaltReasonFor, IntoInstructionResult, SpecFor,
-        TxEnvFor,
+        EthEvmNetwork, EvmEnvFor, FoundryEvmNetwork, HaltReasonFor, IntoInstructionResult,
+        MonadEvmNetwork, SpecFor, TxEnvFor,
     },
     utils::StateChangeset,
 };
@@ -44,6 +44,7 @@ use revm::{
 };
 use sancov::SancovGuard;
 use std::{
+    any::TypeId,
     borrow::Cow,
     sync::{
         Arc,
@@ -136,6 +137,17 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
                 ..Default::default()
             },
         );
+
+        if TypeId::of::<FEN>() == TypeId::of::<MonadEvmNetwork>() {
+            backend.insert_account_info(
+                MONAD_CHEATCODE_ADDRESS,
+                revm::state::AccountInfo {
+                    code: Some(Bytecode::new_raw(Bytes::from_static(&[0]))),
+                    code_hash: keccak256(MONAD_CHEATCODE_ADDRESS),
+                    ..Default::default()
+                },
+            );
+        }
 
         Self {
             backend: Arc::new(backend),
