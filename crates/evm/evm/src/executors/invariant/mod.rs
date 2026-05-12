@@ -5,6 +5,7 @@ use crate::{
     },
     inspectors::Fuzzer,
 };
+use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, FixedBytes, I256, Selector, U256, map::AddressMap};
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
@@ -34,7 +35,7 @@ use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
-use result::{assert_after_invariant, assert_invariants, can_continue, did_fail_on_assert};
+use result::{assert_after_invariant, can_continue, did_fail_on_assert, invariant_preflight_check};
 use revm::{context::Block, state::Account};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -219,7 +220,7 @@ fn build_invariant_progress_json<M: Serialize>(
 }
 
 /// Contains data collected during invariant test runs.
-struct InvariantTestData<FEN: FoundryEvmNetwork> {
+struct InvariantTestData {
     // Consumed gas and calldata of every successful fuzz call.
     fuzz_cases: Vec<FuzzedCases>,
     // Data related to reverts or failed assertions of the test.
@@ -228,8 +229,6 @@ struct InvariantTestData<FEN: FoundryEvmNetwork> {
     last_run_inputs: Vec<BasicTxDetails>,
     // Additional traces for gas report.
     gas_report_traces: Vec<Vec<CallTraceArena>>,
-    // Last call results of the invariant test.
-    last_call_results: Option<RawCallResult<FEN>>,
     // Line coverage information collected from all fuzzed calls.
     line_coverage: Option<HitMaps>,
     // Metrics for each fuzzed selector.
@@ -248,34 +247,28 @@ struct InvariantTestData<FEN: FoundryEvmNetwork> {
 }
 
 /// Contains invariant test data.
-struct InvariantTest<FEN: FoundryEvmNetwork> {
+struct InvariantTest {
     // Fuzz state of invariant test.
     fuzz_state: EvmFuzzState,
     // Contracts fuzzed by the invariant test.
     targeted_contracts: FuzzRunIdentifiedContracts,
     // Data collected during invariant runs.
-    test_data: InvariantTestData<FEN>,
+    test_data: InvariantTestData,
 }
 
-impl<FEN: FoundryEvmNetwork> InvariantTest<FEN> {
+impl InvariantTest {
     /// Instantiates an invariant test.
     fn new(
         fuzz_state: EvmFuzzState,
         targeted_contracts: FuzzRunIdentifiedContracts,
         failures: InvariantFailures,
-        last_call_results: Option<RawCallResult<FEN>>,
         branch_runner: TestRunner,
     ) -> Self {
-        let mut fuzz_cases = vec![];
-        if last_call_results.is_none() {
-            fuzz_cases.push(FuzzedCases::new(vec![]));
-        }
         let test_data = InvariantTestData {
-            fuzz_cases,
+            fuzz_cases: vec![],
             failures,
             last_run_inputs: vec![],
             gas_report_traces: vec![],
-            last_call_results,
             line_coverage: None,
             metrics: Map::default(),
             branch_runner,
@@ -290,19 +283,9 @@ impl<FEN: FoundryEvmNetwork> InvariantTest<FEN> {
         self.test_data.failures.reverts
     }
 
-    /// Whether invariant test has errors or not.
-    const fn has_errors(&self) -> bool {
-        self.test_data.failures.error.is_some()
-    }
-
     /// Set invariant test error.
-    fn set_error(&mut self, error: InvariantFuzzError) {
-        self.test_data.failures.error = Some(error);
-    }
-
-    /// Set last invariant test call results.
-    fn set_last_call_results(&mut self, call_result: Option<RawCallResult<FEN>>) {
-        self.test_data.last_call_results = call_result;
+    fn set_error(&mut self, invariant: &Function, error: InvariantFuzzError) {
+        self.test_data.failures.record_failure(invariant, error);
     }
 
     /// Set last invariant run call sequence.
@@ -335,7 +318,7 @@ impl<FEN: FoundryEvmNetwork> InvariantTest<FEN> {
 
     /// End invariant test run by collecting results, cleaning collected artifacts and reverting
     /// created fuzz state.
-    fn end_run(&mut self, run: InvariantTestRun<FEN>, gas_samples: usize) {
+    fn end_run<FEN: FoundryEvmNetwork>(&mut self, run: InvariantTestRun<FEN>, gas_samples: usize) {
         // We clear all the targeted contracts created during this run.
         self.targeted_contracts.clear_created_contracts(run.created_contracts);
 
@@ -454,10 +437,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         progress: Option<&ProgressBar>,
         early_exit: &EarlyExit,
     ) -> Result<InvariantFuzzTestResult> {
-        // Throw an error to abort test run if the invariant function accepts input params
-        if !invariant_contract.invariant_function.inputs.is_empty() {
-            return Err(eyre!("Invariant test function should have no inputs"));
-        }
+        // Note: invariant function signatures (no inputs) are validated upstream in the
+        // suite runner so parameterized `invariant_*` functions are rejected with a per-test
+        // failure entry before any campaign runs.
 
         let (mut invariant_test, mut corpus_manager) =
             self.prepare_test(&invariant_contract, fuzz_fixtures, fuzz_state)?;
@@ -481,6 +463,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let edge_coverage_enabled = self.config.corpus.collect_edge_coverage();
 
         'stop: while continue_campaign(runs) {
+            // Per-run failure count snapshot used to gate `afterInvariant` below.
+            let failures_before_run = invariant_test.test_data.failures.errors.len();
+
             let initial_seq = corpus_manager.new_inputs(
                 &mut invariant_test.test_data.branch_runner,
                 &invariant_test.fuzz_state,
@@ -534,9 +519,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     current_run.inputs.pop();
                     current_run.rejects += 1;
                     if current_run.rejects > self.config.max_assume_rejects {
-                        invariant_test.set_error(InvariantFuzzError::MaxAssumeRejects(
-                            self.config.max_assume_rejects,
-                        ));
+                        invariant_test.set_error(
+                            invariant_contract.anchor(),
+                            InvariantFuzzError::MaxAssumeRejects(self.config.max_assume_rejects),
+                        );
                         break 'stop;
                     }
                 } else {
@@ -602,8 +588,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 || is_last_call
                         };
 
-                    let result = if should_check_invariant {
-                        can_continue(
+                    let (continues, broken) = if should_check_invariant {
+                        let outcome = can_continue(
                             &invariant_contract,
                             &mut invariant_test,
                             &mut current_run,
@@ -611,7 +597,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             call_result,
                             &state_changeset,
                         )
-                        .map_err(|e| eyre!(e.to_string()))?
+                        .map_err(|e| eyre!(e.to_string()))?;
+                        (outcome.continues, outcome.broken)
                     } else {
                         // Skip invariant check but still track reverts
                         if call_result.reverted {
@@ -619,23 +606,33 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         }
                         if assertion_failure || (call_result.reverted && self.config.fail_on_revert)
                         {
-                            let case_data = error::FailedInvariantCaseData::new(
-                                &invariant_contract,
-                                &self.config,
-                                &invariant_test.targeted_contracts,
-                                &current_run.inputs,
+                            // Handler-side reverts/assertion failures aren't tied to a specific
+                            // invariant body, so attribute to the campaign anchor.
+                            let anchor = invariant_contract.anchor();
+                            let case_data = error::InvariantRunCtx {
+                                contract: &invariant_contract,
+                                config: &self.config,
+                                targeted_contracts: &invariant_test.targeted_contracts,
+                                calldata: &current_run.inputs,
+                            }
+                            .failed_case(
+                                anchor,
+                                self.config.fail_on_revert,
+                                assertion_failure,
                                 call_result,
                                 &[],
-                            )
-                            .with_assertion_failure(assertion_failure);
+                            );
                             invariant_test.test_data.failures.revert_reason =
                                 Some(case_data.revert_reason.clone());
-                            invariant_test.test_data.failures.error = Some(if assertion_failure {
-                                InvariantFuzzError::BrokenInvariant(case_data)
-                            } else {
-                                InvariantFuzzError::Revert(case_data)
-                            });
-                            result::RichInvariantResults::new(false, None)
+                            invariant_test.set_error(
+                                anchor,
+                                if assertion_failure {
+                                    InvariantFuzzError::BrokenInvariant(case_data)
+                                } else {
+                                    InvariantFuzzError::Revert(case_data)
+                                },
+                            );
+                            (false, Some(anchor))
                         } else if call_result.reverted
                             && !invariant_contract.is_optimization()
                             && !self.config.has_delay()
@@ -644,33 +641,30 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             // preserve their warp/roll contribution when building the final
                             // counterexample.
                             current_run.inputs.pop();
-                            result::RichInvariantResults::new(true, None)
+                            (true, None)
                         } else {
-                            result::RichInvariantResults::new(true, None)
+                            (true, None)
                         }
                     };
 
-                    if !result.can_continue || current_run.depth == self.config.depth - 1 {
+                    if !continues || current_run.depth == self.config.depth - 1 {
                         invariant_test.set_last_run_inputs(&current_run.inputs);
                     }
                     // If test cannot continue then stop current run and exit test suite.
-                    if !result.can_continue {
-                        let reason = invariant_test
-                            .test_data
-                            .failures
-                            .error
-                            .as_ref()
-                            .and_then(|e| e.revert_reason())
-                            .unwrap_or_default();
+                    if !continues {
+                        // Attribute the failure event to the invariant returned by the
+                        // per-call check (deterministic, declaration-order). Falls back to the
+                        // anchor only if the failure came from a path that didn't surface a
+                        // specific invariant (defensive — should not happen in practice).
+                        let invariant = broken.unwrap_or_else(|| invariant_contract.anchor());
+                        let reason = invariant_test.test_data.failures.broken_reason(invariant);
                         failure_metrics.record_failure(
-                            &invariant_contract.invariant_function.name,
+                            invariant.name.as_str(),
                             invariant_contract.name,
                             &reason,
                         );
                         break 'stop;
                     }
-
-                    invariant_test.set_last_call_results(result.call_result);
                     current_run.depth += 1;
                 }
 
@@ -695,25 +689,25 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 optimization,
             );
 
-            // Call `afterInvariant` only if it is declared and test didn't fail already.
-            if invariant_contract.call_after_invariant && !invariant_test.has_errors() {
-                let success = assert_after_invariant(
+            // Call `afterInvariant` only if declared and the current run produced no new
+            // failure. Under `assert_all` the campaign keeps running after earlier failures,
+            // but the hook must still execute on subsequent runs.
+            if invariant_contract.call_after_invariant
+                && invariant_test.test_data.failures.errors.len() == failures_before_run
+            {
+                let broken = assert_after_invariant(
                     &invariant_contract,
                     &mut invariant_test,
                     &current_run,
                     &self.config,
                 )
                 .map_err(|_| eyre!("Failed to call afterInvariant"))?;
-                if !success {
-                    let reason = invariant_test
-                        .test_data
-                        .failures
-                        .error
-                        .as_ref()
-                        .and_then(|e| e.revert_reason())
-                        .unwrap_or_default();
+                if let Some(invariant) = broken {
+                    // `assert_after_invariant` returns the broken invariant directly (the
+                    // anchor, by construction), so no map re-scan is needed here.
+                    let reason = invariant_test.test_data.failures.broken_reason(invariant);
                     failure_metrics.record_failure(
-                        &invariant_contract.invariant_function.name,
+                        invariant.name.as_str(),
                         invariant_contract.name,
                         &reason,
                     );
@@ -725,9 +719,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             if let Some(progress) = progress {
                 // If running with progress then increment completed runs.
                 progress.inc(1);
-                // Display current best value and/or corpus metrics in progress bar.
+                // Display current best value, corpus metrics, and failure counts.
                 let best = invariant_test.test_data.optimization_best_value;
-                if edge_coverage_enabled || best.is_some() {
+                let broken = invariant_test.test_data.failures.errors.len();
+                let total_invariants = invariant_contract.invariant_fns.len();
+                if edge_coverage_enabled || best.is_some() || broken > 0 {
                     let mut msg = String::new();
                     if let Some(best) = best {
                         msg.push_str(&format!("best: {best}"));
@@ -738,6 +734,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         }
                         msg.push_str(&format!("{}", corpus_manager.metrics));
                     }
+                    if broken > 0 {
+                        if !msg.is_empty() {
+                            msg.push_str(", ");
+                        }
+                        msg.push_str(&format!("❌ {broken}/{total_invariants} broken"));
+                    }
                     progress.set_message(msg);
                 }
             } else if edge_coverage_enabled
@@ -746,7 +748,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 // Display corpus metrics inline as JSON.
                 let metrics = build_invariant_progress_json(
                     SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-                    &invariant_contract.invariant_function.name,
+                    &invariant_contract.anchor().name,
                     &corpus_manager.metrics,
                     invariant_test.test_data.optimization_best_value,
                     throughput,
@@ -765,7 +767,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         let result = invariant_test.test_data;
         Ok(InvariantFuzzTestResult {
-            error: result.failures.error,
+            errors: result.failures.errors,
             cases: result.fuzz_cases,
             reverts: result.failures.reverts,
             last_run_inputs: result.last_run_inputs,
@@ -786,7 +788,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
-    ) -> Result<(InvariantTest<FEN>, WorkerCorpus)> {
+    ) -> Result<(InvariantTest, WorkerCorpus)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -825,7 +827,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // already know if we can early exit the invariant run.
         // This does not count as a fuzz run. It will just register the revert.
         let mut failures = InvariantFailures::new();
-        let last_call_results = assert_invariants(
+        invariant_preflight_check(
             invariant_contract,
             &self.config,
             &targeted_contracts,
@@ -833,7 +835,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &[],
             &mut failures,
         )?;
-        if let Some(error) = failures.error {
+        // First broken invariant in declaration order (anchor first, then secondaries).
+        // Iterates `invariant_fns` so the lookup is deterministic, unlike HashMap iteration.
+        if let Some(error) =
+            invariant_contract.invariant_fns.iter().find_map(|(f, _)| failures.get_failure(f))
+        {
             return Err(eyre!(error.revert_reason().unwrap_or_default()));
         }
 
@@ -875,13 +881,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             Some(&targeted_contracts),
         )?;
 
-        let mut invariant_test = InvariantTest::new(
-            fuzz_state,
-            targeted_contracts,
-            failures,
-            last_call_results,
-            self.runner.clone(),
-        );
+        let mut invariant_test =
+            InvariantTest::new(fuzz_state, targeted_contracts, failures, self.runner.clone());
 
         // Seed invariant test with previously persisted optimization state,
         // but only if the current invariant is in optimization mode.
@@ -1227,7 +1228,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 /// before inserting it into the dictionary. Otherwise, we flood the dictionary with
 /// randomly generated addresses.
 fn collect_data<FEN: FoundryEvmNetwork>(
-    invariant_test: &InvariantTest<FEN>,
+    invariant_test: &InvariantTest,
     state_changeset: &mut AddressMap<Account>,
     tx: &BasicTxDetails,
     call_result: &RawCallResult<FEN>,
