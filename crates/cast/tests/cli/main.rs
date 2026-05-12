@@ -1,6 +1,7 @@
 //! Contains various tests for checking cast commands
 
 use alloy_chains::NamedChain;
+use alloy_eips::Decodable2718;
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::{TransactionBuilder, TransactionResponse};
 use alloy_primitives::{B256, Bytes, U256, address, b256, hex};
@@ -9,6 +10,7 @@ use alloy_rpc_types::{Authorization, BlockNumberOrTag, Index, TransactionRequest
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
 use anvil::NodeConfig;
+use foundry_evm::core::tempo::PATH_USD_ADDRESS;
 use foundry_test_utils::{
     rpc::{
         next_etherscan_api_key, next_http_archive_rpc_url, next_http_rpc_endpoint,
@@ -20,11 +22,13 @@ use foundry_test_utils::{
 };
 use serde_json::json;
 use std::{fs, path::Path, str::FromStr};
+use tempo_primitives::TempoTxEnvelope;
 
 #[macro_use]
 extern crate foundry_test_utils;
 
 mod erc20;
+mod keychain;
 mod selectors;
 
 casttest!(print_short_version, |_prj, cmd| {
@@ -2055,6 +2059,55 @@ casttest!(mktx_ethsign, async |_prj, cmd| {
     ]]);
 });
 
+// tests that `cast mktx --tempo.lane <name>` resolves the lane against a `tempo.lanes.toml` file at
+// the project root, sets the corresponding `nonce_key` on the produced Tempo AA transaction.
+casttest!(mktx_tempo_lane_resolves_nonce_key, |prj, cmd| {
+    // Write a shared lanes file at the project root.
+    let lanes_path = prj.root().join("tempo.lanes.toml");
+    fs::write(&lanes_path, "deploy = 1\nops = 2\npayments = 42\n").unwrap();
+
+    let output = cmd
+        .current_dir(prj.root())
+        .args([
+            "mktx",
+            "--tempo.lane",
+            "payments",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--chain",
+            "1",
+            "--nonce",
+            "0",
+            "--gas-limit",
+            "21000",
+            "--gas-price",
+            "10000000000",
+            "--priority-gas-price",
+            "1000000000",
+            "0x0000000000000000000000000000000000000001",
+        ])
+        .assert_success()
+        .get_output()
+        .clone();
+
+    // The resolved-lane breadcrumb is printed to stderr so it doesn't pollute stdout
+    // (which carries the raw signed transaction).
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("lane: payments (nonce_key=42, nonce=0)"),
+        "expected lane breadcrumb on stderr, got: {stderr}",
+    );
+
+    // Decode the produced signed Tempo AA transaction and verify it carries the
+    // resolved 2D nonce key.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let raw_hex = stdout.trim().trim_start_matches("0x");
+    let raw = hex::decode(raw_hex).expect("decode hex output");
+    let envelope = TempoTxEnvelope::decode_2718(&mut raw.as_slice()).expect("decode tempo tx");
+    assert!(envelope.is_aa(), "expected Tempo AA transaction, got: {envelope:?}");
+    assert_eq!(envelope.nonce_key(), Some(U256::from(42_u64)));
+});
+
 // tests that the raw encoded transaction is returned
 casttest!(tx_raw, |_prj, cmd| {
     let rpc = next_http_rpc_endpoint();
@@ -3978,7 +4031,7 @@ Error: Failed to estimate gas: server returned an error response: error code 3: 
 });
 
 // <https://basescan.org/block/30558838>
-casttest!(estimate_base_da, |_prj, cmd| {
+casttest!(flaky_estimate_base_da, |_prj, cmd| {
     cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
         .assert_success()
         .stdout_eq(str![[r#"
@@ -4024,6 +4077,7 @@ Warning: Contract code is empty
 });
 
 // <https://github.com/foundry-rs/foundry/issues/10740>
+#[cfg(feature = "optimism")]
 casttest!(tx_raw_opstack_deposit, |_prj, cmd| {
     cmd.args([
         "tx",
@@ -4363,6 +4417,30 @@ casttest!(can_disassemble_contract_code, |_prj, cmd| {
 0000002e: PUSH1 0x00
 ...
 "#]]);
+});
+
+// tests that cast call --trace selects TempoEvmNetwork when Tempo is inferred from
+// the fork RPC, or when a Tempo chain ID is provided explicitly via --chain.
+casttest!(cast_call_trace_selects_tempo_network, async |_prj, cmd| {
+    let (_, tempo_handle) = anvil::spawn(NodeConfig::test_tempo()).await;
+    let (_, eth_handle) = anvil::spawn(NodeConfig::test()).await;
+
+    let token = PATH_USD_ADDRESS.to_string();
+    for (name, rpc, extra_args) in [
+        ("inferred Tempo RPC", tempo_handle.http_endpoint(), Vec::<&str>::new()),
+        ("explicit Tempo --chain", eth_handle.http_endpoint(), vec!["--chain", "4217"]),
+    ] {
+        cmd.cast_fuse();
+        let mut args = vec!["call", &token, "decimals()(uint8)", "--rpc-url", &rpc, "--trace"];
+        args.extend(extra_args);
+
+        let output = cmd.args(args).assert_success().get_output().stdout_lossy();
+
+        assert!(
+            output.contains("PathUSD::decimals()") && output.contains("← [Return] 6"),
+            "expected traced Tempo TIP20 call to execute successfully for {name}, got:\n{output}"
+        );
+    }
 });
 
 // tests that cast call properly applies state diff override
@@ -5020,6 +5098,7 @@ casttest!(cast_decode_tx_network_flag_short_and_long_equivalent, |_prj, cmd| {
 
 // Test that `--network optimism` and `-n optimism` produce identical output for decode-tx.
 // Uses a known OP-stack deposit transaction (same tx as tx_raw_opstack_deposit test).
+#[cfg(feature = "optimism")]
 casttest!(cast_decode_tx_network_optimism_short_and_long_equivalent, |_prj, cmd| {
     let tx = "0x7ef90207a0cbde10ec697aff886f95d2514bab434e455620627b9bb8ba33baaaa4d537d62794d45955f4de64f1840e5686e64278da901e263031944200000000000000000000000000000000000007872386f26fc10000872386f26fc1000083096c4980b901a4d764ad0b0001000000000000000000000000000000000000000000000000000000065132000000000000000000000000fd0bf71f60660e2f608ed56e1659c450eb1131200000000000000000000000004200000000000000000000000000000000000010000000000000000000000000000000000000000000000000002386f26fc1000000000000000000000000000000000000000000000000000000000000000493e000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000a41635f5fd000000000000000000000000ca11bde05977b3631167028862be2a173976ca110000000000000000000000005703b26fe5a7be820db1bf34c901a79da1a46ba4000000000000000000000000000000000000000000000000002386f26fc100000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
 
@@ -5075,4 +5154,69 @@ casttest!(run_evm_version_updates_gas_params, |_prj, cmd| {
         sd_output.contains("Gas used: 177241"),
         "expected Spurious Dragon gas (177241), got: {sd_output}"
     );
+});
+
+// Tests for `cast vaddr` JSON output
+casttest!(vaddr_create_json_output, |_prj, cmd| {
+    // Use a pre-computed salt that satisfies the 4-byte PoW requirement for this owner.
+    // Salt: 0x0000000000000000000000000000000000000000000000003ee0a78d00000000
+    // Owner: 0x1234567890123456789012345678901234567890
+    let out = cmd
+        .args([
+            "--json",
+            "vaddr",
+            "create",
+            "--owner",
+            "0x1234567890123456789012345678901234567890",
+            "--salt",
+            "0x0000000000000000000000000000000000000000000000003ee0a78d00000000",
+            "--no-register",
+            "--count",
+            "2",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let v: serde_json::Value = serde_json::from_str(out.trim()).expect("valid JSON");
+    assert_eq!(v["salt"], "0x0000000000000000000000000000000000000000000000003ee0a78d00000000");
+    assert_eq!(
+        v["registration_hash"],
+        "0x000000002f51c0c4f66f3910f799c6b98e2123ef43a401a062eb8ee07498c396"
+    );
+    assert_eq!(v["master_id"], "0x2f51c0c4");
+    let addrs = v["virtual_addresses"].as_array().expect("array");
+    assert_eq!(addrs.len(), 2);
+    assert_eq!(addrs[0]["tag"], "0x000000000000");
+    assert_eq!(
+        addrs[0]["address"].as_str().unwrap().to_lowercase(),
+        "0x2f51c0c4fdfdfdfdfdfdfdfdfdfd000000000000"
+    );
+    assert_eq!(addrs[1]["tag"], "0x000000000001");
+    assert_eq!(
+        addrs[1]["address"].as_str().unwrap().to_lowercase(),
+        "0x2f51c0c4fdfdfdfdfdfdfdfdfdfd000000000001"
+    );
+});
+
+casttest!(vaddr_create_plain_output, |_prj, cmd| {
+    cmd.args([
+        "vaddr",
+        "create",
+        "--owner",
+        "0x1234567890123456789012345678901234567890",
+        "--salt",
+        "0x0000000000000000000000000000000000000000000000003ee0a78d00000000",
+        "--no-register",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+Salt:              0x0000000000000000000000000000000000000000000000003ee0a78d00000000
+Registration hash: 0x000000002f51c0c4f66f3910f799c6b98e2123ef43a401a062eb8ee07498c396
+Master ID:         0x2f51c0c4
+
+Virtual addresses:
+  tag=0x000000000000  [..]
+
+"#]]);
 });

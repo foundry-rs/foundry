@@ -66,6 +66,25 @@ impl BenchmarkResults {
         self.version_details.insert(version.to_string(), details);
     }
 
+    /// Generate a flat JSON summary mapping `"benchmark/repo" -> mean_seconds`.
+    ///
+    /// Used by the nightly regression comparison script.
+    pub fn generate_json_summary(&self, versions: &[String]) -> HashMap<String, f64> {
+        let mut summary = HashMap::new();
+        for (benchmark_name, version_data) in &self.data {
+            for version in versions {
+                if let Some(repo_data) = version_data.get(version) {
+                    for (repo_name, result) in repo_data {
+                        let key = format!("{benchmark_name}/{repo_name}");
+                        let rounded = (result.mean * 10_000.0).round() / 10_000.0;
+                        summary.insert(key, rounded);
+                    }
+                }
+            }
+        }
+        summary
+    }
+
     pub fn generate_markdown(&self, versions: &[String], repos: &[RepoConfig]) -> String {
         let mut output = String::new();
 

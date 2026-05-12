@@ -837,6 +837,131 @@ Warning (2018): Function state mutability can be restricted to pure
 "#]]);
 });
 
+// Lint diagnostics produced during `forge build` must stream to stderr through the emitter
+// installed inside `SolidityLinter::lint`.
+forgetest!(build_emits_lint_diagnostics, |prj, cmd| {
+    prj.add_source("CounterAWithLints", COUNTER_A);
+
+    prj.update_config(|config| {
+        config.lint.severity = vec![LintSeverity::Info];
+    });
+
+    cmd.arg("build").assert_success().stderr_eq(str![[r#"
+note[mixed-case-variable]: mutable variables should use mixedCase
+  [FILE]:6:20
+  │
+6 │     uint256 public CounterA_Fail_Lint;
+  │                    ━━━━━━━━━━━━━━━━━━ help: consider using: `counterAFailLint`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
+
+
+"#]]);
+});
+
+forgetest!(build_no_lint_flag_skips_lint, |prj, cmd| {
+    prj.add_source("ContractWithLints", CONTRACT);
+
+    // Configure linter with medium severity lints and ensure lint_on_build is enabled
+    // so the only thing skipping the lint step is the `--no-lint` flag.
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![LintSeverity::Med],
+            exclude_lints: vec!["incorrect-shift".into()],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+
+    cmd.args(["build", "--no-lint"]).assert_success().stderr_eq(str![[r#""#]]).stdout_eq(str![[
+        r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2072): Unused local variable.
+  [FILE]:13:9:
+   |
+13 |         uint256 result = 8 >> localValue;
+   |         ^^^^^^^^^^^^^^
+
+Warning (6133): Statement has no effect.
+  [FILE]:16:9:
+   |
+16 |         (1 / 2) * 3;
+   |         ^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:11:5:
+   |
+11 |     function incorrectShiftHigh() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:15:5:
+   |
+15 |     function divideBeforeMultiplyMedium() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:18:5:
+   |
+18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+
+"#
+    ]]);
+});
+
+// `deny = notes` + an info-level lint forces the linter to return Err, exercising the same
+// failure-notice path an unhandled solar edge case would take.
+forgetest!(build_emits_lint_failure_notice_on_failure, |prj, cmd| {
+    prj.add_source("CounterAWithLints", COUNTER_A);
+
+    prj.update_config(|config| {
+        config.lint.severity = vec![LintSeverity::Info];
+        config.deny = DenyLevel::Notes;
+    });
+
+    cmd.arg("build").assert_failure().stderr_eq(str![[r#"
+note[mixed-case-variable]: mutable variables should use mixedCase
+  [FILE]:6:20
+  │
+6 │     uint256 public CounterA_Fail_Lint;
+  │                    ━━━━━━━━━━━━━━━━━━ help: consider using: `counterAFailLint`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-variable
+
+
+note: internal lint engine failure (compilation itself succeeded).
+note: please file a bug report at
+      https://github.com/foundry-rs/foundry/issues/new?template=BUG-FORM.yml
+      and attach the full output above.
+help: rerun with `--no-lint` to skip linting for this build, or consider temporarily
+      disabling forge lint on build:
+      https://getfoundry.sh/forge/linting#disable-linting-on-build
+
+Error: post-build lint step failed
+
+Context:
+- aborting due to 1 linter note(s)
+
+"#]]);
+});
+
+// Same setup as above, but `--no-lint` skips the lint step so the failure notice never fires.
+forgetest!(build_no_lint_flag_does_not_emit_lint_failure_notice, |prj, cmd| {
+    prj.add_source("CounterAWithLints", COUNTER_A);
+
+    prj.update_config(|config| {
+        config.lint.severity = vec![LintSeverity::Info];
+        config.deny = DenyLevel::Notes;
+    });
+
+    cmd.args(["build", "--no-lint"]).assert_success().stderr_eq(str![[r#""#]]);
+});
+
 forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OtherContractWithLints", OTHER_CONTRACT);

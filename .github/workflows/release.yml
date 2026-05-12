@@ -117,6 +117,8 @@ jobs:
     needs: prepare
     uses: ./.github/workflows/docker-publish.yml
     permissions:
+      attestations: write
+      artifact-metadata: write
       contents: read
       id-token: write
       packages: write
@@ -129,9 +131,10 @@ jobs:
   # way, GitHub's immutable-releases setting seals the release at publish.
   release:
     permissions:
-      id-token: write
-      contents: write
       attestations: write
+      artifact-metadata: write
+      contents: write
+      id-token: write
     name: release ${{ matrix.target }} (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
