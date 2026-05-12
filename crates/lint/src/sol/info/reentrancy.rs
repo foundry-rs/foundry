@@ -87,7 +87,7 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
 }
 
 impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
-    fn new(ctx: &'ctx LintContext<'s, 'c>, hir: &'hir hir::Hir<'hir>) -> Self {
+    const fn new(ctx: &'ctx LintContext<'s, 'c>, hir: &'hir hir::Hir<'hir>) -> Self {
         Self { ctx, hir, emitted: Vec::new(), call_stack: Vec::new() }
     }
 
@@ -342,7 +342,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
             ExprKind::Ident(reses) => {
-                for &res in reses.iter() {
+                for &res in *reses {
                     if let Res::Item(ItemId::Variable(var_id)) = res
                         && self.hir.variable(var_id).kind.is_state()
                     {
@@ -509,7 +509,7 @@ fn collect_state_write_lhs_vars(
 ) {
     match &expr.kind {
         ExprKind::Ident(reses) => {
-            for &res in reses.iter() {
+            for &res in *reses {
                 if let Res::Item(ItemId::Variable(var_id)) = res
                     && hir.variable(var_id).kind.is_state()
                 {
