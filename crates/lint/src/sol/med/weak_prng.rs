@@ -72,7 +72,7 @@ fn contains_predictable_source(expr: &Expr<'_>) -> bool {
         }
         ExprKind::CallOptions(callee, options) => {
             contains_predictable_source(callee)
-                || options.iter().any(|option| contains_predictable_source(&option.value))
+                || options.iter().any(|option| contains_predictable_source(option.value))
         }
         ExprKind::Delete(inner) | ExprKind::Member(inner, _) | ExprKind::Unary(_, inner) => {
             contains_predictable_source(inner)
