@@ -15,10 +15,14 @@ use tx_origin::TX_ORIGIN;
 mod unsafe_typecast;
 use unsafe_typecast::UNSAFE_TYPECAST;
 
+mod weak_prng;
+use weak_prng::WEAK_PRNG;
+
 register_lints!(
     (DivideBeforeMultiply, early, (DIVIDE_BEFORE_MULTIPLY)),
     (IncorrectERC20Interface, late, (INCORRECT_ERC20_INTERFACE)),
     (IncorrectERC721Interface, late, (INCORRECT_ERC721_INTERFACE)),
     (TxOrigin, early, (TX_ORIGIN)),
-    (UnsafeTypecast, late, (UNSAFE_TYPECAST))
+    (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
+    (WeakPrng, early, (WEAK_PRNG))
 );
