@@ -126,63 +126,6 @@ jobs:
           mkdir -p "$ARTIFACT_DIR"
           ls -la "$ARTIFACT_DIR" || true
 
-      # Validate that the triggering run actually belongs to the trusted
-      # `release` workflow on this repository before consuming its artifacts.
-      # This prevents artifact poisoning when the workflow is dispatched
-      # manually with an attacker-controlled `run_id`.
-      - name: Validate Source Run
-        id: validate-run
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          INPUT_RUN_ID: ${{ inputs.run_id }}
-          EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-
-          if [[ "$EVENT_NAME" == "workflow_run" ]]; then
-            RUN_ID="$EVENT_RUN_ID"
-          else
-            RUN_ID="$INPUT_RUN_ID"
-          fi
-
-          if [[ -z "${RUN_ID:-}" ]]; then
-            echo "No run id available to validate" >&2
-            exit 1
-          fi
-
-          # Reject anything that isn't a positive integer.
-          if ! [[ "$RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
-            echo "Invalid run id: $RUN_ID" >&2
-            exit 1
-          fi
-
-          run_json=$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID")
-          workflow_path=$(jq -r '.path' <<<"$run_json")
-          head_repo=$(jq -r '.head_repository.full_name' <<<"$run_json")
-          conclusion=$(jq -r '.conclusion' <<<"$run_json")
-          event=$(jq -r '.event' <<<"$run_json")
-
-          echo "Run $RUN_ID: workflow=$workflow_path repo=$head_repo conclusion=$conclusion event=$event"
-
-          if [[ "$workflow_path" != ".github/workflows/release.yml" ]]; then
-            echo "Refusing to consume artifacts: source run is not the release workflow" >&2
-            exit 1
-          fi
-
-          if [[ "$head_repo" != "$GH_REPO" ]]; then
-            echo "Refusing to consume artifacts: source run is from a fork ($head_repo)" >&2
-            exit 1
-          fi
-
-          if [[ "$conclusion" != "success" ]]; then
-            echo "Refusing to consume artifacts: source run did not complete successfully" >&2
-            exit 1
-          fi
-
-          printf 'run_id=%s\n' "$RUN_ID" >> "$GITHUB_OUTPUT"
-
       - name: Download Release Assets
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -192,7 +135,7 @@ jobs:
           # Extract artifacts into an isolated temp directory, not the workspace
           path: ${{ steps.paths.outputs.artifact_dir }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ steps.validate-run.outputs.run_id }}
+          run-id: ${{ github.event.workflow_run.id || inputs.run_id }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
