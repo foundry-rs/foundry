@@ -490,7 +490,7 @@ impl<
             }
         }
 
-        if this.handlers.is_empty() && this.incoming.is_done() {
+        if this.handlers.is_empty() && this.pending_tasks.is_empty() && this.incoming.is_done() {
             trace!(target: "fork::multi", "completed");
             return Poll::Ready(());
         }
