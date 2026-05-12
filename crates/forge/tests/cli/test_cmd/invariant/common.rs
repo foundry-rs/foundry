@@ -3,6 +3,12 @@ use super::*;
 forgetest!(invariant_after_invariant, |prj, cmd| {
     prj.insert_vm();
     prj.insert_ds_test();
+    // This test exercises `afterInvariant` semantics in isolation; disable `assert_all` so the
+    // campaign aborts on the first broken invariant per function (legacy behavior) instead of
+    // fanning out across all invariants in the suite.
+    prj.update_config(|config| {
+        config.invariant.assert_all = false;
+    });
 
     prj.add_test(
         "InvariantAfterInvariant.t.sol",
@@ -1931,7 +1937,7 @@ Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
 ...
  invariant_with_assert() ([..])
 ...
-[FAIL: wrong counter require]
+[FAIL: wrong counter require] invariant_with_require
 	[Sequence] (original: 2, shrunk: 2)
 ...
  invariant_with_require() ([..])
@@ -2063,8 +2069,11 @@ Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantR
 });
 
 forgetest_init!(invariant_test1, |prj, cmd| {
+    // Disable `assert_all` so each invariant in the suite reports independently without secondary
+    // failures being attached to the other (the two invariants here share the same condition).
     prj.update_config(|config| {
         config.invariant.depth = 10;
+        config.invariant.assert_all = false;
     });
 
     prj.add_test(
@@ -2147,11 +2156,14 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_warp_and_roll, |prj, cmd| {
+    // Disable `assert_all` so `--mt invariant_warp` only exercises invariant_warp, isolating the
+    // warp/roll behavior under test from invariant_roll fan-out.
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
         config.invariant.max_time_delay = Some(604800);
         config.invariant.max_block_delay = Some(60480);
         config.invariant.shrink_run_limit = 0;
+        config.invariant.assert_all = false;
     });
 
     prj.add_test(
