@@ -27,6 +27,7 @@ impl PreprocessorDependencies {
     pub fn new(
         gcx: Gcx<'_>,
         paths: &[PathBuf],
+        script_paths: &HashSet<PathBuf>,
         src_dir: &Path,
         root_dir: &Path,
         mocks: &mut HashSet<PathBuf>,
@@ -81,8 +82,9 @@ impl PreprocessorDependencies {
             // which used to be a mock is refactored to a non-mock implementation).
             mocks.remove(&full_path);
 
+            let is_script = script_paths.contains(path);
             let mut deps_collector =
-                BytecodeDependencyCollector::new(gcx, source.file.src.as_str(), src_dir);
+                BytecodeDependencyCollector::new(gcx, source.file.src.as_str(), src_dir, is_script);
             // Analyze current contract.
             let _ = deps_collector.walk_contract(contract);
             // Ignore empty test contracts declared in source files with other contracts.
@@ -142,6 +144,12 @@ struct BytecodeDependencyCollector<'gcx, 'src> {
     src: &'src str,
     /// Project source dir, used to determine if referenced contract is a source contract.
     src_dir: &'src Path,
+    /// Whether the contract being analyzed lives in a script file.
+    /// Salted `new Contract{salt:...}()` in scripts must not be rewritten: at broadcast depth
+    /// Foundry redirects native CREATE2 through the deterministic factory, preserving the salt.
+    /// `vm.deployCode` runs at a deeper call depth and bypasses that redirect, so the broadcast
+    /// would record a plain CREATE and deploy at the wrong address.
+    is_script: bool,
     /// Dependencies collected for current contract.
     dependencies: Vec<BytecodeDependency>,
     /// Unique HIR ids of contracts referenced from current contract.
@@ -149,14 +157,29 @@ struct BytecodeDependencyCollector<'gcx, 'src> {
 }
 
 impl<'gcx, 'src> BytecodeDependencyCollector<'gcx, 'src> {
-    fn new(gcx: Gcx<'gcx>, src: &'src str, src_dir: &'src Path) -> Self {
-        Self { gcx, src, src_dir, dependencies: vec![], referenced_contracts: HashSet::default() }
+    fn new(gcx: Gcx<'gcx>, src: &'src str, src_dir: &'src Path, is_script: bool) -> Self {
+        Self {
+            gcx,
+            src,
+            src_dir,
+            is_script,
+            dependencies: vec![],
+            referenced_contracts: HashSet::default(),
+        }
     }
 
     /// Collects reference identified as bytecode dependency of analyzed contract.
     /// Discards any reference that is not in project src directory (e.g. external
     /// libraries or mock contracts that extend source contracts).
     fn collect_dependency(&mut self, dependency: BytecodeDependency) {
+        // Salted new-expressions in scripts must not be rewritten. See field doc on `is_script`.
+        if self.is_script
+            && let BytecodeDependencyKind::New { salt: Some(_), .. } = &dependency.kind
+        {
+            trace!("skip salted new-expression in script");
+            return;
+        }
+
         let contract = self.gcx.hir.contract(dependency.referenced_contract);
         let source = self.gcx.hir.source(contract.source);
         let FileName::Real(path) = &source.file.name else {

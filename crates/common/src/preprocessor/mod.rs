@@ -60,6 +60,7 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             // Include all sources in the source map so as to not re-load them from disk, but only
             // parse and preprocess tests and scripts.
             let mut preprocessed_paths = vec![];
+            let mut script_paths = HashSet::new();
             let sources = &mut input.input.sources;
             for (path, source) in sources.iter() {
                 if let Ok(src_file) = compiler
@@ -69,6 +70,9 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
                     && paths.is_test_or_script(path)
                 {
                     pcx.add_file(src_file);
+                    if paths.is_script(path) {
+                        script_paths.insert(path.clone());
+                    }
                     preprocessed_paths.push(path.clone());
                 }
             }
@@ -78,9 +82,13 @@ impl Preprocessor<SolcCompiler> for DynamicTestLinkingPreprocessor {
             let ControlFlow::Continue(()) = compiler.lower_asts()? else { return Ok(()) };
             let gcx = compiler.gcx();
             // Collect tests and scripts dependencies and identify mock contracts.
+            // Script paths are passed separately so salted new-expressions are left untouched
+            // (Foundry's broadcast redirects native CREATE2 through the deterministic factory,
+            // but vm.deployCode runs at a deeper depth and bypasses that redirect).
             let deps = PreprocessorDependencies::new(
                 gcx,
                 &preprocessed_paths,
+                &script_paths,
                 &paths.paths_relative().sources,
                 &paths.root,
                 mocks,
