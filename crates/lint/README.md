@@ -41,6 +41,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
+  - `cache-array-length`: Recommends caching dynamic array or `bytes` lengths used in `for` loop conditions.
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
   - `custom-errors`: Recommends using custom errors instead of strings and plain reverts for potential gas savings.
   - `unused-state-variables`: State variables that are never used should be removed.
