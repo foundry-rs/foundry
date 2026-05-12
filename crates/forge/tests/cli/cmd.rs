@@ -366,6 +366,20 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     assert!(!prj.root().join("lib/forge-std/.git").exists());
 });
 
+// Checks that `--no-commit` is accepted as a noop backwards-compatibility flag
+forgetest!(can_init_with_no_commit, |prj, cmd| {
+    prj.wipe();
+
+    cmd.arg("init").arg(prj.root()).arg("--no-commit").assert_success().stdout_eq(str![[r#"
+Initializing [..]...
+Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
+    Installed forge-std[..]
+    Initialized forge project
+
+"#]]);
+    prj.assert_config_exists();
+});
+
 // Checks that quiet mode does not print anything
 forgetest!(can_init_quiet, |prj, cmd| {
     prj.wipe();
@@ -725,6 +739,21 @@ Compiler run successful!
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
+// Checks that `--no-commit` is accepted as a noop backwards-compatibility flag for clone
+forgetest!(flaky_can_clone_with_no_commit, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--no-commit",
+        "0x044b75f554b886A065b9567891e45c79542d7357",
+    ])
+    .arg(prj.root())
+    .assert_success();
 });
 
 // Checks that quiet mode does not print anything for clone
@@ -3000,7 +3029,7 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 +=====================================================================================================================+
 | Deployment Cost                                                | Deployment Size |       |        |       |         |
 |----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
-|                                                         132459 |             396 |       |        |       |         |
+|                                                         132471 |             396 |       |        |       |         |
 |----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
 |                                                                |                 |       |        |       |         |
 |----------------------------------------------------------------+-----------------+-------+--------+-------+---------|
@@ -3023,7 +3052,7 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
   {
     "contract": "test/FallbackWithCalldataTest.sol:CounterWithFallback",
     "deployment": {
-      "gas": 132459,
+      "gas": 132471,
       "size": 396
     },
     "functions": {
