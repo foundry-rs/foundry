@@ -2,7 +2,7 @@
 
 use crossterm::event;
 use eyre::Result;
-use foundry_tui::CrosstermTerminal;
+use foundry_tui::{CrosstermTerminal, with_terminal};
 use std::ops::ControlFlow;
 
 mod context;
@@ -33,7 +33,7 @@ impl<'a> TUI<'a> {
 
     /// Starts the debugger TUI.
     pub fn try_run(&mut self) -> Result<ExitReason> {
-        foundry_tui::with_terminal(|terminal| self.run_inner(terminal))?
+        with_terminal(|terminal| self.run_inner(terminal))?
     }
 
     #[instrument(target = "debugger", name = "run", skip_all, ret)]
