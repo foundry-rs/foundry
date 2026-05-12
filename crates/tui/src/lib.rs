@@ -1,16 +1,17 @@
 //! Shared terminal UI utilities for Foundry.
 
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
+    event::{DisableMouseCapture, EnableMouseCapture, Event, read},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
-    Terminal,
+    Frame, Terminal,
     backend::{Backend, CrosstermBackend},
 };
 use std::{
     io::{Result as IoResult, Stdout, Write, stdout},
+    ops::ControlFlow,
     panic::{PanicHookInfo, set_hook, take_hook},
     sync::Arc,
     thread::panicking,
@@ -26,6 +27,36 @@ pub fn with_terminal<T>(f: impl FnMut(&mut CrosstermTerminal) -> T) -> IoResult<
     let backend = CrosstermBackend::new(stdout());
     let terminal = Terminal::new(backend)?;
     Ok(TerminalGuard::with(terminal, f))
+}
+
+/// An interactive terminal application.
+pub trait TuiApp {
+    /// The reason the application exited.
+    type Exit;
+
+    /// Draws one frame.
+    fn draw(&mut self, frame: &mut Frame<'_>);
+
+    /// Handles one terminal event.
+    fn handle_event(&mut self, event: Event) -> ControlFlow<Self::Exit>;
+}
+
+/// Runs an interactive terminal application with the default Foundry terminal setup.
+pub fn run_app<App: TuiApp>(app: &mut App) -> IoResult<App::Exit> {
+    with_terminal(|terminal| run_app_inner(terminal, app))?
+}
+
+fn run_app_inner<App: TuiApp>(
+    terminal: &mut CrosstermTerminal,
+    app: &mut App,
+) -> IoResult<App::Exit> {
+    loop {
+        terminal.draw(|frame| app.draw(frame))?;
+        match app.handle_event(read()?) {
+            ControlFlow::Continue(()) => {}
+            ControlFlow::Break(reason) => return Ok(reason),
+        }
+    }
 }
 
 /// Handles terminal setup and teardown for interactive TUIs.
