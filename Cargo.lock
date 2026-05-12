@@ -5249,6 +5249,7 @@ dependencies = [
  "foundry-compilers",
  "foundry-evm-core",
  "foundry-evm-traces",
+ "foundry-tui",
  "ratatui",
  "revm",
  "revm-inspectors",
@@ -5564,6 +5565,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.23",
  "ui_test",
+]
+
+[[package]]
+name = "foundry-tui"
+version = "1.7.2"
+dependencies = [
+ "crossterm",
+ "ratatui",
 ]
 
 [[package]]
