@@ -24,8 +24,7 @@ For every concrete or abstract contract, the lint:
    - The `selfdestruct(addr)` builtin.
 3. Internal and library calls whose callee statically resolves to a function are followed
    transitively, so a withdrawal helper buried behind several internal hops is detected. External
-   calls through unresolved member access are not followed (matches Slither's behavior to keep
-   false positives down).
+   calls through unresolved member access are not followed, to keep false positives down.
 
 If no ETH-sending path is found, the lint reports the contract as locked at the contract's name.
 

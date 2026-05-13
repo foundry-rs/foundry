@@ -54,7 +54,7 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
 
         // Walk every function in `self` and its bases. Internal/library calls resolved to a
         // `FunctionId` are queued for transitive analysis; unresolved external calls are
-        // conservatively ignored (matches Slither).
+        // conservatively ignored.
         let mut visited: HashSet<FunctionId> = HashSet::new();
         let mut worklist: Vec<FunctionId> = contract
             .linearized_bases
