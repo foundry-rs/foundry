@@ -680,7 +680,7 @@ async fn test_fill_transaction_reverts_on_gas_estimation_failure() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_send_transaction_surfaces_gas_estimation_error_on_osaka() {
+async fn test_send_transaction_uses_valid_fallback_gas_on_osaka() {
     let (api, handle) =
         spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()))).await;
 
@@ -700,14 +700,6 @@ async fn test_send_transaction_surfaces_gas_estimation_error_on_osaka() {
         .with_to(contract_address)
         .with_input(VendingMachine::buyCall { amount: U256::from(10) }.abi_encode());
 
-    let err = api.send_transaction(WithOtherFields::new(tx_req)).await.unwrap_err().to_string();
-
-    assert!(
-        err.contains("execution reverted"),
-        "send_transaction should return the original estimation revert, got: {err}"
-    );
-    assert!(
-        !err.contains("intrinsic gas too high -- tx.gas_limit > env.cfg.tx_gas_limit_cap"),
-        "send_transaction should not mask estimation revert with tx gas cap error: {err}"
-    );
+    let receipt = api.send_transaction_sync(WithOtherFields::new(tx_req)).await.unwrap();
+    assert!(!receipt.status(), "transaction should preserve send-path revert semantics");
 }

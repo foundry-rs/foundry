@@ -91,7 +91,7 @@ use futures::{
 };
 use parking_lot::RwLock;
 use revm::{
-    context::BlockEnv,
+    context::{BlockEnv, Cfg},
     context_interface::{block::BlobExcessGasAndPrice, result::Output},
     database::CacheDB,
     interpreter::{InstructionResult, return_ok, return_revert},
@@ -2186,7 +2186,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `eth_sendTransaction`
     pub async fn send_transaction(
         &self,
-        mut request: WithOtherFields<TransactionRequest>,
+        request: WithOtherFields<TransactionRequest>,
     ) -> Result<TxHash> {
         node_info!("eth_sendTransaction");
 
@@ -2194,13 +2194,6 @@ impl EthApi<FoundryNetwork> {
             self.accounts()?.first().copied().ok_or(BlockchainError::NoSignerAvailable)
         })?;
         let (nonce, on_chain_nonce) = self.request_nonce(&request, from).await?;
-
-        // Prefill gas limit with estimated gas and bubble up estimation errors directly.
-        if request.as_ref().gas_limit().is_none() {
-            let estimated_gas =
-                self.estimate_gas(request.clone(), None, EvmOverrides::default()).await?;
-            request.as_mut().set_gas_limit(estimated_gas.to());
-        }
 
         let typed_tx = self.build_tx_request(request, nonce).await?;
 
@@ -3457,6 +3450,15 @@ impl EthApi<FoundryNetwork> {
         request.nonce().is_none().then(|| request.set_nonce(nonce));
         request.kind().is_none().then(|| request.set_kind(TxKind::default()));
         if request.gas_limit().is_none() {
+            let fallback_gas_limit = {
+                let evm_env = self.backend.evm_env().read();
+                let block_gas_limit = evm_env.block_env.gas_limit;
+                if evm_env.cfg_env.tx_gas_limit_cap.is_none() {
+                    block_gas_limit.min(evm_env.cfg_env().tx_gas_limit_cap())
+                } else {
+                    block_gas_limit
+                }
+            };
             request.set_gas_limit(
                 self.do_estimate_gas(
                     request.as_ref().clone().into(),
@@ -3465,7 +3467,7 @@ impl EthApi<FoundryNetwork> {
                 )
                 .await
                 .map(|v| v as u64)
-                .unwrap_or(self.backend.gas_limit()),
+                .unwrap_or(fallback_gas_limit),
             );
         }
 
