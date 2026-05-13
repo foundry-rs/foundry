@@ -15,10 +15,14 @@ use tx_origin::TX_ORIGIN;
 mod unsafe_typecast;
 use unsafe_typecast::UNSAFE_TYPECAST;
 
+mod locked_ether;
+use locked_ether::LOCKED_ETHER;
+
 register_lints!(
     (DivideBeforeMultiply, early, (DIVIDE_BEFORE_MULTIPLY)),
     (IncorrectERC20Interface, late, (INCORRECT_ERC20_INTERFACE)),
     (IncorrectERC721Interface, late, (INCORRECT_ERC721_INTERFACE)),
     (TxOrigin, early, (TX_ORIGIN)),
-    (UnsafeTypecast, late, (UNSAFE_TYPECAST))
+    (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
+    (LockedEther, late, (LOCKED_ETHER))
 );
