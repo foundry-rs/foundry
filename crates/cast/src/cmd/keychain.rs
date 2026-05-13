@@ -1,4 +1,5 @@
 use alloy_ens::NameOrAddress;
+use foundry_wallets::BrowserWalletOpts;
 use std::time::Duration;
 
 use alloy_network::{EthereumWallet, TransactionBuilder};
@@ -212,6 +213,69 @@ pub enum KeychainSubcommand {
     Policy {
         #[command(subcommand)]
         command: KeychainPolicySubcommand,
+    },
+
+    /// Sign a Tempo `KeyAuthorization` payload with the connected browser
+    /// wallet (passkey root) and print the resulting RLP-encoded
+    /// `SignedKeyAuthorization` as `0x`-prefixed hex.
+    ///
+    /// Useful for provisioning the `key_authorization` field in
+    /// `~/.tempo/wallet/keys.toml` when the root account is a Tempo
+    /// passkey wallet (i.e. cannot use a local private key).
+    #[command(
+        name = "sign-authorization",
+        visible_alias = "sign-auth",
+        group = clap::ArgGroup::new("spending_policy")
+            .required(true)
+            .multiple(true)
+            .args(["limits", "deny_all_spending"]),
+        group = clap::ArgGroup::new("call_policy")
+            .required(true)
+            .multiple(true)
+            .args(["scope", "scopes_json", "deny_all_calls"]),
+    )]
+    SignAuthorization {
+        /// The access key address being authorized.
+        key_address: Address,
+
+        /// Signature type for the access key being authorized:
+        /// secp256k1, p256, or webauthn.
+        #[arg(default_value = "secp256k1", value_parser = parse_signature_type)]
+        key_type: SignatureType,
+
+        /// Chain ID this authorization is bound to. `0` is the legacy
+        /// pre-T1C wildcard (rejected on T1C+ chains).
+        #[arg(long)]
+        chain_id: u64,
+
+        /// Expiry timestamp (unix seconds). Defaults to "never".
+        #[arg(long)]
+        expiry: Option<u64>,
+
+        /// Spending limit in TOKEN:AMOUNT[:PERIOD] format. Repeatable.
+        #[arg(long = "limit", value_parser = parse_limit)]
+        limits: Vec<TokenLimit>,
+
+        /// Deny all spending (limits = `Some([])`).
+        #[arg(long, conflicts_with = "limits")]
+        deny_all_spending: bool,
+
+        /// Call scope restriction in `TARGET[:SELECTORS[@RECIPIENTS]]` format.
+        /// Required unless `--scopes` or `--deny-all-calls` is passed.
+        #[arg(long = "scope", value_parser = parse_scope)]
+        scope: Vec<CallScope>,
+
+        /// Call scope restrictions as a JSON array. Same format as
+        /// `cast keychain authorize --scopes`.
+        #[arg(long = "scopes", value_parser = parse_scopes_json_wrapped, conflicts_with = "scope")]
+        scopes_json: Option<ScopesJson>,
+
+        /// Deny all calls (allowed_calls = `Some([])`).
+        #[arg(long, conflicts_with_all = ["scope", "scopes_json"])]
+        deny_all_calls: bool,
+
+        #[command(flatten)]
+        browser: BrowserWalletOpts,
     },
 }
 
@@ -614,6 +678,45 @@ impl KeychainSubcommand {
                 run_remove_scope(key_address, target, tx, send_tx).await
             }
             Self::Policy { command } => command.run().await,
+            Self::SignAuthorization {
+                key_address,
+                key_type,
+                chain_id,
+                expiry,
+                limits,
+                deny_all_spending,
+                scope,
+                scopes_json,
+                deny_all_calls,
+                browser,
+            } => {
+                let scopes = if let Some(ScopesJson(json_scopes)) = scopes_json {
+                    Some(json_scopes)
+                } else if !scope.is_empty() {
+                    Some(scope)
+                } else if deny_all_calls {
+                    Some(Vec::new())
+                } else {
+                    None
+                };
+                let resolved_limits = if !limits.is_empty() {
+                    Some(limits)
+                } else if deny_all_spending {
+                    Some(Vec::new())
+                } else {
+                    None
+                };
+                run_sign_authorization(
+                    key_address,
+                    key_type,
+                    chain_id,
+                    expiry,
+                    resolved_limits,
+                    scopes,
+                    browser,
+                )
+                .await
+            }
         }
     }
 }
@@ -953,6 +1056,103 @@ async fn run_authorize(
     };
 
     send_keychain_tx(calldata, tx_opts, &send_tx).await
+}
+
+/// `cast keychain sign-authorization` — drive `wallet_authorizeAccessKey`
+/// on the connected browser wallet and print the resulting RLP-encoded
+/// `SignedKeyAuthorization` as a `0x`-prefixed hex string.
+async fn run_sign_authorization(
+    key_address: Address,
+    key_type: SignatureType,
+    chain_id: u64,
+    expiry: Option<u64>,
+    limits: Option<Vec<TokenLimit>>,
+    scopes: Option<Vec<CallScope>>,
+    browser: foundry_wallets::BrowserWalletOpts,
+) -> Result<()> {
+    use alloy_rlp::Encodable;
+    use core::num::NonZeroU64;
+    use tempo_primitives::transaction::{
+        CallScope as TempoCallScope, KeyAuthorization, SelectorRule as TempoSelectorRule,
+        SignatureType as TempoSignatureType, TokenLimit as TempoTokenLimit,
+    };
+
+    if !browser.browser {
+        eyre::bail!(
+            "`cast keychain sign-authorization` currently requires `--browser` to drive the \
+             passkey signing ceremony"
+        );
+    }
+
+    // Convert ABI types → tempo-primitives types.
+    let primitive_key_type = match key_type {
+        SignatureType::Secp256k1 => TempoSignatureType::Secp256k1,
+        SignatureType::P256 => TempoSignatureType::P256,
+        SignatureType::WebAuthn => TempoSignatureType::WebAuthn,
+        // Any future variants from tempo-contracts: surface the value rather
+        // than silently coercing to secp256k1.
+        other => eyre::bail!("unsupported key type: {other:?}"),
+    };
+
+    let primitive_limits = limits.map(|ls| {
+        ls.into_iter()
+            .map(|l| TempoTokenLimit { token: l.token, limit: l.amount, period: l.period })
+            .collect::<Vec<_>>()
+    });
+
+    let primitive_allowed_calls = scopes.map(|css| {
+        css.into_iter()
+            .map(|cs| TempoCallScope {
+                target: cs.target,
+                selector_rules: cs
+                    .selectorRules
+                    .into_iter()
+                    .map(|r| TempoSelectorRule {
+                        selector: r.selector.into(),
+                        recipients: r.recipients,
+                    })
+                    .collect(),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let key_authorization = KeyAuthorization {
+        chain_id,
+        key_type: primitive_key_type,
+        key_id: key_address,
+        expiry: expiry.and_then(NonZeroU64::new),
+        limits: primitive_limits,
+        allowed_calls: primitive_allowed_calls,
+    };
+
+    // Spin up the local browser-wallet bridge and ask the connected passkey
+    // root to sign.
+    let signer = browser
+        .run::<TempoNetwork>()
+        .await?
+        .ok_or_else(|| eyre::eyre!("--browser is required for sign-authorization"))?;
+
+    let signed = signer.sign_key_authorization(key_authorization, Some(primitive_key_type)).await?;
+
+    let mut buf = Vec::new();
+    signed.encode(&mut buf);
+    let hex_out = format!("0x{}", hex::encode(&buf));
+
+    if shell::is_json() {
+        sh_println!(
+            "{}",
+            serde_json::json!({
+                "key_id": signed.authorization.key_id,
+                "chain_id": signed.authorization.chain_id,
+                "key_type": format!("{:?}", signed.authorization.key_type),
+                "signed_key_authorization": hex_out,
+            })
+        )?;
+    } else {
+        sh_println!("{hex_out}")?;
+    }
+
+    Ok(())
 }
 
 /// `cast keychain revoke` / `cast keychain rev` — revoke a key on-chain.
