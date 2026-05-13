@@ -299,11 +299,57 @@ struct ActivityItem {
     style: ActivityStyle,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum ActivityStyle {
     Block,
     Transaction,
     Notice,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ActivityFilter {
+    All,
+    Blocks,
+    Transactions,
+    Notices,
+}
+
+impl ActivityFilter {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Blocks => "blocks",
+            Self::Transactions => "txs",
+            Self::Notices => "notices",
+        }
+    }
+
+    const fn matches(self, style: ActivityStyle) -> bool {
+        match self {
+            Self::All => true,
+            Self::Blocks => matches!(style, ActivityStyle::Block),
+            Self::Transactions => matches!(style, ActivityStyle::Transaction),
+            Self::Notices => matches!(style, ActivityStyle::Notice),
+        }
+    }
+
+    const fn next(self) -> Self {
+        match self {
+            Self::All => Self::Blocks,
+            Self::Blocks => Self::Transactions,
+            Self::Transactions => Self::Notices,
+            Self::Notices => Self::All,
+        }
+    }
+
+    const fn previous(self) -> Self {
+        match self {
+            Self::All => Self::Notices,
+            Self::Blocks => Self::All,
+            Self::Transactions => Self::Blocks,
+            Self::Notices => Self::Transactions,
+        }
+    }
 }
 
 struct AnvilDashboard {
@@ -311,6 +357,8 @@ struct AnvilDashboard {
     events: UnboundedReceiver<DashboardEvent>,
     feed: Vec<ActivityItem>,
     list_state: ListState,
+    filter: ActivityFilter,
+    detail_scroll: u16,
 }
 
 impl AnvilDashboard {
@@ -328,6 +376,8 @@ impl AnvilDashboard {
             status,
             events,
             list_state,
+            filter: ActivityFilter::All,
+            detail_scroll: 0,
         }
     }
 
@@ -335,40 +385,58 @@ impl AnvilDashboard {
         self.list_state.selected().unwrap_or_default()
     }
 
+    fn visible_indices(&self) -> Vec<usize> {
+        self.feed
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, item)| self.filter.matches(item.style).then_some(idx))
+            .collect()
+    }
+
+    fn visible_len(&self) -> usize {
+        self.feed.iter().filter(|item| self.filter.matches(item.style)).count()
+    }
+
     fn selected_item(&self) -> Option<&ActivityItem> {
-        self.feed.get(self.selected())
+        self.visible_indices().get(self.selected()).and_then(|idx| self.feed.get(*idx))
     }
 
     fn move_next(&mut self) {
-        if self.feed.is_empty() {
+        let len = self.visible_len();
+        if len == 0 {
             return;
         }
-        let next = self.selected().saturating_add(1).min(self.feed.len() - 1);
+        let next = self.selected().saturating_add(1).min(len - 1);
         self.list_state.select(Some(next));
+        self.detail_scroll = 0;
     }
 
     fn move_previous(&mut self) {
-        if self.feed.is_empty() {
+        if self.visible_len() == 0 {
             return;
         }
         self.list_state.select(Some(self.selected().saturating_sub(1)));
+        self.detail_scroll = 0;
     }
 
     fn move_first(&mut self) {
-        if !self.feed.is_empty() {
+        if self.visible_len() > 0 {
             self.list_state.select(Some(0));
+            self.detail_scroll = 0;
         }
     }
 
     fn move_last(&mut self) {
-        if !self.feed.is_empty() {
-            self.list_state.select(Some(self.feed.len() - 1));
+        let len = self.visible_len();
+        if len > 0 {
+            self.list_state.select(Some(len - 1));
+            self.detail_scroll = 0;
         }
     }
 
     fn drain_events(&mut self) {
         while let Ok(event) = self.events.try_recv() {
-            let follow = self.selected() + 1 >= self.feed.len();
+            let follow = self.is_following();
             match event {
                 DashboardEvent::Block(block) => {
                     self.status.current_block = block.number;
@@ -386,6 +454,8 @@ impl AnvilDashboard {
             }
             if follow {
                 self.move_last();
+            } else {
+                self.clamp_selection();
             }
         }
     }
@@ -394,9 +464,49 @@ impl AnvilDashboard {
         self.feed.push(item);
         if self.feed.len() > MAX_FEED_ITEMS {
             self.feed.remove(0);
-            let selected = self.selected().saturating_sub(1);
-            self.list_state.select(Some(selected.min(self.feed.len().saturating_sub(1))));
+            self.clamp_selection();
         }
+    }
+
+    fn is_following(&self) -> bool {
+        let len = self.visible_len();
+        len == 0 || self.selected() + 1 >= len
+    }
+
+    fn clamp_selection(&mut self) {
+        let len = self.visible_len();
+        if len == 0 {
+            self.list_state.select(None);
+        } else {
+            self.list_state.select(Some(self.selected().min(len - 1)));
+        }
+    }
+
+    fn set_filter(&mut self, filter: ActivityFilter) {
+        self.filter = filter;
+        self.clamp_selection();
+        self.detail_scroll = 0;
+    }
+
+    fn next_filter(&mut self) {
+        self.set_filter(self.filter.next());
+    }
+
+    fn previous_filter(&mut self) {
+        self.set_filter(self.filter.previous());
+    }
+
+    fn detail_line_count(&self) -> usize {
+        self.selected_item().map(|item| item.detail.lines().count()).unwrap_or_default()
+    }
+
+    fn scroll_detail_down(&mut self, amount: u16) {
+        let max = self.detail_line_count().saturating_sub(1) as u16;
+        self.detail_scroll = self.detail_scroll.saturating_add(amount).min(max);
+    }
+
+    fn scroll_detail_up(&mut self, amount: u16) {
+        self.detail_scroll = self.detail_scroll.saturating_sub(amount);
     }
 }
 
@@ -417,7 +527,7 @@ impl TuiApp for AnvilDashboard {
             .split(chunks[1]);
 
         render_feed(frame, body[0], self);
-        render_detail(frame, body[1], self.selected_item());
+        render_detail(frame, body[1], self.selected_item(), self.detail_scroll);
         render_footer(frame, chunks[2]);
     }
 
@@ -434,6 +544,20 @@ impl TuiApp for AnvilDashboard {
                 KeyCode::Up | KeyCode::Char('k') => self.move_previous(),
                 KeyCode::Home => self.move_first(),
                 KeyCode::End => self.move_last(),
+                KeyCode::PageDown => self.scroll_detail_down(10),
+                KeyCode::PageUp => self.scroll_detail_up(10),
+                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.scroll_detail_down(10);
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.scroll_detail_up(10);
+                }
+                KeyCode::Tab => self.next_filter(),
+                KeyCode::BackTab => self.previous_filter(),
+                KeyCode::Char('1') => self.set_filter(ActivityFilter::All),
+                KeyCode::Char('2') => self.set_filter(ActivityFilter::Blocks),
+                KeyCode::Char('3') => self.set_filter(ActivityFilter::Transactions),
+                KeyCode::Char('4') => self.set_filter(ActivityFilter::Notices),
                 _ => {}
             }
         }
@@ -472,7 +596,9 @@ fn render_status(frame: &mut Frame<'_>, area: Rect, status: &DashboardStatus) {
 }
 
 fn render_feed(frame: &mut Frame<'_>, area: Rect, app: &mut AnvilDashboard) {
-    let items = app.feed.iter().map(|item| {
+    let visible_indices = app.visible_indices();
+    let items = visible_indices.iter().map(|idx| {
+        let item = &app.feed[*idx];
         let style = match item.style {
             ActivityStyle::Block => Style::default().fg(Color::Cyan),
             ActivityStyle::Transaction => Style::default().fg(Color::Green),
@@ -480,24 +606,29 @@ fn render_feed(frame: &mut Frame<'_>, area: Rect, app: &mut AnvilDashboard) {
         };
         ListItem::new(item.title.clone()).style(style)
     });
+    let title =
+        format!("Activity [{}] {}/{}", app.filter.label(), visible_indices.len(), app.feed.len());
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("Activity"))
+        .block(Block::default().borders(Borders::ALL).title(title))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     frame.render_stateful_widget(list, area, &mut app.list_state);
 }
 
-fn render_detail(frame: &mut Frame<'_>, area: Rect, selected: Option<&ActivityItem>) {
+fn render_detail(frame: &mut Frame<'_>, area: Rect, selected: Option<&ActivityItem>, scroll: u16) {
     let text = selected.map(|item| item.detail.as_str()).unwrap_or("No activity yet.");
     let detail = Paragraph::new(text)
         .block(Block::default().borders(Borders::ALL).title("Details"))
+        .scroll((scroll, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(detail, area);
 }
 
 fn render_footer(frame: &mut Frame<'_>, area: Rect) {
-    let footer = Paragraph::new("q quit  j/k move  home/end jump")
-        .style(Style::default().fg(Color::DarkGray));
+    let footer = Paragraph::new(
+        "q quit  j/k activity  pgup/pgdn details  tab filter  1 all 2 blocks 3 txs 4 notices",
+    )
+    .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, area);
 }
 
