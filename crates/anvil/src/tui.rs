@@ -3,7 +3,7 @@ use crate::{
 };
 use alloy_consensus::{BlockHeader, Transaction};
 use alloy_network::{AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionResponse};
-use alloy_primitives::{Address, B256, Selector, U256, utils::format_ether};
+use alloy_primitives::{Address, B256, Selector, U256, hex, utils::format_ether};
 use alloy_rpc_types_eth::BlockTransactions;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
 use eyre::{Result, WrapErr};
@@ -13,7 +13,7 @@ use foundry_tui::{TuiApp, run_app_with_tick};
 use futures::StreamExt;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table},
@@ -29,7 +29,16 @@ use tokio::{
 };
 
 const TICK_RATE: Duration = Duration::from_millis(250);
+const SPLASH_DURATION: Duration = Duration::from_secs(1);
 const MAX_FEED_ITEMS: usize = 1_000;
+const ANVIL_BANNER: &str = r"
+                             _   _
+                            (_) | |
+      __ _   _ __   __   __  _  | |
+     / _` | | '_ \  \ \ / / | | | |
+    | (_| | | | | |  \ V /  | | | |
+     \__,_| |_| |_|   \_/   |_| |_|
+";
 
 /// Runs the interactive Anvil dashboard.
 pub(crate) async fn run(
@@ -40,6 +49,8 @@ pub(crate) async fn run(
     preserve_historical_states: bool,
 ) -> Result<()> {
     let status = DashboardStatus::from_node(&api, &handle)?;
+    let config = DashboardConfig::from_node(handle.config(), &status);
+    let accounts = config.account_addresses();
     let (events, receiver) = unbounded_channel();
 
     handle.task_manager().spawn(PeriodicStateDumper::new(
@@ -48,9 +59,9 @@ pub(crate) async fn run(
         dump_interval,
         preserve_historical_states,
     ));
-    handle.task_manager().spawn(collect_events(api.clone(), events));
+    handle.task_manager().spawn(collect_events(api.clone(), events, accounts));
 
-    let mut app = AnvilDashboard::new(status, receiver);
+    let mut app = AnvilDashboard::new(status, config, receiver);
     spawn_blocking(move || run_app_with_tick(&mut app, TICK_RATE))
         .await
         .wrap_err("anvil TUI task failed")?
@@ -64,9 +75,17 @@ pub(crate) async fn run(
     Ok(())
 }
 
-async fn collect_events(api: EthApi<FoundryNetwork>, events: UnboundedSender<DashboardEvent>) {
+async fn collect_events(
+    api: EthApi<FoundryNetwork>,
+    events: UnboundedSender<DashboardEvent>,
+    accounts: Vec<Address>,
+) {
     let signatures = SignaturesIdentifier::new(true).ok();
     let mut blocks = api.new_block_notifications();
+
+    if !send_account_balances(&api, &events, &accounts).await {
+        return;
+    }
 
     while let Some(notification) = blocks.next().await {
         let block = match api.block_by_hash_full(notification.hash).await {
@@ -90,7 +109,36 @@ async fn collect_events(api: EthApi<FoundryNetwork>, events: UnboundedSender<Das
         if events.send(DashboardEvent::Block(event)).is_err() {
             break;
         }
+        if !send_account_balances(&api, &events, &accounts).await {
+            break;
+        }
     }
+}
+
+async fn send_account_balances(
+    api: &EthApi<FoundryNetwork>,
+    events: &UnboundedSender<DashboardEvent>,
+    accounts: &[Address],
+) -> bool {
+    if accounts.is_empty() {
+        return true;
+    }
+
+    let mut balances = Vec::with_capacity(accounts.len());
+    for address in accounts {
+        match api.balance(*address, None).await {
+            Ok(balance) => balances.push(AccountBalance { address: *address, balance }),
+            Err(err) => {
+                return events
+                    .send(DashboardEvent::Notice(format!(
+                        "failed to load balance for {address}: {err}"
+                    )))
+                    .is_ok();
+            }
+        }
+    }
+
+    events.send(DashboardEvent::AccountBalances(balances)).is_ok()
 }
 
 #[derive(Clone, Debug)]
@@ -159,6 +207,13 @@ fn mining_mode_label(config: &NodeConfig) -> String {
 enum DashboardEvent {
     Block(BlockActivity),
     Notice(String),
+    AccountBalances(Vec<AccountBalance>),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct AccountBalance {
+    address: Address,
+    balance: U256,
 }
 
 #[derive(Clone, Debug)]
@@ -202,6 +257,104 @@ impl DetailRow {
     fn new(field: impl Into<String>, value: impl Into<String>) -> Self {
         Self { field: field.into(), value: value.into() }
     }
+}
+
+#[derive(Clone, Debug)]
+struct DashboardConfig {
+    rows: Vec<DetailRow>,
+    accounts: Vec<DashboardAccount>,
+}
+
+impl DashboardConfig {
+    fn from_node(config: &NodeConfig, status: &DashboardStatus) -> Self {
+        let gas_limit = if config.disable_block_gas_limit {
+            "disabled".to_string()
+        } else {
+            config.gas_limit.map_or_else(|| "default".to_string(), |limit| limit.to_string())
+        };
+        let fork = status.fork_label();
+        let mut rows = vec![
+            DetailRow::new("version", env!("CARGO_PKG_VERSION")),
+            DetailRow::new("rpc", status.rpc_endpoint.clone()),
+            DetailRow::new("chain id", config.get_chain_id().to_string()),
+            DetailRow::new("hardfork", format!("{:?}", config.get_hardfork())),
+            DetailRow::new("mining", status.mining_mode.clone()),
+            DetailRow::new("fork", fork),
+            DetailRow::new("base fee", config.get_base_fee().to_string()),
+            DetailRow::new("gas price", config.get_gas_price().to_string()),
+            DetailRow::new("gas limit", gas_limit),
+            DetailRow::new("genesis timestamp", config.get_genesis_timestamp().to_string()),
+            DetailRow::new("genesis number", config.get_genesis_number().to_string()),
+            DetailRow::new("max txs/block", config.max_transactions.to_string()),
+        ];
+
+        if let Some(generator) = &config.account_generator {
+            rows.push(DetailRow::new("mnemonic", generator.get_phrase()));
+            rows.push(DetailRow::new("derivation path", generator.get_derivation_path()));
+        }
+
+        let accounts = config
+            .genesis_accounts
+            .iter()
+            .enumerate()
+            .map(|(index, wallet)| {
+                let address = wallet.address();
+                let balance =
+                    config.funded_accounts.get(&address).copied().unwrap_or(config.genesis_balance);
+                DashboardAccount {
+                    index,
+                    address,
+                    balance,
+                    private_key: format!("0x{}", hex::encode(wallet.credential().to_bytes())),
+                }
+            })
+            .collect();
+
+        Self { rows, accounts }
+    }
+
+    fn account_addresses(&self) -> Vec<Address> {
+        self.accounts.iter().map(|account| account.address).collect()
+    }
+
+    fn update_balances(&mut self, balances: Vec<AccountBalance>) {
+        for balance in balances {
+            if let Some(account) =
+                self.accounts.iter_mut().find(|account| account.address == balance.address)
+            {
+                account.balance = balance.balance;
+            }
+        }
+    }
+
+    fn display_rows(&self) -> Vec<DetailRow> {
+        let mut rows = self.rows.clone();
+        rows.push(DetailRow::new("accounts", self.accounts.len().to_string()));
+
+        for account in &self.accounts {
+            let prefix = format!("account {}", account.index);
+            rows.push(DetailRow::new(format!("{prefix} address"), account.address.to_string()));
+            rows.push(DetailRow::new(
+                format!("{prefix} balance"),
+                format!("{} ETH", format_ether(account.balance)),
+            ));
+            rows.push(DetailRow::new(format!("{prefix} private key"), account.private_key.clone()));
+        }
+
+        rows
+    }
+
+    fn len(&self) -> usize {
+        self.rows.len() + 1 + self.accounts.len() * 3
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DashboardAccount {
+    index: usize,
+    address: Address,
+    private_key: String,
+    balance: U256,
 }
 
 struct BlockActivity {
@@ -475,20 +628,33 @@ enum PaneFocus {
     Details,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DetailMode {
+    Activity,
+    Config,
+}
+
 struct AnvilDashboard {
     status: DashboardStatus,
+    config: DashboardConfig,
     events: UnboundedReceiver<DashboardEvent>,
     feed: Vec<ActivityItem>,
     list_state: ListState,
     filter: ActivityFilter,
     focus: PaneFocus,
+    detail_mode: DetailMode,
     search: String,
     search_active: bool,
     detail_scroll: u16,
+    splash_until: Instant,
 }
 
 impl AnvilDashboard {
-    fn new(status: DashboardStatus, events: UnboundedReceiver<DashboardEvent>) -> Self {
+    fn new(
+        status: DashboardStatus,
+        config: DashboardConfig,
+        events: UnboundedReceiver<DashboardEvent>,
+    ) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
         let rpc_endpoint = status.rpc_endpoint.clone();
@@ -506,13 +672,16 @@ impl AnvilDashboard {
                 style: ActivityStyle::Notice,
             }],
             status,
+            config,
             events,
             list_state,
             filter: ActivityFilter::All,
             focus: PaneFocus::Activity,
+            detail_mode: DetailMode::Activity,
             search: String::new(),
             search_active: false,
             detail_scroll: 0,
+            splash_until: Instant::now() + SPLASH_DURATION,
         }
     }
 
@@ -589,6 +758,10 @@ impl AnvilDashboard {
                         style: ActivityStyle::Notice,
                     });
                 }
+                DashboardEvent::AccountBalances(balances) => {
+                    self.config.update_balances(balances);
+                    continue;
+                }
             }
             if follow {
                 self.move_last();
@@ -635,7 +808,12 @@ impl AnvilDashboard {
     }
 
     fn detail_line_count(&self) -> usize {
-        self.selected_item().map(|item| item.detail.len()).unwrap_or_default()
+        match self.detail_mode {
+            DetailMode::Activity => {
+                self.selected_item().map(|item| item.detail.len()).unwrap_or_default()
+            }
+            DetailMode::Config => self.config.len(),
+        }
     }
 
     fn scroll_detail_down(&mut self, amount: u16) {
@@ -653,6 +831,15 @@ impl AnvilDashboard {
 
     fn focus_details(&mut self) {
         self.focus = PaneFocus::Details;
+    }
+
+    fn toggle_config(&mut self) {
+        self.detail_mode = match self.detail_mode {
+            DetailMode::Activity => DetailMode::Config,
+            DetailMode::Config => DetailMode::Activity,
+        };
+        self.focus_details();
+        self.detail_scroll = 0;
     }
 
     fn handle_down(&mut self) {
@@ -701,6 +888,11 @@ impl TuiApp for AnvilDashboard {
     type Exit = ();
 
     fn draw(&mut self, frame: &mut Frame<'_>) {
+        if Instant::now() < self.splash_until {
+            render_splash(frame, frame.area(), &self.status);
+            return;
+        }
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(1)])
@@ -714,13 +906,22 @@ impl TuiApp for AnvilDashboard {
             .split(chunks[1]);
 
         render_feed(frame, body[0], self);
-        render_detail(
-            frame,
-            body[1],
-            self.selected_item(),
-            self.detail_scroll,
-            self.focus == PaneFocus::Details,
-        );
+        match self.detail_mode {
+            DetailMode::Activity => render_detail(
+                frame,
+                body[1],
+                self.selected_item(),
+                self.detail_scroll,
+                self.focus == PaneFocus::Details,
+            ),
+            DetailMode::Config => render_config(
+                frame,
+                body[1],
+                &self.config,
+                self.detail_scroll,
+                self.focus == PaneFocus::Details,
+            ),
+        }
         render_footer(frame, chunks[2], self);
     }
 
@@ -755,6 +956,7 @@ impl TuiApp for AnvilDashboard {
                 }
                 KeyCode::Char('h') | KeyCode::Left => self.focus_activity(),
                 KeyCode::Char('l') | KeyCode::Right => self.focus_details(),
+                KeyCode::Char('c') => self.toggle_config(),
                 KeyCode::Down | KeyCode::Char('j') => self.handle_down(),
                 KeyCode::Up | KeyCode::Char('k') => self.handle_up(),
                 KeyCode::Home if self.focus == PaneFocus::Activity => self.move_first(),
@@ -805,6 +1007,27 @@ fn render_status(frame: &mut Frame<'_>, area: Rect, status: &DashboardStatus) {
     frame.render_widget(Paragraph::new(line).block(block), area);
 }
 
+fn render_splash(frame: &mut Frame<'_>, area: Rect, status: &DashboardStatus) {
+    let mut lines = vec![Line::from("")];
+    lines.extend(ANVIL_BANNER.lines().map(Line::from));
+    lines.extend([
+        Line::from(""),
+        Line::from(vec![
+            label("chain "),
+            value(status.chain_id.to_string()),
+            separator(),
+            label("rpc "),
+            value(status.rpc_endpoint.clone()),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("opening live dashboard", Style::default().fg(Color::DarkGray))),
+    ]);
+    let splash =
+        Paragraph::new(lines).alignment(Alignment::Center).style(Style::default().fg(Color::White));
+
+    frame.render_widget(splash, centered_rect(72, 12, area));
+}
+
 fn render_feed(frame: &mut Frame<'_>, area: Rect, app: &mut AnvilDashboard) {
     let visible_indices = app.visible_indices();
     let items = visible_indices.iter().map(|idx| {
@@ -838,6 +1061,30 @@ fn render_feed(frame: &mut Frame<'_>, area: Rect, app: &mut AnvilDashboard) {
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     frame.render_stateful_widget(list, area, &mut app.list_state);
+}
+
+fn render_config(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    config: &DashboardConfig,
+    scroll: u16,
+    focused: bool,
+) {
+    let border_style = if focused { Style::default().fg(Color::Yellow) } else { Style::default() };
+    let total = config.len();
+    let current = if total == 0 { 0 } else { usize::from(scroll).saturating_add(1).min(total) };
+    let title = format!("Config {current}/{total}");
+    let rows = config.display_rows().into_iter().skip(usize::from(scroll)).map(|row| {
+        Row::new(vec![
+            Cell::from(row.field).style(Style::default().fg(Color::DarkGray)),
+            Cell::from(row.value),
+        ])
+    });
+    let table = Table::new(rows, [Constraint::Length(24), Constraint::Min(24)])
+        .block(Block::default().borders(Borders::ALL).border_style(border_style).title(title))
+        .column_spacing(2);
+
+    frame.render_widget(table, area);
 }
 
 fn render_detail(
@@ -877,7 +1124,8 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AnvilDashboard) {
     let text = if app.search_active {
         format!("search: /{}  enter apply  esc close  backspace edit  ctrl+u clear", app.search)
     } else {
-        "q quit  h/l pane  j/k move/scroll  ctrl+u/d page details  tab filter  / search".to_string()
+        "q quit  h/l pane  j/k move/scroll  ctrl+u/d page details  tab filter  / search  c config"
+            .to_string()
     };
     let footer = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, area);
@@ -911,4 +1159,12 @@ fn gas_usage_percent(gas_used: u64, gas_limit: u64) -> String {
     } else {
         format!("{:.2}%", gas_used as f64 / gas_limit as f64 * 100.0)
     }
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.min(area.width);
+    let height = height.min(area.height);
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    Rect::new(x, y, width, height)
 }
