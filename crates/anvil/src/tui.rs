@@ -15,7 +15,7 @@ use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table},
 };
 use std::{
@@ -442,14 +442,13 @@ impl BlockActivity {
 
     fn into_items(self) -> Vec<ActivityItem> {
         let mut items = Vec::with_capacity(self.transactions.len() + 1);
-        items.push(ActivityItem {
-            title: format!(
-                "block {:>8}  {} txs  gas {}/{}",
-                self.number, self.txs, self.gas_used, self.gas_limit
-            ),
-            detail: self.detail,
-            style: ActivityStyle::Block,
-        });
+        items.push(ActivityItem::block(
+            self.number,
+            self.txs,
+            self.gas_used,
+            self.gas_limit,
+            self.detail,
+        ));
 
         for tx in self.transactions {
             items.push(tx.into_item(self.number, self.hash));
@@ -510,6 +509,7 @@ impl TransactionActivity {
         let method = self.method_label();
         let to = self.to.map(short_address).unwrap_or_else(|| "create".to_string());
         let value = format_ether(self.value);
+        let value_label = format_value(self.value);
         let mut rows = vec![
             DetailRow::new("type", "transaction"),
             DetailRow::new("block", block_number.to_string()),
@@ -542,17 +542,14 @@ impl TransactionActivity {
             rows.push(DetailRow::new("selector", selector.to_string()));
         }
 
-        ActivityItem {
-            title: format!(
-                "tx     {}  {} -> {}  {} ETH  {method}",
-                short_hash(self.hash),
-                short_address(self.from),
-                to,
-                value
-            ),
-            detail: DetailView::new(rows),
-            style: ActivityStyle::Transaction,
-        }
+        ActivityItem::transaction(
+            method,
+            self.hash,
+            self.from,
+            to,
+            value_label,
+            DetailView::new(rows),
+        )
     }
 
     fn method_label(&self) -> String {
@@ -572,19 +569,88 @@ impl TransactionActivity {
 }
 
 struct ActivityItem {
-    title: String,
+    lines: Vec<Line<'static>>,
+    search_text: String,
     detail: DetailView,
     style: ActivityStyle,
 }
 
 impl ActivityItem {
+    fn block(number: u64, txs: usize, gas_used: u64, gas_limit: u64, detail: DetailView) -> Self {
+        let gas = format!("{gas_used}/{gas_limit}");
+        Self {
+            lines: vec![Line::from(vec![
+                Span::styled(
+                    format!("block {number:>8}"),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(format!("{txs} txs"), Style::default().fg(Color::White)),
+                Span::raw("  "),
+                Span::styled("gas ", Style::default().fg(Color::DarkGray)),
+                Span::raw(gas.clone()),
+            ])],
+            search_text: format!("block {number} {txs} txs gas {gas}"),
+            detail,
+            style: ActivityStyle::Block,
+        }
+    }
+
+    fn transaction(
+        method: String,
+        hash: B256,
+        from: Address,
+        to: String,
+        value: String,
+        detail: DetailView,
+    ) -> Self {
+        let from = short_address(from);
+        Self {
+            lines: vec![
+                Line::from(vec![
+                    Span::styled("  tx  ", Style::default().fg(Color::Green)),
+                    Span::styled(
+                        method.clone(),
+                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::raw("      "),
+                    Span::styled("from ", Style::default().fg(Color::DarkGray)),
+                    Span::raw(from.clone()),
+                    Span::styled("  ->  ", Style::default().fg(Color::DarkGray)),
+                    Span::raw(to.clone()),
+                    Span::raw("  "),
+                    Span::styled(value.clone(), Style::default().fg(Color::Green)),
+                ]),
+            ],
+            search_text: format!("tx {hash} {from} {to} {value} {method}"),
+            detail,
+            style: ActivityStyle::Transaction,
+        }
+    }
+
+    fn notice(title: String, detail: DetailView) -> Self {
+        Self {
+            lines: vec![Line::from(vec![
+                Span::styled("notice ", Style::default().fg(Color::Gray)),
+                Span::raw(title.clone()),
+            ])],
+            search_text: title,
+            detail,
+            style: ActivityStyle::Notice,
+        }
+    }
+
     fn matches_search(&self, search: &str) -> bool {
         if search.is_empty() {
             return true;
         }
 
-        let title = self.title.to_ascii_lowercase();
-        search.split_whitespace().all(|term| title.contains(term) || self.detail.matches_term(term))
+        let search_text = self.search_text.to_ascii_lowercase();
+        search
+            .split_whitespace()
+            .all(|term| search_text.contains(term) || self.detail.matches_term(term))
     }
 }
 
@@ -678,9 +744,9 @@ impl AnvilDashboard {
         list_state.select(Some(0));
         let rpc_endpoint = status.rpc_endpoint.clone();
         Self {
-            feed: vec![ActivityItem {
-                title: format!("node started  {rpc_endpoint}"),
-                detail: DetailView::new(vec![
+            feed: vec![ActivityItem::notice(
+                format!("node started  {rpc_endpoint}"),
+                DetailView::new(vec![
                     DetailRow::new("status", "running"),
                     DetailRow::new("rpc", rpc_endpoint),
                     DetailRow::new(
@@ -688,8 +754,7 @@ impl AnvilDashboard {
                         "blocks and transactions will appear here as they are mined",
                     ),
                 ]),
-                style: ActivityStyle::Notice,
-            }],
+            )],
             status,
             config,
             events,
@@ -773,11 +838,10 @@ impl AnvilDashboard {
                     }
                 }
                 DashboardEvent::Notice(notice) => {
-                    self.push_item(ActivityItem {
-                        title: notice.clone(),
-                        detail: DetailView::message("notice", notice),
-                        style: ActivityStyle::Notice,
-                    });
+                    self.push_item(ActivityItem::notice(
+                        notice.clone(),
+                        DetailView::message("notice", notice),
+                    ));
                 }
                 DashboardEvent::AccountBalances(balances) => {
                     self.config.update_balances(balances);
@@ -1052,12 +1116,7 @@ fn render_feed(frame: &mut Frame<'_>, area: Rect, app: &mut AnvilDashboard) {
     let visible_indices = app.visible_indices();
     let items = visible_indices.iter().map(|idx| {
         let item = &app.feed[*idx];
-        let style = match item.style {
-            ActivityStyle::Block => Style::default().fg(Color::Cyan),
-            ActivityStyle::Transaction => Style::default().fg(Color::Green),
-            ActivityStyle::Notice => Style::default().fg(Color::Gray),
-        };
-        ListItem::new(item.title.clone()).style(style)
+        ListItem::new(Text::from(item.lines.clone()))
     });
     let search = app.search.trim();
     let title = if search.is_empty() {
@@ -1178,11 +1237,6 @@ fn separator() -> Span<'static> {
     Span::styled("  |  ", Style::default().fg(Color::DarkGray))
 }
 
-fn short_hash(hash: B256) -> String {
-    let hash = hash.to_string();
-    format!("{}..{}", &hash[..10], &hash[hash.len() - 6..])
-}
-
 fn short_address(address: Address) -> String {
     let address = address.to_string();
     format!("{}..{}", &address[..8], &address[address.len() - 4..])
@@ -1193,6 +1247,14 @@ fn gas_usage_percent(gas_used: u64, gas_limit: u64) -> String {
         "n/a".to_string()
     } else {
         format!("{:.2}%", gas_used as f64 / gas_limit as f64 * 100.0)
+    }
+}
+
+fn format_value(value: U256) -> String {
+    if value < U256::from(1_000_000_000_000_000u64) {
+        format!("{value} wei")
+    } else {
+        format!("{} ETH", format_ether(value))
     }
 }
 
