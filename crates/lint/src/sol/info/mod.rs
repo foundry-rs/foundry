@@ -39,6 +39,9 @@ use pragma_directive::PRAGMA_INCONSISTENT;
 mod inline_assembly;
 use inline_assembly::INLINE_ASSEMBLY;
 
+mod low_level_calls;
+use low_level_calls::LOW_LEVEL_CALLS;
+
 mod missing_inheritance;
 use missing_inheritance::MISSING_INHERITANCE;
 
@@ -57,5 +60,6 @@ register_lints!(
     (TooManyDigits, early, (TOO_MANY_DIGITS)),
     (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
     (InlineAssembly, early, (INLINE_ASSEMBLY)),
+    (LowLevelCalls, early, (LOW_LEVEL_CALLS)),
     (MissingInheritance, project, (MISSING_INHERITANCE)),
 );

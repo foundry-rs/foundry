@@ -277,6 +277,7 @@ impl FromEvmVersion for SpecId {
             EvmVersion::Cancun => Self::CANCUN,
             EvmVersion::Prague => Self::PRAGUE,
             EvmVersion::Osaka => Self::OSAKA,
+            EvmVersion::Amsterdam => Self::AMSTERDAM,
         }
     }
 }
@@ -298,7 +299,7 @@ impl FromEvmVersion for OpSpecId {
             EvmVersion::Shanghai => Self::CANYON,
             EvmVersion::Cancun => Self::ECOTONE,
             EvmVersion::Prague => Self::ISTHMUS,
-            EvmVersion::Osaka => Self::KARST,
+            EvmVersion::Osaka | EvmVersion::Amsterdam => Self::KARST,
         }
     }
 }

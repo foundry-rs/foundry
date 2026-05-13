@@ -38,12 +38,14 @@ use thiserror::Error;
 pub mod macros;
 
 pub mod analysis;
+mod calls;
 pub mod codesize;
 pub mod gas;
 pub mod high;
 pub mod info;
 pub mod low;
 pub mod med;
+pub mod naming;
 
 static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut lints = Vec::new();
