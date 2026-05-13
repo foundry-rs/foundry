@@ -1143,23 +1143,23 @@ fn render_feed(frame: &mut Frame<'_>, area: Rect, app: &mut AnvilDashboard) {
     });
     let search = app.search.trim();
     let title = if search.is_empty() {
-        format!("Activity [{}] {}/{}", app.filter.label(), visible_indices.len(), app.feed.len())
+        format!("Activity [{}]", app.filter.label())
     } else {
-        format!(
-            "Activity [{}] /{} {}/{}",
-            app.filter.label(),
-            search,
-            visible_indices.len(),
-            app.feed.len()
-        )
+        format!("Activity [{}] /{}", app.filter.label(), search)
     };
+    let item_count = activity_count_title(visible_indices.len(), app.feed.len());
     let border_style = if app.focus == PaneFocus::Activity {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default()
     };
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).border_style(border_style).title(title))
+        .block(
+            Block::default().borders(Borders::ALL).border_style(border_style).title(title).title(
+                Line::from(Span::styled(item_count, Style::default().fg(Color::DarkGray)))
+                    .alignment(Alignment::Right),
+            ),
+        )
         .highlight_style(Style::default().bg(Color::Rgb(28, 28, 28)));
 
     frame.render_stateful_widget(list, area, &mut app.list_state);
@@ -1222,8 +1222,20 @@ fn render_detail(
     };
 
     let total = selected.detail.len();
-    let current = if total == 0 { 0 } else { usize::from(scroll).saturating_add(1).min(total) };
-    let title = format!("Details {current}/{total}");
+    let visible_rows = usize::from(area.height.saturating_sub(2));
+    let mut block =
+        Block::default().borders(Borders::ALL).border_style(border_style).title("Details");
+    if total > visible_rows && visible_rows > 0 {
+        let first = usize::from(scroll).saturating_add(1).min(total);
+        let last = usize::from(scroll).saturating_add(visible_rows).min(total);
+        block = block.title(
+            Line::from(Span::styled(
+                format!("rows {first}-{last}/{total}"),
+                Style::default().fg(Color::DarkGray),
+            ))
+            .alignment(Alignment::Right),
+        );
+    }
     let rows = selected.detail.rows.iter().skip(usize::from(scroll)).map(|row| {
         Row::new(vec![
             Cell::from(row.field.clone()).style(Style::default().fg(Color::DarkGray)),
@@ -1231,10 +1243,15 @@ fn render_detail(
         ])
     });
     let table = Table::new(rows, [Constraint::Length(18), Constraint::Min(20)])
-        .block(Block::default().borders(Borders::ALL).border_style(border_style).title(title))
+        .block(block)
         .column_spacing(2);
 
     frame.render_widget(table, area);
+}
+
+fn activity_count_title(visible: usize, total: usize) -> String {
+    let noun = if total == 1 { "item" } else { "items" };
+    if visible == total { format!("{total} {noun}") } else { format!("{visible}/{total} {noun}") }
 }
 
 fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AnvilDashboard) {
