@@ -17,9 +17,9 @@ pub struct JsonEnvelope<T> {
     /// Command-specific payload.
     pub data: Option<T>,
     /// Structured errors emitted by the command.
-    pub errors: Vec<JsonError>,
+    pub errors: Vec<JsonMessage>,
     /// Structured warnings emitted by the command.
-    pub warnings: Vec<JsonWarning>,
+    pub warnings: Vec<JsonMessage>,
 }
 
 impl<T> JsonEnvelope<T> {
@@ -35,7 +35,7 @@ impl<T> JsonEnvelope<T> {
     }
 
     /// Creates a successful envelope with command-specific data and warnings.
-    pub const fn success_with_warnings(data: T, warnings: Vec<JsonWarning>) -> Self {
+    pub const fn success_with_warnings(data: T, warnings: Vec<JsonMessage>) -> Self {
         Self {
             schema_version: JSON_SCHEMA_VERSION,
             success: true,
@@ -48,12 +48,12 @@ impl<T> JsonEnvelope<T> {
 
 impl JsonEnvelope<()> {
     /// Creates a failed envelope with one structured error.
-    pub fn error(error: JsonError) -> Self {
+    pub fn error(error: JsonMessage) -> Self {
         Self::failure(vec![error])
     }
 
     /// Creates a failed envelope with structured errors.
-    pub const fn failure(errors: Vec<JsonError>) -> Self {
+    pub const fn failure(errors: Vec<JsonMessage>) -> Self {
         Self {
             schema_version: JSON_SCHEMA_VERSION,
             success: false,
@@ -64,62 +64,64 @@ impl JsonEnvelope<()> {
     }
 }
 
-/// Structured error entry for JSON output.
+/// Severity level for a structured JSON message.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JsonError {
-    /// Stable machine-readable error code.
+#[serde(rename_all = "snake_case")]
+pub enum JsonMessageLevel {
+    /// Error message.
+    Error,
+    /// Warning message.
+    Warning,
+}
+
+/// Structured diagnostic entry for JSON output.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JsonMessage {
+    /// Diagnostic severity level.
+    pub level: JsonMessageLevel,
+    /// Stable machine-readable diagnostic code.
     pub code: String,
-    /// Human-readable error message.
+    /// Human-readable diagnostic message.
     pub message: String,
-    /// Optional structured context for the error.
+    /// Optional structured context for the diagnostic.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<Value>,
 }
 
-impl JsonError {
+impl JsonMessage {
     /// Creates a structured error without details.
-    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into(), details: None }
+    pub fn error(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            level: JsonMessageLevel::Error,
+            code: code.into(),
+            message: message.into(),
+            details: None,
+        }
     }
 
-    /// Adds structured details to the error.
-    pub fn with_details(mut self, details: Value) -> Self {
-        self.details = Some(details);
-        self
-    }
-}
-
-/// Structured warning entry for JSON output.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JsonWarning {
-    /// Stable machine-readable warning code.
-    pub code: String,
-    /// Human-readable warning message.
-    pub message: String,
-    /// Optional structured context for the warning.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<Value>,
-}
-
-impl JsonWarning {
     /// Creates a structured warning without details.
-    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into(), details: None }
+    pub fn warning(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            level: JsonMessageLevel::Warning,
+            code: code.into(),
+            message: message.into(),
+            details: None,
+        }
     }
 
-    /// Adds structured details to the warning.
+    /// Adds structured details to the diagnostic.
     pub fn with_details(mut self, details: Value) -> Self {
         self.details = Some(details);
         self
     }
 }
 
-/// Serializes a value as pretty JSON.
+/// Serializes a value as compact JSON.
 pub fn to_json_string<T: Serialize>(value: &T) -> Result<String> {
-    Ok(serde_json::to_string_pretty(value)?)
+    Ok(serde_json::to_string(value)?)
 }
 
-/// Prints a value as pretty JSON to stdout.
+/// Prints a value as compact JSON to stdout.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     sh_println!("{}", to_json_string(value)?)?;
     Ok(())
@@ -133,7 +135,7 @@ pub fn print_json_success<T: Serialize>(data: T) -> Result<()> {
 /// Prints a successful JSON envelope with warnings to stdout.
 pub fn print_json_success_with_warnings<T: Serialize>(
     data: T,
-    warnings: Vec<JsonWarning>,
+    warnings: Vec<JsonMessage>,
 ) -> Result<()> {
     print_json(&JsonEnvelope::success_with_warnings(data, warnings))
 }
@@ -156,21 +158,13 @@ mod tests {
 
         assert_eq!(
             json,
-            r#"{
-  "schema_version": 1,
-  "success": true,
-  "data": {
-    "contracts": 2
-  },
-  "errors": [],
-  "warnings": []
-}"#
+            r#"{"schema_version":1,"success":true,"data":{"contracts":2},"errors":[],"warnings":[]}"#
         );
     }
 
     #[test]
     fn warning_details_are_structured() {
-        let warning = JsonWarning::new("compiler.remappings", "auto-detected remappings")
+        let warning = JsonMessage::warning("compiler.remappings", "auto-detected remappings")
             .with_details(json!({ "count": 3 }));
         let envelope =
             JsonEnvelope::success_with_warnings(BuildData { contracts: 1 }, vec![warning]);
@@ -178,13 +172,14 @@ mod tests {
         let value: Value = serde_json::from_str(&to_json_string(&envelope).unwrap()).unwrap();
 
         assert_eq!(value["success"], true);
+        assert_eq!(value["warnings"][0]["level"], "warning");
         assert_eq!(value["warnings"][0]["code"], "compiler.remappings");
         assert_eq!(value["warnings"][0]["details"]["count"], 3);
     }
 
     #[test]
     fn failure_envelope_serializes_null_data_and_structured_errors() {
-        let error = JsonError::new("config.invalid", "invalid foundry.toml")
+        let error = JsonMessage::error("config.invalid", "invalid foundry.toml")
             .with_details(json!({ "path": "foundry.toml" }));
         let envelope = JsonEnvelope::error(error);
 
@@ -193,6 +188,7 @@ mod tests {
         assert_eq!(value["schema_version"], JSON_SCHEMA_VERSION);
         assert_eq!(value["success"], false);
         assert!(value["data"].is_null());
+        assert_eq!(value["errors"][0]["level"], "error");
         assert_eq!(value["errors"][0]["code"], "config.invalid");
         assert_eq!(value["errors"][0]["details"]["path"], "foundry.toml");
         assert_eq!(value["warnings"], json!([]));
