@@ -299,6 +299,17 @@ struct ActivityItem {
     style: ActivityStyle,
 }
 
+impl ActivityItem {
+    fn matches_search(&self, search: &str) -> bool {
+        if search.is_empty() {
+            return true;
+        }
+
+        self.title.to_ascii_lowercase().contains(search)
+            || self.detail.to_ascii_lowercase().contains(search)
+    }
+}
+
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ActivityStyle {
     Block,
@@ -352,12 +363,21 @@ impl ActivityFilter {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PaneFocus {
+    Activity,
+    Details,
+}
+
 struct AnvilDashboard {
     status: DashboardStatus,
     events: UnboundedReceiver<DashboardEvent>,
     feed: Vec<ActivityItem>,
     list_state: ListState,
     filter: ActivityFilter,
+    focus: PaneFocus,
+    search: String,
+    search_active: bool,
     detail_scroll: u16,
 }
 
@@ -377,6 +397,9 @@ impl AnvilDashboard {
             events,
             list_state,
             filter: ActivityFilter::All,
+            focus: PaneFocus::Activity,
+            search: String::new(),
+            search_active: false,
             detail_scroll: 0,
         }
     }
@@ -386,15 +409,18 @@ impl AnvilDashboard {
     }
 
     fn visible_indices(&self) -> Vec<usize> {
+        let search = self.search.trim().to_ascii_lowercase();
         self.feed
             .iter()
             .enumerate()
-            .filter_map(|(idx, item)| self.filter.matches(item.style).then_some(idx))
+            .filter_map(|(idx, item)| {
+                (self.filter.matches(item.style) && item.matches_search(&search)).then_some(idx)
+            })
             .collect()
     }
 
     fn visible_len(&self) -> usize {
-        self.feed.iter().filter(|item| self.filter.matches(item.style)).count()
+        self.visible_indices().len()
     }
 
     fn selected_item(&self) -> Option<&ActivityItem> {
@@ -508,6 +534,55 @@ impl AnvilDashboard {
     fn scroll_detail_up(&mut self, amount: u16) {
         self.detail_scroll = self.detail_scroll.saturating_sub(amount);
     }
+
+    fn focus_activity(&mut self) {
+        self.focus = PaneFocus::Activity;
+    }
+
+    fn focus_details(&mut self) {
+        self.focus = PaneFocus::Details;
+    }
+
+    fn handle_down(&mut self) {
+        match self.focus {
+            PaneFocus::Activity => self.move_next(),
+            PaneFocus::Details => self.scroll_detail_down(1),
+        }
+    }
+
+    fn handle_up(&mut self) {
+        match self.focus {
+            PaneFocus::Activity => self.move_previous(),
+            PaneFocus::Details => self.scroll_detail_up(1),
+        }
+    }
+
+    fn start_search(&mut self) {
+        self.focus_activity();
+        self.search_active = true;
+    }
+
+    fn stop_search(&mut self) {
+        self.search_active = false;
+    }
+
+    fn clear_search(&mut self) {
+        self.search.clear();
+        self.clamp_selection();
+        self.detail_scroll = 0;
+    }
+
+    fn push_search_char(&mut self, c: char) {
+        self.search.push(c);
+        self.clamp_selection();
+        self.detail_scroll = 0;
+    }
+
+    fn pop_search_char(&mut self) {
+        self.search.pop();
+        self.clamp_selection();
+        self.detail_scroll = 0;
+    }
 }
 
 impl TuiApp for AnvilDashboard {
@@ -527,25 +602,51 @@ impl TuiApp for AnvilDashboard {
             .split(chunks[1]);
 
         render_feed(frame, body[0], self);
-        render_detail(frame, body[1], self.selected_item(), self.detail_scroll);
-        render_footer(frame, chunks[2]);
+        render_detail(
+            frame,
+            body[1],
+            self.selected_item(),
+            self.detail_scroll,
+            self.focus == PaneFocus::Details,
+        );
+        render_footer(frame, chunks[2], self);
     }
 
     fn handle_event(&mut self, event: Event) -> ControlFlow<Self::Exit> {
         if let Event::Key(key) = event
             && key.kind == KeyEventKind::Press
         {
+            if self.search_active {
+                match key.code {
+                    KeyCode::Enter | KeyCode::Esc => self.stop_search(),
+                    KeyCode::Backspace => self.pop_search_char(),
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        return ControlFlow::Break(());
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        self.clear_search();
+                    }
+                    KeyCode::Char(c)
+                        if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+                    {
+                        self.push_search_char(c);
+                    }
+                    _ => {}
+                }
+                return ControlFlow::Continue(());
+            }
+
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => return ControlFlow::Break(()),
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     return ControlFlow::Break(());
                 }
-                KeyCode::Down | KeyCode::Char('j') => self.move_next(),
-                KeyCode::Up | KeyCode::Char('k') => self.move_previous(),
-                KeyCode::Home => self.move_first(),
-                KeyCode::End => self.move_last(),
-                KeyCode::PageDown => self.scroll_detail_down(10),
-                KeyCode::PageUp => self.scroll_detail_up(10),
+                KeyCode::Char('h') | KeyCode::Left => self.focus_activity(),
+                KeyCode::Char('l') | KeyCode::Right => self.focus_details(),
+                KeyCode::Down | KeyCode::Char('j') => self.handle_down(),
+                KeyCode::Up | KeyCode::Char('k') => self.handle_up(),
+                KeyCode::Home if self.focus == PaneFocus::Activity => self.move_first(),
+                KeyCode::End if self.focus == PaneFocus::Activity => self.move_last(),
                 KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.scroll_detail_down(10);
                 }
@@ -554,10 +655,7 @@ impl TuiApp for AnvilDashboard {
                 }
                 KeyCode::Tab => self.next_filter(),
                 KeyCode::BackTab => self.previous_filter(),
-                KeyCode::Char('1') => self.set_filter(ActivityFilter::All),
-                KeyCode::Char('2') => self.set_filter(ActivityFilter::Blocks),
-                KeyCode::Char('3') => self.set_filter(ActivityFilter::Transactions),
-                KeyCode::Char('4') => self.set_filter(ActivityFilter::Notices),
+                KeyCode::Char('/') => self.start_search(),
                 _ => {}
             }
         }
@@ -606,29 +704,53 @@ fn render_feed(frame: &mut Frame<'_>, area: Rect, app: &mut AnvilDashboard) {
         };
         ListItem::new(item.title.clone()).style(style)
     });
-    let title =
-        format!("Activity [{}] {}/{}", app.filter.label(), visible_indices.len(), app.feed.len());
+    let search = app.search.trim();
+    let title = if search.is_empty() {
+        format!("Activity [{}] {}/{}", app.filter.label(), visible_indices.len(), app.feed.len())
+    } else {
+        format!(
+            "Activity [{}] /{} {}/{}",
+            app.filter.label(),
+            search,
+            visible_indices.len(),
+            app.feed.len()
+        )
+    };
+    let border_style = if app.focus == PaneFocus::Activity {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(title))
+        .block(Block::default().borders(Borders::ALL).border_style(border_style).title(title))
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     frame.render_stateful_widget(list, area, &mut app.list_state);
 }
 
-fn render_detail(frame: &mut Frame<'_>, area: Rect, selected: Option<&ActivityItem>, scroll: u16) {
+fn render_detail(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    selected: Option<&ActivityItem>,
+    scroll: u16,
+    focused: bool,
+) {
     let text = selected.map(|item| item.detail.as_str()).unwrap_or("No activity yet.");
+    let border_style = if focused { Style::default().fg(Color::Yellow) } else { Style::default() };
     let detail = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title("Details"))
+        .block(Block::default().borders(Borders::ALL).border_style(border_style).title("Details"))
         .scroll((scroll, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(detail, area);
 }
 
-fn render_footer(frame: &mut Frame<'_>, area: Rect) {
-    let footer = Paragraph::new(
-        "q quit  j/k activity  pgup/pgdn details  tab filter  1 all 2 blocks 3 txs 4 notices",
-    )
-    .style(Style::default().fg(Color::DarkGray));
+fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AnvilDashboard) {
+    let text = if app.search_active {
+        format!("search: /{}  enter apply  esc close  backspace edit  ctrl+u clear", app.search)
+    } else {
+        "q quit  h/l pane  j/k move/scroll  ctrl+u/d page details  tab filter  / search".to_string()
+    };
+    let footer = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, area);
 }
 
