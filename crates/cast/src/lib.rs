@@ -74,22 +74,6 @@ use rlp_converter::Item;
 
 // TODO: CastContract with common contract initializers? Same for CastProviders?
 
-/// Builds inclusive chunk ranges `[start, end]` over `[from, to]`.
-fn inclusive_chunk_ranges(from: u64, to: u64, chunk_size: u64) -> Vec<(u64, u64)> {
-    if from > to {
-        return Vec::new();
-    }
-
-    let chunk_size = chunk_size.max(1);
-    (from..=to)
-        .step_by(chunk_size as usize)
-        .map(|chunk_start| {
-            let chunk_end = chunk_start.saturating_add(chunk_size - 1).min(to);
-            (chunk_start, chunk_end)
-        })
-        .collect()
-}
-
 pub struct Cast<P, N = AnyNetwork> {
     provider: P,
     _phantom: PhantomData<N>,
@@ -714,7 +698,14 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
         }
 
         // Create inclusive chunk ranges.
-        let chunk_ranges = inclusive_chunk_ranges(from, to, chunk_size);
+        let chunk_size = chunk_size.max(1);
+        let chunk_ranges = (from..=to)
+            .step_by(chunk_size as usize)
+            .map(|chunk_start| {
+                let chunk_end = chunk_start.saturating_add(chunk_size - 1).min(to);
+                (chunk_start, chunk_end)
+            })
+            .collect::<Vec<_>>();
 
         // Process chunks with controlled concurrency using buffered stream
         let mut all_results: Vec<(u64, Vec<Log>)> = futures::stream::iter(chunk_ranges)
@@ -2614,17 +2605,5 @@ mod tests {
             disassembled,
             "00000000: PUSH32 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n"
         );
-    }
-
-    #[test]
-    fn inclusive_chunk_ranges_include_to_block() {
-        let ranges = super::inclusive_chunk_ranges(10, 15, 3);
-        assert_eq!(ranges, vec![(10, 12), (13, 15)]);
-    }
-
-    #[test]
-    fn inclusive_chunk_ranges_support_single_block_range() {
-        let ranges = super::inclusive_chunk_ranges(42, 42, 10);
-        assert_eq!(ranges, vec![(42, 42)]);
     }
 }
