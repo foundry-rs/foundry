@@ -62,6 +62,8 @@ tempo-primitives.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+anvil.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 
 [features]
 default = ["optimism"]
