@@ -1,4 +1,4 @@
-warning[low-level-calls]: Low-level calls should be avoided
+note[low-level-calls]: Low-level calls should be avoided
    ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
    │
 LL │         (bool success, bytes memory result) = target.call(data);
@@ -6,7 +6,7 @@ LL │         (bool success, bytes memory result) = target.call(data);
    │
    ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
 
-warning[low-level-calls]: Low-level calls should be avoided
+note[low-level-calls]: Low-level calls should be avoided
    ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
    │
 LL │         (bool success, ) = target.call{value: value}("");
@@ -14,7 +14,7 @@ LL │         (bool success, ) = target.call{value: value}("");
    │
    ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
 
-warning[low-level-calls]: Low-level calls should be avoided
+note[low-level-calls]: Low-level calls should be avoided
    ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
    │
 LL │         (bool success, ) = target.delegatecall(data);
@@ -22,7 +22,7 @@ LL │         (bool success, ) = target.delegatecall(data);
    │
    ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
 
-warning[low-level-calls]: Low-level calls should be avoided
+note[low-level-calls]: Low-level calls should be avoided
    ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
    │
 LL │         (bool success, bytes memory result) = target.staticcall(data);
@@ -30,7 +30,7 @@ LL │         (bool success, bytes memory result) = target.staticcall(data);
    │
    ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
 
-warning[low-level-calls]: Low-level calls should be avoided
+note[low-level-calls]: Low-level calls should be avoided
    ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
    │
 LL │         target.call(data);
@@ -38,7 +38,7 @@ LL │         target.call(data);
    │
    ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
 
-warning[low-level-calls]: Low-level calls should be avoided
+note[low-level-calls]: Low-level calls should be avoided
    ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
    │
 LL │         target.call{value: value}("");
@@ -46,7 +46,7 @@ LL │         target.call{value: value}("");
    │
    ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
 
-warning[low-level-calls]: Low-level calls should be avoided
+note[low-level-calls]: Low-level calls should be avoided
    ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
    │
 LL │         target.delegatecall(data);
@@ -54,7 +54,7 @@ LL │         target.delegatecall(data);
    │
    ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
 
-warning[low-level-calls]: Low-level calls should be avoided
+note[low-level-calls]: Low-level calls should be avoided
    ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
    │
 LL │         target.staticcall(data);
@@ -62,7 +62,7 @@ LL │         target.staticcall(data);
    │
    ╰ help: https://getfoundry.sh/forge/linting/low-level-calls
 
-warning[low-level-calls]: Low-level calls should be avoided
+note[low-level-calls]: Low-level calls should be avoided
    ╭▸ ROOT/testdata/LowLevelCalls.sol:LL:CC
    │
 LL │         (, existingData) = target.call("");

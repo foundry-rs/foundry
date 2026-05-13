@@ -17,7 +17,6 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
-  - `low-level-calls`: Direct use of low-level calls should be avoided.
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
 - **Low Severity:**
@@ -40,6 +39,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `interface-naming`: Interface names should be prefixed with `I`.
   - `pragma-inconsistent`: Flags projects whose source files declare different Solidity pragma version requirements.
   - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
+  - `low-level-calls`: Direct use of low-level calls should be avoided.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.

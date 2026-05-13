@@ -1,7 +1,7 @@
-use super::{UncheckedCall, UncheckedTransferERC20, calls::is_low_level_call};
+use super::{UncheckedCall, UncheckedTransferERC20};
 use crate::{
     linter::{EarlyLintPass, LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, calls::is_low_level_call},
 };
 use solar::{
     ast::{Expr, ExprKind, ItemFunction, Stmt, StmtKind, visit::Visit},

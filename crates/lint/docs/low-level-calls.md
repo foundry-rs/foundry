@@ -1,6 +1,6 @@
 # Low-level calls
 
-**Severity**: `Med`
+**Severity**: `Info`
 **ID**: `low-level-calls`
 
 Flags direct use of Solidity low-level calls (`call`, `delegatecall`, and `staticcall`).

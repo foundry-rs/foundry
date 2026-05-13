@@ -1,14 +1,14 @@
-use super::{LowLevelCalls, calls::is_low_level_call};
+use super::LowLevelCalls;
 use crate::{
     linter::{EarlyLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, calls::is_low_level_call},
 };
 use solar::ast::{Expr, ItemFunction, visit::Visit};
 use std::ops::ControlFlow;
 
 declare_forge_lint!(
     LOW_LEVEL_CALLS,
-    Severity::Med,
+    Severity::Info,
     "low-level-calls",
     "Low-level calls should be avoided"
 );
