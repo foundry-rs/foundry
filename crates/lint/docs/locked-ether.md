@@ -18,7 +18,7 @@ For every concrete or abstract contract, the lint:
    that can move Ether out. The following are recognized as ETH-sending operations:
    - `addr.transfer(amount)` and `addr.send(amount)` with a non-literal-zero amount.
    - Any call carrying a non-zero `{value: x}` option, including
-     `addr.call{value: x}(...)`, `addr.delegatecall{value: x}(...)`, and `new C{value: x}(...)`.
+     `addr.call{value: x}(...)` and `new C{value: x}(...)`.
    - Low-level `addr.delegatecall(...)` / `addr.callcode(...)` (the callee runs in this contract's
      context and can `selfdestruct`, draining the balance).
    - The `selfdestruct(addr)` builtin.
