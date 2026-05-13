@@ -608,7 +608,7 @@ impl ActivityItem {
         Self {
             lines: vec![
                 Line::from(vec![
-                    Span::styled("  tx  ", Style::default().fg(Color::Green)),
+                    Span::styled("  tx  ", Style::default().fg(Color::Gray)),
                     Span::styled(
                         method.clone(),
                         Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
@@ -616,12 +616,12 @@ impl ActivityItem {
                 ]),
                 Line::from(vec![
                     Span::raw("      "),
-                    Span::styled("from ", Style::default().fg(Color::DarkGray)),
-                    Span::raw(from.clone()),
-                    Span::styled("  ->  ", Style::default().fg(Color::DarkGray)),
-                    Span::raw(to.clone()),
+                    Span::styled("from ", Style::default().fg(Color::Gray)),
+                    Span::styled(from.clone(), Style::default().fg(Color::Cyan)),
+                    Span::styled("  ->  ", Style::default().fg(Color::Gray)),
+                    Span::styled(to.clone(), Style::default().fg(Color::Cyan)),
                     Span::raw("  "),
-                    Span::styled(value.clone(), Style::default().fg(Color::Green)),
+                    Span::styled(value.clone(), Style::default().fg(Color::Yellow)),
                 ]),
             ],
             search_text: format!("tx {hash} {from} {to} {value} {method}"),
@@ -633,10 +633,40 @@ impl ActivityItem {
     fn notice(title: String, detail: DetailView) -> Self {
         Self {
             lines: vec![Line::from(vec![
-                Span::styled("notice ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    "notice",
+                    Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
                 Span::raw(title.clone()),
             ])],
             search_text: title,
+            detail,
+            style: ActivityStyle::Notice,
+        }
+    }
+
+    fn node_started(rpc_endpoint: String, detail: DetailView) -> Self {
+        Self {
+            lines: vec![
+                Line::from(vec![
+                    Span::styled(
+                        "notice",
+                        Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("  "),
+                    Span::styled(
+                        "node started",
+                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(vec![
+                    Span::raw("      "),
+                    Span::styled("rpc ", Style::default().fg(Color::DarkGray)),
+                    Span::raw(rpc_endpoint.clone()),
+                ]),
+            ],
+            search_text: format!("notice node started {rpc_endpoint}"),
             detail,
             style: ActivityStyle::Notice,
         }
@@ -744,8 +774,8 @@ impl AnvilDashboard {
         list_state.select(Some(0));
         let rpc_endpoint = status.rpc_endpoint.clone();
         Self {
-            feed: vec![ActivityItem::notice(
-                format!("node started  {rpc_endpoint}"),
+            feed: vec![ActivityItem::node_started(
+                rpc_endpoint.clone(),
                 DetailView::new(vec![
                     DetailRow::new("status", "running"),
                     DetailRow::new("rpc", rpc_endpoint),
@@ -1137,7 +1167,7 @@ fn render_feed(frame: &mut Frame<'_>, area: Rect, app: &mut AnvilDashboard) {
     };
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).border_style(border_style).title(title))
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+        .highlight_style(Style::default().bg(Color::DarkGray));
 
     frame.render_stateful_widget(list, area, &mut app.list_state);
 }
