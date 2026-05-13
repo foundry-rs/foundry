@@ -77,6 +77,10 @@ pub struct CoverageArgs {
 }
 
 impl CoverageArgs {
+    fn report_path(&self, root: &Path, default_file_name: &str) -> PathBuf {
+        root.join(self.report_file.as_deref().unwrap_or_else(|| Path::new(default_file_name)))
+    }
+
     pub async fn run(mut self) -> Result<()> {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
@@ -116,8 +120,7 @@ impl CoverageArgs {
                     Some(Box::<CoverageSummaryReporter>::default() as Box<dyn CoverageReporter>)
                 }
                 CoverageReportKind::Lcov => {
-                    let path =
-                        root.join(self.report_file.as_deref().unwrap_or("lcov.info".as_ref()));
+                    let path = self.report_path(root, "lcov.info");
                     Some(Box::new(LcovReporter::new(path, self.lcov_version.clone())))
                 }
                 CoverageReportKind::Bytecode => Some(Box::new(BytecodeReporter::new(
@@ -292,8 +295,9 @@ impl CoverageArgs {
         }
 
         if self.report.iter().any(|kind| matches!(kind, CoverageReportKind::Attribution)) {
-            let reporter =
-                CoverageAttributionReporter::new(project_root.join("coverage-attribution.json"));
+            let reporter = CoverageAttributionReporter::new(
+                self.report_path(project_root, "coverage-attribution.json"),
+            );
             reporter.report(
                 &report,
                 &outcome,

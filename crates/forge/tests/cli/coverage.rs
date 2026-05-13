@@ -1921,6 +1921,13 @@ contract AContractTest is DSTest {
     let attribution = prj.root().join("coverage-attribution.json");
     assert!(attribution.exists(), "coverage attribution report was not created");
 
+    let custom_attribution = prj.root().join("custom-coverage-attribution.json");
+    cmd.forge_fuse()
+        .arg("coverage")
+        .args(["--report=attribution", "--report-file", "custom-coverage-attribution.json"])
+        .assert_success();
+    assert!(custom_attribution.exists(), "custom coverage attribution report was not created");
+
     let json: Value = serde_json::from_str(&std::fs::read_to_string(attribution).unwrap()).unwrap();
     let tests = json["tests"].as_array().unwrap();
     assert_eq!(tests.len(), 2);
