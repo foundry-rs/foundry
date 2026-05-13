@@ -1,13 +1,11 @@
 //! Shared analysis primitives reused by Solidity lints.
 //!
-//! - [`primitives`]: HIR probes (`peel_address_wraps`, `is_msg_sender`, ...).
-//! - [`facts`]: predicate decomposition and caller-guard recognition.
-//! - [`modifier`]: modifier-prefix scanning and param -> caller-arg mapping.
-//! - [`interface`]: contract/library function-shape matching.
+//! - [`primitives`]: HIR probes (`is_address_type`, `is_require_or_assert`,
+//!   `address_call_receiver`, `branch_always_exits`).
+//! - [`interface`]: contract/library function-shape matching (`is_elementary`,
+//!   `receiver_contract_id`).
 //!
 //! All helpers borrow HIR and never mutate it.
 
-pub mod facts;
 pub mod interface;
-pub mod modifier;
 pub mod primitives;
