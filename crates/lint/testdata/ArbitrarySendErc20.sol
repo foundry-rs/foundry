@@ -32,8 +32,9 @@ library SafeERC20 {
         address to,
         uint256 value
     ) internal {
-        // Library passthrough: warns here AND at the user's call site (see `badLibrary`).
-        require(token.transferFrom(from, to, value), "SafeERC20: transferFrom failed"); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        // Library passthrough — `from` is forwarded by the caller; the lint fires at the
+        // user's call site (see `badLibrary`), not here.
+        require(token.transferFrom(from, to, value), "SafeERC20: transferFrom failed");
     }
 
     function safePermit(
@@ -455,5 +456,28 @@ contract ArbitrarySendErc20 {
 
     function okLibrarySelf(address to, uint256 a) public {
         SafeERC20.safeTransferFrom(token, address(this), to, a);
+    }
+}
+
+// Solady-style: first param is `address`, not a contract type.
+library SafeTransferLib {
+    function safeTransferFrom(address token, address from, address to, uint256 amount) internal {
+        token; from; to; amount; // body intentionally elided.
+    }
+}
+
+contract SoladyCallSites {
+    address token;
+
+    function badSolady(address from, address to, uint256 a) public {
+        SafeTransferLib.safeTransferFrom(token, from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function okSoladySender(address to, uint256 a) public {
+        SafeTransferLib.safeTransferFrom(token, msg.sender, to, a);
+    }
+
+    function okSoladySelf(address to, uint256 a) public {
+        SafeTransferLib.safeTransferFrom(token, address(this), to, a);
     }
 }

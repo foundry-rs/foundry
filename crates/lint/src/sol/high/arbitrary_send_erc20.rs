@@ -34,6 +34,11 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
         {
             return;
         }
+        // Library functions typically forward `from` from their caller; flag at the call
+        // site (in user contracts) instead, where the trust boundary actually lives.
+        if func.contract.is_some_and(|cid| hir.contract(cid).kind == ContractKind::Library) {
+            return;
+        }
         let Some(body) = func.body else { return };
 
         let mut a = Analyzer::new(hir);
@@ -487,18 +492,23 @@ fn contract_has_function(
     })
 }
 
-/// SafeERC20's 4-arg `safeTransferFrom(IERC20, address, address, uint256)`. Can't go through
-/// `contract_has_function` because the first param is contract-typed, not elementary.
+/// 4-arg `safeTransferFrom(token, address, address, uint256)`. The `token` param can be
+/// either a contract type (OpenZeppelin SafeERC20: `IERC20`) or an `address` (Solady
+/// SafeTransferLib). Can't go through `contract_has_function` because the first form's
+/// first param isn't elementary.
 fn library_has_safe_transfer_from(hir: &hir::Hir<'_>, cid: hir::ContractId) -> bool {
     hir.contract_item_ids(cid).any(|item| {
         let Some(fid) = item.as_function() else { return false };
         let f = hir.function(fid);
-        f.name.is_some_and(|n| n.name.as_str() == "safeTransferFrom")
-            && f.parameters.len() == 4
-            && matches!(
-                hir.variable(f.parameters[0]).ty.kind,
-                TypeKind::Custom(ItemId::Contract(_))
-            )
+        if f.parameters.len() != 4 || f.name.is_none_or(|n| n.name.as_str() != "safeTransferFrom") {
+            return false;
+        }
+        let token_ok = matches!(
+            hir.variable(f.parameters[0]).ty.kind,
+            TypeKind::Custom(ItemId::Contract(_))
+                | TypeKind::Elementary(ElementaryType::Address(_))
+        );
+        token_ok
             && is_address(hir, f.parameters[1])
             && is_address(hir, f.parameters[2])
             && is_elementary(hir, f.parameters[3], "uint256")
