@@ -29,6 +29,7 @@ use tokio::{
 };
 
 const TICK_RATE: Duration = Duration::from_millis(250);
+const STATUS_POLL_RATE: Duration = Duration::from_secs(1);
 const SPLASH_DURATION: Duration = Duration::from_secs(1);
 const MAX_FEED_ITEMS: usize = 1_000;
 const ACCOUNT_LINES_PER_ACCOUNT: usize = 4;
@@ -60,7 +61,8 @@ pub(crate) async fn run(
         dump_interval,
         preserve_historical_states,
     ));
-    handle.task_manager().spawn(collect_events(api.clone(), events, accounts));
+    handle.task_manager().spawn(collect_events(api.clone(), events.clone(), accounts));
+    handle.task_manager().spawn(collect_status(api.clone(), events));
 
     let mut app = AnvilDashboard::new(status, config, receiver);
     spawn_blocking(move || run_app_with_tick(&mut app, TICK_RATE))
@@ -116,6 +118,21 @@ async fn collect_events(
     }
 }
 
+async fn collect_status(api: EthApi<FoundryNetwork>, events: UnboundedSender<DashboardEvent>) {
+    let mut ticker = tokio::time::interval(STATUS_POLL_RATE);
+
+    loop {
+        ticker.tick().await;
+        let event = match StatusSnapshot::from_api(&api) {
+            Ok(status) => DashboardEvent::Status(status),
+            Err(err) => DashboardEvent::Notice(format!("failed to refresh node status: {err}")),
+        };
+        if events.send(event).is_err() {
+            break;
+        }
+    }
+}
+
 async fn send_account_balances(
     api: &EthApi<FoundryNetwork>,
     events: &UnboundedSender<DashboardEvent>,
@@ -143,6 +160,28 @@ async fn send_account_balances(
 }
 
 #[derive(Clone, Debug)]
+struct StatusSnapshot {
+    chain_id: u64,
+    current_block: u64,
+    mining_mode: String,
+    fork_source: Option<String>,
+    fork_block: Option<u64>,
+}
+
+impl StatusSnapshot {
+    fn from_api(api: &EthApi<FoundryNetwork>) -> Result<Self> {
+        let fork = api.get_fork();
+        Ok(Self {
+            chain_id: api.chain_id(),
+            current_block: api.block_number()?.to(),
+            mining_mode: mining_mode_label_from_api(api)?,
+            fork_source: fork.as_ref().and_then(ClientFork::eth_rpc_url),
+            fork_block: fork.as_ref().map(ClientFork::block_number),
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
 struct DashboardStatus {
     chain_id: u64,
     current_block: u64,
@@ -155,18 +194,25 @@ struct DashboardStatus {
 
 impl DashboardStatus {
     fn from_node(api: &EthApi<FoundryNetwork>, handle: &NodeHandle) -> Result<Self> {
-        let fork = api.get_fork();
-        let config = handle.config();
+        let snapshot = StatusSnapshot::from_api(api)?;
 
         Ok(Self {
-            chain_id: api.chain_id(),
-            current_block: api.block_number()?.to(),
-            mining_mode: mining_mode_label(config),
-            fork_source: fork.as_ref().and_then(ClientFork::eth_rpc_url),
-            fork_block: fork.as_ref().map(ClientFork::block_number),
+            chain_id: snapshot.chain_id,
+            current_block: snapshot.current_block,
+            mining_mode: snapshot.mining_mode,
+            fork_source: snapshot.fork_source,
+            fork_block: snapshot.fork_block,
             rpc_endpoint: handle.http_endpoint(),
             started_at: Instant::now(),
         })
+    }
+
+    fn apply_snapshot(&mut self, snapshot: StatusSnapshot) {
+        self.chain_id = snapshot.chain_id;
+        self.current_block = snapshot.current_block;
+        self.mining_mode = snapshot.mining_mode;
+        self.fork_source = snapshot.fork_source;
+        self.fork_block = snapshot.fork_block;
     }
 
     fn uptime(&self) -> String {
@@ -190,22 +236,19 @@ impl DashboardStatus {
     }
 }
 
-fn mining_mode_label(config: &NodeConfig) -> String {
-    if config.no_mining {
-        "manual".to_string()
-    } else if let Some(block_time) = config.block_time {
-        let seconds = block_time.as_secs_f64();
-        if config.mixed_mining {
-            format!("mixed ({seconds}s)")
-        } else {
-            format!("interval ({seconds}s)")
-        }
-    } else {
+fn mining_mode_label_from_api(api: &EthApi<FoundryNetwork>) -> Result<String> {
+    let label = if api.anvil_get_auto_mine()? {
         "instant".to_string()
-    }
+    } else if let Some(interval) = api.anvil_get_interval_mining()? {
+        format!("interval ({interval}s)")
+    } else {
+        "manual".to_string()
+    };
+    Ok(label)
 }
 
 enum DashboardEvent {
+    Status(StatusSnapshot),
     Block(BlockActivity),
     Notice(String),
     AccountBalances(Vec<AccountBalance>),
@@ -276,8 +319,8 @@ impl DashboardConfig {
         let fork = status.fork_label();
         let mut rows = vec![
             DetailRow::new("version", env!("CARGO_PKG_VERSION")),
-            DetailRow::new("rpc", status.rpc_endpoint.clone()),
-            DetailRow::new("chain id", config.get_chain_id().to_string()),
+            DetailRow::new("listen", status.rpc_endpoint.clone()),
+            DetailRow::new("chain id", status.chain_id.to_string()),
             DetailRow::new("hardfork", format!("{:?}", config.get_hardfork())),
             DetailRow::new("mining", status.mining_mode.clone()),
             DetailRow::new("fork", fork),
@@ -312,6 +355,18 @@ impl DashboardConfig {
             .collect();
 
         Self { rows, accounts }
+    }
+
+    fn update_status(&mut self, status: &DashboardStatus) {
+        self.update_row("chain id", status.chain_id.to_string());
+        self.update_row("mining", status.mining_mode.clone());
+        self.update_row("fork", status.fork_label());
+    }
+
+    fn update_row(&mut self, field: &str, value: String) {
+        if let Some(row) = self.rows.iter_mut().find(|row| row.field == field) {
+            row.value = value;
+        }
     }
 
     fn account_addresses(&self) -> Vec<Address> {
@@ -639,7 +694,7 @@ impl ActivityItem {
         }
     }
 
-    fn node_started(rpc_endpoint: String, detail: DetailView) -> Self {
+    fn node_started(listen_endpoint: String, detail: DetailView) -> Self {
         Self {
             lines: vec![
                 Line::from(vec![
@@ -655,11 +710,11 @@ impl ActivityItem {
                 ]),
                 Line::from(vec![
                     Span::raw("    "),
-                    Span::styled("rpc ", Style::default().fg(Color::DarkGray)),
-                    Span::raw(rpc_endpoint.clone()),
+                    Span::styled("listen ", Style::default().fg(Color::DarkGray)),
+                    Span::raw(listen_endpoint.clone()),
                 ]),
             ],
-            search_text: format!("notice node started {rpc_endpoint}"),
+            search_text: format!("notice node started {listen_endpoint}"),
             detail,
             style: ActivityStyle::Notice,
         }
@@ -765,13 +820,13 @@ impl AnvilDashboard {
     ) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
-        let rpc_endpoint = status.rpc_endpoint.clone();
+        let listen_endpoint = status.rpc_endpoint.clone();
         Self {
             feed: vec![ActivityItem::node_started(
-                rpc_endpoint.clone(),
+                listen_endpoint.clone(),
                 DetailView::new(vec![
                     DetailRow::new("status", "running"),
-                    DetailRow::new("rpc", rpc_endpoint),
+                    DetailRow::new("listen", listen_endpoint),
                     DetailRow::new(
                         "activity",
                         "blocks and transactions will appear here as they are mined",
@@ -854,6 +909,11 @@ impl AnvilDashboard {
         while let Ok(event) = self.events.try_recv() {
             let follow = self.is_following();
             match event {
+                DashboardEvent::Status(status) => {
+                    self.status.apply_snapshot(status);
+                    self.config.update_status(&self.status);
+                    continue;
+                }
                 DashboardEvent::Block(block) => {
                     self.status.current_block = block.number;
                     for item in block.into_items() {
@@ -1104,7 +1164,7 @@ fn render_status(frame: &mut Frame<'_>, area: Rect, status: &DashboardStatus) {
         label("fork "),
         value(status.fork_label()),
         separator(),
-        label("rpc "),
+        label("listen "),
         value(status.rpc_endpoint.clone()),
         separator(),
         label("up "),
@@ -1123,7 +1183,7 @@ fn render_splash(frame: &mut Frame<'_>, area: Rect, status: &DashboardStatus) {
             label("chain "),
             value(status.chain_id.to_string()),
             separator(),
-            label("rpc "),
+            label("listen "),
             value(status.rpc_endpoint.clone()),
         ]),
         Line::from(""),
