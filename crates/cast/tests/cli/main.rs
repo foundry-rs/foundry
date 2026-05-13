@@ -2313,6 +2313,28 @@ casttest!(storage, |_prj, cmd| {
 "#]]);
 });
 
+casttest!(storage_missing_slot_without_api_key, async |_prj, cmd| {
+    let (_, handle) = anvil::spawn(NodeConfig::test()).await;
+    cmd.unset_env("ETHERSCAN_API_KEY");
+    cmd.unset_env("HTTP_PROXY");
+    cmd.unset_env("HTTPS_PROXY");
+    cmd.unset_env("ALL_PROXY");
+    cmd.unset_env("http_proxy");
+    cmd.unset_env("https_proxy");
+    cmd.unset_env("all_proxy");
+    cmd.args([
+        "storage",
+        "0x4e59b44847b379578588920ca78fbf26c0b4956c",
+        "--rpc-url",
+        &handle.http_endpoint(),
+    ])
+    .assert_failure()
+    .stderr_eq(str![[r#"
+Error: No storage slot was provided. To read a raw storage slot, pass a slot argument: `cast storage <address> <slot>`. To fetch the full storage layout, provide an Etherscan API key or run from a local project with matching artifacts.
+
+"#]]);
+});
+
 casttest!(flaky_storage_with_valid_solc_version_1, |_prj, cmd| {
     cmd.args([
         "storage",

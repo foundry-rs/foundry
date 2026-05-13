@@ -146,9 +146,7 @@ impl StorageArgs {
                 etherscan_config.into_client_with_no_proxy(config.eth_rpc_no_proxy)?
             }
             None => {
-                let api_key = etherscan_api_key.ok_or_else(|| {
-                    eyre::eyre!("You must provide an Etherscan API key if you're fetching a remote contract's storage.")
-                })?;
+                let api_key = etherscan_api_key.ok_or_else(missing_storage_slot_or_key_error)?;
                 foundry_block_explorers::Client::new(chain, api_key)?
             }
         };
@@ -393,6 +391,14 @@ const fn is_storage_layout_empty(storage_layout: &Option<StorageLayout>) -> bool
     if let Some(s) = storage_layout { s.storage.is_empty() } else { true }
 }
 
+fn missing_storage_slot_or_key_error() -> eyre::Report {
+    eyre::eyre!(
+        "No storage slot was provided. To read a raw storage slot, pass a slot argument: \
+         `cast storage <address> <slot>`. To fetch the full storage layout, provide an \
+         Etherscan API key or run from a local project with matching artifacts."
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,5 +426,12 @@ mod tests {
     fn parse_solc_version_arg() {
         let args = StorageArgs::parse_from(["foundry-cli", "addr.eth", "--solc-version", "0.8.10"]);
         assert_eq!(args.solc_version, Some(Version::parse("0.8.10").unwrap()));
+    }
+
+    #[test]
+    fn missing_slot_error_explains_raw_storage_usage() {
+        let err = missing_storage_slot_or_key_error().to_string();
+        assert!(err.contains("No storage slot was provided"));
+        assert!(err.contains("cast storage <address> <slot>"));
     }
 }
