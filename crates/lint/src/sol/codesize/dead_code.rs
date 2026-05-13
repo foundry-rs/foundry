@@ -5,10 +5,17 @@ use crate::{
 };
 use solar::{
     ast::{ContractKind, FunctionKind, Visibility},
-    interface::sym,
-    sema::hir::{self, Visit as _},
+    interface::{Symbol, data_structures::Never, sym},
+    sema::hir::{
+        CallArgs, ContractId, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Modifier, Res,
+        SourceId, Type, TypeKind, Variable, VariableId, Visit,
+    },
 };
-use std::{collections::HashSet, ops::ControlFlow};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+    sync::{Arc, LazyLock, Mutex},
+};
 
 declare_forge_lint!(
     DEAD_CODE,
@@ -21,11 +28,10 @@ impl<'hir> LateLintPass<'hir> for DeadCode {
     fn check_nested_source(
         &mut self,
         ctx: &LintContext,
-        hir: &'hir hir::Hir<'hir>,
-        source_id: hir::SourceId,
+        hir: &'hir Hir<'hir>,
+        source_id: SourceId,
     ) {
-        let reachable = Reachability::compute(hir);
-        let overridden = collect_overridden_functions(hir);
+        let analysis = dead_code_analysis(hir);
 
         for function_id in hir.function_ids() {
             let function = hir.function(function_id);
@@ -33,22 +39,57 @@ impl<'hir> LateLintPass<'hir> for DeadCode {
                 continue;
             }
 
-            if function.virtual_ && overridden.contains(&function_id) {
+            if function.virtual_ && analysis.overridden.contains(&function_id) {
                 continue;
             }
 
-            if !reachable.contains(&function_id) {
+            if !analysis.reachable.contains(&function_id) {
                 ctx.emit(&DEAD_CODE, function.span);
             }
         }
     }
 }
 
-fn is_dead_code_candidate(
-    hir: &hir::Hir<'_>,
-    function: &hir::Function<'_>,
-    function_id: hir::FunctionId,
-) -> bool {
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct AnalysisCacheKey {
+    hir: usize,
+    sources: usize,
+    contracts: usize,
+    functions: usize,
+    variables: usize,
+}
+
+#[derive(Debug)]
+struct DeadCodeAnalysis {
+    reachable: HashSet<FunctionId>,
+    overridden: HashSet<FunctionId>,
+}
+
+static ANALYSIS_CACHE: LazyLock<Mutex<HashMap<AnalysisCacheKey, Arc<DeadCodeAnalysis>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn dead_code_analysis(hir: &Hir<'_>) -> Arc<DeadCodeAnalysis> {
+    let key = AnalysisCacheKey {
+        hir: std::ptr::from_ref(hir).addr(),
+        sources: hir.source_ids().len(),
+        contracts: hir.contract_ids().len(),
+        functions: hir.function_ids().len(),
+        variables: hir.variable_ids().len(),
+    };
+
+    if let Some(analysis) = ANALYSIS_CACHE.lock().unwrap().get(&key).cloned() {
+        return analysis;
+    }
+
+    let analysis = Arc::new(DeadCodeAnalysis {
+        reachable: Reachability::compute(hir),
+        overridden: collect_overridden_functions(hir),
+    });
+
+    ANALYSIS_CACHE.lock().unwrap().entry(key).or_insert_with(|| analysis).clone()
+}
+
+fn is_dead_code_candidate(hir: &Hir<'_>, function: &Function<'_>, function_id: FunctionId) -> bool {
     if function.kind != FunctionKind::Function
         || function.visibility >= Visibility::Public
         || function.body.is_none()
@@ -76,7 +117,7 @@ fn is_dead_code_candidate(
     true
 }
 
-fn is_entry_point(function: &hir::Function<'_>) -> bool {
+fn is_entry_point(function: &Function<'_>) -> bool {
     function.body.is_some()
         && (function.visibility >= Visibility::Public
             || matches!(
@@ -85,7 +126,7 @@ fn is_entry_point(function: &hir::Function<'_>) -> bool {
             ))
 }
 
-fn collect_overridden_functions(hir: &hir::Hir<'_>) -> HashSet<hir::FunctionId> {
+fn collect_overridden_functions(hir: &Hir<'_>) -> HashSet<FunctionId> {
     let mut overridden = HashSet::new();
 
     for function_id in hir.function_ids() {
@@ -95,8 +136,6 @@ fn collect_overridden_functions(hir: &hir::Hir<'_>) -> HashSet<hir::FunctionId> 
         }
 
         let Some(contract_id) = function.contract else { continue };
-        let Some(name) = function.name else { continue };
-        let arity = function.parameters.len();
         let contract = hir.contract(contract_id);
 
         let bases = if function.overrides.is_empty() {
@@ -106,7 +145,7 @@ fn collect_overridden_functions(hir: &hir::Hir<'_>) -> HashSet<hir::FunctionId> 
         };
 
         for &base_id in bases {
-            for base_function_id in matching_functions(hir, base_id, name.name, arity) {
+            for base_function_id in matching_overridden_functions(hir, base_id, function) {
                 if hir.function(base_function_id).virtual_ {
                     overridden.insert(base_function_id);
                 }
@@ -117,12 +156,28 @@ fn collect_overridden_functions(hir: &hir::Hir<'_>) -> HashSet<hir::FunctionId> 
     overridden
 }
 
+fn matching_overridden_functions(
+    hir: &Hir<'_>,
+    contract_id: ContractId,
+    overriding: &Function<'_>,
+) -> Vec<FunctionId> {
+    let Some(name) = overriding.name else { return Vec::new() };
+    hir.contract(contract_id)
+        .all_functions()
+        .filter(|&function_id| {
+            let function = hir.function(function_id);
+            function.name.is_some_and(|ident| ident.name == name.name)
+                && same_parameter_types(hir, function.parameters, overriding.parameters)
+        })
+        .collect()
+}
+
 fn matching_functions(
-    hir: &hir::Hir<'_>,
-    contract_id: hir::ContractId,
-    name: solar::interface::Symbol,
+    hir: &Hir<'_>,
+    contract_id: ContractId,
+    name: Symbol,
     arity: usize,
-) -> Vec<hir::FunctionId> {
+) -> Vec<FunctionId> {
     hir.contract(contract_id)
         .all_functions()
         .filter(|&function_id| {
@@ -133,14 +188,50 @@ fn matching_functions(
         .collect()
 }
 
+fn same_parameter_types(hir: &Hir<'_>, lhs: &[VariableId], rhs: &[VariableId]) -> bool {
+    lhs.len() == rhs.len()
+        && lhs
+            .iter()
+            .zip(rhs)
+            .all(|(&lhs, &rhs)| same_type(hir, &hir.variable(lhs).ty, &hir.variable(rhs).ty))
+}
+
+fn same_type(hir: &Hir<'_>, lhs: &Type<'_>, rhs: &Type<'_>) -> bool {
+    match (&lhs.kind, &rhs.kind) {
+        (TypeKind::Elementary(lhs), TypeKind::Elementary(rhs)) => lhs == rhs,
+        (TypeKind::Array(lhs), TypeKind::Array(rhs)) => {
+            same_type(hir, &lhs.element, &rhs.element)
+                && match (lhs.size, rhs.size) {
+                    (None, None) => true,
+                    (Some(lhs), Some(rhs)) => {
+                        format!("{:?}", lhs.kind) == format!("{:?}", rhs.kind)
+                    }
+                    _ => false,
+                }
+        }
+        (TypeKind::Function(lhs), TypeKind::Function(rhs)) => {
+            lhs.visibility == rhs.visibility
+                && lhs.state_mutability == rhs.state_mutability
+                && same_parameter_types(hir, lhs.parameters, rhs.parameters)
+                && same_parameter_types(hir, lhs.returns, rhs.returns)
+        }
+        (TypeKind::Mapping(lhs), TypeKind::Mapping(rhs)) => {
+            same_type(hir, &lhs.key, &rhs.key) && same_type(hir, &lhs.value, &rhs.value)
+        }
+        (TypeKind::Custom(lhs), TypeKind::Custom(rhs)) => lhs == rhs,
+        (TypeKind::Err(_), TypeKind::Err(_)) => true,
+        _ => false,
+    }
+}
+
 struct Reachability<'hir> {
-    hir: &'hir hir::Hir<'hir>,
-    reachable: HashSet<hir::FunctionId>,
-    current_contract: Option<hir::ContractId>,
+    hir: &'hir Hir<'hir>,
+    reachable: HashSet<FunctionId>,
+    current_contract: Option<ContractId>,
 }
 
 impl<'hir> Reachability<'hir> {
-    fn compute(hir: &'hir hir::Hir<'hir>) -> HashSet<hir::FunctionId> {
+    fn compute(hir: &'hir Hir<'hir>) -> HashSet<FunctionId> {
         let mut this = Self { hir, reachable: HashSet::new(), current_contract: None };
 
         for function_id in hir.function_ids() {
@@ -159,18 +250,19 @@ impl<'hir> Reachability<'hir> {
         this.reachable
     }
 
-    fn mark_function(&mut self, function_id: hir::FunctionId) {
+    fn mark_function(&mut self, function_id: FunctionId) {
         if self.reachable.insert(function_id) {
             let _ = self.visit_nested_function(function_id);
         }
     }
 
-    fn resolve_callee(&self, callee: &'hir hir::Expr<'hir>, arity: usize) -> Vec<hir::FunctionId> {
+    fn resolve_callee(&self, callee: &'hir Expr<'hir>, args: CallArgs<'hir>) -> Vec<FunctionId> {
+        let arity = args.len();
         match &callee.peel_parens().kind {
-            hir::ExprKind::Ident(resolutions) => resolutions
+            ExprKind::Ident(resolutions) => resolutions
                 .iter()
                 .filter_map(|resolution| match resolution {
-                    hir::Res::Item(hir::ItemId::Function(function_id))
+                    Res::Item(ItemId::Function(function_id))
                         if self.hir.function(*function_id).parameters.len() == arity =>
                     {
                         Some(*function_id)
@@ -178,7 +270,7 @@ impl<'hir> Reachability<'hir> {
                     _ => None,
                 })
                 .collect(),
-            hir::ExprKind::Member(base, member) => {
+            ExprKind::Member(base, member) => {
                 self.resolve_member_callee(base.peel_parens(), member.name, arity)
             }
             _ => Vec::new(),
@@ -187,43 +279,56 @@ impl<'hir> Reachability<'hir> {
 
     fn resolve_member_callee(
         &self,
-        base: &'hir hir::Expr<'hir>,
-        member: solar::interface::Symbol,
+        base: &'hir Expr<'hir>,
+        member: Symbol,
         arity: usize,
-    ) -> Vec<hir::FunctionId> {
-        let hir::ExprKind::Ident(resolutions) = &base.kind else { return Vec::new() };
-
+    ) -> Vec<FunctionId> {
         let mut functions = Vec::new();
-        for resolution in *resolutions {
-            match resolution {
-                hir::Res::Item(hir::ItemId::Contract(contract_id)) => {
-                    functions.extend(matching_functions(self.hir, *contract_id, member, arity));
-                }
-                hir::Res::Builtin(builtin) if builtin.name() == sym::super_ => {
-                    let Some(contract_id) = self.current_contract else { continue };
-                    let contract = self.hir.contract(contract_id);
-                    for &base_id in contract.linearized_bases.iter().skip(1) {
-                        functions.extend(matching_functions(self.hir, base_id, member, arity));
-                    }
-                }
-                _ => {}
+        if is_super(base) {
+            let Some(contract_id) = self.current_contract else { return functions };
+            let contract = self.hir.contract(contract_id);
+            for &base_id in contract.linearized_bases.iter().skip(1) {
+                functions.extend(matching_functions(self.hir, base_id, member, arity));
             }
+            return functions;
+        }
+
+        for contract_id in self.resolve_static_contracts(base) {
+            functions.extend(matching_functions(self.hir, contract_id, member, arity));
         }
         functions
     }
+
+    fn resolve_static_contracts(&self, expr: &'hir Expr<'hir>) -> Vec<ContractId> {
+        match &expr.peel_parens().kind {
+            ExprKind::Ident(resolutions) => resolutions
+                .iter()
+                .filter_map(|resolution| match resolution {
+                    Res::Item(ItemId::Contract(contract_id)) => Some(*contract_id),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
 }
 
-impl<'hir> hir::Visit<'hir> for Reachability<'hir> {
-    type BreakValue = solar::interface::data_structures::Never;
+fn is_super(expr: &Expr<'_>) -> bool {
+    let ExprKind::Ident(resolutions) = &expr.peel_parens().kind else { return false };
+    resolutions.iter().any(|resolution| match resolution {
+        Res::Builtin(builtin) => builtin.name() == sym::super_,
+        _ => false,
+    })
+}
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+impl<'hir> Visit<'hir> for Reachability<'hir> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'hir Hir<'hir> {
         self.hir
     }
 
-    fn visit_function(
-        &mut self,
-        function: &'hir hir::Function<'hir>,
-    ) -> ControlFlow<Self::BreakValue> {
+    fn visit_function(&mut self, function: &'hir Function<'hir>) -> ControlFlow<Self::BreakValue> {
         let previous_contract = self.current_contract;
         self.current_contract = function.contract;
         let result = self.walk_function(function);
@@ -231,17 +336,14 @@ impl<'hir> hir::Visit<'hir> for Reachability<'hir> {
         result
     }
 
-    fn visit_modifier(
-        &mut self,
-        modifier: &'hir hir::Modifier<'hir>,
-    ) -> ControlFlow<Self::BreakValue> {
-        if let hir::ItemId::Function(function_id) = modifier.id {
+    fn visit_modifier(&mut self, modifier: &'hir Modifier<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let ItemId::Function(function_id) = modifier.id {
             self.mark_function(function_id);
         }
         self.walk_modifier(modifier)
     }
 
-    fn visit_var(&mut self, variable: &'hir hir::Variable<'hir>) -> ControlFlow<Self::BreakValue> {
+    fn visit_var(&mut self, variable: &'hir Variable<'hir>) -> ControlFlow<Self::BreakValue> {
         let previous_contract = self.current_contract;
         if variable.function.is_none() {
             self.current_contract = variable.contract;
@@ -251,17 +353,17 @@ impl<'hir> hir::Visit<'hir> for Reachability<'hir> {
         result
     }
 
-    fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        if let hir::ExprKind::Call(callee, args, opts) = &expr.kind {
-            for function_id in self.resolve_callee(callee, args.len()) {
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let ExprKind::Call(callee, args, opts) = &expr.kind {
+            for function_id in self.resolve_callee(callee, *args) {
                 self.mark_function(function_id);
             }
 
             match &callee.peel_parens().kind {
                 // The call resolver above filters overloaded identifiers by arity, so do not also
                 // visit the callee as a bare function reference and mark every overload reachable.
-                hir::ExprKind::Ident(_) => {}
-                hir::ExprKind::Member(base, _) => self.visit_expr(base)?,
+                ExprKind::Ident(_) => {}
+                ExprKind::Member(base, _) => self.visit_expr(base)?,
                 _ => self.visit_expr(callee)?,
             }
             if let Some(opts) = opts {
@@ -273,9 +375,9 @@ impl<'hir> hir::Visit<'hir> for Reachability<'hir> {
             return ControlFlow::Continue(());
         }
 
-        if let hir::ExprKind::Ident(resolutions) = &expr.kind {
+        if let ExprKind::Ident(resolutions) = &expr.kind {
             for function_id in resolutions.iter().filter_map(|resolution| match resolution {
-                hir::Res::Item(hir::ItemId::Function(function_id)) => Some(*function_id),
+                Res::Item(ItemId::Function(function_id)) => Some(*function_id),
                 _ => None,
             }) {
                 self.mark_function(function_id);

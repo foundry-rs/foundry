@@ -18,6 +18,14 @@ contract DeadCode {
         usedFromConstructor();
     }
 
+    receive() external payable {
+        usedFromReceive();
+    }
+
+    fallback() external payable {
+        usedFromFallback();
+    }
+
     modifier usesHelper() {
         usedFromModifier();
         _;
@@ -44,6 +52,10 @@ contract DeadCode {
     }
 
     function usedFromConstructor() private {}
+
+    function usedFromReceive() private {}
+
+    function usedFromFallback() internal {}
 
     function usedFromInitializer() internal pure returns (uint256) {
         return 0;
