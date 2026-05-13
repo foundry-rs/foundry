@@ -1,11 +1,10 @@
 use super::{UncheckedCall, UncheckedTransferERC20};
 use crate::{
     linter::{EarlyLintPass, LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, calls::is_low_level_call},
 };
 use solar::{
     ast::{Expr, ExprKind, ItemFunction, Stmt, StmtKind, visit::Visit},
-    interface::kw,
     sema::hir::{self},
 };
 use std::ops::ControlFlow;
@@ -159,31 +158,6 @@ impl<'ast> Visit<'ast> for UncheckedCallChecker<'_, '_> {
         }
         self.walk_stmt(stmt)
     }
-}
-
-/// Checks if an expression is a low-level call that should be checked.
-///
-/// Detects patterns like:
-/// - `target.call(...)`
-/// - `target.delegatecall(...)`
-/// - `target.staticcall(...)`
-/// - `target.call{value: x}(...)`
-const fn is_low_level_call(expr: &Expr<'_>) -> bool {
-    if let ExprKind::Call(call_expr, _args) = &expr.kind {
-        // Check the callee expression
-        let callee = match &call_expr.kind {
-            // Handle call options like {value: x}
-            ExprKind::CallOptions(inner_expr, _) => inner_expr,
-            // Direct call without options
-            _ => call_expr,
-        };
-
-        if let ExprKind::Member(_, member) = &callee.kind {
-            // Check for low-level call methods
-            return matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall);
-        }
-    }
-    false
 }
 
 /// Checks if a tuple assignment doesn't properly check the success value.

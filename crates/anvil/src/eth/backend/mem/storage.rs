@@ -434,23 +434,22 @@ impl<N: Network> BlockchainStorage<N> {
     }
 
     /// Returns the hash for [BlockNumberOrTag]
-    pub fn hash(&self, number: BlockNumberOrTag) -> Option<B256> {
-        let slots_in_an_epoch = 32;
+    pub fn hash(&self, number: BlockNumberOrTag, slots_in_an_epoch: u64) -> Option<B256> {
         match number {
             BlockNumberOrTag::Latest => Some(self.best_hash),
             BlockNumberOrTag::Earliest => Some(self.genesis_hash),
             BlockNumberOrTag::Pending => None,
             BlockNumberOrTag::Number(num) => self.hashes.get(&num).copied(),
             BlockNumberOrTag::Safe => {
-                if self.best_number > (slots_in_an_epoch) {
-                    self.hashes.get(&(self.best_number - (slots_in_an_epoch))).copied()
+                if self.best_number > slots_in_an_epoch {
+                    self.hashes.get(&(self.best_number - slots_in_an_epoch)).copied()
                 } else {
-                    Some(self.genesis_hash) // treat the genesis block as safe "by definition"
+                    Some(self.genesis_hash)
                 }
             }
             BlockNumberOrTag::Finalized => {
-                if self.best_number > (slots_in_an_epoch * 2) {
-                    self.hashes.get(&(self.best_number - (slots_in_an_epoch * 2))).copied()
+                if self.best_number > slots_in_an_epoch * 2 {
+                    self.hashes.get(&(self.best_number - slots_in_an_epoch * 2)).copied()
                 } else {
                     Some(self.genesis_hash)
                 }
@@ -509,10 +508,10 @@ impl<N: Network> Blockchain<N> {
     }
 
     /// returns the header hash of given block
-    pub fn hash(&self, id: BlockId) -> Option<B256> {
+    pub fn hash(&self, id: BlockId, slots_in_an_epoch: u64) -> Option<B256> {
         match id {
             BlockId::Hash(h) => Some(h.block_hash),
-            BlockId::Number(num) => self.storage.read().hash(num),
+            BlockId::Number(num) => self.storage.read().hash(num, slots_in_an_epoch),
         }
     }
 
