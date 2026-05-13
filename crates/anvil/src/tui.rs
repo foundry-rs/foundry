@@ -381,7 +381,6 @@ struct BlockActivity {
     hash: B256,
     txs: usize,
     gas_used: u64,
-    gas_limit: u64,
     detail: DetailView,
     transactions: Vec<TransactionActivity>,
 }
@@ -437,18 +436,12 @@ impl BlockActivity {
             rows.push(DetailRow::new("availability", "full block payload unavailable"));
         }
 
-        Self { number, hash, txs, gas_used, gas_limit, detail: DetailView::new(rows), transactions }
+        Self { number, hash, txs, gas_used, detail: DetailView::new(rows), transactions }
     }
 
     fn into_items(self) -> Vec<ActivityItem> {
         let mut items = Vec::with_capacity(self.transactions.len() + 1);
-        items.push(ActivityItem::block(
-            self.number,
-            self.txs,
-            self.gas_used,
-            self.gas_limit,
-            self.detail,
-        ));
+        items.push(ActivityItem::block(self.number, self.txs, self.gas_used, self.detail));
 
         for tx in self.transactions {
             items.push(tx.into_item(self.number, self.hash));
@@ -576,8 +569,8 @@ struct ActivityItem {
 }
 
 impl ActivityItem {
-    fn block(number: u64, txs: usize, gas_used: u64, gas_limit: u64, detail: DetailView) -> Self {
-        let gas = format!("{gas_used}/{gas_limit}");
+    fn block(number: u64, txs: usize, gas_used: u64, detail: DetailView) -> Self {
+        let gas = gas_used.to_string();
         Self {
             lines: vec![Line::from(vec![
                 Span::styled(
@@ -670,37 +663,6 @@ impl ActivityItem {
             detail,
             style: ActivityStyle::Notice,
         }
-    }
-
-    fn display_lines(&self, selected: bool) -> Vec<Line<'static>> {
-        let total = self.lines.len();
-        self.lines
-            .iter()
-            .enumerate()
-            .map(|(idx, line)| {
-                let marker = if selected {
-                    let glyph = if total == 1 {
-                        "│ "
-                    } else if idx == 0 {
-                        "╭ "
-                    } else if idx + 1 == total {
-                        "╰ "
-                    } else {
-                        "│ "
-                    };
-                    Span::styled(
-                        glyph,
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-                    )
-                } else {
-                    Span::raw("  ")
-                };
-                let mut spans = Vec::with_capacity(line.spans.len() + 1);
-                spans.push(marker);
-                spans.extend(line.spans.clone());
-                Line::from(spans)
-            })
-            .collect()
     }
 
     fn matches_search(&self, search: &str) -> bool {
@@ -1175,10 +1137,9 @@ fn render_splash(frame: &mut Frame<'_>, area: Rect, status: &DashboardStatus) {
 
 fn render_feed(frame: &mut Frame<'_>, area: Rect, app: &mut AnvilDashboard) {
     let visible_indices = app.visible_indices();
-    let selected = app.list_state.selected();
-    let items = visible_indices.iter().enumerate().map(|(visible_idx, idx)| {
+    let items = visible_indices.iter().map(|idx| {
         let item = &app.feed[*idx];
-        ListItem::new(Text::from(item.display_lines(selected == Some(visible_idx))))
+        ListItem::new(Text::from(item.lines.clone()))
     });
     let search = app.search.trim();
     let title = if search.is_empty() {
@@ -1198,7 +1159,8 @@ fn render_feed(frame: &mut Frame<'_>, area: Rect, app: &mut AnvilDashboard) {
         Style::default()
     };
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).border_style(border_style).title(title));
+        .block(Block::default().borders(Borders::ALL).border_style(border_style).title(title))
+        .highlight_style(Style::default().bg(Color::Rgb(28, 28, 28)));
 
     frame.render_stateful_widget(list, area, &mut app.list_state);
 }
