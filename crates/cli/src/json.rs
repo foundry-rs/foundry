@@ -138,16 +138,6 @@ pub fn print_json_success_with_warnings<T: Serialize>(
     print_json(&JsonEnvelope::success_with_warnings(data, warnings))
 }
 
-/// Prints a failed JSON envelope with one structured error to stdout.
-pub fn print_json_error(error: JsonError) -> Result<()> {
-    print_json(&JsonEnvelope::error(error))
-}
-
-/// Prints a failed JSON envelope with structured errors to stdout.
-pub fn print_json_failure(errors: Vec<JsonError>) -> Result<()> {
-    print_json(&JsonEnvelope::failure(errors))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
