@@ -675,9 +675,8 @@ impl ActivityItem {
     fn display_lines(&self, selected: bool) -> Vec<Line<'static>> {
         self.lines
             .iter()
-            .enumerate()
-            .map(|(idx, line)| {
-                let marker = if selected && idx == 0 {
+            .map(|line| {
+                let marker = if selected {
                     Span::styled(
                         "| ",
                         Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
