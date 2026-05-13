@@ -37,5 +37,5 @@ contract A {}
 contract B { constructor() {} }
 
 contract C is A {}
-contract D is B {}
+contract D is B { constructor() {} }
 ```
