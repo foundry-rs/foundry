@@ -16,9 +16,8 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table},
 };
-use serde_json::to_string_pretty;
 use std::{
     ops::ControlFlow,
     path::PathBuf,
@@ -162,13 +161,56 @@ enum DashboardEvent {
     Notice(String),
 }
 
+#[derive(Clone, Debug)]
+struct DetailView {
+    rows: Vec<DetailRow>,
+    search_text: String,
+}
+
+impl DetailView {
+    fn new(rows: Vec<DetailRow>) -> Self {
+        let search_text = rows
+            .iter()
+            .flat_map(|row| [&row.field, &row.value])
+            .map(|text| text.to_ascii_lowercase())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        Self { rows, search_text }
+    }
+
+    fn message(field: impl Into<String>, value: impl Into<String>) -> Self {
+        Self::new(vec![DetailRow::new(field, value)])
+    }
+
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn matches_term(&self, term: &str) -> bool {
+        self.search_text.contains(term)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DetailRow {
+    field: String,
+    value: String,
+}
+
+impl DetailRow {
+    fn new(field: impl Into<String>, value: impl Into<String>) -> Self {
+        Self { field: field.into(), value: value.into() }
+    }
+}
+
 struct BlockActivity {
     number: u64,
     hash: B256,
     txs: usize,
     gas_used: u64,
     gas_limit: u64,
-    detail: String,
+    detail: DetailView,
     transactions: Vec<TransactionActivity>,
 }
 
@@ -180,11 +222,10 @@ impl BlockActivity {
         signatures: Option<&SignaturesIdentifier>,
     ) -> Self {
         let mut transactions = Vec::new();
-        let mut detail = block
-            .as_ref()
-            .and_then(|block| to_string_pretty(block).ok())
-            .unwrap_or_else(|| format!("Block {hash} is no longer available."));
         let txs = block.as_ref().map(|block| block.transactions().len()).unwrap_or_default();
+        let number = header.number();
+        let gas_used = header.gas_used();
+        let gas_limit = header.gas_limit();
 
         if let Some(block) = &block
             && let BlockTransactions::Full(txs) = block.transactions()
@@ -195,19 +236,36 @@ impl BlockActivity {
             }
         }
 
-        if detail.is_empty() {
-            detail = format!("Block {hash}");
+        let mut rows = vec![
+            DetailRow::new("type", "block"),
+            DetailRow::new("number", number.to_string()),
+            DetailRow::new("hash", hash.to_string()),
+            DetailRow::new("timestamp", header.timestamp().to_string()),
+            DetailRow::new("transactions", txs.to_string()),
+            DetailRow::new("gas used", gas_used.to_string()),
+            DetailRow::new("gas limit", gas_limit.to_string()),
+            DetailRow::new("gas usage", gas_usage_percent(gas_used, gas_limit)),
+            DetailRow::new("beneficiary", header.beneficiary().to_string()),
+            DetailRow::new("parent hash", header.parent_hash().to_string()),
+            DetailRow::new("state root", header.state_root().to_string()),
+            DetailRow::new("tx root", header.transactions_root().to_string()),
+            DetailRow::new("receipts root", header.receipts_root().to_string()),
+        ];
+
+        if let Some(base_fee) = header.base_fee_per_gas() {
+            rows.push(DetailRow::new("base fee", base_fee.to_string()));
+        }
+        if let Some(blob_gas_used) = header.blob_gas_used() {
+            rows.push(DetailRow::new("blob gas used", blob_gas_used.to_string()));
+        }
+        if let Some(excess_blob_gas) = header.excess_blob_gas() {
+            rows.push(DetailRow::new("excess blob gas", excess_blob_gas.to_string()));
+        }
+        if block.is_none() {
+            rows.push(DetailRow::new("availability", "full block payload unavailable"));
         }
 
-        Self {
-            number: header.number(),
-            hash,
-            txs,
-            gas_used: header.gas_used(),
-            gas_limit: header.gas_limit(),
-            detail,
-            transactions,
-        }
+        Self { number, hash, txs, gas_used, gas_limit, detail: DetailView::new(rows), transactions }
     }
 
     fn into_items(self) -> Vec<ActivityItem> {
@@ -236,7 +294,13 @@ struct TransactionActivity {
     value: U256,
     selector: Option<Selector>,
     signature: Option<String>,
-    detail: String,
+    chain_id: Option<u64>,
+    nonce: u64,
+    gas_limit: u64,
+    transaction_index: Option<u64>,
+    transaction_type: Option<u8>,
+    input: String,
+    input_len: usize,
 }
 
 impl TransactionActivity {
@@ -251,7 +315,7 @@ impl TransactionActivity {
             }
             _ => None,
         };
-        let detail = to_string_pretty(tx).unwrap_or_else(|_| format!("{tx:?}"));
+        let input = tx.input().to_string();
 
         Self {
             hash: tx.tx_hash(),
@@ -260,24 +324,51 @@ impl TransactionActivity {
             value: tx.value(),
             selector,
             signature,
-            detail,
+            chain_id: tx.chain_id(),
+            nonce: tx.nonce(),
+            gas_limit: tx.gas_limit(),
+            transaction_index: tx.transaction_index(),
+            transaction_type: tx.transaction_type(),
+            input_len: tx.input().len(),
+            input,
         }
     }
 
     fn into_item(self, block_number: u64, block_hash: B256) -> ActivityItem {
-        let method = self
-            .signature
-            .or_else(|| self.selector.map(|selector| selector.to_string()))
-            .unwrap_or_else(|| "transfer".to_string());
+        let method = self.method_label();
         let to = self.to.map(short_address).unwrap_or_else(|| "create".to_string());
         let value = format_ether(self.value);
-        let detail = format!(
-            "Block: {block_number}\nBlock hash: {block_hash}\nHash: {}\nFrom: {}\nTo: {}\nValue: {value} ETH\nMethod: {method}\n\n{}",
-            self.hash,
-            self.from,
-            self.to.map(|to| to.to_string()).unwrap_or_else(|| "create".to_string()),
-            self.detail
-        );
+        let mut rows = vec![
+            DetailRow::new("type", "transaction"),
+            DetailRow::new("block", block_number.to_string()),
+            DetailRow::new("block hash", block_hash.to_string()),
+            DetailRow::new("hash", self.hash.to_string()),
+            DetailRow::new("from", self.from.to_string()),
+            DetailRow::new(
+                "to",
+                self.to.map(|to| to.to_string()).unwrap_or_else(|| "create".to_string()),
+            ),
+            DetailRow::new("value eth", value.clone()),
+            DetailRow::new("value wei", self.value.to_string()),
+            DetailRow::new("method", method.clone()),
+            DetailRow::new("nonce", self.nonce.to_string()),
+            DetailRow::new("gas limit", self.gas_limit.to_string()),
+            DetailRow::new("input bytes", self.input_len.to_string()),
+            DetailRow::new("input", self.input.clone()),
+        ];
+
+        if let Some(chain_id) = self.chain_id {
+            rows.push(DetailRow::new("chain id", chain_id.to_string()));
+        }
+        if let Some(index) = self.transaction_index {
+            rows.push(DetailRow::new("transaction index", index.to_string()));
+        }
+        if let Some(tx_type) = self.transaction_type {
+            rows.push(DetailRow::new("tx type", format!("0x{tx_type:x}")));
+        }
+        if let Some(selector) = self.selector {
+            rows.push(DetailRow::new("selector", selector.to_string()));
+        }
 
         ActivityItem {
             title: format!(
@@ -287,15 +378,30 @@ impl TransactionActivity {
                 to,
                 value
             ),
-            detail,
+            detail: DetailView::new(rows),
             style: ActivityStyle::Transaction,
         }
+    }
+
+    fn method_label(&self) -> String {
+        self.signature
+            .clone()
+            .or_else(|| self.selector.map(|selector| selector.to_string()))
+            .unwrap_or_else(|| {
+                if self.to.is_none() {
+                    "contract creation".to_string()
+                } else if self.value > U256::ZERO {
+                    "native transfer".to_string()
+                } else {
+                    "call".to_string()
+                }
+            })
     }
 }
 
 struct ActivityItem {
     title: String,
-    detail: String,
+    detail: DetailView,
     style: ActivityStyle,
 }
 
@@ -305,8 +411,8 @@ impl ActivityItem {
             return true;
         }
 
-        self.title.to_ascii_lowercase().contains(search)
-            || self.detail.to_ascii_lowercase().contains(search)
+        let title = self.title.to_ascii_lowercase();
+        search.split_whitespace().all(|term| title.contains(term) || self.detail.matches_term(term))
     }
 }
 
@@ -385,12 +491,18 @@ impl AnvilDashboard {
     fn new(status: DashboardStatus, events: UnboundedReceiver<DashboardEvent>) -> Self {
         let mut list_state = ListState::default();
         list_state.select(Some(0));
+        let rpc_endpoint = status.rpc_endpoint.clone();
         Self {
             feed: vec![ActivityItem {
-                title: format!("node started  {}", status.rpc_endpoint),
-                detail:
-                    "Anvil is running. Blocks and transactions will appear here as they are mined."
-                        .to_string(),
+                title: format!("node started  {rpc_endpoint}"),
+                detail: DetailView::new(vec![
+                    DetailRow::new("status", "running"),
+                    DetailRow::new("rpc", rpc_endpoint),
+                    DetailRow::new(
+                        "activity",
+                        "blocks and transactions will appear here as they are mined",
+                    ),
+                ]),
                 style: ActivityStyle::Notice,
             }],
             status,
@@ -473,7 +585,7 @@ impl AnvilDashboard {
                 DashboardEvent::Notice(notice) => {
                     self.push_item(ActivityItem {
                         title: notice.clone(),
-                        detail: notice,
+                        detail: DetailView::message("notice", notice),
                         style: ActivityStyle::Notice,
                     });
                 }
@@ -523,7 +635,7 @@ impl AnvilDashboard {
     }
 
     fn detail_line_count(&self) -> usize {
-        self.selected_item().map(|item| item.detail.lines().count()).unwrap_or_default()
+        self.selected_item().map(|item| item.detail.len()).unwrap_or_default()
     }
 
     fn scroll_detail_down(&mut self, amount: u16) {
@@ -735,13 +847,30 @@ fn render_detail(
     scroll: u16,
     focused: bool,
 ) {
-    let text = selected.map(|item| item.detail.as_str()).unwrap_or("No activity yet.");
     let border_style = if focused { Style::default().fg(Color::Yellow) } else { Style::default() };
-    let detail = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).border_style(border_style).title("Details"))
-        .scroll((scroll, 0))
-        .wrap(Wrap { trim: false });
-    frame.render_widget(detail, area);
+
+    let Some(selected) = selected else {
+        let detail = Paragraph::new("No activity yet.").block(
+            Block::default().borders(Borders::ALL).border_style(border_style).title("Details"),
+        );
+        frame.render_widget(detail, area);
+        return;
+    };
+
+    let total = selected.detail.len();
+    let current = if total == 0 { 0 } else { usize::from(scroll).saturating_add(1).min(total) };
+    let title = format!("Details {current}/{total}");
+    let rows = selected.detail.rows.iter().skip(usize::from(scroll)).map(|row| {
+        Row::new(vec![
+            Cell::from(row.field.clone()).style(Style::default().fg(Color::DarkGray)),
+            Cell::from(row.value.clone()),
+        ])
+    });
+    let table = Table::new(rows, [Constraint::Length(18), Constraint::Min(20)])
+        .block(Block::default().borders(Borders::ALL).border_style(border_style).title(title))
+        .column_spacing(2);
+
+    frame.render_widget(table, area);
 }
 
 fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AnvilDashboard) {
@@ -774,4 +903,12 @@ fn short_hash(hash: B256) -> String {
 fn short_address(address: Address) -> String {
     let address = address.to_string();
     format!("{}..{}", &address[..8], &address[address.len() - 4..])
+}
+
+fn gas_usage_percent(gas_used: u64, gas_limit: u64) -> String {
+    if gas_limit == 0 {
+        "n/a".to_string()
+    } else {
+        format!("{:.2}%", gas_used as f64 / gas_limit as f64 * 100.0)
+    }
 }
