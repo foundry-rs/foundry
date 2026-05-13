@@ -39,6 +39,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `interface-file-naming`: Interface file names should be prefixed with `I`.
   - `interface-naming`: Interface names should be prefixed with `I`.
   - `pragma-inconsistent`: Flags projects whose source files declare different Solidity pragma version requirements.
+  - `redundant-base-constructor-call`: Flags explicit empty base-constructor arguments (e.g. `is A()`) when the base requires no arguments.
   - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
   - `low-level-calls`: Direct use of low-level calls should be avoided.
 - **Gas Optimizations:**
