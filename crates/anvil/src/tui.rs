@@ -746,10 +746,12 @@ impl AnvilDashboard {
     }
 
     fn move_first(&mut self) {
-        if self.visible_len() > 0 {
+        if self.visible_len() == 0 {
+            self.list_state.select(None);
+        } else {
             self.list_state.select(Some(0));
-            self.detail_scroll = 0;
         }
+        self.detail_scroll = 0;
     }
 
     fn move_last(&mut self) {
@@ -814,8 +816,7 @@ impl AnvilDashboard {
 
     fn set_filter(&mut self, filter: ActivityFilter) {
         self.filter = filter;
-        self.clamp_selection();
-        self.detail_scroll = 0;
+        self.move_first();
     }
 
     fn next_filter(&mut self) {
