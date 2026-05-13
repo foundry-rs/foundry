@@ -535,7 +535,7 @@ snapbox = { version = "0.6", features = ["json", "regex", "term-svg"] }
 # Use unicode-rs which has a smaller binary size than the default ICU4X as the IDNA backend, used
 # by the `url` crate.
 # See the `idna_adapter` README.md for more details: https://docs.rs/crate/idna_adapter/latest
-idna_adapter = "=1.1.0"
+idna_adapter = "=1.2.1"
 
 [patch.crates-io]
 # https://github.com/rust-cli/rexpect/pull/106
