@@ -234,6 +234,18 @@ impl DashboardStatus {
             _ => "none".to_string(),
         }
     }
+
+    fn compact_fork_label(&self) -> String {
+        match (&self.fork_source, self.fork_block) {
+            (Some(source), Some(block)) => format!("{} @ {block}", compact_endpoint(source)),
+            (Some(source), None) => compact_endpoint(source),
+            _ => "none".to_string(),
+        }
+    }
+
+    fn compact_listen_endpoint(&self) -> String {
+        compact_endpoint(&self.rpc_endpoint)
+    }
 }
 
 fn mining_mode_label_from_api(api: &EthApi<FoundryNetwork>) -> Result<String> {
@@ -1151,27 +1163,97 @@ impl TuiApp for AnvilDashboard {
 }
 
 fn render_status(frame: &mut Frame<'_>, area: Rect, status: &DashboardStatus) {
-    let line = Line::from(vec![
-        label("chain "),
-        value(status.chain_id.to_string()),
-        separator(),
-        label("block "),
-        value(status.current_block.to_string()),
-        separator(),
-        label("mining "),
-        value(status.mining_mode.clone()),
-        separator(),
-        label("fork "),
-        value(status.fork_label()),
-        separator(),
-        label("listen "),
-        value(status.rpc_endpoint.clone()),
-        separator(),
-        label("up "),
-        value(status.uptime()),
-    ]);
+    let mut spans = Vec::new();
+    for (idx, (field, value_text)) in status_segments(status, area.width).into_iter().enumerate() {
+        if idx > 0 {
+            spans.push(separator());
+        }
+        spans.push(label(field));
+        spans.push(value(value_text));
+    }
+    let line = Line::from(spans);
     let block = Block::default().borders(Borders::ALL).title("Anvil");
     frame.render_widget(Paragraph::new(line).block(block), area);
+}
+
+fn status_segments(status: &DashboardStatus, width: u16) -> Vec<(&'static str, String)> {
+    let mut segments = vec![
+        ("chain ", status.chain_id.to_string()),
+        ("block ", status.current_block.to_string()),
+        ("mining ", status.mining_mode.clone()),
+        ("fork ", status.compact_fork_label()),
+        ("listen ", status.compact_listen_endpoint()),
+        ("up ", status.uptime()),
+    ];
+    let inner_width = usize::from(width.saturating_sub(2));
+
+    shrink_status_value(&mut segments, "fork ", inner_width);
+    shrink_status_value(&mut segments, "listen ", inner_width);
+    if status_line_width(&segments) > inner_width {
+        segments.retain(|(field, _)| *field != "listen ");
+    }
+    if status_line_width(&segments) > inner_width {
+        segments.retain(|(field, _)| *field != "up ");
+    }
+    shrink_status_value(&mut segments, "fork ", inner_width);
+    segments
+}
+
+fn shrink_status_value(segments: &mut [(&'static str, String)], field: &str, max_width: usize) {
+    let overflow = status_line_width(segments).saturating_sub(max_width);
+    if overflow == 0 {
+        return;
+    }
+    let Some((_, value_text)) = segments.iter_mut().find(|(candidate, _)| *candidate == field)
+    else {
+        return;
+    };
+    let current_width = value_text.chars().count();
+    let target_width = current_width.saturating_sub(overflow).max(8);
+    *value_text = truncate_middle(value_text, target_width);
+}
+
+fn status_line_width(segments: &[(&'static str, String)]) -> usize {
+    let values = segments
+        .iter()
+        .map(|(field, value_text)| field.chars().count() + value_text.chars().count())
+        .sum::<usize>();
+    let separators = segments.len().saturating_sub(1) * 5;
+    values + separators
+}
+
+fn compact_endpoint(endpoint: &str) -> String {
+    let without_scheme = endpoint.split_once("://").map_or(endpoint, |(_, rest)| rest);
+    let authority = without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .filter(|authority| !authority.is_empty())
+        .unwrap_or(endpoint);
+    authority.rsplit('@').next().unwrap_or(authority).to_string()
+}
+
+fn truncate_middle(text: &str, max_width: usize) -> String {
+    let width = text.chars().count();
+    if width <= max_width {
+        return text.to_string();
+    }
+    if max_width <= 3 {
+        return text.chars().take(max_width).collect();
+    }
+
+    let remaining = max_width - 3;
+    let left_width = remaining / 2;
+    let right_width = remaining - left_width;
+    let left = text.chars().take(left_width).collect::<String>();
+    let right = text
+        .chars()
+        .rev()
+        .take(right_width)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    format!("{left}...{right}")
 }
 
 fn render_splash(frame: &mut Frame<'_>, area: Rect, status: &DashboardStatus) {
