@@ -98,6 +98,7 @@ contract OkSelfdestruct {
 contract OkNewWithValue {
     function deposit() external payable {}
 
+    // OK even though `Child` is itself flagged: `new C{value: x}()` is the exit here.
     function spawn(uint256 amount) external {
         new Child{value: amount}();
     }
