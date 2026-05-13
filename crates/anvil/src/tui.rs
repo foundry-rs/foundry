@@ -608,14 +608,14 @@ impl ActivityItem {
         Self {
             lines: vec![
                 Line::from(vec![
-                    Span::styled("  tx  ", Style::default().fg(Color::Gray)),
+                    Span::styled("tx  ", Style::default().fg(Color::Gray)),
                     Span::styled(
                         method.clone(),
                         Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
                     ),
                 ]),
                 Line::from(vec![
-                    Span::raw("      "),
+                    Span::raw("    "),
                     Span::styled("from ", Style::default().fg(Color::Gray)),
                     Span::styled(from.clone(), Style::default().fg(Color::Cyan)),
                     Span::styled("  ->  ", Style::default().fg(Color::Gray)),
@@ -661,7 +661,7 @@ impl ActivityItem {
                     ),
                 ]),
                 Line::from(vec![
-                    Span::raw("      "),
+                    Span::raw("    "),
                     Span::styled("rpc ", Style::default().fg(Color::DarkGray)),
                     Span::raw(rpc_endpoint.clone()),
                 ]),
@@ -670,6 +670,27 @@ impl ActivityItem {
             detail,
             style: ActivityStyle::Notice,
         }
+    }
+
+    fn display_lines(&self, selected: bool) -> Vec<Line<'static>> {
+        self.lines
+            .iter()
+            .enumerate()
+            .map(|(idx, line)| {
+                let marker = if selected && idx == 0 {
+                    Span::styled(
+                        "| ",
+                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Span::raw("  ")
+                };
+                let mut spans = Vec::with_capacity(line.spans.len() + 1);
+                spans.push(marker);
+                spans.extend(line.spans.clone());
+                Line::from(spans)
+            })
+            .collect()
     }
 
     fn matches_search(&self, search: &str) -> bool {
@@ -1144,9 +1165,10 @@ fn render_splash(frame: &mut Frame<'_>, area: Rect, status: &DashboardStatus) {
 
 fn render_feed(frame: &mut Frame<'_>, area: Rect, app: &mut AnvilDashboard) {
     let visible_indices = app.visible_indices();
-    let items = visible_indices.iter().map(|idx| {
+    let selected = app.list_state.selected();
+    let items = visible_indices.iter().enumerate().map(|(visible_idx, idx)| {
         let item = &app.feed[*idx];
-        ListItem::new(Text::from(item.lines.clone()))
+        ListItem::new(Text::from(item.display_lines(selected == Some(visible_idx))))
     });
     let search = app.search.trim();
     let title = if search.is_empty() {
@@ -1166,8 +1188,7 @@ fn render_feed(frame: &mut Frame<'_>, area: Rect, app: &mut AnvilDashboard) {
         Style::default()
     };
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).border_style(border_style).title(title))
-        .highlight_style(Style::default().bg(Color::DarkGray));
+        .block(Block::default().borders(Borders::ALL).border_style(border_style).title(title));
 
     frame.render_stateful_widget(list, area, &mut app.list_state);
 }
