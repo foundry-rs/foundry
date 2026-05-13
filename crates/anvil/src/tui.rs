@@ -31,6 +31,7 @@ use tokio::{
 const TICK_RATE: Duration = Duration::from_millis(250);
 const SPLASH_DURATION: Duration = Duration::from_secs(1);
 const MAX_FEED_ITEMS: usize = 1_000;
+const ACCOUNT_LINES_PER_ACCOUNT: usize = 4;
 const ANVIL_BANNER: &str = r"
                              _   _
                             (_) | |
@@ -327,25 +328,43 @@ impl DashboardConfig {
         }
     }
 
-    fn display_rows(&self) -> Vec<DetailRow> {
-        let mut rows = self.rows.clone();
-        rows.push(DetailRow::new("accounts", self.accounts.len().to_string()));
-
+    fn account_lines(&self) -> Vec<Line<'static>> {
+        let mut lines = Vec::with_capacity(self.account_line_count());
         for account in &self.accounts {
-            let prefix = format!("account {}", account.index);
-            rows.push(DetailRow::new(format!("{prefix} address"), account.address.to_string()));
-            rows.push(DetailRow::new(
-                format!("{prefix} balance"),
-                format!("{} ETH", format_ether(account.balance)),
-            ));
-            rows.push(DetailRow::new(format!("{prefix} private key"), account.private_key.clone()));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("account {}", account.index),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  "),
+                Span::styled(
+                    format!("{} ETH", format_ether(account.balance)),
+                    Style::default().fg(Color::Green),
+                ),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("address  ", Style::default().fg(Color::DarkGray)),
+                Span::raw(account.address.to_string()),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("key      ", Style::default().fg(Color::DarkGray)),
+                Span::raw(account.private_key.clone()),
+            ]));
+            lines.push(Line::from(""));
         }
-
-        rows
+        lines
     }
 
-    fn len(&self) -> usize {
-        self.rows.len() + 1 + self.accounts.len() * 3
+    fn account_line_count(&self) -> usize {
+        self.accounts.len() * ACCOUNT_LINES_PER_ACCOUNT
+    }
+
+    fn account_index_for_scroll(&self, scroll: u16) -> usize {
+        if self.accounts.is_empty() {
+            0
+        } else {
+            (usize::from(scroll) / ACCOUNT_LINES_PER_ACCOUNT).min(self.accounts.len() - 1)
+        }
     }
 }
 
@@ -812,7 +831,7 @@ impl AnvilDashboard {
             DetailMode::Activity => {
                 self.selected_item().map(|item| item.detail.len()).unwrap_or_default()
             }
-            DetailMode::Config => self.config.len(),
+            DetailMode::Config => self.config.account_line_count(),
         }
     }
 
@@ -1071,20 +1090,35 @@ fn render_config(
     focused: bool,
 ) {
     let border_style = if focused { Style::default().fg(Color::Yellow) } else { Style::default() };
-    let total = config.len();
-    let current = if total == 0 { 0 } else { usize::from(scroll).saturating_add(1).min(total) };
-    let title = format!("Config {current}/{total}");
-    let rows = config.display_rows().into_iter().skip(usize::from(scroll)).map(|row| {
+
+    let min_node_height = 3.min(area.height);
+    let min_accounts_height = 8.min(area.height.saturating_sub(min_node_height));
+    let max_node_height = area.height.saturating_sub(min_accounts_height).max(min_node_height);
+    let node_height =
+        (config.rows.len() as u16 + 2).min(9).min(max_node_height).max(min_node_height);
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(node_height), Constraint::Min(min_accounts_height)])
+        .split(area);
+
+    let node_rows = config.rows.iter().map(|row| {
         Row::new(vec![
-            Cell::from(row.field).style(Style::default().fg(Color::DarkGray)),
-            Cell::from(row.value),
+            Cell::from(row.field.clone()).style(Style::default().fg(Color::DarkGray)),
+            Cell::from(row.value.clone()),
         ])
     });
-    let table = Table::new(rows, [Constraint::Length(24), Constraint::Min(24)])
-        .block(Block::default().borders(Borders::ALL).border_style(border_style).title(title))
+    let node = Table::new(node_rows, [Constraint::Length(18), Constraint::Min(24)])
+        .block(Block::default().borders(Borders::ALL).border_style(border_style).title("Node"))
         .column_spacing(2);
+    frame.render_widget(node, sections[0]);
 
-    frame.render_widget(table, area);
+    let total = config.accounts.len();
+    let current = if total == 0 { 0 } else { config.account_index_for_scroll(scroll) + 1 };
+    let title = format!("Accounts {current}/{total}");
+    let accounts = Paragraph::new(config.account_lines())
+        .block(Block::default().borders(Borders::ALL).border_style(border_style).title(title))
+        .scroll((scroll, 0));
+    frame.render_widget(accounts, sections[1]);
 }
 
 fn render_detail(
