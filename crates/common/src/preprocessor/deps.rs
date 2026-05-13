@@ -89,6 +89,7 @@ impl PreprocessorDependencies {
                 || contract
                     .linearized_bases
                     .iter()
+                    .skip(1)
                     .any(|base_id| gcx.hir.contract(*base_id).name.as_str() == "Script");
             let mut deps_collector =
                 BytecodeDependencyCollector::new(gcx, source.file.src.as_str(), src_dir, is_script);
