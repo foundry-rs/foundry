@@ -9,6 +9,14 @@ LL │         return block.timestamp % upper;
 warning[weak-prng]: weak randomness derived from a predictable on-chain value
    ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
    │
+LL │         return block.number % upper;
+   │                ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/weak-prng
+
+warning[weak-prng]: weak randomness derived from a predictable on-chain value
+   ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
+   │
 LL │         return uint256(blockhash(block.number - 1)) % upper;
    │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │

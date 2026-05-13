@@ -11,6 +11,10 @@ contract WeakPrng {
         return block.timestamp % upper; //~WARN: weak randomness derived from a predictable on-chain value
     }
 
+    function blockNumberModulo(uint256 upper) external view returns (uint256) {
+        return block.number % upper; //~WARN: weak randomness derived from a predictable on-chain value
+    }
+
     function blockhashModulo(uint256 upper) external view returns (uint256) {
         return uint256(blockhash(block.number - 1)) % upper; //~WARN: weak randomness derived from a predictable on-chain value
     }
@@ -35,6 +39,10 @@ contract WeakPrng {
 
     function timestampOnly() external view returns (uint256) {
         return block.timestamp;
+    }
+
+    function blockNumberOnly() external view returns (uint256) {
+        return block.number;
     }
 
     function schedulingOnly() external view returns (bool) {

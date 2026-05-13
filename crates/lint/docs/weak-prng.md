@@ -7,8 +7,9 @@ Flags randomness-like expressions that directly derive entropy from predictable 
 
 ## What it does
 
-Reports direct use of `block.timestamp`, `blockhash(...)`, `block.prevrandao`, or
-`block.difficulty` in modulo expressions, `keccak256(...)`, or `abi.encodePacked(...)`.
+Reports direct use of `block.timestamp`, `block.number`, `blockhash(...)`,
+`block.prevrandao`, or `block.difficulty` in modulo expressions, `keccak256(...)`, or
+`abi.encodePacked(...)`.
 
 ## Why is this bad?
 

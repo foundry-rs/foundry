@@ -74,7 +74,7 @@ fn contains_predictable_source(expr: &Expr<'_>) -> bool {
             contains_predictable_source(callee)
                 || options.iter().any(|option| contains_predictable_source(option.value))
         }
-        ExprKind::Delete(inner) | ExprKind::Member(inner, _) | ExprKind::Unary(_, inner) => {
+        ExprKind::Member(inner, _) | ExprKind::Unary(_, inner) => {
             contains_predictable_source(inner)
         }
         ExprKind::Index(base, index) => {
@@ -113,7 +113,7 @@ fn is_block_member(expr: &Expr<'_>) -> bool {
     matches!(
         &expr.kind,
         ExprKind::Member(base, member)
-            if matches!(member.as_str(), "timestamp" | "prevrandao" | "difficulty")
+            if matches!(member.as_str(), "timestamp" | "number" | "prevrandao" | "difficulty")
             && is_ident(base.peel_parens(), "block")
     )
 }
