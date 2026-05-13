@@ -44,19 +44,19 @@ pub(super) struct CallContext {
 }
 
 impl CallContext {
-    pub(super) fn nested(size: usize) -> Self {
+    pub(super) const fn nested(size: usize) -> Self {
         Self { kind: CallContextKind::Nested, size, has_indent: false }
     }
 
-    pub(super) fn chained(size: usize, has_indent: bool) -> Self {
+    pub(super) const fn chained(size: usize, has_indent: bool) -> Self {
         Self { kind: CallContextKind::Chained, size, has_indent }
     }
 
-    pub(super) fn is_nested(&self) -> bool {
+    pub(super) const fn is_nested(&self) -> bool {
         matches!(self.kind, CallContextKind::Nested)
     }
 
-    pub(super) fn is_chained(&self) -> bool {
+    pub(super) const fn is_chained(&self) -> bool {
         matches!(self.kind, CallContextKind::Chained)
     }
 }
@@ -86,10 +86,13 @@ impl CallStack {
         self.last().is_some_and(|call| call.is_nested())
     }
 
-    /// Returns true if any chained call in the stack has its own indentation.
+    /// Returns true if the direct parent chain has its own indentation.
     /// Used to determine if commasep should skip its own indentation (to avoid double indent).
-    pub(crate) fn has_chain_with_indent(&self) -> bool {
-        self.stack.iter().any(|call| call.is_chained() && call.has_indent)
+    pub(crate) fn has_indented_parent_chain(&self) -> bool {
+        matches!(
+            self.stack.as_slice(),
+            [.., parent, last] if last.is_nested() && parent.is_chained() && parent.has_indent
+        )
     }
 }
 
@@ -478,10 +481,10 @@ impl<'sess> State<'sess, '_> {
     }
 
     fn cmnt_config(&self) -> CommentConfig {
-        CommentConfig { ..Default::default() }
+        Default::default()
     }
 
-    fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
+    const fn print_docs(&mut self, docs: &'_ ast::DocComments<'_>) {
         // Intetionally no-op. Handled with `self.comments`.
         let _ = docs;
     }
@@ -711,7 +714,7 @@ impl<'sess> State<'sess, '_> {
                         // Merge the lines and let the wrapper handle breaking if needed
                         let merged_line = format!(
                             "{current_line} {next_content}",
-                            next_content = &next_line[prefix.len()..].trim_start()
+                            next_content = next_line[prefix.len()..].trim_start()
                         );
                         result.push(merged_line);
 
@@ -1061,12 +1064,12 @@ impl CommentConfig {
         Self { skip_blanks: Some(Skip::Trailing), ..Default::default() }
     }
 
-    pub(crate) fn offset(mut self, off: isize) -> Self {
+    pub(crate) const fn offset(mut self, off: isize) -> Self {
         self.offset = off;
         self
     }
 
-    pub(crate) fn no_breaks(mut self) -> Self {
+    pub(crate) const fn no_breaks(mut self) -> Self {
         self.iso_no_break = true;
         self.trailing_no_break = true;
         self.mixed_no_break_prev = true;
@@ -1074,28 +1077,28 @@ impl CommentConfig {
         self
     }
 
-    pub(crate) fn trailing_no_break(mut self) -> Self {
+    pub(crate) const fn trailing_no_break(mut self) -> Self {
         self.trailing_no_break = true;
         self
     }
 
-    pub(crate) fn mixed_no_break(mut self) -> Self {
+    pub(crate) const fn mixed_no_break(mut self) -> Self {
         self.mixed_no_break_prev = true;
         self.mixed_no_break_post = true;
         self
     }
 
-    pub(crate) fn mixed_no_break_post(mut self) -> Self {
+    pub(crate) const fn mixed_no_break_post(mut self) -> Self {
         self.mixed_no_break_post = true;
         self
     }
 
-    pub(crate) fn mixed_prev_space(mut self) -> Self {
+    pub(crate) const fn mixed_prev_space(mut self) -> Self {
         self.mixed_prev_space = true;
         self
     }
 
-    pub(crate) fn mixed_post_nbsp(mut self) -> Self {
+    pub(crate) const fn mixed_post_nbsp(mut self) -> Self {
         self.mixed_post_nbsp = true;
         self
     }

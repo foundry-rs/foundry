@@ -6,7 +6,7 @@ use crate::{
     tx::{CastTxBuilder, SenderKind},
 };
 use alloy_ens::NameOrAddress;
-use alloy_network::{Network, TransactionBuilder};
+use alloy_network::{Network, NetworkTransactionBuilder, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256, hex, map::HashMap};
 use alloy_provider::Provider;
 use alloy_rpc_types::{
@@ -33,10 +33,12 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock, FoundryTransaction,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
     },
     executors::TracingExecutor,
     opts::EvmOpts,
@@ -222,18 +224,26 @@ impl CallArgs {
             return self.run_curl().await;
         }
         if self.tx.tempo.is_tempo() {
-            self.run_with_network::<TempoEvmNetwork>().await
-        } else {
-            let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
-            let mut evm_opts = figment.extract::<EvmOpts>()?;
-            evm_opts.infer_network_from_fork().await;
-
-            if evm_opts.networks.is_optimism() {
-                self.run_with_network::<OpEvmNetwork>().await
-            } else {
-                self.run_with_network::<EthEvmNetwork>().await
-            }
+            return self.run_with_network::<TempoEvmNetwork>().await;
         }
+
+        let figment = self.rpc.clone().into_figment(self.with_local_artifacts).merge(&self);
+        let mut evm_opts = figment.extract::<EvmOpts>()?;
+        if let Some(chain) = self.chain {
+            evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
+        }
+        evm_opts.infer_network_from_fork().await;
+
+        if evm_opts.networks.is_tempo() {
+            return self.run_with_network::<TempoEvmNetwork>().await;
+        }
+
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
+            return self.run_with_network::<OpEvmNetwork>().await;
+        }
+
+        self.run_with_network::<EthEvmNetwork>().await
     }
 
     pub async fn run_with_network<FEN: FoundryEvmNetwork>(self) -> Result<()>

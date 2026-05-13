@@ -120,6 +120,13 @@ pub struct CloneArgs {
     #[command(flatten)]
     pub etherscan: EtherscanOpts,
 
+    /// Do not create a commit after cloning.
+    ///
+    /// This is a noop flag kept for backwards compatibility, as `forge clone` no longer commits
+    /// by default. Use `--commit` to opt into creating a commit.
+    #[arg(long, hide = true)]
+    pub no_commit: bool,
+
     #[command(flatten)]
     pub install: DependencyInstallOpts,
 }
@@ -135,6 +142,7 @@ impl CloneArgs {
             keep_directory_structure,
             source,
             sourcify_url,
+            no_commit: _,
         } = self;
 
         // step 0. get the chain and api key from the config
@@ -147,9 +155,12 @@ impl CloneArgs {
         // step 1. get the metadata from client based on source type
         let (meta, explorer_name, sourcify_client) = match source {
             SourceExplorer::Etherscan => {
-                let etherscan_api_key =
-                    config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-                let client = Client::new(chain, etherscan_api_key.clone())?;
+                let client = config
+                    .get_etherscan_config_with_chain(Some(chain))?
+                    .ok_or_else(|| {
+                        eyre::eyre!("No Etherscan API key configured for chain {chain}")
+                    })?
+                    .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
                 sh_println!("Downloading the source code of {address} from Etherscan...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
                 (meta, "Etherscan", None)
@@ -177,13 +188,15 @@ impl CloneArgs {
 
         match source {
             SourceExplorer::Etherscan => {
-                let etherscan_api_key =
-                    config.get_etherscan_api_key(Some(chain)).unwrap_or_default();
-                let client = Client::new(chain, etherscan_api_key.clone())?;
-                if etherscan_api_key.is_empty() {
+                let etherscan_config =
+                    config.get_etherscan_config_with_chain(Some(chain))?.ok_or_else(|| {
+                        eyre::eyre!("No Etherscan API key configured for chain {chain}")
+                    })?;
+                if etherscan_config.key.is_empty() {
                     sh_warn!("Waiting for 5 seconds to avoid rate limit...")?;
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 }
+                let client = etherscan_config.into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
                 Self::collect_compilation_metadata(&meta, chain, address, &root, &client).await?;
             }
             SourceExplorer::Sourcify => {
@@ -1016,8 +1029,8 @@ mod tests {
         contract_name: &str,
         stripped_creation_code: &str,
     ) {
-        compiled.compiled_contracts_by_compiler_version().iter().for_each(|(_, contracts)| {
-            contracts.iter().for_each(|(name, contract)| {
+        for contracts in compiled.compiled_contracts_by_compiler_version().values() {
+            for (name, contract) in contracts {
                 if name == contract_name {
                     let compiled_creation_code =
                         contract.bin_ref().expect("creation code not found");
@@ -1027,8 +1040,8 @@ mod tests {
                         "inconsistent creation code"
                     );
                 }
-            });
-        });
+            }
+        }
     }
 
     fn mock_etherscan(address: Address) -> impl super::ExplorerClient {

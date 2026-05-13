@@ -7,17 +7,12 @@ import { colors } from '#const.mjs'
 
 const REGISTRY_URL = Bun.env.NPM_REGISTRY_URL || 'https://registry.npmjs.org'
 
-const NPM_TOKEN = Bun.env.NPM_TOKEN
-if (!NPM_TOKEN) throw new Error('NPM_TOKEN is required')
-
 main().catch(error => {
   console.error(error)
   process.exit(1)
 })
 
 async function main() {
-  const npmToken = Bun.env.NPM_TOKEN
-  if (!npmToken) throw new Error('NPM_TOKEN is required')
 
   const inputPath = Bun.argv[2]
   if (!inputPath) throw new Error('Package path is required')
@@ -114,11 +109,6 @@ async function setPackageVersion(packagePath, version) {
   console.info(colors.green, 'Setting package version:', version)
   const result = await Bun.$`npm version ${version} --allow-same-version --no-git-tag-version`
     .cwd(packagePath)
-    .env({
-      ...Bun.env,
-      ...process.env,
-      NPM_TOKEN
-    })
     .quiet()
     .nothrow()
 

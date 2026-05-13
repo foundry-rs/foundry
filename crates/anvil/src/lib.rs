@@ -3,6 +3,9 @@
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(feature = "optimism")]
+use op_alloy_rpc_types as _;
+
 use crate::{
     error::{NodeError, NodeResult},
     eth::{
@@ -288,9 +291,9 @@ pub struct NodeHandle {
     /// The address of the running rpc server.
     addresses: Vec<SocketAddr>,
     /// Join handle for the Node Service.
-    pub node_service: JoinHandle<Result<(), NodeError>>,
+    node_service: JoinHandle<Result<(), NodeError>>,
     /// Join handles (one per socket) for the Anvil server.
-    pub servers: Vec<JoinHandle<Result<(), NodeError>>>,
+    servers: Vec<JoinHandle<Result<(), NodeError>>>,
     /// The future that joins the ipc server, if any.
     ipc_task: Option<IpcTask>,
     /// A signal that fires the shutdown, fired on drop.
@@ -305,12 +308,19 @@ impl Drop for NodeHandle {
         if let Some(signal) = self._signal.take() {
             let _ = signal.fire();
         }
+        self.node_service.abort();
+        for server in &self.servers {
+            server.abort();
+        }
+        if let Some(ipc_task) = &self.ipc_task {
+            ipc_task.abort();
+        }
     }
 }
 
 impl NodeHandle {
     /// The [NodeConfig] the node was launched with.
-    pub fn config(&self) -> &NodeConfig {
+    pub const fn config(&self) -> &NodeConfig {
         &self.config
     }
 
@@ -387,7 +397,7 @@ impl NodeHandle {
     }
 
     /// Native token balance of every genesis account in the genesis block.
-    pub fn genesis_balance(&self) -> U256 {
+    pub const fn genesis_balance(&self) -> U256 {
         self.config.genesis_balance
     }
 
@@ -397,14 +407,14 @@ impl NodeHandle {
     }
 
     /// Returns the shutdown signal.
-    pub fn shutdown_signal(&self) -> &Option<Signal> {
+    pub const fn shutdown_signal(&self) -> &Option<Signal> {
         &self._signal
     }
 
     /// Returns mutable access to the shutdown signal.
     ///
     /// This can be used to extract the Signal.
-    pub fn shutdown_signal_mut(&mut self) -> &mut Option<Signal> {
+    pub const fn shutdown_signal_mut(&mut self) -> &mut Option<Signal> {
         &mut self._signal
     }
 
@@ -423,7 +433,7 @@ impl NodeHandle {
     ///
     /// # }
     /// ```
-    pub fn task_manager(&self) -> &TaskManager {
+    pub const fn task_manager(&self) -> &TaskManager {
         &self.task_manager
     }
 }

@@ -5,14 +5,16 @@ use crate::{
 };
 use alloy_genesis::Genesis;
 use alloy_network::Network;
-use alloy_primitives::{B256, U256, utils::Unit};
+use alloy_primitives::{Address, B256, U256, map::HashMap, utils::Unit};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-use foundry_evm::hardfork::{EthereumHardfork, OpHardfork};
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
+use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -171,6 +173,13 @@ pub struct NodeArgs {
     )]
     pub load_state: Option<SerializableState>,
 
+    /// Fund specific accounts with custom balances on startup.
+    ///
+    /// Accepts multiple address:balance pairs where balance is in ETH.
+    /// Example: --fund-accounts 0x1234...5678:1000 0xabcd...ef01:5000
+    #[arg(long, value_name = "ADDRESS:AMOUNT", value_delimiter = ' ', num_args = 1..)]
+    pub fund_accounts: Vec<String>,
+
     #[arg(long, help = IPC_HELP, value_name = "PATH", visible_alias = "ipcpath")]
     pub ipc: Option<Option<String>>,
 
@@ -227,16 +236,22 @@ impl NodeArgs {
         let compute_units_per_second =
             if self.evm.no_rate_limit { Some(u64::MAX) } else { self.evm.compute_units_per_second };
 
-        let hardfork = match &self.hardfork {
-            Some(hf) => {
-                if self.evm.networks.is_optimism() {
-                    Some(OpHardfork::from_str(hf)?.into())
-                } else if self.evm.networks.is_tempo() {
-                    Some(TempoHardfork::from_str(hf)?.into())
-                } else {
-                    Some(EthereumHardfork::from_str(hf)?.into())
+        // Validate that secondary fork URLs don't have conflicting block number suffixes
+        if self.evm.fork_url.len() > 1 {
+            for fork in &self.evm.fork_url[1..] {
+                if fork.block.is_some() {
+                    eyre::bail!(
+                        "Block number suffixes (@block) on secondary --fork-url values are not supported. \
+                         Use --fork-block-number to set the fork block for all endpoints."
+                    );
                 }
             }
+        }
+
+        let funded_accounts = self.parse_funded_accounts()?;
+
+        let hardfork = match &self.hardfork {
+            Some(hf) => Some(parse_hardfork(hf, &self.evm.networks)?),
             None => None,
         };
 
@@ -260,7 +275,7 @@ impl NodeArgs {
                 _ => self
                     .evm
                     .fork_url
-                    .as_ref()
+                    .first()
                     .and_then(|f| f.block)
                     .map(|num| ForkChoice::Block(num as i128)),
             })
@@ -270,7 +285,7 @@ impl NodeArgs {
             .fork_request_retries(self.evm.fork_request_retries)
             .fork_retry_backoff(self.evm.fork_retry_backoff.map(Duration::from_millis))
             .fork_compute_units_per_second(compute_units_per_second)
-            .with_eth_rpc_url(self.evm.fork_url.map(|fork| fork.url))
+            .with_fork_urls(self.evm.fork_url.into_iter().map(|f| f.url).collect())
             .with_base_fee(self.evm.block_base_fee_per_gas)
             .disable_min_priority_fee(self.evm.disable_min_priority_fee)
             .with_no_storage_caching(self.evm.no_storage_caching)
@@ -298,7 +313,30 @@ impl NodeArgs {
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm.memory_limit)
-            .with_cache_path(self.cache_path))
+            .with_cache_path(self.cache_path)
+            .with_funded_accounts(funded_accounts))
+    }
+
+    fn parse_funded_accounts(&self) -> eyre::Result<HashMap<Address, U256>> {
+        let mut accounts = HashMap::default();
+        for entry in &self.fund_accounts {
+            let parts: Vec<&str> = entry.split(':').collect();
+            if parts.len() != 2 {
+                eyre::bail!(
+                    "Invalid fund-accounts entry '{}'. Expected format: ADDRESS:AMOUNT",
+                    entry
+                );
+            }
+            let address = parts[0]
+                .parse::<Address>()
+                .map_err(|e| eyre::eyre!("Invalid address '{}': {}", parts[0], e))?;
+            let amount: u64 = parts[1]
+                .parse()
+                .map_err(|e| eyre::eyre!("Invalid amount '{}': {}", parts[1], e))?;
+            let balance = Unit::ETHER.wei().saturating_mul(U256::from(amount));
+            accounts.insert(address, balance);
+        }
+        Ok(accounts)
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -426,6 +464,10 @@ pub struct AnvilEvmArgs {
     /// Fetch state over a remote endpoint instead of starting from an empty state.
     ///
     /// If you want to fetch state from a specific block number, add a block number like `http://localhost:8545@1400000` or use the `--fork-block-number` argument.
+    ///
+    /// Multiple `--fork-url` flags can be provided to distribute requests across endpoints
+    /// using round-robin load balancing. On failure, the retry layer rotates to the next
+    /// endpoint.
     #[arg(
         long,
         short,
@@ -433,7 +475,7 @@ pub struct AnvilEvmArgs {
         value_name = "URL",
         help_heading = "Fork config"
     )]
-    pub fork_url: Option<ForkUrl>,
+    pub fork_url: Vec<ForkUrl>,
 
     /// Headers to use for the rpc client, e.g. "User-Agent: test-agent"
     ///
@@ -630,13 +672,45 @@ pub struct AnvilEvmArgs {
 /// Resolves an alias passed as fork-url to the matching url defined in the rpc_endpoints section
 /// of the project configuration file.
 /// Does nothing if the fork-url is not a configured alias.
+///
+/// When an alias maps to an `RpcEndpoint` with multiple `endpoints`, all URLs are expanded
+/// into additional `--fork-url` entries for multi-endpoint load balancing.
 impl AnvilEvmArgs {
     pub fn resolve_rpc_alias(&mut self) {
-        if let Some(fork_url) = &self.fork_url
-            && let Ok(config) = Config::load_with_providers(FigmentProviders::Anvil)
-            && let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url)
-        {
-            self.fork_url = Some(ForkUrl { url: url.to_string(), block: fork_url.block });
+        if let Ok(config) = Config::load_with_providers(FigmentProviders::Anvil) {
+            let mut resolved_urls = Vec::new();
+            for fork_url in &self.fork_url {
+                let mut endpoints = config.rpc_endpoints.clone().resolved();
+                if let Some(endpoint) = endpoints.remove(&fork_url.url) {
+                    // Alias matched — expand all URLs from the endpoint config
+                    match endpoint.all_urls() {
+                        Ok(urls) => {
+                            for (i, url) in urls.into_iter().enumerate() {
+                                resolved_urls.push(ForkUrl {
+                                    url,
+                                    // Only the first URL inherits the block suffix
+                                    block: if i == 0 { fork_url.block } else { None },
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            warn!(target: "node", alias=%fork_url.url, %e, "could not resolve all endpoints, using primary endpoint only");
+                            if let Ok(url) = endpoint.url() {
+                                resolved_urls.push(ForkUrl { url, block: fork_url.block });
+                            } else {
+                                resolved_urls.push(fork_url.clone());
+                            }
+                        }
+                    }
+                } else if let Some(Ok(url)) = config.get_rpc_url_with_alias(&fork_url.url) {
+                    // Try mesc or other resolution
+                    resolved_urls.push(ForkUrl { url: url.to_string(), block: fork_url.block });
+                } else {
+                    // Not an alias — keep as-is
+                    resolved_urls.push(fork_url.clone());
+                }
+            }
+            self.fork_url = resolved_urls;
         }
     }
 }
@@ -798,6 +872,19 @@ impl FromStr for ForkUrl {
             }
         }
         Ok(Self { url: s.to_string(), block: None })
+    }
+}
+
+/// Parses a hardfork string against the active network configuration.
+fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHardfork> {
+    #[cfg(feature = "optimism")]
+    if networks.is_optimism() {
+        return Ok(OpHardfork::from_str(hf)?.into());
+    }
+    if networks.is_tempo() {
+        Ok(TempoHardfork::from_str(hf)?.into())
+    } else {
+        Ok(EthereumHardfork::from_str(hf)?.into())
     }
 }
 
@@ -964,5 +1051,66 @@ mod tests {
             args.host,
             ["::1", "1.1.1.1", "2.2.2.2"].map(|ip| ip.parse::<IpAddr>().unwrap()).to_vec()
         );
+    }
+
+    #[test]
+    fn can_parse_multiple_fork_urls() {
+        let args: NodeArgs = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545",
+            "--fork-url",
+            "http://localhost:8546",
+            "--fork-url",
+            "http://localhost:8547",
+        ]);
+        assert_eq!(args.evm.fork_url.len(), 3);
+        assert_eq!(args.evm.fork_url[0].url, "http://localhost:8545");
+        assert_eq!(args.evm.fork_url[1].url, "http://localhost:8546");
+        assert_eq!(args.evm.fork_url[2].url, "http://localhost:8547");
+
+        // Block suffix on first URL should work
+        let args: NodeArgs = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545@1000000",
+            "--fork-url",
+            "http://localhost:8546",
+        ]);
+        assert_eq!(args.evm.fork_url[0].block, Some(1000000));
+        assert_eq!(args.evm.fork_url[1].block, None);
+    }
+
+    #[test]
+    fn rejects_block_suffix_on_secondary_fork_urls() {
+        let args: NodeArgs = NodeArgs::parse_from([
+            "anvil",
+            "--fork-url",
+            "http://localhost:8545@1000000",
+            "--fork-url",
+            "http://localhost:8546@2000000",
+        ]);
+        let result = args.into_node_config();
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("Block number suffixes"),
+            "should reject block suffix on secondary fork URL"
+        );
+    }
+
+    #[test]
+    fn fork_dependent_args_require_fork_url() {
+        // All these args have `requires = "fork_url"` — they should fail without --fork-url
+        let cases = [
+            vec!["anvil", "--fork-header", "X-Api-Key: test"],
+            vec!["anvil", "--timeout", "5000"],
+            vec!["anvil", "--retries", "3"],
+            vec!["anvil", "--fork-block-number", "100"],
+            vec!["anvil", "--fork-retry-backoff", "500"],
+        ];
+        for args in &cases {
+            let result = NodeArgs::try_parse_from(args);
+            assert!(result.is_err(), "expected error when using {:?} without --fork-url", args[1]);
+        }
     }
 }

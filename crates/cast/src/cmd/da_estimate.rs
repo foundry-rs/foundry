@@ -6,12 +6,10 @@ use alloy_provider::Provider;
 use alloy_rpc_types::BlockId;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{
-    opts::{NetworkVariant, RpcOpts},
-    utils::LoadConfig,
-};
+use foundry_cli::{opts::RpcOpts, utils::LoadConfig};
 use foundry_common::provider::ProviderBuilder;
 use foundry_config::Config;
+use foundry_evm_networks::NetworkVariant;
 use op_alloy_network::Optimism;
 
 /// CLI arguments for `cast da-estimate`.

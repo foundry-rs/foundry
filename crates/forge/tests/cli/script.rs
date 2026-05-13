@@ -136,6 +136,21 @@ contract FailingScript is Script {
 }
 "#;
 
+static OUT_OF_GAS_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+contract OutOfGasScript is Script {
+    function run() external {
+        uint256 i;
+        while (true) {
+            unchecked {
+                ++i;
+            }
+        }
+    }
+}
+"#;
+
 // Tests that execution throws upon encountering a revert in the script.
 forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -163,6 +178,32 @@ forgetest_async!(assert_exit_code_error_on_failure_script_with_json, |prj, cmd| 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
 Error: script failed: failed
+
+"#]]);
+});
+
+// Tests that script failures surface halt reasons for empty revert data.
+forgetest_async!(assert_exit_code_error_on_out_of_gas_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
+
+    cmd.arg("script").arg(script);
+
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: script failed: EvmError: OutOfGas
+
+"#]]);
+});
+
+// Tests that --json script failures also surface halt reasons for empty revert data.
+forgetest_async!(assert_exit_code_error_on_out_of_gas_script_with_json, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
+
+    cmd.arg("script").arg(script).arg("--json");
+
+    cmd.assert_failure().stderr_eq(str![[r#"
+Error: script failed: EvmError: OutOfGas
 
 "#]]);
 });
@@ -1050,9 +1091,8 @@ forgetest_async!(check_broadcast_log, |prj, cmd| {
     let run_log = re.replace_all(&run_log, "");
 
     // Clean up carriage return OS differences
-    let re = Regex::new(r"\r\n").unwrap();
-    let fixtures_log = re.replace_all(&fixtures_log, "\n");
-    let run_log = re.replace_all(&run_log, "\n");
+    let fixtures_log = fixtures_log.replace("\r\n", "\n");
+    let run_log = run_log.replace("\r\n", "\n");
 
     similar_asserts::assert_eq!(fixtures_log, run_log);
 });
@@ -3201,7 +3241,7 @@ contract CounterScript is Script {
 error: the following required arguments were not provided:
   --broadcast
 
-Usage: [..] script --broadcast --verify --rpc-url <RPC_URL> <PATH> [ARGS]...
+Usage: [..] script --broadcast --verify --rpc-url <URL> <PATH> [ARGS]...
 
 For more information, try '--help'.
 
@@ -3298,6 +3338,122 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 
 "#]]);
+});
+
+// Regression: Salted `new Foo{salt: ...}(args)` in scripts must NOT be rewritten to
+// `vm.deployCode(...)` by the dynamic test linking preprocessor.
+//
+// NOTE: `dynamic_test_linking` config option is not yet taken into account by `forge script`.
+// The config is set explicitly here so the test fails if there is a regression.
+forgetest_async!(can_broadcast_salted_create2_in_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|c| c.dynamic_test_linking = true);
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Token {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+}
+        "#,
+    );
+    prj.add_script(
+        "Salted.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "../src/Token.sol";
+contract SaltedScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Token{salt: bytes32(uint256(0xDEADBEEF))}("SaltedTok");
+        vm.stopBroadcast();
+    }
+}
+        "#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        "script/Salted.s.sol:SaltedScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+    let content = foundry_common::fs::read_to_string(run_latest).unwrap();
+    let json: Value = serde_json::from_str(&content).unwrap();
+    let tx = &json["transactions"][0];
+
+    assert_eq!(
+        tx["transactionType"], "CREATE2",
+        "salted broadcast must be recorded as CREATE2, got: {tx}"
+    );
+    assert_eq!(tx["contractName"], "Token");
+    assert_eq!(tx["arguments"][0], "SaltedTok");
+});
+
+// Regression: same as above but the script contract lives under `src/` (not the configured
+// script directory). The preprocessor must still detect it as a script via inheritance
+// (`is Script`) and leave salted new-expressions untouched.
+forgetest_async!(can_broadcast_salted_create2_in_src_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|c| c.dynamic_test_linking = true);
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Token {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+}
+        "#,
+    );
+    prj.add_source(
+        "SaltedSrc.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "./Token.sol";
+contract SaltedSrcScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Token{salt: bytes32(uint256(0xDEADBEEF))}("SaltedSrc");
+        vm.stopBroadcast();
+    }
+}
+        "#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        "src/SaltedSrc.s.sol:SaltedSrcScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+    let content = foundry_common::fs::read_to_string(run_latest).unwrap();
+    let json: Value = serde_json::from_str(&content).unwrap();
+    let tx = &json["transactions"][0];
+
+    assert_eq!(
+        tx["transactionType"], "CREATE2",
+        "salted broadcast must be recorded as CREATE2, got: {tx}"
+    );
+    assert_eq!(tx["contractName"], "Token");
+    assert_eq!(tx["arguments"][0], "SaltedSrc");
 });
 
 forgetest_async!(flaky_can_deploy_with_broadcast_in_setup, |prj, cmd| {
@@ -3530,3 +3686,23 @@ contract ArbScript is Script {
         cmd.arg("script").arg(script).args(["--fork-url", rpc.as_str(), "-vvvv"]).assert_success();
     }
 );
+
+// Tests that `forge script` works in Tempo mode without CreateCollision.
+// Tempo genesis pre-deploys the Arachnid CREATE2 factory at the same address as the default
+// CREATE2 deployer, so `deploy_create2_deployer` must be skipped to avoid a collision.
+forgetest!(can_execute_script_command_with_tempo, |prj, cmd| {
+    prj.wipe();
+
+    // Initialize a Tempo project (installs forge-std, tempo-std, generates Mail template).
+    cmd.args(["init", "--network", "tempo"]).arg(prj.root()).assert_success();
+
+    // Run the generated Mail.s.sol script with a salt argument.
+    cmd.forge_fuse()
+        .arg("script")
+        .arg("script/Mail.s.sol")
+        .arg("temposalt")
+        .arg("--tempo")
+        .arg("--root")
+        .arg(prj.root())
+        .assert_success();
+});

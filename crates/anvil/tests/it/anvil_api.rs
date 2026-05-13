@@ -21,6 +21,7 @@ use anvil_core::{
     eth::EthRequest,
     types::{ReorgOptions, TransactionData},
 };
+use foundry_common::version::{COMMIT_SHA, SEMVER_VERSION};
 use foundry_evm::hardfork::EthereumHardfork;
 
 use std::{
@@ -481,6 +482,8 @@ async fn can_get_metadata() {
         latest_block_number: block_number,
         chain_id,
         client_version: CLIENT_VERSION.to_string(),
+        client_semver: Some(SEMVER_VERSION.to_string()),
+        client_commit_sha: Some(COMMIT_SHA.to_string()),
         instance_id: api.instance_id(),
         forked_network: None,
         snapshots: Default::default(),
@@ -506,6 +509,8 @@ async fn can_get_metadata_on_fork() {
         latest_block_number: block_number,
         chain_id,
         client_version: CLIENT_VERSION.to_string(),
+        client_semver: Some(SEMVER_VERSION.to_string()),
+        client_commit_sha: Some(COMMIT_SHA.to_string()),
         instance_id: api.instance_id(),
         forked_network: Some(ForkedNetwork {
             chain_id,
@@ -998,7 +1003,6 @@ async fn test_mine_blk_with_prev_timestamp() {
 }
 
 // increase time by 0 seconds i.e next_block_timestamp = prev_block_timestamp
-// api.evm_increase_time(0).unwrap();
 #[tokio::test(flavor = "multi_thread")]
 async fn test_increase_time_by_zero() {
     let (api, handle) = spawn(NodeConfig::test()).await;
@@ -1009,7 +1013,7 @@ async fn test_increase_time_by_zero() {
     let init_number = init_blk.header.number;
     let init_timestamp = init_blk.header.timestamp;
 
-    let _ = api.evm_increase_time(U256::ZERO).await;
+    api.evm_set_next_block_timestamp(init_timestamp).unwrap();
 
     api.mine_one().await;
 
@@ -1264,7 +1268,10 @@ async fn can_get_node_info_tempo_t1() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn can_deal_erc20_tempo() {
-    use foundry_evm::core::tempo::{ALPHA_USD_ADDRESS, PATH_USD_ADDRESS};
+    use alloy_primitives::address;
+    use foundry_evm::core::tempo::PATH_USD_ADDRESS;
+
+    const ALPHA_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000001");
 
     let (api, _handle) = spawn(NodeConfig::test_tempo()).await;
 

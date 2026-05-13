@@ -10,6 +10,7 @@ use foundry_config::{
         value::{Dict, Map, Value},
     },
 };
+use foundry_evm_networks::NetworkConfigs;
 use serde::Serialize;
 
 use crate::opts::RpcCommonOpts;
@@ -118,6 +119,11 @@ pub struct EvmArgs {
     #[arg(long)]
     #[serde(skip)]
     pub isolate: bool,
+
+    /// Network selection.
+    #[command(flatten)]
+    #[serde(skip)]
+    pub networks: NetworkConfigs,
 }
 
 // Make this set of options a `figment::Provider` so that it can be merged into the `Config`
@@ -168,6 +174,15 @@ impl Provider for EvmArgs {
         }
         if self.rpc.no_proxy {
             dict.insert("eth_rpc_no_proxy".to_string(), true.into());
+        }
+
+        // Only insert network flags when explicitly set via CLI to avoid overriding
+        // values from foundry.toml (NetworkConfigs is flattened in Config).
+        if let Some(name) = self.networks.active_network_name() {
+            dict.insert("network".to_string(), name.into());
+        }
+        if self.networks.is_celo() {
+            dict.insert("celo".to_string(), true.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
@@ -290,6 +305,17 @@ mod tests {
         let dict = data.get(&Config::selected_profile()).expect("profile dict");
         let val = dict.get("compute_units_per_second").expect("cups present");
         assert_eq!(val, &Value::from(1000u64));
+    }
+
+    #[test]
+    fn rpc_url_arg_does_not_read_eth_rpc_url_env() {
+        use clap::CommandFactory;
+
+        let command = EvmArgs::command();
+        let rpc_url =
+            command.get_arguments().find(|arg| arg.get_id() == "rpc_url").expect("rpc_url arg");
+
+        assert!(rpc_url.get_env().is_none());
     }
 
     #[test]

@@ -29,10 +29,12 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
@@ -165,41 +167,47 @@ impl RunArgs {
             if self.jit {
                 return Err(eyre::eyre!("--jit is not supported for Tempo networks"));
             }
-            self.run_with_evm::<TempoEvmNetwork>(revmc::runtime::JitBackend::disabled()).await
-        } else if evm_opts.networks.is_optimism() {
+            return self
+                .run_with_evm::<TempoEvmNetwork>(revmc::runtime::JitBackend::disabled())
+                .await;
+        }
+
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
             if self.jit {
                 return Err(eyre::eyre!("--jit is not supported for OP networks"));
             }
-            self.run_with_evm::<OpEvmNetwork>(revmc::runtime::JitBackend::disabled()).await
-        } else {
-            let jit_backend = if self.jit {
-                let opt_level = match self.jit_opt_level {
-                    Some(0) => revmc::OptimizationLevel::None,
-                    Some(1) => revmc::OptimizationLevel::Less,
-                    Some(2) => revmc::OptimizationLevel::Default,
-                    Some(3) => revmc::OptimizationLevel::Aggressive,
-                    Some(n) => return Err(eyre::eyre!("invalid --jit-opt-level {n} (0-3)")),
-                    None => revmc::OptimizationLevel::Default,
-                };
-                let config = revmc::runtime::RuntimeConfig {
-                    blocking: true,
-                    dump_dir: self.jit_dump_dir.clone(),
-                    debug_assertions: self.jit_debug_assertions,
-                    no_dedup: self.jit_no_dedup,
-                    no_dse: self.jit_no_dse,
-                    tuning: revmc::runtime::RuntimeTuning {
-                        jit_opt_level: opt_level,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-                revmc::runtime::JitBackend::new(config)
-                    .map_err(|e| eyre::eyre!("failed to start JIT backend: {e}"))?
-            } else {
-                revmc::runtime::JitBackend::disabled()
-            };
-            self.run_with_evm::<EthEvmNetwork>(jit_backend).await
+            return self.run_with_evm::<OpEvmNetwork>(revmc::runtime::JitBackend::disabled()).await;
         }
+
+        let jit_backend = if self.jit {
+            let opt_level = match self.jit_opt_level {
+                Some(0) => revmc::OptimizationLevel::None,
+                Some(1) => revmc::OptimizationLevel::Less,
+                Some(2) => revmc::OptimizationLevel::Default,
+                Some(3) => revmc::OptimizationLevel::Aggressive,
+                Some(n) => return Err(eyre::eyre!("invalid --jit-opt-level {n} (0-3)")),
+                None => revmc::OptimizationLevel::Default,
+            };
+            let config = revmc::runtime::RuntimeConfig {
+                blocking: true,
+                dump_dir: self.jit_dump_dir.clone(),
+                debug_assertions: self.jit_debug_assertions,
+                no_dedup: self.jit_no_dedup,
+                no_dse: self.jit_no_dse,
+                tuning: revmc::runtime::RuntimeTuning {
+                    jit_opt_level: opt_level,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            revmc::runtime::JitBackend::new(config)
+                .map_err(|e| eyre::eyre!("failed to start JIT backend: {e}"))?
+        } else {
+            revmc::runtime::JitBackend::disabled()
+        };
+
+        self.run_with_evm::<EthEvmNetwork>(jit_backend).await
     }
 
     async fn run_with_evm<FEN: FoundryEvmNetwork>(

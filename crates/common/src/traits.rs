@@ -221,7 +221,7 @@ impl TestFunctionKind {
 
     /// Returns `true` if this function is a unit test.
     #[inline]
-    pub fn is_unit_test(&self) -> bool {
+    pub const fn is_unit_test(&self) -> bool {
         matches!(self, Self::UnitTest { .. })
     }
 

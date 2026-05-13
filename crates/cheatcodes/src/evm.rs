@@ -1134,6 +1134,11 @@ impl Cheatcode for executeTransactionCall {
         ccx.ecx.cfg_mut().limit_contract_initcode_size =
             Some(revm::primitives::eip3860::MAX_INITCODE_SIZE);
 
+        // Reset the tx gas limit cap so revm applies the spec-defined default (EIP-7825).
+        // Normal test execution sets `Some(u64::MAX)` to disable the cap; clearing it here
+        // lets the nested EVM enforce the real network limit for realistic simulation.
+        ccx.ecx.cfg_mut().tx_gas_limit_cap = None;
+
         // Snapshot the modified env for EVM construction.
         let modified_evm_env = ccx.ecx.evm_clone();
         let modified_tx_env = ccx.ecx.tx_clone();
@@ -1180,6 +1185,7 @@ impl Cheatcode for executeTransactionCall {
         nested_evm_env.cfg_env.disable_nonce_check = cached_evm_env.cfg_env.disable_nonce_check;
         nested_evm_env.cfg_env.limit_contract_initcode_size =
             cached_evm_env.cfg_env.limit_contract_initcode_size;
+        nested_evm_env.cfg_env.tx_gas_limit_cap = cached_evm_env.cfg_env.tx_gas_limit_cap;
         ccx.ecx.set_evm(nested_evm_env);
         ccx.ecx.set_tx(cached_tx_env);
 
@@ -1239,6 +1245,10 @@ impl Cheatcode for startDebugTraceRecordingCall {
         let Some(tracer) = executor.tracing_inspector() else {
             return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
+
+        if ccx.state.record_debug_steps_info.is_some() {
+            bail!("debug trace recording was already started");
+        }
 
         let mut info = RecordDebugStepInfo {
             // will be updated later

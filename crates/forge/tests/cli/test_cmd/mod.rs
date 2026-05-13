@@ -40,7 +40,7 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
 /// These are run separately by the `flaky_testdata` test below.
 /// Format: pipe-separated regex alternation, e.g. `"Foo|Bar|Baz"`.
-const FLAKY_TESTDATA_CONTRACTS: &str = "Issue4640Test";
+const FLAKY_TESTDATA_CONTRACTS: &str = "Issue4640Test|Issue14212Test";
 
 // Run `forge test` on `/testdata`.
 forgetest!(testdata, |_prj, cmd| {
@@ -2969,7 +2969,7 @@ contract ScrollForkTest is Test {
     }
 );
 
-// Test that only provider is included in failed fork error.
+// Test that failed fork errors still surface the provider hostname.
 forgetest_init!(test_display_provider_on_error, |prj, cmd| {
     prj.add_test(
         "ForkTest.t.sol",
@@ -2987,8 +2987,8 @@ contract ForkTest is Test {
     cmd.args(["test", "--mt", "test_fork_err_message"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/ForkTest.t.sol:ForkTest
-[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; [..]] test_fork_err_message() ([GAS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+[FAIL: vm.createSelectFork: could not instantiate forked environment with provider eth-mainnet.g.alchemy.com; HTTP error 401 with body: Must be authenticated!
+
 ...
 
 "#]]);

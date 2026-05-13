@@ -39,8 +39,9 @@ use alloy_eips::{
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
 use alloy_network::{
-    AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, ReceiptResponse, TransactionBuilder,
-    TransactionBuilder4844, TransactionResponse, eip2718::Decodable2718,
+    AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, NetworkTransactionBuilder,
+    ReceiptResponse, TransactionBuilder, TransactionBuilder4844, TransactionResponse,
+    eip2718::Decodable2718,
 };
 use alloy_primitives::{
     Address, B64, B256, Bytes, TxHash, TxKind, U64, U256,
@@ -57,7 +58,7 @@ use alloy_rpc_types::{
     state::{AccountOverride, EvmOverrides, StateOverridesBuilder},
     trace::{
         filter::TraceFilter,
-        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace},
+        geth::{GethDebugTracingCallOptions, GethDebugTracingOptions, GethTrace, TraceResult},
         parity::{LocalizedTransactionTrace, TraceResultsWithTransactionHash, TraceType},
     },
     txpool::{TxpoolContent, TxpoolInspect, TxpoolInspectSummary, TxpoolStatus},
@@ -75,7 +76,10 @@ use anvil_core::{
     types::{ReorgOptions, TransactionData},
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
-use foundry_common::provider::ProviderBuilder;
+use foundry_common::{
+    provider::ProviderBuilder,
+    version::{COMMIT_SHA, SEMVER_VERSION},
+};
 use foundry_evm::decode::RevertDecoder;
 use foundry_primitives::{
     FoundryNetwork, FoundryReceiptEnvelope, FoundryTransactionRequest, FoundryTxEnvelope,
@@ -353,7 +357,7 @@ impl<N: Network> EthApi<N> {
             )
             .into());
         }
-        self.backend.set_gas_price(gas.to());
+        self.backend.set_gas_price(gas.saturating_to());
         Ok(())
     }
 
@@ -368,7 +372,7 @@ impl<N: Network> EthApi<N> {
             )
             .into());
         }
-        self.backend.set_base_fee(basefee.to());
+        self.backend.set_base_fee(basefee.saturating_to());
         Ok(())
     }
 
@@ -412,7 +416,7 @@ impl<N: Network> EthApi<N> {
                     let config = fork.config.read();
 
                     NodeForkConfig {
-                        fork_url: Some(config.eth_rpc_url.clone()),
+                        fork_url: config.eth_rpc_url().map(|s| s.to_string()),
                         fork_block_number: Some(config.block_number),
                         fork_retry_backoff: Some(config.backoff.as_millis()),
                     }
@@ -431,6 +435,8 @@ impl<N: Network> EthApi<N> {
 
         Ok(Metadata {
             client_version: CLIENT_VERSION.to_string(),
+            client_semver: Some(SEMVER_VERSION.to_string()),
+            client_commit_sha: Some(COMMIT_SHA.to_string()),
             chain_id: self.backend.chain_id().to::<u64>(),
             latest_block_hash: self.backend.best_hash(),
             latest_block_number: self.backend.best_number(),
@@ -477,6 +483,10 @@ impl<N: Network> EthApi<N> {
     /// Sets the specific timestamp and returns the number of seconds between the given timestamp
     /// and the current time.
     ///
+    /// The `timestamp` is in seconds. The `evm_setTime` JSON-RPC method accepts both seconds and
+    /// milliseconds (values above 1e12 are treated as milliseconds); the RPC handler normalises
+    /// the input to seconds before calling this function.
+    ///
     /// Handler for RPC call: `evm_setTime`
     pub fn evm_set_time(&self, timestamp: u64) -> Result<u64> {
         node_info!("evm_setTime");
@@ -485,7 +495,7 @@ impl<N: Network> EthApi<N> {
 
         // number of seconds between the given timestamp and the current time.
         let offset = timestamp.saturating_sub(now);
-        Ok(Duration::from_millis(offset).as_secs())
+        Ok(offset)
     }
 
     /// Set the next block gas limit
@@ -493,7 +503,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `evm_setBlockGasLimit`
     pub fn evm_set_block_gas_limit(&self, gas_limit: U256) -> Result<bool> {
         node_info!("evm_setBlockGasLimit");
-        self.backend.set_gas_limit(gas_limit.to());
+        self.backend.set_gas_limit(gas_limit.saturating_to());
         Ok(true)
     }
 
@@ -517,7 +527,7 @@ impl<N: Network> EthApi<N> {
     /// Sets the backend rpc url
     ///
     /// Handler for ETH RPC call: `anvil_setRpcUrl`
-    pub fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
+    pub async fn anvil_set_rpc_url(&self, url: String) -> Result<()> {
         node_info!("anvil_setRpcUrl");
         if let Some(fork) = self.backend.get_fork() {
             let mut config = fork.config.write();
@@ -533,9 +543,11 @@ impl<N: Network> EthApi<N> {
                 )?, // .interval(interval),
             );
             config.provider = new_provider;
-            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url, url);
-            config.eth_rpc_url = url;
+            trace!(target: "backend", "Updated fork rpc from \"{}\" to \"{}\"", config.eth_rpc_url().unwrap_or("none"), url);
+            config.fork_urls = vec![url.clone()];
         }
+        // Keep node_config in sync so anvil_reset(None) uses the updated URL
+        self.backend.node_config.write().await.fork_urls = vec![url];
         Ok(())
     }
 
@@ -625,6 +637,7 @@ impl<N: Network> EthApi<N> {
     }
 
     /// Handler for RPC call: `anvil_getBlobByHash`
+    #[allow(clippy::large_stack_frames)]
     pub fn anvil_get_blob_by_versioned_hash(
         &self,
         hash: B256,
@@ -1089,16 +1102,7 @@ impl<N: Network> EthApi<N> {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
 
-        let current = self.backend.best_number();
-        let slots_in_an_epoch = 32u64;
-
-        let number = match newest_block {
-            BlockNumber::Latest | BlockNumber::Pending => current,
-            BlockNumber::Earliest => 0,
-            BlockNumber::Number(n) => n,
-            BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
-            BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
-        };
+        let number = self.backend.convert_block_number(Some(newest_block));
 
         // check if the number predates the fork, if in fork mode
         if let Some(fork) = self.get_fork() {
@@ -1113,7 +1117,7 @@ impl<N: Network> EthApi<N> {
         }
 
         const MAX_BLOCK_COUNT: u64 = 1024u64;
-        let block_count = block_count.to::<u64>().min(MAX_BLOCK_COUNT);
+        let block_count = block_count.saturating_to::<u64>().min(MAX_BLOCK_COUNT);
 
         // highest and lowest block num in the requested range
         let highest = number;
@@ -1480,6 +1484,7 @@ impl EthApi<FoundryNetwork> {
     }
 
     /// Executes the [EthRequest] and returns an RPC [ResponseResult].
+    #[allow(clippy::large_stack_frames)]
     pub async fn execute(&self, request: EthRequest) -> ResponseResult {
         trace!(target: "rpc::api", "executing eth request");
         let response = match request.clone() {
@@ -1659,6 +1664,12 @@ impl EthApi<FoundryNetwork> {
                 self.debug_code_by_hash(hash, block).await.to_rpc_result()
             }
             EthRequest::DebugDbGet(key) => self.debug_db_get(key).await.to_rpc_result(),
+            EthRequest::DebugTraceBlockByHash(block_hash, opts) => {
+                self.debug_trace_block_by_hash(block_hash, opts).await.to_rpc_result()
+            }
+            EthRequest::DebugTraceBlockByNumber(block_number, opts) => {
+                self.debug_trace_block_by_number(block_number, opts).await.to_rpc_result()
+            }
             EthRequest::TraceTransaction(tx) => self.trace_transaction(tx).await.to_rpc_result(),
             EthRequest::TraceBlock(block) => self.trace_block(block).await.to_rpc_result(),
             EthRequest::TraceFilter(filter) => self.trace_filter(filter).await.to_rpc_result(),
@@ -1753,7 +1764,15 @@ impl EthApi<FoundryNetwork> {
                         "The timestamp is too big",
                     ));
                 }
-                let time = timestamp.to::<u64>();
+                // evm_setTime accepts either seconds or milliseconds for Ganache compatibility.
+                // Timestamps above 1e12 are interpreted as milliseconds and converted to
+                // seconds; below that threshold they are treated as seconds directly.
+                let raw = timestamp.to::<u64>();
+                let time = if raw > 1_000_000_000_000 {
+                    Duration::from_millis(raw).as_secs()
+                } else {
+                    raw
+                };
                 self.evm_set_time(time).to_rpc_result()
             }
             EthRequest::EvmSetBlockGasLimit(gas_limit) => {
@@ -1771,7 +1790,7 @@ impl EthApi<FoundryNetwork> {
             EthRequest::EvmMineDetailed(mine) => {
                 self.evm_mine_detailed(mine.and_then(|p| p.params)).await.to_rpc_result()
             }
-            EthRequest::SetRpcUrl(url) => self.anvil_set_rpc_url(url).to_rpc_result(),
+            EthRequest::SetRpcUrl(url) => self.anvil_set_rpc_url(url).await.to_rpc_result(),
             EthRequest::EthSendUnsignedTransaction(tx) => {
                 self.eth_send_unsigned_transaction(*tx).await.to_rpc_result()
             }
@@ -1831,6 +1850,16 @@ impl EthApi<FoundryNetwork> {
                 self.anvil_reorg(reorg_options).await.to_rpc_result()
             }
             EthRequest::Rollback(depth) => self.anvil_rollback(depth).await.to_rpc_result(),
+            EthRequest::SetFeeToken(user, token) => {
+                self.anvil_set_fee_token(user, token).await.to_rpc_result()
+            }
+            EthRequest::SetValidatorFeeToken(validator, token) => {
+                self.anvil_set_validator_fee_token(validator, token).await.to_rpc_result()
+            }
+            EthRequest::SetFeeAmmLiquidity(user_token, validator_token, amount) => self
+                .anvil_set_fee_amm_liquidity(user_token, validator_token, amount)
+                .await
+                .to_rpc_result(),
         };
 
         if let ResponseResult::Error(err) = &response {
@@ -1844,6 +1873,7 @@ impl EthApi<FoundryNetwork> {
 
     fn sign_request(&self, from: &Address, typed_tx: FoundryTypedTx) -> Result<FoundryTxEnvelope> {
         match typed_tx {
+            #[cfg(feature = "optimism")]
             FoundryTypedTx::Deposit(_) => return Ok(build_impersonated(typed_tx)),
             _ => {
                 for signer in self.signers.iter() {
@@ -2172,9 +2202,13 @@ impl EthApi<FoundryNetwork> {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let requires = required_marker(nonce, on_chain_nonce, from);
-        let provides = vec![to_marker(nonce, from)];
-        debug_assert!(requires != provides);
+        let (requires, provides) = if let Some((requires, provides)) =
+            tempo_parallel_nonce_markers(&pending_transaction)
+        {
+            (requires, provides)
+        } else {
+            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
+        };
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -2250,11 +2284,10 @@ impl EthApi<FoundryNetwork> {
         let priority = self.transaction_priority(&pending_transaction.transaction);
 
         // Tempo txs use a 2D nonce system — no sequential ordering by account nonce.
-        let (requires, provides) = if let FoundryTxEnvelope::Tempo(aa_tx) =
-            pending_transaction.transaction.as_ref()
-            && !aa_tx.tx().nonce_key.is_zero()
+        let (requires, provides) = if let Some((requires, provides)) =
+            tempo_parallel_nonce_markers(&pending_transaction)
         {
-            (vec![], vec![pending_transaction.hash().to_vec()])
+            (requires, provides)
         } else {
             let on_chain_nonce = self.backend.current_nonce(from).await?;
             let nonce = pending_transaction.transaction.nonce();
@@ -2730,6 +2763,30 @@ impl EthApi<FoundryNetwork> {
         self.backend.debug_trace_transaction(tx_hash, opts).await
     }
 
+    /// Returns traces for all transactions in a block by hash.
+    ///
+    /// Handler for RPC call: `debug_traceBlockByHash`
+    pub async fn debug_trace_block_by_hash(
+        &self,
+        block_hash: B256,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        node_info!("debug_traceBlockByHash");
+        self.backend.debug_trace_block_by_hash(block_hash, opts).await
+    }
+
+    /// Returns traces for all transactions in a block by number.
+    ///
+    /// Handler for RPC call: `debug_traceBlockByNumber`
+    pub async fn debug_trace_block_by_number(
+        &self,
+        block_number: BlockNumber,
+        opts: GethDebugTracingOptions,
+    ) -> Result<Vec<TraceResult>> {
+        node_info!("debug_traceBlockByNumber");
+        self.backend.debug_trace_block_by_number(block_number, opts).await
+    }
+
     /// Returns traces for the transaction for geth's tracing endpoint
     ///
     /// Handler for RPC call: `debug_traceCall`
@@ -2763,7 +2820,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `anvil_mine`
     pub async fn anvil_mine(&self, num_blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
         node_info!("anvil_mine");
-        let interval = interval.map(|i| i.to::<u64>());
+        let interval = interval.map(|i| i.saturating_to::<u64>());
         let blocks = num_blocks.unwrap_or(U256::from(1));
         if blocks.is_zero() {
             return Ok(());
@@ -2771,7 +2828,7 @@ impl EthApi<FoundryNetwork> {
 
         self.on_blocking_task(|this| async move {
             // mine all the blocks
-            for _ in 0..blocks.to::<u64>() {
+            for _ in 0..blocks.saturating_to::<u64>() {
                 // If we have an interval, jump forwards in time to the "next" timestamp
                 if let Some(interval) = interval {
                     this.backend.time().increase_time(interval);
@@ -3130,8 +3187,13 @@ impl EthApi<FoundryNetwork> {
         // pre-validate
         self.backend.validate_pool_transaction(&pending_transaction).await?;
 
-        let requires = required_marker(nonce, on_chain_nonce, from);
-        let provides = vec![to_marker(nonce, from)];
+        let (requires, provides) = if let Some((requires, provides)) =
+            tempo_parallel_nonce_markers(&pending_transaction)
+        {
+            (requires, provides)
+        } else {
+            (required_marker(nonce, on_chain_nonce, from), vec![to_marker(nonce, from)])
+        };
 
         self.add_pending_transaction(pending_transaction, requires, provides)
     }
@@ -3167,7 +3229,7 @@ impl EthApi<FoundryNetwork> {
             entry.insert(key, convert(pending));
         }
         for queued in self.pool.pending_transactions() {
-            let entry = inspect.pending.entry(*queued.pending_transaction.sender()).or_default();
+            let entry = inspect.queued.entry(*queued.pending_transaction.sender()).or_default();
             let key = queued.pending_transaction.nonce().to_string();
             entry.insert(key, convert(queued));
         }
@@ -3210,7 +3272,7 @@ impl EthApi<FoundryNetwork> {
             entry.insert(key, convert(pending)?);
         }
         for queued in self.pool.pending_transactions() {
-            let entry = content.pending.entry(*queued.pending_transaction.sender()).or_default();
+            let entry = content.queued.entry(*queued.pending_transaction.sender()).or_default();
             let key = queued.pending_transaction.nonce().to_string();
             entry.insert(key, convert(queued)?);
         }
@@ -3487,6 +3549,7 @@ impl EthApi<FoundryNetwork> {
         requires: Vec<TxMarker>,
         provides: Vec<TxMarker>,
     ) -> Result<TxHash> {
+        debug_assert!(requires != provides);
         let from = *pending_transaction.sender();
         let priority = self.transaction_priority(&pending_transaction.transaction);
         let pool_transaction =
@@ -3503,10 +3566,66 @@ impl EthApi<FoundryNetwork> {
             FoundryTxEnvelope::Eip1559(_) => self.backend.ensure_eip1559_active(),
             FoundryTxEnvelope::Eip4844(_) => self.backend.ensure_eip4844_active(),
             FoundryTxEnvelope::Eip7702(_) => self.backend.ensure_eip7702_active(),
+            #[cfg(feature = "optimism")]
             FoundryTxEnvelope::Deposit(_) => self.backend.ensure_op_deposits_active(),
+            #[cfg(feature = "optimism")]
+            FoundryTxEnvelope::PostExec(_) => Err(BlockchainError::InvalidTransactionRequest(
+                "not implemented for post-exec tx".to_string(),
+            )),
             FoundryTxEnvelope::Legacy(_) => Ok(()),
             FoundryTxEnvelope::Tempo(_) => self.backend.ensure_tempo_active(),
         }
+    }
+
+    /// Sets the fee token for a user address.
+    ///
+    /// Handler for RPC call: `anvil_setFeeToken`
+    ///
+    /// Only supported when running in Tempo mode (`--tempo`).
+    pub async fn anvil_set_fee_token(&self, user: Address, token: Address) -> Result<()> {
+        node_info!("anvil_setFeeToken");
+        if !self.backend.is_tempo() {
+            return Err(BlockchainError::RpcUnimplemented);
+        }
+        self.backend.set_fee_token(user, token).await?;
+        Ok(())
+    }
+
+    /// Sets the fee token for a validator address.
+    ///
+    /// Handler for RPC call: `anvil_setValidatorFeeToken`
+    ///
+    /// Only supported when running in Tempo mode (`--tempo`).
+    pub async fn anvil_set_validator_fee_token(
+        &self,
+        validator: Address,
+        token: Address,
+    ) -> Result<()> {
+        node_info!("anvil_setValidatorFeeToken");
+        if !self.backend.is_tempo() {
+            return Err(BlockchainError::RpcUnimplemented);
+        }
+        self.backend.set_validator_fee_token(validator, token).await?;
+        Ok(())
+    }
+
+    /// Mints FeeAMM liquidity for a token pair.
+    ///
+    /// Handler for RPC call: `anvil_setFeeAmmLiquidity`
+    ///
+    /// Only supported when running in Tempo mode (`--tempo`).
+    pub async fn anvil_set_fee_amm_liquidity(
+        &self,
+        user_token: Address,
+        validator_token: Address,
+        amount: U256,
+    ) -> Result<()> {
+        node_info!("anvil_setFeeAmmLiquidity");
+        if !self.backend.is_tempo() {
+            return Err(BlockchainError::RpcUnimplemented);
+        }
+        self.backend.set_fee_amm_liquidity(user_token, validator_token, amount).await?;
+        Ok(())
     }
 }
 
@@ -3516,6 +3635,20 @@ fn required_marker(provided_nonce: u64, on_chain_nonce: u64, from: Address) -> V
     }
     let prev_nonce = provided_nonce.saturating_sub(1);
     if on_chain_nonce <= prev_nonce { vec![to_marker(prev_nonce, from)] } else { Vec::new() }
+}
+
+fn tempo_parallel_nonce_markers(
+    pending_transaction: &PendingTransaction<FoundryTxEnvelope>,
+) -> Option<(Vec<TxMarker>, Vec<TxMarker>)> {
+    // Tempo txs with non-zero nonce_key use a 2D nonce system and should not
+    // be sequenced by account nonce markers.
+    if let FoundryTxEnvelope::Tempo(aa_tx) = pending_transaction.transaction.as_ref()
+        && !aa_tx.tx().nonce_key.is_zero()
+    {
+        Some((vec![], vec![pending_transaction.hash().to_vec()]))
+    } else {
+        None
+    }
 }
 
 fn convert_transact_out(out: &Option<Output>) -> Bytes {

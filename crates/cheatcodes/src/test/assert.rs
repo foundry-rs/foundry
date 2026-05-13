@@ -4,6 +4,7 @@ use foundry_evm_core::{
     abi::console::{format_units_int, format_units_uint},
     backend::GLOBAL_FAIL_SLOT,
     constants::CHEATCODE_ADDRESS,
+    decode::ASSERTION_FAILED_PREFIX,
     evm::FoundryEvmNetwork,
 };
 use itertools::Itertools;
@@ -29,7 +30,7 @@ enum AssertionKind {
 }
 
 impl AssertionKind {
-    fn inverse(self) -> Self {
+    const fn inverse(self) -> Self {
         match self {
             Self::Eq => Self::Ne,
             Self::Ne => Self::Eq,
@@ -40,7 +41,7 @@ impl AssertionKind {
         }
     }
 
-    fn to_str(self) -> &'static str {
+    const fn to_str(self) -> &'static str {
         match self {
             Self::Eq => "==",
             Self::Ne => "!=",
@@ -163,7 +164,7 @@ impl EqRelAssertionError<U256> {
                 format_units_uint(&f.left, decimals),
                 format_units_uint(&f.right, decimals),
                 format_delta_percent(&f.max_delta),
-                &f.real_delta,
+                f.real_delta,
             ),
             Self::Overflow => self.to_string(),
         }
@@ -178,7 +179,7 @@ impl EqRelAssertionError<I256> {
                 format_units_int(&f.left, decimals),
                 format_units_int(&f.right, decimals),
                 format_delta_percent(&f.max_delta),
-                &f.real_delta,
+                f.real_delta,
             ),
             Self::Overflow => self.to_string(),
         }
@@ -195,7 +196,7 @@ fn handle_assertion_result<FEN: FoundryEvmNetwork, E>(
     error_formatter: Option<&dyn Fn(&E) -> String>,
     error_msg: Option<&str>,
 ) -> Result {
-    let error_msg = error_msg.unwrap_or("assertion failed");
+    let error_msg = error_msg.unwrap_or(ASSERTION_FAILED_PREFIX);
     let msg = if let Some(error_formatter) = error_formatter {
         Cow::Owned(format!("{error_msg}: {}", error_formatter(&err)))
     } else {
@@ -221,9 +222,9 @@ fn handle_assertion_result_mono<FEN: FoundryEvmNetwork>(
 /// Implements [crate::Cheatcode] for pairs of cheatcodes.
 ///
 /// Accepts a list of pairs of cheatcodes, where the first cheatcode is the one that doesn't contain
-/// a custom error message, and the second one contains it at `error` field.
+/// a custom error message, and the second one contains it at `err` field.
 ///
-/// Passed `args` are the common arguments for both cheatcode structs (excluding `error` field).
+/// Passed `args` are the common arguments for both cheatcode structs (excluding `err` field).
 ///
 /// Macro also accepts an optional closure that formats the error returned by the assertion.
 macro_rules! impl_assertions {
@@ -266,10 +267,12 @@ macro_rules! impl_assertions {
                 ccx: &mut CheatsCtxt<'_, '_, FEN>,
                 executor: &mut dyn CheatcodesExecutor<FEN>,
             ) -> Result {
-                let Self { $($arg,)* error } = self;
+                let Self { $($arg,)* err } = self;
                 match $body {
                     Ok(()) => Ok(Default::default()),
-                    Err(err) => handle_assertion_result(ccx, executor, err, $error_formatter, Some(error))
+                    Err(assertion_err) => {
+                        handle_assertion_result(ccx, executor, assertion_err, $error_formatter, Some(err))
+                    }
                 }
             }
         }
@@ -450,11 +453,11 @@ impl_assertions! {
     (assertApproxEqRelDecimal_2Call, assertApproxEqRelDecimal_3Call),
 }
 
-fn assert_true(condition: bool) -> Result<(), ()> {
+const fn assert_true(condition: bool) -> Result<(), ()> {
     if condition { Ok(()) } else { Err(()) }
 }
 
-fn assert_false(condition: bool) -> Result<(), ()> {
+const fn assert_false(condition: bool) -> Result<(), ()> {
     assert_true(!condition)
 }
 

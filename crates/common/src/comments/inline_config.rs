@@ -331,7 +331,7 @@ struct NextItemFinder {
 }
 
 impl NextItemFinder {
-    fn new(offset: BytePos) -> Self {
+    const fn new(offset: BytePos) -> Self {
         Self { offset }
     }
 

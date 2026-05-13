@@ -62,7 +62,7 @@ impl ChiselRunner {
     /// ### Returns
     ///
     /// A new [ChiselRunner]
-    pub fn new(
+    pub const fn new(
         executor: Executor<EthEvmNetwork>,
         initial_balance: U256,
         sender: Address,

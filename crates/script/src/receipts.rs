@@ -57,20 +57,19 @@ pub async fn check_tx_status<N: Network>(
 
                     // Receipt is pending, try to sleep and retry a few times
                     match provider.get_transaction_by_hash(hash).await {
-                        Ok(_) => {
+                        Ok(Some(_)) => {
                             // Sleep for a short time to allow the transaction to be mined
                             tokio::time::sleep(Duration::from_millis(500)).await;
                             // Transaction is still known to the node, retry
                             Err(RetryError::Retry(PendingReceiptError { tx_hash: hash }.into()))
                         }
-                        Err(_) => {
-                            // Transaction is not known to the node, mark it as dropped
-                            Ok(TxStatus::Dropped)
-                        }
+                        // Tx unknown to the node (rejected/dropped) or transport error: mark
+                        // dropped instead of polling forever.
+                        Ok(None) | Err(_) => Ok(TxStatus::Dropped),
                     }
                 }
                 Err(e) => match provider.get_transaction_by_hash(hash).await {
-                    Ok(_) => match e {
+                    Ok(Some(_)) => match e {
                         PendingTransactionError::TxWatcher(WatchTxError::Timeout) => {
                             Err(RetryError::Continue(eyre!(
                                 "tx is still known to the node, waiting for receipt"
@@ -78,7 +77,7 @@ pub async fn check_tx_status<N: Network>(
                         }
                         _ => Err(RetryError::Retry(e.into())),
                     },
-                    Err(_) => Ok(TxStatus::Dropped),
+                    Ok(None) | Err(_) => Ok(TxStatus::Dropped),
                 },
             }
         })
@@ -181,9 +180,10 @@ pub fn format_receipt<N: Network>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_network::Ethereum;
+    use alloy_network::{Ethereum, TransactionBuilder};
     use alloy_primitives::B256;
-    use alloy_rpc_types::TransactionReceipt;
+    use alloy_provider::ProviderBuilder;
+    use alloy_rpc_types::{TransactionReceipt, TransactionRequest};
     use std::collections::VecDeque;
 
     fn mock_receipt(tx_hash: B256, success: bool) -> TransactionReceipt {
@@ -270,5 +270,123 @@ mod tests {
 
         assert!(out.contains("❌  [Failed]"));
         assert!(out.contains("Contract: FailContract"));
+    }
+
+    /// Upper bound for the anvil-based `check_tx_status` tests, so a hang fails fast
+    /// instead of stalling the suite.
+    const CHECK_TX_TIMEOUT: Duration = Duration::from_secs(15);
+
+    /// A tx hash the node doesn't know about (rejected at submission or dropped from
+    /// the mempool) must resolve to `TxStatus::Dropped` rather than polling forever.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn check_tx_status_unknown_tx_is_dropped() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let provider = ProviderBuilder::new()
+            .connect_http(handle.http_endpoint().parse().unwrap())
+            .root()
+            .clone();
+
+        // Random hash the node has never seen.
+        let unknown_hash = B256::repeat_byte(0xab);
+
+        // Inner `timeout=1` bounds the pending-tx watcher; the outer `tokio::time::timeout`
+        // guarantees the test fails fast if the watcher ever hangs again.
+        let (returned_hash, status) = tokio::time::timeout(
+            CHECK_TX_TIMEOUT,
+            check_tx_status::<Ethereum>(&provider, unknown_hash, 1),
+        )
+        .await
+        .expect("check_tx_status hung on an unknown tx hash");
+
+        assert_eq!(returned_hash, unknown_hash);
+        let status = status.expect("unknown tx should resolve to Ok(TxStatus::Dropped)");
+        assert!(
+            matches!(status, TxStatus::Dropped),
+            "expected TxStatus::Dropped for an unknown tx",
+        );
+    }
+
+    /// A tx that is initially in the mempool (so `eth_getTransactionByHash` returns
+    /// `Some`) and is later dropped from it must:
+    ///   1. keep retrying while the node still knows the tx (the `Ok(Some(_))` branch), and
+    ///   2. resolve to `TxStatus::Dropped` once the node forgets it (the `Ok(None)` branch).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn check_tx_status_known_then_dropped_resolves_to_dropped() {
+        // `no_mining` keeps the tx pending so `get_receipt` always times out and the
+        // watcher exercises the `WatchTxError::Timeout` + `get_transaction_by_hash`
+        // branch on every retry.
+        let (api, handle) = anvil::spawn(anvil::NodeConfig::test().with_no_mining(true)).await;
+        let signer_provider =
+            ProviderBuilder::new().connect_http(handle.http_endpoint().parse().unwrap());
+
+        let mut wallets = handle.dev_wallets();
+        let from = wallets.next().unwrap().address();
+        let to = wallets.next().unwrap().address();
+        let tx =
+            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+
+        let pending = signer_provider.send_transaction(tx).await.unwrap();
+        let tx_hash = *pending.tx_hash();
+
+        // Run `check_tx_status` concurrently; while it loops on `Ok(Some(_))`, drop the
+        // tx from the mempool so the next iteration sees `Ok(None)` and exits.
+        let provider = signer_provider.root().clone();
+        let watcher = tokio::spawn(async move {
+            tokio::time::timeout(
+                CHECK_TX_TIMEOUT,
+                check_tx_status::<Ethereum>(&provider, tx_hash, 1),
+            )
+            .await
+        });
+
+        // Give the watcher at least one Continue iteration before evicting the tx.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        api.anvil_drop_transaction(tx_hash).await.unwrap();
+
+        let (returned_hash, status) = watcher
+            .await
+            .unwrap()
+            .expect("check_tx_status hung after the tx was dropped from the mempool");
+        assert_eq!(returned_hash, tx_hash);
+        let status = status.expect("dropped tx should resolve to Ok(TxStatus::Dropped)");
+        assert!(
+            matches!(status, TxStatus::Dropped),
+            "expected TxStatus::Dropped after the tx was evicted from the mempool",
+        );
+    }
+
+    /// A real, mined transaction must resolve to `TxStatus::Success` and not be
+    /// misclassified as dropped.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn check_tx_status_mined_tx_is_success() {
+        let (_api, handle) = anvil::spawn(anvil::NodeConfig::test()).await;
+        let signer_provider =
+            ProviderBuilder::new().connect_http(handle.http_endpoint().parse().unwrap());
+
+        let mut wallets = handle.dev_wallets();
+        let from = wallets.next().unwrap().address();
+        let to = wallets.next().unwrap().address();
+        let tx =
+            TransactionRequest::default().with_from(from).with_to(to).with_value(U256::from(1));
+
+        // Send and mine the tx so a receipt is immediately available.
+        let pending = signer_provider.send_transaction(tx).await.unwrap();
+        let tx_hash = *pending.tx_hash();
+        let _ = pending.get_receipt().await.unwrap();
+
+        let provider = signer_provider.root().clone();
+        let (returned_hash, status) = tokio::time::timeout(
+            CHECK_TX_TIMEOUT,
+            check_tx_status::<Ethereum>(&provider, tx_hash, 5),
+        )
+        .await
+        .expect("check_tx_status hung on a mined tx");
+
+        assert_eq!(returned_hash, tx_hash);
+        let status = status.expect("mined tx should resolve to Ok(TxStatus::Success)");
+        assert!(
+            matches!(status, TxStatus::Success(_)),
+            "expected TxStatus::Success for a mined ETH transfer",
+        );
     }
 }

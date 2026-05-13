@@ -39,6 +39,7 @@ impl ExternalIdentifier {
             return Ok(None);
         }
 
+        let no_proxy = config.eth_rpc_no_proxy;
         let config = match config.get_etherscan_config_with_chain(chain) {
             Ok(Some(config)) => {
                 chain = config.chain;
@@ -61,7 +62,7 @@ impl ExternalIdentifier {
         }
         if let Some(config) = config {
             debug!(target: "evm::traces::external", chain=?config.chain, url=?config.api_url, "using etherscan identifier");
-            match config.into_client() {
+            match config.into_client_with_no_proxy(no_proxy) {
                 Ok(client) => {
                     fetchers.push(Arc::new(EtherscanFetcher::new(client)));
                 }
@@ -360,7 +361,7 @@ struct EtherscanFetcher {
 }
 
 impl EtherscanFetcher {
-    fn new(client: foundry_block_explorers::Client) -> Self {
+    const fn new(client: foundry_block_explorers::Client) -> Self {
         Self { client, invalid_api_key: AtomicBool::new(false) }
     }
 }

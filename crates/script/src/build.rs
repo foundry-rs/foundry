@@ -107,7 +107,7 @@ pub enum ScriptPredeployLibraries {
 }
 
 impl ScriptPredeployLibraries {
-    pub fn libraries_count(&self) -> usize {
+    pub const fn libraries_count(&self) -> usize {
         match self {
             Self::Default(libs) => libs.len(),
             Self::Create2(libs, _) => libs.len(),

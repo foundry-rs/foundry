@@ -40,8 +40,7 @@ use foundry_evm_core::{
     env::FoundryContextExt,
     evm::{
         BlockEnvFor, EthEvmNetwork, FoundryContextFor, FoundryEvmFactory, FoundryEvmNetwork,
-        IntoNestedEvm, NestedEvm, NestedEvmClosure, SpecFor, TransactionRequestFor, TxEnvFor,
-        with_cloned_context,
+        NestedEvmClosure, SpecFor, TransactionRequestFor, TxEnvFor, with_cloned_context,
     },
 };
 use foundry_evm_traces::{
@@ -176,16 +175,9 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
     ) -> Result<(), EVMError<DatabaseError>> {
         with_cloned_context(ecx, |db, evm_env, journal_inner| {
-            let mut evm = FEN::EvmFactory::default()
-                .create_foundry_evm_with_inspector(
-                    db,
-                    evm_env,
-                    cheats,
-                    revmc::runtime::JitBackend::disabled(),
-                )
-                .into_nested_evm();
+            let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, cheats);
             *evm.journal_inner_mut() = journal_inner;
-            f(&mut evm)?;
+            f(&mut *evm)?;
             let sub_inner = evm.journal_inner_mut().clone();
             let sub_evm_env = evm.to_evm_env();
             Ok((sub_evm_env, sub_inner))
@@ -199,15 +191,8 @@ impl<FEN: FoundryEvmNetwork> CheatcodesExecutor<FEN> for TransparentCheatcodesEx
         evm_env: EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>,
         f: NestedEvmClosure<'_, SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>,
     ) -> Result<EvmEnv<SpecFor<FEN>, BlockEnvFor<FEN>>, EVMError<DatabaseError>> {
-        let mut evm = FEN::EvmFactory::default()
-            .create_foundry_evm_with_inspector(
-                db,
-                evm_env,
-                cheats,
-                revmc::runtime::JitBackend::disabled(),
-            )
-            .into_nested_evm();
-        f(&mut evm)?;
+        let mut evm = FEN::EvmFactory::default().create_foundry_nested_evm(db, evm_env, cheats);
+        f(&mut *evm)?;
         Ok(evm.to_evm_env())
     }
 
@@ -314,12 +299,12 @@ pub struct GasMetering {
 
 impl GasMetering {
     /// Start the gas recording.
-    pub fn start(&mut self) {
+    pub const fn start(&mut self) {
         self.recording = true;
     }
 
     /// Stop the gas recording.
-    pub fn stop(&mut self) {
+    pub const fn stop(&mut self) {
         self.recording = false;
     }
 
@@ -871,6 +856,46 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         }
 
+        // Apply our prank
+        if let Some(prank) = &self.get_prank(curr_depth) {
+            // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
+            if prank.delegate_call
+                && curr_depth == prank.depth
+                && call.scheme == CallScheme::DelegateCall
+            {
+                call.target_address = prank.new_caller;
+                call.caller = prank.new_caller;
+                if let Some(new_origin) = prank.new_origin {
+                    ecx.tx_mut().set_caller(new_origin);
+                }
+            }
+
+            if curr_depth >= prank.depth && call.caller == prank.prank_caller {
+                // At the target depth we set `msg.sender`
+                let prank_applied = if curr_depth == prank.depth {
+                    // Ensure new caller is loaded and touched
+                    let _ = journaled_account(ecx, prank.new_caller);
+                    call.caller = prank.new_caller;
+                    true
+                } else {
+                    false
+                };
+
+                // At the target depth, or deeper, we set `tx.origin`
+                let prank_applied = if let Some(new_origin) = prank.new_origin {
+                    ecx.tx_mut().set_caller(new_origin);
+                    true
+                } else {
+                    prank_applied
+                };
+
+                // If prank applied for first time, then update
+                if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
+                    self.pranks.insert(curr_depth, applied_prank);
+                }
+            }
+        }
+
         // Handle mocked calls
         if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
             let ctx = MockCallDataContext {
@@ -887,13 +912,43 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             && mock.value.is_none_or(|value| Some(value) == call.transfer_value())
                     })
                     .map(|(_, v)| v),
-            } && let Some(return_data) = if return_data_queue.len() == 1 {
+            } && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
+            {
+                if let Some(value) = call.transfer_value() {
+                    let checkpoint = ecx.journal_mut().checkpoint();
+                    match ecx.journal_mut().transfer_loaded(
+                        call.transfer_from(),
+                        call.transfer_to(),
+                        value,
+                    ) {
+                        None => {
+                            if return_data.ret_type.is_ok() {
+                                ecx.journal_mut().checkpoint_commit();
+                            } else {
+                                ecx.journal_mut().checkpoint_revert(checkpoint);
+                            }
+                        }
+                        Some(err) => {
+                            ecx.journal_mut().checkpoint_revert(checkpoint);
+                            return Some(CallOutcome {
+                                result: InterpreterResult {
+                                    result: err.into(),
+                                    output: Bytes::new(),
+                                    gas,
+                                },
+                                memory_offset: call.return_memory_offset.clone(),
+                                was_precompile_called: false,
+                                precompile_call_logs: vec![],
+                            });
+                        }
+                    }
+                }
+
                 // If the mocked calls stack has a single element in it, don't empty it
-                return_data_queue.front().map(|x| x.to_owned())
-            } else {
-                // Else, we pop the front element
-                return_data_queue.pop_front()
-            } {
+                if return_data_queue.len() > 1 {
+                    return_data_queue.pop_front();
+                }
+
                 return Some(CallOutcome {
                     result: InterpreterResult {
                         result: return_data.ret_type,
@@ -904,44 +959,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     was_precompile_called: true,
                     precompile_call_logs: vec![],
                 });
-            }
-        }
-
-        // Apply our prank
-        if let Some(prank) = &self.get_prank(curr_depth) {
-            // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
-            if prank.delegate_call
-                && curr_depth == prank.depth
-                && let CallScheme::DelegateCall = call.scheme
-            {
-                call.target_address = prank.new_caller;
-                call.caller = prank.new_caller;
-                if let Some(new_origin) = prank.new_origin {
-                    ecx.tx_mut().set_caller(new_origin);
-                }
-            }
-
-            if curr_depth >= prank.depth && call.caller == prank.prank_caller {
-                let mut prank_applied = false;
-
-                // At the target depth we set `msg.sender`
-                if curr_depth == prank.depth {
-                    // Ensure new caller is loaded and touched
-                    let _ = journaled_account(ecx, prank.new_caller);
-                    call.caller = prank.new_caller;
-                    prank_applied = true;
-                }
-
-                // At the target depth, or deeper, we set `tx.origin`
-                if let Some(new_origin) = prank.new_origin {
-                    ecx.tx_mut().set_caller(new_origin);
-                    prank_applied = true;
-                }
-
-                // If prank applied for first time, then update
-                if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
-                    self.pranks.insert(curr_depth, applied_prank);
-                }
             }
         }
 
@@ -1070,19 +1087,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         if let Some(recorded_account_diffs_stack) = &mut self.recorded_account_diffs_stack {
             // Determine if account is "initialized," ie, it has a non-zero balance, a non-zero
             // nonce, a non-zero KECCAK_EMPTY codehash, or non-empty code
-            let initialized;
-            let old_balance;
-            let old_nonce;
-
-            if let Ok(acc) = ecx.journal_mut().load_account(call.target_address) {
-                initialized = acc.data.info.exists();
-                old_balance = acc.data.info.balance;
-                old_nonce = acc.data.info.nonce;
-            } else {
-                initialized = false;
-                old_balance = U256::ZERO;
-                old_nonce = 0;
-            }
+            let (initialized, old_balance, old_nonce) =
+                if let Ok(acc) = ecx.journal_mut().load_account(call.target_address) {
+                    (acc.data.info.exists(), acc.data.info.balance, acc.data.info.nonce)
+                } else {
+                    (false, U256::ZERO, 0)
+                };
 
             let kind = match call.scheme {
                 CallScheme::Call => crate::Vm::AccountAccessKind::Call,
@@ -1467,7 +1477,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         let gas = outcome.result.gas;
         self.gas_metering.last_call_gas = Some(crate::Vm::Gas {
             gasLimit: gas.limit(),
-            gasTotalUsed: gas.spent(),
+            gasTotalUsed: gas.total_gas_spent(),
             gasMemoryUsed: 0,
             gasRefunded: gas.refunded(),
             gasRemaining: gas.remaining(),
@@ -1483,13 +1493,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
                 if outcome.result.is_revert() {
-                    last_recorded_depth.iter_mut().for_each(|element| {
+                    for element in &mut *last_recorded_depth {
                         element.reverted = true;
-                        element
-                            .storageAccesses
-                            .iter_mut()
-                            .for_each(|storage_access| storage_access.reverted = true);
-                    })
+                        for storage_access in &mut element.storageAccesses {
+                            storage_access.reverted = true;
+                        }
+                    }
                 }
 
                 if let Some(call_access) = last_recorded_depth.first_mut() {
@@ -1516,6 +1525,21 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                     }
                 }
             }
+        }
+
+        // this will ensure we don't have false positives when trying to diagnose reverts in fork
+        // mode
+        let diag = self.fork_revert_diagnostic.take();
+
+        // If the call already reverted, preserve that primary failure and skip post-call
+        // expect* validation so it cannot overwrite the original revert.
+        if outcome.result.is_revert() {
+            // if there's a revert and a previous call was diagnosed as fork related revert then we
+            // can return a better error here
+            if let Some(err) = diag {
+                outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
+            }
+            return;
         }
 
         // At the end of the call,
@@ -1593,19 +1617,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // Clear the queue, as we expect the user to declare more events for the next call
             // if they wanna match further events.
             self.expected_emits.clear()
-        }
-
-        // this will ensure we don't have false positives when trying to diagnose reverts in fork
-        // mode
-        let diag = self.fork_revert_diagnostic.take();
-
-        // if there's a revert and a previous call was diagnosed as fork related revert then we can
-        // return a better error here
-        if outcome.result.is_revert()
-            && let Some(err) = diag
-        {
-            outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
-            return;
         }
 
         // try to diagnose reverts in multi-fork mode where a call is made to an address that does
@@ -1753,21 +1764,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             && curr_depth >= prank.depth
             && input.caller() == prank.prank_caller
         {
-            let mut prank_applied = false;
-
             // At the target depth we set `msg.sender`
-            if curr_depth == prank.depth {
+            let prank_applied = if curr_depth == prank.depth {
                 // Ensure new caller is loaded and touched
                 let _ = journaled_account(ecx, prank.new_caller);
                 input.set_caller(prank.new_caller);
-                prank_applied = true;
-            }
+                true
+            } else {
+                false
+            };
 
             // At the target depth, or deeper, we set `tx.origin`
-            if let Some(new_origin) = prank.new_origin {
+            let prank_applied = if let Some(new_origin) = prank.new_origin {
                 ecx.tx_mut().set_caller(new_origin);
-                prank_applied = true;
-            }
+                true
+            } else {
+                prank_applied
+            };
 
             // If prank applied for first time, then update
             if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
@@ -1886,10 +1899,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         }
 
         // Handle expected reverts
-        if let Some(expected_revert) = &self.expected_revert
+        if let Some(expected_revert) = &mut self.expected_revert
             && curr_depth <= expected_revert.depth
             && matches!(expected_revert.kind, ExpectedRevertKind::Default)
         {
+            // Mirror the logic in `call_end`: when an expected reverter address is set
+            // and we don't yet have one (or we're matching multiple reverts), record the
+            // would-be deployed address as the reverter. revm guarantees `outcome.address`
+            // is `Some(_)` whenever the constructor actually ran (including the revert
+            // case); it is only `None` for pre-frame rejection (depth/balance/nonce),
+            // for which a reverter address is meaningless.
+            if outcome.result.is_revert()
+                && expected_revert.reverter.is_some()
+                && (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
+                && let Some(addr) = outcome.address
+            {
+                expected_revert.reverted_by = Some(addr);
+            }
             let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
             return match revert_handlers::handle_expect_revert(
                 false,
@@ -1927,13 +1953,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                 // Update the reverted status of all deeper calls if this call reverted, in
                 // accordance with EVM behavior
                 if outcome.result.is_revert() {
-                    last_depth.iter_mut().for_each(|element| {
+                    for element in &mut *last_depth {
                         element.reverted = true;
-                        element
-                            .storageAccesses
-                            .iter_mut()
-                            .for_each(|storage_access| storage_access.reverted = true);
-                    })
+                        for storage_access in &mut element.storageAccesses {
+                            storage_access.reverted = true;
+                        }
+                    }
                 }
 
                 if let Some(create_access) = last_depth.first_mut() {
@@ -2045,14 +2070,16 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     // Skip the first opcode of the first call frame as it includes the gas cost of
                     // creating the snapshot.
                     if self.gas_metering.last_gas_used != 0 {
-                        let gas_diff =
-                            interpreter.gas.spent().saturating_sub(self.gas_metering.last_gas_used);
+                        let gas_diff = interpreter
+                            .gas
+                            .total_gas_spent()
+                            .saturating_sub(self.gas_metering.last_gas_used);
                         record.gas_used = record.gas_used.saturating_add(gas_diff);
                     }
 
                     // Update `last_gas_used` to the current spent gas for the next iteration to
                     // compare against.
-                    self.gas_metering.last_gas_used = interpreter.gas.spent();
+                    self.gas_metering.last_gas_used = interpreter.gas.total_gas_spent();
                 }
             });
         }
@@ -2085,7 +2112,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             // Reset gas if spent is less than refunded.
             // This can happen if gas was paused / resumed or reset.
             // https://github.com/foundry-rs/foundry/issues/4370
-            if interpreter.gas.spent()
+            if interpreter.gas.total_gas_spent()
                 < u64::try_from(interpreter.gas.refunded()).unwrap_or_default()
             {
                 interpreter.gas = Gas::new(interpreter.gas.limit());
@@ -2224,13 +2251,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
 
                 // Try to include present value for informational purposes, otherwise assume
                 // it's not set (zero value)
-                let mut present_value = U256::ZERO;
                 // Try to load the account and the slot's present value
-                if ecx.journal_mut().load_account(address).is_ok()
+                let present_value = if ecx.journal_mut().load_account(address).is_ok()
                     && let Some(previous) = ecx.sload(address, key)
                 {
-                    present_value = previous.data;
-                }
+                    previous.data
+                } else {
+                    U256::ZERO
+                };
                 let access = crate::Vm::StorageAccess {
                     account: interpreter.input.target_address,
                     slot: key.into(),
@@ -2251,12 +2279,13 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 let address = interpreter.input.target_address;
                 // Try to load the account and the slot's previous value, otherwise, assume it's
                 // not set (zero value)
-                let mut previous_value = U256::ZERO;
-                if ecx.journal_mut().load_account(address).is_ok()
+                let previous_value = if ecx.journal_mut().load_account(address).is_ok()
                     && let Some(previous) = ecx.sload(address, key)
                 {
-                    previous_value = previous.data;
-                }
+                    previous.data
+                } else {
+                    U256::ZERO
+                };
 
                 let access = crate::Vm::StorageAccess {
                     account: address,
@@ -2282,18 +2311,12 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 };
                 let address =
                     Address::from_word(B256::from(try_or_return!(interpreter.stack.peek(0))));
-                let initialized;
-                let balance;
-                let nonce;
-                if let Ok(acc) = ecx.journal_mut().load_account(address) {
-                    initialized = acc.data.info.exists();
-                    balance = acc.data.info.balance;
-                    nonce = acc.data.info.nonce;
-                } else {
-                    initialized = false;
-                    balance = U256::ZERO;
-                    nonce = 0;
-                }
+                let (initialized, balance, nonce) =
+                    if let Ok(acc) = ecx.journal_mut().load_account(address) {
+                        (acc.data.info.exists(), acc.data.info.balance, acc.data.info.nonce)
+                    } else {
+                        (false, U256::ZERO, 0)
+                    };
                 let curr_depth =
                     ecx.journal().depth().try_into().expect("journaled state depth exceeds u64");
                 let account_access = crate::Vm::AccountAccess {
@@ -2542,7 +2565,7 @@ fn disallowed_mem_write(
 }
 
 /// Returns true if the kind of account access is a call.
-fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
+const fn access_is_call(kind: crate::Vm::AccountAccessKind) -> bool {
     matches!(
         kind,
         crate::Vm::AccountAccessKind::Call
@@ -2612,7 +2635,7 @@ fn append_storage_access(
 }
 
 /// Returns the [`spec::Cheatcode`] definition for a given [`spec::CheatcodeDef`] implementor.
-fn cheatcode_of<T: spec::CheatcodeDef>(_: &T) -> &'static spec::Cheatcode<'static> {
+const fn cheatcode_of<T: spec::CheatcodeDef>(_: &T) -> &'static spec::Cheatcode<'static> {
     T::CHEATCODE
 }
 
@@ -2620,11 +2643,11 @@ fn cheatcode_name(cheat: &spec::Cheatcode<'static>) -> &'static str {
     cheat.func.signature.split('(').next().unwrap()
 }
 
-fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {
+const fn cheatcode_id(cheat: &spec::Cheatcode<'static>) -> &'static str {
     cheat.func.id
 }
 
-fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
+const fn cheatcode_signature(cheat: &spec::Cheatcode<'static>) -> &'static str {
     cheat.func.signature
 }
 
@@ -2686,7 +2709,7 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
 }
 
 /// Helper function to check if frame execution will exit.
-fn will_exit(action: &InterpreterAction) -> bool {
+const fn will_exit(action: &InterpreterAction) -> bool {
     match action {
         InterpreterAction::Return(result) => {
             result.result.is_ok_or_revert() || result.result.is_error()

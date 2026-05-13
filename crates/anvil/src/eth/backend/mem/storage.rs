@@ -85,7 +85,7 @@ impl InMemoryBlockStates {
     }
 
     /// Configures no disk caching
-    pub fn memory_only(mut self) -> Self {
+    pub const fn memory_only(mut self) -> Self {
         self.max_on_disk_limit = 0;
         self
     }
@@ -112,7 +112,7 @@ impl InMemoryBlockStates {
     }
 
     /// Returns true if only memory caching is supported.
-    fn is_memory_only(&self) -> bool {
+    const fn is_memory_only(&self) -> bool {
         self.max_on_disk_limit == 0
     }
 
@@ -197,7 +197,7 @@ impl InMemoryBlockStates {
     }
 
     /// Sets the maximum number of stats we keep in memory
-    pub fn set_cache_limit(&mut self, limit: usize) {
+    pub const fn set_cache_limit(&mut self, limit: usize) {
         self.in_memory_limit = limit;
     }
 
@@ -434,23 +434,22 @@ impl<N: Network> BlockchainStorage<N> {
     }
 
     /// Returns the hash for [BlockNumberOrTag]
-    pub fn hash(&self, number: BlockNumberOrTag) -> Option<B256> {
-        let slots_in_an_epoch = 32;
+    pub fn hash(&self, number: BlockNumberOrTag, slots_in_an_epoch: u64) -> Option<B256> {
         match number {
             BlockNumberOrTag::Latest => Some(self.best_hash),
             BlockNumberOrTag::Earliest => Some(self.genesis_hash),
             BlockNumberOrTag::Pending => None,
             BlockNumberOrTag::Number(num) => self.hashes.get(&num).copied(),
             BlockNumberOrTag::Safe => {
-                if self.best_number > (slots_in_an_epoch) {
-                    self.hashes.get(&(self.best_number - (slots_in_an_epoch))).copied()
+                if self.best_number > slots_in_an_epoch {
+                    self.hashes.get(&(self.best_number - slots_in_an_epoch)).copied()
                 } else {
-                    Some(self.genesis_hash) // treat the genesis block as safe "by definition"
+                    Some(self.genesis_hash)
                 }
             }
             BlockNumberOrTag::Finalized => {
-                if self.best_number > (slots_in_an_epoch * 2) {
-                    self.hashes.get(&(self.best_number - (slots_in_an_epoch * 2))).copied()
+                if self.best_number > slots_in_an_epoch * 2 {
+                    self.hashes.get(&(self.best_number - slots_in_an_epoch * 2)).copied()
                 } else {
                     Some(self.genesis_hash)
                 }
@@ -509,10 +508,10 @@ impl<N: Network> Blockchain<N> {
     }
 
     /// returns the header hash of given block
-    pub fn hash(&self, id: BlockId) -> Option<B256> {
+    pub fn hash(&self, id: BlockId, slots_in_an_epoch: u64) -> Option<B256> {
         match id {
             BlockId::Hash(h) => Some(h.block_hash),
-            BlockId::Number(num) => self.storage.read().hash(num),
+            BlockId::Number(num) => self.storage.read().hash(num, slots_in_an_epoch),
         }
     }
 
@@ -605,14 +604,15 @@ impl<N: Network> MinedTransaction<N> {
                     CallKind::Create2 => OperationType::OpCreate2,
                     _ => return None,
                 };
-                let mut from = node.trace.caller;
-                let mut to = node.trace.address;
-                let mut value = node.trace.value;
-                if node.is_selfdestruct() {
-                    from = node.trace.address;
-                    to = node.trace.selfdestruct_refund_target.unwrap_or_default();
-                    value = node.trace.selfdestruct_transferred_value.unwrap_or_default();
-                }
+                let (from, to, value) = if node.is_selfdestruct() {
+                    (
+                        node.trace.address,
+                        node.trace.selfdestruct_refund_target.unwrap_or_default(),
+                        node.trace.selfdestruct_transferred_value.unwrap_or_default(),
+                    )
+                } else {
+                    (node.trace.caller, node.trace.address, node.trace.value)
+                };
                 Some(InternalOperation { r#type, from, to, value })
             })
             .collect()

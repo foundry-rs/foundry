@@ -2,7 +2,7 @@ use alloy_primitives::U256;
 use revm::bytecode::opcode;
 
 /// Used to keep track of which buffer is currently active to be drawn by the debugger.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum BufferKind {
     Memory,
     Calldata,
@@ -11,7 +11,7 @@ pub enum BufferKind {
 
 impl BufferKind {
     /// Helper to cycle through the active buffers.
-    pub fn next(&self) -> Self {
+    pub const fn next(&self) -> Self {
         match self {
             Self::Memory => Self::Calldata,
             Self::Calldata => Self::Returndata,

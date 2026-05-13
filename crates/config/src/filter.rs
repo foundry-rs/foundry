@@ -180,7 +180,7 @@ impl SkipBuildFilter {
     }
 
     /// Returns the pattern to match against a file
-    pub fn file_pattern(&self) -> &str {
+    pub const fn file_pattern(&self) -> &str {
         match self {
             Self::Tests => ".t.sol",
             Self::Scripts => ".s.sol",

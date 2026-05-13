@@ -3,6 +3,12 @@ use super::*;
 forgetest!(invariant_after_invariant, |prj, cmd| {
     prj.insert_vm();
     prj.insert_ds_test();
+    // This test exercises `afterInvariant` semantics in isolation; disable `assert_all` so the
+    // campaign aborts on the first broken invariant per function (legacy behavior) instead of
+    // fanning out across all invariants in the suite.
+    prj.update_config(|config| {
+        config.invariant.assert_all = false;
+    });
 
     prj.add_test(
         "InvariantAfterInvariant.t.sol",
@@ -288,7 +294,7 @@ contract InvariantCalldataDictionary is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary
-[FAIL: <empty revert data>]
+[FAIL: assertion failed]
 	[SEQUENCE]
  invariant_owner_never_changes() ([RUNS])
 
@@ -300,7 +306,7 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/InvariantCalldataDictionary.t.sol:InvariantCalldataDictionary
-[FAIL: <empty revert data>]
+[FAIL: assertion failed]
 	[SEQUENCE]
  invariant_owner_never_changes() ([RUNS])
 
@@ -1478,6 +1484,409 @@ Ran 1 test for test/InvariantShrinkFailOnRevert.t.sol:ShrinkFailOnRevertTest
 "#]]);
 });
 
+forgetest_init!(invariant_fail_on_assert_panic, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantFailOnAssertPanic.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract AssertHandler {
+    uint256 public calls;
+
+    function alwaysAssert() external {
+        calls++;
+        assert(false);
+    }
+}
+
+contract InvariantFailOnAssertPanic is Test {
+    AssertHandler handler;
+
+    function setUp() public {
+        handler = new AssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_fail_on_assert_panic() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantFailOnAssertPanic.t.sol:InvariantFailOnAssertPanic
+[FAIL: panic: assertion failed (0x01)]
+...
+ invariant_fail_on_assert_panic() ([RUNS])
+...
+"#]]);
+});
+
+forgetest_init!(invariant_ignore_assert_panic_when_flag_off, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantIgnoreAssertWhenFlagOff.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract AssertHandler {
+    uint256 public calls;
+
+    function alwaysAssert() external {
+        calls++;
+        assert(false);
+    }
+}
+
+contract InvariantIgnoreAssertWhenFlagOff is Test {
+    AssertHandler handler;
+
+    function setUp() public {
+        handler = new AssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_assert_discarded() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantIgnoreAssertWhenFlagOff.t.sol:InvariantIgnoreAssertWhenFlagOff
+[FAIL: panic: assertion failed (0x01)]
+...
+ invariant_assert_discarded() ([RUNS])
+...
+"#]]);
+});
+
+forgetest_init!(invariant_fail_on_assert_ignores_non_assert_panic, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantIgnoreNonAssertPanic.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract OverflowHandler {
+    uint256 public calls;
+
+    function alwaysOverflow() external {
+        calls++;
+        uint256 x = type(uint256).max;
+        x = x + 1;
+    }
+}
+
+contract InvariantIgnoreNonAssertPanic is Test {
+    OverflowHandler handler;
+
+    function setUp() public {
+        handler = new OverflowHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_non_assert_panic_discarded() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
+...
+[PASS] invariant_non_assert_panic_discarded() ([RUNS])
+...
+"#]]);
+});
+
+forgetest_init!(invariant_fail_on_assert_ignores_require_revert, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantIgnoreRequireRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract RequireHandler {
+    uint256 public calls;
+
+    function alwaysRequire() external {
+        calls++;
+        require(false, "require failed");
+    }
+}
+
+contract InvariantIgnoreRequireRevert is Test {
+    RequireHandler handler;
+
+    function setUp() public {
+        handler = new RequireHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_require_revert_discarded() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
+...
+[PASS] invariant_require_revert_discarded() ([RUNS])
+...
+"#]]);
+});
+
+forgetest_init!(invariant_replay_fail_on_assert, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(119u32));
+        config.invariant.fail_on_revert = false;
+        config.invariant.runs = 1;
+        config.invariant.depth = 200;
+    });
+
+    prj.add_test(
+        "InvariantReplayFailOnAssert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ReplayAssertHandler {
+    uint256 public calls;
+
+    function alwaysAssert() external {
+        calls++;
+        assert(false);
+    }
+}
+
+contract ReplayFailOnAssertTest is Test {
+    ReplayAssertHandler handler;
+
+    function setUp() public {
+        handler = new ReplayAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_replay_fail_on_assert() public view {}
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantReplayFailOnAssert.t.sol:ReplayFailOnAssertTest
+[FAIL: panic: assertion failed (0x01)]
+...
+"#]]);
+
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantReplayFailOnAssert.t.sol:ReplayFailOnAssertTest
+[FAIL: panic: assertion failed (0x01)]
+...
+"#]]);
+});
+
+forgetest_init!(invariant_fail_on_vm_assert_revert, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantFailOnVmAssertRevert.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 public calls;
+
+    function alwaysVmAssert() external {
+        calls++;
+        vm.assertEq(uint256(1), uint256(2));
+    }
+}
+
+contract InvariantFailOnVmAssertRevert is Test {
+    VmAssertHandler handler;
+
+    function setUp() public {
+        handler = new VmAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_fail_on_vm_assert_revert() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantFailOnVmAssertRevert.t.sol:InvariantFailOnVmAssertRevert
+[FAIL: assertion failed: 1 != 2]
+...
+ invariant_fail_on_vm_assert_revert() ([RUNS])
+...
+"#]]);
+});
+
+forgetest_init!(invariant_ignore_vm_assert_when_flag_off, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantIgnoreVmAssertWhenFlagOff.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 public calls;
+
+    function alwaysVmAssert() external {
+        calls++;
+        vm.assertEq(uint256(1), uint256(2));
+    }
+}
+
+contract InvariantIgnoreVmAssertWhenFlagOff is Test {
+    VmAssertHandler handler;
+
+    function setUp() public {
+        handler = new VmAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_vm_assert_discarded() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantIgnoreVmAssertWhenFlagOff.t.sol:InvariantIgnoreVmAssertWhenFlagOff
+[FAIL: assertion failed: 1 != 2]
+...
+ invariant_vm_assert_discarded() ([RUNS])
+...
+"#]]);
+});
+
+forgetest_init!(invariant_fail_on_vm_assert_global_flag, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+        config.assertions_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantFailOnVmAssertGlobalFlag.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 public calls;
+
+    function alwaysVmAssert() external {
+        calls++;
+        vm.assertEq(uint256(1), uint256(2));
+    }
+}
+
+contract InvariantFailOnVmAssertGlobalFlag is Test {
+    VmAssertHandler handler;
+
+    function setUp() public {
+        handler = new VmAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_fail_on_vm_assert_global_flag() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantFailOnVmAssertGlobalFlag.t.sol:InvariantFailOnVmAssertGlobalFlag
+[FAIL: assertion failed]
+...
+ invariant_fail_on_vm_assert_global_flag() ([RUNS])
+...
+"#]]);
+});
+
+forgetest_init!(invariant_ignore_vm_assert_global_flag_when_flag_off, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 10;
+        config.invariant.fail_on_revert = false;
+        config.assertions_revert = false;
+    });
+
+    prj.add_test(
+        "InvariantIgnoreVmAssertGlobalFlagWhenFlagOff.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract VmAssertHandler {
+    Vm constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 public calls;
+
+    function alwaysVmAssert() external {
+        calls++;
+        vm.assertEq(uint256(1), uint256(2));
+    }
+}
+
+contract InvariantIgnoreVmAssertGlobalFlagWhenFlagOff is Test {
+    VmAssertHandler handler;
+
+    function setUp() public {
+        handler = new VmAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_vm_assert_global_flag_discarded() public view {}
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantIgnoreVmAssertGlobalFlagWhenFlagOff.t.sol:InvariantIgnoreVmAssertGlobalFlagWhenFlagOff
+[FAIL: assertion failed]
+...
+ invariant_vm_assert_global_flag_discarded() ([RUNS])
+...
+"#]]);
+});
+
 forgetest_init!(invariant_shrink_with_assert, |prj, cmd| {
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(100u32));
@@ -1528,7 +1937,7 @@ Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
 ...
  invariant_with_assert() ([..])
 ...
-[FAIL: wrong counter require]
+[FAIL: wrong counter require] invariant_with_require
 	[Sequence] (original: 2, shrunk: 2)
 ...
  invariant_with_require() ([..])
@@ -1536,9 +1945,135 @@ Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
 "#]]);
 });
 
+forgetest_init!(invariant_replay_keeps_assertion_failure_from_invariant_function, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(100u32));
+        config.invariant.runs = 1;
+        config.invariant.depth = 15;
+    });
+
+    prj.add_test(
+        "InvariantReplayKeepsInvariantAssertion.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+
+    function decrement() public {
+        number--;
+    }
+}
+
+contract InvariantReplayKeepsInvariantAssertion is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function invariant_with_assert() public view {
+        assertTrue(counter.number() < 2, "wrong counter assert");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/InvariantReplayKeepsInvariantAssertion.t.sol:InvariantReplayKeepsInvariantAssertion
+[FAIL: wrong counter assert]
+...
+ invariant_with_assert() ([..])
+...
+"#]]);
+
+    cmd.assert_failure().stdout_eq(str![[r#"
+...
+Ran 1 test for test/InvariantReplayKeepsInvariantAssertion.t.sol:InvariantReplayKeepsInvariantAssertion
+[FAIL: wrong counter assert]
+	[Sequence] (original: 2, shrunk: 2)
+...
+ invariant_with_assert() ([..])
+...
+"#]]);
+});
+
+forgetest_init!(invariant_replay_keeps_assertion_failure_from_after_invariant, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(119u32));
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+    });
+
+    prj.add_test(
+        "InvariantReplayKeepsAfterInvariantAssertion.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract AfterInvariantAssertHandler {
+    uint256 public count;
+
+    function inc() external {
+        count += 1;
+    }
+}
+
+contract InvariantReplayKeepsAfterInvariantAssertion is Test {
+    AfterInvariantAssertHandler handler;
+
+    function setUp() public {
+        handler = new AfterInvariantAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function afterInvariant() public view {
+        assertTrue(handler.count() < 2, "afterInvariant assertion");
+    }
+
+    function invariant_success() public view {
+        require(handler.count() < 10, "invariant should not fail");
+    }
+}
+"#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantReplayKeepsAfterInvariantAssertion
+[FAIL: afterInvariant assertion]
+	[SEQUENCE]
+ invariant_success() ([RUNS])
+...
+"#]]);
+
+    assert_invariant(&mut cmd).failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantReplayKeepsAfterInvariantAssertion
+[FAIL: afterInvariant assertion]
+	[SEQUENCE]
+ invariant_success() ([RUNS])
+...
+"#]]);
+});
+
 forgetest_init!(invariant_test1, |prj, cmd| {
+    // Disable `assert_all` so each invariant in the suite reports independently without secondary
+    // failures being attached to the other (the two invariants here share the same condition).
     prj.update_config(|config| {
         config.invariant.depth = 10;
+        config.invariant.assert_all = false;
     });
 
     prj.add_test(
@@ -1621,11 +2156,14 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_warp_and_roll, |prj, cmd| {
+    // Disable `assert_all` so `--mt invariant_warp` only exercises invariant_warp, isolating the
+    // warp/roll behavior under test from invariant_roll fan-out.
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
         config.invariant.max_time_delay = Some(604800);
         config.invariant.max_block_delay = Some(60480);
         config.invariant.shrink_run_limit = 0;
+        config.invariant.assert_all = false;
     });
 
     prj.add_test(
@@ -1653,46 +2191,39 @@ contract InvariantWarpAndRoll {
     }
 
     function invariant_warp() public view {
-        require(block.number < 200000, "max block");
+        require(block.timestamp < 500000, "max timestamp");
     }
 
     /// forge-config: default.invariant.show_solidity = true
     function invariant_roll() public view {
-        require(block.timestamp < 500000, "max timestamp");
+        require(block.number < 200000, "max block");
     }
 }
 "#,
     );
 
     cmd.args(["test", "--mt", "invariant_warp"]).assert_failure().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
-[FAIL: max block]
-	[Sequence] (original: 6, shrunk: 6)
-		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=6280 roll=21461 calldata=setNumber(uint256) args=[200000 [2e5]]
+...
+[FAIL: max timestamp]
+	[Sequence] (original: 5, shrunk: 5)
+		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=6280 roll=21461 calldata=setNumber(uint256) args=[500000 [5e5]]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=92060 roll=51816 calldata=setNumber(uint256) args=[0]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=198040 roll=60259 calldata=increment() args=[]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=20609 roll=27086 calldata=setNumber(uint256) args=[26717227324157985679793128079000084308648530834088529513797156275625002 [2.671e70]]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=409368 roll=24864 calldata=increment() args=[]
-		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=218105 roll=17834 calldata=setNumber(uint256) args=[24752675372815722001736610830 [2.475e28]]
  invariant_warp() (runs: 0, calls: 0, reverts: 0)
 ...
 
 "#]]);
 
     cmd.forge_fuse().args(["test", "--mt", "invariant_roll"]).assert_failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
-
-Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
-[FAIL: max timestamp]
-	[Sequence] (original: 5, shrunk: 5)
+...
+[FAIL: max block]
+	[Sequence] (original: 6, shrunk: 6)
 		vm.warp(block.timestamp + 6280);
 		vm.roll(block.number + 21461);
 		vm.prank([..]);
-		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(200000);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(500000);
 		vm.warp(block.timestamp + 92060);
 		vm.roll(block.number + 51816);
 		vm.prank([..]);
@@ -1709,6 +2240,10 @@ Ran 1 test for test/InvariantWarpAndRoll.t.sol:InvariantWarpAndRoll
 		vm.roll(block.number + 24864);
 		vm.prank([..]);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+		vm.warp(block.timestamp + 218105);
+		vm.roll(block.number + 17834);
+		vm.prank([..]);
+		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(24752675372815722001736610830);
  invariant_roll() (runs: 0, calls: 0, reverts: 0)
 ...
 
@@ -2068,4 +2603,90 @@ contract InvariantOptimizeWarpTest is Test {
  invariant_optimize_max_value() (best: 324962, runs: 10, calls: 150)
 ...
 "#]]);
+});
+
+// Regression test for delay-aware shrinking in check mode.
+// Removed calls may still contribute warp/roll, so the final shrunk sequence must preserve those
+// values in the remaining call.
+forgetest_init!(invariant_shrink_preserves_warp_roll, |prj, cmd| {
+    prj.add_test(
+        "InvariantRollWarpShrink.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Roll {
+    uint256 public number;
+
+    function increment() public {
+        require(block.number > 50000, "wrong block");
+        number++;
+    }
+}
+
+contract Warp {
+    uint256 public number;
+
+    function increment() public {
+        require(block.timestamp > 500000, "wrong timestamp");
+        number++;
+    }
+}
+
+contract InvariantRoll is Test {
+    Roll public roll;
+
+    function setUp() public {
+        roll = new Roll();
+    }
+
+    /// forge-config: default.fuzz.seed = "119"
+    /// forge-config: default.invariant.max_block_delay = 60480
+    /// forge-config: default.invariant.show_solidity = true
+    function invariant_roll() public view {
+        require(roll.number() == 0, "number is not zero");
+    }
+}
+
+contract InvariantWarp is Test {
+    Warp public warp;
+
+    function setUp() public {
+        warp = new Warp();
+    }
+
+    /// forge-config: default.fuzz.seed = "119"
+    /// forge-config: default.invariant.max_time_delay = 604800
+    /// forge-config: default.invariant.show_solidity = true
+    function invariant_warp() public view {
+        require(warp.number() == 0, "max time");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_roll"]).assert_failure().stdout_eq(str![[r#"
+...
+[FAIL: number is not zero]
+	[Sequence] (original: 3, shrunk: 1)
+		vm.roll(block.number + 52068);
+		vm.prank([..]);
+		Roll(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+ invariant_roll() (runs: 0, calls: 0, reverts: 2)
+...
+
+"#]]);
+
+    cmd.forge_fuse().args(["test", "--mt", "invariant_warp"]).assert_failure().stdout_eq(str![[
+        r#"
+...
+[FAIL: max time]
+	[Sequence] (original: 3, shrunk: 1)
+		vm.warp(block.timestamp + 656868);
+		vm.prank(0x00000000000000000000000000000000000012d1);
+		Warp(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
+ invariant_warp() (runs: 0, calls: 0, reverts: 2)
+...
+
+"#
+    ]]);
 });

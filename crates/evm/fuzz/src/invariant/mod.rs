@@ -198,7 +198,7 @@ pub struct TargetedContract {
 
 impl TargetedContract {
     /// Returns a new `TargetedContract` instance.
-    pub fn new(identifier: String, abi: JsonAbi) -> Self {
+    pub const fn new(identifier: String, abi: JsonAbi) -> Self {
         Self {
             identifier,
             abi,
@@ -264,8 +264,16 @@ impl TargetedContract {
 pub struct InvariantContract<'a> {
     /// Address of the test contract.
     pub address: Address,
-    /// Invariant function present in the test contract.
-    pub invariant_function: &'a Function,
+    /// Name of the test contract.
+    pub name: &'a str,
+    /// Invariant functions to assert against, paired with their `fail_on_revert` config.
+    /// Stored in **source declaration order** so failure-event attribution and report
+    /// rendering match user expectations.
+    pub invariant_fns: Vec<(&'a Function, bool)>,
+    /// Index into [`Self::invariant_fns`] of the campaign anchor — the function chosen by
+    /// the `--mt` filter (or the only one). Used for corpus and persistence file paths and
+    /// for the legacy single-invariant `TestResult.{reason, counterexample}` fields.
+    pub anchor_idx: usize,
     /// If true, `afterInvariant` function is called after each invariant run.
     pub call_after_invariant: bool,
     /// ABI of the test contract.
@@ -274,18 +282,28 @@ pub struct InvariantContract<'a> {
 
 impl<'a> InvariantContract<'a> {
     /// Creates a new invariant contract.
-    pub fn new(
+    ///
+    /// Caller must ensure `invariant_fns` is non-empty and `anchor_idx < invariant_fns.len()`.
+    pub const fn new(
         address: Address,
-        invariant_function: &'a Function,
+        name: &'a str,
+        invariant_fns: Vec<(&'a Function, bool)>,
+        anchor_idx: usize,
         call_after_invariant: bool,
         abi: &'a JsonAbi,
     ) -> Self {
-        Self { address, invariant_function, call_after_invariant, abi }
+        Self { address, name, invariant_fns, anchor_idx, call_after_invariant, abi }
+    }
+
+    /// Returns the campaign anchor — the invariant matched by `--mt` (or the only one).
+    /// Used for corpus and persistence file paths and for legacy primary `TestResult` fields.
+    pub fn anchor(&self) -> &'a Function {
+        self.invariant_fns[self.anchor_idx].0
     }
 
     /// Returns true if this is an optimization mode invariant (returns int256).
     pub fn is_optimization(&self) -> bool {
-        is_optimization_invariant(self.invariant_function)
+        is_optimization_invariant(self.anchor())
     }
 }
 
@@ -405,7 +423,7 @@ impl fmt::Display for InvariantSettings {
             self.target_selectors.values().map(|v| v.len()).sum::<usize>(),
             self.target_senders.len(),
             self.excluded_senders.len(),
-            self.fail_on_revert
+            self.fail_on_revert,
         )
     }
 }

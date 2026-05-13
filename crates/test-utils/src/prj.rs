@@ -79,13 +79,13 @@ impl RemoteProject {
     }
 
     /// Whether to run `forge build`
-    pub fn set_build(mut self, run_build: bool) -> Self {
+    pub const fn set_build(mut self, run_build: bool) -> Self {
         self.run_build = run_build;
         self
     }
 
     /// Configures the project's pathstyle
-    pub fn path_style(mut self, path_style: PathStyle) -> Self {
+    pub const fn path_style(mut self, path_style: PathStyle) -> Self {
         self.path_style = path_style;
         self
     }
@@ -545,7 +545,7 @@ pub struct TestCommand {
 
 impl TestCommand {
     /// Returns a mutable reference to the underlying command.
-    pub fn cmd(&mut self) -> &mut Command {
+    pub const fn cmd(&mut self) -> &mut Command {
         &mut self.cmd
     }
 
@@ -768,7 +768,7 @@ impl TestCommand {
     }
 
     /// Does not apply [`snapbox`] redactions to the command output.
-    pub fn with_no_redact(&mut self) -> &mut Self {
+    pub const fn with_no_redact(&mut self) -> &mut Self {
         self.redact_output = false;
         self
     }

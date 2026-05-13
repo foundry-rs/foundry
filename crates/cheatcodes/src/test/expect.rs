@@ -155,7 +155,7 @@ impl From<revm::context_interface::CreateScheme> for CreateScheme {
 }
 
 impl CreateScheme {
-    pub fn eq(&self, create_scheme: Self) -> bool {
+    pub const fn eq(&self, create_scheme: Self) -> bool {
         matches!(
             (self, create_scheme),
             (Self::Create, Self::Create) | (Self::Create2, Self::Create2 { .. })
