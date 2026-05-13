@@ -3893,9 +3893,13 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
-        // load the blocks and transactions into the storage
-        self.blockchain.storage.write().load_blocks(state.blocks.clone());
-        self.blockchain.storage.write().load_transactions(state.transactions.clone());
+        // load the blocks and transactions into the storage atomically so concurrent readers
+        // never observe blocks without their transactions
+        {
+            let mut storage = self.blockchain.storage.write();
+            storage.load_blocks(state.blocks.clone());
+            storage.load_transactions(state.transactions.clone());
+        }
         // reset the block env
         if let Some(block) = state.block.clone() {
             self.evm_env.write().block_env = block.clone();
@@ -3912,14 +3916,16 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 // Ref: https://github.com/foundry-rs/foundry/issues/9539
                 if best_number > number {
                     self.blockchain.storage.write().best_number = best_number;
-                    let best_hash =
-                        self.blockchain.storage.read().hash(best_number.into()).ok_or_else(
-                            || {
-                                BlockchainError::RpcError(RpcError::internal_error_with(format!(
-                                    "Best hash not found for best number {best_number}",
-                                )))
-                            },
-                        )?;
+                    let best_hash = self
+                        .blockchain
+                        .storage
+                        .read()
+                        .hash(best_number.into(), self.slots_in_an_epoch)
+                        .ok_or_else(|| {
+                            BlockchainError::RpcError(RpcError::internal_error_with(format!(
+                                "Best hash not found for best number {best_number}",
+                            )))
+                        })?;
                     self.blockchain.storage.write().best_hash = best_hash;
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
@@ -3931,8 +3937,12 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 self.blockchain.storage.write().best_number = best_number;
 
                 // Set the current best block hash;
-                let best_hash =
-                    self.blockchain.storage.read().hash(best_number.into()).ok_or_else(|| {
+                let best_hash = self
+                    .blockchain
+                    .storage
+                    .read()
+                    .hash(best_number.into(), self.slots_in_an_epoch)
+                    .ok_or_else(|| {
                         BlockchainError::RpcError(RpcError::internal_error_with(format!(
                             "Best hash not found for best number {best_number}",
                         )))

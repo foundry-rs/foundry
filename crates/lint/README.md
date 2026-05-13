@@ -38,11 +38,14 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `interface-file-naming`: Interface file names should be prefixed with `I`.
   - `interface-naming`: Interface names should be prefixed with `I`.
   - `pragma-inconsistent`: Flags projects whose source files declare different Solidity pragma version requirements.
+  - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
+  - `low-level-calls`: Direct use of low-level calls should be avoided.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
   - `custom-errors`: Recommends using custom errors instead of strings and plain reverts for potential gas savings.
   - `unused-state-variables`: State variables that are never used should be removed.
+  - `var-read-using-this`: Reads of state variables (or other `view`/`pure` functions) via `this` cause an unnecessary `STATICCALL`; access them directly.
 - **Code Size:**
   - `unwrapped-modifier-logic`: Recommends wrapping modifier logic to reduce contract code size.
 

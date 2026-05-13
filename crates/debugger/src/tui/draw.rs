@@ -13,15 +13,10 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use revm_inspectors::tracing::types::CallKind;
-use std::{collections::VecDeque, fmt::Write, io};
+use std::{collections::VecDeque, fmt::Write};
 
 impl TUIContext<'_> {
-    /// Draws the TUI layout and subcomponents to the given terminal.
-    pub(crate) fn draw(&self, terminal: &mut super::DebuggerTerminal) -> io::Result<()> {
-        terminal.draw(|f| self.draw_layout(f)).map(drop)
-    }
-
-    fn draw_layout(&self, f: &mut Frame<'_>) {
+    pub(crate) fn draw_layout(&self, f: &mut Frame<'_>) {
         // We need 100 columns to display a 32 byte word in the memory and stack panes.
         let area = f.area();
         let min_width = 100;

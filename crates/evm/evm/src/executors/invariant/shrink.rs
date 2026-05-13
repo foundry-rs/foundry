@@ -5,6 +5,7 @@ use crate::executors::{
         result::did_fail_on_assert,
     },
 };
+use alloy_json_abi::Function;
 use alloy_primitives::{Address, Bytes, I256, U256};
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
@@ -44,11 +45,30 @@ impl CallSequenceShrinker {
 }
 
 /// Resets the progress bar for shrinking.
-fn reset_shrink_progress(config: &InvariantConfig, progress: Option<&ProgressBar>) {
+///
+/// Callers (e.g. `replay_error`) are responsible for invoking this before each shrink so the
+/// bar's length and message reflect the invariant currently being shrunk. Multi-invariant
+/// campaigns can call this once per invariant to display per-target progress.
+///
+/// `position` is `Some((current, total))` when more than one invariant needs shrinking in the
+/// same campaign; the bar then reads `[i/N] Shrink: <label>` so users can see how many
+/// shrinkers are left in the queue.
+pub(crate) fn reset_shrink_progress(
+    config: &InvariantConfig,
+    progress: Option<&ProgressBar>,
+    label: &str,
+    position: Option<(usize, usize)>,
+) {
     if let Some(progress) = progress {
         progress.set_length(config.shrink_run_limit as u64);
         progress.reset();
-        progress.set_message(" Shrink");
+        let message = match position {
+            Some((current, total)) if total > 1 => {
+                format!(" [{current}/{total}] Shrink: {label}")
+            }
+            _ => format!(" Shrink: {label}"),
+        };
+        progress.set_message(message);
     }
 }
 
@@ -121,9 +141,11 @@ fn build_shrunk_sequence(
     result
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     config: &InvariantConfig,
     invariant_contract: &InvariantContract<'_>,
+    target_invariant: &Function,
     calls: &[BasicTxDetails],
     expect_assertion_failure: bool,
     executor: &Executor<FEN>,
@@ -132,10 +154,8 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     trace!(target: "forge::test", "Shrinking sequence of {} calls.", calls.len());
 
-    reset_shrink_progress(config, progress);
-
     let target_address = invariant_contract.address;
-    let calldata: Bytes = invariant_contract.invariant_function.selector().to_vec().into();
+    let calldata: Bytes = target_invariant.selector().to_vec().into();
     // Special case test: the invariant is *unsatisfiable* - it took 0 calls to
     // break the invariant -- consider emitting a warning.
     let (_, success) = call_invariant_function(executor, target_address, calldata.clone())?;
@@ -374,9 +394,11 @@ fn assertion_failure_reason<FEN: FoundryEvmNetwork>(
 /// Unlike `shrink_sequence` (for check mode), this function:
 /// - Accumulates warp/roll values from removed calls into the next kept call
 /// - Checks for target value equality rather than invariant failure
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     config: &InvariantConfig,
     invariant_contract: &InvariantContract<'_>,
+    target_invariant: &Function,
     calls: &[BasicTxDetails],
     executor: &Executor<FEN>,
     target_value: I256,
@@ -385,10 +407,8 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
 ) -> eyre::Result<Vec<BasicTxDetails>> {
     trace!(target: "forge::test", "Shrinking optimization sequence of {} calls for target value {}.", calls.len(), target_value);
 
-    reset_shrink_progress(config, progress);
-
     let target_address = invariant_contract.address;
-    let calldata: Bytes = invariant_contract.invariant_function.selector().to_vec().into();
+    let calldata: Bytes = target_invariant.selector().to_vec().into();
 
     // Special case: check if target value is achieved with 0 calls.
     if check_sequence_value(executor.clone(), calls, vec![], target_address, calldata.clone())?
