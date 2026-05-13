@@ -673,13 +673,24 @@ impl ActivityItem {
     }
 
     fn display_lines(&self, selected: bool) -> Vec<Line<'static>> {
+        let total = self.lines.len();
         self.lines
             .iter()
-            .map(|line| {
+            .enumerate()
+            .map(|(idx, line)| {
                 let marker = if selected {
+                    let glyph = if total == 1 {
+                        "│ "
+                    } else if idx == 0 {
+                        "╭ "
+                    } else if idx + 1 == total {
+                        "╰ "
+                    } else {
+                        "│ "
+                    };
                     Span::styled(
-                        "| ",
-                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                        glyph,
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
                     )
                 } else {
                     Span::raw("  ")
