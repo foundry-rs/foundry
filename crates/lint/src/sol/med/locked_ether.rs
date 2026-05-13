@@ -159,10 +159,10 @@ fn expr_sends_ether(expr: &hir::Expr<'_>) -> bool {
                 return true;
             }
         }
-        ExprKind::Ident(reses) => {
-            if reses.iter().any(|r| matches!(r, Res::Builtin(Builtin::Selfdestruct))) {
-                return true;
-            }
+        ExprKind::Ident(reses)
+            if reses.iter().any(|r| matches!(r, Res::Builtin(Builtin::Selfdestruct))) =>
+        {
+            return true;
         }
         _ => {}
     }
