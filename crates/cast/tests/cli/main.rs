@@ -3148,7 +3148,6 @@ casttest!(flaky_test_non_mainnet_traces, |prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [33841] FiatTokenProxy::fallback(0x111111125421cA6dc452d289314280a0f8842A65, 164054805 [1.64e8])
     ├─ [26673] FiatTokenV2_2::approve(0x111111125421cA6dc452d289314280a0f8842A65, 164054805 [1.64e8]) [delegatecall]
@@ -3156,6 +3155,10 @@ Traces:
     │   └─ ← [Return] true
     └─ ← [Return] true
 ...
+
+"#]])
+    .stderr_eq(str![[r#"
+Executing previous transactions from the block.
 
 "#]]);
 });
@@ -3241,9 +3244,12 @@ contract LocalProjectScript is Script {
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
+Nothing to compile
+
+"#]])
+        .stderr_eq(str![[r#"
 Executing previous transactions from the block.
 Compiling project to generate artifacts
-Nothing to compile
 
 "#]]);
 
@@ -3255,7 +3261,6 @@ Nothing to compile
         .args(["run", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] → new <unknown>@0x5FbDB2315678afecb367f032d93F642f64180aa3
     ├─  emit topic 0: 0xa7263295d3a687d750d1fd377b5df47de69d7db8decc745aaa4bbee44dc1688d
@@ -3266,6 +3271,10 @@ Traces:
 Transaction successfully executed.
 [GAS]
 
+"#]])
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+
 "#]]);
 
     // Assert cast with local artifacts can decode traces.
@@ -3273,8 +3282,6 @@ Transaction successfully executed.
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
-Compiling project to generate artifacts
 No files changed, compilation skipped
 Traces:
   [..] → new LocalProjectContract@0x5FbDB2315678afecb367f032d93F642f64180aa3
@@ -3284,6 +3291,11 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
+Compiling project to generate artifacts
 
 "#]]);
 });
@@ -3338,7 +3350,6 @@ forgetest_async!(show_state_changes_in_traces, |prj, cmd| {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
@@ -3348,6 +3359,10 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
 
 "#]]);
 });
@@ -4036,7 +4051,11 @@ casttest!(flaky_estimate_base_da, |_prj, cmd| {
     cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
         .assert_success()
         .stdout_eq(str![[r#"
-Estimated data availability size for block 30558838 with 225 transactions: 52916546100
+52916546100
+
+"#]])
+        .stderr_eq(str![[r#"
+Estimated data availability size for block 30558838 with 225 transactions:
 
 "#]]);
 });
@@ -4892,7 +4911,6 @@ forgetest_async!(cast_send_with_data, |prj, cmd| {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-Executing previous transactions from the block.
 Traces:
   [..] 0x5FbDB2315678afecb367f032d93F642f64180aa3::setNumber(111)
     ├─  storage changes:
@@ -4902,6 +4920,10 @@ Traces:
 
 Transaction successfully executed.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Executing previous transactions from the block.
 
 "#]]);
 });
@@ -5212,12 +5234,15 @@ casttest!(vaddr_create_plain_output, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
+  tag=0x000000000000  [..]
+
+"#]])
+    .stderr_eq(str![[r#"
 Salt:              0x0000000000000000000000000000000000000000000000003ee0a78d00000000
 Registration hash: 0x000000002f51c0c4f66f3910f799c6b98e2123ef43a401a062eb8ee07498c396
 Master ID:         0x2f51c0c4
 
 Virtual addresses:
-  tag=0x000000000000  [..]
 
 "#]]);
 });

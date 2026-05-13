@@ -72,12 +72,12 @@ pub(super) async fn run(
         }
 
         if !shell::is_json() {
-            sh_println!("Mining TIP-1022 salt for {owner} with {n_threads} threads...")?;
+            sh_status!("Mining TIP-1022 salt for {owner} with {n_threads} threads...")?;
         }
         let timer = Instant::now();
         let output = mine::mine(owner, start_salt, n_threads, POW_BYTES)?;
         if !shell::is_json() {
-            sh_println!("Found salt in {:?}", timer.elapsed())?;
+            sh_status!("Found salt in {:?}", timer.elapsed())?;
         }
         output
     };
@@ -109,7 +109,7 @@ pub(super) async fn run(
             }))?
         )?;
     } else {
-        sh_println!(
+        sh_status!(
             "Salt:              {}
 Registration hash: {}
 Master ID:         {}",
@@ -117,7 +117,7 @@ Master ID:         {}",
             output.registration_hash,
             output.master_id,
         )?;
-        sh_println!("\nVirtual addresses:")?;
+        sh_status!("\nVirtual addresses:")?;
         for (tag, vaddr) in &virtual_addresses {
             sh_println!("  tag={tag}  {vaddr}")?;
         }
@@ -161,7 +161,7 @@ async fn register(
     tempo::print_expires(expires_at)?;
     tx_opts.apply::<TempoNetwork>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
 
-    sh_println!("Submitting registerVirtualMaster({salt})...")?;
+    sh_status!("Submitting registerVirtualMaster({salt})...")?;
 
     if let Some(ref access_key) = tempo_access_key {
         cast_send_with_access_key(

@@ -27,7 +27,7 @@ pub(crate) async fn handle_traces(
     trace_depth: Option<usize>,
 ) -> eyre::Result<()> {
     let (known_contracts, mut sources) = if with_local_artifacts {
-        let _ = sh_println!("Compiling project to generate artifacts");
+        let _ = sh_status!("Compiling project to generate artifacts");
         let project = config.project()?;
         let compiler = ProjectCompiler::new();
         let output = compiler.compile(&project)?;

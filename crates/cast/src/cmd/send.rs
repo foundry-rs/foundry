@@ -179,7 +179,7 @@ impl SendTxArgs {
                 sh_warn!("{}", iso4217_warning_message(currency))?;
                 let response: String = foundry_common::prompt!("\nContinue anyway? [y/N] ")?;
                 if !matches!(response.trim(), "y" | "Y") {
-                    sh_println!("Aborted.")?;
+                    sh_status!("Aborted.")?;
                     return Ok(());
                 }
             }
@@ -230,7 +230,7 @@ impl SendTxArgs {
         }
 
         if let Some(ts) = expires_at {
-            sh_println!("Transaction expires at unix timestamp {ts}")?;
+            sh_status!("Transaction expires at unix timestamp {ts}")?;
         }
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);

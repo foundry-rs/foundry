@@ -6,7 +6,7 @@ pub use foundry_common::tempo::{TempoSponsor, TempoSponsorPreview, resolve_tempo
 
 pub(crate) fn print_expires(expires_at: Option<u64>) -> Result<()> {
     if let Some(ts) = expires_at {
-        sh_println!("Transaction expires at unix timestamp {ts}")?;
+        sh_status!("Transaction expires at unix timestamp {ts}")?;
     }
     Ok(())
 }

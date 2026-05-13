@@ -18,7 +18,7 @@ pub(super) async fn run(addr: Address, rpc: RpcOpts) -> Result<()> {
     let (decoded, master) = tokio::try_join!(decode_builder.call(), resolve_builder.call())?;
 
     if !decoded.isVirtual {
-        sh_println!("{addr} is not a virtual address")?;
+        sh_status!("{addr} is not a virtual address")?;
         return Ok(());
     }
 
@@ -38,13 +38,13 @@ pub(super) async fn run(addr: Address, rpc: RpcOpts) -> Result<()> {
             }))?
         )?;
     } else {
-        sh_println!("Virtual address: {addr}")?;
-        sh_println!("Master ID:       0x{}", hex::encode(master_id))?;
-        sh_println!("User tag:        0x{}", hex::encode(user_tag))?;
+        sh_status!("Virtual address: {addr}")?;
+        sh_status!("Master ID:       0x{}", hex::encode(master_id))?;
+        sh_status!("User tag:        0x{}", hex::encode(user_tag))?;
         if master.is_zero() {
-            sh_println!("Master address:  (unregistered)")?;
+            sh_status!("Master address:  (unregistered)")?;
         } else {
-            sh_println!("Master address:  {master}")?;
+            sh_println!("{master}")?;
         }
     }
 

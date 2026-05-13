@@ -521,12 +521,9 @@ impl CreateArgs {
             } else {
                 sh_warn!("Dry run enabled, not broadcasting transaction\n")?;
 
-                sh_println!("Contract: {}", self.contract.name)?;
-                sh_println!(
-                    "Transaction: {}",
-                    serde_json::to_string_pretty(&deployer.tx.clone())?
-                )?;
-                sh_println!("ABI: {}\n", serde_json::to_string_pretty(&abi)?)?;
+                sh_status!("Contract: {}", self.contract.name)?;
+                sh_status!("Transaction: {}", serde_json::to_string_pretty(&deployer.tx.clone())?)?;
+                sh_status!("ABI: {}\n", serde_json::to_string_pretty(&abi)?)?;
 
                 sh_warn!(
                     "To broadcast this transaction, add --broadcast to the previous command. See forge create --help for more."
@@ -606,16 +603,16 @@ impl CreateArgs {
             });
             sh_println!("{}", serde_json::to_string_pretty(&output)?)?;
         } else {
-            sh_println!("Deployer: {deployer_address}")?;
-            sh_println!("Deployed to: {address}")?;
-            sh_println!("Transaction hash: {tx_hash:?}")?;
+            sh_status!("Deployer: {deployer_address}")?;
+            sh_status!("Transaction hash: {tx_hash:?}")?;
+            sh_println!("{address}")?;
         };
 
         if !self.verify {
             return Ok(());
         }
 
-        sh_println!("Starting contract verification...")?;
+        sh_status!("Starting contract verification...")?;
 
         let num_of_optimizations = if let Some(optimizer) = self.build.compiler.optimize {
             optimizer.then(|| self.build.compiler.optimizer_runs.unwrap_or(200))
@@ -650,7 +647,7 @@ impl CreateArgs {
             language: None,
             creation_transaction_hash: Some(tx_hash),
         };
-        sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
+        sh_status!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
         verify.run().await
     }
 
