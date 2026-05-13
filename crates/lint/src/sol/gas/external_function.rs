@@ -8,7 +8,12 @@ use solar::{
     interface::{Symbol, data_structures::Never},
     sema::hir::{self, ContractId, ExprKind, FunctionId, ItemId, Res, VariableId, Visit as _},
 };
-use std::{cell::RefCell, collections::HashSet, ops::ControlFlow, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+    rc::Rc,
+};
 
 declare_forge_lint!(
     EXTERNAL_FUNCTION,
@@ -22,9 +27,9 @@ struct ProjectIndex {
     /// `FunctionId`s referenced via an `Ident` resolution anywhere in the project. Covers
     /// direct internal calls (`foo()`) and function-pointer references (`fn = foo;`).
     referenced: HashSet<FunctionId>,
-    /// Names on the right-hand side of `super.<name>`. HIR's `Member` node carries no
-    /// resolved `FunctionId` for `super.foo`, so we conservatively match by name.
-    super_called: HashSet<Symbol>,
+    /// `super.<name>` callsites keyed by the contract that contains them, so name matches
+    /// can be scoped to the caller's inheritance chain.
+    super_called: HashMap<Symbol, HashSet<ContractId>>,
 }
 
 thread_local! {
@@ -106,9 +111,9 @@ impl<'hir> LateLintPass<'hir> for ExternalFunction {
 
             let Some(name) = func.name else { continue };
 
-            // Any same-name/arity reference in this contract or a derivative — or any
-            // `super.<name>` anywhere — counts as an internal call to the base's slot.
-            if index.super_called.contains(&name.name) {
+            // Any same-name/arity reference in this contract or a derivative — or a
+            // `super.<name>` from a derivative — counts as an internal call.
+            if super_called_from_derivative(hir, contract_id, &name.name, &index.super_called) {
                 continue;
             }
             if any_override_referenced(hir, contract_id, func, &index.referenced) {
@@ -121,14 +126,16 @@ impl<'hir> LateLintPass<'hir> for ExternalFunction {
 }
 
 fn build_project_index<'hir>(hir: &'hir hir::Hir<'hir>) -> ProjectIndex {
-    let mut builder = IndexBuilder { hir, idx: ProjectIndex::default() };
+    let mut builder = IndexBuilder { hir, idx: ProjectIndex::default(), current_contract: None };
     for func in hir.functions() {
+        builder.current_contract = func.contract;
         let _ = builder.visit_function(func);
     }
     // State-variable initializers run in the synthesized constructor; their references count
     // as "called". Function-local var initializers are already covered by `visit_function`.
     for var in hir.variables() {
         if var.is_state_variable() {
+            builder.current_contract = var.contract;
             let _ = builder.visit_var(var);
         }
     }
@@ -141,6 +148,8 @@ fn build_project_index<'hir>(hir: &'hir hir::Hir<'hir>) -> ProjectIndex {
 struct IndexBuilder<'hir> {
     hir: &'hir hir::Hir<'hir>,
     idx: ProjectIndex,
+    /// Contract being walked; used to attribute `super.<name>` calls to the caller.
+    current_contract: Option<ContractId>,
 }
 
 impl<'hir> hir::Visit<'hir> for IndexBuilder<'hir> {
@@ -160,16 +169,32 @@ impl<'hir> hir::Visit<'hir> for IndexBuilder<'hir> {
                 }
             }
             ExprKind::Member(base, member) => {
-                if let ExprKind::Ident(reses) = &base.peel_parens().kind
+                if let Some(cid) = self.current_contract
+                    && let ExprKind::Ident(reses) = &base.peel_parens().kind
                     && reses.iter().any(|r| matches!(r, Res::Builtin(b) if b.name() == solar::interface::sym::super_))
                 {
-                    self.idx.super_called.insert(member.name);
+                    self.idx.super_called.entry(member.name).or_default().insert(cid);
                 }
             }
             _ => {}
         }
         self.walk_expr(expr)
     }
+}
+
+/// Returns `true` if any strict descendant of `base_contract_id` contains a `super.<name>`
+/// call (the only callsites that can resolve into `base_contract_id`).
+fn super_called_from_derivative(
+    hir: &hir::Hir<'_>,
+    base_contract_id: ContractId,
+    name: &Symbol,
+    super_called: &HashMap<Symbol, HashSet<ContractId>>,
+) -> bool {
+    let Some(callers) = super_called.get(name) else { return false };
+    callers.iter().any(|&caller_cid| {
+        caller_cid != base_contract_id
+            && hir.contract(caller_cid).linearized_bases.contains(&base_contract_id)
+    })
 }
 
 /// Returns `true` if any function in `contract_id` or a derivative shares `base`'s name and

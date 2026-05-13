@@ -155,3 +155,23 @@ contract Derived is Base {
 interface IIface {
     function ifaceFn(bytes calldata data) external;
 }
+
+// `super.<name>` is scoped to the caller's inheritance chain, so a same-named function in
+// an unrelated contract is still flagged.
+abstract contract UnrelatedBase {
+    function isolatedSuperTarget(bytes memory data) public virtual {}
+}
+
+contract UnrelatedDerived is UnrelatedBase {
+    function callsSuper(bytes memory data) external {
+        super.isolatedSuperTarget(data);
+    }
+}
+
+contract UnrelatedSameName {
+    bytes public buf;
+
+    function isolatedSuperTarget(bytes memory data) public { //~NOTE: public function can be declared external
+        buf = data;
+    }
+}
