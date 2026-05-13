@@ -99,3 +99,32 @@ contract Child is AbstractBase {
         return 2;
     }
 }
+
+abstract contract ArrayOverrideBase {
+    function fixedArrayHook(uint256[2] memory values) internal virtual returns (uint256) {
+        return values[0];
+    }
+}
+
+contract ArrayOverrideChild is ArrayOverrideBase {
+    function callFixedArrayHook() external pure returns (uint256) {
+        uint256[2] memory values;
+        return fixedArrayHook(values);
+    }
+
+    function fixedArrayHook(uint256[2] memory values) internal pure override returns (uint256) {
+        return values[1];
+    }
+}
+
+contract StaticBase {
+    function usedViaStaticBase() internal pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract StaticChild is StaticBase {
+    function callStaticBase() external pure returns (uint256) {
+        return StaticBase.usedViaStaticBase();
+    }
+}

@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{ContractKind, FunctionKind, Visibility},
+    ast::{ContractKind, FunctionKind, LitKind, Visibility},
     interface::{Symbol, data_structures::Never, sym},
     sema::hir::{
         CallArgs, ContractId, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Modifier, Res,
@@ -65,6 +65,8 @@ struct DeadCodeAnalysis {
     overridden: HashSet<FunctionId>,
 }
 
+const ANALYSIS_CACHE_LIMIT: usize = 16;
+
 static ANALYSIS_CACHE: LazyLock<Mutex<HashMap<AnalysisCacheKey, Arc<DeadCodeAnalysis>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -77,8 +79,11 @@ fn dead_code_analysis(hir: &Hir<'_>) -> Arc<DeadCodeAnalysis> {
         variables: hir.variable_ids().len(),
     };
 
-    if let Some(analysis) = ANALYSIS_CACHE.lock().unwrap().get(&key).cloned() {
-        return analysis;
+    {
+        let cache = ANALYSIS_CACHE.lock().unwrap();
+        if let Some(analysis) = cache.get(&key).cloned() {
+            return analysis;
+        }
     }
 
     let analysis = Arc::new(DeadCodeAnalysis {
@@ -86,7 +91,14 @@ fn dead_code_analysis(hir: &Hir<'_>) -> Arc<DeadCodeAnalysis> {
         overridden: collect_overridden_functions(hir),
     });
 
-    ANALYSIS_CACHE.lock().unwrap().entry(key).or_insert_with(|| analysis).clone()
+    let mut cache = ANALYSIS_CACHE.lock().unwrap();
+    // `check_nested_source` is called once per source and constructs fresh pass instances each time,
+    // so cache per-HIR analysis across those calls. Keep it bounded for long-running test processes
+    // that lint many independent HIRs in one process.
+    if cache.len() >= ANALYSIS_CACHE_LIMIT {
+        cache.clear();
+    }
+    cache.entry(key).or_insert_with(|| analysis).clone()
 }
 
 fn is_dead_code_candidate(hir: &Hir<'_>, function: &Function<'_>, function_id: FunctionId) -> bool {
@@ -201,13 +213,7 @@ fn same_type(hir: &Hir<'_>, lhs: &Type<'_>, rhs: &Type<'_>) -> bool {
         (TypeKind::Elementary(lhs), TypeKind::Elementary(rhs)) => lhs == rhs,
         (TypeKind::Array(lhs), TypeKind::Array(rhs)) => {
             same_type(hir, &lhs.element, &rhs.element)
-                && match (lhs.size, rhs.size) {
-                    (None, None) => true,
-                    (Some(lhs), Some(rhs)) => {
-                        format!("{:?}", lhs.kind) == format!("{:?}", rhs.kind)
-                    }
-                    _ => false,
-                }
+                && same_array_size(lhs.size.map(Expr::peel_parens), rhs.size.map(Expr::peel_parens))
         }
         (TypeKind::Function(lhs), TypeKind::Function(rhs)) => {
             lhs.visibility == rhs.visibility
@@ -220,6 +226,42 @@ fn same_type(hir: &Hir<'_>, lhs: &Type<'_>, rhs: &Type<'_>) -> bool {
         }
         (TypeKind::Custom(lhs), TypeKind::Custom(rhs)) => lhs == rhs,
         (TypeKind::Err(_), TypeKind::Err(_)) => true,
+        _ => false,
+    }
+}
+
+fn same_array_size(lhs: Option<&Expr<'_>>, rhs: Option<&Expr<'_>>) -> bool {
+    match (lhs, rhs) {
+        (None, None) => true,
+        (Some(lhs), Some(rhs)) => same_expr(lhs, rhs),
+        _ => false,
+    }
+}
+
+fn same_expr(lhs: &Expr<'_>, rhs: &Expr<'_>) -> bool {
+    match (&lhs.peel_parens().kind, &rhs.peel_parens().kind) {
+        (ExprKind::Lit(lhs), ExprKind::Lit(rhs)) => same_lit_kind(&lhs.kind, &rhs.kind),
+        (ExprKind::Ident(lhs), ExprKind::Ident(rhs)) => lhs == rhs,
+        (ExprKind::Unary(lhs_op, lhs), ExprKind::Unary(rhs_op, rhs)) => {
+            lhs_op.kind == rhs_op.kind && same_expr(lhs, rhs)
+        }
+        (ExprKind::Binary(lhs_l, lhs_op, lhs_r), ExprKind::Binary(rhs_l, rhs_op, rhs_r)) => {
+            lhs_op.kind == rhs_op.kind && same_expr(lhs_l, rhs_l) && same_expr(lhs_r, rhs_r)
+        }
+        _ => false,
+    }
+}
+
+fn same_lit_kind(lhs: &LitKind<'_>, rhs: &LitKind<'_>) -> bool {
+    match (lhs, rhs) {
+        (LitKind::Str(lhs_kind, lhs_value, _), LitKind::Str(rhs_kind, rhs_value, _)) => {
+            lhs_kind == rhs_kind && lhs_value == rhs_value
+        }
+        (LitKind::Number(lhs), LitKind::Number(rhs)) => lhs == rhs,
+        (LitKind::Rational(lhs), LitKind::Rational(rhs)) => lhs == rhs,
+        (LitKind::Address(lhs), LitKind::Address(rhs)) => lhs == rhs,
+        (LitKind::Bool(lhs), LitKind::Bool(rhs)) => lhs == rhs,
+        (LitKind::Err(_), LitKind::Err(_)) => true,
         _ => false,
     }
 }
@@ -308,6 +350,16 @@ impl<'hir> Reachability<'hir> {
                     _ => None,
                 })
                 .collect(),
+            ExprKind::Type(Type {
+                kind: TypeKind::Custom(ItemId::Contract(contract_id)), ..
+            })
+            | ExprKind::TypeCall(Type {
+                kind: TypeKind::Custom(ItemId::Contract(contract_id)),
+                ..
+            }) => vec![*contract_id],
+            // Casts like `C(addr).foo()` are instance calls, not static base calls. Resolving them
+            // here would only add false edges for public/external calls, which are not dead-code
+            // candidates.
             _ => Vec::new(),
         }
     }
