@@ -46,11 +46,34 @@ pub const COMMAND_LEADER: char = '!';
 /// Chisel character
 pub const CHISEL_CHAR: &str = "⚒️";
 
+/// The kind of a buffered REPL message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplMsgKind {
+    /// Normal informational output (would go to stdout in the plain REPL).
+    Out,
+    /// Error / diagnostic output (would go to stderr in the plain REPL).
+    Err,
+}
+
+/// One buffered message produced while dispatching an input. Drained by the caller after each
+/// dispatch (the plain REPL prints to stdout/stderr; the TUI renders into its output pane).
+#[derive(Debug, Clone)]
+pub struct ReplMessage {
+    /// Whether this is normal output or a diagnostic.
+    pub kind: ReplMsgKind,
+    /// The (possibly multi-line) message text.
+    pub text: String,
+}
+
 /// Chisel input dispatcher
 #[derive(Debug)]
 pub struct ChiselDispatcher {
     pub session: ChiselSession,
     pub helper: SolidityHelper,
+    /// Buffered output messages produced by [`Self::dispatch`]. The caller drains these
+    /// after each dispatch (e.g. the TUI uses them to populate the output pane; the plain
+    /// REPL prints them to stdout/stderr).
+    pub messages: Vec<ReplMessage>,
 }
 
 /// Helper function that formats solidity source with the given [FormatterConfig]
@@ -63,7 +86,22 @@ impl ChiselDispatcher {
     /// Associated public function to create a new Dispatcher instance
     pub fn new(config: SessionSourceConfig) -> eyre::Result<Self> {
         let session = ChiselSession::new(config)?;
-        Ok(Self { session, helper: Default::default() })
+        Ok(Self { session, helper: Default::default(), messages: Vec::new() })
+    }
+
+    /// Drains and returns the buffered output messages produced since the last call.
+    pub fn drain_messages(&mut self) -> Vec<ReplMessage> {
+        std::mem::take(&mut self.messages)
+    }
+
+    /// Push a normal informational message into the output buffer.
+    pub fn push_out(&mut self, text: impl Into<String>) {
+        self.messages.push(ReplMessage { kind: ReplMsgKind::Out, text: text.into() });
+    }
+
+    /// Push an error / diagnostic message into the output buffer.
+    pub fn push_err(&mut self, text: impl Into<String>) {
+        self.messages.push(ReplMessage { kind: ReplMsgKind::Err, text: text.into() });
     }
 
     /// Returns the optional ID of the current session.
@@ -133,8 +171,8 @@ impl ChiselDispatcher {
         let (new_source, do_execute) = source.clone_with_new_line(input.to_string())?;
 
         let (cf, res) = source.inspect(input).await?;
-        if let Some(res) = &res {
-            let _ = sh_println!("{res}");
+        if let Some(res) = res.as_ref() {
+            self.push_out(res.clone());
         }
         if cf.is_break() {
             debug!(%input, ?res, "inspect success");
@@ -178,25 +216,29 @@ impl ChiselDispatcher {
         Ok(decoder)
     }
 
-    /// Display the gathered traces of a REPL execution.
-    pub async fn show_traces(
+    /// Render the gathered traces of a REPL execution as a single string. Returns `None` if
+    /// there are no Setup/Execution traces to render.
+    pub async fn render_traces(
         decoder: &CallTraceDecoder,
         result: &mut ChiselResult,
-    ) -> eyre::Result<()> {
+    ) -> Option<String> {
         if result.traces.is_empty() {
-            return Ok(());
+            return None;
         }
 
-        sh_println!("{}", "Traces:".green())?;
+        let mut out = format!("{}\n", "Traces:".green());
+        let mut any = false;
         for (kind, trace) in &mut result.traces {
             // Display all Setup + Execution traces.
             if matches!(kind, TraceKind::Setup | TraceKind::Execution) {
                 decode_trace_arena(trace, decoder).await;
-                sh_println!("{}", render_trace_arena(trace))?;
+                out.push_str(&render_trace_arena(trace));
+                out.push('\n');
+                any = true;
             }
         }
 
-        Ok(())
+        any.then_some(out)
     }
 
     async fn execute_and_replace(&mut self, mut new_source: SessionSource) -> Result<()> {
@@ -204,15 +246,18 @@ impl ChiselDispatcher {
         let failed = !res.success;
         if new_source.config.traces || failed {
             if let Ok(decoder) = Self::decode_traces(&new_source.config, &mut res).await {
-                Self::show_traces(&decoder, &mut res).await?;
+                if let Some(traces) = Self::render_traces(&decoder, &mut res).await {
+                    self.push_out(traces);
+                }
 
                 // Show console logs, if there are any
                 let decoded_logs = decode_console_logs(&res.logs);
                 if !decoded_logs.is_empty() {
-                    let _ = sh_println!("{}", "Logs:".green());
+                    let mut buf = format!("{}\n", "Logs:".green());
                     for log in decoded_logs {
-                        let _ = sh_println!("  {log}");
+                        buf.push_str(&format!("  {log}\n"));
                     }
+                    self.push_out(buf);
                 }
             }
 
@@ -263,13 +308,15 @@ impl ChiselDispatcher {
         }
     }
 
-    pub(crate) fn show_help(&self) -> Result<()> {
-        sh_println!("{}", ChiselCommand::format_help())
+    pub(crate) fn show_help(&mut self) -> Result<()> {
+        self.push_out(ChiselCommand::format_help());
+        Ok(())
     }
 
     pub(crate) fn clear_source(&mut self) -> Result<()> {
         self.source_mut().clear();
-        sh_println!("Cleared session!")
+        self.push_out("Cleared session!");
+        Ok(())
     }
 
     pub(crate) fn save_session(&mut self, id: Option<String>) -> Result<()> {
@@ -280,7 +327,9 @@ impl ChiselDispatcher {
         }
 
         self.session.write()?;
-        sh_println!("Saved session to cache with ID = {}", self.session.id.as_ref().unwrap())
+        let id = self.session.id.as_ref().unwrap().clone();
+        self.push_out(format!("Saved session to cache with ID = {id}"));
+        Ok(())
     }
 
     pub(crate) fn load_session(&mut self, id: &str) -> Result<()> {
@@ -288,7 +337,7 @@ impl ChiselDispatcher {
         // Don't save an empty session.
         if !self.source().run_code.is_empty() {
             self.session.write()?;
-            sh_println!("{}", "Saved current session!".green())?;
+            self.push_out(format!("{}", "Saved current session!".green()));
         }
 
         let new_session = match id {
@@ -299,41 +348,44 @@ impl ChiselDispatcher {
 
         new_session.source.build()?;
         self.session = new_session;
-        sh_println!("Loaded Chisel session! (ID = {})", self.session.id.as_ref().unwrap())
+        let id = self.session.id.as_ref().unwrap().clone();
+        self.push_out(format!("Loaded Chisel session! (ID = {id})"));
+        Ok(())
     }
 
-    pub(crate) fn list_sessions(&self) -> Result<()> {
+    pub(crate) fn list_sessions(&mut self) -> Result<()> {
         let sessions = ChiselSession::get_sessions()?;
         if sessions.is_empty() {
             eyre::bail!("No sessions found. Use the `!save` command to save a session.");
         }
-        sh_println!(
-            "{}\n{}",
-            format!("{CHISEL_CHAR} Chisel Sessions").cyan(),
-            sessions
-                .iter()
-                .map(|(time, name)| format!("{} - {}", format!("{time:?}").blue(), name))
-                .collect::<Vec<String>>()
-                .join("\n")
-        )
+        let header = format!("{CHISEL_CHAR} Chisel Sessions").cyan().to_string();
+        let body = sessions
+            .iter()
+            .map(|(time, name)| format!("{} - {}", format!("{time:?}").blue(), name))
+            .collect::<Vec<String>>()
+            .join("\n");
+        self.push_out(format!("{header}\n{body}"));
+        Ok(())
     }
 
-    pub(crate) fn show_source(&self) -> Result<()> {
+    pub(crate) fn show_source(&mut self) -> Result<()> {
         let formatted = self.format_source().wrap_err("failed to format session source")?;
-        let highlighted = self.helper.highlight(&formatted);
-        sh_println!("{highlighted}")
+        let highlighted = self.helper.highlight(&formatted).into_owned();
+        self.push_out(highlighted);
+        Ok(())
     }
 
     pub(crate) fn clear_cache(&mut self) -> Result<()> {
         ChiselSession::clear_cache().wrap_err("failed to clear cache")?;
         self.session.id = None;
-        sh_println!("Cleared chisel cache!")
+        self.push_out("Cleared chisel cache!");
+        Ok(())
     }
 
     pub(crate) fn set_fork(&mut self, url: Option<String>) -> Result<()> {
         let Some(url) = url else {
             self.source_mut().config.evm_opts.fork_url = None;
-            sh_println!("Now using local environment.")?;
+            self.push_out("Now using local environment.");
             return Ok(());
         };
 
@@ -353,7 +405,7 @@ impl ChiselDispatcher {
             eyre::bail!("invalid fork URL: {e}");
         }
 
-        sh_println!("Set fork URL to {}", fork_url.yellow())?;
+        self.push_out(format!("Set fork URL to {}", fork_url.yellow()));
 
         self.source_mut().config.evm_opts.fork_url = Some(fork_url);
         // Clear the backend so that it is re-instantiated with the new fork
@@ -366,7 +418,9 @@ impl ChiselDispatcher {
     pub(crate) fn toggle_traces(&mut self) -> Result<()> {
         let t = &mut self.source_mut().config.traces;
         *t = !*t;
-        sh_println!("{} traces!", if *t { "Enabled" } else { "Disabled" })
+        let enabled = *t;
+        self.push_out(format!("{} traces!", if enabled { "Enabled" } else { "Disabled" }));
+        Ok(())
     }
 
     pub(crate) fn set_calldata(&mut self, data: Option<&str>) -> Result<()> {
@@ -378,7 +432,7 @@ impl ChiselDispatcher {
 
         if arg.is_empty() {
             self.source_mut().config.calldata = None;
-            sh_println!("Calldata cleared.")?;
+            self.push_out("Calldata cleared.");
             return Ok(());
         }
 
@@ -386,7 +440,8 @@ impl ChiselDispatcher {
         match calldata {
             Ok(calldata) => {
                 self.source_mut().config.calldata = Some(calldata);
-                sh_println!("Set calldata to '{}'", arg.yellow())
+                self.push_out(format!("Set calldata to '{}'", arg.yellow()));
+                Ok(())
             }
             Err(e) => {
                 eyre::bail!("Invalid calldata: {e}")
@@ -399,12 +454,18 @@ impl ChiselDispatcher {
         let Some((_, mem)) = res.state.as_ref() else {
             eyre::bail!("Run function is empty.");
         };
+        let mut buf = String::new();
         for i in (0..mem.len()).step_by(32) {
-            let _ = sh_println!(
-                "{}: {}",
+            buf.push_str(&format!(
+                "{}: {}\n",
                 format!("[0x{:02x}:0x{:02x}]", i, i + 32).yellow(),
                 hex::encode_prefixed(&mem[i..i + 32]).cyan()
-            );
+            ));
+        }
+        if !buf.is_empty() {
+            // Trim trailing newline.
+            buf.pop();
+            self.push_out(buf);
         }
         Ok(())
     }
@@ -414,17 +475,22 @@ impl ChiselDispatcher {
         let Some((stack, _)) = res.state.as_ref() else {
             eyre::bail!("Run function is empty.");
         };
+        let mut buf = String::new();
         for i in (0..stack.len()).rev() {
-            let _ = sh_println!(
-                "{}: {}",
+            buf.push_str(&format!(
+                "{}: {}\n",
                 format!("[{}]", stack.len() - i - 1).yellow(),
                 format!("0x{:02x}", stack[i]).cyan()
-            );
+            ));
+        }
+        if !buf.is_empty() {
+            buf.pop();
+            self.push_out(buf);
         }
         Ok(())
     }
 
-    pub(crate) fn export(&self) -> Result<()> {
+    pub(crate) fn export(&mut self) -> Result<()> {
         // Check if the pwd is a foundry project
         if !Path::new("foundry.toml").exists() {
             eyre::bail!("Must be in a foundry project to export source to script.");
@@ -437,7 +503,8 @@ impl ChiselDispatcher {
 
         let formatted_source = self.format_source()?;
         std::fs::write(PathBuf::from("script/REPL.s.sol"), formatted_source)?;
-        sh_println!("Exported session source to script/REPL.s.sol!")
+        self.push_out("Exported session source to script/REPL.s.sol!");
+        Ok(())
     }
 
     /// Fetches an interface from Etherscan
@@ -452,13 +519,17 @@ impl ChiselDispatcher {
         let code = forge_fmt::format(&abi.to_sol(&name, None), FormatterConfig::default())
             .into_result()?;
         self.source_mut().add_global_code(&code);
-        sh_println!("Added {address}'s interface to source as `{name}`")
+        self.push_out(format!("Added {address}'s interface to source as `{name}`"));
+        Ok(())
     }
 
     pub(crate) fn exec_command(&self, command: String, args: Vec<String>) -> Result<()> {
         let mut cmd = Command::new(command);
         cmd.args(args);
-        let _ = cmd.status()?;
+        // Suspend the TUI (if active) so the child process gets direct access to the
+        // terminal. No-op when running in the plain REPL.
+        let status = foundry_tui::with_suspended_terminal(|| cmd.status());
+        let _ = status?;
         Ok(())
     }
 
@@ -477,7 +548,8 @@ impl ChiselDispatcher {
         let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
         let mut cmd = Command::new(editor);
         cmd.arg(tmp.path());
-        let st = cmd.status()?;
+        // Suspend the TUI (if active) so the editor takes over the terminal.
+        let st = foundry_tui::with_suspended_terminal(|| cmd.status())?;
         if !st.success() {
             eyre::bail!("Editor exited with {st}");
         }
@@ -489,7 +561,8 @@ impl ChiselDispatcher {
 
         // if the editor exited successfully, try to compile the new code
         self.execute_and_replace(new_source).await?;
-        sh_println!("Successfully edited `run()` function's body!")
+        self.push_out("Successfully edited `run()` function's body!");
+        Ok(())
     }
 
     pub(crate) async fn show_raw_stack(&mut self, var: String) -> Result<()> {
@@ -498,7 +571,7 @@ impl ChiselDispatcher {
         if let Ok((new_source, _)) = source.clone_with_new_line(line)
             && let (_, Some(res)) = new_source.inspect("__raw__").await?
         {
-            sh_println!("{res}")?;
+            self.push_out(res);
             return Ok(());
         }
 

@@ -24,6 +24,8 @@ pub mod session;
 
 pub mod source;
 
+pub mod tui;
+
 mod solidity_helper;
 pub use solidity_helper::SolidityHelper;
 

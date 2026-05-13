@@ -81,7 +81,7 @@ impl SessionSource {
                     Ok(res) => (res, Some(err)),
                     Err(_) => {
                         if self.config.foundry_config.verbosity >= 3 {
-                            sh_err!("Could not inspect: {err}")?;
+                            tracing::warn!("Could not inspect: {err}");
                         }
                         return Ok((ControlFlow::Continue(()), None));
                     }
@@ -103,7 +103,7 @@ impl SessionSource {
 
             // we were unable to check the event
             if self.config.foundry_config.verbosity >= 3 {
-                sh_err!("Failed eval: {err}")?;
+                tracing::warn!("Failed eval: {err}");
             }
 
             debug!(%err, %input, "failed abi encode input");
@@ -112,19 +112,27 @@ impl SessionSource {
         drop(source_without_inspector);
 
         let Some((stack, memory)) = &res.state else {
-            // Show traces and logs, if there are any, and return an error
-            if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res).await {
-                ChiselDispatcher::show_traces(&decoder, &mut res).await?;
+            // Bundle any traces/logs into the returned error so that the dispatcher (and
+            // hence the plain REPL or TUI) can surface them through the unified message
+            // buffer.
+            let mut diag = String::new();
+            if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res).await
+                && let Some(t) = ChiselDispatcher::render_traces(&decoder, &mut res).await
+            {
+                diag.push_str(&t);
             }
             let decoded_logs = decode_console_logs(&res.logs);
             if !decoded_logs.is_empty() {
-                sh_println!("{}", "Logs:".green())?;
+                diag.push_str(&format!("{}\n", "Logs:".green()));
                 for log in decoded_logs {
-                    sh_println!("  {log}")?;
+                    diag.push_str(&format!("  {log}\n"));
                 }
             }
 
-            return Err(eyre::eyre!("Failed to inspect expression"));
+            if diag.is_empty() {
+                return Err(eyre::eyre!("Failed to inspect expression"));
+            }
+            return Err(eyre::eyre!("Failed to inspect expression\n{}", diag.trim_end()));
         };
 
         // Either the expression referred to by `input`, or the last expression,
@@ -223,6 +231,155 @@ impl SessionSource {
 
         Ok(ChiselRunner::new(executor, U256::MAX, Address::ZERO, self.config.calldata.clone()))
     }
+}
+
+/// Lists every top-level variable declared in the current REPL session source: state
+/// variables of the synthesized `REPL` contract and locals declared at the top of `run()`.
+///
+/// Returns a list of `(name, type_str)` pairs, where `type_str` is a best-effort display of
+/// the variable's type (uses [`DynSolType::sol_type_name`] when the type can be lowered to a
+/// [`DynSolType`], otherwise `"<?>"`). Variables declared inside nested blocks of `run()` are
+/// not reported.
+pub fn list_session_variables(source: &SessionSource) -> Vec<(String, String)> {
+    list_session_variables_typed(source).into_iter().map(|(n, t, _)| (n, t)).collect()
+}
+
+/// Like [`list_session_variables`] but also returns the [`DynSolType`] of each variable when
+/// it can be inferred. Used by [`snapshot_session_variables`] to ABI-decode a single batched
+/// `abi.encode(v1, v2, ...)` execution.
+pub fn list_session_variables_typed(
+    source: &SessionSource,
+) -> Vec<(String, String, Option<DynSolType>)> {
+    let Ok(output) = source.build() else { return Vec::new() };
+
+    output.enter(|out| -> Vec<(String, String, Option<DynSolType>)> {
+        let gcx = out.gcx();
+        let hir = &gcx.hir;
+        let Some(repl) = hir.contracts().find(|c| c.name.as_str() == "REPL") else {
+            return Vec::new();
+        };
+
+        let mut entries: Vec<(String, String, Option<DynSolType>)> = Vec::new();
+
+        let resolve_ty = |item: ItemId| -> (String, Option<DynSolType>) {
+            let dyn_ty = solar_ty_to_dyn(gcx, gcx.type_of_item(item));
+            let type_str = dyn_ty
+                .as_ref()
+                .map(|t| t.sol_type_name().into_owned())
+                .unwrap_or_else(|| "<?>".to_string());
+            (type_str, dyn_ty)
+        };
+
+        // State variables.
+        for vid in repl.variables() {
+            let var = hir.variable(vid);
+            if let Some(name) = var.name {
+                let (type_str, ty) = resolve_ty(vid.into());
+                entries.push((name.as_str().to_string(), type_str, ty));
+            }
+        }
+
+        // Locals declared in the top of run().
+        if let Some(run_fid) = repl
+            .functions()
+            .find(|&f| hir.function(f).name.as_ref().map(|n| n.as_str()) == Some("run"))
+            && let Some(body) = hir.function(run_fid).body
+        {
+            for stmt in body.stmts {
+                match stmt.kind {
+                    StmtKind::DeclSingle(vid) => {
+                        let var = hir.variable(vid);
+                        if let Some(name) = var.name {
+                            let (type_str, ty) = resolve_ty(vid.into());
+                            entries.push((name.as_str().to_string(), type_str, ty));
+                        }
+                    }
+                    StmtKind::DeclMulti(vids, _) => {
+                        for vid in vids.iter().flatten() {
+                            let var = hir.variable(*vid);
+                            if let Some(name) = var.name {
+                                let (type_str, ty) = resolve_ty((*vid).into());
+                                entries.push((name.as_str().to_string(), type_str, ty));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        entries
+    })
+}
+
+/// Returns a snapshot of every top-level variable's `(name, type_str, value_str)` for the
+/// current REPL session.
+///
+/// Internally builds a single synthetic `bytes memory __snap__ = abi.encode(v1, v2, ...);`
+/// snippet, executes it once, and ABI-decodes the result as a tuple — so it costs **two
+/// compiles** (one for [`list_session_variables_typed`] and one for the synthetic snippet)
+/// regardless of how many variables exist, instead of N+1 compiles.
+///
+/// Variables whose type cannot be lowered to a [`DynSolType`] show a placeholder value of
+/// `"<?>"`.
+pub async fn snapshot_session_variables(source: &SessionSource) -> Vec<(String, String, String)> {
+    let vars = list_session_variables_typed(source);
+    if vars.is_empty() {
+        return Vec::new();
+    }
+
+    let placeholder = || -> Vec<(String, String, String)> {
+        vars.iter().map(|(n, t, _)| (n.clone(), t.clone(), "<?>".to_string())).collect()
+    };
+
+    // Pick variables whose ABI type is known.
+    let encodable: Vec<(String, DynSolType)> =
+        vars.iter().filter_map(|(n, _, ty)| ty.as_ref().map(|t| (n.clone(), t.clone()))).collect();
+    if encodable.is_empty() {
+        return placeholder();
+    }
+
+    let names_csv = encodable.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ");
+    let snippet = format!("bytes memory __snap__ = abi.encode({names_csv});");
+
+    let (mut new_source, _) = match source.clone_with_new_line(snippet) {
+        Ok(s) => s,
+        Err(_) => return placeholder(),
+    };
+    let res = match new_source.execute().await {
+        Ok(r) => r,
+        Err(_) => return placeholder(),
+    };
+
+    let Some((stack, memory)) = &res.state else { return placeholder() };
+
+    // Read the `bytes memory __snap__` blob from memory: top-of-stack value is its offset.
+    let data = (|| -> Option<&[u8]> {
+        let mut offset: usize = stack.last()?.try_into().ok()?;
+        let mem_offset = memory.get(offset..offset + 32)?;
+        let len: usize = U256::try_from_be_slice(mem_offset)?.try_into().ok()?;
+        offset += 32;
+        memory.get(offset..offset + len)
+    })();
+    let Some(data) = data else { return placeholder() };
+
+    let tuple_ty = DynSolType::Tuple(encodable.iter().map(|(_, t)| t.clone()).collect());
+    let Ok(decoded) = tuple_ty.abi_decode(data) else { return placeholder() };
+    let DynSolValue::Tuple(values) = decoded else { return placeholder() };
+
+    // Build a name -> formatted-value map for the encodable subset.
+    let mut value_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::with_capacity(values.len());
+    for ((name, _), value) in encodable.into_iter().zip(values) {
+        value_map.insert(name, format_token(value));
+    }
+
+    vars.into_iter()
+        .map(|(name, type_str, _)| {
+            let value = value_map.remove(&name).unwrap_or_else(|| "<?>".to_string());
+            (name, type_str, value)
+        })
+        .collect()
 }
 
 /// Looks up `name` as a named variable in the REPL contract (state variables or run() locals)
