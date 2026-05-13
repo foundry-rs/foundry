@@ -1,5 +1,7 @@
 use crate::{
-    NodeConfig, NodeHandle, cmd::PeriodicStateDumper, eth::EthApi, eth::backend::fork::ClientFork,
+    NodeConfig, NodeHandle,
+    cmd::PeriodicStateDumper,
+    eth::{EthApi, backend::fork::ClientFork},
 };
 use alloy_consensus::{BlockHeader, Transaction};
 use alloy_network::{AnyRpcBlock, AnyRpcTransaction, BlockResponse, TransactionResponse};
@@ -294,7 +296,7 @@ impl DetailView {
         Self::new(vec![DetailRow::new(field, value)])
     }
 
-    fn len(&self) -> usize {
+    const fn len(&self) -> usize {
         self.rows.len()
     }
 
@@ -422,7 +424,7 @@ impl DashboardConfig {
         lines
     }
 
-    fn account_line_count(&self) -> usize {
+    const fn account_line_count(&self) -> usize {
         self.accounts.len() * ACCOUNT_LINES_PER_ACCOUNT
     }
 
@@ -580,7 +582,7 @@ impl TransactionActivity {
                 "to",
                 self.to.map(|to| to.to_string()).unwrap_or_else(|| "create".to_string()),
             ),
-            DetailRow::new("value eth", value.clone()),
+            DetailRow::new("value eth", value),
             DetailRow::new("value wei", self.value.to_string()),
             DetailRow::new("method", method.clone()),
             DetailRow::new("nonce", self.nonce.to_string()),
@@ -820,6 +822,7 @@ struct AnvilDashboard {
     detail_mode: DetailMode,
     search: String,
     search_active: bool,
+    pending_count: Option<usize>,
     detail_scroll: u16,
     splash_until: Instant,
 }
@@ -854,6 +857,7 @@ impl AnvilDashboard {
             detail_mode: DetailMode::Activity,
             search: String::new(),
             search_active: false,
+            pending_count: None,
             detail_scroll: 0,
             splash_until: Instant::now() + SPLASH_DURATION,
         }
@@ -882,21 +886,21 @@ impl AnvilDashboard {
         self.visible_indices().get(self.selected()).and_then(|idx| self.feed.get(*idx))
     }
 
-    fn move_next(&mut self) {
+    fn move_next_by(&mut self, amount: usize) {
         let len = self.visible_len();
         if len == 0 {
             return;
         }
-        let next = self.selected().saturating_add(1).min(len - 1);
+        let next = self.selected().saturating_add(amount).min(len - 1);
         self.list_state.select(Some(next));
         self.detail_scroll = 0;
     }
 
-    fn move_previous(&mut self) {
+    fn move_previous_by(&mut self, amount: usize) {
         if self.visible_len() == 0 {
             return;
         }
-        self.list_state.select(Some(self.selected().saturating_sub(1)));
+        self.list_state.select(Some(self.selected().saturating_sub(amount)));
         self.detail_scroll = 0;
     }
 
@@ -1000,19 +1004,43 @@ impl AnvilDashboard {
         self.detail_scroll = self.detail_scroll.saturating_add(amount).min(max);
     }
 
-    fn scroll_detail_up(&mut self, amount: u16) {
+    const fn scroll_detail_up(&mut self, amount: u16) {
         self.detail_scroll = self.detail_scroll.saturating_sub(amount);
     }
 
-    fn focus_activity(&mut self) {
+    fn push_pending_count_digit(&mut self, digit: char) {
+        let Some(digit) = digit.to_digit(10) else {
+            return;
+        };
+        if digit == 0 && self.pending_count.is_none() {
+            return;
+        }
+
+        let count = self.pending_count.unwrap_or_default();
+        self.pending_count = Some(count.saturating_mul(10).saturating_add(digit as usize).min(999));
+    }
+
+    fn take_count(&mut self) -> usize {
+        self.pending_count.take().unwrap_or(1).max(1)
+    }
+
+    const fn clear_pending_count(&mut self) {
+        self.pending_count = None;
+    }
+
+    fn count_as_scroll_amount(count: usize) -> u16 {
+        count.min(u16::MAX as usize) as u16
+    }
+
+    const fn focus_activity(&mut self) {
         self.focus = PaneFocus::Activity;
     }
 
-    fn focus_details(&mut self) {
+    const fn focus_details(&mut self) {
         self.focus = PaneFocus::Details;
     }
 
-    fn toggle_config(&mut self) {
+    const fn toggle_config(&mut self) {
         self.detail_mode = match self.detail_mode {
             DetailMode::Activity => DetailMode::Config,
             DetailMode::Config => DetailMode::Activity,
@@ -1021,26 +1049,26 @@ impl AnvilDashboard {
         self.detail_scroll = 0;
     }
 
-    fn handle_down(&mut self) {
+    fn handle_down(&mut self, amount: usize) {
         match self.focus {
-            PaneFocus::Activity => self.move_next(),
-            PaneFocus::Details => self.scroll_detail_down(1),
+            PaneFocus::Activity => self.move_next_by(amount),
+            PaneFocus::Details => self.scroll_detail_down(Self::count_as_scroll_amount(amount)),
         }
     }
 
-    fn handle_up(&mut self) {
+    fn handle_up(&mut self, amount: usize) {
         match self.focus {
-            PaneFocus::Activity => self.move_previous(),
-            PaneFocus::Details => self.scroll_detail_up(1),
+            PaneFocus::Activity => self.move_previous_by(amount),
+            PaneFocus::Details => self.scroll_detail_up(Self::count_as_scroll_amount(amount)),
         }
     }
 
-    fn start_search(&mut self) {
+    const fn start_search(&mut self) {
         self.focus_activity();
         self.search_active = true;
     }
 
-    fn stop_search(&mut self) {
+    const fn stop_search(&mut self) {
         self.search_active = false;
     }
 
@@ -1133,23 +1161,52 @@ impl TuiApp for AnvilDashboard {
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     return ControlFlow::Break(());
                 }
-                KeyCode::Char('h') | KeyCode::Left => self.focus_activity(),
-                KeyCode::Char('l') | KeyCode::Right => self.focus_details(),
-                KeyCode::Char('c') => self.toggle_config(),
-                KeyCode::Down | KeyCode::Char('j') => self.handle_down(),
-                KeyCode::Up | KeyCode::Char('k') => self.handle_up(),
-                KeyCode::Home if self.focus == PaneFocus::Activity => self.move_first(),
-                KeyCode::End if self.focus == PaneFocus::Activity => self.move_last(),
-                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.scroll_detail_down(10);
+                KeyCode::Char(digit) if key.modifiers.is_empty() && digit.is_ascii_digit() => {
+                    self.push_pending_count_digit(digit);
                 }
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.scroll_detail_up(10);
+                KeyCode::Char('h') | KeyCode::Left => {
+                    self.clear_pending_count();
+                    self.focus_activity();
                 }
-                KeyCode::Tab => self.next_filter(),
-                KeyCode::BackTab => self.previous_filter(),
-                KeyCode::Char('/') => self.start_search(),
-                _ => {}
+                KeyCode::Char('l') | KeyCode::Right => {
+                    self.clear_pending_count();
+                    self.focus_details();
+                }
+                KeyCode::Char('c') => {
+                    self.clear_pending_count();
+                    self.toggle_config();
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let count = self.take_count();
+                    self.handle_down(count);
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    let count = self.take_count();
+                    self.handle_up(count);
+                }
+                KeyCode::Home if self.focus == PaneFocus::Activity => {
+                    self.clear_pending_count();
+                    self.move_first();
+                }
+                KeyCode::End if self.focus == PaneFocus::Activity => {
+                    self.clear_pending_count();
+                    self.move_last();
+                }
+                KeyCode::Tab => {
+                    self.clear_pending_count();
+                    self.next_filter();
+                }
+                KeyCode::BackTab => {
+                    self.clear_pending_count();
+                    self.previous_filter();
+                }
+                KeyCode::Char('/') => {
+                    self.clear_pending_count();
+                    self.start_search();
+                }
+                _ => {
+                    self.pending_count = None;
+                }
             }
         }
 
@@ -1400,8 +1457,7 @@ fn render_footer(frame: &mut Frame<'_>, area: Rect, app: &AnvilDashboard) {
     let text = if app.search_active {
         format!("search: /{}  enter apply  esc close  backspace edit  ctrl+u clear", app.search)
     } else {
-        "q quit  h/l pane  j/k move/scroll  ctrl+u/d page details  tab filter  / search  c config"
-            .to_string()
+        "q quit  h/l pane  j/k move/scroll  tab filter  / search  c config".to_string()
     };
     let footer = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, area);
