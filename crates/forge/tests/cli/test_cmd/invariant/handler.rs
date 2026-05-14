@@ -665,3 +665,66 @@ contract TwoBranchTest is Test {
         "expected 1 persisted handler bug for two branches in same function, got {entries:?}",
     );
 });
+
+// Regression: with `assertions_revert = false`, a non-reverting `vm.assert*` writes
+// `GLOBAL_FAIL_SLOT = 1` and that committed slot was never cleared, poisoning every
+// subsequent `handlers_succeeded` check and silently suppressing later `assert_invariants`
+// evaluations. Asserts on call #1, then bumps a counter on call #2/#3 to trip a real
+// predicate — both the handler bug AND the predicate failure must be reported.
+forgetest_init!(handler_vm_assert_global_flag_does_not_poison_invariant_checks, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 5;
+        config.invariant.fail_on_revert = false;
+        config.invariant.assert_all = true;
+        config.assertions_revert = false;
+    });
+    prj.add_test(
+        "HandlerVmAssertPoisonTest.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract OncePoisonHandler is Test {
+    uint256 public counter;
+    bool public asserted;
+
+    // First call sets GLOBAL_FAIL_SLOT via the non-reverting cheatcode path; later
+    // calls don't re-touch the slot, so invariants only keep getting checked if the
+    // committed slot is cleared after recording the handler bug.
+    function step() external {
+        counter++;
+        if (!asserted) {
+            asserted = true;
+            vm.assertEq(uint256(1), uint256(2));
+        }
+    }
+}
+
+contract HandlerVmAssertPoisonTest is Test {
+    OncePoisonHandler handler;
+
+    function setUp() public {
+        handler = new OncePoisonHandler();
+        targetContract(address(handler));
+    }
+
+    // Holds at counter ∈ {1, 2}, breaks at counter == 3.
+    function invariant_counter_below_three() public view {
+        require(handler.counter() < 3, "counter reached 3");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_counter_below_three"]).assert_failure().stdout_eq(str![[
+        r#"
+...
+Ran 1 test for test/HandlerVmAssertPoisonTest.t.sol:HandlerVmAssertPoisonTest
+[FAIL: counter reached 3]
+...
+Suite handlers: 1 assertion bug(s) found
+[FAIL: assertion failed] test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler::step
+...
+"#
+    ]]);
+});

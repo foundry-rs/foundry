@@ -780,20 +780,13 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             .is_ok_and(|failed_slot| !failed_slot.is_zero())
     }
 
-    /// Clears the global assertion failure flag from both the committed backend state and, when
-    /// provided, the in-flight state changeset for the current call.
-    pub fn clear_global_failure(
-        &mut self,
-        state_changeset: Option<&mut StateChangeset>,
-    ) -> BackendResult<()> {
-        if let Some(state_changeset) = state_changeset
-            && let Some(acc) = state_changeset.get_mut(&CHEATCODE_ADDRESS)
-            && let Some(failed_slot) = acc.storage.get_mut(&GLOBAL_FAIL_SLOT)
-        {
-            failed_slot.present_value = U256::ZERO;
+    /// Clears the global assertion failure flag from the committed backend state. Best-effort:
+    /// a backend failure here would only happen on a fundamentally broken state, so we just
+    /// trace it.
+    pub fn clear_global_failure(&mut self) {
+        if let Err(err) = self.set_storage_slot(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::ZERO) {
+            trace!(%err, "failed to clear GLOBAL_FAIL_SLOT");
         }
-
-        self.set_storage_slot(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::ZERO)
     }
 
     /// Creates the environment to use when executing a transaction in a test context

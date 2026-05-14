@@ -298,6 +298,11 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 is_optimization,
             );
 
+            // Non-reverting `vm.assert*` (`assertions_revert = false`) leaves
+            // `GLOBAL_FAIL_SLOT = 1` committed; clear it so it doesn't poison
+            // `handlers_succeeded` / `assert_invariants` on subsequent calls.
+            invariant_run.executor.clear_global_failure();
+
             // No invariant predicate broke; `broken = None`.
             let continues = invariant_test
                 .test_data

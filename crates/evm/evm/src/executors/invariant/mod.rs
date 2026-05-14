@@ -694,6 +694,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 call_reverted,
                                 invariant_contract.is_optimization(),
                             );
+                            // Non-reverting `vm.assert*` (`assertions_revert = false`) leaves
+                            // `GLOBAL_FAIL_SLOT = 1` committed; clear it so it doesn't poison
+                            // `handlers_succeeded` / `assert_invariants` on subsequent calls.
+                            current_run.executor.clear_global_failure();
                             (true, None)
                         } else if call_result.reverted && self.config.fail_on_revert {
                             // Plain revert under fail_on_revert: attribute to the anchor.
