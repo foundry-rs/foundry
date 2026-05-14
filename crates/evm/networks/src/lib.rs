@@ -18,6 +18,7 @@ use alloy_op_hardforks::{OpChainHardforks, OpHardforks};
 use alloy_primitives::{Address, ChainId, map::AddressHashMap};
 use clap::Parser;
 use foundry_evm_hardforks::FoundryHardfork;
+use monad_revm::{MONAD_MAX_CODE_SIZE, MONAD_MAX_INITCODE_SIZE};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -32,6 +33,15 @@ pub enum NetworkVariant {
     Optimism,
     Tempo,
     Monad,
+}
+
+/// Runtime and initcode byte-size limits for a configured network.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NetworkContractSizeLimits {
+    /// Maximum deployed runtime bytecode size.
+    pub runtime: usize,
+    /// Maximum initcode bytecode size.
+    pub initcode: usize,
 }
 
 impl NetworkVariant {
@@ -165,6 +175,14 @@ impl NetworkConfigs {
         }
     }
 
+    /// Returns contract size limits for networks that override Ethereum defaults.
+    pub fn contract_size_limits(&self) -> Option<NetworkContractSizeLimits> {
+        self.is_monad().then_some(NetworkContractSizeLimits {
+            runtime: MONAD_MAX_CODE_SIZE,
+            initcode: MONAD_MAX_INITCODE_SIZE,
+        })
+    }
+
     pub fn bypass_prevrandao(&self, chain_id: u64) -> bool {
         if let Ok(
             Moonbeam | Moonbase | Moonriver | MoonbeamDev | Rsk | RskTestnet | Gnosis | Chiado,
@@ -293,6 +311,14 @@ mod tests {
         let cfg = NetworkConfigs::with_monad();
         assert_eq!(cfg.active_network_name(), Some("monad"));
         assert!(cfg.is_monad());
+    }
+
+    #[test]
+    fn contract_size_limits_monad() {
+        let limits = NetworkConfigs::with_monad().contract_size_limits().unwrap();
+        assert_eq!(limits.runtime, MONAD_MAX_CODE_SIZE);
+        assert_eq!(limits.initcode, MONAD_MAX_INITCODE_SIZE);
+        assert!(NetworkConfigs::default().contract_size_limits().is_none());
     }
 
     #[test]

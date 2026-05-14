@@ -599,7 +599,17 @@ impl ScriptArgs {
     }
 
     fn contract_size_limits(&self) -> ContractSizeLimits {
-        self.evm.env.code_size_limit.map(ContractSizeLimits::with_runtime_limit).unwrap_or_default()
+        self.evm
+            .env
+            .code_size_limit
+            .map(ContractSizeLimits::with_runtime_limit)
+            .or_else(|| {
+                self.evm
+                    .networks
+                    .contract_size_limits()
+                    .map(|limits| ContractSizeLimits::new(limits.runtime, limits.initcode))
+            })
+            .unwrap_or_default()
     }
 
     /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.

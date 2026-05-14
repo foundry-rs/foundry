@@ -5460,6 +5460,7 @@ dependencies = [
  "alloy-primitives",
  "clap",
  "foundry-evm-hardforks",
+ "monad-revm",
  "revm",
  "serde",
  "serde_json",
