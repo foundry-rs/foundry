@@ -1,6 +1,7 @@
 use solar::{
     ast::{Expr, ExprKind},
     interface::kw,
+    sema::hir,
 };
 
 /// Checks if an expression is a low-level call.
@@ -22,4 +23,26 @@ pub(crate) const fn is_low_level_call(expr: &Expr<'_>) -> bool {
         }
     }
     false
+}
+
+/// Checks if a HIR expression is a low-level call with an explicit gas option.
+///
+/// Detects patterns like:
+/// - `target.call{gas: gasLimit}(...)`
+/// - `target.delegatecall{gas: gasLimit}(...)`
+/// - `target.staticcall{gas: gasLimit}(...)`
+pub(crate) fn is_low_level_call_with_gas_limit(expr: &hir::Expr<'_>) -> bool {
+    let hir::ExprKind::Call(callee, _, Some(opts)) = &expr.kind else {
+        return false;
+    };
+
+    if !matches!(
+        &callee.peel_parens().kind,
+        hir::ExprKind::Member(_, member)
+            if matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
+    ) {
+        return false;
+    }
+
+    opts.iter().any(|opt| opt.name.name == kw::Gas)
 }
