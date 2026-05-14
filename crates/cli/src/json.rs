@@ -2,17 +2,24 @@
 
 use eyre::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, to_string, to_value};
+use serde_json::{Value, to_string};
 
 /// The current version of Foundry's top-level JSON output envelope.
 pub const JSON_SCHEMA_VERSION: u32 = 1;
 
-/// Stable top-level envelope for machine-readable command output.
+/// Stable top-level envelope for complete machine-readable command output.
+///
+/// This envelope represents a terminal command outcome. Long-running commands
+/// that stream intermediate records should use a separate event type and reserve
+/// this shape for final, complete results.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JsonEnvelope<T> {
     /// Version of the envelope schema.
     pub schema_version: u32,
     /// Whether the command completed successfully.
+    ///
+    /// For streaming output this should be known only by a final summary record,
+    /// not by intermediate progress events.
     pub success: bool,
     /// Command-specific payload.
     pub data: Option<T>,
@@ -64,7 +71,11 @@ impl JsonEnvelope<()> {
     }
 }
 
-/// Severity level for a structured JSON message.
+/// Severity level for a structured JSON diagnostic.
+///
+/// These levels classify diagnostics attached to an envelope. Progress,
+/// informational, and debug records should be modeled as command output data or
+/// stream events instead.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JsonMessageLevel {
@@ -75,6 +86,9 @@ pub enum JsonMessageLevel {
 }
 
 /// Structured diagnostic entry for JSON output.
+///
+/// Diagnostics describe errors and warnings associated with command output. They
+/// are not intended for progress, informational, or debug events.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JsonMessage {
     /// Diagnostic severity level.
@@ -116,7 +130,10 @@ impl JsonMessage {
     }
 }
 
-/// Prints a value as compact JSON to stdout.
+/// Prints a value as compact, single-line JSON to stdout.
+///
+/// The trailing newline makes this suitable for NDJSON streams when each call
+/// emits one self-contained JSON record.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     sh_println!("{}", to_string(value)?)?;
     Ok(())
@@ -138,7 +155,7 @@ pub fn print_json_success_with_warnings<T: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{json, to_value};
 
     #[derive(Serialize)]
     struct BuildData {
