@@ -1,0 +1,164 @@
+use super::DelegatecallLoop;
+use crate::{
+    linter::{LateLintPass, LintContext},
+    sol::{Severity, SolLint},
+};
+use solar::{
+    ast::{StateMutability, Visibility},
+    interface::{Span, kw},
+    sema::hir::{self, Expr, ExprKind, FunctionId, Stmt, StmtKind, Visit},
+};
+use std::{collections::HashSet, ops::ControlFlow};
+
+declare_forge_lint!(
+    DELEGATECALL_LOOP,
+    Severity::Low,
+    "delegatecall-loop",
+    "payable functions should not use `delegatecall` inside a loop"
+);
+
+impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
+    fn check_function(
+        &mut self,
+        ctx: &LintContext,
+        hir: &'hir hir::Hir<'hir>,
+        func: &'hir hir::Function<'hir>,
+    ) {
+        if !is_payable_entry_point(func) {
+            return;
+        }
+
+        let Some(body) = func.body else { return };
+
+        let mut checker = DelegatecallLoopChecker {
+            ctx,
+            hir,
+            loop_depth: 0,
+            emitted: HashSet::new(),
+            modifier_stack: Vec::new(),
+        };
+        checker.visit_modifier_chain(func.modifiers, 0, body);
+    }
+}
+
+fn is_payable_entry_point(func: &hir::Function<'_>) -> bool {
+    // Match Slither's scope: implemented payable entry points, not internal helpers.
+    func.state_mutability == StateMutability::Payable
+        && matches!(func.visibility, Visibility::Public | Visibility::External)
+}
+
+struct DelegatecallLoopChecker<'a, 's, 'hir> {
+    ctx: &'a LintContext<'s, 'a>,
+    hir: &'hir hir::Hir<'hir>,
+    loop_depth: usize,
+    emitted: HashSet<Span>,
+    modifier_stack: Vec<FunctionId>,
+}
+
+impl<'a, 's, 'hir> DelegatecallLoopChecker<'a, 's, 'hir> {
+    fn visit_modifier_chain(
+        &mut self,
+        modifiers: &'hir [hir::Modifier<'hir>],
+        index: usize,
+        body: hir::Block<'hir>,
+    ) {
+        let Some(modifier) = modifiers.get(index) else {
+            self.visit_block_stmts(body);
+            return;
+        };
+
+        let _ = self.visit_call_args(&modifier.args);
+
+        let Some(modifier_id) = modifier.id.as_function() else {
+            self.visit_modifier_chain(modifiers, index + 1, body);
+            return;
+        };
+
+        if self.modifier_stack.contains(&modifier_id) {
+            self.visit_modifier_chain(modifiers, index + 1, body);
+            return;
+        }
+
+        let modifier_func = self.hir.function(modifier_id);
+        let Some(modifier_body) = modifier_func.body else {
+            self.visit_modifier_chain(modifiers, index + 1, body);
+            return;
+        };
+
+        self.modifier_stack.push(modifier_id);
+        self.visit_block_with_placeholder(modifier_body, Some((modifiers, index + 1, body)));
+        self.modifier_stack.pop();
+    }
+
+    fn visit_block_stmts(&mut self, block: hir::Block<'hir>) {
+        for stmt in block.stmts {
+            let _ = self.visit_stmt(stmt);
+        }
+    }
+
+    fn visit_block_with_placeholder(
+        &mut self,
+        block: hir::Block<'hir>,
+        placeholder: Option<(&'hir [hir::Modifier<'hir>], usize, hir::Block<'hir>)>,
+    ) {
+        for stmt in block.stmts {
+            self.visit_stmt_with_placeholder(stmt, placeholder);
+        }
+    }
+
+    fn visit_stmt_with_placeholder(
+        &mut self,
+        stmt: &'hir Stmt<'hir>,
+        placeholder: Option<(&'hir [hir::Modifier<'hir>], usize, hir::Block<'hir>)>,
+    ) {
+        if matches!(stmt.kind, StmtKind::Placeholder) {
+            if let Some((modifiers, index, body)) = placeholder {
+                self.visit_modifier_chain(modifiers, index, body);
+            }
+        } else {
+            let _ = self.visit_stmt(stmt);
+        }
+    }
+}
+
+impl<'hir> Visit<'hir> for DelegatecallLoopChecker<'_, '_, 'hir> {
+    type BreakValue = ();
+
+    fn hir(&self) -> &'hir hir::Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_stmt(&mut self, stmt: &'hir Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        match stmt.kind {
+            // HIR lowers `for` update expressions into the loop body, so this covers loop
+            // bodies and `for (...; ...; next)` delegatecalls with the same scope tracking.
+            StmtKind::Loop(block, _) => self.visit_loop_block(block),
+            _ => self.walk_stmt(stmt),
+        }
+    }
+
+    fn visit_expr(&mut self, expr: &'hir Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        if self.loop_depth > 0 && is_delegatecall(expr) && self.emitted.insert(expr.span) {
+            self.ctx.emit(&DELEGATECALL_LOOP, expr.span);
+        }
+
+        self.walk_expr(expr)
+    }
+}
+
+impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
+    fn visit_loop_block(&mut self, block: hir::Block<'hir>) -> ControlFlow<()> {
+        self.loop_depth += 1;
+        self.visit_block_stmts(block);
+        self.loop_depth -= 1;
+        ControlFlow::Continue(())
+    }
+}
+
+fn is_delegatecall(expr: &Expr<'_>) -> bool {
+    let ExprKind::Call(call_expr, _, _) = &expr.kind else {
+        return false;
+    };
+
+    matches!(&call_expr.kind, ExprKind::Member(_, member) if member.name == kw::Delegatecall)
+}
