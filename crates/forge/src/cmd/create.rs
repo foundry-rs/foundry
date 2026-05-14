@@ -650,8 +650,15 @@ impl CreateArgs {
             language: None,
             creation_transaction_hash: Some(tx_hash),
         };
-        let resolved_verifier =
-            verify.verifier.resolve(verify.etherscan.key.as_deref(), Some(chain));
+        // Load the full config (including foundry.toml) so the key used for resolution matches
+        // what `verify.run()` will actually use, preventing a "Waiting for sourcify..." message
+        // when the run will actually use Etherscan (or vice versa for unknown chains).
+        let verify_config = verify.load_config()?;
+        let effective_key = verify_config
+            .get_etherscan_config_with_chain(Some(chain))?
+            .map(|c| c.key)
+            .or_else(|| verify_config.etherscan_api_key.clone());
+        let resolved_verifier = verify.verifier.resolve(effective_key.as_deref(), Some(chain));
         sh_println!("Waiting for {resolved_verifier} to detect contract deployment...")?;
         verify.run().await
     }

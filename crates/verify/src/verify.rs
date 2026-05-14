@@ -279,7 +279,14 @@ impl VerifyArgs {
 
         // Set Etherscan options.
         self.etherscan.chain = Some(chain);
-        self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
+        // `get_etherscan_config_with_chain` returns None for chains with no known Etherscan API
+        // URL (even when a key was explicitly passed), because `ResolvedEtherscanConfig::create`
+        // requires `chain.etherscan_urls()`. Fall back to the raw `etherscan_api_key` from config
+        // so that the key survives for warning/fallback logic in `client()`.
+        self.etherscan.key = config
+            .get_etherscan_config_with_chain(Some(chain))?
+            .map(|c| c.key)
+            .or_else(|| config.etherscan_api_key.clone());
 
         // For chains with Sourcify-compatible APIs, use the chain's URL from etherscan_urls
         if self.verifier.effective_type().is_sourcify()
