@@ -23,6 +23,9 @@ complete JSON object instead of an event stream. For event streams, overall comm
 reported by the final `summary` event payload. Intermediate events do not carry whole-command
 success.
 
+The default `forge test --json` wire format is an NDJSON event stream. This is a breaking change
+from the previous aggregate object keyed by suite name.
+
 ## `forge build --json`
 
 Events:
@@ -79,6 +82,7 @@ The following combinations emit non-streaming output:
 - `forge test --summary --json`
 - `forge test --list --json`
 
+`--live-logs` is incompatible with `--json` because live logs are written directly to stdout.
 `--junit` remains incompatible with `--json`.
 
 ## `forge coverage --json`

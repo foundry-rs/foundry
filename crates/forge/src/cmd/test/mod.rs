@@ -284,12 +284,14 @@ impl TestArgs {
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
+        self.ensure_json_compatible(&config)?;
 
         // Install missing dependencies.
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
+            self.ensure_json_compatible(&config)?;
         }
 
         // Set up the project.
@@ -319,6 +321,8 @@ impl TestArgs {
         filter: &ProjectPathsAwareFilter,
         coverage: bool,
     ) -> Result<TestOutcome> {
+        self.ensure_json_compatible(&config)?;
+
         if config.fuzz.run == Some(0) {
             bail!("`fuzz.run` must be greater than 0");
         }
@@ -1120,6 +1124,15 @@ impl TestArgs {
 
     fn emit_json_events(&self) -> bool {
         shell::is_json() && !self.suppress_json_events && !self.gas_report && !self.summary
+    }
+
+    fn ensure_json_compatible(&self, config: &Config) -> Result<()> {
+        if shell::is_json() && config.live_logs {
+            bail!(
+                "`--live-logs` is incompatible with `--json` because live logs write directly to stdout"
+            );
+        }
+        Ok(())
     }
 
     pub(crate) const fn suppress_json_events(&mut self) {

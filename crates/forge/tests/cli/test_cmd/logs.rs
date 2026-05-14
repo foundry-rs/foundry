@@ -790,6 +790,30 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+forgetest_init!(test_json_rejects_live_logs_flag, |prj, cmd| {
+    prj.add_test(
+        "Foo.t.sol",
+        r#"
+import {Test, console} from "forge-std/Test.sol";
+
+contract Foo is Test {
+    function test1() pure public {
+        console.log("THIS-LINE-CORRUPTS-NDJSON");
+    }
+}
+    "#,
+    );
+
+    cmd.forge_fuse()
+        .args(["test", "--json", "--live-logs"])
+        .assert_failure()
+        .stdout_eq(str![[""]])
+        .stderr_eq(str![[r#"
+Error: `--live-logs` is incompatible with `--json` because live logs write directly to stdout
+
+"#]]);
+});
+
 forgetest_init!(test_can_run_with_live_logs_config, |prj, cmd| {
     prj.update_config(|config| {
         config.live_logs = true;
