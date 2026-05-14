@@ -446,7 +446,7 @@ fn is_compile_time_constant(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
 fn is_allowed_constant_call(callee: &hir::Expr<'_>) -> bool {
     match &callee.kind {
         // Type casts: `address(0xCAFE)`, `uint256(x)`, etc.
-        ExprKind::Type(_) | ExprKind::TypeCall(_) => true,
+        ExprKind::Type(_) => true,
         // Contract/interface casts: `IToken(address(0xCAFE))`.
         ExprKind::Ident([Res::Item(hir::ItemId::Contract(_)), ..]) => true,
         ExprKind::Ident([Res::Builtin(builtin), ..]) => {

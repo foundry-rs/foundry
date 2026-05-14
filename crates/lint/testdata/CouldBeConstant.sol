@@ -55,6 +55,9 @@ contract CouldBeConstant {
     uint256 internal writtenByInitializer = 0;
     uint256 internal writerInitializer = (writtenByInitializer = 1);
 
+    // Self-writing initializer: not flagged (initializer is non-constant).
+    uint256 internal selfWriting = (selfWriting = 1);
+
     constructor(uint256 immutableValue) {
         ALREADY_IMMUTABLE = immutableValue;
         configured = immutableValue;
