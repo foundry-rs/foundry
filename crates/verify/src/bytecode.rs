@@ -32,7 +32,7 @@ use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
-    core::evm::{EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, SpecFor},
+    core::evm::{EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, MonadEvmNetwork, SpecFor},
     executors::EvmError,
 };
 use revm::{
@@ -135,7 +135,14 @@ impl VerifyBytecodeArgs {
     /// Run the `verify-bytecode` command to verify the bytecode onchain against the locally built
     /// bytecode.
     pub async fn run(self) -> Result<()> {
-        self.run_with_network::<EthEvmNetwork>().await
+        let (_, mut evm_opts) = self.load_config_and_evm_opts_no_warnings()?;
+        evm_opts.infer_network_from_fork().await;
+
+        if evm_opts.networks.is_monad() {
+            self.run_with_network::<MonadEvmNetwork>().await
+        } else {
+            self.run_with_network::<EthEvmNetwork>().await
+        }
     }
 
     /// Run the `verify-bytecode` command with the selected EVM network implementation.
