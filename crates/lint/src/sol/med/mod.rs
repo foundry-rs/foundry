@@ -12,6 +12,9 @@ use incorrect_erc721_interface::INCORRECT_ERC721_INTERFACE;
 mod incorrect_strict_equality;
 use incorrect_strict_equality::INCORRECT_STRICT_EQUALITY;
 
+mod tautology;
+use tautology::TYPE_BASED_TAUTOLOGY;
+
 mod tx_origin;
 use tx_origin::TX_ORIGIN;
 
@@ -23,6 +26,7 @@ register_lints!(
     (IncorrectERC20Interface, late, (INCORRECT_ERC20_INTERFACE)),
     (IncorrectERC721Interface, late, (INCORRECT_ERC721_INTERFACE)),
     (IncorrectStrictEquality, late, (INCORRECT_STRICT_EQUALITY)),
+    (TypeBasedTautology, late, (TYPE_BASED_TAUTOLOGY)),
     (TxOrigin, early, (TX_ORIGIN)),
     (UnsafeTypecast, late, (UNSAFE_TYPECAST))
 );
