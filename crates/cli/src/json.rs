@@ -2,7 +2,7 @@
 
 use eyre::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, to_string, to_value};
 
 /// The current version of Foundry's top-level JSON output envelope.
 pub const JSON_SCHEMA_VERSION: u32 = 1;
@@ -116,14 +116,9 @@ impl JsonMessage {
     }
 }
 
-/// Serializes a value as compact JSON.
-pub fn to_json_string<T: Serialize>(value: &T) -> Result<String> {
-    Ok(serde_json::to_string(value)?)
-}
-
 /// Prints a value as compact JSON to stdout.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
-    sh_println!("{}", to_json_string(value)?)?;
+    sh_println!("{}", to_string(value)?)?;
     Ok(())
 }
 
@@ -154,7 +149,7 @@ mod tests {
     fn success_envelope_serializes_all_top_level_fields() {
         let envelope = JsonEnvelope::success(BuildData { contracts: 2 });
 
-        let json = to_json_string(&envelope).unwrap();
+        let json = to_string(&envelope).unwrap();
 
         assert_eq!(
             json,
@@ -169,7 +164,7 @@ mod tests {
         let envelope =
             JsonEnvelope::success_with_warnings(BuildData { contracts: 1 }, vec![warning]);
 
-        let value: Value = serde_json::from_str(&to_json_string(&envelope).unwrap()).unwrap();
+        let value = to_value(&envelope).unwrap();
 
         assert_eq!(value["success"], true);
         assert_eq!(value["warnings"][0]["level"], "warning");
@@ -183,7 +178,7 @@ mod tests {
             .with_details(json!({ "path": "foundry.toml" }));
         let envelope = JsonEnvelope::error(error);
 
-        let value: Value = serde_json::from_str(&to_json_string(&envelope).unwrap()).unwrap();
+        let value = to_value(&envelope).unwrap();
 
         assert_eq!(value["schema_version"], JSON_SCHEMA_VERSION);
         assert_eq!(value["success"], false);
