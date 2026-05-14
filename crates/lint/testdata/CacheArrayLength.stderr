@@ -33,6 +33,14 @@ LL │         for (uint256 i = 0; i < data.length; ++i) {
 note[cache-array-length]: array length read in loop condition should be cached outside the loop
    ╭▸ ROOT/testdata/CacheArrayLength.sol:LL:CC
    │
+LL │         for (uint256 i = 0; i < bytes(value).length; ++i) {
+   │                                 ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/cache-array-length
+
+note[cache-array-length]: array length read in loop condition should be cached outside the loop
+   ╭▸ ROOT/testdata/CacheArrayLength.sol:LL:CC
+   │
 LL │         for (uint256 i = 0; i < values[0].length; ++i) {
    │                                 ━━━━━━━━━━━━━━━━
    │
@@ -67,6 +75,14 @@ note[cache-array-length]: array length read in loop condition should be cached o
    │
 LL │         for (uint256 i = 0; i < left.length && i < right.length; ++i) {
    │                                                    ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/cache-array-length
+
+note[cache-array-length]: array length read in loop condition should be cached outside the loop
+   ╭▸ ROOT/testdata/CacheArrayLength.sol:LL:CC
+   │
+LL │         for (uint256 i = 0; i < generatedValues().length; ++i) {
+   │                                 ━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/cache-array-length
 

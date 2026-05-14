@@ -46,6 +46,12 @@ contract CacheArrayLength {
         }
     }
 
+    function bytesCastLength(string memory value) public pure returns (uint256 sum) {
+        for (uint256 i = 0; i < bytes(value).length; ++i) { //~NOTE: array length read in loop condition
+            sum += uint8(bytes(value)[i]);
+        }
+    }
+
     function nestedArrayLength(uint256[][] memory values) public pure returns (uint256 sum) {
         for (uint256 i = 0; i < values[0].length; ++i) { //~NOTE: array length read in loop condition
             sum += values[0][i];
@@ -75,6 +81,12 @@ contract CacheArrayLength {
         }
     }
 
+    function functionReturnArrayLength() public pure returns (uint256 sum) {
+        for (uint256 i = 0; i < generatedValues().length; ++i) { //~NOTE: array length read in loop condition
+            sum += i;
+        }
+    }
+
     function cachedLength(uint256[] memory values) public pure returns (uint256 sum) {
         uint256 length = values.length;
         for (uint256 i = 0; i < length; ++i) {
@@ -92,5 +104,21 @@ contract CacheArrayLength {
         for (uint256 i = 0; i < counter.length; ++i) {
             sum += i;
         }
+    }
+
+    function storageArrayPushLengthMutation() external {
+        for (uint256 i = 0; i < items.length; ++i) {
+            items.push(i);
+        }
+    }
+
+    function storageArrayPopLengthMutation() external {
+        for (uint256 i = 0; i < items.length; ++i) {
+            items.pop();
+        }
+    }
+
+    function generatedValues() internal pure returns (uint256[] memory values) {
+        values = new uint256[](3);
     }
 }
