@@ -1603,6 +1603,7 @@ fn base_counterexamples_to_txes(
                 call_details: CallDetails {
                     target: seq.addr.unwrap_or_default(),
                     calldata: seq.calldata.clone(),
+                    value: seq.value,
                 },
             }
         })

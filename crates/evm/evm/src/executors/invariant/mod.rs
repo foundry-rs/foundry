@@ -1475,8 +1475,13 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
         }
     }
 
+    // Bound requested value by sender's available balance so payable paths still get
+    // exercised when the requested value exceeds balance, instead of collapsing to zero.
+    let requested_value = tx.call_details.value.unwrap_or(U256::ZERO);
+    let sender_balance = executor.get_balance(tx.sender)?;
+    let value = requested_value.min(sender_balance);
     executor
-        .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), U256::ZERO)
+        .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), value)
         .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
 }
 
