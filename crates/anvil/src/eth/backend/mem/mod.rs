@@ -105,7 +105,7 @@ use foundry_evm::{
     },
     utils::{
         block_env_from_header, get_blob_base_fee_update_fraction,
-        get_blob_base_fee_update_fraction_by_spec_id,
+        get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_spec_id,
     },
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -119,7 +119,7 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
 #[cfg(feature = "optimism")]
-use op_revm::{OpSpecId, OpTransaction, transaction::deposit::DepositTransactionParts};
+use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 
 /// Side-channel container for OP-specific deposit info produced by
 /// [`Backend::build_call_env`] and consumed by the OP transact path.
@@ -602,17 +602,7 @@ impl<N: Network> Backend<N> {
 
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
-        let spec_id = self.spec_id();
-
-        if spec_id >= SpecId::OSAKA {
-            return BlobParams::osaka();
-        }
-
-        if spec_id >= SpecId::PRAGUE {
-            return BlobParams::prague();
-        }
-
-        BlobParams::cancun()
+        get_blob_params_by_spec_id(self.spec_id())
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)
@@ -1359,7 +1349,7 @@ impl<N: Network> Backend<N> {
         #[cfg(feature = "optimism")]
         if self.is_optimism() {
             let op_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
+                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork.into()),
                 evm_env.block_env.clone(),
             );
             let mut evm =
@@ -3916,14 +3906,16 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 // Ref: https://github.com/foundry-rs/foundry/issues/9539
                 if best_number > number {
                     self.blockchain.storage.write().best_number = best_number;
-                    let best_hash =
-                        self.blockchain.storage.read().hash(best_number.into()).ok_or_else(
-                            || {
-                                BlockchainError::RpcError(RpcError::internal_error_with(format!(
-                                    "Best hash not found for best number {best_number}",
-                                )))
-                            },
-                        )?;
+                    let best_hash = self
+                        .blockchain
+                        .storage
+                        .read()
+                        .hash(best_number.into(), self.slots_in_an_epoch)
+                        .ok_or_else(|| {
+                            BlockchainError::RpcError(RpcError::internal_error_with(format!(
+                                "Best hash not found for best number {best_number}",
+                            )))
+                        })?;
                     self.blockchain.storage.write().best_hash = best_hash;
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
@@ -3935,8 +3927,12 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 self.blockchain.storage.write().best_number = best_number;
 
                 // Set the current best block hash;
-                let best_hash =
-                    self.blockchain.storage.read().hash(best_number.into()).ok_or_else(|| {
+                let best_hash = self
+                    .blockchain
+                    .storage
+                    .read()
+                    .hash(best_number.into(), self.slots_in_an_epoch)
+                    .ok_or_else(|| {
                         BlockchainError::RpcError(RpcError::internal_error_with(format!(
                             "Best hash not found for best number {best_number}",
                         )))
