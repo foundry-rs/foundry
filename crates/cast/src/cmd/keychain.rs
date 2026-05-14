@@ -1,9 +1,11 @@
+use alloy_consensus::BlockHeader;
 use alloy_ens::NameOrAddress;
 use std::time::Duration;
 
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_primitives::{Address, U256, hex, keccak256};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
+use alloy_rpc_types::BlockId;
 use alloy_signer::Signer;
 use alloy_sol_types::SolCall;
 use alloy_transport::TransportError;
@@ -11,7 +13,7 @@ use chrono::DateTime;
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    opts::{RpcOpts, TransactionOpts},
+    opts::{RpcOpts, TempoOpts, TransactionOpts},
     utils::LoadConfig,
 };
 use foundry_common::{
@@ -114,8 +116,11 @@ pub enum KeychainSubcommand {
         recipient: Option<Address>,
 
         /// Fee token to check the root account balance for. Defaults to PathUSD.
-        #[arg(long, value_parser = parse_policy_token, default_value = "PathUSD")]
-        fee_token: Address,
+        #[arg(id = "doctor_fee_token", long, value_parser = parse_policy_token)]
+        fee_token: Option<Address>,
+
+        #[command(flatten)]
+        tempo: TempoOpts,
 
         #[command(flatten)]
         rpc: RpcOpts,
@@ -607,7 +612,16 @@ impl KeychainSubcommand {
             Self::Inspect { key_address, root_account, rpc } => {
                 run_inspect(key_address, root_account, rpc).await
             }
-            Self::Doctor { key_address, root_account, to, selector, recipient, fee_token, rpc } => {
+            Self::Doctor {
+                key_address,
+                root_account,
+                to,
+                selector,
+                recipient,
+                fee_token,
+                tempo,
+                rpc,
+            } => {
                 run_doctor(
                     key_address,
                     root_account,
@@ -615,6 +629,7 @@ impl KeychainSubcommand {
                     selector.map(|s| s.0),
                     recipient,
                     fee_token,
+                    tempo,
                     rpc,
                 )
                 .await
@@ -959,14 +974,11 @@ async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) 
 // `cast keychain doctor`
 // ---------------------------------------------------------------------------
 //
-// TODO(OSS-160 follow-ups): the doctor cannot diagnose the following parts of
-// the access-key signing path because the upstream surface to query against
-// does not exist yet. Add checks once the corresponding stacks land:
+// TODO(OSS-160 follow-up): browser-wallet KeyAuthorization signing still needs a
+// wallet-facing probe once the upstream browser-wallet surface lands. TIP-1009
+// and sponsorship have config-level diagnostics below, but full fee-payer digest
+// validation needs a concrete transaction payload.
 //
-//   * Sequence-key / TIP-1009 expiring nonce — no expiring-nonce flag exists upstream and `KeyInfo`
-//     does not carry sequence-key state today.
-//   * Sponsorship / `fee_payer_signature` — no sponsorship plumbing exists in the local config or
-//     precompile to read.
 //   * Browser-wallet `KeyAuthorization` signing — wallet capability is being added in
 //     foundry-rs/foundry#14743 + foundry-rs/foundry-core#67 + foundry-rs/foundry-browser-wallet#67.
 //     Once merged, doctor can probe whether the connected browser/passkey wallet can sign the
@@ -1031,7 +1043,37 @@ impl DoctorStep {
 struct DoctorSubject {
     root_account: Address,
     key_address: Address,
-    entry: tempo::KeyEntry,
+    entry: Option<tempo::KeyEntry>,
+}
+
+/// Candidate subject collected before the RPC chain is known.
+#[derive(Debug)]
+struct DoctorCandidate {
+    root_account: Address,
+    key_address: Address,
+    chain_id: Option<u64>,
+    entry: Option<tempo::KeyEntry>,
+}
+
+impl DoctorCandidate {
+    fn from_entry(entry: tempo::KeyEntry) -> Self {
+        Self {
+            root_account: entry.wallet_address,
+            key_address: key_entry_effective_key(&entry),
+            chain_id: Some(entry.chain_id),
+            entry: Some(entry),
+        }
+    }
+
+    const fn explicit(root_account: Address, key_address: Address) -> Self {
+        Self { root_account, key_address, chain_id: None, entry: None }
+    }
+}
+
+#[derive(Debug)]
+struct LocalCandidateResolution {
+    step: DoctorStep,
+    candidates: Vec<DoctorCandidate>,
 }
 
 /// Outcome of TIP-1011 allowed-call matching.
@@ -1052,29 +1094,21 @@ async fn run_doctor(
     to: Option<Address>,
     selector: Option<[u8; 4]>,
     recipient: Option<Address>,
-    fee_token: Address,
+    fee_token: Option<Address>,
+    mut tempo: TempoOpts,
     rpc: RpcOpts,
 ) -> Result<()> {
     let mut steps: Vec<DoctorStep> = Vec::new();
+    let fee_token = fee_token.or(tempo.fee_token).unwrap_or(PATH_USD_ADDRESS);
 
     // Step 1: local registry lookup.
-    let candidates = collect_local_candidates(key_address, root_account);
-    let candidates = match candidates {
-        Ok(c) => {
-            steps.push(DoctorStep::pass(
-                "local_registry",
-                "Local registry",
-                format!("{} candidate(s) in {}", c.len(), tempo_keys_path_display()),
-            ));
-            c
+    let candidates = match collect_local_candidates(key_address, root_account) {
+        Ok(resolution) => {
+            steps.push(resolution.step);
+            resolution.candidates
         }
-        Err(detail) => {
-            steps.push(DoctorStep::fail(
-                "local_registry",
-                "Local registry",
-                detail,
-                "run `cast tempo login` or add the key to ~/.tempo/wallet/keys.toml",
-            ));
+        Err(step) => {
+            steps.push(step);
             return finalize_doctor(steps);
         }
     };
@@ -1131,14 +1165,18 @@ async fn run_doctor(
     // Step 3: chain-id match + final entry selection.
     let subject = match select_subject_for_chain(candidates, rpc_chain_id, root_account) {
         Ok(s) => {
-            steps.push(DoctorStep::pass(
-                "chain_id_match",
-                "Chain ID match",
+            let detail = if s.entry.is_some() {
                 format!(
                     "local entry on chain {} matches RPC (root {}, key {})",
                     rpc_chain_id, s.root_account, s.key_address
-                ),
-            ));
+                )
+            } else {
+                format!(
+                    "using explicit root {} and key {} on RPC chain {}",
+                    s.root_account, s.key_address, rpc_chain_id
+                )
+            };
+            steps.push(DoctorStep::pass("chain_id_match", "Chain ID match", detail));
             s
         }
         Err(detail) => {
@@ -1152,7 +1190,15 @@ async fn run_doctor(
         }
     };
 
-    // Step 4: on-chain key state.
+    // Step 4: local signing readiness.
+    let local_signing = check_local_signing_readiness(&subject);
+    let local_signing_failed = local_signing.status == DoctorStatus::Fail;
+    steps.push(local_signing);
+    if local_signing_failed {
+        return finalize_doctor(steps);
+    }
+
+    // Step 5: on-chain key state.
     let info = match provider.get_keychain_key(subject.root_account, subject.key_address).await {
         Ok(info) if info.keyId != Address::ZERO => {
             steps.push(DoctorStep::pass(
@@ -1185,7 +1231,7 @@ async fn run_doctor(
         }
     };
 
-    // Step 5: revoked?
+    // Step 6: revoked?
     if info.isRevoked {
         steps.push(DoctorStep::fail(
             "not_revoked",
@@ -1197,7 +1243,7 @@ async fn run_doctor(
     }
     steps.push(DoctorStep::pass("not_revoked", "Not revoked", "active"));
 
-    // Step 6: expiry.
+    // Step 7: expiry.
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -1224,18 +1270,44 @@ async fn run_doctor(
         ));
     }
 
-    // Compute is_t3 (used for limits and allowed-calls checks). Treat detection failure
-    // as "not T3" — both checks will gracefully degrade.
-    let is_t3 = is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.unwrap_or(false);
+    // Step 8: hardfork detection (used for limits and allowed-calls checks).
+    let is_t3 = match is_tempo_hardfork_active(&provider, TempoHardfork::T3).await {
+        Ok(true) => {
+            steps.push(DoctorStep::pass("hardfork_detection", "Hardfork", "Tempo T3 active"));
+            true
+        }
+        Ok(false) => {
+            steps.push(DoctorStep::pass(
+                "hardfork_detection",
+                "Hardfork",
+                "pre-T3; TIP-1011 scopes not enforced",
+            ));
+            false
+        }
+        Err(err) => {
+            steps.push(DoctorStep::warn(
+                "hardfork_detection",
+                "Hardfork",
+                format!("could not determine Tempo T3 activation: {err}"),
+                "TIP-1011 allowed-call checks will be skipped",
+            ));
+            false
+        }
+    };
 
-    // Step 7: spending limits.
+    // Step 9: spending limits.
     steps.push(check_spending_limits(&provider, &subject, &info, fee_token, is_t3).await);
 
-    // Step 8: allowed calls (TIP-1011, T3+ only).
+    // Step 10: allowed calls (TIP-1011, T3+ only).
     steps.push(check_allowed_calls(&provider, &subject, is_t3, to, selector, recipient).await);
 
-    // Step 9: fee-token balance on the root account.
+    // Step 11: fee-token balance on the root account.
     steps.push(check_fee_token_balance(&provider, subject.root_account, fee_token).await);
+
+    // Step 12: transaction-option diagnostics that affect access-key sends.
+    let resolved_expires_at = tempo.resolve_expires();
+    steps.push(check_expiring_nonce(&provider, &tempo, resolved_expires_at).await);
+    steps.push(check_sponsorship(&tempo, subject.root_account).await);
 
     finalize_doctor(steps)
 }
@@ -1244,9 +1316,35 @@ async fn run_doctor(
 fn collect_local_candidates(
     key_address: Option<Address>,
     root_account: Option<Address>,
-) -> Result<Vec<tempo::KeyEntry>, String> {
+) -> Result<LocalCandidateResolution, DoctorStep> {
+    let explicit_candidate = || {
+        key_address
+            .zip(root_account)
+            .map(|(key_address, root_account)| DoctorCandidate::explicit(root_account, key_address))
+    };
+
     let Some(keys_file) = read_tempo_keys_file() else {
-        return Err(format!("could not read local keys file at {}", tempo_keys_path_display()));
+        if let Some(candidate) = explicit_candidate() {
+            return Ok(LocalCandidateResolution {
+                step: DoctorStep::warn(
+                    "local_registry",
+                    "Local registry",
+                    format!(
+                        "could not read {}; using explicit root/key",
+                        tempo_keys_path_display()
+                    ),
+                    "local signing material and saved limit metadata cannot be verified",
+                ),
+                candidates: vec![candidate],
+            });
+        }
+
+        return Err(DoctorStep::fail(
+            "local_registry",
+            "Local registry",
+            format!("could not read local keys file at {}", tempo_keys_path_display()),
+            "run `cast tempo login` or pass both KEY_ADDRESS and --root-account",
+        ));
     };
 
     let mut matches: Vec<tempo::KeyEntry> = keys_file
@@ -1261,31 +1359,72 @@ fn collect_local_candidates(
         .collect();
 
     if matches.is_empty() {
+        if let Some(candidate) = explicit_candidate() {
+            return Ok(LocalCandidateResolution {
+                step: DoctorStep::warn(
+                    "local_registry",
+                    "Local registry",
+                    format!(
+                        "no local entry for key {} and root {}; using explicit root/key",
+                        candidate.key_address, candidate.root_account
+                    ),
+                    "local signing material and saved limit metadata cannot be verified",
+                ),
+                candidates: vec![candidate],
+            });
+        }
+
         let descriptor = match (key_address, root_account) {
             (Some(k), Some(r)) => format!("key {k} for root {r}"),
             (Some(k), None) => format!("key {k}"),
             (None, Some(r)) => format!("root account {r}"),
             (None, None) => "the requested key".to_string(),
         };
-        return Err(format!("no entry for {descriptor} in {}", tempo_keys_path_display()));
+        let hint = match (key_address, root_account) {
+            (Some(_), None) => "pass --root-account to diagnose an explicit key/root pair",
+            (None, Some(_)) => "pass KEY_ADDRESS to diagnose a key without a local registry entry",
+            _ => "run `cast tempo login` or add the key to ~/.tempo/wallet/keys.toml",
+        };
+        return Err(DoctorStep::fail(
+            "local_registry",
+            "Local registry",
+            format!("no entry for {descriptor} in {}", tempo_keys_path_display()),
+            hint,
+        ));
     }
 
     // Prefer the same default selection as `key_metadata_from_entry` callers (entries with
     // local limit metadata first), but keep all chain-matching candidates for step 3.
     matches.sort_by_key(|entry| usize::MAX - entry.limits.len());
-    Ok(matches)
+    let count = matches.len();
+    let mut candidates: Vec<DoctorCandidate> =
+        matches.into_iter().map(DoctorCandidate::from_entry).collect();
+    if let Some(candidate) = explicit_candidate() {
+        candidates.push(candidate);
+    }
+
+    Ok(LocalCandidateResolution {
+        step: DoctorStep::pass(
+            "local_registry",
+            "Local registry",
+            format!("{count} candidate(s) in {}", tempo_keys_path_display()),
+        ),
+        candidates,
+    })
 }
 
 /// Step 3 helper: filter candidates to the RPC chain id and pick a single entry.
 fn select_subject_for_chain(
-    candidates: Vec<tempo::KeyEntry>,
+    candidates: Vec<DoctorCandidate>,
     rpc_chain_id: u64,
     explicit_root: Option<Address>,
 ) -> Result<DoctorSubject, String> {
-    let local_chain_ids: Vec<u64> = candidates.iter().map(|e| e.chain_id).collect();
+    let local_chain_ids: Vec<u64> = candidates.iter().filter_map(|e| e.chain_id).collect();
 
-    let chain_matched: Vec<tempo::KeyEntry> =
-        candidates.into_iter().filter(|entry| entry.chain_id == rpc_chain_id).collect();
+    let chain_matched: Vec<DoctorCandidate> = candidates
+        .into_iter()
+        .filter(|entry| entry.chain_id.is_none_or(|chain_id| chain_id == rpc_chain_id))
+        .collect();
 
     if chain_matched.is_empty() {
         return Err(format!(
@@ -1295,7 +1434,7 @@ fn select_subject_for_chain(
 
     // If multiple entries belong to different roots and the user did not pin one, refuse to guess.
     if explicit_root.is_none()
-        && chain_matched.iter().any(|entry| entry.wallet_address != chain_matched[0].wallet_address)
+        && chain_matched.iter().any(|entry| entry.root_account != chain_matched[0].root_account)
     {
         return Err(
             "multiple local entries match this chain across different root accounts; pass --root-account"
@@ -1304,14 +1443,44 @@ fn select_subject_for_chain(
     }
 
     // Prefer entries with inline key material (i.e. signing-ready), otherwise the first.
-    let preferred_idx = chain_matched.iter().position(|entry| entry.has_inline_key()).unwrap_or(0);
+    let preferred_idx = chain_matched
+        .iter()
+        .position(|entry| entry.entry.as_ref().is_some_and(|entry| entry.has_inline_key()))
+        .unwrap_or(0);
     let entry = chain_matched.into_iter().nth(preferred_idx).expect("non-empty");
 
     Ok(DoctorSubject {
-        root_account: entry.wallet_address,
-        key_address: key_entry_effective_key(&entry),
-        entry,
+        root_account: entry.root_account,
+        key_address: entry.key_address,
+        entry: entry.entry,
     })
+}
+
+/// Step 4 helper: verify whether the local side can actually sign as the key.
+fn check_local_signing_readiness(subject: &DoctorSubject) -> DoctorStep {
+    let Some(entry) = subject.entry.as_ref() else {
+        return DoctorStep::warn(
+            "local_signing",
+            "Local signing",
+            "not verified; using explicit root/key without a local registry entry",
+            "pass --tempo.access-key in the send command or add this key to ~/.tempo/wallet/keys.toml",
+        );
+    };
+
+    if entry.has_inline_key() {
+        return DoctorStep::pass(
+            "local_signing",
+            "Local signing",
+            format!("inline {} key available", key_type_name(&entry.key_type)),
+        );
+    }
+
+    DoctorStep::fail(
+        "local_signing",
+        "Local signing",
+        "local entry has no inline access-key private key",
+        "run `cast tempo login` again, restore the key material, or pass --tempo.access-key when sending",
+    )
 }
 
 /// Step 7 helper: spending limits.
@@ -1333,8 +1502,10 @@ where
         );
     }
 
+    let local_limits = subject.entry.as_ref().map(|entry| entry.limits.as_slice()).unwrap_or(&[]);
+
     // Token universe: local-entry limits ∪ {fee_token}.
-    let mut tokens: Vec<Address> = subject.entry.limits.iter().map(|l| l.currency).collect();
+    let mut tokens: Vec<Address> = local_limits.iter().map(|l| l.currency).collect();
     if !tokens.contains(&fee_token) {
         tokens.push(fee_token);
     }
@@ -1343,8 +1514,7 @@ where
     let mut any_zero = false;
 
     for token in tokens {
-        let configured =
-            subject.entry.limits.iter().find(|l| l.currency == token).map(|l| l.limit.clone());
+        let configured = local_limits.iter().find(|l| l.currency == token).map(|l| l.limit.clone());
 
         let (remaining, period_end) = if is_t3 {
             match provider
@@ -1408,6 +1578,13 @@ where
             "Spending limits",
             detail,
             "raise the limit (e.g. `cast keychain ul ...`) or wait for the window reset",
+        )
+    } else if local_limits.is_empty() {
+        DoctorStep::warn(
+            "spending_limits",
+            "Spending limits",
+            detail,
+            "local limit metadata is unavailable; only --fee-token was checked",
         )
     } else {
         DoctorStep::pass("spending_limits", "Spending limits", detail)
@@ -1596,14 +1773,222 @@ where
     }
 }
 
+/// Step 12 helper: validate TIP-1009 expiring-nonce options, if supplied.
+async fn check_expiring_nonce<P>(
+    provider: &P,
+    tempo: &TempoOpts,
+    resolved_expires_at: Option<u64>,
+) -> DoctorStep
+where
+    P: Provider<TempoNetwork>,
+{
+    if !tempo.expiring_nonce && tempo.valid_before.is_none() && tempo.valid_after.is_none() {
+        return DoctorStep::pass("expiring_nonce", "Expiring nonce", "not requested");
+    }
+
+    let latest = match provider.get_block(BlockId::latest()).await {
+        Ok(Some(block)) => block,
+        Ok(None) => {
+            return DoctorStep::warn(
+                "expiring_nonce",
+                "Expiring nonce",
+                "latest block not found; validity window not checked",
+                "verify the RPC can serve latest block data",
+            );
+        }
+        Err(err) => {
+            return DoctorStep::warn(
+                "expiring_nonce",
+                "Expiring nonce",
+                format!("latest block query failed: {err}"),
+                "validity window could not be checked against chain time",
+            );
+        }
+    };
+
+    let chain_timestamp = latest.header.timestamp();
+    let valid_before = tempo.valid_before;
+    let valid_after = tempo.valid_after;
+
+    if (valid_before.is_some() || valid_after.is_some()) && !tempo.expiring_nonce {
+        return DoctorStep::warn(
+            "expiring_nonce",
+            "Expiring nonce",
+            "validity window set without --tempo.expiring-nonce",
+            "use --tempo.expiring-nonce or --tempo.expires so nonce_key is set to the expiring lane",
+        );
+    }
+
+    if let (Some(after), Some(before)) = (valid_after, valid_before)
+        && after >= before
+    {
+        return DoctorStep::fail(
+            "expiring_nonce",
+            "Expiring nonce",
+            format!("valid-after {after} is not before valid-before {before}"),
+            "choose a valid window where valid-after < valid-before",
+        );
+    }
+
+    if let Some(before) = valid_before {
+        if before <= chain_timestamp {
+            return DoctorStep::fail(
+                "expiring_nonce",
+                "Expiring nonce",
+                format!(
+                    "valid-before {} is expired at chain timestamp {}",
+                    format_timestamp_iso(before),
+                    chain_timestamp
+                ),
+                "use a later --tempo.valid-before or rerun with --tempo.expires",
+            );
+        }
+
+        let ttl = before - chain_timestamp;
+        if ttl <= 3 {
+            return DoctorStep::fail(
+                "expiring_nonce",
+                "Expiring nonce",
+                format!(
+                    "valid-before must be more than 3s after chain timestamp {chain_timestamp}; current ttl is {ttl}s"
+                ),
+                "use a later --tempo.valid-before or rerun with --tempo.expires",
+            );
+        }
+        if ttl <= 5 {
+            return DoctorStep::warn(
+                "expiring_nonce",
+                "Expiring nonce",
+                format!("valid for only {ttl}s at chain timestamp {chain_timestamp}"),
+                "use a larger validity window before signing",
+            );
+        }
+        if ttl > 30 {
+            if resolved_expires_at.is_some() {
+                return DoctorStep::warn(
+                    "expiring_nonce",
+                    "Expiring nonce",
+                    format!(
+                        "--tempo.expires resolved to a deadline {ttl}s ahead of chain timestamp {chain_timestamp}"
+                    ),
+                    "check local clock/RPC timestamp skew before relying on this deadline",
+                );
+            }
+
+            return DoctorStep::warn(
+                "expiring_nonce",
+                "Expiring nonce",
+                format!(
+                    "valid-before is {ttl}s ahead of chain timestamp {chain_timestamp}; --tempo.expires caps this at 30s"
+                ),
+                "prefer --tempo.expires for bounded retry-safe sends",
+            );
+        }
+    }
+
+    if let Some(after) = valid_after
+        && after > chain_timestamp
+    {
+        return DoctorStep::warn(
+            "expiring_nonce",
+            "Expiring nonce",
+            format!("transaction is not valid until {}", format_timestamp_iso(after)),
+            "wait until valid-after or choose an earlier lower bound",
+        );
+    }
+
+    let mut detail = format!("enabled at chain timestamp {chain_timestamp}");
+    if let Some(before) = valid_before {
+        detail.push_str(&format!(", valid-before {}", format_timestamp_iso(before)));
+    }
+    if let Some(after) = valid_after {
+        detail.push_str(&format!(", valid-after {}", format_timestamp_iso(after)));
+    }
+    if let Some(expires_at) = resolved_expires_at {
+        detail.push_str(&format!(
+            ", --tempo.expires resolved to {}",
+            format_timestamp_iso(expires_at)
+        ));
+    }
+
+    DoctorStep::pass("expiring_nonce", "Expiring nonce", detail)
+}
+
+/// Step 13 helper: validate sponsorship configuration, if supplied.
+async fn check_sponsorship(tempo: &TempoOpts, sender: Address) -> DoctorStep {
+    if tempo.print_sponsor_hash {
+        return DoctorStep::warn(
+            "sponsorship",
+            "Sponsorship",
+            "--tempo.print-sponsor-hash requested, but doctor has no concrete tx payload",
+            "run the target send/mktx command with --tempo.print-sponsor-hash to compute the exact digest",
+        );
+    }
+
+    if !tempo.has_sponsor_submission() {
+        return DoctorStep::pass("sponsorship", "Sponsorship", "not requested");
+    }
+
+    let sponsor = match tempo.sponsor_config().await {
+        Ok(Some(sponsor)) => sponsor,
+        Ok(None) => return DoctorStep::pass("sponsorship", "Sponsorship", "not requested"),
+        Err(err) => {
+            return DoctorStep::fail(
+                "sponsorship",
+                "Sponsorship",
+                format!("invalid sponsor config: {err}"),
+                "pass --tempo.sponsor with either --tempo.sponsor-signer or --tempo.sponsor-sig",
+            );
+        }
+    };
+
+    if sponsor.sponsor() == sender {
+        return DoctorStep::fail(
+            "sponsorship",
+            "Sponsorship",
+            format!("sponsor {} equals transaction sender {sender}", sponsor.sponsor()),
+            "use a different fee payer for sponsored transactions",
+        );
+    }
+
+    if tempo.sponsor_sig.is_some() {
+        return DoctorStep::warn(
+            "sponsorship",
+            "Sponsorship",
+            format!("signature syntax parsed for sponsor {}", sponsor.sponsor()),
+            "doctor cannot recover fee_payer_signature without the exact transaction digest",
+        );
+    }
+
+    DoctorStep::pass(
+        "sponsorship",
+        "Sponsorship",
+        format!("sponsor signer configured for {}", sponsor.sponsor()),
+    )
+}
+
 /// Render the doctor result and return.
 fn finalize_doctor(steps: Vec<DoctorStep>) -> Result<()> {
-    let passed = steps.iter().all(|s| s.status != DoctorStatus::Fail);
+    let failure_count = steps.iter().filter(|s| s.status == DoctorStatus::Fail).count();
+    let warning_count = steps.iter().filter(|s| s.status == DoctorStatus::Warn).count();
+    let passed = failure_count == 0;
+    let healthy = passed && warning_count == 0;
+    let status = if failure_count > 0 {
+        "fail"
+    } else if warning_count > 0 {
+        "warn"
+    } else {
+        "pass"
+    };
 
     if shell::is_json() {
         let json = serde_json::json!({
             "steps": steps,
+            "status": status,
             "passed": passed,
+            "healthy": healthy,
+            "warning_count": warning_count,
+            "failure_count": failure_count,
         });
         sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
     } else {
@@ -1611,8 +1996,10 @@ fn finalize_doctor(steps: Vec<DoctorStep>) -> Result<()> {
             print_doctor_step(step)?;
         }
         sh_println!()?;
-        if passed {
+        if healthy {
             sh_println!("{} access-key signing path looks healthy", "✓".green())?;
+        } else if passed {
+            sh_println!("{} access-key signing path has warnings (see above)", "!".yellow())?;
         } else {
             sh_println!("{} access-key signing path has issues (see above)", "✗".red())?;
         }
@@ -2782,6 +3169,113 @@ mod tests {
             "transfer",
         ]);
         assert!(res.is_err(), "--selector without --to should error");
+    }
+
+    #[test]
+    fn test_doctor_parses_tempo_expiring_nonce_options() {
+        let cmd = KeychainSubcommand::try_parse_from([
+            "keychain",
+            "doctor",
+            "0x1111111111111111111111111111111111111111",
+            "--root-account",
+            "0x2222222222222222222222222222222222222222",
+            "--tempo.expiring-nonce",
+            "--tempo.valid-before",
+            "9999999999",
+            "--tempo.fee-token",
+            "0x20C0000000000000000000000000000000000002",
+        ])
+        .unwrap();
+        match cmd {
+            KeychainSubcommand::Doctor { tempo, .. } => {
+                assert!(tempo.expiring_nonce);
+                assert_eq!(tempo.valid_before, Some(9_999_999_999));
+                assert_eq!(
+                    tempo.fee_token,
+                    Some(Address::from_str("0x20C0000000000000000000000000000000000002").unwrap())
+                );
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_select_subject_accepts_explicit_root_key_without_local_entry() {
+        let root = target_addr(0x11);
+        let key = target_addr(0x22);
+        let subject =
+            select_subject_for_chain(vec![DoctorCandidate::explicit(root, key)], 31337, Some(root))
+                .unwrap();
+
+        assert_eq!(subject.root_account, root);
+        assert_eq!(subject.key_address, key);
+        assert!(subject.entry.is_none());
+
+        let signing = check_local_signing_readiness(&subject);
+        assert_eq!(signing.status, DoctorStatus::Warn);
+    }
+
+    #[test]
+    fn test_select_subject_uses_explicit_root_key_when_local_entry_is_wrong_chain() {
+        let root = target_addr(0x11);
+        let key = target_addr(0x22);
+        let local = tempo::KeyEntry {
+            wallet_address: root,
+            chain_id: 1,
+            key_address: Some(key),
+            key: Some("0xdeadbeef".to_string()),
+            ..Default::default()
+        };
+
+        let subject = select_subject_for_chain(
+            vec![DoctorCandidate::from_entry(local), DoctorCandidate::explicit(root, key)],
+            31337,
+            Some(root),
+        )
+        .unwrap();
+
+        assert_eq!(subject.root_account, root);
+        assert_eq!(subject.key_address, key);
+        assert!(subject.entry.is_none());
+    }
+
+    #[test]
+    fn test_local_signing_readiness_fails_without_inline_key() {
+        let root = target_addr(0x11);
+        let key = target_addr(0x22);
+        let subject = DoctorSubject {
+            root_account: root,
+            key_address: key,
+            entry: Some(tempo::KeyEntry {
+                wallet_address: root,
+                chain_id: 31337,
+                key_address: Some(key),
+                ..Default::default()
+            }),
+        };
+
+        let signing = check_local_signing_readiness(&subject);
+        assert_eq!(signing.status, DoctorStatus::Fail);
+    }
+
+    #[test]
+    fn test_local_signing_readiness_passes_with_inline_key() {
+        let root = target_addr(0x11);
+        let key = target_addr(0x22);
+        let subject = DoctorSubject {
+            root_account: root,
+            key_address: key,
+            entry: Some(tempo::KeyEntry {
+                wallet_address: root,
+                chain_id: 31337,
+                key_address: Some(key),
+                key: Some("0xdeadbeef".to_string()),
+                ..Default::default()
+            }),
+        };
+
+        let signing = check_local_signing_readiness(&subject);
+        assert_eq!(signing.status, DoctorStatus::Pass);
     }
 
     #[test]
