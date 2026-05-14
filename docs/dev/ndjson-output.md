@@ -23,9 +23,6 @@ complete JSON object instead of an event stream. For event streams, overall comm
 reported by the final `summary` event payload. Intermediate events do not carry whole-command
 success.
 
-This is a breaking wire-format change for the default `forge test --json` path. It previously
-emitted one aggregate JSON object keyed by suite name; it now emits an NDJSON event stream.
-
 ## `forge build --json`
 
 Events:
@@ -43,9 +40,6 @@ Events:
   - `warning_count`: number of compiler warnings.
   - `output`: compiler output object, or `null` if the compiler did not produce output.
   - `error`: terminal error string, or `null` if no terminal command error occurred.
-
-In the current implementation, `compile_artifact` events are emitted after the compiler returns,
-while the command is building the terminal event stream from compiler output.
 
 ## `forge test --json`
 
@@ -75,11 +69,11 @@ Events:
   - `wall_time`: elapsed wall-clock time.
   - `cpu_time`: accumulated test CPU time.
 
-### Current Exceptions For `forge test --json`
+### Non-Streaming `forge test --json` Outputs
 
 The NDJSON event stream applies to the default test execution path.
 
-The following combinations currently retain legacy non-streaming output:
+The following combinations emit non-streaming output:
 
 - `forge test --gas-report --json`
 - `forge test --summary --json`

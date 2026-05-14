@@ -1,5 +1,7 @@
-use crate::json::{assert_json_event, parse_json_lines};
-use crate::utils::generate_large_init_contract;
+use crate::{
+    json::{assert_json_event, parse_json_lines},
+    utils::generate_large_init_contract,
+};
 use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt};
 use globset::Glob;
 use std::fs;

@@ -1,11 +1,13 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
-use crate::coverage::{
-    BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummary,
-    CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter,
-    analysis::{SourceAnalysis, SourceFiles},
-    anchors::find_anchors,
+use crate::{
+    coverage::{
+        BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummary,
+        CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter,
+        analysis::{SourceAnalysis, SourceFiles},
+        anchors::find_anchors,
+    },
+    result::TestOutcome,
 };
-use crate::result::TestOutcome;
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::Result;
