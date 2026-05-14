@@ -93,10 +93,9 @@ fn input_sources<'ast>(hir: &Hir<'_>, sources: &[ProjectSource<'ast>]) -> InputS
 
         if sources[source_idx].is_test_or_script {
             continue;
-        } else {
-            input_sources.emitted.insert(source_id, source_idx);
-            input_sources.included.insert(source_id);
         }
+        input_sources.emitted.insert(source_id, source_idx);
+        input_sources.included.insert(source_id);
     }
     input_sources
 }
@@ -362,7 +361,7 @@ fn select_matching_functions(
         }
     }
 
-    if !exact.is_empty() { exact } else { possible }
+    if exact.is_empty() { possible } else { exact }
 }
 
 fn select_matching_member_functions(
@@ -382,7 +381,7 @@ fn select_matching_member_functions(
         }
     }
 
-    if !exact.is_empty() { exact } else { possible }
+    if exact.is_empty() { possible } else { exact }
 }
 
 fn function_matches_args(
@@ -399,9 +398,7 @@ fn function_matches_member_args(
     receiver: &Expr<'_>,
     args: CallArgs<'_>,
 ) -> Option<MatchQuality> {
-    let Some((&receiver_param, parameters)) = function.parameters.split_first() else {
-        return None;
-    };
+    let (&receiver_param, parameters) = function.parameters.split_first()?;
     if parameters.len() != args.len() {
         return None;
     }
@@ -534,14 +531,14 @@ fn type_matches_param(
     }
 }
 
-fn call_expr_type<'hir>(callee: &'hir Expr<'hir>) -> Option<&'hir Type<'hir>> {
+const fn call_expr_type<'hir>(callee: &'hir Expr<'hir>) -> Option<&'hir Type<'hir>> {
     match &callee.kind {
         ExprKind::Type(ty) | ExprKind::TypeCall(ty) | ExprKind::New(ty) => Some(ty),
         _ => None,
     }
 }
 
-fn lit_matches_type(lit: &LitKind<'_>, ty: &Type<'_>) -> Option<MatchQuality> {
+const fn lit_matches_type(lit: &LitKind<'_>, ty: &Type<'_>) -> Option<MatchQuality> {
     let TypeKind::Elementary(elementary) = ty.kind else {
         return match lit {
             LitKind::Err(_) => Some(MatchQuality::Possible),
