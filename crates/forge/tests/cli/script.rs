@@ -3340,6 +3340,122 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 "#]]);
 });
 
+// Regression: Salted `new Foo{salt: ...}(args)` in scripts must NOT be rewritten to
+// `vm.deployCode(...)` by the dynamic test linking preprocessor.
+//
+// NOTE: `dynamic_test_linking` config option is not yet taken into account by `forge script`.
+// The config is set explicitly here so the test fails if there is a regression.
+forgetest_async!(can_broadcast_salted_create2_in_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|c| c.dynamic_test_linking = true);
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Token {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+}
+        "#,
+    );
+    prj.add_script(
+        "Salted.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "../src/Token.sol";
+contract SaltedScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Token{salt: bytes32(uint256(0xDEADBEEF))}("SaltedTok");
+        vm.stopBroadcast();
+    }
+}
+        "#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        "script/Salted.s.sol:SaltedScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+    let content = foundry_common::fs::read_to_string(run_latest).unwrap();
+    let json: Value = serde_json::from_str(&content).unwrap();
+    let tx = &json["transactions"][0];
+
+    assert_eq!(
+        tx["transactionType"], "CREATE2",
+        "salted broadcast must be recorded as CREATE2, got: {tx}"
+    );
+    assert_eq!(tx["contractName"], "Token");
+    assert_eq!(tx["arguments"][0], "SaltedTok");
+});
+
+// Regression: same as above but the script contract lives under `src/` (not the configured
+// script directory). The preprocessor must still detect it as a script via inheritance
+// (`is Script`) and leave salted new-expressions untouched.
+forgetest_async!(can_broadcast_salted_create2_in_src_script, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.update_config(|c| c.dynamic_test_linking = true);
+    prj.add_source(
+        "Token.sol",
+        r#"
+contract Token {
+    string public name;
+    constructor(string memory _name) { name = _name; }
+}
+        "#,
+    );
+    prj.add_source(
+        "SaltedSrc.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import {Token} from "./Token.sol";
+contract SaltedSrcScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Token{salt: bytes32(uint256(0xDEADBEEF))}("SaltedSrc");
+        vm.stopBroadcast();
+    }
+}
+        "#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.args([
+        "script",
+        "src/SaltedSrc.s.sol:SaltedSrcScript",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--broadcast",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    ])
+    .assert_success();
+
+    let run_latest = foundry_common::fs::json_files(&prj.root().join("broadcast"))
+        .find(|path| path.ends_with("run-latest.json"))
+        .expect("No broadcast artifacts");
+    let content = foundry_common::fs::read_to_string(run_latest).unwrap();
+    let json: Value = serde_json::from_str(&content).unwrap();
+    let tx = &json["transactions"][0];
+
+    assert_eq!(
+        tx["transactionType"], "CREATE2",
+        "salted broadcast must be recorded as CREATE2, got: {tx}"
+    );
+    assert_eq!(tx["contractName"], "Token");
+    assert_eq!(tx["arguments"][0], "SaltedSrc");
+});
+
 forgetest_async!(flaky_can_deploy_with_broadcast_in_setup, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(

@@ -342,8 +342,8 @@ foundry-primitives = { path = "crates/primitives", default-features = false }
 foundry-tui = { path = "crates/tui", default-features = false }
 
 # solc & compilation utilities
-foundry-block-explorers = { version = "0.23.1", default-features = false }
-foundry-compilers = { version = "0.20.0", default-features = false, features = [
+foundry-block-explorers = { version = "0.24.0", default-features = false }
+foundry-compilers = { version = "0.21.0", default-features = false, features = [
     "rustls",
     "svm-solc",
 ] }
