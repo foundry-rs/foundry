@@ -30,8 +30,15 @@ use foundry_cli::{
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender, shell};
 use foundry_compilers::{artifacts::EvmVersion, info::ContractInfo};
 use foundry_config::{Config, figment, impl_figment_convert};
-use foundry_evm::{constants::DEFAULT_CREATE2_DEPLOYER, executors::EvmError};
-use revm::{context::TxEnv, state::AccountInfo};
+use foundry_evm::{
+    constants::DEFAULT_CREATE2_DEPLOYER,
+    core::evm::{EthEvmNetwork, FoundryEvmFactory, FoundryEvmNetwork, SpecFor},
+    executors::EvmError,
+};
+use revm::{
+    context::{BlockEnv, TxEnv},
+    state::AccountInfo,
+};
 use std::path::PathBuf;
 
 impl_figment_convert!(VerifyBytecodeArgs);
@@ -127,7 +134,15 @@ impl figment::Provider for VerifyBytecodeArgs {
 impl VerifyBytecodeArgs {
     /// Run the `verify-bytecode` command to verify the bytecode onchain against the locally built
     /// bytecode.
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
+        self.run_with_network::<EthEvmNetwork>().await
+    }
+
+    /// Run the `verify-bytecode` command with the selected EVM network implementation.
+    pub async fn run_with_network<FEN>(mut self) -> Result<()>
+    where
+        FEN: FoundryEvmNetwork<EvmFactory: FoundryEvmFactory<BlockEnv = BlockEnv, Tx = TxEnv>>,
+    {
         // Setup
         let config = self.load_config()?;
         let provider = utils::get_provider(&config)?;
@@ -231,7 +246,7 @@ impl VerifyBytecodeArgs {
             // Deploy at genesis
             let gen_blk_num = 0_u64;
             let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
-            let (mut evm_env, _, mut executor) = crate::utils::get_tracing_executor(
+            let (mut evm_env, _, mut executor) = crate::utils::get_tracing_executor::<FEN>(
                 &mut fork_config,
                 gen_blk_num,
                 etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default()),
@@ -250,7 +265,7 @@ impl VerifyBytecodeArgs {
                 .into_create();
 
             if let Some(ref block) = genesis_block {
-                configure_env_block(&mut evm_env, block, config.networks);
+                configure_env_block::<FEN>(&mut evm_env, block, config.networks);
                 gen_tx_req.max_fee_per_gas = block.header.base_fee_per_gas().map(|g| g as u128);
                 gen_tx_req.gas = Some(block.header.gas_limit());
                 gen_tx_req.gas_price = block.header.base_fee_per_gas().map(|g| g as u128);
@@ -267,16 +282,16 @@ impl VerifyBytecodeArgs {
             };
             executor.backend_mut().insert_account_info(deployer, account_info);
 
-            let fork_address = crate::utils::deploy_contract(
+            let fork_address = crate::utils::deploy_contract::<FEN>(
                 &mut executor,
                 &evm_env,
                 &tx_env,
-                config.evm_spec_id(),
+                config.evm_spec_id::<SpecFor<FEN>>(),
                 kind,
             )?;
 
             // Compare runtime bytecode
-            let (deployed_bytecode, onchain_runtime_code) = crate::utils::get_runtime_codes(
+            let (deployed_bytecode, onchain_runtime_code) = crate::utils::get_runtime_codes::<FEN>(
                 &mut executor,
                 &provider,
                 self.address,
@@ -447,13 +462,14 @@ impl VerifyBytecodeArgs {
 
             // Fork the chain at `simulation_block`.
             let (mut fork_config, evm_opts) = config.clone().load_config_and_evm_opts()?;
-            let (mut evm_env, mut tx_env, mut executor) = crate::utils::get_tracing_executor(
-                &mut fork_config,
-                simulation_block - 1, // env.fork_block_number
-                etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default()),
-                evm_opts,
-            )
-            .await?;
+            let (mut evm_env, mut tx_env, mut executor) =
+                crate::utils::get_tracing_executor::<FEN>(
+                    &mut fork_config,
+                    simulation_block - 1, // env.fork_block_number
+                    etherscan_metadata.evm_version()?.unwrap_or(EvmVersion::default()),
+                    evm_opts,
+                )
+                .await?;
             evm_env.block_env.number = U256::from(simulation_block);
             let block = provider.get_block(simulation_block.into()).full().await?;
 
@@ -470,7 +486,7 @@ impl VerifyBytecodeArgs {
             transaction.set_nonce(prev_block_nonce);
 
             if let Some(ref block) = block {
-                configure_env_block(&mut evm_env, block, config.networks);
+                configure_env_block::<FEN>(&mut evm_env, block, config.networks);
 
                 let BlockTransactions::Full(ref txs) = block.transactions else {
                     return Err(eyre::eyre!("Could not get block txs"));
@@ -539,16 +555,16 @@ impl VerifyBytecodeArgs {
             let kind = transaction.kind();
             tx_env = transaction.try_into_tx_env(&evm_env)?;
 
-            let fork_address = crate::utils::deploy_contract(
+            let fork_address = crate::utils::deploy_contract::<FEN>(
                 &mut executor,
                 &evm_env,
                 &tx_env,
-                config.evm_spec_id(),
+                config.evm_spec_id::<SpecFor<FEN>>(),
                 kind,
             )?;
 
             // State committed using deploy_with_env, now get the runtime bytecode from the db.
-            let (fork_runtime_code, onchain_runtime_code) = crate::utils::get_runtime_codes(
+            let (fork_runtime_code, onchain_runtime_code) = crate::utils::get_runtime_codes::<FEN>(
                 &mut executor,
                 &provider,
                 self.address,

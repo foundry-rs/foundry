@@ -1,6 +1,5 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
-use alloy_evm::EvmEnv;
 use alloy_primitives::{Address, Bytes, TxKind};
 use alloy_provider::{
     Provider,
@@ -19,7 +18,10 @@ use foundry_compilers::artifacts::{BytecodeHash, CompactContractBytecode, EvmVer
 use foundry_config::Config;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
-    core::{decode::RevertDecoder, evm::EthEvmNetwork},
+    core::{
+        decode::RevertDecoder,
+        evm::{EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor},
+    },
     executors::TracingExecutor,
     opts::EvmOpts,
     traces::TraceMode,
@@ -27,7 +29,11 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
-use revm::{bytecode::Bytecode, context::TxEnv, database::Database, primitives::hardfork::SpecId};
+use revm::{
+    bytecode::Bytecode,
+    context::{BlockEnv, TxEnv},
+    database::Database,
+};
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
@@ -263,20 +269,23 @@ pub fn check_args_len(
     Ok(())
 }
 
-pub async fn get_tracing_executor(
+pub async fn get_tracing_executor<FEN>(
     fork_config: &mut Config,
     fork_blk_num: u64,
     evm_version: EvmVersion,
     evm_opts: EvmOpts,
-) -> Result<(EvmEnv, TxEnv, TracingExecutor<EthEvmNetwork>)> {
+) -> Result<(EvmEnvFor<FEN>, TxEnv, TracingExecutor<FEN>)>
+where
+    FEN: FoundryEvmNetwork<EvmFactory: FoundryEvmFactory<BlockEnv = BlockEnv, Tx = TxEnv>>,
+{
     fork_config.fork_block_number = Some(fork_blk_num);
     fork_config.evm_version = evm_version;
 
     let create2_deployer = evm_opts.create2_deployer;
     let (evm_env, tx_env, fork, _chain, networks) =
-        TracingExecutor::<EthEvmNetwork>::get_fork_material(fork_config, evm_opts).await?;
+        TracingExecutor::<FEN>::get_fork_material(fork_config, evm_opts).await?;
 
-    let executor = TracingExecutor::<EthEvmNetwork>::new(
+    let executor = TracingExecutor::<FEN>::new(
         (evm_env.clone(), tx_env.clone()),
         fork,
         Some(fork_config.evm_version),
@@ -289,20 +298,29 @@ pub async fn get_tracing_executor(
     Ok((evm_env, tx_env, executor))
 }
 
-pub fn configure_env_block(evm_env: &mut EvmEnv, block: &AnyRpcBlock, config: NetworkConfigs) {
+pub fn configure_env_block<FEN>(
+    evm_env: &mut EvmEnvFor<FEN>,
+    block: &AnyRpcBlock,
+    config: NetworkConfigs,
+) where
+    FEN: FoundryEvmNetwork<EvmFactory: FoundryEvmFactory<BlockEnv = BlockEnv>>,
+{
     let number = evm_env.block_env.number;
     evm_env.block_env = block_env_from_header(&block.header);
     evm_env.block_env.number = number;
     apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(evm_env, block, config);
 }
 
-pub fn deploy_contract(
-    executor: &mut TracingExecutor<EthEvmNetwork>,
-    evm_env: &EvmEnv,
+pub fn deploy_contract<FEN>(
+    executor: &mut TracingExecutor<FEN>,
+    evm_env: &EvmEnvFor<FEN>,
     tx_env: &TxEnv,
-    spec_id: SpecId,
+    spec_id: SpecFor<FEN>,
     to: Option<TxKind>,
-) -> Result<Address, eyre::ErrReport> {
+) -> Result<Address, eyre::ErrReport>
+where
+    FEN: FoundryEvmNetwork<EvmFactory: FoundryEvmFactory<Tx = TxEnv>>,
+{
     let mut evm_env = evm_env.clone();
     evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
 
@@ -349,13 +367,16 @@ pub fn deploy_contract(
     }
 }
 
-pub async fn get_runtime_codes(
-    executor: &mut TracingExecutor<EthEvmNetwork>,
+pub async fn get_runtime_codes<FEN>(
+    executor: &mut TracingExecutor<FEN>,
     provider: &impl Provider<AnyNetwork>,
     address: Address,
     fork_address: Address,
     block: Option<u64>,
-) -> Result<(Bytecode, Bytes)> {
+) -> Result<(Bytecode, Bytes)>
+where
+    FEN: FoundryEvmNetwork,
+{
     let fork_runtime_code = executor
         .backend_mut()
         .basic(fork_address)?
