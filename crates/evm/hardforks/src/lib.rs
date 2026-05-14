@@ -271,6 +271,16 @@ pub fn spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> OpSpecId {
 /// Trait for converting an [`EvmVersion`] into a network-specific spec type.
 pub trait FromEvmVersion: From<FoundryHardfork> {
     fn from_evm_version(version: EvmVersion) -> Self;
+
+    fn evm_version_name(&self) -> String;
+
+    fn from_network_hardfork(_: &str) -> Option<Self> {
+        None
+    }
+
+    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
+        Some(hardfork.into())
+    }
 }
 
 impl FromEvmVersion for SpecId {
@@ -290,6 +300,21 @@ impl FromEvmVersion for SpecId {
             EvmVersion::Cancun => Self::CANCUN,
             EvmVersion::Prague => Self::PRAGUE,
             EvmVersion::Osaka => Self::OSAKA,
+        }
+    }
+
+    fn evm_version_name(&self) -> String {
+        self.to_string()
+    }
+
+    fn from_network_hardfork(hardfork: &str) -> Option<Self> {
+        EthereumHardfork::from_str(hardfork).ok().map(spec_id_from_ethereum_hardfork)
+    }
+
+    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
+        match hardfork {
+            FoundryHardfork::Ethereum(hardfork) => Some(spec_id_from_ethereum_hardfork(hardfork)),
+            _ => None,
         }
     }
 }
@@ -313,11 +338,42 @@ impl FromEvmVersion for OpSpecId {
             EvmVersion::Osaka => Self::JOVIAN,
         }
     }
+
+    fn evm_version_name(&self) -> String {
+        let name: &'static str = (*self).into();
+        name.to_string()
+    }
+
+    fn from_network_hardfork(hardfork: &str) -> Option<Self> {
+        OpHardfork::from_str(hardfork).ok().map(spec_id_from_optimism_hardfork)
+    }
+
+    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
+        match hardfork {
+            FoundryHardfork::Optimism(hardfork) => Some(spec_id_from_optimism_hardfork(hardfork)),
+            _ => None,
+        }
+    }
 }
 
 impl FromEvmVersion for TempoHardfork {
     fn from_evm_version(_: EvmVersion) -> Self {
         Self::default()
+    }
+
+    fn evm_version_name(&self) -> String {
+        self.to_string()
+    }
+
+    fn from_network_hardfork(hardfork: &str) -> Option<Self> {
+        Self::from_str(hardfork).ok()
+    }
+
+    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
+        match hardfork {
+            FoundryHardfork::Tempo(hardfork) => Some(hardfork),
+            _ => None,
+        }
     }
 }
 
@@ -325,11 +381,41 @@ impl FromEvmVersion for MonadHardfork {
     fn from_evm_version(_: EvmVersion) -> Self {
         Self::default()
     }
+
+    fn evm_version_name(&self) -> String {
+        self.to_string()
+    }
+
+    fn from_network_hardfork(hardfork: &str) -> Option<Self> {
+        Self::from_str(hardfork).ok()
+    }
+
+    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
+        match hardfork {
+            FoundryHardfork::Monad(hardfork) => Some(hardfork),
+            _ => None,
+        }
+    }
 }
 
 /// Returns the spec id derived from [`EvmVersion`] for a given spec type.
 pub fn evm_spec_id<SPEC: FromEvmVersion>(evm_version: EvmVersion) -> SPEC {
     SPEC::from_evm_version(evm_version)
+}
+
+/// Parses an EVM version or network-specific hardfork into the given spec type.
+pub fn evm_spec_id_from_str<SPEC: FromEvmVersion>(evm_version: &str) -> Option<SPEC> {
+    let evm_version = evm_version.trim();
+
+    if let Ok(version) = EvmVersion::from_str(evm_version) {
+        return Some(evm_spec_id(version));
+    }
+
+    if let Some(spec) = SPEC::from_network_hardfork(evm_version) {
+        return Some(spec);
+    }
+
+    FoundryHardfork::from_str(evm_version).ok().and_then(SPEC::from_foundry_hardfork)
 }
 
 /// Convert a `BlockNumberOrTag` into an `EthereumHardfork`.
@@ -404,6 +490,19 @@ mod tests {
             MonadHardfork::from(FoundryHardfork::Monad(MonadHardfork::MonadNext)),
             MonadHardfork::MonadNext
         );
+    }
+
+    #[test]
+    fn test_evm_spec_id_from_str_parses_network_hardforks() {
+        assert_eq!(
+            evm_spec_id_from_str::<MonadHardfork>("MonadNine"),
+            Some(MonadHardfork::MonadNine)
+        );
+        assert_eq!(
+            evm_spec_id_from_str::<MonadHardfork>("monad:MonadEight"),
+            Some(MonadHardfork::MonadEight)
+        );
+        assert_eq!(evm_spec_id_from_str::<MonadHardfork>("tempo:T3"), None);
     }
 
     #[test]
