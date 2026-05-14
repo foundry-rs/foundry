@@ -92,9 +92,9 @@ fn dead_code_analysis(hir: &Hir<'_>) -> Arc<DeadCodeAnalysis> {
     });
 
     let mut cache = ANALYSIS_CACHE.lock().unwrap();
-    // `check_nested_source` is called once per source and constructs fresh pass instances each time,
-    // so cache per-HIR analysis across those calls. Keep it bounded for long-running test processes
-    // that lint many independent HIRs in one process.
+    // `check_nested_source` is called once per source and constructs fresh pass instances each
+    // time, so cache per-HIR analysis across those calls. Keep it bounded for long-running test
+    // processes that lint many independent HIRs in one process.
     if cache.len() >= ANALYSIS_CACHE_LIMIT {
         cache.clear();
     }
