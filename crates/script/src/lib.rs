@@ -32,8 +32,9 @@ use foundry_cli::{
     utils::{LoadConfig, parse_fee_token_address},
 };
 use foundry_common::{
-    CONTRACT_MAX_SIZE, ContractsByArtifact, SELECTOR_LEN,
+    ContractsByArtifact, SELECTOR_LEN,
     abi::{encode_function_args, get_func},
+    compile::ContractSizeLimits,
     shell,
 };
 use foundry_compilers::ArtifactId;
@@ -508,8 +509,8 @@ impl ScriptArgs {
         Ok((func.clone(), data.into()))
     }
 
-    /// Checks if the transaction is a deployment with either a size above the `CONTRACT_MAX_SIZE`
-    /// or specified `code_size_limit`.
+    /// Checks if the transaction is a deployment with either a size above the default contract size
+    /// limit or specified `code_size_limit`.
     ///
     /// If `self.broadcast` is enabled, it asks confirmation of the user. Otherwise, it just warns
     /// the user.
@@ -549,10 +550,7 @@ impl ScriptArgs {
         }
 
         let mut prompt_user = false;
-        let max_size = match self.evm.env.code_size_limit {
-            Some(size) => size,
-            None => CONTRACT_MAX_SIZE,
-        };
+        let max_size = self.contract_size_limits().runtime;
 
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
@@ -598,6 +596,10 @@ impl ScriptArgs {
         }
 
         Ok(())
+    }
+
+    fn contract_size_limits(&self) -> ContractSizeLimits {
+        self.evm.env.code_size_limit.map(ContractSizeLimits::with_runtime_limit).unwrap_or_default()
     }
 
     /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
