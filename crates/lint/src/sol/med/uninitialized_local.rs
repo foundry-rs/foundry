@@ -4,13 +4,19 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    interface::data_structures::Never,
+    interface::{Span, data_structures::Never},
     sema::{
         Hir,
-        hir::{Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind, VarKind, VariableId, Visit},
+        hir::{
+            Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind, TypeKind, VarKind, VariableId,
+            Visit,
+        },
     },
 };
-use std::{collections::HashSet, ops::ControlFlow};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::ControlFlow,
+};
 
 declare_forge_lint!(
     UNINITIALIZED_LOCAL,
@@ -28,13 +34,13 @@ impl<'hir> LateLintPass<'hir> for UninitializedLocal {
     ) {
         let Some(body) = func.body else { return };
 
-        let mut checker = Checker { hir, uninitialized: HashSet::new(), findings: HashSet::new() };
+        let mut checker = Checker { hir, uninitialized: HashSet::new(), findings: HashMap::new() };
         for stmt in body.stmts {
             let _ = checker.visit_stmt(stmt);
         }
 
-        for vid in checker.findings {
-            ctx.emit(&UNINITIALIZED_LOCAL, hir.variable(vid).span);
+        for (_vid, read_span) in checker.findings {
+            ctx.emit(&UNINITIALIZED_LOCAL, read_span);
         }
     }
 }
@@ -43,8 +49,8 @@ struct Checker<'hir> {
     hir: &'hir Hir<'hir>,
     /// Locals declared without an initializer that have not yet been written.
     uninitialized: HashSet<VariableId>,
-    /// Variables that were read while uninitialized (deduplicated by variable).
-    findings: HashSet<VariableId>,
+    /// First read span per variable that was read while uninitialized.
+    findings: HashMap<VariableId, Span>,
 }
 
 impl<'hir> Visit<'hir> for Checker<'hir> {
@@ -58,7 +64,10 @@ impl<'hir> Visit<'hir> for Checker<'hir> {
         match &stmt.kind {
             StmtKind::DeclSingle(vid) => {
                 let v = self.hir.variable(*vid);
-                if matches!(v.kind, VarKind::Statement) && v.initializer.is_none() {
+                let is_value_type =
+                    matches!(v.ty.kind, TypeKind::Elementary(ty) if ty.is_value_type());
+                if matches!(v.kind, VarKind::Statement) && v.initializer.is_none() && is_value_type
+                {
                     self.uninitialized.insert(*vid);
                 }
                 // Walk initializer (if any) to catch reads of other uninitialized vars.
@@ -124,12 +133,19 @@ impl<'hir> Visit<'hir> for Checker<'hir> {
                 return ControlFlow::Continue(());
             }
 
+            // `delete x` is an explicit write to the zero value — not a read.
+            ExprKind::Delete(target) => {
+                mark_written(target, &mut self.uninitialized);
+                let _ = self.visit_expr(target);
+                return ControlFlow::Continue(());
+            }
+
             ExprKind::Ident(reses) => {
                 for res in *reses {
                     if let Res::Item(ItemId::Variable(vid)) = res
                         && self.uninitialized.contains(vid)
                     {
-                        self.findings.insert(*vid);
+                        self.findings.entry(*vid).or_insert(expr.span);
                         break;
                     }
                 }
@@ -141,13 +157,21 @@ impl<'hir> Visit<'hir> for Checker<'hir> {
     }
 }
 
-/// If `expr` is a direct identifier resolving to a local variable, remove it from `uninitialized`.
+/// Remove `expr` from `uninitialized` if it is a direct identifier or a tuple of identifiers.
 fn mark_written(expr: &Expr<'_>, uninitialized: &mut HashSet<VariableId>) {
-    if let ExprKind::Ident(reses) = &expr.kind {
-        for res in *reses {
-            if let Res::Item(ItemId::Variable(vid)) = res {
-                uninitialized.remove(vid);
+    match &expr.kind {
+        ExprKind::Ident(reses) => {
+            for res in *reses {
+                if let Res::Item(ItemId::Variable(vid)) = res {
+                    uninitialized.remove(vid);
+                }
             }
         }
+        ExprKind::Tuple(elems) => {
+            for elem in elems.iter().flatten() {
+                mark_written(elem, uninitialized);
+            }
+        }
+        _ => {}
     }
 }

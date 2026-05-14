@@ -1,48 +1,48 @@
 warning[uninitialized-local]: local variable is read before being initialized
    ╭▸ ROOT/testdata/UninitializedLocal.sol:LL:CC
    │
-LL │         address payable to;
-   │         ━━━━━━━━━━━━━━━━━━
+LL │         to.transfer(address(this).balance);
+   │         ━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
 
 warning[uninitialized-local]: local variable is read before being initialized
    ╭▸ ROOT/testdata/UninitializedLocal.sol:LL:CC
    │
-LL │         uint256 amount;
-   │         ━━━━━━━━━━━━━━
+LL │         return amount;
+   │                ━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
 
 warning[uninitialized-local]: local variable is read before being initialized
    ╭▸ ROOT/testdata/UninitializedLocal.sol:LL:CC
    │
-LL │         uint256 a;
-   │         ━━━━━━━━━
+LL │         return a + b;
+   │                ━
    │
    ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
 
 warning[uninitialized-local]: local variable is read before being initialized
    ╭▸ ROOT/testdata/UninitializedLocal.sol:LL:CC
    │
-LL │         address to;
-   │         ━━━━━━━━━━
+LL │         address from = to;
+   │                        ━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
 
 warning[uninitialized-local]: local variable is read before being initialized
    ╭▸ ROOT/testdata/UninitializedLocal.sol:LL:CC
    │
-LL │         address payable to;
-   │         ━━━━━━━━━━━━━━━━━━
+LL │         to.transfer(1);
+   │         ━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
 
 warning[uninitialized-local]: local variable is read before being initialized
    ╭▸ ROOT/testdata/UninitializedLocal.sol:LL:CC
    │
-LL │         uint256 x;
-   │         ━━━━━━━━━
+LL │         x += 1;
+   │         ━
    │
    ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
 
