@@ -11,6 +11,7 @@ use foundry_evm_core::{
     tempo::{TEMPO_PRECOMPILE_ADDRESSES, TEMPO_TIP20_TOKENS},
 };
 use itertools::Itertools;
+use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
 use revm_inspectors::tracing::types::DecodedCallTrace;
 
 sol! {
@@ -84,6 +85,13 @@ pub(super) fn is_known_precompile(address: Address, chain_id: Option<u64>) -> bo
     // Tempo precompiles and TIP20 fee tokens (only on Tempo chains).
     if chain_id.is_some_and(|id| Chain::from_id(id).is_tempo())
         && (TEMPO_PRECOMPILE_ADDRESSES.contains(&address) || TEMPO_TIP20_TOKENS.contains(&address))
+    {
+        return true;
+    }
+    // Monad precompiles (only on Monad chains).
+    if chain_id.is_some_and(|id| {
+        matches!(Chain::from_id(id).named(), Some(NamedChain::Monad | NamedChain::MonadTestnet))
+    }) && matches!(address, STAKING_ADDRESS | RESERVE_BALANCE_ADDRESS)
     {
         return true;
     }

@@ -5488,6 +5488,7 @@ dependencies = [
  "futures",
  "itertools 0.14.0",
  "memchr",
+ "monad-revm",
  "rayon",
  "reqwest 0.13.2",
  "revm",

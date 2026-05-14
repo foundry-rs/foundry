@@ -27,6 +27,7 @@ use foundry_evm_core::{
     },
 };
 use itertools::Itertools;
+use monad_revm::{reserve_balance::abi::RESERVE_BALANCE_ADDRESS, staking::STAKING_ADDRESS};
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
@@ -39,6 +40,67 @@ use tempo_precompiles::{
 };
 
 mod precompiles;
+
+alloy_sol_types::sol! {
+    /// Monad staking precompile interface at address 0x1000.
+    /// Reference: https://docs.monad.xyz/developer-essentials/staking/staking-precompile
+    #[sol(abi)]
+    interface IMonadStaking {
+        function getEpoch() external returns (uint64 epoch, bool inEpochDelayPeriod);
+        function getProposerValId() external returns (uint64 val_id);
+        function getValidator(uint64 validatorId) external view returns (
+            address authAddress, uint64 flags, uint256 stake,
+            uint256 accRewardPerToken, uint256 commission, uint256 unclaimedRewards,
+            uint256 consensusStake, uint256 consensusCommission,
+            uint256 snapshotStake, uint256 snapshotCommission,
+            bytes memory secpPubkey, bytes memory blsPubkey);
+        function getDelegator(uint64 validatorId, address delegator) external returns (
+            uint256 stake, uint256 accRewardPerToken, uint256 unclaimedRewards,
+            uint256 deltaStake, uint256 nextDeltaStake, uint64 deltaEpoch, uint64 nextDeltaEpoch);
+        function getWithdrawalRequest(uint64 validatorId, address delegator, uint8 withdrawId)
+            external returns (uint256 withdrawalAmount, uint256 accRewardPerToken, uint64 withdrawEpoch);
+        function getConsensusValidatorSet(uint32 startIndex)
+            external returns (bool isDone, uint32 nextIndex, uint64[] memory valIds);
+        function getSnapshotValidatorSet(uint32 startIndex)
+            external returns (bool isDone, uint32 nextIndex, uint64[] memory valIds);
+        function getExecutionValidatorSet(uint32 startIndex)
+            external returns (bool isDone, uint32 nextIndex, uint64[] memory valIds);
+        function getDelegations(address delegator, uint64 startValId)
+            external returns (bool isDone, uint64 nextValId, uint64[] memory valIds);
+        function getDelegators(uint64 validatorId, address startDelegator)
+            external returns (bool isDone, address nextDelegator, address[] memory delegators);
+
+        function addValidator(bytes calldata payload, bytes calldata signedSecpMessage, bytes calldata signedBlsMessage)
+            external payable returns (uint64 validatorId);
+        function delegate(uint64 validatorId) external payable returns (bool success);
+        function undelegate(uint64 validatorId, uint256 amount, uint8 withdrawId) external returns (bool success);
+        function withdraw(uint64 validatorId, uint8 withdrawId) external returns (bool success);
+        function compound(uint64 validatorId) external returns (bool success);
+        function claimRewards(uint64 validatorId) external returns (bool success);
+        function changeCommission(uint64 validatorId, uint256 commission) external returns (bool success);
+        function externalReward(uint64 validatorId) external returns (bool success);
+
+        function syscallOnEpochChange(uint64 epoch) external;
+        function syscallReward(address blockAuthor) external;
+        function syscallSnapshot() external;
+
+        event ClaimRewards(uint64 indexed validatorId, address indexed delegator, uint256 amount, uint64 epoch);
+        event CommissionChanged(uint64 indexed validatorId, uint256 oldCommission, uint256 newCommission);
+        event Delegate(uint64 indexed validatorId, address indexed delegator, uint256 amount, uint64 activationEpoch);
+        event EpochChanged(uint64 oldEpoch, uint64 newEpoch);
+        event Undelegate(uint64 indexed validatorId, address indexed delegator, uint8 withdrawId, uint256 amount, uint64 activationEpoch);
+        event ValidatorCreated(uint64 indexed validatorId, address indexed authAddress, uint256 commission);
+        event ValidatorRewarded(uint64 indexed validatorId, address indexed from, uint256 amount, uint64 epoch);
+        event ValidatorStatusChanged(uint64 indexed validatorId, uint64 flags);
+        event Withdraw(uint64 indexed validatorId, address indexed delegator, uint8 withdrawId, uint256 amount, uint64 withdrawEpoch);
+    }
+
+    /// Monad reserve-balance precompile interface at address 0x1001.
+    #[sol(abi)]
+    interface IReserveBalance {
+        function dippedIntoReserve() external returns (bool);
+    }
+}
 
 /// Build a new [CallTraceDecoder].
 #[derive(Default)]
@@ -214,6 +276,9 @@ impl CallTraceDecoder {
                 (BLS12_MAP_FP_TO_G1, "BLS12_MAP_FP_TO_G1".to_string()),
                 (BLS12_MAP_FP2_TO_G2, "BLS12_MAP_FP2_TO_G2".to_string()),
                 (P256_VERIFY, "P256VERIFY".to_string()),
+                // Monad
+                (STAKING_ADDRESS, "Staking".to_string()),
+                (RESERVE_BALANCE_ADDRESS, "ReserveBalance".to_string()),
                 // Tempo
                 (TIP_FEE_MANAGER_ADDRESS, "FeeManager".to_string()),
                 (TIP403_REGISTRY_ADDRESS, "TIP403Registry".to_string()),
@@ -240,6 +305,9 @@ impl CallTraceDecoder {
                 .chain(INonce::abi::functions().into_values())
                 .chain(IValidatorConfig::abi::functions().into_values())
                 .chain(IAccountKeychain::abi::functions().into_values())
+                // Monad
+                .chain(IMonadStaking::abi::functions().into_values())
+                .chain(IReserveBalance::abi::functions().into_values())
                 .flatten()
                 .map(|func| (func.selector(), vec![func]))
                 .collect(),
@@ -254,6 +322,9 @@ impl CallTraceDecoder {
                 .chain(INonce::abi::events().into_values())
                 .chain(IValidatorConfig::abi::events().into_values())
                 .chain(IAccountKeychain::abi::events().into_values())
+                // Monad
+                .chain(IMonadStaking::abi::events().into_values())
+                .chain(IReserveBalance::abi::events().into_values())
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
@@ -926,7 +997,12 @@ fn indexed_inputs(event: &Event) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::hex;
+    use alloy_primitives::{U256, hex};
+    use alloy_sol_types::{SolCall, SolValue};
+    use monad_revm::{
+        reserve_balance::interface::IReserveBalance::dippedIntoReserveCall,
+        staking::interface::IMonadStaking::{getEpochCall, getEpochReturn},
+    };
 
     #[test]
     fn test_selector_collision_resolution() {
@@ -1442,6 +1518,82 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_decodes_monad_staking_precompile_call() {
+        let trace = CallTrace {
+            address: STAKING_ADDRESS,
+            data: getEpochCall::SELECTOR.to_vec().into(),
+            output: getEpochCall::abi_encode_returns(&getEpochReturn {
+                epoch: 42,
+                inEpochDelayPeriod: true,
+            })
+            .into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let decoded = CallTraceDecoder::new().decode_function(&trace).await;
+
+        assert_eq!(decoded.label.as_deref(), Some("Staking"));
+        let call_data = decoded.call_data.expect("call data");
+        assert_eq!(call_data.signature, "getEpoch()");
+        assert!(call_data.args.is_empty());
+        assert_eq!(decoded.return_data.as_deref(), Some("42, true"));
+    }
+
+    #[tokio::test]
+    async fn test_decodes_monad_reserve_balance_precompile_call() {
+        let trace = CallTrace {
+            address: RESERVE_BALANCE_ADDRESS,
+            data: dippedIntoReserveCall::SELECTOR.to_vec().into(),
+            output: true.abi_encode().into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let decoded = CallTraceDecoder::new().decode_function(&trace).await;
+
+        assert_eq!(decoded.label.as_deref(), Some("ReserveBalance"));
+        let call_data = decoded.call_data.expect("call data");
+        assert_eq!(call_data.signature, "dippedIntoReserve()");
+        assert!(call_data.args.is_empty());
+        assert_eq!(decoded.return_data.as_deref(), Some("true"));
+    }
+
+    #[tokio::test]
+    async fn test_decodes_monad_staking_precompile_event() {
+        let event = Event::parse(
+            "event Delegate(uint64 indexed validatorId,address indexed delegator,uint256 amount,uint64 activationEpoch)",
+        )
+        .unwrap();
+        let delegator = Address::from([0x11; 20]);
+        let log = LogData::new_unchecked(
+            vec![event.selector(), topic_from_u64(7), topic_from_address(delegator)],
+            (U256::from(1000), 9_u64).abi_encode().into(),
+        );
+
+        let decoded = CallTraceDecoder::new().decode_event(&log).await;
+
+        assert_eq!(decoded.name.as_deref(), Some("Delegate"));
+        let params = decoded.params.expect("params");
+        assert_eq!(params[0], ("validatorId".to_string(), "7".to_string()));
+        assert_eq!(params[1].0, "delegator");
+        assert_eq!(params[2], ("amount".to_string(), "1000".to_string()));
+        assert_eq!(params[3], ("activationEpoch".to_string(), "9".to_string()));
+    }
+
+    fn topic_from_u64(value: u64) -> B256 {
+        let mut topic = [0u8; 32];
+        topic[24..].copy_from_slice(&value.to_be_bytes());
+        B256::from(topic)
+    }
+
+    fn topic_from_address(address: Address) -> B256 {
+        let mut topic = [0u8; 32];
+        topic[12..].copy_from_slice(address.as_slice());
+        B256::from(topic)
+    }
+
     // A mock identifier that records which addresses it was asked to identify.
     struct RecordingIdentifier {
         queried: Vec<Address>,
@@ -1555,5 +1707,80 @@ mod tests {
 
         // On Ethereum, Tempo precompile addresses are regular contracts — should NOT be filtered.
         assert_eq!(identifier.queried, vec![regular_addr, tempo_precompile]);
+    }
+
+    #[test]
+    fn test_identify_addresses_skips_monad_precompiles() {
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(143);
+
+        let mut arena = CallTraceArena::default();
+        let regular_addr = Address::from([0x42; 20]);
+        arena.nodes_mut()[0].trace.address = regular_addr;
+
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: STAKING_ADDRESS,
+                depth: 1,
+                maybe_precompile: None,
+                ..Default::default()
+            },
+            idx: 1,
+            ..Default::default()
+        });
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: RESERVE_BALANCE_ADDRESS,
+                depth: 1,
+                maybe_precompile: None,
+                ..Default::default()
+            },
+            idx: 2,
+            ..Default::default()
+        });
+
+        let mut identifier = RecordingIdentifier { queried: Vec::new() };
+        decoder.identify_addresses(&arena, &mut identifier);
+
+        assert_eq!(identifier.queried, vec![regular_addr]);
+    }
+
+    #[test]
+    fn test_identify_addresses_does_not_skip_monad_precompiles_on_other_chains() {
+        let mut decoder = CallTraceDecoder::new().clone();
+        decoder.chain_id = Some(1);
+
+        let mut arena = CallTraceArena::default();
+        let regular_addr = Address::from([0x42; 20]);
+        arena.nodes_mut()[0].trace.address = regular_addr;
+
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: STAKING_ADDRESS,
+                depth: 1,
+                maybe_precompile: None,
+                ..Default::default()
+            },
+            idx: 1,
+            ..Default::default()
+        });
+        arena.nodes_mut().push(CallTraceNode {
+            trace: CallTrace {
+                address: RESERVE_BALANCE_ADDRESS,
+                depth: 1,
+                maybe_precompile: None,
+                ..Default::default()
+            },
+            idx: 2,
+            ..Default::default()
+        });
+
+        let mut identifier = RecordingIdentifier { queried: Vec::new() };
+        decoder.identify_addresses(&arena, &mut identifier);
+
+        assert_eq!(
+            identifier.queried,
+            vec![regular_addr, STAKING_ADDRESS, RESERVE_BALANCE_ADDRESS]
+        );
     }
 }
