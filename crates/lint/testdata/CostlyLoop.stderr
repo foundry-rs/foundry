@@ -1,0 +1,48 @@
+note[costly-loop]: storage write inside a loop
+   ╭▸ ROOT/testdata/CostlyLoop.sol:LL:CC
+   │
+LL │             counter++;
+   │             ━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/costly-loop
+
+note[costly-loop]: storage write inside a loop
+   ╭▸ ROOT/testdata/CostlyLoop.sol:LL:CC
+   │
+LL │             counter = i;
+   │             ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/costly-loop
+
+note[costly-loop]: storage write inside a loop
+   ╭▸ ROOT/testdata/CostlyLoop.sol:LL:CC
+   │
+LL │             counter += 1;
+   │             ━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/costly-loop
+
+note[costly-loop]: storage write inside a loop
+   ╭▸ ROOT/testdata/CostlyLoop.sol:LL:CC
+   │
+LL │             balances[users[i]] = amount;
+   │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/costly-loop
+
+note[costly-loop]: storage write inside a loop
+   ╭▸ ROOT/testdata/CostlyLoop.sol:LL:CC
+   │
+LL │             values[i] = i;
+   │             ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/costly-loop
+
+note[costly-loop]: storage write inside a loop
+   ╭▸ ROOT/testdata/CostlyLoop.sol:LL:CC
+   │
+LL │             delete counter;
+   │             ━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/costly-loop
+
