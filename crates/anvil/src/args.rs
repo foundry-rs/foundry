@@ -7,6 +7,7 @@ use foundry_cli::utils;
 pub fn run() -> Result<()> {
     setup()?;
 
+    foundry_cli::opts::GlobalArgs::check_introspect::<Anvil>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Anvil>();
 
     let mut args = Anvil::parse();
@@ -76,5 +77,15 @@ mod tests {
                 shell: foundry_cli::clap::Shell::ClapCompleteShell(clap_complete::Shell::Bash)
             })
         ));
+    }
+
+    /// Every `command_id` exposed by `anvil --introspect` MUST be unique.
+    #[test]
+    fn introspect_command_ids_are_unique() {
+        use foundry_cli::introspect::{CommandRegistry, build_document, duplicate_command_ids};
+        let cmd = <Anvil as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let dups = duplicate_command_ids(&doc);
+        assert!(dups.is_empty(), "duplicate anvil command_ids: {dups:?}");
     }
 }

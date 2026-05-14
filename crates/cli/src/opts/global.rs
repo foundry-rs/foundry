@@ -55,9 +55,47 @@ impl GlobalArgs {
     ///
     /// This must be called **before** parsing arguments, since commands with required
     /// subcommands would fail parsing before the flag is checked.
+    ///
+    /// Agents should prefer `--introspect`, which emits a stable machine-readable
+    /// document. A deprecation notice is written to stderr to steer that migration;
+    /// the rendered Markdown itself is unchanged from previous releases.
     pub fn check_markdown_help<C: clap::CommandFactory>() {
         if std::env::args().any(|arg| arg == "--markdown-help") {
+            // Pre-parse: `Shell` is not initialized yet, so `sh_*` is unavailable.
+            #[allow(clippy::disallowed_macros)]
+            {
+                eprintln!(
+                    "warning: `--markdown-help` is intended for human documentation; \
+                     agents should use `--introspect` for machine-readable command discovery",
+                );
+            }
             foundry_cli_markdown::print_help_markdown::<C>();
+            std::process::exit(0);
+        }
+    }
+
+    /// Check if `--introspect` was passed and print the introspection document as JSON, then exit.
+    ///
+    /// Must run **before** clap parsing so required subcommands or args don't block discovery.
+    pub fn check_introspect<C: clap::CommandFactory>() {
+        Self::check_introspect_with(C::command(), &crate::introspect::CommandRegistry::EMPTY)
+    }
+
+    /// Like [`check_introspect`](Self::check_introspect) but uses an explicit
+    /// [`Command`](clap::Command) and [`CommandRegistry`](crate::introspect::CommandRegistry).
+    pub fn check_introspect_with(
+        command: clap::Command,
+        registry: &crate::introspect::CommandRegistry,
+    ) {
+        if std::env::args().any(|arg| arg == "--introspect") {
+            let doc = crate::introspect::build_document(&command, registry);
+            let json =
+                serde_json::to_string(&doc).expect("introspect document must be serializable");
+            // Pre-parse: `Shell` is not initialized yet, so `sh_*` is unavailable.
+            #[allow(clippy::disallowed_macros)]
+            {
+                println!("{json}");
+            }
             std::process::exit(0);
         }
     }

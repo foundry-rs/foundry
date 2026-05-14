@@ -14,6 +14,7 @@ use yansi::Paint;
 pub fn run() -> Result<()> {
     setup()?;
 
+    foundry_cli::opts::GlobalArgs::check_introspect::<Chisel>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Chisel>();
 
     let args = Chisel::parse();
@@ -182,5 +183,15 @@ mod tests {
     #[test]
     fn verify_cli() {
         Chisel::command().debug_assert();
+    }
+
+    /// Every `command_id` exposed by `chisel --introspect` MUST be unique.
+    #[test]
+    fn introspect_command_ids_are_unique() {
+        use foundry_cli::introspect::{CommandRegistry, build_document, duplicate_command_ids};
+        let cmd = Chisel::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let dups = duplicate_command_ids(&doc);
+        assert!(dups.is_empty(), "duplicate chisel command_ids: {dups:?}");
     }
 }

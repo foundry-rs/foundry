@@ -13,6 +13,7 @@ use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 pub fn run() -> Result<()> {
     setup()?;
 
+    foundry_cli::opts::GlobalArgs::check_introspect::<Forge>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Forge>();
 
     let args = Forge::parse();
@@ -140,5 +141,23 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Eip712(cmd) => cmd.run(),
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
         ForgeSubcommand::Lint(cmd) => cmd.run(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_cli::introspect::{CommandRegistry, build_document, duplicate_command_ids};
+
+    /// Every `command_id` exposed by `forge --introspect` MUST be unique.
+    /// This is the foundation of the agent contract — agents key on
+    /// `command_id` to identify commands, and duplicates would silently break
+    /// downstream tooling.
+    #[test]
+    fn introspect_command_ids_are_unique() {
+        let cmd = <Forge as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let dups = duplicate_command_ids(&doc);
+        assert!(dups.is_empty(), "duplicate forge command_ids: {dups:?}");
     }
 }

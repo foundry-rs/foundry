@@ -38,6 +38,7 @@ use tempo_alloy::TempoNetwork;
 pub fn run() -> Result<()> {
     setup()?;
 
+    foundry_cli::opts::GlobalArgs::check_introspect::<CastArgs>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<CastArgs>();
 
     let args = CastArgs::parse();
@@ -844,4 +845,33 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_cli::introspect::{CommandRegistry, build_document, duplicate_command_ids};
+
+    /// Every `command_id` exposed by `cast --introspect` MUST be unique.
+    /// This is the foundation of the agent contract — agents key on
+    /// `command_id` to identify commands, and duplicates would silently break
+    /// downstream tooling.
+    ///
+    /// Cast's clap tree is large and exhausts the default test-thread stack
+    /// (2 MiB) when constructed in debug builds, so we spawn a worker thread
+    /// with an explicit, generous stack size.
+    #[test]
+    fn introspect_command_ids_are_unique() {
+        let dups = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let cmd = <CastArgs as clap::CommandFactory>::command();
+                let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+                duplicate_command_ids(&doc)
+            })
+            .expect("spawn worker thread")
+            .join()
+            .expect("worker thread join");
+        assert!(dups.is_empty(), "duplicate cast command_ids: {dups:?}");
+    }
 }
