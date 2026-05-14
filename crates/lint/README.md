@@ -45,6 +45,7 @@ It helps enforce best practices and improve code quality within Foundry projects
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
+  - `could-be-constant`: Recommends declaring never-written state variables with a compile-time-constant initializer as `constant`.
   - `custom-errors`: Recommends using custom errors instead of strings and plain reverts for potential gas savings.
   - `unused-state-variables`: State variables that are never used should be removed.
   - `var-read-using-this`: Reads of state variables (or other `view`/`pure` functions) via `this` cause an unnecessary `STATICCALL`; access them directly.
