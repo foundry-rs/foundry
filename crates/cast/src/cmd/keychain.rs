@@ -958,6 +958,19 @@ async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) 
 // ---------------------------------------------------------------------------
 // `cast keychain doctor`
 // ---------------------------------------------------------------------------
+//
+// TODO(OSS-160 follow-ups): the doctor cannot diagnose the following parts of
+// the access-key signing path because the upstream surface to query against
+// does not exist yet. Add checks once the corresponding stacks land:
+//
+//   * Sequence-key / TIP-1009 expiring nonce — no expiring-nonce flag exists upstream and `KeyInfo`
+//     does not carry sequence-key state today.
+//   * Sponsorship / `fee_payer_signature` — no sponsorship plumbing exists in the local config or
+//     precompile to read.
+//   * Browser-wallet `KeyAuthorization` signing — wallet capability is being added in
+//     foundry-rs/foundry#14743 + foundry-rs/foundry-core#67 + foundry-rs/foundry-browser-wallet#67.
+//     Once merged, doctor can probe whether the connected browser/passkey wallet can sign the
+//     digest.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -979,13 +992,7 @@ struct DoctorStep {
 
 impl DoctorStep {
     fn pass(name: &'static str, label: &'static str, detail: impl Into<String>) -> Self {
-        Self {
-            name,
-            label,
-            status: DoctorStatus::Pass,
-            detail: detail.into(),
-            hint: None,
-        }
+        Self { name, label, status: DoctorStatus::Pass, detail: detail.into(), hint: None }
     }
 
     fn warn(
@@ -1057,11 +1064,7 @@ async fn run_doctor(
             steps.push(DoctorStep::pass(
                 "local_registry",
                 "Local registry",
-                format!(
-                    "{} candidate(s) in {}",
-                    c.len(),
-                    tempo_keys_path_display()
-                ),
+                format!("{} candidate(s) in {}", c.len(), tempo_keys_path_display()),
             ));
             c
         }
@@ -1243,19 +1246,14 @@ fn collect_local_candidates(
     root_account: Option<Address>,
 ) -> Result<Vec<tempo::KeyEntry>, String> {
     let Some(keys_file) = read_tempo_keys_file() else {
-        return Err(format!(
-            "could not read local keys file at {}",
-            tempo_keys_path_display()
-        ));
+        return Err(format!("could not read local keys file at {}", tempo_keys_path_display()));
     };
 
     let mut matches: Vec<tempo::KeyEntry> = keys_file
         .keys
         .into_iter()
         .filter(|entry| match (key_address, root_account) {
-            (Some(k), Some(r)) => {
-                key_entry_effective_key(entry) == k && entry.wallet_address == r
-            }
+            (Some(k), Some(r)) => key_entry_effective_key(entry) == k && entry.wallet_address == r,
             (Some(k), None) => key_entry_effective_key(entry) == k,
             (None, Some(r)) => entry.wallet_address == r,
             (None, None) => false,
@@ -1269,10 +1267,7 @@ fn collect_local_candidates(
             (None, Some(r)) => format!("root account {r}"),
             (None, None) => "the requested key".to_string(),
         };
-        return Err(format!(
-            "no entry for {descriptor} in {}",
-            tempo_keys_path_display()
-        ));
+        return Err(format!("no entry for {descriptor} in {}", tempo_keys_path_display()));
     }
 
     // Prefer the same default selection as `key_metadata_from_entry` callers (entries with
@@ -1300,9 +1295,7 @@ fn select_subject_for_chain(
 
     // If multiple entries belong to different roots and the user did not pin one, refuse to guess.
     if explicit_root.is_none()
-        && chain_matched
-            .iter()
-            .any(|entry| entry.wallet_address != chain_matched[0].wallet_address)
+        && chain_matched.iter().any(|entry| entry.wallet_address != chain_matched[0].wallet_address)
     {
         return Err(
             "multiple local entries match this chain across different root accounts; pass --root-account"
@@ -1311,8 +1304,7 @@ fn select_subject_for_chain(
     }
 
     // Prefer entries with inline key material (i.e. signing-ready), otherwise the first.
-    let preferred_idx =
-        chain_matched.iter().position(|entry| entry.has_inline_key()).unwrap_or(0);
+    let preferred_idx = chain_matched.iter().position(|entry| entry.has_inline_key()).unwrap_or(0);
     let entry = chain_matched.into_iter().nth(preferred_idx).expect("non-empty");
 
     Ok(DoctorSubject {
@@ -1342,8 +1334,7 @@ where
     }
 
     // Token universe: local-entry limits ∪ {fee_token}.
-    let mut tokens: Vec<Address> =
-        subject.entry.limits.iter().map(|l| l.currency).collect();
+    let mut tokens: Vec<Address> = subject.entry.limits.iter().map(|l| l.currency).collect();
     if !tokens.contains(&fee_token) {
         tokens.push(fee_token);
     }
@@ -1490,7 +1481,7 @@ where
             DoctorStep::pass(
                 "allowed_calls",
                 "Allowed calls",
-                format!("target {} is in scope; pass --selector to test the function", to),
+                format!("target {to} is in scope; pass --selector to test the function"),
             )
         } else {
             DoctorStep::warn(
@@ -1533,9 +1524,7 @@ fn match_allowed_call<'a>(
     recipient: Option<Address>,
 ) -> AllowedCallMatch<'a> {
     let Some(scope) = scopes.iter().find(|s| s.target == to) else {
-        return AllowedCallMatch::Denied(format!(
-            "target {to} not in any allowed scope"
-        ));
+        return AllowedCallMatch::Denied(format!("target {to} not in any allowed scope"));
     };
 
     if scope.selectorRules.is_empty() {
@@ -2672,12 +2661,8 @@ mod tests {
     #[test]
     fn test_match_allowed_call_target_wildcard_any_selector() {
         let scopes = vec![CallScope { target: target_addr(0xAA), selectorRules: vec![] }];
-        let result = match_allowed_call(
-            &scopes,
-            target_addr(0xAA),
-            ITIP20::transferCall::SELECTOR,
-            None,
-        );
+        let result =
+            match_allowed_call(&scopes, target_addr(0xAA), ITIP20::transferCall::SELECTOR, None);
         assert!(matches!(result, AllowedCallMatch::Allowed(_)));
     }
 
@@ -2699,12 +2684,8 @@ mod tests {
     #[test]
     fn test_match_allowed_call_missing_target_denied() {
         let scopes = vec![CallScope { target: target_addr(0xAA), selectorRules: vec![] }];
-        let result = match_allowed_call(
-            &scopes,
-            target_addr(0xCC),
-            ITIP20::transferCall::SELECTOR,
-            None,
-        );
+        let result =
+            match_allowed_call(&scopes, target_addr(0xCC), ITIP20::transferCall::SELECTOR, None);
         assert!(matches!(result, AllowedCallMatch::Denied(_)));
     }
 
@@ -2715,19 +2696,18 @@ mod tests {
             target: target_addr(0xAA),
             selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, recipients.clone())],
         }];
-        let result = match_allowed_call(
-            &scopes,
-            target_addr(0xAA),
-            ITIP20::transferCall::SELECTOR,
-            None,
-        );
+        let result =
+            match_allowed_call(&scopes, target_addr(0xAA), ITIP20::transferCall::SELECTOR, None);
         match result {
             AllowedCallMatch::RecipientRestricted(rs) => assert_eq!(rs, recipients.as_slice()),
-            other => panic!("expected RecipientRestricted, got {:?}", match other {
-                AllowedCallMatch::Allowed(s) => format!("Allowed({s})"),
-                AllowedCallMatch::Denied(s) => format!("Denied({s})"),
-                AllowedCallMatch::RecipientRestricted(_) => unreachable!(),
-            }),
+            other => panic!(
+                "expected RecipientRestricted, got {:?}",
+                match other {
+                    AllowedCallMatch::Allowed(s) => format!("Allowed({s})"),
+                    AllowedCallMatch::Denied(s) => format!("Denied({s})"),
+                    AllowedCallMatch::RecipientRestricted(_) => unreachable!(),
+                }
+            ),
         }
     }
 
@@ -2769,12 +2749,8 @@ mod tests {
             target: target_addr(0xAA),
             selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, vec![])],
         }];
-        let result = match_allowed_call(
-            &scopes,
-            target_addr(0xAA),
-            ITIP20::approveCall::SELECTOR,
-            None,
-        );
+        let result =
+            match_allowed_call(&scopes, target_addr(0xAA), ITIP20::approveCall::SELECTOR, None);
         assert!(matches!(result, AllowedCallMatch::Denied(_)));
     }
 
