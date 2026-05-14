@@ -18,8 +18,7 @@ pub struct JsonEnvelope<T> {
     pub schema_version: u32,
     /// Whether the command completed successfully.
     ///
-    /// For streaming output this should be known only by a final summary record,
-    /// not by intermediate progress events.
+    /// Only meaningful for a complete/terminal command outcome.
     pub success: bool,
     /// Command-specific payload.
     pub data: Option<T>,
