@@ -155,7 +155,11 @@ impl ProjectCompiler {
         // broader refactor across the call chain. Leaving it as-is for now until a larger
         // refactor is feasible.
         if !project.paths.has_input_files() && self.files.is_empty() {
-            sh_println!("Nothing to compile")?;
+            if shell::is_json() {
+                sh_eprintln!("Nothing to compile")?;
+            } else {
+                sh_println!("Nothing to compile")?;
+            }
             std::process::exit(0);
         }
 

@@ -1,5 +1,6 @@
 //! Contains various tests for `forge test`.
 
+use crate::json::{assert_json_event, parse_json_lines};
 use alloy_primitives::U256;
 use anvil::{NodeConfig, spawn};
 use foundry_test_utils::{
@@ -349,10 +350,23 @@ forgetest!(can_run_test_with_json_output_verbose, |prj, cmd| {
 
     prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
 
-    // Assert that with verbose output the json output includes the traces
-    cmd.args(["test", "-vvvvv", "--json"])
-        .assert_success()
-        .stdout_eq(file!["../../fixtures/SimpleContractTestVerbose.json": Json]);
+    let stdout =
+        cmd.args(["test", "-vvvvv", "--json"]).assert_success().get_output().stdout_lossy();
+    let events = parse_json_lines(&stdout);
+
+    assert_eq!(events.len(), 3);
+    assert_json_event(&events[0], "test_result");
+    assert_json_event(&events[1], "suite_summary");
+    assert_json_event(&events[2], "summary");
+
+    assert_eq!(events[0]["data"]["suite"], "src/Simple.t.sol:SimpleContractTest");
+    assert_eq!(events[0]["data"]["name"], "test()");
+    assert_eq!(events[0]["data"]["result"]["status"], "Success");
+    assert_eq!(events[0]["data"]["result"]["decoded_logs"], serde_json::json!(["100"]));
+    assert!(!events[0]["data"]["result"]["logs"].as_array().unwrap().is_empty());
+    assert!(!events[0]["data"]["result"]["traces"].as_array().unwrap().is_empty());
+    assert_eq!(events[2]["data"]["success"], true);
+    assert_eq!(events[2]["data"]["total"], 1);
 });
 
 forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
@@ -361,10 +375,24 @@ forgetest!(can_run_test_with_json_output_non_verbose, |prj, cmd| {
 
     prj.add_source("Simple.t.sol", SIMPLE_CONTRACT);
 
-    // Assert that without verbose output the json output does not include the traces
-    cmd.args(["test", "--json"])
-        .assert_success()
-        .stdout_eq(file!["../../fixtures/SimpleContractTestNonVerbose.json": Json]);
+    let stdout = cmd.args(["test", "--json"]).assert_success().get_output().stdout_lossy();
+    let events = parse_json_lines(&stdout);
+
+    assert_eq!(events.len(), 3);
+    assert_json_event(&events[0], "test_result");
+    assert_json_event(&events[1], "suite_summary");
+    assert_json_event(&events[2], "summary");
+
+    assert_eq!(events[0]["data"]["suite"], "src/Simple.t.sol:SimpleContractTest");
+    assert_eq!(events[0]["data"]["name"], "test()");
+    assert_eq!(events[0]["data"]["result"]["status"], "Success");
+    assert_eq!(events[0]["data"]["result"]["logs"], serde_json::json!([]));
+    assert_eq!(events[0]["data"]["result"]["decoded_logs"], serde_json::json!([]));
+    assert_eq!(events[0]["data"]["result"]["traces"], serde_json::json!([]));
+    assert_eq!(events[1]["data"]["passed"], 1);
+    assert_eq!(events[1]["data"]["total"], 1);
+    assert_eq!(events[2]["data"]["success"], true);
+    assert_eq!(events[2]["data"]["total"], 1);
 });
 
 // tests that `forge test` will pick up tests that are stored in the `test = <path>` config value

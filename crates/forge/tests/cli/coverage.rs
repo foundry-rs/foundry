@@ -1,7 +1,9 @@
+use crate::json::{assert_json_event, parse_json_lines};
 use foundry_common::fs::{self, files_with_ext};
 use foundry_test_utils::{
     TestCommand, TestProject,
     snapbox::{Data, IntoData},
+    util::OutputExt,
 };
 use std::path::Path;
 
@@ -174,6 +176,41 @@ end_of_record
 forgetest_init!(basic, |prj, cmd| {
     prj.initialize_default_contracts();
     basic_base(prj, cmd);
+});
+
+forgetest_init!(coverage_json_output, |prj, cmd| {
+    prj.initialize_default_contracts();
+
+    let output = cmd.args(["coverage", "--json"]).assert_success().get_output().clone();
+    let stdout = output.stdout_lossy();
+    let stderr = output.stderr_lossy();
+    let events = parse_json_lines(&stdout);
+    let event_names =
+        events.iter().map(|event| event["event"].as_str().unwrap()).collect::<Vec<_>>();
+
+    assert!(stderr.contains("Analysing contracts..."));
+    assert!(stderr.contains("Running tests..."));
+    assert!(event_names.contains(&"coverage_file"));
+    assert!(!event_names.contains(&"test_result"));
+    assert_eq!(event_names.last(), Some(&"summary"));
+
+    for event in &events {
+        assert_json_event(event, event["event"].as_str().unwrap());
+    }
+
+    let counter = events
+        .iter()
+        .find(|event| {
+            event["event"] == "coverage_file"
+                && event["data"]["path"].as_str().unwrap().ends_with("Counter.sol")
+        })
+        .expect("missing Counter.sol coverage file event");
+    assert_eq!(counter["data"]["summary"]["line_count"], 4);
+    assert_eq!(counter["data"]["summary"]["line_hits"], 4);
+
+    let summary = events.last().unwrap();
+    assert_eq!(summary["data"]["success"], true);
+    assert!(summary["data"]["files"].as_u64().unwrap() >= 2);
 });
 
 forgetest_init!(basic_crlf, |prj, cmd| {

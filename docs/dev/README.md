@@ -50,6 +50,7 @@ $ make pr
 - [Architecture](./architecture.md)
 - [Cheatcodes](./cheatcodes.md)
 - [Debugging](./debugging.md)
+- [Incremental JSON Output](./ndjson-output.md)
 - [Scripting](./scripting.md)
 - [Custom Network Features](./networks.md)
 

@@ -4,7 +4,7 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::{MultiNetworkConfig, matches_artifact},
-    result::{SuiteResult, TestOutcome, TestStatus},
+    result::{SuiteResult, TestOutcome, TestResult, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
@@ -17,6 +17,7 @@ use chrono::Utc;
 use clap::{Parser, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
+    json::print_json_event,
     opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
@@ -51,6 +52,7 @@ use foundry_evm::{
 use rand::Rng;
 use regex::Regex;
 use revm::context::Transaction;
+use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -218,6 +220,9 @@ pub struct TestArgs {
 
     #[command(flatten)]
     pub watch: WatchArgs,
+
+    #[arg(skip)]
+    suppress_json_events: bool,
 }
 
 impl TestArgs {
@@ -252,7 +257,11 @@ impl TestArgs {
         });
         let output = project.compile()?;
         if output.has_compiler_errors() {
-            sh_println!("{output}")?;
+            if shell::is_json() {
+                sh_eprintln!("{output}")?;
+            } else {
+                sh_println!("{output}")?;
+            }
             eyre::bail!("Compilation failed");
         }
 
@@ -426,6 +435,12 @@ impl TestArgs {
             if self.summary && !outcome.results.is_empty() {
                 let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
                 sh_println!("{}", &summary_report)?;
+            }
+            if self.emit_json_events() {
+                print_json_event(
+                    "summary",
+                    TestRunSummaryEvent::new(&outcome, multi_pass_timer.elapsed()),
+                )?;
             }
 
             (libraries, outcome)
@@ -610,8 +625,9 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
+        let emit_json_events = self.emit_json_events();
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && shell::is_json() || self.summary && shell::is_json();
+        let silent = shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
 
@@ -622,9 +638,15 @@ impl TestArgs {
                 runner.matching_test_functions(&EmptyTestFilter::default()).count()
             };
             if total_tests == 0 {
-                sh_println!(
-                    "No tests found in project! Forge looks for functions that start with `test`"
-                )?;
+                if shell::is_json() {
+                    sh_warn!(
+                        "No tests found in project! Forge looks for functions that start with `test`"
+                    )?;
+                } else {
+                    sh_println!(
+                        "No tests found in project! Forge looks for functions that start with `test`"
+                    )?;
+                }
             } else {
                 let mut msg = format!("no tests match the provided pattern:\n{filter}");
                 // Try to suggest a test when there's no match.
@@ -637,6 +659,13 @@ impl TestArgs {
                     }
                 }
                 sh_warn!("{msg}")?;
+            }
+            if emit_json_events {
+                let outcome = TestOutcome::empty(Some(runner.known_contracts.clone()), false);
+                print_json_event(
+                    "summary",
+                    TestRunSummaryEvent::new(&outcome, Duration::default()),
+                )?;
             }
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
@@ -665,25 +694,6 @@ impl TestArgs {
             runner.decode_internal = InternalTraceMode::Full;
         }
 
-        // Run tests in a non-streaming fashion and collect results for serialization.
-        if !self.gas_report && !self.summary && shell::is_json() {
-            let mut results = runner.test_collect(filter)?;
-            for suite_result in results.values_mut() {
-                for test_result in suite_result.test_results.values_mut() {
-                    if verbosity >= 2 {
-                        // Decode logs at level 2 and above.
-                        test_result.decoded_logs = decode_console_logs(&test_result.logs);
-                    } else {
-                        // Empty logs for non verbose runs.
-                        test_result.logs = vec![];
-                    }
-                }
-            }
-            sh_println!("{}", serde_json::to_string(&results)?)?;
-            let kc = runner.known_contracts.clone();
-            return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
-        }
-
         if self.junit {
             let results = runner.test_collect(filter)?;
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
@@ -701,6 +711,7 @@ impl TestArgs {
         // In multi-pass mode the per-pass summary is suppressed; the merged summary is
         // printed once by the caller after all passes complete.
         let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
+        let pass_network = runner.tcfg.multi_network.pass_network.map(|network| network.name());
 
         // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -919,6 +930,23 @@ impl TestArgs {
                 for (group, new_snapshots) in &result.gas_snapshots {
                     gas_snapshots.entry(group.clone()).or_default().extend(new_snapshots.clone());
                 }
+
+                if emit_json_events {
+                    if verbosity >= 2 {
+                        result.decoded_logs = decode_console_logs(&result.logs);
+                    } else {
+                        result.logs = Vec::new();
+                    }
+                    print_json_event(
+                        "test_result",
+                        TestResultEvent {
+                            network: pass_network,
+                            suite: &contract_name,
+                            name,
+                            result,
+                        },
+                    )?;
+                }
             }
 
             // Write gas snapshots to disk if any were collected.
@@ -1011,6 +1039,13 @@ impl TestArgs {
                 sh_println!("{}", suite_result.summary())?;
             }
 
+            if emit_json_events && has_tests {
+                print_json_event(
+                    "suite_summary",
+                    TestSuiteSummaryEvent::new(&contract_name, &suite_result, pass_network),
+                )?;
+            }
+
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
 
@@ -1054,6 +1089,10 @@ impl TestArgs {
         // Persist test run failures to enable replaying.
         persist_run_failures(&config, &outcome);
 
+        if emit_json_events && !is_multi_pass {
+            print_json_event("summary", TestRunSummaryEvent::new(&outcome, duration))?;
+        }
+
         Ok(outcome)
     }
 
@@ -1079,12 +1118,90 @@ impl TestArgs {
         self.watch.watch.is_some()
     }
 
+    fn emit_json_events(&self) -> bool {
+        shell::is_json() && !self.suppress_json_events && !self.gas_report && !self.summary
+    }
+
+    pub(crate) const fn suppress_json_events(&mut self) {
+        self.suppress_json_events = true;
+    }
+
     /// Returns the [`watchexec::Config`] necessary to bootstrap a new watch loop.
     pub(crate) fn watchexec_config(&self) -> Result<watchexec::Config> {
         self.watch.watchexec_config(|| {
             let config = self.load_config()?;
             Ok([config.src, config.test])
         })
+    }
+}
+
+#[derive(Serialize)]
+struct TestResultEvent<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    network: Option<&'static str>,
+    suite: &'a str,
+    name: &'a str,
+    result: &'a TestResult,
+}
+
+#[derive(Serialize)]
+struct TestSuiteSummaryEvent<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    network: Option<&'static str>,
+    suite: &'a str,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    total: usize,
+    #[serde(with = "foundry_common::serde_helpers::duration")]
+    duration: Duration,
+    warnings: &'a [String],
+}
+
+impl<'a> TestSuiteSummaryEvent<'a> {
+    fn new(suite: &'a str, result: &'a SuiteResult, network: Option<&'static str>) -> Self {
+        Self {
+            network,
+            suite,
+            passed: result.passed(),
+            failed: result.failed(),
+            skipped: result.skipped(),
+            total: result.len(),
+            duration: result.duration,
+            warnings: &result.warnings,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct TestRunSummaryEvent {
+    success: bool,
+    suites: usize,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    total: usize,
+    #[serde(with = "foundry_common::serde_helpers::duration")]
+    wall_time: Duration,
+    #[serde(with = "foundry_common::serde_helpers::duration")]
+    cpu_time: Duration,
+}
+
+impl TestRunSummaryEvent {
+    fn new(outcome: &TestOutcome, wall_time: Duration) -> Self {
+        let passed = outcome.passed();
+        let failed = outcome.failed();
+        let skipped = outcome.skipped();
+        Self {
+            success: outcome.allow_failure || failed == 0,
+            suites: outcome.results.len(),
+            passed,
+            failed,
+            skipped,
+            total: passed + failed + skipped,
+            wall_time,
+            cpu_time: outcome.total_time(),
+        }
     }
 }
 

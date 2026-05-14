@@ -3,6 +3,7 @@
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, to_string};
+use std::borrow::Cow;
 
 /// The current version of Foundry's top-level JSON output envelope.
 pub const JSON_SCHEMA_VERSION: u32 = 1;
@@ -66,6 +67,54 @@ impl JsonEnvelope<()> {
             data: None,
             errors,
             warnings: Vec::new(),
+        }
+    }
+}
+
+/// Stable top-level event record for incremental machine-readable output.
+///
+/// Long-running commands emit one compact JSON object per line as work progresses.
+/// Each object identifies its event type with [`JsonEvent::event`] and carries
+/// event-specific data in [`JsonEvent::data`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JsonEvent<T> {
+    /// Version of the shared JSON output schema.
+    pub schema_version: u32,
+    /// Stable machine-readable event discriminator.
+    pub event: Cow<'static, str>,
+    /// Event-specific payload. Events always carry data.
+    pub data: T,
+    /// Structured errors associated with this event.
+    pub errors: Vec<JsonMessage>,
+    /// Structured warnings associated with this event.
+    pub warnings: Vec<JsonMessage>,
+}
+
+impl<T> JsonEvent<T> {
+    /// Creates an event with event-specific data.
+    pub const fn new(event: &'static str, data: T) -> Self {
+        Self {
+            schema_version: JSON_SCHEMA_VERSION,
+            event: Cow::Borrowed(event),
+            data,
+            errors: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Creates an event with event-specific data and diagnostics.
+    pub const fn with_diagnostics(
+        event: &'static str,
+        data: T,
+        errors: Vec<JsonMessage>,
+        warnings: Vec<JsonMessage>,
+    ) -> Self {
+        Self {
+            schema_version: JSON_SCHEMA_VERSION,
+            event: Cow::Borrowed(event),
+            data,
+            errors,
+            warnings,
         }
     }
 }
@@ -151,12 +200,17 @@ pub fn print_json_success_with_warnings<T: Serialize>(
     print_json(&JsonEnvelope::success_with_warnings(data, warnings))
 }
 
+/// Prints a JSON event record to stdout.
+pub fn print_json_event<T: Serialize>(event: &'static str, data: T) -> Result<()> {
+    print_json(&JsonEvent::new(event, data))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::{json, to_value};
 
-    #[derive(Serialize)]
+    #[derive(Serialize, Deserialize)]
     struct BuildData {
         contracts: usize,
     }
@@ -203,5 +257,34 @@ mod tests {
         assert_eq!(value["errors"][0]["code"], "config.invalid");
         assert_eq!(value["errors"][0]["details"]["path"], "foundry.toml");
         assert_eq!(value["warnings"], json!([]));
+    }
+
+    #[test]
+    fn event_serializes_top_level_discriminator() {
+        let event = JsonEvent::with_diagnostics(
+            "compile_start",
+            BuildData { contracts: 2 },
+            Vec::new(),
+            vec![JsonMessage::warning("compiler.cached", "using cached artifacts")],
+        );
+
+        let json = to_string(&event).unwrap();
+
+        assert_eq!(
+            json,
+            r#"{"schema_version":1,"event":"compile_start","data":{"contracts":2},"errors":[],"warnings":[{"level":"warning","code":"compiler.cached","message":"using cached artifacts"}]}"#
+        );
+    }
+
+    #[test]
+    fn event_deserializes_owned_event_string() {
+        let event: JsonEvent<BuildData> = serde_json::from_str(
+            r#"{"schema_version":1,"event":"compile_start","data":{"contracts":2},"errors":[],"warnings":[]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(event.schema_version, JSON_SCHEMA_VERSION);
+        assert_eq!(event.event, "compile_start");
+        assert_eq!(event.data.contracts, 2);
     }
 }

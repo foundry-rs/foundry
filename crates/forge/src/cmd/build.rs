@@ -3,6 +3,7 @@ use clap::Parser;
 use eyre::Result;
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
+    json::print_json_event,
     opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
     utils::{Git, LoadConfig, cache_local_signatures},
 };
@@ -108,6 +109,7 @@ impl BuildArgs {
         }
 
         let format_json = shell::is_json();
+        let no_explicit_files = files.is_empty();
         let compiler = ProjectCompiler::new()
             .files(files)
             .dynamic_test_linking(config.dynamic_test_linking)
@@ -116,13 +118,70 @@ impl BuildArgs {
             .ignore_eip_3860(self.ignore_eip_3860)
             .bail(!format_json);
 
-        let mut output = compiler.compile(&project)?;
+        let emit_json_events = format_json && !self.names && !self.sizes;
+        let empty_compile =
+            emit_json_events && !project.paths.has_input_files() && no_explicit_files;
+        if empty_compile {
+            print_json_event(
+                "summary",
+                BuildSummaryEvent::<()> {
+                    success: true,
+                    artifact_count: 0,
+                    error_count: 0,
+                    warning_count: 0,
+                    output: None,
+                    error: None,
+                },
+            )?;
+        } else if emit_json_events {
+            print_json_event(
+                "compile_start",
+                BuildStartEvent {
+                    paths: self
+                        .paths
+                        .as_ref()
+                        .map(|paths| paths.iter().map(|path| path.display().to_string()).collect())
+                        .unwrap_or_default(),
+                },
+            )?;
+        }
+
+        let mut output = match compiler.compile(&project) {
+            Ok(output) => output,
+            Err(err) => {
+                if emit_json_events {
+                    print_json_event(
+                        "summary",
+                        BuildSummaryEvent::<()> {
+                            success: false,
+                            artifact_count: 0,
+                            error_count: 0,
+                            warning_count: 0,
+                            output: None,
+                            error: Some(err.to_string()),
+                        },
+                    )?;
+                }
+                return Err(err);
+            }
+        };
 
         // Cache project selectors.
         cache_local_signatures(&output)?;
 
-        if format_json && !self.names && !self.sizes {
-            sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
+        let mut artifact_count = 0;
+        if emit_json_events {
+            for (id, _) in output.artifact_ids() {
+                artifact_count += 1;
+                print_json_event(
+                    "compile_artifact",
+                    BuildArtifactEvent {
+                        source: id.source.display().to_string(),
+                        name: id.name.clone(),
+                        version: id.version.to_string(),
+                    },
+                )?;
+            }
         }
 
         // Only run the `SolidityLinter` if lint on build and no compilation errors.
@@ -131,8 +190,37 @@ impl BuildArgs {
             && !output.output().errors.iter().any(|e| e.is_error())
             && let Err(err) = self.lint(&project, &config, self.paths.as_deref(), &mut output)
         {
+            if emit_json_events {
+                let errors = &output.output().errors;
+                print_json_event(
+                    "summary",
+                    BuildSummaryEvent {
+                        success: false,
+                        artifact_count,
+                        error_count: errors.iter().filter(|error| error.is_error()).count(),
+                        warning_count: errors.iter().filter(|error| error.is_warning()).count(),
+                        output: Some(output.output()),
+                        error: Some(err.to_string()),
+                    },
+                )?;
+            }
             emit_lint_failure_notice();
             return Err(err.wrap_err("post-build lint step failed"));
+        }
+
+        if emit_json_events {
+            let errors = &output.output().errors;
+            print_json_event(
+                "summary",
+                BuildSummaryEvent {
+                    success: !output.has_compiler_errors(),
+                    artifact_count,
+                    error_count: errors.iter().filter(|error| error.is_error()).count(),
+                    warning_count: errors.iter().filter(|error| error.is_warning()).count(),
+                    output: Some(output.output()),
+                    error: None,
+                },
+            )?;
         }
 
         Ok(output)
@@ -332,6 +420,28 @@ impl BuildArgs {
             }
         }
     }
+}
+
+#[derive(Serialize)]
+struct BuildStartEvent {
+    paths: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct BuildArtifactEvent {
+    source: String,
+    name: String,
+    version: String,
+}
+
+#[derive(Serialize)]
+struct BuildSummaryEvent<'a, T> {
+    success: bool,
+    artifact_count: usize,
+    error_count: usize,
+    warning_count: usize,
+    output: Option<&'a T>,
+    error: Option<String>,
 }
 
 /// Notice shown on lint-on-build failure; printed separately so it survives single-line

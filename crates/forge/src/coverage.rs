@@ -212,7 +212,11 @@ impl CoverageReporter for LcovReporter {
         }
 
         out.flush()?;
-        sh_println!("Wrote LCOV report.")?;
+        if shell::is_json() {
+            sh_eprintln!("Wrote LCOV report.")?;
+        } else {
+            sh_println!("Wrote LCOV report.")?;
+        }
 
         Ok(())
     }

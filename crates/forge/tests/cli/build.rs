@@ -1,5 +1,6 @@
+use crate::json::{assert_json_event, parse_json_lines};
 use crate::utils::generate_large_init_contract;
-use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str};
+use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str, util::OutputExt};
 use globset::Glob;
 use std::fs;
 
@@ -46,29 +47,42 @@ contract Dummy {
 ",
     );
 
-    // set up command
-    cmd.args(["compile", "--format-json"]).assert_success().stderr_eq("").stdout_eq(str![[r#"
-{
-  "errors": [
-    {
-      "sourceLocation": {
-        "file": "src/jsonError.sol",
-        "start": 184,
-        "end": 193
-      },
-      "type": "DeclarationError",
-      "component": "general",
-      "severity": "error",
-      "errorCode": "7576",
-      "message": "Undeclared identifier. Did you mean \"newNumber\"?",
-      "formattedMessage": "DeclarationError: Undeclared identifier. Did you mean \"newNumber\"?\n [FILE]:7:18:\n  |\n7 |         number = newnumber; // error here\n  |                  ^^^^^^^^^\n\n"
+    let stdout = cmd
+        .args(["compile", "--format-json"])
+        .assert_success()
+        .stderr_eq("")
+        .get_output()
+        .stdout_lossy();
+    let events = parse_json_lines(&stdout);
+
+    assert_eq!(events.len(), 2);
+    assert_json_event(&events[0], "compile_start");
+    assert_json_event(&events[1], "summary");
+    assert_eq!(events[1]["data"]["success"], false);
+    assert_eq!(events[1]["data"]["artifact_count"], 0);
+    assert_eq!(events[1]["data"]["error_count"], 1);
+    assert_eq!(events[1]["data"]["output"]["errors"][0]["type"], "DeclarationError");
+});
+
+forgetest_init!(compile_json_success_events, |prj, cmd| {
+    prj.initialize_default_contracts();
+
+    let stdout = cmd.args(["build", "--json"]).assert_success().get_output().stdout_lossy();
+    let events = parse_json_lines(&stdout);
+    let event_names =
+        events.iter().map(|event| event["event"].as_str().unwrap()).collect::<Vec<_>>();
+
+    assert_eq!(event_names.first(), Some(&"compile_start"));
+    assert!(event_names.contains(&"compile_artifact"));
+    assert_eq!(event_names.last(), Some(&"summary"));
+
+    for event in &events {
+        assert_json_event(event, event["event"].as_str().unwrap());
     }
-  ],
-  "sources": {},
-  "contracts": {},
-  "build_infos": "{...}"
-}
-"#]].is_json());
+
+    let summary = events.last().unwrap();
+    assert_eq!(summary["data"]["success"], true);
+    assert!(summary["data"]["artifact_count"].as_u64().unwrap() > 0);
 });
 
 forgetest!(initcode_size_exceeds_limit, |prj, cmd| {

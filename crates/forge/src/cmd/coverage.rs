@@ -1,15 +1,19 @@
 use super::{install, test::TestArgs, watch::WatchArgs};
 use crate::coverage::{
-    BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummaryReporter,
-    DebugReporter, ItemAnchor, LcovReporter,
+    BytecodeReporter, ContractId, CoverageReport, CoverageReporter, CoverageSummary,
+    CoverageSummaryReporter, DebugReporter, ItemAnchor, LcovReporter,
     analysis::{SourceAnalysis, SourceFiles},
     anchors::find_anchors,
 };
+use crate::result::TestOutcome;
 use alloy_primitives::{Address, Bytes, U256, map::HashMap};
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::Result;
-use foundry_cli::utils::{LoadConfig, STATIC_FUZZ_SEED};
-use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors};
+use foundry_cli::{
+    json::print_json_event,
+    utils::{LoadConfig, STATIC_FUZZ_SEED},
+};
+use foundry_common::{compile::ProjectCompiler, errors::convert_solar_errors, shell};
 use foundry_compilers::{
     Artifact, ArtifactId, Project, ProjectCompileOutput, ProjectPathsConfig, VYPER_EXTENSIONS,
     artifacts::{CompactBytecode, CompactDeployedBytecode, sourcemap::SourceMap},
@@ -18,6 +22,7 @@ use foundry_config::Config;
 use foundry_evm::{core::ic::IcPcMap, opts::EvmOpts};
 use rayon::prelude::*;
 use semver::{Version, VersionReq};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 // Loads project's figment and merges the build cli arguments into it
@@ -100,10 +105,10 @@ impl CoverageArgs {
 
         self.populate_reporters(&paths.root);
 
-        sh_println!("Analysing contracts...")?;
+        print_status("Analysing contracts...")?;
         let report = self.prepare(&paths, &mut output)?;
 
-        sh_println!("Running tests...")?;
+        print_status("Running tests...")?;
         self.collect(&paths.root, &output, report, config, evm_opts).await
     }
 
@@ -251,6 +256,7 @@ impl CoverageArgs {
         evm_opts: EvmOpts,
     ) -> Result<()> {
         let filter = self.test.filter(&config)?;
+        self.test.suppress_json_events();
         let outcome =
             self.test.run_tests(project_root, config, evm_opts, output, &filter, true).await?;
 
@@ -300,7 +306,12 @@ impl CoverageArgs {
         }
 
         // Output final reports.
-        self.report(&report)?;
+        if shell::is_json() {
+            self.emit_json_report(&report, &outcome)?;
+            self.report_json_side_effects(&report)?;
+        } else {
+            self.report(&report)?;
+        }
 
         // Check for test failures after generating coverage report.
         // This ensures coverage data is written even when tests fail.
@@ -318,12 +329,98 @@ impl CoverageArgs {
         Ok(())
     }
 
+    fn report_json_side_effects(&mut self, report: &CoverageReport) -> Result<()> {
+        for reporter in &mut self.reporters {
+            if matches!(reporter.name(), "lcov" | "bytecode") {
+                let _guard = debug_span!("reporter.report", kind=%reporter.name()).entered();
+                reporter.report(report)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_json_report(&self, report: &CoverageReport, outcome: &TestOutcome) -> Result<()> {
+        let mut total = CoverageSummary::default();
+        let mut files = 0usize;
+
+        for (path, summary) in report.summary_by_file() {
+            total.merge(&summary);
+            files += 1;
+            print_json_event(
+                "coverage_file",
+                CoverageFileEvent {
+                    path: path.display().to_string(),
+                    summary: CoverageSummaryEvent::from(summary),
+                },
+            )?;
+        }
+
+        print_json_event(
+            "summary",
+            CoverageRunSummaryEvent {
+                success: outcome.allow_failure || outcome.failed() == 0,
+                files,
+                summary: CoverageSummaryEvent::from(total),
+            },
+        )?;
+        Ok(())
+    }
+
     pub const fn is_watch(&self) -> bool {
         self.test.is_watch()
     }
 
     pub const fn watch(&self) -> &WatchArgs {
         &self.test.watch
+    }
+}
+
+fn print_status(message: &str) -> Result<()> {
+    if shell::is_json() {
+        sh_eprintln!("{message}")?;
+    } else {
+        sh_println!("{message}")?;
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct CoverageFileEvent {
+    path: String,
+    summary: CoverageSummaryEvent,
+}
+
+#[derive(Serialize)]
+struct CoverageRunSummaryEvent {
+    success: bool,
+    files: usize,
+    summary: CoverageSummaryEvent,
+}
+
+#[derive(Serialize)]
+struct CoverageSummaryEvent {
+    line_count: usize,
+    line_hits: usize,
+    statement_count: usize,
+    statement_hits: usize,
+    branch_count: usize,
+    branch_hits: usize,
+    function_count: usize,
+    function_hits: usize,
+}
+
+impl From<CoverageSummary> for CoverageSummaryEvent {
+    fn from(summary: CoverageSummary) -> Self {
+        Self {
+            line_count: summary.line_count,
+            line_hits: summary.line_hits,
+            statement_count: summary.statement_count,
+            statement_hits: summary.statement_hits,
+            branch_count: summary.branch_count,
+            branch_hits: summary.branch_hits,
+            function_count: summary.function_count,
+            function_hits: summary.function_hits,
+        }
     }
 }
 

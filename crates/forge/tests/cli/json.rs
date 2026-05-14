@@ -1,3 +1,30 @@
+use serde_json::{Value, json};
+
+pub fn parse_json_lines(stdout: &str) -> Vec<Value> {
+    let values = stdout
+        .lines()
+        .enumerate()
+        .filter_map(|(idx, line)| {
+            let line = line.trim();
+            (!line.is_empty()).then(|| {
+                serde_json::from_str(line).unwrap_or_else(|err| {
+                    panic!("stdout line {} is not JSON: {err}\n{line}", idx + 1)
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    assert!(!values.is_empty(), "expected at least one JSON line");
+    values
+}
+
+pub fn assert_json_event(value: &Value, event: &str) {
+    assert_eq!(value["schema_version"], 1);
+    assert_eq!(value["event"], event);
+    assert_eq!(value["errors"], json!([]));
+    assert_eq!(value["warnings"], json!([]));
+    assert!(value.get("data").is_some(), "event is missing data: {value}");
+}
+
 // tests enhanced `vm.parseJson` and `vm.serializeJson` cheatcodes, which are not constrained to
 // alphabetical ordering of struct keys, but rather respect the Solidity struct definition.
 forgetest_init!(test_parse_json, |prj, cmd| {
