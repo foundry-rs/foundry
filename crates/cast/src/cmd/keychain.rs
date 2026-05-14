@@ -86,6 +86,41 @@ pub enum KeychainSubcommand {
         rpc: RpcOpts,
     },
 
+    /// Diagnose access-key signing issues end-to-end.
+    ///
+    /// Walks the local registry, RPC, and on-chain key state and prints a green
+    /// checklist. The first failing step turns red and includes a one-line hint.
+    Doctor {
+        /// The key address to diagnose. Optional when `--root-account` is provided.
+        #[arg(required_unless_present = "root_account")]
+        key_address: Option<Address>,
+
+        /// Root account address. Required if the key cannot be resolved from the local registry,
+        /// or to diagnose the default key for a sender.
+        #[arg(long, visible_alias = "wallet-address", value_name = "ADDRESS")]
+        root_account: Option<Address>,
+
+        /// Hypothetical call target for the TIP-1011 scope check.
+        #[arg(long, value_name = "ADDRESS")]
+        to: Option<Address>,
+
+        /// Function selector for the TIP-1011 scope check (hex `0x12345678`,
+        /// known shorthand like `transfer`, or full signature like `foo(uint256)`).
+        #[arg(long, value_parser = parse_selector_arg, requires = "to")]
+        selector: Option<SelectorArg>,
+
+        /// Recipient address for the TIP-1011 scope check (per-selector recipient list).
+        #[arg(long, value_name = "ADDRESS", requires = "selector")]
+        recipient: Option<Address>,
+
+        /// Fee token to check the root account balance for. Defaults to PathUSD.
+        #[arg(long, value_parser = parse_policy_token, default_value = "PathUSD")]
+        fee_token: Address,
+
+        #[command(flatten)]
+        rpc: RpcOpts,
+    },
+
     /// Authorize a new key on-chain via the AccountKeychain precompile.
     #[command(visible_alias = "auth")]
     Authorize {
@@ -572,6 +607,18 @@ impl KeychainSubcommand {
             Self::Inspect { key_address, root_account, rpc } => {
                 run_inspect(key_address, root_account, rpc).await
             }
+            Self::Doctor { key_address, root_account, to, selector, recipient, fee_token, rpc } => {
+                run_doctor(
+                    key_address,
+                    root_account,
+                    to,
+                    selector.map(|s| s.0),
+                    recipient,
+                    fee_token,
+                    rpc,
+                )
+                .await
+            }
             Self::Authorize {
                 key_address,
                 key_type,
@@ -905,6 +952,698 @@ async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) 
 
     sh_println!("Spending Limits: {}", if info.enforceLimits { "enforced" } else { "none" })?;
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// `cast keychain doctor`
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum DoctorStatus {
+    Pass,
+    Warn,
+    Fail,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct DoctorStep {
+    name: &'static str,
+    label: &'static str,
+    status: DoctorStatus,
+    detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hint: Option<String>,
+}
+
+impl DoctorStep {
+    fn pass(name: &'static str, label: &'static str, detail: impl Into<String>) -> Self {
+        Self {
+            name,
+            label,
+            status: DoctorStatus::Pass,
+            detail: detail.into(),
+            hint: None,
+        }
+    }
+
+    fn warn(
+        name: &'static str,
+        label: &'static str,
+        detail: impl Into<String>,
+        hint: impl Into<String>,
+    ) -> Self {
+        Self {
+            name,
+            label,
+            status: DoctorStatus::Warn,
+            detail: detail.into(),
+            hint: Some(hint.into()),
+        }
+    }
+
+    fn fail(
+        name: &'static str,
+        label: &'static str,
+        detail: impl Into<String>,
+        hint: impl Into<String>,
+    ) -> Self {
+        Self {
+            name,
+            label,
+            status: DoctorStatus::Fail,
+            detail: detail.into(),
+            hint: Some(hint.into()),
+        }
+    }
+}
+
+/// Result of resolving a local registry entry for the doctor.
+#[derive(Debug)]
+struct DoctorSubject {
+    root_account: Address,
+    key_address: Address,
+    entry: tempo::KeyEntry,
+}
+
+/// Outcome of TIP-1011 allowed-call matching.
+enum AllowedCallMatch<'a> {
+    /// The call is allowed.
+    Allowed(String),
+    /// The call is denied.
+    Denied(String),
+    /// The selector is allowed but recipients are restricted; user did not pass `--recipient`.
+    RecipientRestricted(&'a [Address]),
+}
+
+/// `cast keychain doctor` — diagnose access-key signing failures.
+#[allow(clippy::too_many_arguments)]
+async fn run_doctor(
+    key_address: Option<Address>,
+    root_account: Option<Address>,
+    to: Option<Address>,
+    selector: Option<[u8; 4]>,
+    recipient: Option<Address>,
+    fee_token: Address,
+    rpc: RpcOpts,
+) -> Result<()> {
+    let mut steps: Vec<DoctorStep> = Vec::new();
+
+    // Step 1: local registry lookup.
+    let candidates = collect_local_candidates(key_address, root_account);
+    let candidates = match candidates {
+        Ok(c) => {
+            steps.push(DoctorStep::pass(
+                "local_registry",
+                "Local registry",
+                format!(
+                    "{} candidate(s) in {}",
+                    c.len(),
+                    tempo_keys_path_display()
+                ),
+            ));
+            c
+        }
+        Err(detail) => {
+            steps.push(DoctorStep::fail(
+                "local_registry",
+                "Local registry",
+                detail,
+                "run `cast tempo login` or add the key to ~/.tempo/wallet/keys.toml",
+            ));
+            return finalize_doctor(steps);
+        }
+    };
+
+    // Step 2: RPC reachability.
+    let config = match rpc.load_config() {
+        Ok(c) => c,
+        Err(err) => {
+            steps.push(DoctorStep::fail(
+                "rpc_reachability",
+                "RPC reachable",
+                format!("could not load RPC config: {err}"),
+                "check --rpc-url and your foundry.toml",
+            ));
+            return finalize_doctor(steps);
+        }
+    };
+
+    let provider = match ProviderBuilder::<TempoNetwork>::from_config(&config)
+        .and_then(|builder| builder.build())
+    {
+        Ok(p) => p,
+        Err(err) => {
+            steps.push(DoctorStep::fail(
+                "rpc_reachability",
+                "RPC reachable",
+                format!("could not build provider: {err}"),
+                "verify --rpc-url is set and reachable",
+            ));
+            return finalize_doctor(steps);
+        }
+    };
+
+    let rpc_chain_id = match provider.get_chain_id().await {
+        Ok(id) => {
+            steps.push(DoctorStep::pass(
+                "rpc_reachability",
+                "RPC reachable",
+                format!("chain id {id}"),
+            ));
+            id
+        }
+        Err(err) => {
+            steps.push(DoctorStep::fail(
+                "rpc_reachability",
+                "RPC reachable",
+                format!("eth_chainId failed: {err}"),
+                "confirm the node is reachable and not rate-limited",
+            ));
+            return finalize_doctor(steps);
+        }
+    };
+
+    // Step 3: chain-id match + final entry selection.
+    let subject = match select_subject_for_chain(candidates, rpc_chain_id, root_account) {
+        Ok(s) => {
+            steps.push(DoctorStep::pass(
+                "chain_id_match",
+                "Chain ID match",
+                format!(
+                    "local entry on chain {} matches RPC (root {}, key {})",
+                    rpc_chain_id, s.root_account, s.key_address
+                ),
+            ));
+            s
+        }
+        Err(detail) => {
+            steps.push(DoctorStep::fail(
+                "chain_id_match",
+                "Chain ID match",
+                detail,
+                "use the RPC for the chain the local entry was created on, or pass --root-account",
+            ));
+            return finalize_doctor(steps);
+        }
+    };
+
+    // Step 4: on-chain key state.
+    let info = match provider.get_keychain_key(subject.root_account, subject.key_address).await {
+        Ok(info) if info.keyId != Address::ZERO => {
+            steps.push(DoctorStep::pass(
+                "key_on_chain",
+                "Key on-chain",
+                format!("provisioned, type {}", signature_type_label(&info.signatureType)),
+            ));
+            info
+        }
+        Ok(_) => {
+            steps.push(DoctorStep::fail(
+                "key_on_chain",
+                "Key on-chain",
+                format!(
+                    "key {} is not registered for root account {}",
+                    subject.key_address, subject.root_account
+                ),
+                "authorize the key with `cast keychain authorize <KEY>`",
+            ));
+            return finalize_doctor(steps);
+        }
+        Err(err) => {
+            steps.push(DoctorStep::fail(
+                "key_on_chain",
+                "Key on-chain",
+                format!("AccountKeychain.getKey failed: {err}"),
+                "verify the RPC supports the AccountKeychain precompile",
+            ));
+            return finalize_doctor(steps);
+        }
+    };
+
+    // Step 5: revoked?
+    if info.isRevoked {
+        steps.push(DoctorStep::fail(
+            "not_revoked",
+            "Not revoked",
+            "key is revoked on-chain".to_string(),
+            "authorize a new key or re-authorize this one",
+        ));
+        return finalize_doctor(steps);
+    }
+    steps.push(DoctorStep::pass("not_revoked", "Not revoked", "active"));
+
+    // Step 6: expiry.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if info.expiry == u64::MAX {
+        steps.push(DoctorStep::pass("expiry", "Expiry", "never expires"));
+    } else if info.expiry <= now {
+        steps.push(DoctorStep::fail(
+            "expiry",
+            "Expiry",
+            format!("expired {}", format_relative_timestamp(info.expiry)),
+            "authorize a new key with a later expiry",
+        ));
+        return finalize_doctor(steps);
+    } else {
+        steps.push(DoctorStep::pass(
+            "expiry",
+            "Expiry",
+            format!(
+                "{} ({})",
+                format_relative_timestamp(info.expiry),
+                format_timestamp_iso(info.expiry)
+            ),
+        ));
+    }
+
+    // Compute is_t3 (used for limits and allowed-calls checks). Treat detection failure
+    // as "not T3" — both checks will gracefully degrade.
+    let is_t3 = is_tempo_hardfork_active(&provider, TempoHardfork::T3).await.unwrap_or(false);
+
+    // Step 7: spending limits.
+    steps.push(check_spending_limits(&provider, &subject, &info, fee_token, is_t3).await);
+
+    // Step 8: allowed calls (TIP-1011, T3+ only).
+    steps.push(check_allowed_calls(&provider, &subject, is_t3, to, selector, recipient).await);
+
+    // Step 9: fee-token balance on the root account.
+    steps.push(check_fee_token_balance(&provider, subject.root_account, fee_token).await);
+
+    finalize_doctor(steps)
+}
+
+/// Step 1 helper: collect local registry candidates.
+fn collect_local_candidates(
+    key_address: Option<Address>,
+    root_account: Option<Address>,
+) -> Result<Vec<tempo::KeyEntry>, String> {
+    let Some(keys_file) = read_tempo_keys_file() else {
+        return Err(format!(
+            "could not read local keys file at {}",
+            tempo_keys_path_display()
+        ));
+    };
+
+    let mut matches: Vec<tempo::KeyEntry> = keys_file
+        .keys
+        .into_iter()
+        .filter(|entry| match (key_address, root_account) {
+            (Some(k), Some(r)) => {
+                key_entry_effective_key(entry) == k && entry.wallet_address == r
+            }
+            (Some(k), None) => key_entry_effective_key(entry) == k,
+            (None, Some(r)) => entry.wallet_address == r,
+            (None, None) => false,
+        })
+        .collect();
+
+    if matches.is_empty() {
+        let descriptor = match (key_address, root_account) {
+            (Some(k), Some(r)) => format!("key {k} for root {r}"),
+            (Some(k), None) => format!("key {k}"),
+            (None, Some(r)) => format!("root account {r}"),
+            (None, None) => "the requested key".to_string(),
+        };
+        return Err(format!(
+            "no entry for {descriptor} in {}",
+            tempo_keys_path_display()
+        ));
+    }
+
+    // Prefer the same default selection as `key_metadata_from_entry` callers (entries with
+    // local limit metadata first), but keep all chain-matching candidates for step 3.
+    matches.sort_by_key(|entry| usize::MAX - entry.limits.len());
+    Ok(matches)
+}
+
+/// Step 3 helper: filter candidates to the RPC chain id and pick a single entry.
+fn select_subject_for_chain(
+    candidates: Vec<tempo::KeyEntry>,
+    rpc_chain_id: u64,
+    explicit_root: Option<Address>,
+) -> Result<DoctorSubject, String> {
+    let local_chain_ids: Vec<u64> = candidates.iter().map(|e| e.chain_id).collect();
+
+    let chain_matched: Vec<tempo::KeyEntry> =
+        candidates.into_iter().filter(|entry| entry.chain_id == rpc_chain_id).collect();
+
+    if chain_matched.is_empty() {
+        return Err(format!(
+            "no local entry matches RPC chain id {rpc_chain_id} (local entries on {local_chain_ids:?})"
+        ));
+    }
+
+    // If multiple entries belong to different roots and the user did not pin one, refuse to guess.
+    if explicit_root.is_none()
+        && chain_matched
+            .iter()
+            .any(|entry| entry.wallet_address != chain_matched[0].wallet_address)
+    {
+        return Err(
+            "multiple local entries match this chain across different root accounts; pass --root-account"
+                .to_string(),
+        );
+    }
+
+    // Prefer entries with inline key material (i.e. signing-ready), otherwise the first.
+    let preferred_idx =
+        chain_matched.iter().position(|entry| entry.has_inline_key()).unwrap_or(0);
+    let entry = chain_matched.into_iter().nth(preferred_idx).expect("non-empty");
+
+    Ok(DoctorSubject {
+        root_account: entry.wallet_address,
+        key_address: key_entry_effective_key(&entry),
+        entry,
+    })
+}
+
+/// Step 7 helper: spending limits.
+async fn check_spending_limits<P>(
+    provider: &P,
+    subject: &DoctorSubject,
+    info: &KeyInfo,
+    fee_token: Address,
+    is_t3: bool,
+) -> DoctorStep
+where
+    P: Provider<TempoNetwork>,
+{
+    if !info.enforceLimits {
+        return DoctorStep::pass(
+            "spending_limits",
+            "Spending limits",
+            "limits not enforced for this key",
+        );
+    }
+
+    // Token universe: local-entry limits ∪ {fee_token}.
+    let mut tokens: Vec<Address> =
+        subject.entry.limits.iter().map(|l| l.currency).collect();
+    if !tokens.contains(&fee_token) {
+        tokens.push(fee_token);
+    }
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut any_zero = false;
+
+    for token in tokens {
+        let configured =
+            subject.entry.limits.iter().find(|l| l.currency == token).map(|l| l.limit.clone());
+
+        let (remaining, period_end) = if is_t3 {
+            match provider
+                .get_keychain_remaining_limit_with_period(
+                    subject.root_account,
+                    subject.key_address,
+                    token,
+                )
+                .await
+            {
+                Ok(r) => (r.remaining, Some(r.periodEnd)),
+                Err(err) => {
+                    return DoctorStep::warn(
+                        "spending_limits",
+                        "Spending limits",
+                        format!("{} query failed: {err}", address_label(token)),
+                        "verify the AccountKeychain precompile is reachable",
+                    );
+                }
+            }
+        } else {
+            match provider
+                .account_keychain()
+                .getRemainingLimit(subject.root_account, subject.key_address, token)
+                .call()
+                .await
+            {
+                Ok(r) => (r, None),
+                Err(err) => {
+                    return DoctorStep::warn(
+                        "spending_limits",
+                        "Spending limits",
+                        format!("{} query failed: {err}", address_label(token)),
+                        "verify the AccountKeychain precompile is reachable",
+                    );
+                }
+            }
+        };
+
+        if remaining.is_zero() {
+            any_zero = true;
+        }
+
+        let configured_str = configured.as_deref().unwrap_or("?");
+        let period_str = period_end
+            .and_then(|pe| (pe != 0).then(|| format!(" ({})", format_period_end(pe))))
+            .unwrap_or_default();
+        lines.push(format!(
+            "{} remaining {} / {}{}",
+            address_label(token),
+            remaining,
+            configured_str,
+            period_str
+        ));
+    }
+
+    let detail = lines.join("; ");
+    if any_zero {
+        DoctorStep::warn(
+            "spending_limits",
+            "Spending limits",
+            detail,
+            "raise the limit (e.g. `cast keychain ul ...`) or wait for the window reset",
+        )
+    } else {
+        DoctorStep::pass("spending_limits", "Spending limits", detail)
+    }
+}
+
+/// Step 8 helper: allowed calls (TIP-1011).
+async fn check_allowed_calls<P>(
+    provider: &P,
+    subject: &DoctorSubject,
+    is_t3: bool,
+    to: Option<Address>,
+    selector: Option<[u8; 4]>,
+    recipient: Option<Address>,
+) -> DoctorStep
+where
+    P: Provider<TempoNetwork>,
+{
+    if !is_t3 {
+        return DoctorStep::pass(
+            "allowed_calls",
+            "Allowed calls",
+            "TIP-1011 not enforced before T3",
+        );
+    }
+
+    let allowed = match provider
+        .account_keychain()
+        .getAllowedCalls(subject.root_account, subject.key_address)
+        .call()
+        .await
+    {
+        Ok(a) => a,
+        Err(err) => {
+            return DoctorStep::warn(
+                "allowed_calls",
+                "Allowed calls",
+                format!("getAllowedCalls failed: {err}"),
+                "verify the AccountKeychain precompile is reachable",
+            );
+        }
+    };
+
+    if !allowed.isScoped {
+        return DoctorStep::pass("allowed_calls", "Allowed calls", "any call permitted");
+    }
+
+    if allowed.scopes.is_empty() {
+        return DoctorStep::warn(
+            "allowed_calls",
+            "Allowed calls",
+            "scoped, but no targets permitted",
+            "widen the policy with `cast keychain policy add-call ...`",
+        );
+    }
+
+    let Some(to) = to else {
+        return DoctorStep::pass(
+            "allowed_calls",
+            "Allowed calls",
+            format!(
+                "scoped to {} target(s); pass --to/--selector to test a specific call",
+                allowed.scopes.len()
+            ),
+        );
+    };
+
+    let Some(selector) = selector else {
+        // --to without --selector: report whether the target is in scope at all.
+        return if allowed.scopes.iter().any(|s| s.target == to) {
+            DoctorStep::pass(
+                "allowed_calls",
+                "Allowed calls",
+                format!("target {} is in scope; pass --selector to test the function", to),
+            )
+        } else {
+            DoctorStep::warn(
+                "allowed_calls",
+                "Allowed calls",
+                format!("target {to} not in any allowed scope"),
+                "widen the policy with `cast keychain policy add-call ...`",
+            )
+        };
+    };
+
+    match match_allowed_call(&allowed.scopes, to, selector, recipient) {
+        AllowedCallMatch::Allowed(detail) => {
+            DoctorStep::pass("allowed_calls", "Allowed calls", detail)
+        }
+        AllowedCallMatch::Denied(reason) => DoctorStep::warn(
+            "allowed_calls",
+            "Allowed calls",
+            reason,
+            "widen the policy with `cast keychain policy add-call ...`",
+        ),
+        AllowedCallMatch::RecipientRestricted(recipients) => DoctorStep::pass(
+            "allowed_calls",
+            "Allowed calls",
+            format!(
+                "selector {} on {} allowed only for {}; pass --recipient to verify exact match",
+                format_selector(&selector),
+                address_label_with_address(to),
+                format_recipients(recipients)
+            ),
+        ),
+    }
+}
+
+/// Pure TIP-1011 matching logic. Extracted so it can be unit-tested.
+fn match_allowed_call<'a>(
+    scopes: &'a [CallScope],
+    to: Address,
+    selector: [u8; 4],
+    recipient: Option<Address>,
+) -> AllowedCallMatch<'a> {
+    let Some(scope) = scopes.iter().find(|s| s.target == to) else {
+        return AllowedCallMatch::Denied(format!(
+            "target {to} not in any allowed scope"
+        ));
+    };
+
+    if scope.selectorRules.is_empty() {
+        return AllowedCallMatch::Allowed(format!(
+            "any selector on {} permitted",
+            address_label_with_address(to)
+        ));
+    }
+
+    let Some(rule) = scope.selectorRules.iter().find(|r| r.selector.0 == selector) else {
+        return AllowedCallMatch::Denied(format!(
+            "selector {} on {} not in allowed list",
+            format_selector(&selector),
+            address_label_with_address(to)
+        ));
+    };
+
+    if rule.recipients.is_empty() {
+        return AllowedCallMatch::Allowed(format!(
+            "{} on {} permitted (any recipient)",
+            format_selector(&selector),
+            address_label_with_address(to)
+        ));
+    }
+
+    match recipient {
+        Some(r) if rule.recipients.contains(&r) => AllowedCallMatch::Allowed(format!(
+            "{} on {} to recipient {} permitted",
+            format_selector(&selector),
+            address_label_with_address(to),
+            r
+        )),
+        Some(r) => AllowedCallMatch::Denied(format!(
+            "recipient {r} not in allowed list for {} on {}",
+            format_selector(&selector),
+            address_label_with_address(to)
+        )),
+        None => AllowedCallMatch::RecipientRestricted(&rule.recipients),
+    }
+}
+
+/// Step 9 helper: fee-token balance on the root account.
+async fn check_fee_token_balance<P>(
+    provider: &P,
+    root_account: Address,
+    fee_token: Address,
+) -> DoctorStep
+where
+    P: Provider<TempoNetwork>,
+{
+    match ITIP20::new(fee_token, provider).balanceOf(root_account).call().await {
+        Ok(balance) if balance.is_zero() => DoctorStep::warn(
+            "fee_token_balance",
+            "Fee-token balance",
+            format!("0 {} on {}", address_label(fee_token), root_account),
+            format!("fund {} with {}", root_account, address_label(fee_token)),
+        ),
+        Ok(balance) => DoctorStep::pass(
+            "fee_token_balance",
+            "Fee-token balance",
+            format!("{} {} on {}", balance, address_label(fee_token), root_account),
+        ),
+        Err(err) => DoctorStep::warn(
+            "fee_token_balance",
+            "Fee-token balance",
+            format!("balanceOf failed: {err}"),
+            "verify --fee-token points to a TIP-20 token",
+        ),
+    }
+}
+
+/// Render the doctor result and return.
+fn finalize_doctor(steps: Vec<DoctorStep>) -> Result<()> {
+    let passed = steps.iter().all(|s| s.status != DoctorStatus::Fail);
+
+    if shell::is_json() {
+        let json = serde_json::json!({
+            "steps": steps,
+            "passed": passed,
+        });
+        sh_println!("{}", serde_json::to_string_pretty(&json)?)?;
+    } else {
+        for step in &steps {
+            print_doctor_step(step)?;
+        }
+        sh_println!()?;
+        if passed {
+            sh_println!("{} access-key signing path looks healthy", "✓".green())?;
+        } else {
+            sh_println!("{} access-key signing path has issues (see above)", "✗".red())?;
+        }
+    }
+
+    Ok(())
+}
+
+fn print_doctor_step(step: &DoctorStep) -> Result<()> {
+    let marker = match step.status {
+        DoctorStatus::Pass => "✓".green().to_string(),
+        DoctorStatus::Warn => "!".yellow().to_string(),
+        DoctorStatus::Fail => "✗".red().to_string(),
+    };
+
+    let label = format!("{:<22}", step.label);
+    sh_println!("{marker} {label} {}", step.detail)?;
+    if let Some(hint) = step.hint.as_deref() {
+        sh_println!("  {} {}", "hint:".dim(), hint)?;
+    }
     Ok(())
 }
 
@@ -1920,6 +2659,153 @@ mod tests {
             hard_fork: Some("T3".to_string()),
         };
         assert_eq!(active_from_anvil_node_info(&ethereum_t3, TempoHardfork::T3), None);
+    }
+
+    fn rule(selector: [u8; 4], recipients: Vec<Address>) -> SelectorRule {
+        SelectorRule { selector: selector.into(), recipients }
+    }
+
+    fn target_addr(byte: u8) -> Address {
+        Address::from([byte; 20])
+    }
+
+    #[test]
+    fn test_match_allowed_call_target_wildcard_any_selector() {
+        let scopes = vec![CallScope { target: target_addr(0xAA), selectorRules: vec![] }];
+        let result = match_allowed_call(
+            &scopes,
+            target_addr(0xAA),
+            ITIP20::transferCall::SELECTOR,
+            None,
+        );
+        assert!(matches!(result, AllowedCallMatch::Allowed(_)));
+    }
+
+    #[test]
+    fn test_match_allowed_call_empty_recipients_any_recipient() {
+        let scopes = vec![CallScope {
+            target: target_addr(0xAA),
+            selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, vec![])],
+        }];
+        let result = match_allowed_call(
+            &scopes,
+            target_addr(0xAA),
+            ITIP20::transferCall::SELECTOR,
+            Some(target_addr(0xBB)),
+        );
+        assert!(matches!(result, AllowedCallMatch::Allowed(_)));
+    }
+
+    #[test]
+    fn test_match_allowed_call_missing_target_denied() {
+        let scopes = vec![CallScope { target: target_addr(0xAA), selectorRules: vec![] }];
+        let result = match_allowed_call(
+            &scopes,
+            target_addr(0xCC),
+            ITIP20::transferCall::SELECTOR,
+            None,
+        );
+        assert!(matches!(result, AllowedCallMatch::Denied(_)));
+    }
+
+    #[test]
+    fn test_match_allowed_call_recipient_restricted_no_recipient_arg() {
+        let recipients = vec![target_addr(0xBB)];
+        let scopes = vec![CallScope {
+            target: target_addr(0xAA),
+            selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, recipients.clone())],
+        }];
+        let result = match_allowed_call(
+            &scopes,
+            target_addr(0xAA),
+            ITIP20::transferCall::SELECTOR,
+            None,
+        );
+        match result {
+            AllowedCallMatch::RecipientRestricted(rs) => assert_eq!(rs, recipients.as_slice()),
+            other => panic!("expected RecipientRestricted, got {:?}", match other {
+                AllowedCallMatch::Allowed(s) => format!("Allowed({s})"),
+                AllowedCallMatch::Denied(s) => format!("Denied({s})"),
+                AllowedCallMatch::RecipientRestricted(_) => unreachable!(),
+            }),
+        }
+    }
+
+    #[test]
+    fn test_match_allowed_call_recipient_match_allowed() {
+        let recipients = vec![target_addr(0xBB), target_addr(0xCC)];
+        let scopes = vec![CallScope {
+            target: target_addr(0xAA),
+            selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, recipients)],
+        }];
+        let result = match_allowed_call(
+            &scopes,
+            target_addr(0xAA),
+            ITIP20::transferCall::SELECTOR,
+            Some(target_addr(0xCC)),
+        );
+        assert!(matches!(result, AllowedCallMatch::Allowed(_)));
+    }
+
+    #[test]
+    fn test_match_allowed_call_recipient_not_in_list_denied() {
+        let recipients = vec![target_addr(0xBB)];
+        let scopes = vec![CallScope {
+            target: target_addr(0xAA),
+            selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, recipients)],
+        }];
+        let result = match_allowed_call(
+            &scopes,
+            target_addr(0xAA),
+            ITIP20::transferCall::SELECTOR,
+            Some(target_addr(0xDD)),
+        );
+        assert!(matches!(result, AllowedCallMatch::Denied(_)));
+    }
+
+    #[test]
+    fn test_match_allowed_call_selector_not_in_list_denied() {
+        let scopes = vec![CallScope {
+            target: target_addr(0xAA),
+            selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, vec![])],
+        }];
+        let result = match_allowed_call(
+            &scopes,
+            target_addr(0xAA),
+            ITIP20::approveCall::SELECTOR,
+            None,
+        );
+        assert!(matches!(result, AllowedCallMatch::Denied(_)));
+    }
+
+    #[test]
+    fn test_doctor_command_parses_with_only_root_account() {
+        let cmd = KeychainSubcommand::try_parse_from([
+            "keychain",
+            "doctor",
+            "--root-account",
+            "0x1111111111111111111111111111111111111111",
+        ])
+        .unwrap();
+        match cmd {
+            KeychainSubcommand::Doctor { key_address, root_account, .. } => {
+                assert!(key_address.is_none());
+                assert!(root_account.is_some());
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_doctor_selector_requires_to() {
+        let res = KeychainSubcommand::try_parse_from([
+            "keychain",
+            "doctor",
+            "0x1111111111111111111111111111111111111111",
+            "--selector",
+            "transfer",
+        ]);
+        assert!(res.is_err(), "--selector without --to should error");
     }
 
     #[test]
