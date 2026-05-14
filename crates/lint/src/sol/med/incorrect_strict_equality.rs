@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::BinOpKind,
+    ast::{BinOpKind, ContractKind},
     interface::sym,
     sema::{
         Hir,
@@ -44,6 +44,10 @@ fn contains_externally_influenced<'hir>(hir: &'hir Hir<'hir>, expr: &Expr<'hir>)
         ExprKind::Binary(lhs, _, rhs) => {
             contains_externally_influenced(hir, lhs) || contains_externally_influenced(hir, rhs)
         }
+        ExprKind::Ternary(_, then, else_) => {
+            contains_externally_influenced(hir, then) || contains_externally_influenced(hir, else_)
+        }
+        ExprKind::Call(_, args, _) => args.exprs().any(|a| contains_externally_influenced(hir, a)),
         _ => false,
     }
 }
@@ -59,11 +63,19 @@ fn is_externally_influenced<'hir>(hir: &'hir Hir<'hir>, expr: &Expr<'hir>) -> bo
 
         // `<expr>.balanceOf(...)`, ERC-20 style external call. We match by name, since
         // `balanceOf` is overwhelmingly an ERC-20 / token method.
+        // Skip calls where the receiver resolves to a library to avoid false positives
+        // on internal library helpers named `balanceOf`.
         ExprKind::Call(callee, _, _) => {
-            matches!(
-                &callee.peel_parens().kind,
-                ExprKind::Member(_, m) if m.as_str() == "balanceOf"
-            )
+            if let ExprKind::Member(base, m) = &callee.peel_parens().kind
+                && m.as_str() == "balanceOf"
+            {
+                // Skip if the receiver resolves to a library contract.
+                !matches!(&base.peel_parens().kind, ExprKind::Ident(reses) if reses.iter().any(|r| {
+                    matches!(r, Res::Item(ItemId::Contract(cid)) if hir.contract(*cid).kind == ContractKind::Library)
+                }))
+            } else {
+                false
+            }
         }
 
         _ => false,

@@ -15,6 +15,12 @@ struct Holder {
     address operator;
 }
 
+library TokenUtils {
+    function balanceOf(IERC20 token, address account) internal view returns (uint256) {
+        return token.balanceOf(account);
+    }
+}
+
 contract IncorrectStrictEquality {
     IERC20 public token;
     uint256 public threshold;
@@ -30,6 +36,10 @@ contract IncorrectStrictEquality {
 
     function getRecipient() internal view returns (address) {
         return recipient;
+    }
+
+    function consume(uint256 x) internal pure returns (uint256) {
+        return x;
     }
 
     // SHOULD FAIL:
@@ -125,6 +135,14 @@ contract IncorrectStrictEquality {
         return getRecipient().balance == 0; //~WARN: dangerous strict equality check on an externally-influenced value
     }
 
+    function ternaryBalance(bool flag) public view returns (bool) {
+        return (flag ? address(this).balance : 0) == 0; //~WARN: dangerous strict equality check on an externally-influenced value
+    }
+
+    function callArgBalance() public view returns (bool) {
+        return consume(address(this).balance) == 0; //~WARN: dangerous strict equality check on an externally-influenced value
+    }
+
     // SHOULD PASS:
 
     function ethBalanceGe() public view returns (bool) {
@@ -165,5 +183,10 @@ contract IncorrectStrictEquality {
     function localStructBalanceEq() public view returns (bool) {
         Account memory a;
         return a.balance == 100;
+    }
+
+    // Static library call named `balanceOf` must NOT trigger the lint.
+    function libraryBalanceOf() public view returns (bool) {
+        return TokenUtils.balanceOf(token, address(this)) == 0;
     }
 }

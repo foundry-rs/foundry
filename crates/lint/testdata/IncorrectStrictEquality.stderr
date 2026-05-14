@@ -174,3 +174,19 @@ LL │         return getRecipient().balance == 0;
    │
    ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
 
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return (flag ? address(this).balance : 0) == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
+warning[incorrect-strict-equality]: dangerous strict equality check on an externally-influenced value
+   ╭▸ ROOT/testdata/IncorrectStrictEquality.sol:LL:CC
+   │
+LL │         return consume(address(this).balance) == 0;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-strict-equality
+
