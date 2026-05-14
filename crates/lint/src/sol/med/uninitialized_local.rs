@@ -8,8 +8,8 @@ use solar::{
     sema::{
         Hir,
         hir::{
-            Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind, TypeKind, VarKind, VariableId,
-            Visit,
+            Expr, ExprKind, Function, ItemId, LoopSource, Res, Stmt, StmtKind, TypeKind, VarKind,
+            VariableId, Visit,
         },
     },
 };
@@ -94,18 +94,46 @@ impl<'hir> Visit<'hir> for Checker<'hir> {
                 }
                 let after_else = self.uninitialized.clone();
 
-                self.uninitialized = after_then.union(&after_else).copied().collect();
+                let then_exits = branch_always_exits(then);
+                let else_exits = else_.is_some_and(branch_always_exits);
+                self.uninitialized = match (then_exits, else_exits) {
+                    (true, _) => after_else,
+                    (_, true) => after_then,
+                    _ => after_then.union(&after_else).copied().collect(),
+                };
                 return ControlFlow::Continue(());
             }
 
-            // Loops may execute zero times, so writes inside cannot be treated as guaranteed.
-            // Visit the body to catch reads inside, but restore the uninitialized set afterwards.
-            StmtKind::Loop(block, _) => {
+            // do-while always executes the body once, so writes are guaranteed.
+            // for/while may execute zero times, so writes must be discarded.
+            StmtKind::Loop(block, source) => {
                 let before = self.uninitialized.clone();
                 for s in block.stmts {
                     let _ = self.visit_stmt(s);
                 }
-                self.uninitialized = before;
+                if !matches!(source, LoopSource::DoWhile) {
+                    self.uninitialized = before;
+                }
+                return ControlFlow::Continue(());
+            }
+
+            // Each try/catch clause is an independent execution path; treat like if/else branches.
+            StmtKind::Try(t) => {
+                let _ = self.visit_expr(&t.expr);
+                let mut clause_states: Vec<HashSet<VariableId>> = Vec::new();
+                for clause in t.clauses {
+                    let before = self.uninitialized.clone();
+                    for s in clause.block.stmts {
+                        let _ = self.visit_stmt(s);
+                    }
+                    clause_states.push(self.uninitialized.clone());
+                    self.uninitialized = before;
+                }
+                // Union across all clause post-states: variable stays uninitialized if any clause
+                // fails to write it.
+                self.uninitialized = clause_states
+                    .iter()
+                    .fold(HashSet::new(), |acc, s| acc.union(s).copied().collect());
                 return ControlFlow::Continue(());
             }
 
@@ -154,6 +182,17 @@ impl<'hir> Visit<'hir> for Checker<'hir> {
             _ => {}
         }
         self.walk_expr(expr)
+    }
+}
+
+fn branch_always_exits(stmt: &Stmt<'_>) -> bool {
+    match &stmt.kind {
+        StmtKind::Return(_) | StmtKind::Revert(_) => true,
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            block.stmts.last().is_some_and(branch_always_exits)
+        }
+        StmtKind::If(_, t, Some(e)) => branch_always_exits(t) && branch_always_exits(e),
+        _ => false,
     }
 }
 

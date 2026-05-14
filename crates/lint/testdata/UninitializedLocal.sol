@@ -133,7 +133,53 @@ contract UninitializedLocal {
         return p.x;
     }
 
+    // do-while body always executes once: write is guaranteed.
+    function doWhileWrite(bool cond) public pure returns (uint256) {
+        uint256 x;
+        do {
+            x = 5;
+        } while (cond);
+        return x;
+    }
+
+    // Only then-branch writes but it always returns: x is initialized on the fall-through path.
+    function thenAlwaysReturns(bool flag) public pure returns (uint256) {
+        uint256 x;
+        if (flag) {
+            return 0;
+        } else {
+            x = 5;
+        }
+        return x;
+    }
+
+    // Only else-branch writes but it always returns: x is initialized on the fall-through path.
+    function elseAlwaysReturns(bool flag) public pure returns (uint256) {
+        uint256 x;
+        if (flag) {
+            x = 5;
+        } else {
+            return 0;
+        }
+        return x;
+    }
+
+    // SHOULD WARN: try/catch — write only in success clause, uninitialized on revert path.
+    function tryWrite(address target) public returns (uint256) {
+        uint256 x;
+        try IFoo(target).getValue() returns (uint256 v) {
+            x = v;
+        } catch {
+            // x not written
+        }
+        return x; //~WARN: local variable is read before being initialized
+    }
+
     function foo() internal pure returns (uint256, uint256) {
         return (1, 2);
     }
+}
+
+interface IFoo {
+    function getValue() external returns (uint256);
 }
