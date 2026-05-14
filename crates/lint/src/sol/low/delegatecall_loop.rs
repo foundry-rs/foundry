@@ -30,6 +30,8 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
 
         let Some(body) = func.body else { return };
 
+        // Start from payable entry points so helper functions are only linted when reachable
+        // through a call path that can preserve a non-zero `msg.value`.
         let mut checker = DelegatecallLoopChecker {
             ctx,
             hir,
@@ -64,6 +66,8 @@ impl<'a, 's, 'hir> DelegatecallLoopChecker<'a, 's, 'hir> {
         index: usize,
         body: hir::Block<'hir>,
     ) {
+        // Solidity modifiers wrap the function body. Walk each modifier in order and replace
+        // the `_` placeholder with the remaining modifier chain and final function body.
         let Some(modifier) = modifiers.get(index) else {
             self.visit_block_stmts(body);
             return;
@@ -149,6 +153,8 @@ impl<'hir> Visit<'hir> for DelegatecallLoopChecker<'_, '_, 'hir> {
             return result;
         }
 
+        // Internal helper calls inherit the current loop context. This catches cases where the
+        // loop body calls a helper that performs the delegatecall.
         if let ExprKind::Call(callee, _, _) = &expr.kind {
             for func_id in resolved_function_ids(callee) {
                 self.visit_internal_call(func_id);
@@ -161,6 +167,8 @@ impl<'hir> Visit<'hir> for DelegatecallLoopChecker<'_, '_, 'hir> {
 
 impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
     fn visit_loop_block(&mut self, block: hir::Block<'hir>) -> ControlFlow<()> {
+        // Keep loop state as traversal context rather than as a property of a single function,
+        // so delegatecalls inside internal helpers reached from a loop are also reported.
         self.loop_depth += 1;
         self.visit_block_stmts(block);
         self.loop_depth -= 1;
@@ -168,6 +176,8 @@ impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
     }
 
     fn visit_internal_call(&mut self, func_id: FunctionId) {
+        // Avoid infinite recursion on cyclic internal call graphs while still following each
+        // acyclic helper path from the payable entry point.
         if self.call_stack.contains(&func_id) {
             return;
         }
@@ -192,6 +202,8 @@ fn is_delegatecall(expr: &Expr<'_>) -> bool {
 fn resolved_function_ids<'hir>(
     callee: &'hir hir::Expr<'hir>,
 ) -> impl Iterator<Item = FunctionId> + 'hir {
+    // Only direct internal calls resolve to function IDs here. Member calls and external calls
+    // are intentionally ignored because they do not execute in the current function's HIR body.
     let reses = match &callee.peel_parens().kind {
         ExprKind::Ident(reses) => *reses,
         _ => &[],
