@@ -258,7 +258,7 @@ impl EtherscanVerificationProvider {
     ) -> Result<Client> {
         let chain = etherscan_opts.chain.unwrap_or_default();
         let etherscan_key = etherscan_opts.key();
-        let verifier_type = &verifier_args.verifier;
+        let verifier_type = verifier_args.effective_type();
         let verifier_url = verifier_args.verifier_url.as_deref();
 
         // Verifier is etherscan if explicitly set or if no verifier set (default sourcify) but
@@ -569,7 +569,7 @@ mod tests {
 
         let config = args.load_config().unwrap();
 
-        assert_eq!(args.verifier.verifier, VerificationProviderType::Etherscan);
+        assert_eq!(args.verifier.effective_type(), VerificationProviderType::Etherscan);
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();

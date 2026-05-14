@@ -650,7 +650,9 @@ impl CreateArgs {
             language: None,
             creation_transaction_hash: Some(tx_hash),
         };
-        sh_println!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
+        let resolved_verifier =
+            verify.verifier.resolve(verify.etherscan.key.as_deref(), Some(chain));
+        sh_println!("Waiting for {resolved_verifier} to detect contract deployment...")?;
         verify.run().await
     }
 

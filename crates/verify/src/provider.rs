@@ -165,7 +165,7 @@ impl fmt::Display for VerificationProviderType {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum VerificationProviderType {
     Etherscan,
     #[default]
@@ -177,16 +177,22 @@ pub enum VerificationProviderType {
 }
 
 impl VerificationProviderType {
-    /// Returns the corresponding `VerificationProvider` for the key
+    /// Returns the corresponding `VerificationProvider` for the key.
+    ///
+    /// `is_explicit` should be `true` when the user explicitly passed `--verifier`; `false` when
+    /// the value is the default (Sourcify). An explicit flag always takes precedence over the
+    /// `ETHERSCAN_API_KEY` environment variable.
     pub fn client(
         &self,
         key: Option<&str>,
         chain: Option<Chain>,
         has_url: bool,
+        is_explicit: bool,
     ) -> Result<Box<dyn VerificationProvider>> {
-        let has_key = key.as_ref().is_some_and(|k| !k.is_empty());
-        // 1. If no verifier or `--verifier sourcify` is set and no API key provided, use Sourcify.
-        if !has_key && self.is_sourcify() {
+        let has_key = key.is_some_and(|k| !k.is_empty());
+
+        // 1. Explicit `--verifier sourcify` always wins over ETHERSCAN_API_KEY.
+        if is_explicit && self.is_sourcify() {
             sh_println!(
                 "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
             or use the --verifier flag to verify on another provider."
@@ -194,8 +200,7 @@ impl VerificationProviderType {
             return Ok(Box::<SourcifyVerificationProvider>::default());
         }
 
-        // 2. If `--verifier etherscan` is explicitly set, check if chain is supported and
-        // enforce the API key requirement.
+        // 2. `--verifier etherscan` (explicit): check chain support and require key.
         if self.is_etherscan() {
             if let Some(chain) = chain
                 && chain.etherscan_urls().is_none()
@@ -212,25 +217,46 @@ impl VerificationProviderType {
             return Ok(Box::<EtherscanVerificationProvider>::default());
         }
 
-        // 3. If `--verifier blockscout | oklink | custom` is explicitly set, use the chosen
-        //    verifier and make sure an URL was specified.
-        if matches!(self, Self::Blockscout | Self::Oklink | Self::Custom) {
+        // 3. Explicit `--verifier blockscout | oklink | custom`: require a URL.
+        if is_explicit && matches!(self, Self::Blockscout | Self::Oklink | Self::Custom) {
             if !has_url {
                 eyre::bail!("No verifier URL specified for verifier {}", self);
             }
             return Ok(Box::<EtherscanVerificationProvider>::default());
         }
 
-        // 4. If no `--verifier` is specified but `ETHERSCAN_API_KEY` is set, default to Etherscan.
+        // 4. No explicit `--verifier` but ETHERSCAN_API_KEY is set: prefer Etherscan when the chain
+        //    is supported; otherwise warn and fall through to the Sourcify default. See <https://github.com/foundry-rs/foundry/issues/10774>.
         if has_key {
-            sh_eprintln!(
-                "ETHERSCAN_API_KEY is set, defaulting to Etherscan verifier. \
-                 Unset it or pass `--verifier sourcify` (or another provider) to override."
-            )?;
-            return Ok(Box::<EtherscanVerificationProvider>::default());
+            if let Some(chain) = chain
+                && chain.etherscan_urls().is_none()
+                && !has_url
+            {
+                sh_warn!(
+                    "ETHERSCAN_API_KEY is set but chain {chain} has no known Etherscan API URL. \
+                     Falling back to Sourcify. Pass --verifier-url <URL> or \
+                     `--verifier <provider>` to override."
+                )?;
+                // Fall through to branch 5 (Sourcify default) below.
+            } else {
+                sh_eprintln!(
+                    "ETHERSCAN_API_KEY is set, defaulting to Etherscan verifier. \
+                     Unset it or pass `--verifier sourcify` (or another provider) to override."
+                )?;
+                return Ok(Box::<EtherscanVerificationProvider>::default());
+            }
         }
 
-        // 5. If no valid provider is specified, bail.
+        // 5. No key, no explicit verifier: default to Sourcify.
+        if self.is_sourcify() {
+            sh_println!(
+                "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
+            or use the --verifier flag to verify on another provider."
+            )?;
+            return Ok(Box::<SourcifyVerificationProvider>::default());
+        }
+
+        // 6. No valid provider.
         eyre::bail!(
             "No valid verification provider specified. Pass the --verifier flag to specify a provider or set the ETHERSCAN_API_KEY environment variable to use Etherscan as a verifier."
         )
@@ -252,19 +278,33 @@ mod tests {
     #[test]
     fn etherscan_allows_unknown_chain_with_verifier_url() {
         let chain = Chain::from(3658348u64);
-        let res = VerificationProviderType::Etherscan.client(Some("key"), Some(chain), true);
+        let res = VerificationProviderType::Etherscan.client(Some("key"), Some(chain), true, true);
         assert!(res.is_ok());
     }
 
     #[test]
     fn etherscan_rejects_unknown_chain_without_verifier_url() {
         let chain = Chain::from(3658348u64);
-        let res = VerificationProviderType::Etherscan.client(Some("key"), Some(chain), false);
+        let res = VerificationProviderType::Etherscan.client(Some("key"), Some(chain), false, true);
         match res {
             Ok(_) => panic!("expected unknown-chain error"),
             Err(err) => {
                 assert!(err.to_string().contains("No known Etherscan API URL"));
             }
+        }
+    }
+
+    // Regression test for <https://github.com/foundry-rs/foundry/issues/10774>:
+    // when --verifier is not set, ETHERSCAN_API_KEY is set, but the chain has no known
+    // Etherscan API URL, `client()` must NOT bail; it should warn and fall back to Sourcify.
+    // (Behavior is verified more strictly via `VerifierArgs::resolve` tests in `verify.rs`.)
+    #[test]
+    fn implicit_etherscan_unknown_chain_falls_back_to_sourcify() {
+        let chain = Chain::from(3658348u64);
+        let res =
+            VerificationProviderType::Sourcify.client(Some("mykey"), Some(chain), false, false);
+        if let Err(err) = res {
+            panic!("expected fallback to Sourcify, got error: {err}");
         }
     }
 }

@@ -30,16 +30,16 @@ use std::path::PathBuf;
 pub enum ContractLanguage {
     /// Solidity programming language
     Solidity,
-    /// Vyper programming language  
+    /// Vyper programming language
     Vyper,
 }
 
 /// Verification provider arguments
-#[derive(Clone, Debug, Parser)]
+#[derive(Clone, Debug, Default, Parser)]
 pub struct VerifierArgs {
     /// The contract verification provider to use.
-    #[arg(long, help_heading = "Verifier options", default_value = "sourcify", value_enum)]
-    pub verifier: VerificationProviderType,
+    #[arg(long, help_heading = "Verifier options", value_enum)]
+    pub verifier: Option<VerificationProviderType>,
 
     /// The verifier API KEY, if using a custom provider.
     #[arg(long, help_heading = "Verifier options", env = "VERIFIER_API_KEY")]
@@ -50,13 +50,45 @@ pub struct VerifierArgs {
     pub verifier_url: Option<String>,
 }
 
-impl Default for VerifierArgs {
-    fn default() -> Self {
-        Self {
-            verifier: VerificationProviderType::Sourcify,
-            verifier_api_key: None,
-            verifier_url: None,
+impl VerifierArgs {
+    /// Returns the effective verifier type, defaulting to Sourcify if not explicitly set.
+    ///
+    /// Note: this is the *defaulted CLI value*, not the actually-selected provider after
+    /// considering `ETHERSCAN_API_KEY` / chain support. Use [`Self::resolve`] for that.
+    pub fn effective_type(&self) -> VerificationProviderType {
+        self.verifier.unwrap_or_default()
+    }
+
+    /// Returns true if `--verifier` was explicitly provided by the user.
+    pub const fn is_explicitly_set(&self) -> bool {
+        self.verifier.is_some()
+    }
+
+    /// Resolves the actual verification provider that will be used at runtime, taking into
+    /// account the explicit `--verifier`, the presence of `ETHERSCAN_API_KEY`, and whether the
+    /// target chain has a known Etherscan API URL.
+    ///
+    /// Resolution rules (mirrors [`VerificationProviderType::client`]):
+    /// 1. If `--verifier` was explicitly set, that wins.
+    /// 2. Otherwise, if an Etherscan API key is set AND the chain is supported (or a custom
+    ///    `--verifier-url` is provided), use Etherscan.
+    /// 3. Otherwise, fall back to Sourcify.
+    pub fn resolve(
+        &self,
+        etherscan_key: Option<&str>,
+        chain: Option<Chain>,
+    ) -> VerificationProviderType {
+        if let Some(v) = self.verifier {
+            return v;
         }
+        let has_key = etherscan_key.is_some_and(|k| !k.is_empty());
+        if has_key {
+            let chain_supports_etherscan = chain.is_none_or(|c| c.etherscan_urls().is_some());
+            if chain_supports_etherscan || self.verifier_url.is_some() {
+                return VerificationProviderType::Etherscan;
+            }
+        }
+        VerificationProviderType::Sourcify
     }
 }
 
@@ -250,7 +282,7 @@ impl VerifyArgs {
         self.etherscan.key = config.get_etherscan_config_with_chain(Some(chain))?.map(|c| c.key);
 
         // For chains with Sourcify-compatible APIs, use the chain's URL from etherscan_urls
-        if self.verifier.verifier.is_sourcify()
+        if self.verifier.effective_type().is_sourcify()
             && self.verifier.verifier_url.is_none()
             && let Some(url) = sourcify_api_url(chain)
         {
@@ -281,24 +313,17 @@ impl VerifyArgs {
         {
             sh_println!("Constructor args: {args}")?
         }
-        // `client()` picks Etherscan when `--verifier etherscan` is passed, or when
-        // `ETHERSCAN_API_KEY` is set and no other provider was explicitly chosen. This mirrors
-        // that selection closely enough to decide whether the host-only URL hint applies.
+        // Use the centralized resolver so the URL hint reflects the provider that will actually
+        // be used (rather than re-encoding the routing rules here).
         let etherscan_key = self.etherscan.key();
-        let using_etherscan = self.verifier.verifier.is_etherscan()
-            || (etherscan_key.as_deref().is_some_and(|k| !k.is_empty())
-                && !matches!(
-                    self.verifier.verifier,
-                    VerificationProviderType::Blockscout
-                        | VerificationProviderType::Oklink
-                        | VerificationProviderType::Custom
-                ));
-        self.verifier
-            .verifier
+        let resolved = self.verifier.resolve(etherscan_key.as_deref(), self.etherscan.chain);
+        let using_etherscan = resolved.is_etherscan();
+        resolved
             .client(
                 etherscan_key.as_deref(),
                 self.etherscan.chain,
                 self.verifier.verifier_url.is_some(),
+                self.verifier.is_explicitly_set(),
             )?
             .verify(self, context)
             .await
@@ -307,10 +332,11 @@ impl VerifyArgs {
 
     /// Returns the configured verification provider
     pub fn verification_provider(&self) -> Result<Box<dyn VerificationProvider>> {
-        self.verifier.verifier.client(
+        self.verifier.effective_type().client(
             self.etherscan.key().as_deref(),
             self.etherscan.chain,
             self.verifier.verifier_url.is_some(),
+            self.verifier.is_explicitly_set(),
         )
     }
 
@@ -511,11 +537,12 @@ impl VerifyCheckArgs {
             self.etherscan.chain.unwrap_or_default()
         )?;
         self.verifier
-            .verifier
+            .effective_type()
             .client(
                 self.etherscan.key().as_deref(),
                 self.etherscan.chain,
                 self.verifier.verifier_url.is_some(),
+                self.verifier.is_explicitly_set(),
             )?
             .check(self)
             .await
@@ -581,5 +608,68 @@ mod tests {
         ]);
         assert!(args.no_auto_detect);
         assert_eq!(args.use_solc.as_deref(), Some("0.8.23"));
+    }
+
+    #[test]
+    fn resolve_explicit_sourcify_overrides_api_key() {
+        let args = VerifierArgs {
+            verifier: Some(VerificationProviderType::Sourcify),
+            verifier_api_key: None,
+            verifier_url: None,
+        };
+        assert_eq!(
+            args.resolve(Some("mykey"), Some(Chain::mainnet())),
+            VerificationProviderType::Sourcify,
+        );
+    }
+
+    #[test]
+    fn resolve_explicit_etherscan_is_etherscan() {
+        let args = VerifierArgs {
+            verifier: Some(VerificationProviderType::Etherscan),
+            verifier_api_key: None,
+            verifier_url: None,
+        };
+        assert_eq!(
+            args.resolve(Some("mykey"), Some(Chain::mainnet())),
+            VerificationProviderType::Etherscan,
+        );
+    }
+
+    #[test]
+    fn resolve_implicit_with_key_and_known_chain_uses_etherscan() {
+        let args = VerifierArgs { verifier: None, verifier_api_key: None, verifier_url: None };
+        assert_eq!(
+            args.resolve(Some("mykey"), Some(Chain::mainnet())),
+            VerificationProviderType::Etherscan,
+        );
+    }
+
+    #[test]
+    fn resolve_implicit_with_key_and_unknown_chain_falls_back_to_sourcify() {
+        let args = VerifierArgs { verifier: None, verifier_api_key: None, verifier_url: None };
+        assert_eq!(
+            args.resolve(Some("mykey"), Some(Chain::from(3658348u64))),
+            VerificationProviderType::Sourcify,
+        );
+    }
+
+    #[test]
+    fn resolve_implicit_with_key_and_unknown_chain_but_url_uses_etherscan() {
+        let args = VerifierArgs {
+            verifier: None,
+            verifier_api_key: None,
+            verifier_url: Some("https://example.com/api".to_string()),
+        };
+        assert_eq!(
+            args.resolve(Some("mykey"), Some(Chain::from(3658348u64))),
+            VerificationProviderType::Etherscan,
+        );
+    }
+
+    #[test]
+    fn resolve_implicit_no_key_falls_back_to_sourcify() {
+        let args = VerifierArgs { verifier: None, verifier_api_key: None, verifier_url: None };
+        assert_eq!(args.resolve(None, Some(Chain::mainnet())), VerificationProviderType::Sourcify,);
     }
 }

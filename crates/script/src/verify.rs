@@ -189,7 +189,8 @@ async fn verify_contracts<FEN: FoundryEvmNetwork>(
 
     verify.set_chain(config, sequence.chain.into());
 
-    if verify.etherscan.has_key() || verify.verifier.verifier != VerificationProviderType::Etherscan
+    if verify.etherscan.has_key()
+        || verify.verifier.effective_type() != VerificationProviderType::Etherscan
     {
         trace!(target: "script", "prepare future verifications");
 
