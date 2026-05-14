@@ -51,6 +51,10 @@ contract CouldBeConstant {
     uint256[] internal arr = [uint256(1), 2, 3];
     mapping(address => uint256) internal balances;
 
+    // Written by a sibling state variable's initializer: not flagged.
+    uint256 internal writtenByInitializer = 0;
+    uint256 internal writerInitializer = (writtenByInitializer = 1);
+
     constructor(uint256 immutableValue) {
         ALREADY_IMMUTABLE = immutableValue;
         configured = immutableValue;

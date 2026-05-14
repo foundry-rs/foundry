@@ -62,8 +62,13 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
 
         for &var_id in &candidates {
             let var = hir.variable(var_id);
-            if var.initializer.is_some_and(|expr| !is_compile_time_constant(hir, expr)) {
-                non_constant_initializer.insert(var_id);
+            if let Some(expr) = var.initializer {
+                if !is_compile_time_constant(hir, expr) {
+                    non_constant_initializer.insert(var_id);
+                }
+                // State-variable initializers run at construction time, so any side-effecting
+                // writes they perform on other candidates count as constructor writes.
+                collect_expr_writes(expr, &candidate_set, &mut constructor_body_writes);
             }
         }
 
