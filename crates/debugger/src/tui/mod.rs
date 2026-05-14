@@ -1,17 +1,13 @@
 //! The debugger TUI.
 
-use crossterm::event;
 use eyre::Result;
-use foundry_tui::{CrosstermTerminal, with_terminal};
-use std::ops::ControlFlow;
+use foundry_tui::run_app;
 
 mod context;
 use crate::debugger::DebuggerContext;
 use context::TUIContext;
 
 mod draw;
-
-type DebuggerTerminal = CrosstermTerminal;
 
 /// Debugger exit reason.
 #[derive(Debug)]
@@ -33,19 +29,13 @@ impl<'a> TUI<'a> {
 
     /// Starts the debugger TUI.
     pub fn try_run(&mut self) -> Result<ExitReason> {
-        with_terminal(|terminal| self.run_inner(terminal))?
+        self.run_inner()
     }
 
     #[instrument(target = "debugger", name = "run", skip_all, ret)]
-    fn run_inner(&mut self, terminal: &mut DebuggerTerminal) -> Result<ExitReason> {
+    fn run_inner(&mut self) -> Result<ExitReason> {
         let mut cx = TUIContext::new(self.debugger_context);
         cx.init();
-        loop {
-            cx.draw(terminal)?;
-            match cx.handle_event(event::read()?) {
-                ControlFlow::Continue(()) => {}
-                ControlFlow::Break(reason) => return Ok(reason),
-            }
-        }
+        Ok(run_app(&mut cx)?)
     }
 }
