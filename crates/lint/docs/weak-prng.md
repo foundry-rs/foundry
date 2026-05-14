@@ -7,9 +7,12 @@ Flags randomness-like expressions that directly derive entropy from predictable 
 
 ## What it does
 
-Reports direct use of `block.timestamp`, `block.number`, `blockhash(...)`,
+Reports direct use of `block.timestamp`, `block.number`, `block.coinbase`, `blockhash(...)`,
 `block.prevrandao`, or `block.difficulty` in modulo expressions, `keccak256(...)`, or
-`abi.encodePacked(...)`.
+`abi.encode*` calls.
+
+`block.difficulty` is included for legacy code. On proof-of-stake chains it is equivalent to
+`block.prevrandao` and has been deprecated since Solidity 0.8.18.
 
 ## Why is this bad?
 

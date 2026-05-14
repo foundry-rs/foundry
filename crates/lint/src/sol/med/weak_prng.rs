@@ -4,7 +4,9 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{BinOp, BinOpKind, Expr, ExprKind, IndexKind, ItemFunction, visit::Visit},
+    ast::{
+        BinOp, BinOpKind, Expr, ExprKind, IndexKind, ItemFunction, SubDenomination, visit::Visit,
+    },
     interface::SpannedOption,
 };
 use std::ops::ControlFlow;
@@ -45,15 +47,31 @@ impl<'ast> Visit<'ast> for WeakPrngChecker<'_, '_> {
 fn is_randomness_expr(expr: &Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Binary(lhs, BinOp { kind: BinOpKind::Rem, .. }, rhs) => {
-            contains_predictable_source(lhs) || contains_predictable_source(rhs)
+            is_randomness_modulo(lhs, rhs)
         }
         ExprKind::Call(callee, args) => {
             let callee = callee.peel_parens();
-            (is_keccak256(callee) || is_abi_encode_packed(callee))
+            (is_keccak256(callee) || is_abi_encode(callee))
                 && args.exprs().any(contains_predictable_source)
         }
         _ => false,
     }
+}
+
+fn is_randomness_modulo(lhs: &Expr<'_>, rhs: &Expr<'_>) -> bool {
+    if is_timestamp_time_bucket(lhs, rhs) {
+        return false;
+    }
+    contains_predictable_source(lhs) || contains_predictable_source(rhs)
+}
+
+fn is_timestamp_time_bucket(lhs: &Expr<'_>, rhs: &Expr<'_>) -> bool {
+    (is_block_timestamp(lhs.peel_parens()) && is_time_subdenomination(rhs))
+        || (is_time_subdenomination(lhs) && is_block_timestamp(rhs.peel_parens()))
+}
+
+fn is_time_subdenomination(expr: &Expr<'_>) -> bool {
+    matches!(&expr.peel_parens().kind, ExprKind::Lit(_, Some(SubDenomination::Time(_))))
 }
 
 fn contains_predictable_source(expr: &Expr<'_>) -> bool {
@@ -110,10 +128,20 @@ fn is_predictable_source(expr: &Expr<'_>) -> bool {
 }
 
 fn is_block_member(expr: &Expr<'_>) -> bool {
+    is_block_member_with(expr, |member| {
+        matches!(member, "timestamp" | "number" | "coinbase" | "prevrandao" | "difficulty")
+    })
+}
+
+fn is_block_timestamp(expr: &Expr<'_>) -> bool {
+    is_block_member_with(expr, |member| member == "timestamp")
+}
+
+fn is_block_member_with(expr: &Expr<'_>, predicate: impl FnOnce(&str) -> bool) -> bool {
     matches!(
         &expr.kind,
         ExprKind::Member(base, member)
-            if matches!(member.as_str(), "timestamp" | "number" | "prevrandao" | "difficulty")
+            if predicate(member.as_str())
             && is_ident(base.peel_parens(), "block")
     )
 }
@@ -129,11 +157,18 @@ fn is_keccak256(expr: &Expr<'_>) -> bool {
     is_ident(expr, "keccak256")
 }
 
-fn is_abi_encode_packed(expr: &Expr<'_>) -> bool {
+fn is_abi_encode(expr: &Expr<'_>) -> bool {
     matches!(
         &expr.kind,
         ExprKind::Member(base, member)
-            if member.as_str() == "encodePacked" && is_ident(base.peel_parens(), "abi")
+            if matches!(
+                member.as_str(),
+                "encode"
+                    | "encodePacked"
+                    | "encodeWithSelector"
+                    | "encodeWithSignature"
+                    | "encodeCall"
+            ) && is_ident(base.peel_parens(), "abi")
     )
 }
 

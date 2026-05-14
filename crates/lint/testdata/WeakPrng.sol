@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
+interface Receiver {
+    function record(uint256 value) external;
+}
+
 contract WeakPrng {
     uint256 public deadline;
 
@@ -27,6 +31,22 @@ contract WeakPrng {
         return abi.encodePacked(block.prevrandao, msg.sender); //~WARN: weak randomness derived from a predictable on-chain value
     }
 
+    function encodeCoinbase() external view returns (bytes memory) {
+        return abi.encode(block.coinbase, msg.sender); //~WARN: weak randomness derived from a predictable on-chain value
+    }
+
+    function encodeWithSelectorTimestamp() external view returns (bytes memory) {
+        return abi.encodeWithSelector(Receiver.record.selector, block.timestamp); //~WARN: weak randomness derived from a predictable on-chain value
+    }
+
+    function encodeWithSignatureTimestamp() external view returns (bytes memory) {
+        return abi.encodeWithSignature("record(uint256)", block.timestamp); //~WARN: weak randomness derived from a predictable on-chain value
+    }
+
+    function encodeCallTimestamp() external view returns (bytes memory) {
+        return abi.encodeCall(Receiver.record, (block.timestamp)); //~WARN: weak randomness derived from a predictable on-chain value
+    }
+
     function hashDifficulty() external view returns (bytes32) {
         return keccak256(abi.encodePacked(block.difficulty)); //~WARN: weak randomness derived from a predictable on-chain value
     }
@@ -47,6 +67,10 @@ contract WeakPrng {
 
     function schedulingOnly() external view returns (bool) {
         return block.timestamp > deadline;
+    }
+
+    function timestampTimeBucket() external view returns (uint256) {
+        return block.timestamp % 1 days;
     }
 
     function hashInput(bytes memory data) external pure returns (bytes32) {
