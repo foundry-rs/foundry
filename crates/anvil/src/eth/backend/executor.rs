@@ -39,7 +39,7 @@ use revm::{
     primitives::hardfork::SpecId,
     state::AccountInfo,
 };
-use std::{fmt, fmt::Debug, mem::take, sync::Arc};
+use std::{cmp::min, fmt, fmt::Debug, mem::take, sync::Arc};
 
 /// Receipt builder for Foundry/Anvil that handles all transaction types
 #[derive(Debug, Default, Clone, Copy)]
@@ -115,8 +115,12 @@ pub struct AnvilBlockExecutor<E> {
     receipt_builder: FoundryReceiptBuilder,
     /// Receipts of executed transactions.
     receipts: Vec<FoundryReceiptEnvelope>,
-    /// Total gas used by transactions in this block.
+    /// Cumulative gas used by transactions in receipts.
     gas_used: u64,
+    /// Regular gas used by transactions in this block.
+    block_regular_gas_used: u64,
+    /// State gas used by transactions in this block.
+    block_state_gas_used: u64,
     /// Blob gas used by the block.
     blob_gas_used: u64,
     /// Optional state change hook.
@@ -146,8 +150,19 @@ impl<E> AnvilBlockExecutor<E> {
             receipt_builder: FoundryReceiptBuilder,
             receipts: Vec::new(),
             gas_used: 0,
+            block_regular_gas_used: 0,
+            block_state_gas_used: 0,
             blob_gas_used: 0,
             state_hook: None,
+        }
+    }
+
+    /// Returns the maximum of regular and state gas used by transactions in this block.
+    const fn max_block_gas_used(&self) -> u64 {
+        if self.block_regular_gas_used > self.block_state_gas_used {
+            self.block_regular_gas_used
+        } else {
+            self.block_state_gas_used
         }
     }
 }
@@ -193,8 +208,19 @@ where
     ) -> Result<Self::Result, BlockExecutionError> {
         let (tx_env, tx) = tx.into_parts();
 
-        let block_available_gas = self.evm.block().gas_limit() - self.gas_used;
-        if tx.tx().gas_limit() > block_available_gas {
+        let block_gas_used = if self.evm.cfg_env().enable_amsterdam_eip8037 {
+            self.block_regular_gas_used
+        } else {
+            self.gas_used
+        };
+        let block_available_gas = self.evm.block().gas_limit() - block_gas_used;
+
+        let mut max_tx_gas_usage = tx.tx().gas_limit();
+        if let Some(tx_gas_limit_cap) = self.evm.cfg_env().tx_gas_limit_cap {
+            max_tx_gas_usage = min(max_tx_gas_usage, tx_gas_limit_cap);
+        }
+
+        if max_tx_gas_usage > block_available_gas {
             return Err(BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
                 transaction_gas_limit: tx.tx().gas_limit(),
                 block_available_gas,
@@ -230,8 +256,12 @@ where
             hook.on_state(StateChangeSource::Transaction(self.receipts.len()), &state);
         }
 
-        let gas_used = result.tx_gas_used();
-        self.gas_used += gas_used;
+        let tx_gas_used = result.gas().tx_gas_used();
+        let regular_gas_used = result.gas().block_regular_gas_used();
+        let state_gas_used = result.gas().block_state_gas_used();
+        self.gas_used += tx_gas_used;
+        self.block_regular_gas_used += regular_gas_used;
+        self.block_state_gas_used += state_gas_used;
 
         if self.spec_id >= SpecId::CANCUN {
             self.blob_gas_used = self.blob_gas_used.saturating_add(blob_gas_used);
@@ -275,19 +305,25 @@ where
         self.receipts.push(receipt);
         self.evm.db_mut().commit(state);
 
-        GasOutput::new(gas_used)
+        GasOutput::with_state_gas(tx_gas_used, state_gas_used)
     }
 
     fn finish(
         self,
     ) -> Result<(Self::Evm, BlockExecutionResult<FoundryReceiptEnvelope>), BlockExecutionError>
     {
+        let gas_used = if self.evm.cfg_env().enable_amsterdam_eip8037 {
+            self.max_block_gas_used()
+        } else {
+            self.gas_used
+        };
+
         Ok((
             self.evm,
             BlockExecutionResult {
                 receipts: self.receipts,
                 requests: Default::default(),
-                gas_used: self.gas_used,
+                gas_used,
                 blob_gas_used: self.blob_gas_used,
             },
         ))

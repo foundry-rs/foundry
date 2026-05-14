@@ -1,12 +1,13 @@
 //! Gas related tests
 
 use crate::utils::http_provider_with_signer;
-use alloy_network::{EthereumWallet, TransactionBuilder};
-use alloy_primitives::{Address, U64, U256, uint};
+use alloy_network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
+use alloy_primitives::{Address, U64, U256, bytes, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
+use foundry_evm::hardfork::EthereumHardfork;
 
 const GAS_TRANSFER: u64 = 21_000;
 
@@ -23,6 +24,40 @@ async fn test_gas_limit_disabled_from_config() {
 
     // see https://github.com/foundry-rs/foundry/pull/8933
     assert_eq!(api.gas_limit(), U256::from(U64::MAX));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_amsterdam_block_gas_uses_state_gas_accounting() {
+    let node_config = NodeConfig::test().with_hardfork(Some(EthereumHardfork::Amsterdam.into()));
+    let (_api, handle) = spawn(node_config).await;
+    let provider = handle.http_provider();
+    let from = handle.dev_wallets().next().unwrap().address();
+
+    let eip1559_est = provider.estimate_eip1559_fees().await.unwrap();
+    let tx = TransactionRequest::default()
+        .with_from(from)
+        .into_create()
+        .with_max_fee_per_gas(eip1559_est.max_fee_per_gas)
+        .with_max_priority_fee_per_gas(eip1559_est.max_priority_fee_per_gas)
+        .with_input(bytes!("66365f5f37365fa05f5260076019f3"));
+
+    let receipt = provider
+        .send_transaction(WithOtherFields::new(tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    assert!(receipt.status());
+
+    let block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+
+    assert!(
+        block.header.gas_used < receipt.gas_used,
+        "Amsterdam block gas should use split block gas accounting instead of receipt gas: block={}, receipt={}",
+        block.header.gas_used,
+        receipt.gas_used,
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

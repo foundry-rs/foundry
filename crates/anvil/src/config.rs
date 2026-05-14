@@ -1132,8 +1132,8 @@ impl NodeConfig {
     {
         // configure the revm environment
 
-        let mut cfg = CfgEnv::default();
-        cfg.spec = self.get_hardfork().into();
+        let spec_id = self.get_hardfork().into();
+        let mut cfg = CfgEnv::new_with_spec(spec_id);
 
         cfg.chain_id = self.get_chain_id();
         cfg.limit_contract_code_size = self.code_size_limit;
@@ -1151,7 +1151,6 @@ impl NodeConfig {
             cfg.memory_limit = value;
         }
 
-        let spec_id = cfg.spec;
         let mut evm_env = EvmEnv::new(
             cfg,
             BlockEnv {
@@ -1384,7 +1383,7 @@ latest block number: {latest_block}"
             && let Some(hardfork) =
                 FoundryHardfork::from_chain_and_timestamp(chain_id, block.header.timestamp())
         {
-            evm_env.cfg_env.spec = SpecId::from(hardfork);
+            evm_env.cfg_env.set_spec_and_mainnet_gas_params(SpecId::from(hardfork));
             self.hardfork = Some(hardfork);
         }
 
