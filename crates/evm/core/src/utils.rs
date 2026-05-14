@@ -7,10 +7,7 @@ use alloy_primitives::{B256, ChainId, Selector, U256};
 use alloy_provider::{Network, network::BlockResponse};
 use foundry_config::NamedChain;
 use foundry_evm_networks::NetworkConfigs;
-use revm::primitives::{
-    eip4844::{BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN, BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE},
-    hardfork::SpecId,
-};
+use revm::primitives::hardfork::SpecId;
 pub use revm::state::EvmState as StateChangeset;
 
 /// Hints to the compiler that this is a cold path, i.e. unlikely to be taken.
@@ -136,13 +133,22 @@ pub fn get_blob_base_fee_update_fraction(chain_id: ChainId, timestamp: u64) -> u
     get_blob_params(chain_id, timestamp).update_fraction as u64
 }
 
+/// Returns the blob params based on the spec id.
+pub fn get_blob_params_by_spec_id(spec: SpecId) -> BlobParams {
+    if spec >= SpecId::AMSTERDAM {
+        BlobParams::bpo2()
+    } else if spec >= SpecId::OSAKA {
+        BlobParams::osaka()
+    } else if spec >= SpecId::PRAGUE {
+        BlobParams::prague()
+    } else {
+        BlobParams::cancun()
+    }
+}
+
 /// Returns the blob base fee update fraction based on the spec id.
 pub fn get_blob_base_fee_update_fraction_by_spec_id(spec: SpecId) -> u64 {
-    if spec >= SpecId::PRAGUE {
-        BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
-    } else {
-        BLOB_BASE_FEE_UPDATE_FRACTION_CANCUN
-    }
+    get_blob_params_by_spec_id(spec).update_fraction as u64
 }
 
 /// Given an ABI and selector, it tries to find the respective function.
@@ -154,4 +160,21 @@ pub fn get_function<'a>(
     abi.functions()
         .find(|func| func.selector() == selector)
         .ok_or_else(|| eyre::eyre!("{contract_name} does not have the selector {selector}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blob_params_by_spec_id_tracks_latest_known_blob_schedule() {
+        assert_eq!(get_blob_params_by_spec_id(SpecId::CANCUN), BlobParams::cancun());
+        assert_eq!(get_blob_params_by_spec_id(SpecId::PRAGUE), BlobParams::prague());
+        assert_eq!(get_blob_params_by_spec_id(SpecId::OSAKA), BlobParams::osaka());
+        assert_eq!(get_blob_params_by_spec_id(SpecId::AMSTERDAM), BlobParams::bpo2());
+        assert_eq!(
+            get_blob_base_fee_update_fraction_by_spec_id(SpecId::AMSTERDAM),
+            BlobParams::bpo2().update_fraction as u64
+        );
+    }
 }

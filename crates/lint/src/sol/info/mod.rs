@@ -42,6 +42,9 @@ use inline_assembly::INLINE_ASSEMBLY;
 mod low_level_calls;
 use low_level_calls::LOW_LEVEL_CALLS;
 
+mod redundant_base_constructor_call;
+use redundant_base_constructor_call::REDUNDANT_BASE_CONSTRUCTOR_CALL;
+
 mod missing_inheritance;
 use missing_inheritance::MISSING_INHERITANCE;
 
@@ -61,5 +64,6 @@ register_lints!(
     (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
     (InlineAssembly, early, (INLINE_ASSEMBLY)),
     (LowLevelCalls, early, (LOW_LEVEL_CALLS)),
+    (RedundantBaseConstructorCall, late, (REDUNDANT_BASE_CONSTRUCTOR_CALL)),
     (MissingInheritance, project, (MISSING_INHERITANCE)),
 );
