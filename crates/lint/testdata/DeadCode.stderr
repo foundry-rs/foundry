@@ -48,3 +48,43 @@ LL │ ┃     }
    │
    ╰ help: https://getfoundry.sh/forge/linting/dead-code
 
+note[dead-code]: internal or private function is never used
+   ╭▸ ROOT/testdata/DeadCode.sol:LL:CC
+   │
+LL │ ┏     function overloaded(uint256) internal pure returns (uint256) {
+LL │ ┃         return 2;
+LL │ ┃     }
+   │ ┗━━━━━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/dead-code
+
+note[dead-code]: internal or private function is never used
+   ╭▸ ROOT/testdata/DeadCode.sol:LL:CC
+   │
+LL │ ┏     function overloadedCast(uint256) internal pure returns (uint256) {
+LL │ ┃         return 4;
+LL │ ┃     }
+   │ ┗━━━━━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/dead-code
+
+note[dead-code]: internal or private function is never used
+   ╭▸ ROOT/testdata/DeadCode.sol:LL:CC
+   │
+LL │ ┏     function usedViaStaticOverload(uint256) internal pure returns (uint256) {
+LL │ ┃         return 2;
+LL │ ┃     }
+   │ ┗━━━━━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/dead-code
+
+note[dead-code]: internal or private function is never used
+   ╭▸ ROOT/testdata/DeadCode.sol:LL:CC
+   │
+LL │ ┏     function named(uint256 who, address amount) internal pure returns (uint256) {
+LL │ ┃         return who + uint160(amount);
+LL │ ┃     }
+   │ ┗━━━━━┛
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/dead-code
+

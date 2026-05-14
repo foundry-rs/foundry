@@ -128,3 +128,105 @@ contract StaticChild is StaticBase {
         return StaticBase.usedViaStaticBase();
     }
 }
+
+contract OverloadedDeadCode {
+    function callAddress(address value) external pure returns (uint256) {
+        return overloaded(value);
+    }
+
+    function callAddressCast() external pure returns (uint256) {
+        return overloadedCast(address(0));
+    }
+
+    function overloaded(address) internal pure returns (uint256) {
+        return 1;
+    }
+
+    function overloaded(uint256) internal pure returns (uint256) {
+        return 2;
+    }
+
+    function overloadedCast(address) internal pure returns (uint256) {
+        return 3;
+    }
+
+    function overloadedCast(uint256) internal pure returns (uint256) {
+        return 4;
+    }
+}
+
+contract StaticOverloadBase {
+    function usedViaStaticOverload(address) internal pure returns (uint256) {
+        return 1;
+    }
+
+    function usedViaStaticOverload(uint256) internal pure returns (uint256) {
+        return 2;
+    }
+}
+
+contract StaticOverloadChild is StaticOverloadBase {
+    function callStaticOverload() external pure returns (uint256) {
+        return StaticOverloadBase.usedViaStaticOverload(address(0));
+    }
+}
+
+contract AmbiguousOverloadReachability {
+    function callFromHelper() external pure returns (uint256) {
+        return ambiguous(makeAddress());
+    }
+
+    function makeAddress() internal pure returns (address) {
+        return address(0);
+    }
+
+    function ambiguous(address) internal pure returns (uint256) {
+        return 1;
+    }
+
+    function ambiguous(uint256) internal pure returns (uint256) {
+        return 2;
+    }
+}
+
+contract ImplicitConversionReachability {
+    function callWidening(uint8 value) external pure returns (uint256) {
+        return widened(value);
+    }
+
+    function widened(uint256 value) internal pure returns (uint256) {
+        return value;
+    }
+}
+
+contract PayableConversionReachability {
+    function callPlain(address value) external pure returns (uint256) {
+        return takesPlain(payable(value));
+    }
+
+    function callPayable(address value) external pure returns (uint256) {
+        return takesPayable(payable(value));
+    }
+
+    function takesPlain(address) internal pure returns (uint256) {
+        return 1;
+    }
+
+    function takesPayable(address payable) internal pure returns (uint256) {
+        return 2;
+    }
+}
+
+contract NamedArgOverload {
+    function callNamed(address who, uint256 amount) external pure returns (uint256) {
+        return named({amount: amount, who: who});
+    }
+
+    function named(address who, uint256 amount) internal pure returns (uint256) {
+        return uint160(who) + amount;
+    }
+
+    function named(uint256 who, address amount) internal pure returns (uint256) {
+        return who + uint160(amount);
+    }
+}

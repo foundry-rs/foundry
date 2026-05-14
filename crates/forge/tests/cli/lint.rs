@@ -1034,6 +1034,47 @@ Compiler run successful!
 "#]]);
 });
 
+forgetest!(dead_code_ignores_test_reachability_roots, |prj, cmd| {
+    prj.add_source(
+        "DeadCodeProd",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract DeadCodeProd {
+    function live() external pure returns (uint256) {
+        return 1;
+    }
+
+    function helperOnlyUsedByTest() internal pure returns (uint256) {
+        return 2;
+    }
+}
+"#,
+    );
+    prj.add_test(
+        "DeadCodeProdTest",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import { DeadCodeProd } from "../src/DeadCodeProd.sol";
+
+contract DeadCodeProdTest is DeadCodeProd {
+    function testCallsHelper() external pure returns (uint256) {
+        return helperOnlyUsedByTest();
+    }
+}
+"#,
+    );
+
+    let output = cmd.arg("lint").args(["--only-lint", "dead-code"]).assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    assert_eq!(stderr.matches("note[dead-code]").count(), 1);
+    assert!(stderr.contains("helperOnlyUsedByTest"));
+});
+
 // <https://github.com/foundry-rs/foundry/issues/11460>
 forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
     prj.add_source(

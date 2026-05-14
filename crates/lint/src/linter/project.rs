@@ -15,6 +15,7 @@ pub struct ProjectSource<'ast> {
     pub file: Arc<SourceFile>,
     pub ast: &'ast ast::SourceUnit<'ast>,
     pub inline_config: InlineConfig<Vec<String>>,
+    pub is_test_or_script: bool,
 }
 
 /// Trait for lints that need to inspect every input source at once (e.g. cross-file checks).

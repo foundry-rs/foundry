@@ -220,7 +220,14 @@ impl<'a> SolidityLinter<'a> {
                 let comments =
                     Comments::new(&source.file, gcx.sess.source_map(), false, false, None);
                 let inline_config = parse_inline_config(gcx.sess, &comments, ast);
-                Some(ProjectSource { path, file: source.file.clone(), ast, inline_config })
+                let is_test_or_script = self.path_config.is_test_or_script(&path);
+                Some(ProjectSource {
+                    path,
+                    file: source.file.clone(),
+                    ast,
+                    inline_config,
+                    is_test_or_script,
+                })
             })
             .collect();
 

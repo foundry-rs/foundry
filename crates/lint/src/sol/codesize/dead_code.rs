@@ -1,11 +1,11 @@
 use super::DeadCode;
 use crate::{
-    linter::{LateLintPass, LintContext},
+    linter::{Lint, ProjectLintEmitter, ProjectLintPass, ProjectSource},
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{ContractKind, FunctionKind, LitKind, Visibility},
-    interface::{Symbol, data_structures::Never, sym},
+    ast::{ContractKind, ElementaryType, FunctionKind, LitKind, Visibility},
+    interface::{Symbol, data_structures::Never, source_map::FileName, sym},
     sema::hir::{
         CallArgs, ContractId, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Modifier, Res,
         SourceId, Type, TypeKind, Variable, VariableId, Visit,
@@ -14,7 +14,7 @@ use solar::{
 use std::{
     collections::{HashMap, HashSet},
     ops::ControlFlow,
-    sync::{Arc, LazyLock, Mutex},
+    path::Path,
 };
 
 declare_forge_lint!(
@@ -24,18 +24,26 @@ declare_forge_lint!(
     "internal or private function is never used"
 );
 
-impl<'hir> LateLintPass<'hir> for DeadCode {
-    fn check_nested_source(
-        &mut self,
-        ctx: &LintContext,
-        hir: &'hir Hir<'hir>,
-        source_id: SourceId,
-    ) {
-        let analysis = dead_code_analysis(hir);
+impl<'ast> ProjectLintPass<'ast> for DeadCode {
+    fn check_project(&mut self, ctx: &ProjectLintEmitter<'_, '_>, sources: &[ProjectSource<'ast>]) {
+        if !ctx.is_lint_enabled(DEAD_CODE.id()) {
+            return;
+        }
+
+        let gcx = ctx.gcx();
+        let hir = &gcx.hir;
+        let input_sources = input_sources(hir, sources);
+        if input_sources.emitted.is_empty() {
+            return;
+        }
+
+        let analysis = dead_code_analysis(hir, &input_sources.excluded);
 
         for function_id in hir.function_ids() {
             let function = hir.function(function_id);
-            if function.source != source_id || !is_dead_code_candidate(hir, function, function_id) {
+            let Some(&source_idx) = input_sources.emitted.get(&function.source) else { continue };
+
+            if !is_dead_code_candidate(hir, function, function_id) {
                 continue;
             }
 
@@ -44,19 +52,10 @@ impl<'hir> LateLintPass<'hir> for DeadCode {
             }
 
             if !analysis.reachable.contains(&function_id) {
-                ctx.emit(&DEAD_CODE, function.span);
+                ctx.emit(&sources[source_idx], &DEAD_CODE, function.span);
             }
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct AnalysisCacheKey {
-    hir: usize,
-    sources: usize,
-    contracts: usize,
-    functions: usize,
-    variables: usize,
 }
 
 #[derive(Debug)]
@@ -65,40 +64,35 @@ struct DeadCodeAnalysis {
     overridden: HashSet<FunctionId>,
 }
 
-const ANALYSIS_CACHE_LIMIT: usize = 16;
+fn dead_code_analysis(hir: &Hir<'_>, excluded_sources: &HashSet<SourceId>) -> DeadCodeAnalysis {
+    DeadCodeAnalysis {
+        reachable: Reachability::compute(hir, excluded_sources),
+        overridden: collect_overridden_functions(hir, excluded_sources),
+    }
+}
 
-static ANALYSIS_CACHE: LazyLock<Mutex<HashMap<AnalysisCacheKey, Arc<DeadCodeAnalysis>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+#[derive(Default)]
+struct InputSources {
+    emitted: HashMap<SourceId, usize>,
+    excluded: HashSet<SourceId>,
+}
 
-fn dead_code_analysis(hir: &Hir<'_>) -> Arc<DeadCodeAnalysis> {
-    let key = AnalysisCacheKey {
-        hir: std::ptr::from_ref(hir).addr(),
-        sources: hir.source_ids().len(),
-        contracts: hir.contract_ids().len(),
-        functions: hir.function_ids().len(),
-        variables: hir.variable_ids().len(),
-    };
+fn input_sources<'ast>(hir: &Hir<'_>, sources: &[ProjectSource<'ast>]) -> InputSources {
+    let source_indices_by_path: HashMap<&Path, usize> =
+        sources.iter().enumerate().map(|(idx, source)| (source.path.as_path(), idx)).collect();
 
-    {
-        let cache = ANALYSIS_CACHE.lock().unwrap();
-        if let Some(analysis) = cache.get(&key).cloned() {
-            return analysis;
+    let mut input_sources = InputSources::default();
+    for (source_id, source) in hir.sources_enumerated() {
+        let FileName::Real(path) = &source.file.name else { continue };
+        let Some(&source_idx) = source_indices_by_path.get(path.as_path()) else { continue };
+
+        if sources[source_idx].is_test_or_script {
+            input_sources.excluded.insert(source_id);
+        } else {
+            input_sources.emitted.insert(source_id, source_idx);
         }
     }
-
-    let analysis = Arc::new(DeadCodeAnalysis {
-        reachable: Reachability::compute(hir),
-        overridden: collect_overridden_functions(hir),
-    });
-
-    let mut cache = ANALYSIS_CACHE.lock().unwrap();
-    // `check_nested_source` is called once per source and constructs fresh pass instances each
-    // time, so cache per-HIR analysis across those calls. Keep it bounded for long-running test
-    // processes that lint many independent HIRs in one process.
-    if cache.len() >= ANALYSIS_CACHE_LIMIT {
-        cache.clear();
-    }
-    cache.entry(key).or_insert_with(|| analysis).clone()
+    input_sources
 }
 
 fn is_dead_code_candidate(hir: &Hir<'_>, function: &Function<'_>, function_id: FunctionId) -> bool {
@@ -138,12 +132,15 @@ fn is_entry_point(function: &Function<'_>) -> bool {
             ))
 }
 
-fn collect_overridden_functions(hir: &Hir<'_>) -> HashSet<FunctionId> {
+fn collect_overridden_functions(
+    hir: &Hir<'_>,
+    excluded_sources: &HashSet<SourceId>,
+) -> HashSet<FunctionId> {
     let mut overridden = HashSet::new();
 
     for function_id in hir.function_ids() {
         let function = hir.function(function_id);
-        if !function.override_ {
+        if !function.override_ || excluded_sources.contains(&function.source) {
             continue;
         }
 
@@ -188,16 +185,183 @@ fn matching_functions(
     hir: &Hir<'_>,
     contract_id: ContractId,
     name: Symbol,
-    arity: usize,
+    args: CallArgs<'_>,
 ) -> Vec<FunctionId> {
-    hir.contract(contract_id)
-        .all_functions()
-        .filter(|&function_id| {
+    select_matching_functions(
+        hir,
+        hir.contract(contract_id).all_functions().filter(|&function_id| {
             let function = hir.function(function_id);
             function.name.is_some_and(|ident| ident.name == name)
-                && function.parameters.len() == arity
-        })
-        .collect()
+        }),
+        args,
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MatchQuality {
+    Exact,
+    Possible,
+}
+
+fn select_matching_functions(
+    hir: &Hir<'_>,
+    candidates: impl IntoIterator<Item = FunctionId>,
+    args: CallArgs<'_>,
+) -> Vec<FunctionId> {
+    let mut exact = Vec::new();
+    let mut possible = Vec::new();
+
+    for function_id in candidates {
+        match function_matches_args(hir, hir.function(function_id), args) {
+            Some(MatchQuality::Exact) => exact.push(function_id),
+            Some(MatchQuality::Possible) => possible.push(function_id),
+            None => {}
+        }
+    }
+
+    if !exact.is_empty() { exact } else { possible }
+}
+
+fn function_matches_args(
+    hir: &Hir<'_>,
+    function: &Function<'_>,
+    args: CallArgs<'_>,
+) -> Option<MatchQuality> {
+    if function.parameters.len() != args.len() {
+        return None;
+    }
+
+    let mut quality = MatchQuality::Exact;
+    let mut check_arg = |expr: &Expr<'_>, param: VariableId| match expr_matches_type(
+        hir,
+        expr,
+        &hir.variable(param).ty,
+    ) {
+        Some(MatchQuality::Exact) => Some(()),
+        Some(MatchQuality::Possible) => {
+            quality = MatchQuality::Possible;
+            Some(())
+        }
+        None => None,
+    };
+
+    match args.kind {
+        solar::sema::hir::CallArgsKind::Unnamed(exprs) => {
+            for (expr, &param) in exprs.iter().zip(function.parameters) {
+                check_arg(expr, param)?;
+            }
+        }
+        solar::sema::hir::CallArgsKind::Named(named_args) => {
+            for arg in named_args {
+                let param = function.parameters.iter().copied().find(|&param| {
+                    hir.variable(param).name.is_some_and(|ident| ident.name == arg.name.name)
+                })?;
+                check_arg(&arg.value, param)?;
+            }
+        }
+    }
+
+    Some(quality)
+}
+
+fn expr_matches_type(hir: &Hir<'_>, expr: &Expr<'_>, ty: &Type<'_>) -> Option<MatchQuality> {
+    let expr = expr.peel_parens();
+    match &expr.kind {
+        ExprKind::Ident(resolutions) => {
+            let mut variables = resolutions.iter().filter_map(|res| match res {
+                Res::Item(ItemId::Variable(variable_id)) => Some(*variable_id),
+                _ => None,
+            });
+            let Some(variable_id) = variables.next() else { return Some(MatchQuality::Possible) };
+            if variables.next().is_some() {
+                return Some(MatchQuality::Possible);
+            }
+            type_matches_param(hir, &hir.variable(variable_id).ty, ty)
+        }
+        ExprKind::Call(callee, ..) => {
+            if let Some(expr_ty) = call_expr_type(callee.peel_parens()) {
+                type_matches_param(hir, expr_ty, ty)
+            } else {
+                Some(MatchQuality::Possible)
+            }
+        }
+        ExprKind::Lit(lit) => lit_matches_type(&lit.kind, ty),
+        ExprKind::New(expr_ty) => type_matches_param(hir, expr_ty, ty),
+        ExprKind::Payable(_) => match ty.kind {
+            TypeKind::Elementary(ElementaryType::Address(true)) => Some(MatchQuality::Exact),
+            TypeKind::Elementary(ElementaryType::Address(false)) => Some(MatchQuality::Possible),
+            _ => None,
+        },
+        ExprKind::Ternary(_, lhs, rhs) => {
+            match (expr_matches_type(hir, lhs, ty)?, expr_matches_type(hir, rhs, ty)?) {
+                (MatchQuality::Exact, MatchQuality::Exact) => Some(MatchQuality::Exact),
+                _ => Some(MatchQuality::Possible),
+            }
+        }
+        ExprKind::Err(_) => Some(MatchQuality::Possible),
+        _ => Some(MatchQuality::Possible),
+    }
+}
+
+fn type_matches_param(
+    hir: &Hir<'_>,
+    arg_ty: &Type<'_>,
+    param_ty: &Type<'_>,
+) -> Option<MatchQuality> {
+    if same_type(hir, arg_ty, param_ty) {
+        return Some(MatchQuality::Exact);
+    }
+
+    match (&arg_ty.kind, &param_ty.kind) {
+        (
+            TypeKind::Elementary(ElementaryType::UInt(arg_size)),
+            TypeKind::Elementary(ElementaryType::UInt(param_size)),
+        )
+        | (
+            TypeKind::Elementary(ElementaryType::Int(arg_size)),
+            TypeKind::Elementary(ElementaryType::Int(param_size)),
+        ) if arg_size.bits() <= param_size.bits() => Some(MatchQuality::Possible),
+        (
+            TypeKind::Elementary(ElementaryType::Address(true)),
+            TypeKind::Elementary(ElementaryType::Address(false)),
+        ) => Some(MatchQuality::Possible),
+        (TypeKind::Err(_), _) | (_, TypeKind::Err(_)) => Some(MatchQuality::Possible),
+        _ => None,
+    }
+}
+
+fn call_expr_type<'hir>(callee: &'hir Expr<'hir>) -> Option<&'hir Type<'hir>> {
+    match &callee.kind {
+        ExprKind::Type(ty) | ExprKind::TypeCall(ty) | ExprKind::New(ty) => Some(ty),
+        _ => None,
+    }
+}
+
+fn lit_matches_type(lit: &LitKind<'_>, ty: &Type<'_>) -> Option<MatchQuality> {
+    let TypeKind::Elementary(elementary) = ty.kind else {
+        return match lit {
+            LitKind::Err(_) => Some(MatchQuality::Possible),
+            _ => None,
+        };
+    };
+
+    match (lit, elementary) {
+        (LitKind::Bool(_), ElementaryType::Bool)
+        | (LitKind::Address(_), ElementaryType::Address(false)) => Some(MatchQuality::Exact),
+        (LitKind::Address(_), ElementaryType::Address(true)) => Some(MatchQuality::Possible),
+        (LitKind::Str(..), ElementaryType::String | ElementaryType::Bytes) => {
+            Some(MatchQuality::Possible)
+        }
+        (
+            LitKind::Number(_) | LitKind::Rational(_),
+            ElementaryType::Int(_)
+            | ElementaryType::UInt(_)
+            | ElementaryType::Fixed(_, _)
+            | ElementaryType::UFixed(_, _),
+        ) => Some(MatchQuality::Possible),
+        (LitKind::Err(_), _) => Some(MatchQuality::Possible),
+        _ => None,
+    }
 }
 
 fn same_parameter_types(hir: &Hir<'_>, lhs: &[VariableId], rhs: &[VariableId]) -> bool {
@@ -268,23 +432,33 @@ fn same_lit_kind(lhs: &LitKind<'_>, rhs: &LitKind<'_>) -> bool {
 
 struct Reachability<'hir> {
     hir: &'hir Hir<'hir>,
+    excluded_sources: HashSet<SourceId>,
     reachable: HashSet<FunctionId>,
     current_contract: Option<ContractId>,
 }
 
 impl<'hir> Reachability<'hir> {
-    fn compute(hir: &'hir Hir<'hir>) -> HashSet<FunctionId> {
-        let mut this = Self { hir, reachable: HashSet::new(), current_contract: None };
+    fn compute(hir: &'hir Hir<'hir>, excluded_sources: &HashSet<SourceId>) -> HashSet<FunctionId> {
+        let mut this = Self {
+            hir,
+            excluded_sources: excluded_sources.clone(),
+            reachable: HashSet::new(),
+            current_contract: None,
+        };
 
         for function_id in hir.function_ids() {
-            if is_entry_point(hir.function(function_id)) {
+            if !this.is_excluded_function(function_id) && is_entry_point(hir.function(function_id))
+            {
                 this.mark_function(function_id);
             }
         }
 
         for variable_id in hir.variable_ids() {
             let variable = hir.variable(variable_id);
-            if variable.function.is_none() && variable.initializer.is_some() {
+            if !this.is_excluded_source(variable.source)
+                && variable.function.is_none()
+                && variable.initializer.is_some()
+            {
                 let _ = this.visit_nested_var(variable_id);
             }
         }
@@ -292,28 +466,35 @@ impl<'hir> Reachability<'hir> {
         this.reachable
     }
 
+    fn is_excluded_source(&self, source_id: SourceId) -> bool {
+        self.excluded_sources.contains(&source_id)
+    }
+
+    fn is_excluded_function(&self, function_id: FunctionId) -> bool {
+        self.is_excluded_source(self.hir.function(function_id).source)
+    }
+
     fn mark_function(&mut self, function_id: FunctionId) {
+        if self.is_excluded_function(function_id) {
+            return;
+        }
         if self.reachable.insert(function_id) {
             let _ = self.visit_nested_function(function_id);
         }
     }
 
     fn resolve_callee(&self, callee: &'hir Expr<'hir>, args: CallArgs<'hir>) -> Vec<FunctionId> {
-        let arity = args.len();
         match &callee.peel_parens().kind {
-            ExprKind::Ident(resolutions) => resolutions
-                .iter()
-                .filter_map(|resolution| match resolution {
-                    Res::Item(ItemId::Function(function_id))
-                        if self.hir.function(*function_id).parameters.len() == arity =>
-                    {
-                        Some(*function_id)
-                    }
+            ExprKind::Ident(resolutions) => select_matching_functions(
+                self.hir,
+                resolutions.iter().filter_map(|resolution| match resolution {
+                    Res::Item(ItemId::Function(function_id)) => Some(*function_id),
                     _ => None,
-                })
-                .collect(),
+                }),
+                args,
+            ),
             ExprKind::Member(base, member) => {
-                self.resolve_member_callee(base.peel_parens(), member.name, arity)
+                self.resolve_member_callee(base.peel_parens(), member.name, args)
             }
             _ => Vec::new(),
         }
@@ -323,20 +504,20 @@ impl<'hir> Reachability<'hir> {
         &self,
         base: &'hir Expr<'hir>,
         member: Symbol,
-        arity: usize,
+        args: CallArgs<'hir>,
     ) -> Vec<FunctionId> {
         let mut functions = Vec::new();
         if is_super(base) {
             let Some(contract_id) = self.current_contract else { return functions };
             let contract = self.hir.contract(contract_id);
             for &base_id in contract.linearized_bases.iter().skip(1) {
-                functions.extend(matching_functions(self.hir, base_id, member, arity));
+                functions.extend(matching_functions(self.hir, base_id, member, args));
             }
             return functions;
         }
 
         for contract_id in self.resolve_static_contracts(base) {
-            functions.extend(matching_functions(self.hir, contract_id, member, arity));
+            functions.extend(matching_functions(self.hir, contract_id, member, args));
         }
         functions
     }
@@ -396,6 +577,10 @@ impl<'hir> Visit<'hir> for Reachability<'hir> {
     }
 
     fn visit_var(&mut self, variable: &'hir Variable<'hir>) -> ControlFlow<Self::BreakValue> {
+        if self.is_excluded_source(variable.source) {
+            return ControlFlow::Continue(());
+        }
+
         let previous_contract = self.current_contract;
         if variable.function.is_none() {
             self.current_contract = variable.contract;
@@ -412,8 +597,8 @@ impl<'hir> Visit<'hir> for Reachability<'hir> {
             }
 
             match &callee.peel_parens().kind {
-                // The call resolver above filters overloaded identifiers by arity, so do not also
-                // visit the callee as a bare function reference and mark every overload reachable.
+                // The call resolver above handles overloaded identifiers, so do not also visit the
+                // callee as a bare function reference and mark every overload reachable.
                 ExprKind::Ident(_) => {}
                 ExprKind::Member(base, _) => self.visit_expr(base)?,
                 _ => self.visit_expr(callee)?,
