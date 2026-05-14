@@ -65,6 +65,34 @@ contract DelegatecallLoop {
 
     function payableModifierLoop(bytes[] calldata payloads) external payable loopDelegatecall(payloads) {}
 
+    function payableLoopWithInternalDelegatecall(bytes[] calldata payloads) external payable {
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            delegate(payloads[i]);
+        }
+    }
+
+    function delegate(bytes calldata payload) internal {
+        address target = address(this);
+        (bool ok,) = target.delegatecall(payload); //~WARN: payable functions should not use `delegatecall` inside a loop
+        require(ok);
+    }
+
+    function payableInternalLoopWithDelegatecall(bytes[] calldata payloads) external payable {
+        delegateInLoop(payloads);
+    }
+
+    function delegateInLoop(bytes[] calldata payloads) internal {
+        address target = address(this);
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            (bool ok,) = target.delegatecall(payloads[i]); //~WARN: payable functions should not use `delegatecall` inside a loop
+            require(ok);
+        }
+    }
+
+    function payableInternalDelegatecallOutsideLoop(bytes calldata payload) external payable {
+        delegate(payload);
+    }
+
     function payableLoopWithCallAndStaticcall(bytes[] calldata payloads) external payable {
         address target = address(this);
         for (uint256 i = 0; i < payloads.length; ++i) {

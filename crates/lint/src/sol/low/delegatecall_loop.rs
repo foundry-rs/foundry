@@ -6,7 +6,7 @@ use crate::{
 use solar::{
     ast::{StateMutability, Visibility},
     interface::{Span, kw},
-    sema::hir::{self, Expr, ExprKind, FunctionId, Stmt, StmtKind, Visit},
+    sema::hir::{self, Expr, ExprKind, FunctionId, ItemId, Res, Stmt, StmtKind, Visit},
 };
 use std::{collections::HashSet, ops::ControlFlow};
 
@@ -36,6 +36,7 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
             loop_depth: 0,
             emitted: HashSet::new(),
             modifier_stack: Vec::new(),
+            call_stack: Vec::new(),
         };
         checker.visit_modifier_chain(func.modifiers, 0, body);
     }
@@ -53,6 +54,7 @@ struct DelegatecallLoopChecker<'a, 's, 'hir> {
     loop_depth: usize,
     emitted: HashSet<Span>,
     modifier_stack: Vec<FunctionId>,
+    call_stack: Vec<FunctionId>,
 }
 
 impl<'a, 's, 'hir> DelegatecallLoopChecker<'a, 's, 'hir> {
@@ -142,7 +144,18 @@ impl<'hir> Visit<'hir> for DelegatecallLoopChecker<'_, '_, 'hir> {
             self.ctx.emit(&DELEGATECALL_LOOP, expr.span);
         }
 
-        self.walk_expr(expr)
+        let result = self.walk_expr(expr);
+        if result.is_break() {
+            return result;
+        }
+
+        if let ExprKind::Call(callee, _, _) = &expr.kind {
+            for func_id in resolved_function_ids(callee) {
+                self.visit_internal_call(func_id);
+            }
+        }
+
+        ControlFlow::Continue(())
     }
 }
 
@@ -153,6 +166,19 @@ impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
         self.loop_depth -= 1;
         ControlFlow::Continue(())
     }
+
+    fn visit_internal_call(&mut self, func_id: FunctionId) {
+        if self.call_stack.contains(&func_id) {
+            return;
+        }
+
+        let func = self.hir.function(func_id);
+        let Some(body) = func.body else { return };
+
+        self.call_stack.push(func_id);
+        self.visit_modifier_chain(func.modifiers, 0, body);
+        self.call_stack.pop();
+    }
 }
 
 fn is_delegatecall(expr: &Expr<'_>) -> bool {
@@ -161,4 +187,17 @@ fn is_delegatecall(expr: &Expr<'_>) -> bool {
     };
 
     matches!(&call_expr.kind, ExprKind::Member(_, member) if member.name == kw::Delegatecall)
+}
+
+fn resolved_function_ids<'hir>(
+    callee: &'hir hir::Expr<'hir>,
+) -> impl Iterator<Item = FunctionId> + 'hir {
+    let reses = match &callee.peel_parens().kind {
+        ExprKind::Ident(reses) => *reses,
+        _ => &[],
+    };
+    reses.iter().filter_map(|res| match res {
+        Res::Item(ItemId::Function(func_id)) => Some(*func_id),
+        _ => None,
+    })
 }
