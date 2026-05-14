@@ -226,7 +226,9 @@ pub trait Db:
 
     /// Deserialize and add all chain data to the backend storage
     fn load_state(&mut self, state: SerializableState) -> DatabaseResult<bool> {
-        for (addr, account) in state.accounts {
+        let SerializableState { accounts, blocks, .. } = state;
+
+        for (addr, account) in accounts {
             let old_account_nonce = DatabaseRef::basic_ref(self, addr)
                 .ok()
                 .and_then(|acc| acc.map(|acc| acc.nonce))
@@ -254,6 +256,15 @@ pub trait Db:
                 self.set_storage_at(addr, k, v)?;
             }
         }
+
+        // Backfill execution-layer block hash cache for imported blocks so BLOCKHASH lookups can
+        // hit local DB data after `anvil_loadState`.
+        for block in blocks {
+            let number = U256::from(block.header.number);
+            let hash = block.header.hash_slow();
+            self.insert_block_hash(number, hash);
+        }
+
         Ok(true)
     }
 

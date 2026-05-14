@@ -3966,14 +3966,17 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
             ));
         }
 
-        if !self.db.write().await.load_state(state.clone())? {
+        let mut state = state;
+        let historical_states = state.historical_states.take();
+
+        if !self.db.write().await.load_state(state)? {
             return Err(RpcError::invalid_params(
                 "Loading state not supported with the current configuration",
             )
             .into());
         }
 
-        if let Some(historical_states) = state.historical_states {
+        if let Some(historical_states) = historical_states {
             self.states.write().load_states(historical_states);
         }
 
@@ -4807,6 +4810,7 @@ pub use foundry_evm::core::evm::IntoInstructionResult;
 #[cfg(test)]
 mod tests {
     use crate::{NodeConfig, spawn};
+    use revm::database::DatabaseRef;
 
     #[tokio::test]
     async fn test_deterministic_block_mining() {
@@ -4860,5 +4864,25 @@ mod tests {
             block_a_1.header.hash, block_a_2.header.hash,
             "Different blocks should have different hashes"
         );
+    }
+
+    #[tokio::test]
+    async fn test_load_state_backfills_block_hash_cache() {
+        let genesis_timestamp = 1743944919u64;
+        let config = NodeConfig::test().with_genesis_timestamp(genesis_timestamp.into());
+
+        let (api_src, _src_handle) = spawn(config.clone()).await;
+        let (api_dst, _dst_handle) = spawn(config).await;
+
+        let mined = api_src.backend.mine_block(vec![]).await;
+        let number = mined.block_number;
+        let mined_block = api_src.block_by_number(number.into()).await.unwrap().unwrap();
+        let expected_hash = mined_block.header.hash;
+
+        let dumped_state = api_src.backend.dump_state(false).await.unwrap();
+        api_dst.backend.load_state_bytes(dumped_state).await.unwrap();
+
+        let loaded_hash = api_dst.backend.db.read().await.block_hash_ref(number).unwrap();
+        assert_eq!(loaded_hash, expected_hash);
     }
 }
