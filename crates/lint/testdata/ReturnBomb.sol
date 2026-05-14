@@ -3,8 +3,19 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
+interface IReturnBombTarget {
+    function fetch() external returns (bytes memory);
+    function value() external returns (uint256);
+}
+
 contract ReturnBomb {
+    struct Result {
+        bytes data;
+    }
+
     bytes existingData;
+    bytes[] results;
+    Result storedResult;
 
     // SHOULD PASS: Gas-capped calls that do not bind returndata.
     function ignoresReturnData(address target, bytes memory payload, uint256 gasLimit) public {
@@ -53,5 +64,36 @@ contract ReturnBomb {
         (bool success, bytes memory result) = target.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
         (success, existingData) = target.call{gas: gasLimit}(result); //~WARN: external calls with a gas limit should not consume unbounded return data
         require(success, "Call failed");
+    }
+
+    function directReturn(address target, bytes memory payload, uint256 gasLimit) public returns (bool, bytes memory) {
+        return target.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
+    }
+
+    function memberBytes(address target, bytes memory payload, uint256 gasLimit) public {
+        bool success;
+        (success, storedResult.data) = target.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(success, "Call failed");
+    }
+
+    function indexedBytes(address target, bytes memory payload, uint256 gasLimit) public {
+        bool success;
+        results.push();
+        (success, results[0]) = target.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(success, "Call failed");
+    }
+
+    function highLevelDynamicReturn(IReturnBombTarget target, uint256 gasLimit) public {
+        bytes memory result = target.fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
+    }
+
+    function directHighLevelDynamicReturn(IReturnBombTarget target, uint256 gasLimit) public returns (bytes memory) {
+        return target.fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
+    }
+
+    function highLevelStaticReturn(IReturnBombTarget target, uint256 gasLimit) public {
+        uint256 result = target.value{gas: gasLimit}();
+        require(result >= 0);
     }
 }
