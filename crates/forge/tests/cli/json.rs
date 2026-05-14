@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde_json::{Value, json};
 
 pub fn parse_json_lines(stdout: &str) -> Vec<Value> {
@@ -18,6 +20,13 @@ pub fn parse_json_lines(stdout: &str) -> Vec<Value> {
 }
 
 pub fn assert_json_event(value: &Value, event: &str) {
+    let keys = value
+        .as_object()
+        .expect("event must be a JSON object")
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(keys, BTreeSet::from(["schema_version", "event", "data", "errors", "warnings"]));
     assert_eq!(value["schema_version"], 1);
     assert_eq!(value["event"], event);
     assert_eq!(value["errors"], json!([]));
