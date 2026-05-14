@@ -1,0 +1,56 @@
+warning[reentrancy-unlimited-gas]: uncapped ETH transfer can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
+LL │ …     (bool ok,) = payable(msg.sender).call{value: amount}("");
+   │                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+
+warning[reentrancy-unlimited-gas]: uncapped ETH transfer can be reentered before `totalPaid` is updated
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
+LL │         (bool ok,) = receiver.call{value: 1 ether}("");
+   │                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+
+warning[reentrancy-unlimited-gas]: uncapped ETH transfer can be reentered before `totalPaid` is updated
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
+LL │         (bool ok,) = receiver.call{value: amount}("");
+   │                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+
+warning[reentrancy-unlimited-gas]: uncapped ETH transfer can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
+LL │         (bool ok,) = receiver.call{value: amount}("");
+   │                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+
+warning[reentrancy-unlimited-gas]: uncapped ETH transfer can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
+LL │ …     (bool ok,) = receiver.call{value: amount, gas: gasleft()}("");
+   │                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+
+warning[reentrancy-unlimited-gas]: uncapped ETH transfer can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
+LL │ …     (bool ok,) = payable(msg.sender).call{value: amount}("");
+   │                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+
+warning[reentrancy-unlimited-gas]: uncapped ETH transfer can be reentered before `balances` is updated
+   ╭▸ ROOT/testdata/ReentrancyUnlimitedGas.sol:LL:CC
+   │
+LL │         (bool ok,) = receiver.call{value: amount}("");
+   │                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/reentrancy-unlimited-gas
+

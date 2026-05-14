@@ -1,3 +1,5 @@
+//@compile-flags: --only-lint missing-zero-check
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 

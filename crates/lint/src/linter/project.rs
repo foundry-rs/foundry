@@ -4,6 +4,7 @@ use foundry_config::lint::LintSpecificConfig;
 use solar::{
     ast,
     interface::{Session, Span, diagnostics::DiagMsg, source_map::SourceFile},
+    sema::Gcx,
 };
 use std::{path::PathBuf, sync::Arc};
 
@@ -19,15 +20,17 @@ pub struct ProjectSource<'ast> {
 /// Trait for lints that need to inspect every input source at once (e.g. cross-file checks).
 ///
 /// `check_project` runs once after all per-file [`super::EarlyLintPass`] /
-/// [`super::LateLintPass`] passes have completed.
+/// [`super::LateLintPass`] passes have completed. Passes that need HIR or type-check info access
+/// it through [`ProjectLintEmitter::gcx`].
 pub trait ProjectLintPass<'ast>: Send + Sync {
     fn check_project(&mut self, ctx: &ProjectLintEmitter<'_, '_>, sources: &[ProjectSource<'ast>]);
 }
 
 /// Helper passed to [`ProjectLintPass::check_project`] for emitting diagnostics against a specific
-/// source.
+/// source and accessing the global compilation context.
 pub struct ProjectLintEmitter<'s, 'c> {
     sess: &'s Session,
+    gcx: Gcx<'s>,
     with_description: bool,
     with_json_emitter: bool,
     lint_specific: &'c LintSpecificConfig,
@@ -37,18 +40,24 @@ pub struct ProjectLintEmitter<'s, 'c> {
 impl<'s, 'c> ProjectLintEmitter<'s, 'c> {
     pub const fn new(
         sess: &'s Session,
+        gcx: Gcx<'s>,
         with_description: bool,
         with_json_emitter: bool,
         lint_specific: &'c LintSpecificConfig,
         active_lints: Vec<&'static str>,
     ) -> Self {
-        Self { sess, with_description, with_json_emitter, lint_specific, active_lints }
+        Self { sess, gcx, with_description, with_json_emitter, lint_specific, active_lints }
     }
 
     /// Returns `true` if the given lint id is enabled for this run. Project passes that perform
     /// expensive analysis should guard their work behind this check.
     pub fn is_lint_enabled(&self, id: &'static str) -> bool {
         self.active_lints.contains(&id)
+    }
+
+    /// Returns the global compilation context, for passes that need HIR or semantic info.
+    pub const fn gcx(&self) -> Gcx<'s> {
+        self.gcx
     }
 
     /// Emits a diagnostic with the lint's default description as the message.

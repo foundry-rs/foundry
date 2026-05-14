@@ -248,8 +248,9 @@ pub fn spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> OpSpecId {
         OpHardfork::Granite => OpSpecId::GRANITE,
         OpHardfork::Holocene => OpSpecId::HOLOCENE,
         OpHardfork::Isthmus => OpSpecId::ISTHMUS,
-        OpHardfork::Interop => OpSpecId::INTEROP,
         OpHardfork::Jovian => OpSpecId::JOVIAN,
+        OpHardfork::Karst => OpSpecId::KARST,
+        OpHardfork::Interop => OpSpecId::INTEROP,
         f => unreachable!("unimplemented {}", f),
     }
 }
@@ -276,6 +277,7 @@ impl FromEvmVersion for SpecId {
             EvmVersion::Cancun => Self::CANCUN,
             EvmVersion::Prague => Self::PRAGUE,
             EvmVersion::Osaka => Self::OSAKA,
+            EvmVersion::Amsterdam => Self::AMSTERDAM,
         }
     }
 }
@@ -297,7 +299,7 @@ impl FromEvmVersion for OpSpecId {
             EvmVersion::Shanghai => Self::CANYON,
             EvmVersion::Cancun => Self::ECOTONE,
             EvmVersion::Prague => Self::ISTHMUS,
-            EvmVersion::Osaka => Self::JOVIAN,
+            EvmVersion::Osaka | EvmVersion::Amsterdam => Self::KARST,
         }
     }
 }
@@ -393,7 +395,9 @@ mod tests {
 
             // Test latest hardforks
             assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Holocene), OpSpecId::HOLOCENE);
+            assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Karst), OpSpecId::KARST);
             assert_eq!(spec_id_from_optimism_hardfork(OpHardfork::Interop), OpSpecId::INTEROP);
+            assert_eq!(evm_spec_id::<OpSpecId>(EvmVersion::Osaka), OpSpecId::KARST);
         }
 
         #[test]

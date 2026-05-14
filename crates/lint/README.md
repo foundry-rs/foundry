@@ -12,6 +12,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `unchecked-call`: Low-level calls should check the success return value.
   - `erc20-unchecked-transfer`: ERC20 `transfer` and `transferFrom` calls should check the return value.
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
+  - `reentrancy-unlimited-gas`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.
 - **Medium Severity:**
   - `boolean-cst`: Flags misuse of boolean constants.
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
@@ -38,6 +39,9 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `interface-file-naming`: Interface file names should be prefixed with `I`.
   - `interface-naming`: Interface names should be prefixed with `I`.
   - `pragma-inconsistent`: Flags projects whose source files declare different Solidity pragma version requirements.
+  - `redundant-base-constructor-call`: Flags explicit empty base-constructor arguments (e.g. `is A()`) when the base requires no arguments.
+  - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
+  - `low-level-calls`: Direct use of low-level calls should be avoided.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
