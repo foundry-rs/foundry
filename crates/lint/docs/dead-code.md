@@ -49,3 +49,6 @@ contract C {
 ## Notes
 
 This is a `CodeSize`-severity lint and is **not** applied to test or script files.
+Foundry intentionally treats every public or external function in the linted sources as an entry
+point, so this lint prefers avoiding false positives over proving deployability from the most-derived
+contracts only.

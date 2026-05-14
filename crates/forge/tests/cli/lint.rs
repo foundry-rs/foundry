@@ -1075,6 +1075,50 @@ contract DeadCodeProdTest is DeadCodeProd {
     assert!(stderr.contains("helperOnlyUsedByTest"));
 });
 
+forgetest!(dead_code_scopes_reachability_to_linted_sources, |prj, cmd| {
+    prj.add_source(
+        "DeadCodeSubsetTarget",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract DeadCodeSubsetTarget {
+    function live() external pure returns (uint256) {
+        return 1;
+    }
+
+    function helperOnlyUsedByOtherSource() internal pure returns (uint256) {
+        return 2;
+    }
+}
+"#,
+    );
+    prj.add_source(
+        "DeadCodeSubsetOther",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import { DeadCodeSubsetTarget } from "./DeadCodeSubsetTarget.sol";
+
+contract DeadCodeSubsetOther is DeadCodeSubsetTarget {
+    function callsTargetHelper() external pure returns (uint256) {
+        return helperOnlyUsedByOtherSource();
+    }
+}
+"#,
+    );
+
+    let output = cmd
+        .arg("lint")
+        .args(["src/DeadCodeSubsetTarget.sol", "--only-lint", "dead-code"])
+        .assert_success();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+
+    assert_eq!(stderr.matches("note[dead-code]").count(), 1);
+    assert!(stderr.contains("helperOnlyUsedByOtherSource"));
+});
+
 // <https://github.com/foundry-rs/foundry/issues/11460>
 forgetest!(lint_json_output_no_ansi_escape_codes, |prj, cmd| {
     prj.add_source(

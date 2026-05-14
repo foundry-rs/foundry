@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{ContractKind, ElementaryType, FunctionKind, LitKind, Visibility},
+    ast::{self, ContractKind, ElementaryType, FunctionKind, LitKind, Visibility},
     interface::{Symbol, data_structures::Never, source_map::FileName, sym},
     sema::hir::{
         CallArgs, ContractId, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Modifier, Res,
@@ -37,7 +37,8 @@ impl<'ast> ProjectLintPass<'ast> for DeadCode {
             return;
         }
 
-        let analysis = dead_code_analysis(hir, &input_sources.excluded);
+        let using_for = collect_using_for(hir, sources, &input_sources);
+        let analysis = dead_code_analysis(hir, &input_sources.included, &using_for);
 
         for function_id in hir.function_ids() {
             let function = hir.function(function_id);
@@ -64,17 +65,21 @@ struct DeadCodeAnalysis {
     overridden: HashSet<FunctionId>,
 }
 
-fn dead_code_analysis(hir: &Hir<'_>, excluded_sources: &HashSet<SourceId>) -> DeadCodeAnalysis {
+fn dead_code_analysis(
+    hir: &Hir<'_>,
+    included_sources: &HashSet<SourceId>,
+    using_for: &UsingFor,
+) -> DeadCodeAnalysis {
     DeadCodeAnalysis {
-        reachable: Reachability::compute(hir, excluded_sources),
-        overridden: collect_overridden_functions(hir, excluded_sources),
+        reachable: Reachability::compute(hir, included_sources, using_for),
+        overridden: collect_overridden_functions(hir, included_sources),
     }
 }
 
 #[derive(Default)]
 struct InputSources {
     emitted: HashMap<SourceId, usize>,
-    excluded: HashSet<SourceId>,
+    included: HashSet<SourceId>,
 }
 
 fn input_sources<'ast>(hir: &Hir<'_>, sources: &[ProjectSource<'ast>]) -> InputSources {
@@ -87,12 +92,149 @@ fn input_sources<'ast>(hir: &Hir<'_>, sources: &[ProjectSource<'ast>]) -> InputS
         let Some(&source_idx) = source_indices_by_path.get(path.as_path()) else { continue };
 
         if sources[source_idx].is_test_or_script {
-            input_sources.excluded.insert(source_id);
+            continue;
         } else {
             input_sources.emitted.insert(source_id, source_idx);
+            input_sources.included.insert(source_id);
         }
     }
     input_sources
+}
+
+#[derive(Default)]
+struct UsingFor {
+    global_functions: Vec<FunctionId>,
+    source_functions: HashMap<SourceId, Vec<FunctionId>>,
+    contract_functions: HashMap<ContractId, Vec<FunctionId>>,
+}
+
+struct UsingLookup {
+    contracts_by_source_name: HashMap<(SourceId, Symbol), ContractId>,
+    contracts_by_name: HashMap<Symbol, Vec<ContractId>>,
+    free_functions_by_name: HashMap<Symbol, Vec<FunctionId>>,
+    contract_functions_by_name: HashMap<(ContractId, Symbol), Vec<FunctionId>>,
+}
+
+fn collect_using_for<'ast>(
+    hir: &Hir<'_>,
+    sources: &[ProjectSource<'ast>],
+    input_sources: &InputSources,
+) -> UsingFor {
+    let lookup = UsingLookup::new(hir);
+    let mut using_for = UsingFor::default();
+
+    for (&source_id, &source_idx) in &input_sources.emitted {
+        for item in sources[source_idx].ast.items.iter() {
+            match &item.kind {
+                ast::ItemKind::Using(using) => {
+                    let functions = lookup.resolve_using_functions(hir, using);
+                    if using.global {
+                        using_for.global_functions.extend(functions);
+                    } else {
+                        using_for.source_functions.entry(source_id).or_default().extend(functions);
+                    }
+                }
+                ast::ItemKind::Contract(contract) => {
+                    let Some(&contract_id) =
+                        lookup.contracts_by_source_name.get(&(source_id, contract.name.name))
+                    else {
+                        continue;
+                    };
+                    for item in contract.body.iter() {
+                        if let ast::ItemKind::Using(using) = &item.kind {
+                            let functions = lookup.resolve_using_functions(hir, using);
+                            using_for
+                                .contract_functions
+                                .entry(contract_id)
+                                .or_default()
+                                .extend(functions);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    using_for
+}
+
+impl UsingLookup {
+    fn new(hir: &Hir<'_>) -> Self {
+        let mut this = Self {
+            contracts_by_source_name: HashMap::new(),
+            contracts_by_name: HashMap::new(),
+            free_functions_by_name: HashMap::new(),
+            contract_functions_by_name: HashMap::new(),
+        };
+
+        for contract_id in hir.contract_ids() {
+            let contract = hir.contract(contract_id);
+            this.contracts_by_source_name
+                .insert((contract.source, contract.name.name), contract_id);
+            this.contracts_by_name.entry(contract.name.name).or_default().push(contract_id);
+
+            for function_id in contract.functions() {
+                if let Some(name) = hir.function(function_id).name {
+                    this.contract_functions_by_name
+                        .entry((contract_id, name.name))
+                        .or_default()
+                        .push(function_id);
+                }
+            }
+        }
+
+        for function_id in hir.function_ids() {
+            let function = hir.function(function_id);
+            if function.contract.is_none()
+                && let Some(name) = function.name
+            {
+                this.free_functions_by_name.entry(name.name).or_default().push(function_id);
+            }
+        }
+
+        this
+    }
+
+    fn resolve_using_functions(
+        &self,
+        hir: &Hir<'_>,
+        using: &ast::UsingDirective<'_>,
+    ) -> Vec<FunctionId> {
+        match &using.list {
+            ast::UsingList::Single(path) => self.resolve_using_path(hir, path),
+            ast::UsingList::Multiple(items) => {
+                items.iter().flat_map(|(path, _)| self.resolve_using_path(hir, path)).collect()
+            }
+        }
+    }
+
+    fn resolve_using_path(&self, hir: &Hir<'_>, path: &ast::PathSlice) -> Vec<FunctionId> {
+        match path.segments() {
+            [name] => {
+                let mut functions =
+                    self.free_functions_by_name.get(&name.name).cloned().unwrap_or_default();
+                for &contract_id in self.contracts_by_name.get(&name.name).into_iter().flatten() {
+                    functions.extend(hir.contract(contract_id).functions());
+                }
+                functions
+            }
+            [contract_name, function_name] => self
+                .contracts_by_name
+                .get(&contract_name.name)
+                .into_iter()
+                .flatten()
+                .flat_map(|&contract_id| {
+                    self.contract_functions_by_name
+                        .get(&(contract_id, function_name.name))
+                        .into_iter()
+                        .flatten()
+                        .copied()
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
 }
 
 fn is_dead_code_candidate(hir: &Hir<'_>, function: &Function<'_>, function_id: FunctionId) -> bool {
@@ -134,13 +276,13 @@ fn is_entry_point(function: &Function<'_>) -> bool {
 
 fn collect_overridden_functions(
     hir: &Hir<'_>,
-    excluded_sources: &HashSet<SourceId>,
+    included_sources: &HashSet<SourceId>,
 ) -> HashSet<FunctionId> {
     let mut overridden = HashSet::new();
 
     for function_id in hir.function_ids() {
         let function = hir.function(function_id);
-        if !function.override_ || excluded_sources.contains(&function.source) {
+        if !function.override_ || !included_sources.contains(&function.source) {
             continue;
         }
 
@@ -155,7 +297,8 @@ fn collect_overridden_functions(
 
         for &base_id in bases {
             for base_function_id in matching_overridden_functions(hir, base_id, function) {
-                if hir.function(base_function_id).virtual_ {
+                let base_function = hir.function(base_function_id);
+                if included_sources.contains(&base_function.source) && base_function.virtual_ {
                     overridden.insert(base_function_id);
                 }
             }
@@ -222,46 +365,107 @@ fn select_matching_functions(
     if !exact.is_empty() { exact } else { possible }
 }
 
+fn select_matching_member_functions(
+    hir: &Hir<'_>,
+    candidates: impl IntoIterator<Item = FunctionId>,
+    receiver: &Expr<'_>,
+    args: CallArgs<'_>,
+) -> Vec<FunctionId> {
+    let mut exact = Vec::new();
+    let mut possible = Vec::new();
+
+    for function_id in candidates {
+        match function_matches_member_args(hir, hir.function(function_id), receiver, args) {
+            Some(MatchQuality::Exact) => exact.push(function_id),
+            Some(MatchQuality::Possible) => possible.push(function_id),
+            None => {}
+        }
+    }
+
+    if !exact.is_empty() { exact } else { possible }
+}
+
 fn function_matches_args(
     hir: &Hir<'_>,
     function: &Function<'_>,
     args: CallArgs<'_>,
 ) -> Option<MatchQuality> {
-    if function.parameters.len() != args.len() {
+    parameters_match_args(hir, function.parameters, args)
+}
+
+fn function_matches_member_args(
+    hir: &Hir<'_>,
+    function: &Function<'_>,
+    receiver: &Expr<'_>,
+    args: CallArgs<'_>,
+) -> Option<MatchQuality> {
+    let Some((&receiver_param, parameters)) = function.parameters.split_first() else {
+        return None;
+    };
+    if parameters.len() != args.len() {
         return None;
     }
 
     let mut quality = MatchQuality::Exact;
-    let mut check_arg = |expr: &Expr<'_>, param: VariableId| match expr_matches_type(
-        hir,
-        expr,
-        &hir.variable(param).ty,
-    ) {
-        Some(MatchQuality::Exact) => Some(()),
-        Some(MatchQuality::Possible) => {
-            quality = MatchQuality::Possible;
-            Some(())
-        }
-        None => None,
-    };
+    check_arg_match(hir, receiver, receiver_param, &mut quality)?;
+    parameters_match_args_with_quality(hir, parameters, args, &mut quality)?;
 
+    Some(quality)
+}
+
+fn parameters_match_args(
+    hir: &Hir<'_>,
+    parameters: &[VariableId],
+    args: CallArgs<'_>,
+) -> Option<MatchQuality> {
+    if parameters.len() != args.len() {
+        return None;
+    }
+
+    let mut quality = MatchQuality::Exact;
+    parameters_match_args_with_quality(hir, parameters, args, &mut quality)?;
+    Some(quality)
+}
+
+fn parameters_match_args_with_quality(
+    hir: &Hir<'_>,
+    parameters: &[VariableId],
+    args: CallArgs<'_>,
+    quality: &mut MatchQuality,
+) -> Option<()> {
     match args.kind {
         solar::sema::hir::CallArgsKind::Unnamed(exprs) => {
-            for (expr, &param) in exprs.iter().zip(function.parameters) {
-                check_arg(expr, param)?;
+            for (expr, &param) in exprs.iter().zip(parameters) {
+                check_arg_match(hir, expr, param, quality)?;
             }
         }
         solar::sema::hir::CallArgsKind::Named(named_args) => {
             for arg in named_args {
-                let param = function.parameters.iter().copied().find(|&param| {
+                let param = parameters.iter().copied().find(|&param| {
                     hir.variable(param).name.is_some_and(|ident| ident.name == arg.name.name)
                 })?;
-                check_arg(&arg.value, param)?;
+                check_arg_match(hir, &arg.value, param, quality)?;
             }
         }
     }
 
-    Some(quality)
+    Some(())
+}
+
+fn check_arg_match(
+    hir: &Hir<'_>,
+    expr: &Expr<'_>,
+    param: VariableId,
+    quality: &mut MatchQuality,
+) -> Option<()> {
+    match expr_matches_type(hir, expr, &hir.variable(param).ty) {
+        Some(MatchQuality::Exact) => Some(()),
+        Some(MatchQuality::Possible) => {
+            *quality = MatchQuality::Possible;
+            Some(())
+        }
+        None => None,
+    }
 }
 
 fn expr_matches_type(hir: &Hir<'_>, expr: &Expr<'_>, ty: &Type<'_>) -> Option<MatchQuality> {
@@ -430,32 +634,39 @@ fn same_lit_kind(lhs: &LitKind<'_>, rhs: &LitKind<'_>) -> bool {
     }
 }
 
-struct Reachability<'hir> {
+struct Reachability<'hir, 'a> {
     hir: &'hir Hir<'hir>,
-    excluded_sources: HashSet<SourceId>,
+    included_sources: HashSet<SourceId>,
+    using_for: &'a UsingFor,
     reachable: HashSet<FunctionId>,
     current_contract: Option<ContractId>,
+    current_source: Option<SourceId>,
 }
 
-impl<'hir> Reachability<'hir> {
-    fn compute(hir: &'hir Hir<'hir>, excluded_sources: &HashSet<SourceId>) -> HashSet<FunctionId> {
+impl<'hir, 'a> Reachability<'hir, 'a> {
+    fn compute(
+        hir: &'hir Hir<'hir>,
+        included_sources: &HashSet<SourceId>,
+        using_for: &'a UsingFor,
+    ) -> HashSet<FunctionId> {
         let mut this = Self {
             hir,
-            excluded_sources: excluded_sources.clone(),
+            included_sources: included_sources.clone(),
+            using_for,
             reachable: HashSet::new(),
             current_contract: None,
+            current_source: None,
         };
 
         for function_id in hir.function_ids() {
-            if !this.is_excluded_function(function_id) && is_entry_point(hir.function(function_id))
-            {
+            if this.is_included_function(function_id) && is_entry_point(hir.function(function_id)) {
                 this.mark_function(function_id);
             }
         }
 
         for variable_id in hir.variable_ids() {
             let variable = hir.variable(variable_id);
-            if !this.is_excluded_source(variable.source)
+            if this.is_included_source(variable.source)
                 && variable.function.is_none()
                 && variable.initializer.is_some()
             {
@@ -466,16 +677,16 @@ impl<'hir> Reachability<'hir> {
         this.reachable
     }
 
-    fn is_excluded_source(&self, source_id: SourceId) -> bool {
-        self.excluded_sources.contains(&source_id)
+    fn is_included_source(&self, source_id: SourceId) -> bool {
+        self.included_sources.contains(&source_id)
     }
 
-    fn is_excluded_function(&self, function_id: FunctionId) -> bool {
-        self.is_excluded_source(self.hir.function(function_id).source)
+    fn is_included_function(&self, function_id: FunctionId) -> bool {
+        self.is_included_source(self.hir.function(function_id).source)
     }
 
     fn mark_function(&mut self, function_id: FunctionId) {
-        if self.is_excluded_function(function_id) {
+        if !self.is_included_function(function_id) {
             return;
         }
         if self.reachable.insert(function_id) {
@@ -511,7 +722,10 @@ impl<'hir> Reachability<'hir> {
             let Some(contract_id) = self.current_contract else { return functions };
             let contract = self.hir.contract(contract_id);
             for &base_id in contract.linearized_bases.iter().skip(1) {
-                functions.extend(matching_functions(self.hir, base_id, member, args));
+                functions = matching_functions(self.hir, base_id, member, args);
+                if !functions.is_empty() {
+                    return functions;
+                }
             }
             return functions;
         }
@@ -519,7 +733,36 @@ impl<'hir> Reachability<'hir> {
         for contract_id in self.resolve_static_contracts(base) {
             functions.extend(matching_functions(self.hir, contract_id, member, args));
         }
+        functions.extend(self.resolve_using_for(base, member, args));
         functions
+    }
+
+    fn resolve_using_for(
+        &self,
+        base: &'hir Expr<'hir>,
+        member: Symbol,
+        args: CallArgs<'hir>,
+    ) -> Vec<FunctionId> {
+        let Some(source_id) = self.current_source else { return Vec::new() };
+        let mut seen = HashSet::new();
+        let candidates = self
+            .using_for
+            .global_functions
+            .iter()
+            .chain(self.using_for.source_functions.get(&source_id).into_iter().flatten())
+            .chain(
+                self.current_contract
+                    .and_then(|contract_id| self.using_for.contract_functions.get(&contract_id))
+                    .into_iter()
+                    .flatten(),
+            )
+            .copied()
+            .filter(|&function_id| seen.insert(function_id))
+            .filter(|&function_id| {
+                self.hir.function(function_id).name.is_some_and(|ident| ident.name == member)
+            });
+
+        select_matching_member_functions(self.hir, candidates, base, args)
     }
 
     fn resolve_static_contracts(&self, expr: &'hir Expr<'hir>) -> Vec<ContractId> {
@@ -554,7 +797,7 @@ fn is_super(expr: &Expr<'_>) -> bool {
     })
 }
 
-impl<'hir> Visit<'hir> for Reachability<'hir> {
+impl<'hir> Visit<'hir> for Reachability<'hir, '_> {
     type BreakValue = Never;
 
     fn hir(&self) -> &'hir Hir<'hir> {
@@ -563,9 +806,12 @@ impl<'hir> Visit<'hir> for Reachability<'hir> {
 
     fn visit_function(&mut self, function: &'hir Function<'hir>) -> ControlFlow<Self::BreakValue> {
         let previous_contract = self.current_contract;
+        let previous_source = self.current_source;
         self.current_contract = function.contract;
+        self.current_source = Some(function.source);
         let result = self.walk_function(function);
         self.current_contract = previous_contract;
+        self.current_source = previous_source;
         result
     }
 
@@ -577,16 +823,19 @@ impl<'hir> Visit<'hir> for Reachability<'hir> {
     }
 
     fn visit_var(&mut self, variable: &'hir Variable<'hir>) -> ControlFlow<Self::BreakValue> {
-        if self.is_excluded_source(variable.source) {
+        if !self.is_included_source(variable.source) {
             return ControlFlow::Continue(());
         }
 
         let previous_contract = self.current_contract;
+        let previous_source = self.current_source;
         if variable.function.is_none() {
             self.current_contract = variable.contract;
         }
+        self.current_source = Some(variable.source);
         let result = self.walk_var(variable);
         self.current_contract = previous_contract;
+        self.current_source = previous_source;
         result
     }
 

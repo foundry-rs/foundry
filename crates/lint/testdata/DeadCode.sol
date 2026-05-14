@@ -11,6 +11,18 @@ function usedFreeFunction() pure returns (uint256) {
     return 2;
 }
 
+function usedAsAttachedFreeFunction(uint256 value) pure returns (uint256) {
+    return value + 1;
+}
+
+function unusedAttachedFreeFunction(uint256 value) pure returns (uint256) {
+    return value + 2;
+}
+
+function usedByUsingLibrary(uint256 value) pure returns (uint256) {
+    return value * 2;
+}
+
 contract DeadCode {
     uint256 initialized = usedFromInitializer();
 
@@ -126,6 +138,66 @@ contract StaticBase {
 contract StaticChild is StaticBase {
     function callStaticBase() external pure returns (uint256) {
         return StaticBase.usedViaStaticBase();
+    }
+}
+
+contract InheritedBaseInternal {
+    function inheritedHelper() internal pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract InheritedChildCallsBase is InheritedBaseInternal {
+    function callInheritedHelper() external pure returns (uint256) {
+        return inheritedHelper();
+    }
+}
+
+contract SuperRoot {
+    function superHook() internal pure virtual returns (uint256) {
+        return rootOnlyHelper();
+    }
+
+    function rootOnlyHelper() internal pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract SuperMid is SuperRoot {
+    function superHook() internal pure virtual override returns (uint256) {
+        return midOnlyHelper();
+    }
+
+    function midOnlyHelper() internal pure returns (uint256) {
+        return 2;
+    }
+}
+
+contract SuperChild is SuperMid {
+    function callSuperHook() external pure returns (uint256) {
+        return super.superHook();
+    }
+}
+
+contract UsingForFreeFunction {
+    using {usedAsAttachedFreeFunction} for uint256;
+
+    function callAttached(uint256 value) external pure returns (uint256) {
+        return value.usedAsAttachedFreeFunction();
+    }
+}
+
+library UsingForLibrary {
+    function twice(uint256 value) internal pure returns (uint256) {
+        return usedByUsingLibrary(value);
+    }
+}
+
+contract UsingForLibraryCall {
+    using UsingForLibrary for uint256;
+
+    function callLibrary(uint256 value) external pure returns (uint256) {
+        return value.twice();
     }
 }
 
