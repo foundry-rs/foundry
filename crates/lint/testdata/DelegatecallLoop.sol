@@ -3,6 +3,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
+library DelegatecallLoopLib {
+    function helper(bytes calldata payload) internal {
+        address target = address(this);
+        (bool ok,) = target.delegatecall(payload); //~WARN: payable functions should not use `delegatecall` inside a loop
+        require(ok);
+    }
+}
+
+interface OrdinaryDelegatecall {
+    function delegatecall(bytes calldata payload) external returns (bool);
+}
+
 contract DelegatecallLoop {
     function payableForLoop(bytes[] calldata payloads) external payable {
         address target = address(this);
@@ -118,6 +130,37 @@ contract DelegatecallLoop {
         address target = address(this);
         (bool ok,) = target.delegatecall(payload);
         require(ok);
+    }
+
+    function payableLoopWithInternalLibraryDelegatecall(bytes[] calldata payloads) external payable {
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            DelegatecallLoopLib.helper(payloads[i]);
+        }
+    }
+
+    function payableLoopCallsSafeOverload(uint256[] calldata values) external payable {
+        for (uint256 i = 0; i < values.length; ++i) {
+            overloaded(values[i]);
+        }
+    }
+
+    function overloaded(uint256 value) internal pure returns (uint256) {
+        return value;
+    }
+
+    function overloaded(bytes calldata payload) internal {
+        address target = address(this);
+        (bool ok,) = target.delegatecall(payload);
+        require(ok);
+    }
+
+    function payableLoopCallsOrdinaryDelegatecall(
+        OrdinaryDelegatecall callee,
+        bytes[] calldata payloads
+    ) external payable {
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            require(callee.delegatecall(payloads[i]));
+        }
     }
 
     function nonPayableLoop(bytes[] calldata payloads) external {
