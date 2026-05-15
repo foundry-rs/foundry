@@ -1,6 +1,6 @@
 //! Tests for tracing functionality
 
-use foundry_test_utils::str;
+use foundry_test_utils::{str, util::OutputExt};
 
 forgetest_init!(conflicting_signatures, |prj, cmd| {
     prj.add_test(
@@ -77,6 +77,82 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+forgetest_init!(trace_struct_outputs_use_called_contract_abi, |prj, cmd| {
+    prj.add_test(
+        "TraceStructOutputs.t.sol",
+        r#"
+pragma solidity ^0.8.18;
+
+import "forge-std/Test.sol";
+
+contract AAAMuchWow {
+    struct MuchWowStruct {
+        uint256 c;
+        uint256 d;
+    }
+
+    mapping(uint256 => MuchWowStruct) internal items;
+
+    constructor() {
+        items[2] = MuchWowStruct({ c: 3, d: 4 });
+    }
+
+    function item(uint256 id) public view returns (MuchWowStruct memory) {
+        return items[id];
+    }
+}
+
+contract ZWow {
+    struct WowStruct {
+        uint256 a;
+        uint256 b;
+    }
+
+    mapping(uint256 => WowStruct) internal items;
+
+    constructor() {
+        items[1] = WowStruct({ a: 1, b: 2 });
+    }
+
+    function item(uint256 id) public view returns (WowStruct memory) {
+        return items[id];
+    }
+}
+
+contract TraceStructOutputsTest is Test {
+    AAAMuchWow muchWow;
+    ZWow wow;
+
+    function setUp() public {
+        muchWow = new AAAMuchWow();
+        wow = new ZWow();
+    }
+
+    function testStructTracesUseContractAbi() public view {
+        ZWow.WowStruct memory wowItem = wow.item(1);
+        AAAMuchWow.MuchWowStruct memory muchWowItem = muchWow.item(2);
+
+        assertEq(wowItem.a, 1);
+        assertEq(wowItem.b, 2);
+        assertEq(muchWowItem.c, 3);
+        assertEq(muchWowItem.d, 4);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--mt", "testStructTracesUseContractAbi", "-vvvv"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("ZWow::item(1) [staticcall]"), "{stdout}");
+    assert!(stdout.contains("← [Return] WowStruct({ a: 1, b: 2 })"), "{stdout}");
+    assert!(stdout.contains("AAAMuchWow::item(2) [staticcall]"), "{stdout}");
+    assert!(stdout.contains("← [Return] MuchWowStruct({ c: 3, d: 4 })"), "{stdout}");
 });
 
 #[cfg(not(feature = "isolate-by-default"))]
