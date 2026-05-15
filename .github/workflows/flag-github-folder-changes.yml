@@ -1,0 +1,32 @@
+name: Flag .github folder changes from external contributors
+
+on:
+  pull_request_target:
+    paths:
+      - '.github/**'
+
+jobs:
+  flag:
+    runs-on: ubuntu-latest
+    # Only act on PRs from forks (external contributors)
+    if: github.event.pull_request.head.repo.fork == true
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Add security review label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "T-blocked"
+
+      - name: Comment on PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body \
+            "> [!WARNING]
+            > This PR modifies files in the \`.github\` folder. External contributors rarely have a legitimate reason to do so. A maintainer must review these changes carefully before approving CI runs."
