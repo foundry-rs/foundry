@@ -129,8 +129,11 @@ impl BuildArgs {
 
         let machine_mode = foundry_cli::is_machine();
         let format_json = shell::is_json();
-        // `--machine` reserves stdout for the terminal envelope.
-        let compiler = ProjectCompiler::new()
+        // Under `--machine`, only the terminal envelope is allowed on
+        // stdout. Force the compile reporter quiet without overriding the
+        // `--quiet` default in the human path (the builder's default
+        // already picks up `shell::is_quiet()`).
+        let mut compiler = ProjectCompiler::new()
             .files(files)
             .dynamic_test_linking(config.dynamic_test_linking)
             .print_names(self.names)
@@ -142,8 +145,10 @@ impl BuildArgs {
                     .map(ContractSizeLimits::with_runtime_limit)
                     .unwrap_or_default(),
             )
-            .quiet(machine_mode)
             .bail(!format_json);
+        if machine_mode {
+            compiler = compiler.quiet(true);
+        }
 
         let mut output = compiler.compile(&project)?;
 
