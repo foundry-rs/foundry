@@ -134,6 +134,7 @@ impl InvariantFuzzState {
 
     /// Collects state changes from a [StateChangeset] and logs into an [InvariantFuzzState]
     /// according to the given [FuzzDictionaryConfig].
+    #[allow(clippy::too_many_arguments)]
     pub fn collect_values_from_call(
         &self,
         fuzzed_contracts: &FuzzRunIdentifiedContracts,
