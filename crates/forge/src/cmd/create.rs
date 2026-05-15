@@ -364,7 +364,17 @@ impl CreateArgs {
 
         let context = verify.resolve_context().await?;
 
-        verify.verification_provider()?.preflight_verify_check(verify, context).await?;
+        verify.verification_provider()?.preflight_verify_check(verify.clone(), context).await?;
+
+        let api_key =
+            verify.etherscan.key.as_deref().or(verify.verifier.verifier_api_key.as_deref());
+        let chain = verify.etherscan.chain.unwrap_or_default();
+        verify
+            .verifier
+            .check_credentials(api_key, chain, &config)
+            .await
+            .wrap_err("Verification preflight check failed")?;
+
         Ok(())
     }
 

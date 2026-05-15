@@ -19,7 +19,6 @@ use alloy_provider::{Provider, RootProvider, utils::Eip1559Estimation};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::Signature;
 use eyre::{Context, Result, bail};
-use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
 use foundry_common::{
@@ -731,31 +730,34 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         })
     }
 
-    pub fn verify_preflight_check(&self) -> Result<()> {
+    pub async fn verify_preflight_check(&self) -> Result<()> {
         for sequence in self.sequence.sequences() {
             let chain: Chain = sequence.chain.into();
-            let etherscan_key = self
-                .script_config
-                .config
-                .get_etherscan_api_key(Some(chain))
-                .or_else(|| self.script_config.config.etherscan_api_key.clone());
-            // Use the centralized resolver so the preflight reflects the provider that will
-            // actually be used at verification time (not just the explicit CLI value).
-            let resolved = self.args.verifier.resolve(etherscan_key.as_deref(), Some(chain));
-            if resolved == VerificationProviderType::Etherscan {
-                let has_etherscan_url = (chain.etherscan_urls().is_some()
-                    && !chain.is_custom_sourcify())
-                    || self.args.verifier.verifier_url.is_some();
-                if !has_etherscan_url {
-                    eyre::bail!(
-                        "Chain {} has no known Etherscan API URL; pass --verifier-url <URL>",
-                        sequence.chain
-                    );
-                }
-                if etherscan_key.is_none() {
-                    eyre::bail!("Missing etherscan key for chain {}", sequence.chain);
-                }
-            }
+            // Resolve the API key the same way verification does: CLI arg first, then config.
+            let api_key = self
+                .args
+                .verifier
+                .verifier_api_key
+                .clone()
+                .or_else(|| self.script_config.config.get_etherscan_api_key(Some(chain)));
+            let has_url = self.args.verifier.verifier_url.is_some();
+            let is_explicit = self.args.verifier.is_explicitly_set();
+            // Presence check: validates required credentials exist before broadcasting.
+            self.args
+                .verifier
+                .effective_type()
+                .client(api_key.as_deref(), Some(chain), has_url, is_explicit)
+                .wrap_err_with(|| {
+                    format!("Verification preflight check failed for chain {}", sequence.chain)
+                })?;
+            // Connectivity check: validates credentials are actually accepted by the verifier.
+            self.args
+                .verifier
+                .check_credentials(api_key.as_deref(), chain, &self.script_config.config)
+                .await
+                .wrap_err_with(|| {
+                    format!("Verification preflight check failed for chain {}", sequence.chain)
+                })?;
         }
 
         Ok(())

@@ -2,9 +2,11 @@
 //! and Sourcify.
 
 use crate::utils::{self, EnvExternalities};
+use alloy_primitives::hex;
+use anvil::{NodeConfig, spawn};
 use foundry_common::retry::Retry;
 use foundry_test_utils::{
-    forgetest,
+    forgetest, forgetest_async, str,
     util::{OutputExt, TestCommand, TestProject},
 };
 use std::time::Duration;
@@ -359,4 +361,104 @@ Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed o
 Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.
 
 "#]]);
+});
+
+// Tests that `forge create --verify` fails before deploying when the verifier
+// rejects the API key (credential preflight check).
+//
+// Uses `--verifier custom` pointing at a non-listening port so the HTTP credential
+// probe fails immediately (connection refused) without requiring a live endpoint.
+forgetest_async!(create_fails_early_on_bad_verifier_credentials, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "src/Counter.sol:Counter",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--verify",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            "http://127.0.0.1:59999",
+            "--verifier-api-key",
+            "FAKE_KEY_1234",
+        ])
+        .execute();
+
+    assert!(!output.status.success(), "expected command to fail");
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.contains("Verification preflight check failed"),
+        "expected preflight error in stderr, got: {stderr}"
+    );
+    // The contract must NOT have been deployed.
+    let stdout = output.stdout_lossy();
+    assert!(
+        !stdout.contains("Contract Address"),
+        "contract was deployed but preflight check should have prevented it"
+    );
+});
+
+// Tests that `forge script --broadcast --verify` fails before broadcasting when
+// the verifier rejects the API key (credential preflight check).
+//
+// Uses `--verifier custom` pointing at a non-listening port so the HTTP credential
+// probe fails immediately (connection refused) without requiring a live endpoint.
+forgetest_async!(script_fails_early_on_bad_verifier_credentials, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.add_script(
+        "Deploy.s.sol",
+        r#"
+import "forge-std/Script.sol";
+contract Noop {}
+contract Deploy is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Noop();
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "script",
+            "script/Deploy.s.sol:Deploy",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+            "--verify",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            "http://127.0.0.1:59999",
+            "--verifier-api-key",
+            "FAKE_KEY_1234",
+        ])
+        .execute();
+
+    assert!(!output.status.success(), "expected command to fail");
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.contains("Verification preflight check failed"),
+        "expected preflight error in stderr, got: {stderr}"
+    );
+    // The command exiting non-zero with the preflight error message is sufficient evidence
+    // that no transactions were sent before the failure.
 });

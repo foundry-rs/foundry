@@ -10,6 +10,7 @@ use alloy_primitives::{Address, TxHash, map::HashSet};
 use alloy_provider::Provider;
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::Result;
+use foundry_block_explorers::errors::EtherscanError;
 use foundry_cli::{
     opts::{EtherscanOpts, RpcOpts},
     utils::{self, LoadConfig},
@@ -21,7 +22,7 @@ use foundry_config::{
 };
 use itertools::Itertools;
 use semver::BuildMetadata;
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 /// The programming language used for smart contract development.
 ///
@@ -62,6 +63,50 @@ impl VerifierArgs {
     /// Returns true if `--verifier` was explicitly provided by the user.
     pub const fn is_explicitly_set(&self) -> bool {
         self.verifier.is_some()
+    }
+
+    /// Makes a lightweight network call to validate that credentials are accepted by the verifier.
+    pub async fn check_credentials(
+        &self,
+        api_key: Option<&str>,
+        chain: Chain,
+        config: &Config,
+    ) -> eyre::Result<()> {
+        let resolved = self.resolve(api_key, Some(chain));
+        match resolved {
+            VerificationProviderType::Etherscan
+            | VerificationProviderType::Blockscout
+            | VerificationProviderType::Oklink
+            | VerificationProviderType::Custom => {
+                let etherscan_opts =
+                    EtherscanOpts { key: api_key.map(str::to_owned), chain: Some(chain) };
+                let client = EtherscanVerificationProvider::default().client(
+                    &etherscan_opts,
+                    self,
+                    config,
+                )?;
+                match client.contract_abi(Address::ZERO).await {
+                    Ok(_)
+                    | Err(
+                        EtherscanError::ContractCodeNotVerified(_)
+                        | EtherscanError::ContractNotFound(_),
+                    ) => {}
+                    Err(e) => eyre::bail!("verifier credential check failed: {e}"),
+                }
+            }
+            VerificationProviderType::Sourcify => {
+                // Only probe custom URLs; the default public endpoint is assumed reachable.
+                if let Some(url) = &self.verifier_url {
+                    reqwest::Client::new()
+                        .get(url)
+                        .timeout(Duration::from_secs(10))
+                        .send()
+                        .await
+                        .map_err(|e| eyre::eyre!("Sourcify URL `{url}` is not reachable: {e}"))?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Resolves the actual verification provider that will be used at runtime, taking into

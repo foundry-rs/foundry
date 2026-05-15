@@ -426,7 +426,7 @@ impl ScriptArgs {
 
         // Exit early if something is wrong with verification options.
         if bundled.args.verify {
-            bundled.verify_preflight_check()?;
+            bundled.verify_preflight_check().await?;
         }
 
         Ok(Some(bundled))
