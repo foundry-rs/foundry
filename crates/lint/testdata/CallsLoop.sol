@@ -19,6 +19,10 @@ library LocalLib {
     }
 }
 
+struct Target {
+    IReceiver receiver;
+}
+
 contract Receiver {
     event Ping(uint256 value);
 
@@ -34,6 +38,8 @@ contract CallsLoop {
     address payable[] public recipients;
     IReceiver[] public receivers;
     IReceiver public receiver;
+    mapping(address => IReceiver) internal receiverByAddress;
+    Target internal target;
     LocalLib.Box[] internal boxes;
 
     function lowLevelCalls(address[] calldata targets) external {
@@ -54,6 +60,24 @@ contract CallsLoop {
     function highLevelCalls() external {
         for (uint256 i; i < receivers.length; ++i) {
             receivers[i].ping(i);
+        }
+    }
+
+    function callsReturnedReceiver() external {
+        for (uint256 i; i < receivers.length; ++i) {
+            getReceiver().ping(i);
+        }
+    }
+
+    function callsMappedReceiver(address targetAddress) external {
+        for (uint256 i; i < receivers.length; ++i) {
+            receiverByAddress[targetAddress].ping(i);
+        }
+    }
+
+    function callsStructFieldReceiver() external {
+        for (uint256 i; i < receivers.length; ++i) {
+            target.receiver.ping(i);
         }
     }
 
@@ -93,6 +117,10 @@ contract CallsLoop {
     }
 
     function externalOnly(uint256) external {}
+
+    function getReceiver() internal view returns (IReceiver) {
+        return receiver;
+    }
 
     function _notify(uint256 value) internal {
         receiver.ping(value);
