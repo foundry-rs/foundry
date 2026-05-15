@@ -207,6 +207,9 @@ impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
         if member.name != kw::Delegatecall {
             return false;
         }
+        if is_this_or_super(receiver) {
+            return false;
+        }
 
         // Only the address builtin `delegatecall` is the low-level EVM operation.
         // Contract/interface methods with the same name are ordinary external calls.
@@ -218,23 +221,23 @@ impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
         callee: &'hir Expr<'hir>,
         args: &CallArgs<'hir>,
     ) -> Option<FunctionId> {
-        let candidates = match &callee.peel_parens().kind {
-            ExprKind::Ident(reses) => reses
-                .iter()
-                .filter_map(|res| match res {
-                    Res::Item(ItemId::Function(func_id)) => Some(*func_id),
-                    _ => None,
-                })
-                .collect::<Vec<_>>(),
-            ExprKind::Member(base, member) => self.member_function_ids(base, member.name),
-            _ => Vec::new(),
-        };
-
-        unique(candidates.into_iter().filter(|&func_id| {
-            let func = self.hir.function(func_id);
-            is_internal_helper(func)
-                && args_match_function(self.gcx, self.hir, args, func.parameters)
-        }))
+        match &callee.peel_parens().kind {
+            ExprKind::Ident(reses) => unique(
+                reses
+                    .iter()
+                    .filter_map(|res| match res {
+                        Res::Item(ItemId::Function(func_id)) => Some(*func_id),
+                        _ => None,
+                    })
+                    .filter(|&func_id| self.is_followable_call(func_id, args)),
+            ),
+            ExprKind::Member(base, member) => unique(
+                self.member_function_ids(base, member.name)
+                    .into_iter()
+                    .filter(|&func_id| self.is_followable_call(func_id, args)),
+            ),
+            _ => None,
+        }
     }
 
     fn member_function_ids(
@@ -261,13 +264,40 @@ impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
             .collect()
     }
 
+    fn is_followable_call(&self, func_id: FunctionId, args: &CallArgs<'hir>) -> bool {
+        let func = self.hir.function(func_id);
+        is_current_context_helper(func)
+            && args_match_function(self.gcx, self.hir, args, func.parameters)
+    }
+
     fn expr_ty(&self, expr: &'hir Expr<'hir>) -> Option<Ty<'hir>> {
         expr_ty(self.gcx, self.hir, expr)
     }
 }
 
-fn is_internal_helper(func: &Function<'_>) -> bool {
-    func.kind.is_ordinary() && matches!(func.visibility, Visibility::Internal | Visibility::Private)
+fn is_current_context_helper(func: &Function<'_>) -> bool {
+    func.kind.is_ordinary()
+        && matches!(
+            func.visibility,
+            Visibility::Public | Visibility::Internal | Visibility::Private
+        )
+}
+
+fn is_this_or_super(expr: &Expr<'_>) -> bool {
+    matches!(
+        &expr.peel_parens().kind,
+        ExprKind::Ident(reses)
+            if reses.iter().any(|res| {
+                matches!(
+                    res,
+                    Res::Builtin(builtin)
+                        if matches!(
+                            builtin.name(),
+                            solar::interface::sym::this | solar::interface::sym::super_
+                        )
+                )
+            })
+    )
 }
 
 fn unique<T>(mut iter: impl Iterator<Item = T>) -> Option<T> {

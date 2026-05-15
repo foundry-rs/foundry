@@ -15,7 +15,13 @@ interface OrdinaryDelegatecall {
     function delegatecall(bytes calldata payload) external returns (bool);
 }
 
-contract DelegatecallLoop {
+contract ParentOrdinaryDelegatecall {
+    function delegatecall(bytes calldata) public pure virtual returns (bool) {
+        return true;
+    }
+}
+
+contract DelegatecallLoop is ParentOrdinaryDelegatecall {
     function payableForLoop(bytes[] calldata payloads) external payable {
         address target = address(this);
         for (uint256 i = 0; i < payloads.length; ++i) {
@@ -117,6 +123,18 @@ contract DelegatecallLoop {
         delegate(payload);
     }
 
+    function payableLoopWithPublicDelegatecall(bytes[] calldata payloads) external payable {
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            publicDelegate(payloads[i]);
+        }
+    }
+
+    function publicDelegate(bytes calldata payload) public {
+        address target = address(this);
+        (bool ok,) = target.delegatecall(payload); //~WARN: payable functions should not use `delegatecall` inside a loop
+        require(ok);
+    }
+
     function payableLoopWithCallAndStaticcall(bytes[] calldata payloads) external payable {
         address target = address(this);
         for (uint256 i = 0; i < payloads.length; ++i) {
@@ -161,6 +179,22 @@ contract DelegatecallLoop {
         for (uint256 i = 0; i < payloads.length; ++i) {
             require(callee.delegatecall(payloads[i]));
         }
+    }
+
+    function payableLoopCallsThisDelegatecall(bytes[] calldata payloads) external payable {
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            require(this.delegatecall(payloads[i]));
+        }
+    }
+
+    function payableLoopCallsSuperDelegatecall(bytes[] calldata payloads) external payable {
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            require(super.delegatecall(payloads[i]));
+        }
+    }
+
+    function delegatecall(bytes calldata) public pure override returns (bool) {
+        return true;
     }
 
     function nonPayableLoop(bytes[] calldata payloads) external {
