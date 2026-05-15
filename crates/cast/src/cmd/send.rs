@@ -6,7 +6,7 @@ use alloy_ens::NameOrAddress;
 use alloy_network::{
     Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, TransactionBuilder,
 };
-use alloy_primitives::{Address, B256, hex};
+use alloy_primitives::{Address, hex};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
@@ -125,7 +125,7 @@ impl SendTxArgs {
             self;
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
-        let sponsor_url = tx.tempo.sponsor_url.take();
+        let sponsor_url = tx.tempo.sponsor_url.clone();
         let expires_at = tx.tempo.resolve_expires();
         let tempo_sponsor =
             if print_sponsor_hash || sponsor_url.is_some() {
@@ -341,7 +341,8 @@ impl SendTxArgs {
             )
             .await
         // Case 4:
-        // Remote sponsor URL: sign locally, forward raw tx to the sponsor service.
+        // Remote sponsor URL: sign locally, get sponsor signature from the service,
+        // then submit the fully-sponsored tx to the regular RPC.
         } else if let Some(sponsor_url) = sponsor_url {
             let signer = match pre_resolved_signer {
                 Some(s) => s,
@@ -357,14 +358,19 @@ impl SendTxArgs {
                 tx_request.nonce().unwrap_or_default(),
             )?;
 
+            // Sign the tx locally.
             let wallet = EthereumWallet::from(signer);
             let signed_tx = tx_request.build(&wallet).await?;
             let raw_tx = hex::encode_prefixed(signed_tx.encoded_2718());
 
-            let tx_hash =
-                send_via_sponsor_url(&sponsor_url, &raw_tx).await?;
+            // Send to the sponsor service to get the fee payer signature attached.
+            let sponsored_raw_tx = sign_via_sponsor_url(&sponsor_url, &raw_tx).await?;
 
+            // Submit the fully-sponsored tx via the regular RPC.
+            let sponsored_bytes = hex::decode(&sponsored_raw_tx)?;
             let cast = CastTxSender::new(&provider);
+            let pending = cast.send_raw(&sponsored_bytes).await?;
+            let tx_hash = *pending.inner().tx_hash();
             cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
                 .await
         // Case 5:
@@ -470,18 +476,18 @@ where
 }
 
 /// Sends a user-signed raw transaction to a remote sponsor service via JSON-RPC
-/// `eth_sendRawTransaction`. The service adds its fee payer signature and broadcasts
-/// the fully-sponsored transaction.
-async fn send_via_sponsor_url(url: &str, raw_tx_hex: &str) -> Result<B256> {
-    let client = reqwest::Client::new();
+/// `eth_signRawTransaction`. The service adds its fee payer signature and returns the
+/// fully-sponsored raw transaction bytes, which are then ready for submission via the
+/// regular RPC.
+async fn sign_via_sponsor_url(url: &str, raw_tx_hex: &str) -> Result<String> {
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
-        "method": "eth_sendRawTransaction",
+        "method": "eth_signRawTransaction",
         "params": [raw_tx_hex]
     });
 
-    let resp = client
+    let resp = reqwest::Client::new()
         .post(url)
         .header("content-type", "application/json")
         .json(&body)
@@ -501,22 +507,28 @@ async fn send_via_sponsor_url(url: &str, raw_tx_hex: &str) -> Result<B256> {
 
     #[derive(serde::Deserialize)]
     struct JsonRpcResponse {
-        result: Option<B256>,
+        result: Option<String>,
         error: Option<JsonRpcError>,
     }
     #[derive(serde::Deserialize)]
     struct JsonRpcError {
-        message: String,
+        message: Option<String>,
+        name: Option<String>,
+        code: Option<i64>,
     }
 
     let parsed: JsonRpcResponse =
         serde_json::from_str(&text).map_err(|e| eyre!("invalid sponsor service response: {e}"))?;
 
     if let Some(err) = parsed.error {
-        eyre::bail!("sponsor service error: {}", err.message);
+        let msg = err
+            .message
+            .or(err.name)
+            .unwrap_or_else(|| format!("code {}", err.code.unwrap_or(-1)));
+        eyre::bail!("sponsor service error: {msg}");
     }
 
     parsed
         .result
-        .ok_or_else(|| eyre!("sponsor service returned no transaction hash"))
+        .ok_or_else(|| eyre!("sponsor service returned no signed transaction"))
 }
