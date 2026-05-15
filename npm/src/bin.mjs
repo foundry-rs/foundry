@@ -45,6 +45,23 @@ const signalHandlers = {
 for (const [signal, handler] of Object.entries(signalHandlers))
   process.on(signal, handler)
 
+child.on('error', error => {
+  cleanupSignalHandlers()
+  console.error(error)
+  process.exit(1)
+})
+
+child.on('exit', (code, signal) => {
+  cleanupSignalHandlers()
+
+  if (signal) {
+    process.kill(process.pid, signal)
+    return
+  }
+
+  process.exit(code ?? 1)
+})
+
 /**
  * Determines which tool wrapper is executing.
  * @returns {Tool}
@@ -149,4 +166,9 @@ function forwardSignal(signal) {
 
   process.off(signal, signalHandlers[signal])
   process.kill(process.pid, signal)
+}
+
+function cleanupSignalHandlers() {
+  for (const [signal, handler] of Object.entries(signalHandlers))
+    process.off(signal, handler)
 }
