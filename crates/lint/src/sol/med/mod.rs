@@ -18,11 +18,15 @@ use tx_origin::TX_ORIGIN;
 mod unsafe_typecast;
 use unsafe_typecast::UNSAFE_TYPECAST;
 
+mod unused_return;
+use unused_return::UNUSED_RETURN;
+
 register_lints!(
     (DivideBeforeMultiply, early, (DIVIDE_BEFORE_MULTIPLY)),
     (IncorrectERC20Interface, late, (INCORRECT_ERC20_INTERFACE)),
     (IncorrectERC721Interface, late, (INCORRECT_ERC721_INTERFACE)),
     (TypeBasedTautology, late, (TYPE_BASED_TAUTOLOGY)),
     (TxOrigin, early, (TX_ORIGIN)),
-    (UnsafeTypecast, late, (UNSAFE_TYPECAST))
+    (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
+    (UnusedReturn, late, (UNUSED_RETURN))
 );

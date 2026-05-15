@@ -20,6 +20,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
+  - `unused-return`: Return value of an external call is not used.
 - **Low Severity:**
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
