@@ -22,6 +22,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
 - **Low Severity:**
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
+  - `calls-loop`: External calls inside loops can cause denial-of-service if a call reverts or exhausts gas.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
 - **Informational / Style Guide:**
   - `boolean-equal`: Boolean comparisons to constants should be simplified.
