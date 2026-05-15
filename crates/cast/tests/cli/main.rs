@@ -1836,20 +1836,42 @@ casttest!(logs_sig_2, |_prj, cmd| {
 
 casttest!(logs_chunked_large_range, |_prj, cmd| {
     let rpc = next_http_archive_rpc_url();
-    cmd.args([
-        "logs",
-        "--rpc-url",
-        rpc.as_str(),
-        "--from-block",
-        "18000000",
-        "--to-block",
-        "18050000",
-        "--query-size",
-        "1000",
-        "Transfer(address indexed from, address indexed to, uint256 value)",
-        "0xA0b86a33E6441d02dd8C6B2b7E5D1E3eD7F73b4b",
-    ])
-    .assert_success();
+    let output = cmd
+        .args([
+            "logs",
+            "--rpc-url",
+            rpc.as_str(),
+            "--from-block",
+            "12370000",
+            "--to-block",
+            "12421182",
+            "--query-size",
+            "1000",
+            "Transfer(address indexed from, address indexed to, uint256 value)",
+            "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
+            "0x68A99f89E475a078645f4BAC491360aFe255Dff1",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(output.contains("0xb65bcbb85c1633b0ab4e4886c3cd8eeaeb63edbb39cacdb9223fdcf4454fd2c7"));
+
+    cmd.cast_fuse()
+        .args([
+            "logs",
+            "--rpc-url",
+            rpc.as_str(),
+            "--from-block",
+            "12421182",
+            "--to-block",
+            "12421182",
+            "Transfer(address indexed from, address indexed to, uint256 value)",
+            "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B",
+            "0x68A99f89E475a078645f4BAC491360aFe255Dff1",
+        ])
+        .assert_success()
+        .stdout_eq(file!["../fixtures/cast_logs.stdout"]);
 });
 
 casttest!(mktx, |_prj, cmd| {
