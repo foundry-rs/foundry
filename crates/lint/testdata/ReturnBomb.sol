@@ -17,19 +17,23 @@ contract ReturnBomb {
     bytes[] results;
     Result storedResult;
 
-    // SHOULD PASS: Gas-capped calls that do not bind returndata.
-    function ignoresReturnData(address target, bytes memory payload, uint256 gasLimit) public {
-        (bool success, ) = target.call{gas: gasLimit}(payload);
-        require(success, "Call failed");
-    }
-
+    // SHOULD PASS: Calls without a gas cap.
     function valueOnlyOption(address payable target, bytes memory payload, uint256 value) public {
         (bool success, bytes memory result) = target.call{value: value}(payload);
         require(success, "Call failed");
         require(result.length >= 0);
     }
 
-    // SHOULD FAIL: Gas-capped calls that bind unbounded returndata.
+    // SHOULD FAIL: Gas-capped low-level calls that copy unbounded returndata.
+    function ignoresReturnData(address target, bytes memory payload, uint256 gasLimit) public {
+        (bool success, ) = target.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(success, "Call failed");
+    }
+
+    function standaloneLowLevelCall(address target, bytes memory payload, uint256 gasLimit) public {
+        target.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
+    }
+
     function lowLevelCall(address target, bytes memory payload, uint256 gasLimit) public {
         (bool success, bytes memory result) = target.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
         require(success, "Call failed");
@@ -86,6 +90,14 @@ contract ReturnBomb {
     function highLevelDynamicReturn(IReturnBombTarget target, uint256 gasLimit) public {
         bytes memory result = target.fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
         require(result.length >= 0);
+    }
+
+    function standaloneHighLevelDynamicReturn(IReturnBombTarget target, uint256 gasLimit) public {
+        target.fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
+    }
+
+    function nestedHighLevelDynamicReturn(IReturnBombTarget target, uint256 gasLimit) public {
+        require(target.fetch{gas: gasLimit}().length >= 0); //~WARN: external calls with a gas limit should not consume unbounded return data
     }
 
     function directHighLevelDynamicReturn(IReturnBombTarget target, uint256 gasLimit) public returns (bytes memory) {

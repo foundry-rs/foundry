@@ -27,45 +27,22 @@ impl<'hir> LateLintPass<'hir> for ReturnBomb {
         stmt: &'hir hir::Stmt<'hir>,
     ) {
         let span = match stmt.kind {
-            StmtKind::DeclSingle(var) => {
-                let var = hir.variable(var);
-                var.initializer
-                    .filter(|expr| {
-                        call_with_gas_returns_dynamic_data(hir, expr)
-                            && is_dynamic_type(hir, &var.ty)
-                    })
-                    .map(|_| stmt.span)
-            }
-            StmtKind::DeclMulti(vars, expr) => {
-                if is_low_level_call_with_gas_limit(expr) && captures_return_data(hir, vars) {
-                    Some(stmt.span)
-                } else if call_with_gas_returns_dynamic_data(hir, expr)
-                    && captures_dynamic_return_data(hir, vars)
-                {
+            StmtKind::DeclSingle(var) => hir
+                .variable(var)
+                .initializer
+                .filter(|expr| expr_consumes_unbounded_return_data(hir, expr))
+                .map(|_| stmt.span),
+            StmtKind::DeclMulti(_, expr) => {
+                if expr_consumes_unbounded_return_data(hir, expr) {
                     Some(stmt.span)
                 } else {
                     None
                 }
             }
-            StmtKind::Expr(expr) => match expr.kind {
-                ExprKind::Assign(lhs, _, rhs)
-                    if is_low_level_call_with_gas_limit(rhs)
-                        && assigns_return_data_receiver(hir, lhs) =>
-                {
-                    Some(expr.span)
-                }
-                ExprKind::Assign(lhs, _, rhs)
-                    if call_with_gas_returns_dynamic_data(hir, rhs)
-                        && assignment_captures_dynamic_return_data(hir, lhs) =>
-                {
-                    Some(expr.span)
-                }
-                _ => None,
-            },
-            StmtKind::Return(Some(expr)) if is_low_level_call_with_gas_limit(expr) => {
-                Some(stmt.span)
+            StmtKind::Expr(expr) if expr_consumes_unbounded_return_data(hir, expr) => {
+                Some(expr.span)
             }
-            StmtKind::Return(Some(expr)) if call_with_gas_returns_dynamic_data(hir, expr) => {
+            StmtKind::Return(Some(expr)) if expr_consumes_unbounded_return_data(hir, expr) => {
                 Some(stmt.span)
             }
             _ => None,
@@ -77,90 +54,56 @@ impl<'hir> LateLintPass<'hir> for ReturnBomb {
     }
 }
 
-fn captures_return_data(hir: &hir::Hir<'_>, vars: &[Option<hir::VariableId>]) -> bool {
-    vars.get(1)
-        .and_then(|var| *var)
-        .is_some_and(|var| is_dynamic_bytes_type(&hir.variable(var).ty.kind))
-}
-
-fn assigns_return_data_receiver(hir: &hir::Hir<'_>, lhs: &hir::Expr<'_>) -> bool {
-    let ExprKind::Tuple(elements) = &lhs.peel_parens().kind else { return false };
-    elements.get(1).and_then(|element| *element).is_some_and(|expr| is_bytes_lvalue(hir, expr))
-}
-
-fn is_bytes_lvalue(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn expr_consumes_unbounded_return_data(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     let expr = expr.peel_parens();
+
+    if is_low_level_call_with_gas_limit(expr) || call_with_gas_returns_dynamic_data(hir, expr) {
+        return true;
+    }
+
     match &expr.kind {
-        ExprKind::Ident(reses) => reses
-            .iter()
-            .filter_map(hir::Res::as_variable)
-            .any(|var| is_dynamic_bytes_type(&hir.variable(var).ty.kind)),
-        ExprKind::Member(base, member) => {
-            field_type(hir, base, member.name).is_some_and(|ty| is_dynamic_bytes_type(&ty.kind))
+        ExprKind::Array(exprs) => {
+            exprs.iter().any(|expr| expr_consumes_unbounded_return_data(hir, expr))
         }
-        ExprKind::Index(base, _) => {
-            indexed_value_type(hir, base).is_some_and(|ty| is_dynamic_bytes_type(&ty.kind))
+        ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
+            expr_consumes_unbounded_return_data(hir, lhs)
+                || expr_consumes_unbounded_return_data(hir, rhs)
         }
-        _ => false,
+        ExprKind::Call(callee, args, opts) => {
+            expr_consumes_unbounded_return_data(hir, callee)
+                || args.exprs().any(|expr| expr_consumes_unbounded_return_data(hir, expr))
+                || opts.is_some_and(|opts| {
+                    opts.iter().any(|opt| expr_consumes_unbounded_return_data(hir, &opt.value))
+                })
+        }
+        ExprKind::Delete(inner) | ExprKind::Payable(inner) | ExprKind::Unary(_, inner) => {
+            expr_consumes_unbounded_return_data(hir, inner)
+        }
+        ExprKind::Index(base, index) => {
+            expr_consumes_unbounded_return_data(hir, base)
+                || index.is_some_and(|index| expr_consumes_unbounded_return_data(hir, index))
+        }
+        ExprKind::Slice(base, start, end) => {
+            expr_consumes_unbounded_return_data(hir, base)
+                || start.is_some_and(|start| expr_consumes_unbounded_return_data(hir, start))
+                || end.is_some_and(|end| expr_consumes_unbounded_return_data(hir, end))
+        }
+        ExprKind::Member(base, _) => expr_consumes_unbounded_return_data(hir, base),
+        ExprKind::Ternary(cond, then_expr, else_expr) => {
+            expr_consumes_unbounded_return_data(hir, cond)
+                || expr_consumes_unbounded_return_data(hir, then_expr)
+                || expr_consumes_unbounded_return_data(hir, else_expr)
+        }
+        ExprKind::Tuple(exprs) => {
+            exprs.iter().flatten().any(|expr| expr_consumes_unbounded_return_data(hir, expr))
+        }
+        ExprKind::Ident(_)
+        | ExprKind::Lit(_)
+        | ExprKind::New(_)
+        | ExprKind::TypeCall(_)
+        | ExprKind::Type(_)
+        | ExprKind::Err(_) => false,
     }
-}
-
-const fn is_dynamic_bytes_type(ty: &TypeKind<'_>) -> bool {
-    matches!(ty, TypeKind::Elementary(ElementaryType::Bytes))
-}
-
-fn field_type<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    base: &hir::Expr<'hir>,
-    member: Symbol,
-) -> Option<&'hir hir::Type<'hir>> {
-    let base = base.peel_parens();
-    let ExprKind::Ident(reses) = &base.kind else { return None };
-    let var = reses.iter().filter_map(hir::Res::as_variable).next()?;
-    let TypeKind::Custom(ItemId::Struct(struct_id)) = hir.variable(var).ty.kind else {
-        return None;
-    };
-    hir.strukt(struct_id).fields.iter().find_map(|&field| {
-        let field_var = hir.variable(field);
-        (field_var.name?.name == member).then_some(&field_var.ty)
-    })
-}
-
-fn indexed_value_type<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    base: &hir::Expr<'hir>,
-) -> Option<&'hir hir::Type<'hir>> {
-    match &base.peel_parens().kind {
-        ExprKind::Ident(reses) => {
-            let var = reses.iter().filter_map(hir::Res::as_variable).next()?;
-            array_element_type(&hir.variable(var).ty)
-        }
-        ExprKind::Member(inner, member) => {
-            let field = field_type(hir, inner, member.name)?;
-            array_element_type(field)
-        }
-        ExprKind::Index(inner, _) => {
-            let element = indexed_value_type(hir, inner)?;
-            array_element_type(element)
-        }
-        _ => None,
-    }
-}
-
-fn array_element_type<'hir>(ty: &'hir hir::Type<'hir>) -> Option<&'hir hir::Type<'hir>> {
-    let TypeKind::Array(array) = &ty.kind else { return None };
-    Some(&array.element)
-}
-
-fn captures_dynamic_return_data(hir: &hir::Hir<'_>, vars: &[Option<hir::VariableId>]) -> bool {
-    vars.iter().flatten().any(|&var| is_dynamic_type(hir, &hir.variable(var).ty))
-}
-
-fn assignment_captures_dynamic_return_data(hir: &hir::Hir<'_>, lhs: &hir::Expr<'_>) -> bool {
-    let ExprKind::Tuple(elements) = &lhs.peel_parens().kind else {
-        return expr_has_dynamic_type(hir, lhs);
-    };
-    elements.iter().flatten().any(|expr| expr_has_dynamic_type(hir, expr))
 }
 
 fn call_with_gas_returns_dynamic_data(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
@@ -204,25 +147,6 @@ fn function_returns_for_member<'hir>(
         let function = hir.function(id);
         (function.name?.name == member).then_some(function.returns)
     })
-}
-
-fn expr_has_dynamic_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
-    expr_type(hir, expr).is_some_and(|ty| is_dynamic_type(hir, ty))
-}
-
-fn expr_type<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    expr: &hir::Expr<'hir>,
-) -> Option<&'hir hir::Type<'hir>> {
-    match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => {
-            let var = reses.iter().filter_map(hir::Res::as_variable).next()?;
-            Some(&hir.variable(var).ty)
-        }
-        ExprKind::Member(base, member) => field_type(hir, base, member.name),
-        ExprKind::Index(base, _) => indexed_value_type(hir, base),
-        _ => None,
-    }
 }
 
 fn expr_contract_id(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::ContractId> {
