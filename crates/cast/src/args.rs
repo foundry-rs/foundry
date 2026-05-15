@@ -1,6 +1,7 @@
 use crate::{
     Cast, SimpleCast,
     cmd::erc20::IERC20,
+    introspect::REGISTRY,
     opts::{Cast as CastArgs, CastSubcommand, ToBaseArgs},
     traces::identifier::SignaturesIdentifier,
     tx::CastTxSender,
@@ -36,10 +37,11 @@ use tempo_alloy::TempoNetwork;
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
+    // Pre-setup so setup failures land in the machine envelope path.
+    foundry_cli::machine::check_machine();
     setup()?;
 
-    foundry_cli::machine::check_machine();
-    foundry_cli::opts::GlobalArgs::check_introspect::<CastArgs>();
+    foundry_cli::opts::GlobalArgs::check_introspect_with(CastArgs::command(), &REGISTRY);
     foundry_cli::opts::GlobalArgs::check_markdown_help::<CastArgs>();
 
     let args = foundry_cli::parse_or_exit::<CastArgs>();
@@ -852,7 +854,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 mod tests {
     use super::*;
     use foundry_cli::introspect::{
-        CommandRegistry, build_document, capability_violations, duplicate_command_ids,
+        OutputMode, build_document, capability_violations, duplicate_command_ids,
     };
 
     /// Every `command_id` exposed by `cast --introspect` MUST be unique.
@@ -869,7 +871,7 @@ mod tests {
             .stack_size(16 * 1024 * 1024)
             .spawn(|| {
                 let cmd = <CastArgs as clap::CommandFactory>::command();
-                let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+                let doc = build_document(&cmd, &REGISTRY);
                 duplicate_command_ids(&doc)
             })
             .expect("spawn worker thread")
@@ -887,12 +889,42 @@ mod tests {
             .stack_size(16 * 1024 * 1024)
             .spawn(|| {
                 let cmd = <CastArgs as clap::CommandFactory>::command();
-                let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+                let doc = build_document(&cmd, &REGISTRY);
                 capability_violations(&doc)
             })
             .expect("spawn worker thread")
             .join()
             .expect("worker thread join");
         assert!(v.is_empty(), "cast capability violations: {v:?}");
+    }
+
+    /// Every adopted command (`output_mode = Envelope`) must pin a stable
+    /// `command_id` matching its registry entry.
+    #[test]
+    fn registered_commands_pin_stable_ids() {
+        let ids = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let cmd = <CastArgs as clap::CommandFactory>::command();
+                let doc = build_document(&cmd, &REGISTRY);
+                fn walk(c: &foundry_cli::introspect::CommandInfo) -> Vec<String> {
+                    let mut out = Vec::new();
+                    if matches!(c.capabilities.output_mode, OutputMode::Envelope) {
+                        out.push(c.command_id.clone());
+                    }
+                    for sub in &c.subcommands {
+                        out.extend(walk(sub));
+                    }
+                    out
+                }
+                doc.commands.iter().flat_map(walk).collect::<Vec<_>>()
+            })
+            .expect("spawn worker thread")
+            .join()
+            .expect("worker thread join");
+        assert!(
+            ids.iter().any(|s| s == "cast.call"),
+            "cast.call missing from envelope ids: {ids:?}"
+        );
     }
 }

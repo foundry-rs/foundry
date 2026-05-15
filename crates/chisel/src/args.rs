@@ -11,9 +11,10 @@ use yansi::Paint;
 
 /// Run the `chisel` command line interface.
 pub fn run() -> Result<()> {
+    // Pre-setup so setup failures land in the machine envelope path.
+    foundry_cli::machine::check_machine();
     setup()?;
 
-    foundry_cli::machine::check_machine();
     foundry_cli::opts::GlobalArgs::check_introspect::<Chisel>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Chisel>();
 

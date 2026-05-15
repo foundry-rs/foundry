@@ -1,0 +1,30 @@
+//! Stable, agent-facing metadata for the `forge` command tree.
+//!
+//! See [`docs/agents/spec.md`](../../../docs/agents/spec.md). The registry
+//! pins `command_id`s and machine-mode capabilities for adopted commands.
+
+use foundry_cli::introspect::{
+    CapabilityMeta, CommandMeta, CommandRegistry, OutputMode, RegistryEntry, SideEffects,
+};
+
+/// Stable schema id for the `forge build` envelope payload.
+pub const BUILD_RESULT_SCHEMA: &str = "foundry:forge.build@v1";
+
+static ENTRIES: &[RegistryEntry] = &[RegistryEntry {
+    path: &["build"],
+    meta: CommandMeta {
+        command_id: Some("forge.build"),
+        capabilities: CapabilityMeta {
+            output_mode: OutputMode::Envelope,
+            result_schema_ref: Some(BUILD_RESULT_SCHEMA),
+            requires_project: true,
+            side_effects: SideEffects::FsWrite,
+            ..CapabilityMeta::NONE
+        },
+        exit_codes: &[],
+    },
+}];
+
+/// The `forge` command registry. Used by `--introspect` and by adoption code
+/// that needs to look up command metadata.
+pub const REGISTRY: CommandRegistry = CommandRegistry::new(ENTRIES);

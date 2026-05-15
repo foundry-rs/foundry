@@ -1,5 +1,6 @@
 use crate::{
     cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch},
+    introspect::REGISTRY,
     opts::{Forge, ForgeSubcommand},
 };
 use clap::CommandFactory;
@@ -11,10 +12,11 @@ use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 
 /// Run the `forge` command line interface.
 pub fn run() -> Result<()> {
+    // Pre-setup so setup failures land in the machine envelope path.
+    foundry_cli::machine::check_machine();
     setup()?;
 
-    foundry_cli::machine::check_machine();
-    foundry_cli::opts::GlobalArgs::check_introspect::<Forge>();
+    foundry_cli::opts::GlobalArgs::check_introspect_with(Forge::command(), &REGISTRY);
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Forge>();
 
     let args = foundry_cli::parse_or_exit::<Forge>();
@@ -149,7 +151,7 @@ pub fn run_command(args: Forge) -> Result<()> {
 mod tests {
     use super::*;
     use foundry_cli::introspect::{
-        CommandRegistry, build_document, capability_violations, duplicate_command_ids,
+        OutputMode, build_document, capability_violations, duplicate_command_ids,
     };
 
     /// Every `command_id` exposed by `forge --introspect` MUST be unique.
@@ -159,7 +161,7 @@ mod tests {
     #[test]
     fn introspect_command_ids_are_unique() {
         let cmd = <Forge as clap::CommandFactory>::command();
-        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let doc = build_document(&cmd, &REGISTRY);
         let dups = duplicate_command_ids(&doc);
         assert!(dups.is_empty(), "duplicate forge command_ids: {dups:?}");
     }
@@ -170,8 +172,30 @@ mod tests {
     #[test]
     fn introspect_capabilities_are_consistent() {
         let cmd = <Forge as clap::CommandFactory>::command();
-        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let doc = build_document(&cmd, &REGISTRY);
         let v = capability_violations(&doc);
         assert!(v.is_empty(), "forge capability violations: {v:?}");
+    }
+
+    /// Every adopted command (`output_mode = Envelope`) must pin a stable
+    /// `command_id` matching its registry entry. Catches accidental drift
+    /// between the registry and the clap tree.
+    #[test]
+    fn registered_commands_pin_stable_ids() {
+        let cmd = <Forge as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &REGISTRY);
+        fn walk(c: &foundry_cli::introspect::CommandInfo) -> Vec<&str> {
+            let mut out = Vec::new();
+            if matches!(c.capabilities.output_mode, OutputMode::Envelope) {
+                out.push(c.command_id.as_str());
+            }
+            for sub in &c.subcommands {
+                out.extend(walk(sub));
+            }
+            out
+        }
+        let mut envelope_ids: Vec<&str> = doc.commands.iter().flat_map(walk).collect();
+        envelope_ids.sort();
+        assert!(envelope_ids.contains(&"forge.build"), "forge.build missing: {envelope_ids:?}");
     }
 }
