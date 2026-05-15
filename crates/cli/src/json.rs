@@ -134,10 +134,10 @@ impl JsonMessage {
 /// The trailing newline makes this suitable for NDJSON streams when each call
 /// emits one self-contained JSON record.
 ///
-/// Under `--machine` this bypasses [`Shell::is_quiet`] so the agent contract
-/// remains visible even when the global shell is flipped to `Quiet` to
-/// silence human prints. Outside machine mode, behaves like the legacy
-/// `sh_println!` path and respects quiet.
+/// Under `--machine` this bypasses [`foundry_common::shell::Shell::is_quiet`]
+/// so the agent contract remains visible even when the global shell is
+/// flipped to `Quiet` to silence human prints. Outside machine mode, behaves
+/// like the legacy `sh_println!` path and respects quiet.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     let s = to_string(value)?;
     if crate::machine::is_machine() {
