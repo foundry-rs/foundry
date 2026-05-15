@@ -149,6 +149,9 @@ pub struct CallTraceDecoder {
 
     /// All known functions.
     pub functions: HashMap<Selector, Vec<Function>>,
+    /// Per-address function index, used to disambiguate selector collisions when the called
+    /// contract is identified. Keyed by address, then selector.
+    pub functions_by_address: HashMap<Address, HashMap<Selector, Function>>,
     /// All known events.
     ///
     /// Key is: `(topics[0], topics.len() - 1)`.
@@ -239,6 +242,7 @@ impl CallTraceDecoder {
                 .flatten()
                 .map(|func| (func.selector(), vec![func]))
                 .collect(),
+            functions_by_address: Default::default(),
             events: console::ds::abi::events()
                 .into_values()
                 // Tempo
@@ -278,6 +282,7 @@ impl CallTraceDecoder {
         self.receive_contracts.clear();
         self.fallback_contracts.clear();
         self.non_fallback_contracts.clear();
+        self.functions_by_address.clear();
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
@@ -414,6 +419,12 @@ impl CallTraceDecoder {
                 self.non_fallback_contracts
                     .insert(address, abi.functions().map(|f| f.selector()).collect());
             }
+
+            // Index this contract's functions by selector so the decoder can pick the right
+            // function (and therefore the right return-type metadata) when multiple known
+            // contracts share the same selector. Replaces any prior entry for the address.
+            self.functions_by_address
+                .insert(address, abi.functions().map(|f| (f.selector(), f.clone())).collect());
         }
     }
 
@@ -459,17 +470,32 @@ impl CallTraceDecoder {
 
         if is_abi_call_data(cdata) {
             let selector = Selector::try_from(&cdata[..SELECTOR_LEN]).unwrap();
-            let mut functions = Vec::new();
-            let functions = match self.functions.get(&selector) {
-                Some(fs) => fs,
-                None => {
-                    if let Some(identifier) = &self.signature_identifier
-                        && let Some(function) = identifier.identify_function(selector).await
-                    {
-                        functions.push(function);
-                    }
-                    &functions
+            let mut scratch = Vec::new();
+            // Resolve the function set to use for decoding:
+            // - no collision: use the single global candidate (zero overhead, common case)
+            // - collision + address known: prefer the called contract's function so its return-type
+            //   metadata (struct/field names) is used to format the trace
+            // - collision + address unknown: fall through to `select_contract_function`
+            // - selector unknown: try the signature identifier
+            let functions: &[Function] = if let Some(fs) = self.functions.get(&selector) {
+                if fs.len() <= 1 {
+                    fs
+                } else if let Some(func) = self
+                    .functions_by_address
+                    .get(&trace.address)
+                    .and_then(|by_selector| by_selector.get(&selector))
+                {
+                    std::slice::from_ref(func)
+                } else {
+                    fs
                 }
+            } else if let Some(identifier) = &self.signature_identifier
+                && let Some(function) = identifier.identify_function(selector).await
+            {
+                scratch.push(function);
+                &scratch
+            } else {
+                &scratch
             };
 
             // Check if unsupported fn selector: calldata dooes NOT point to one of its selectors +
@@ -979,6 +1005,96 @@ mod tests {
         // Should return only the function that can decode the calldata (func2)
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].signature(), "gasprice_bit_ether(int128)");
+    }
+
+    /// Regression test: when two known contracts share a function selector but use different
+    /// return-type metadata (e.g. distinct struct/field names), the decoder must format the
+    /// trace using the called contract's ABI, not the first one collected.
+    #[tokio::test(flavor = "current_thread")]
+    async fn test_address_scoped_function_disambiguation() {
+        use alloy_json_abi::JsonAbi;
+
+        let wow_abi: JsonAbi = serde_json::from_str(
+            r#"[{
+                "type":"function",
+                "name":"items",
+                "inputs":[{"name":"k","type":"uint256","internalType":"uint256"}],
+                "outputs":[{
+                    "name":"",
+                    "type":"tuple",
+                    "internalType":"struct Wow.WowStruct",
+                    "components":[
+                        {"name":"a","type":"uint256","internalType":"uint256"},
+                        {"name":"b","type":"uint256","internalType":"uint256"}
+                    ]
+                }],
+                "stateMutability":"view"
+            }]"#,
+        )
+        .unwrap();
+
+        let muchwow_abi: JsonAbi = serde_json::from_str(
+            r#"[{
+                "type":"function",
+                "name":"items",
+                "inputs":[{"name":"k","type":"uint256","internalType":"uint256"}],
+                "outputs":[{
+                    "name":"",
+                    "type":"tuple",
+                    "internalType":"struct MuchWow.MuchWowStruct",
+                    "components":[
+                        {"name":"c","type":"uint256","internalType":"uint256"},
+                        {"name":"d","type":"uint256","internalType":"uint256"}
+                    ]
+                }],
+                "stateMutability":"view"
+            }]"#,
+        )
+        .unwrap();
+
+        let wow_addr = Address::from([0x11; 20]);
+        let muchwow_addr = Address::from([0x22; 20]);
+
+        let mut decoder = CallTraceDecoder::new().clone();
+        // Register MuchWow first so it would win the legacy collision tie-break.
+        decoder.collect_abi(&muchwow_abi, Some(muchwow_addr));
+        decoder.collect_abi(&wow_abi, Some(wow_addr));
+
+        // Both functions share the same selector since they share name + inputs.
+        let selector = wow_abi.functions().next().unwrap().selector();
+        assert_eq!(selector, muchwow_abi.functions().next().unwrap().selector());
+        assert_eq!(decoder.functions.get(&selector).map(Vec::len), Some(2));
+
+        // calldata: items(0)
+        let mut data = Vec::with_capacity(36);
+        data.extend_from_slice(selector.as_slice());
+        data.extend_from_slice(&[0u8; 32]);
+
+        // output: WowStruct(11, 22) — same bytes regardless of which struct shape is used.
+        let mut output = Vec::with_capacity(64);
+        output.extend_from_slice(&[0u8; 31]);
+        output.push(11);
+        output.extend_from_slice(&[0u8; 31]);
+        output.push(22);
+
+        let trace = CallTrace {
+            address: wow_addr,
+            data: data.into(),
+            output: output.into(),
+            success: true,
+            ..Default::default()
+        };
+
+        let decoded = decoder.decode_function(&trace).await;
+        let return_data = decoded.return_data.expect("should decode return data");
+        assert!(
+            return_data.contains("WowStruct") && !return_data.contains("MuchWowStruct"),
+            "expected WowStruct in return data, got: {return_data}"
+        );
+        assert!(
+            return_data.contains("a:") && return_data.contains("b:"),
+            "expected fields a,b from WowStruct, got: {return_data}"
+        );
     }
 
     #[test]
