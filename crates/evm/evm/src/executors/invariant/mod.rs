@@ -1,7 +1,9 @@
 use crate::{
     executors::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, FuzzTestTimer,
-        RawCallResult, corpus::WorkerCorpus,
+        RawCallResult,
+        corpus::WorkerCorpus,
+        symexec::{self, SymExecState},
     },
     inspectors::Fuzzer,
 };
@@ -507,7 +509,47 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
         let edge_coverage_enabled = self.config.corpus.collect_edge_coverage();
 
+        // Symbolic-assist state for invariant tests. The invariant runner
+        // is single-worker, so the assist always runs (when enabled) on
+        // the master corpus.
+        let symexec_active = self.config.corpus.symexec_assist_active();
+        let symexec_interval = self.config.corpus.symexec_assist_interval.max(1);
+        let mut runs_since_symexec: u32 = 0;
+        let mut symexec_state = SymExecState::default();
+
         'stop: while continue_campaign(runs) {
+            if symexec_active {
+                runs_since_symexec += 1;
+                if runs_since_symexec >= symexec_interval {
+                    let timer = Instant::now();
+                    match symexec::run_symexec_assist(
+                        &mut corpus_manager,
+                        &self.executor,
+                        None,
+                        Some(&invariant_test.targeted_contracts),
+                        &mut symexec_state,
+                        /* stateful */ true,
+                    ) {
+                        Ok(n) if n > 0 => {
+                            trace!(
+                                target: "corpus",
+                                "symexec assist accepted {n} candidates in {:?}",
+                                timer.elapsed()
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(err) => {
+                            debug!(
+                                target: "corpus",
+                                %err,
+                                "symexec assist cycle errored"
+                            );
+                        }
+                    }
+                    runs_since_symexec = 0;
+                }
+            }
+
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
 

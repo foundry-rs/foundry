@@ -1123,6 +1123,88 @@ impl WorkerCorpus {
         Ok(())
     }
 
+    // -- Symbolic-assist helpers ------------------------------------------
+    //
+    // These accessors are used by `crate::executors::symexec::run_symexec_assist`
+    // to drive the master worker's symbolic-assist cycle without exposing
+    // `CorpusEntry` internals to the rest of the crate.
+
+    /// Whether this is the master worker (the only one allowed to drive
+    /// symbolic assist in v1).
+    pub const fn is_master(&self) -> bool {
+        self.id == 0
+    }
+
+    /// Snapshot a small candidate pool of seeds for symbolic-assist seed
+    /// scoring. Returns at most `MAX` entries (kept tiny so scoring stays
+    /// cheap).
+    pub fn symexec_seed_pool(&self) -> Vec<crate::executors::symexec::SeedSnapshot> {
+        const MAX: usize = 16;
+        self.in_memory_corpus
+            .iter()
+            .rev()
+            .take(MAX)
+            .map(|e| crate::executors::symexec::SeedSnapshot {
+                uuid: e.uuid,
+                tx_seq: e.tx_seq.clone(),
+                is_favored: e.is_favored,
+                new_finds_produced: e.new_finds_produced,
+            })
+            .collect()
+    }
+
+    /// Returns a copy of the current EVM history map. Used by the symbolic
+    /// worker to detect frontier (currently-unseen) edges without holding
+    /// the corpus mutably for the duration of replay.
+    pub fn history_map_snapshot(&self) -> Vec<u8> {
+        self.history_map.clone()
+    }
+
+    /// Path to the master worker's `sync/` directory. The symbolic-assist
+    /// worker writes accepted candidates here so the next `sync()` cycle
+    /// imports them.
+    pub fn master_sync_dir(&self) -> Option<PathBuf> {
+        self.config.corpus_dir.as_ref().map(|d| d.join(format!("{WORKER}0")).join(SYNC_DIR))
+    }
+
+    /// Validate a candidate sequence produced by the symbolic-assist
+    /// worker: re-run it through a clone of `executor` and report whether
+    /// it produced at least one previously-unseen EVM edge against a
+    /// snapshot of the history map. Does *not* mutate `self.history_map`
+    /// — the next `calibrate()` call will fold in the persisted file's
+    /// coverage in the normal way.
+    ///
+    /// `stateful` mirrors `WorkerCorpus::new`'s replay behavior: when
+    /// `true`, intermediate txs are committed so later txs see the prefix
+    /// state (invariant tests). When `false`, each tx runs against the
+    /// post-`setUp` baseline (stateless fuzz).
+    pub fn symexec_validate<FEN: FoundryEvmNetwork>(
+        &self,
+        executor: &Executor<FEN>,
+        candidate: &[BasicTxDetails],
+        stateful: bool,
+    ) -> Result<bool> {
+        if !self.config.collect_evm_edge_coverage() {
+            return Ok(false);
+        }
+        let mut executor = executor.clone();
+        let mut history = self.history_map.clone();
+        let mut sancov_history = self.sancov_history_map.clone();
+        let mut produced_new = false;
+        for tx in candidate {
+            let mut result = execute_tx(&mut executor, tx)?;
+            let (new_coverage, _is_edge) =
+                result.merge_all_coverage(&mut history, &mut sancov_history);
+            if new_coverage {
+                produced_new = true;
+            }
+            if stateful {
+                executor.commit(&mut result);
+            }
+        }
+        Ok(produced_new)
+    }
+
     /// Helper to check if a tx can be replayed.
     fn can_replay_tx(
         tx: &BasicTxDetails,

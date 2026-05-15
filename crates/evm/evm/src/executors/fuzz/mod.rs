@@ -1,6 +1,7 @@
 use crate::executors::{
     DURATION_BETWEEN_METRICS_REPORT, EarlyExit, Executor, FuzzTestTimer, RawCallResult,
     corpus::{GlobalCorpusMetrics, WorkerCorpus},
+    symexec::{self, SymExecState},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -503,6 +504,18 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let sync_threshold = SYNC_INTERVAL + sync_offset;
         let mut runs_since_sync = sync_threshold; // Always sync at the start.
         let mut last_metrics_report = Instant::now();
+
+        // Symbolic-assist state — only initialised on the master worker
+        // (`worker_id == 0`). The master periodically replays a corpus seed
+        // under a branch-trace inspector, proposes ABI-aware mutations
+        // that flip an unseen branch, validates them via normal coverage,
+        // and writes accepted candidates into its own `sync/` directory so
+        // the existing corpus protocol distributes them.
+        let symexec_active =
+            worker_id == 0 && self.config.corpus.symexec_assist_active();
+        let symexec_interval = self.config.corpus.symexec_assist_interval.max(1);
+        let mut runs_since_symexec: u32 = 0;
+        let mut symexec_state = SymExecState::default();
         // Continue while:
         // 1. Global state allows (not timed out, not at global limit, no failure found)
         // 2. Worker hasn't reached its specific run limit
@@ -542,6 +555,38 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     )?;
                     trace!("finished corpus sync in {:?}", timer.elapsed());
                     runs_since_sync = 0;
+                }
+
+                if symexec_active {
+                    runs_since_symexec += 1;
+                    if runs_since_symexec >= symexec_interval {
+                        let timer = Instant::now();
+                        match symexec::run_symexec_assist(
+                            &mut corpus,
+                            &executor,
+                            Some(func),
+                            None,
+                            &mut symexec_state,
+                            /* stateful */ false,
+                        ) {
+                            Ok(n) if n > 0 => {
+                                trace!(
+                                    target: "corpus",
+                                    "symexec assist accepted {n} candidates in {:?}",
+                                    timer.elapsed()
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(err) => {
+                                debug!(
+                                    target: "corpus",
+                                    %err,
+                                    "symexec assist cycle errored"
+                                );
+                            }
+                        }
+                        runs_since_symexec = 0;
+                    }
                 }
 
                 let fuzz_run = self.config.run.unwrap_or(worker.runs + 1);

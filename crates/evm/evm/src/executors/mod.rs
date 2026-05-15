@@ -63,6 +63,7 @@ pub use invariant::InvariantExecutor;
 
 mod corpus;
 mod sancov;
+pub mod symexec;
 mod trace;
 
 pub use trace::TracingExecutor;
@@ -983,6 +984,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub line_coverage: Option<HitMaps>,
     /// The edge coverage info collected during the call
     pub edge_coverage: Option<Vec<u8>>,
+    /// Branch observations collected by the symbolic-assist worker.
+    pub branch_trace: Option<crate::inspectors::BranchTrace>,
     /// Sancov edge coverage from instrumented native Rust crates (e.g. precompiles).
     /// Tracked separately from EVM edge coverage to avoid ID-space collisions.
     pub sancov_coverage: Option<Vec<u8>>,
@@ -1020,6 +1023,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             traces: None,
             line_coverage: None,
             edge_coverage: None,
+            branch_trace: None,
             sancov_coverage: None,
             sancov_cmp_values: None,
             transactions: None,
@@ -1239,6 +1243,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         traces,
         line_coverage,
         edge_coverage,
+        branch_trace,
         cheatcodes,
         chisel_state,
         reverter,
@@ -1266,6 +1271,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         traces,
         line_coverage,
         edge_coverage,
+        branch_trace,
         sancov_coverage: None,
         sancov_cmp_values: None,
         transactions,

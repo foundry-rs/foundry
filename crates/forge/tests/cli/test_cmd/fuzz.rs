@@ -1013,3 +1013,101 @@ fn random_failure_reason(stdout: &str) -> String {
         .unwrap_or_else(|| panic!("{stdout}"))[1]
         .to_string()
 }
+
+// Regression test for the symbolic-assist worker:
+// `crate::executors::symexec::run_symexec_assist`.
+//
+// The fuzz target has a hard equality guard on a 32-byte "magic" value that
+// random fuzzing cannot reasonably hit. With `symexec_assist = true`, the
+// master worker should:
+//   1. replay an existing corpus seed under the branch-trace inspector,
+//   2. observe the `EQ(x, MAGIC)` near `JUMPI`,
+//   3. propose new calldata with `x = MAGIC` via the ABI-rewrite backend,
+//   4. validate it (new edge), and
+//   5. persist the candidate into the master's `worker0/sync/` directory.
+//
+// We assert end-to-end by scanning the corpus directory after the run for any
+// JSON file whose calldata contains the magic value; this verifies the loop
+// closes (replay → propose → validate → persist) without relying on the test
+// having to fail.
+forgetest_init!(symexec_assist_solves_equality_guard, |prj, cmd| {
+    prj.update_config(|config| {
+        // Enough runs that the symbolic worker triggers at least once.
+        config.fuzz.runs = 100;
+        config.fuzz.corpus.corpus_dir = Some("symexec_corpus".into());
+        config.fuzz.corpus.corpus_gzip = false;
+        config.fuzz.corpus.symexec_assist = true;
+        config.fuzz.corpus.symexec_assist_interval = 5;
+    });
+
+    prj.add_test(
+        "SymExecAssistTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract SymExecAssistTest is Test {
+    // Distinctive 32-byte magic value: random fuzzing cannot hit this, so
+    // the only way for a corpus entry to contain these exact bytes is for
+    // the symbolic-assist worker to have proposed it from the `EQ(x, MAGIC)`
+    // observation.
+    uint256 constant MAGIC = 0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef;
+
+    // Coverage-guided branch with no revert — the symbolic worker only needs
+    // to discover the `true` side as new coverage.
+    uint256 public hits;
+
+    function testFuzz_FindMagic(uint256 x) public {
+        if (x == MAGIC) {
+            hits = hits + 1;
+        }
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "testFuzz_FindMagic"]).assert_success();
+
+    // Master corpus directory: `<corpus_dir>/<contract>/<test>/worker0/corpus/`.
+    let corpus_root = prj
+        .root()
+        .join("symexec_corpus")
+        .join("SymExecAssistTest")
+        .join("testFuzz_FindMagic");
+    let master_corpus = corpus_root.join("worker0").join("corpus");
+    let master_sync = corpus_root.join("worker0").join("sync");
+
+    let magic_hex = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+
+    let mut search_dirs = vec![master_corpus.clone(), master_sync.clone()];
+    if let Ok(entries) = std::fs::read_dir(&corpus_root) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                search_dirs.push(p.join("corpus"));
+                search_dirs.push(p.join("sync"));
+            }
+        }
+    }
+
+    let mut found = false;
+    'outer: for dir in &search_dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Ok(contents) = std::fs::read_to_string(&path) else { continue };
+            if contents.to_ascii_lowercase().contains(magic_hex) {
+                found = true;
+                break 'outer;
+            }
+        }
+    }
+
+    assert!(
+        found,
+        "expected the symbolic-assist worker to persist a corpus entry containing the magic \
+         value; checked dirs: {search_dirs:?}",
+    );
+});

@@ -25,6 +25,11 @@ pub use stack::{InspectorData, InspectorStack, InspectorStackBuilder};
 mod edge_cov;
 pub use edge_cov::EdgeCovInspector;
 
+mod branch_trace;
+pub use branch_trace::{
+    BranchObservation, BranchTrace, BranchTraceInspector, CmpKind, CmpObservation,
+};
+
 mod revert_diagnostic;
 pub use revert_diagnostic::RevertDiagnostic;
 

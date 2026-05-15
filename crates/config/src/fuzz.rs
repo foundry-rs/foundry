@@ -135,6 +135,18 @@ pub struct FuzzCorpusConfig {
     /// Whether to capture comparison operands from sancov-instrumented crates
     /// and inject them into the fuzz dictionary. Independent of `sancov_edges`.
     pub sancov_trace_cmp: bool,
+    /// Whether to enable the symbolic-assist worker. When set, the master
+    /// fuzz worker periodically replays a corpus seed under a branch-trace
+    /// inspector, proposes ABI-aware calldata mutations that flip an
+    /// uncovered branch, validates them through the normal coverage gate,
+    /// and writes accepted candidates into its `sync/` directory so the
+    /// existing corpus protocol distributes them.
+    /// Requires `corpus_dir` to be set and EVM edge coverage to be enabled
+    /// (i.e. `sancov_edges` off).
+    pub symexec_assist: bool,
+    /// Number of fuzz runs between symbolic-assist cycles on the master
+    /// worker. Ignored when `symexec_assist` is `false`.
+    pub symexec_assist_interval: u32,
 }
 
 impl FuzzCorpusConfig {
@@ -178,6 +190,13 @@ impl FuzzCorpusConfig {
     pub const fn is_coverage_guided(&self) -> bool {
         self.corpus_dir.is_some()
     }
+
+    /// Whether the symbolic-assist worker should run. v1 only supports the
+    /// EVM edge-coverage signal, so we require coverage-guided mode and
+    /// disable assist when sancov edges are taking over.
+    pub const fn symexec_assist_active(&self) -> bool {
+        self.symexec_assist && self.is_coverage_guided() && !self.sancov_edges
+    }
 }
 
 impl Default for FuzzCorpusConfig {
@@ -190,6 +209,8 @@ impl Default for FuzzCorpusConfig {
             show_edge_coverage: false,
             sancov_edges: false,
             sancov_trace_cmp: false,
+            symexec_assist: false,
+            symexec_assist_interval: 200,
         }
     }
 }

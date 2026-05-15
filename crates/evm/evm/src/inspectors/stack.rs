@@ -1,7 +1,7 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer, EdgeCovInspector, Fuzzer,
-    LineCoverageCollector, LogCollector, RevertDiagnostic, ScriptExecutionInspector, TempoLabels,
-    TracingInspector,
+    BranchTrace, BranchTraceInspector, Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer,
+    EdgeCovInspector, Fuzzer, LineCoverageCollector, LogCollector, RevertDiagnostic,
+    ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256,
@@ -316,6 +316,9 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
     pub traces: Option<SparsedTraceArena>,
     pub line_coverage: Option<HitMaps>,
     pub edge_coverage: Option<Vec<u8>>,
+    /// Branch observations collected by the symbolic-assist worker, when
+    /// [`InspectorStack::collect_branch_trace`] is enabled.
+    pub branch_trace: Option<BranchTrace>,
     pub cheatcodes: Option<Box<Cheatcodes<FEN>>>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
     pub reverter: Option<Address>,
@@ -360,6 +363,7 @@ pub struct InspectorStackInner {
     // Inspectors.
     // These are boxed to reduce the size of the struct and slightly improve performance of the
     // `if let Some` checks.
+    pub branch_trace: Option<Box<BranchTraceInspector>>,
     pub chisel_state: Option<Box<ChiselState>>,
     pub edge_coverage: Option<Box<EdgeCovInspector>>,
     pub fuzzer: Option<Box<Fuzzer>>,
@@ -546,6 +550,15 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.edge_coverage = yes.then(EdgeCovInspector::new).map(Into::into);
     }
 
+    /// Set whether to enable the branch-trace inspector used by the
+    /// symbolic-assist worker. Independent of [`Self::collect_edge_coverage`]:
+    /// branch trace observes JUMPI + comparator operands and never updates
+    /// the edge coverage map.
+    #[inline]
+    pub fn collect_branch_trace(&mut self, yes: bool) {
+        self.branch_trace = yes.then(BranchTraceInspector::new).map(Into::into);
+    }
+
     /// Set whether to collect sancov edge coverage from instrumented native crates.
     #[inline]
     pub const fn collect_sancov_edges(&mut self, yes: bool) {
@@ -628,6 +641,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
             mut cheatcodes,
             inner:
                 InspectorStackInner {
+                    branch_trace,
                     chisel_state,
                     line_coverage,
                     edge_coverage,
@@ -669,6 +683,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
             traces,
             line_coverage: line_coverage.map(|line_coverage| line_coverage.finish()),
             edge_coverage: edge_coverage.map(|edge_coverage| edge_coverage.into_hitcount()),
+            branch_trace: branch_trace.map(|mut bt| bt.take_trace()),
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
             reverter,
@@ -961,6 +976,7 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
         call_inspectors!(
             [
                 // These are sorted in definition order.
+                &mut self.branch_trace,
                 &mut self.edge_coverage,
                 &mut self.fuzzer,
                 &mut self.line_coverage,

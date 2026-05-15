@@ -1856,3 +1856,102 @@ contract FailureEventTest is Test {
 ...
 "#]]);
 });
+
+// Regression test for the symbolic-assist worker driving stateful invariant
+// tests. The handler exposes a hard equality guard on a 32-byte magic value
+// that random fuzzing cannot reasonably hit. With `symexec_assist = true`,
+// the (single) invariant worker should observe the `EQ(x, MAGIC)` near
+// `JUMPI` while replaying a corpus seed, propose new calldata with
+// `x = MAGIC`, validate it (new edge), and persist the candidate into the
+// master worker's `sync/` directory.
+//
+// We assert end-to-end by scanning the corpus directory afterwards for any
+// JSON file whose calldata contains the magic value. The invariant itself
+// is trivially true so the test passes regardless of whether the assist
+// fires; the structural check on the corpus is the real signal.
+forgetest_init!(symexec_assist_solves_equality_guard_invariant, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 60;
+        config.invariant.depth = 5;
+        config.invariant.corpus.corpus_dir = Some("symexec_inv_corpus".into());
+        config.invariant.corpus.corpus_gzip = false;
+        config.invariant.corpus.symexec_assist = true;
+        config.invariant.corpus.symexec_assist_interval = 5;
+        config.invariant.fail_on_revert = false;
+    });
+
+    prj.add_test(
+        "SymExecAssistInvariantTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract MagicHandler {
+    uint256 constant MAGIC = 0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef;
+    uint256 public hits;
+
+    function setMagic(uint256 x) public {
+        if (x == MAGIC) {
+            hits = hits + 1;
+        }
+    }
+}
+
+contract SymExecAssistInvariantTest is Test {
+    MagicHandler handler;
+
+    function setUp() public {
+        handler = new MagicHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_always_true() public view {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_always_true"]).assert_success();
+
+    let corpus_root = prj
+        .root()
+        .join("symexec_inv_corpus")
+        .join("SymExecAssistInvariantTest")
+        .join("invariant_always_true");
+
+    let magic_hex = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+
+    let mut search_dirs = vec![
+        corpus_root.join("worker0").join("corpus"),
+        corpus_root.join("worker0").join("sync"),
+    ];
+    if let Ok(entries) = std::fs::read_dir(&corpus_root) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                search_dirs.push(p.join("corpus"));
+                search_dirs.push(p.join("sync"));
+            }
+        }
+    }
+
+    let mut found = false;
+    'outer: for dir in &search_dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Ok(contents) = std::fs::read_to_string(&path) else { continue };
+            if contents.to_ascii_lowercase().contains(magic_hex) {
+                found = true;
+                break 'outer;
+            }
+        }
+    }
+
+    assert!(
+        found,
+        "expected the symbolic-assist worker to persist a corpus entry containing the magic \
+         value; checked dirs: {search_dirs:?}",
+    );
+});
