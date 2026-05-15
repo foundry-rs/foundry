@@ -130,6 +130,47 @@ contract OkTransitive {
     }
 }
 
+// Regression: `this.<fn>(...)` member-call dispatch. The callee is not a plain
+// `Ident` resolved to a `FunctionId` inside `SendChecker`, but `_doSend` is
+// public/external on `self`, so it's already seeded into the worklist via
+// `linearized_bases.all_functions()` and its body is analyzed transitively.
+contract OkExternalSelfCall {
+    function deposit() external payable {}
+
+    function withdraw(address payable to, uint256 amount) external {
+        this._doSend(to, amount);
+    }
+
+    function _doSend(address payable to, uint256 amount) external {
+        to.transfer(amount);
+    }
+}
+
+// Regression: inline assembly is lowered to `StmtKind::Err` and is opaque to the
+// HIR visitor. The lint bails conservatively on any contract whose inheritance
+// chain contains assembly, to avoid false positives like `call(...)` /
+// `selfdestruct` exits expressed in Yul.
+contract OkAssemblyExit {
+    function deposit() external payable {}
+
+    function withdraw(address to, uint256 amount) external {
+        assembly {
+            let ok := call(gas(), to, amount, 0, 0, 0, 0)
+            if iszero(ok) { revert(0, 0) }
+        }
+    }
+}
+
+contract OkAssemblySelfdestruct {
+    function deposit() external payable {}
+
+    function close(address to) external {
+        assembly {
+            selfdestruct(to)
+        }
+    }
+}
+
 contract OkDelegatecall {
     function deposit() external payable {}
 

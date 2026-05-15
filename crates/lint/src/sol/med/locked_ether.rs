@@ -8,7 +8,7 @@ use solar::{
     interface::{kw, sym},
     sema::{
         builtins::Builtin,
-        hir::{self, ExprKind, FunctionId, ItemId, Res, Visit as _},
+        hir::{self, ExprKind, FunctionId, ItemId, Res, StmtKind, Visit as _},
     },
 };
 use std::{collections::HashSet, ops::ControlFlow};
@@ -105,6 +105,18 @@ impl<'hir> hir::Visit<'hir> for SendChecker<'_, 'hir> {
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
         self.hir
+    }
+
+    /// Inline assembly is lowered to `StmtKind::Err` by Solar; we cannot soundly inspect it
+    /// for ETH-sending opcodes (`call`, `selfdestruct`, ...). Bail conservatively to avoid
+    /// false positives on contracts whose only exit lives in assembly. Reusing `Break(())`
+    /// here is intentional: the outer loop treats it the same as "found an exit" — skip
+    /// the warning for this contract.
+    fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        if matches!(stmt.kind, StmtKind::Err(_)) {
+            return ControlFlow::Break(());
+        }
+        self.walk_stmt(stmt)
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
