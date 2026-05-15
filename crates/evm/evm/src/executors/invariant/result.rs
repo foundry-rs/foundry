@@ -228,7 +228,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     let mut broken: Option<&'a Function> = None;
 
     let handlers_succeeded = || {
-        invariant_test.targeted_contracts.targets.lock().keys().all(|address| {
+        invariant_test.targeted_contracts.targets().keys().all(|address| {
             invariant_run.executor.is_success(
                 *address,
                 false,
