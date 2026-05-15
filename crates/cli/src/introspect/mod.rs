@@ -11,7 +11,8 @@ mod document;
 mod registry;
 
 pub use build::{
-    build_document, collect_command_ids, duplicate_command_ids, render_introspect_document,
+    build_document, capability_violations, collect_command_ids, duplicate_command_ids,
+    render_introspect_document,
 };
 pub use document::*;
 pub use registry::{CommandMeta, CommandRegistry};

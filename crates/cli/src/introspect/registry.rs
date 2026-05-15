@@ -95,7 +95,7 @@ impl CommandRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::introspect::document::OutputMode;
+    use crate::introspect::document::{OutputMode, SideEffects};
     use std::borrow::Cow;
 
     fn fixture_registry() -> CommandRegistry {
@@ -105,13 +105,13 @@ mod tests {
                 command_id: Some("forge.build"),
                 capabilities: Capabilities {
                     output_mode: OutputMode::Envelope,
-                    result_schema_ref: None,
+                    result_schema_ref: Some(Cow::Borrowed("foundry:forge.build@v1")),
                     event_schema_ref: None,
                     session_schema_ref: None,
                     reads_stdin: false,
                     supports_output_path: false,
                     requires_project: true,
-                    side_effects: super::super::document::SideEffects::FsWrite,
+                    side_effects: SideEffects::FsWrite,
                     long_running: false,
                     stateful: false,
                 },
@@ -179,7 +179,7 @@ mod tests {
                     reads_stdin: false,
                     supports_output_path: false,
                     requires_project: true,
-                    side_effects: super::super::document::SideEffects::None,
+                    side_effects: SideEffects::None,
                     long_running: false,
                     stateful: false,
                 },

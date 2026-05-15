@@ -1,5 +1,5 @@
 use crate::opts::{Anvil, AnvilSubcommand};
-use clap::{CommandFactory, Parser};
+use clap::CommandFactory;
 use eyre::Result;
 use foundry_cli::utils;
 
@@ -7,12 +7,13 @@ use foundry_cli::utils;
 pub fn run() -> Result<()> {
     // Pre-parse discovery flags run before `setup()` so they cannot be blocked
     // by panic-handler / tracing init failures and avoid that init's cost.
+    foundry_cli::machine::check_machine();
     foundry_cli::opts::GlobalArgs::check_introspect::<Anvil>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Anvil>();
 
     setup()?;
 
-    let mut args = Anvil::parse();
+    let mut args = foundry_cli::parse_or_exit::<Anvil>();
     args.global.init()?;
     args.node.evm.resolve_rpc_alias();
 
@@ -49,6 +50,7 @@ pub fn run_command(args: Anvil) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn verify_cli() {
@@ -103,5 +105,15 @@ mod tests {
         let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
         assert_eq!(doc.binary.name, "anvil");
+    }
+
+    /// Capability self-consistency for every `anvil` command.
+    #[test]
+    fn introspect_capabilities_are_consistent() {
+        use foundry_cli::introspect::{CommandRegistry, build_document, capability_violations};
+        let cmd = <Anvil as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let v = capability_violations(&doc);
+        assert!(v.is_empty(), "anvil capability violations: {v:?}");
     }
 }
