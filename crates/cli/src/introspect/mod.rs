@@ -10,7 +10,9 @@ mod build;
 mod document;
 mod registry;
 
-pub use build::{build_document, collect_command_ids, duplicate_command_ids};
+pub use build::{
+    build_document, capability_violations, collect_command_ids, duplicate_command_ids,
+};
 pub use document::*;
 pub use registry::{CommandMeta, CommandRegistry};
 

@@ -1,13 +1,15 @@
 //! Build an [`IntrospectDocument`] from a `clap::Command` tree.
 
 use clap::{Arg, ArgAction, Command};
+use std::sync::OnceLock;
 
 use super::{
-    INTROSPECT_SCHEMA_ID, INTROSPECT_SCHEMA_VERSION,
+    INTROSPECT_SCHEMA_ID, INTROSPECT_SCHEMA_VERSION, OutputMode,
     document::{
-        ArgInfo, ArgKind, BinaryInfo, Capabilities, CommandInfo, IntrospectDocument, ValueType,
+        ArgInfo, ArgKind, BinaryInfo, Capabilities, CommandInfo, ExitCodeInfo, IntrospectDocument,
+        ValueType,
     },
-    registry::{CommandMeta, CommandRegistry},
+    registry::{CapabilityMeta, CommandMeta, CommandRegistry, ExitCodeMeta},
 };
 
 /// Collect every `command_id` (recursively) emitted by an
@@ -22,6 +24,124 @@ pub fn collect_command_ids(doc: &IntrospectDocument) -> Vec<String> {
     let mut out = Vec::new();
     for cmd in &doc.commands {
         walk(cmd, &mut out);
+    }
+    out
+}
+
+/// Assert capability self-consistency for every command in `doc`.
+///
+/// Returns one error message per offending command. Static repo-wide check
+/// that catches commands declaring an output mode without wiring the
+/// supporting schema metadata, or vice versa.
+///
+/// Per-mode rules (see also spec §3, §4, §8):
+///
+/// - [`OutputMode::None`](super::OutputMode::None) and
+///   [`OutputMode::LegacyJson`](super::OutputMode::LegacyJson) MUST NOT carry schema refs.
+/// - [`OutputMode::Envelope`](super::OutputMode::Envelope) requires `result_schema_ref`; MUST NOT
+///   carry `event_schema_ref` or `session_schema_ref`.
+/// - [`OutputMode::Stream`](super::OutputMode::Stream) requires `event_schema_ref`; implies
+///   `long_running = true`. `result_schema_ref` MAY also be set when the stream ends with a
+///   terminal envelope.
+/// - [`OutputMode::Session`](super::OutputMode::Session) requires `session_schema_ref`; implies
+///   `stateful = true` and `long_running = true`.
+///
+/// Schema refs, when present, must be non-empty and match
+/// `^foundry:[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*(\.event|\.session)?@v\d+$`.
+pub fn capability_violations(doc: &IntrospectDocument) -> Vec<String> {
+    static SCHEMA_REF_RE: OnceLock<regex::Regex> = OnceLock::new();
+    let schema_re = SCHEMA_REF_RE.get_or_init(|| {
+        regex::Regex::new(r"^foundry:[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*(\.event|\.session)?@v\d+$")
+            .expect("schema-ref regex compiles")
+    });
+
+    fn check_ref(
+        out: &mut Vec<String>,
+        id: &str,
+        name: &str,
+        val: Option<&str>,
+        re: &regex::Regex,
+    ) {
+        if let Some(v) = val {
+            if v.is_empty() {
+                out.push(format!("{id}: capabilities.{name} must not be empty"));
+            } else if !re.is_match(v) {
+                out.push(format!(
+                    "{id}: capabilities.{name} = `{v}` does not match `foundry:<id>@vN`"
+                ));
+            }
+        }
+    }
+
+    fn walk(cmd: &CommandInfo, out: &mut Vec<String>, re: &regex::Regex) {
+        let caps = &cmd.capabilities;
+        let id = cmd.command_id.as_str();
+
+        // Format check on every present ref, regardless of mode.
+        check_ref(out, id, "result_schema_ref", caps.result_schema_ref.as_deref(), re);
+        check_ref(out, id, "event_schema_ref", caps.event_schema_ref.as_deref(), re);
+        check_ref(out, id, "session_schema_ref", caps.session_schema_ref.as_deref(), re);
+
+        match caps.output_mode {
+            OutputMode::None | OutputMode::LegacyJson => {
+                if caps.result_schema_ref.is_some()
+                    || caps.event_schema_ref.is_some()
+                    || caps.session_schema_ref.is_some()
+                {
+                    out.push(format!(
+                        "{id}: output_mode={:?} must not carry any schema refs",
+                        caps.output_mode
+                    ));
+                }
+            }
+            OutputMode::Envelope => {
+                if caps.result_schema_ref.is_none() {
+                    out.push(format!(
+                        "{id}: output_mode=envelope requires capabilities.result_schema_ref"
+                    ));
+                }
+                if caps.event_schema_ref.is_some() {
+                    out.push(format!("{id}: output_mode=envelope must not carry event_schema_ref"));
+                }
+                if caps.session_schema_ref.is_some() {
+                    out.push(format!(
+                        "{id}: output_mode=envelope must not carry session_schema_ref"
+                    ));
+                }
+            }
+            OutputMode::Stream => {
+                if caps.event_schema_ref.is_none() {
+                    out.push(format!(
+                        "{id}: output_mode=stream requires capabilities.event_schema_ref"
+                    ));
+                }
+                if !caps.long_running {
+                    out.push(format!("{id}: output_mode=stream implies long_running = true"));
+                }
+            }
+            OutputMode::Session => {
+                if caps.session_schema_ref.is_none() {
+                    out.push(format!(
+                        "{id}: output_mode=session requires capabilities.session_schema_ref"
+                    ));
+                }
+                if !caps.stateful {
+                    out.push(format!("{id}: output_mode=session implies stateful = true"));
+                }
+                if !caps.long_running {
+                    out.push(format!("{id}: output_mode=session implies long_running = true"));
+                }
+            }
+        }
+
+        for sub in &cmd.subcommands {
+            walk(sub, out, re);
+        }
+    }
+
+    let mut out = Vec::new();
+    for cmd in &doc.commands {
+        walk(cmd, &mut out, schema_re);
     }
     out
 }
@@ -86,8 +206,10 @@ fn build_command_info(
     let meta = registry.lookup(&lookup_path);
 
     let command_id = derive_command_id(&path, meta);
-    let capabilities = meta.map_or_else(Capabilities::default, |m| m.capabilities.clone());
-    let exit_codes = meta.map_or_else(Vec::new, |m| m.exit_codes.to_vec());
+    let capabilities =
+        meta.map_or_else(Capabilities::default, |m| capabilities_from(&m.capabilities));
+    let exit_codes =
+        meta.map_or_else(Vec::new, |m| m.exit_codes.iter().map(exit_code_from).collect());
 
     let aliases = command.get_visible_aliases().map(str::to_string).collect::<Vec<_>>();
 
@@ -114,6 +236,33 @@ fn build_command_info(
         capabilities,
         exit_codes,
         hidden: command.is_hide_set(),
+    }
+}
+
+/// Convert const-friendly registry [`CapabilityMeta`] to the owned
+/// serialized [`Capabilities`] form emitted in introspection.
+fn capabilities_from(meta: &CapabilityMeta) -> Capabilities {
+    Capabilities {
+        output_mode: meta.output_mode,
+        result_schema_ref: meta.result_schema_ref.map(String::from),
+        event_schema_ref: meta.event_schema_ref.map(String::from),
+        session_schema_ref: meta.session_schema_ref.map(String::from),
+        reads_stdin: meta.reads_stdin,
+        supports_output_path: meta.supports_output_path,
+        requires_project: meta.requires_project,
+        side_effects: meta.side_effects,
+        long_running: meta.long_running,
+        stateful: meta.stateful,
+    }
+}
+
+/// Convert const-friendly registry [`ExitCodeMeta`] to the owned serialized
+/// [`ExitCodeInfo`] form emitted in introspection.
+fn exit_code_from(meta: &ExitCodeMeta) -> ExitCodeInfo {
+    ExitCodeInfo {
+        code: meta.code,
+        name: meta.name.to_string(),
+        description: meta.description.to_string(),
     }
 }
 
@@ -269,7 +418,7 @@ mod tests {
                 path: &["build"],
                 meta: CommandMeta {
                     command_id: Some("demo.compile"),
-                    capabilities: Capabilities::NONE,
+                    capabilities: CapabilityMeta::NONE,
                     exit_codes: &[],
                 },
             }];
@@ -314,6 +463,168 @@ mod tests {
         for arg in &build.args {
             assert!(arg.name != "help" && arg.name != "version", "got {arg:?}");
         }
+    }
+
+    /// Helper: build a registry with one entry pinned at `["build"]`.
+    fn registry_with_one_build_entry(meta: &'static CommandMeta) -> CommandRegistry {
+        let entry: &'static super::super::registry::RegistryEntry =
+            Box::leak(Box::new(super::super::registry::RegistryEntry {
+                path: &["build"],
+                meta: *meta,
+            }));
+        CommandRegistry::new(std::slice::from_ref(entry))
+    }
+
+    #[test]
+    fn capability_violations_detects_envelope_without_schema_ref() {
+        static META: CommandMeta = CommandMeta {
+            command_id: None,
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::Envelope,
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
+        };
+        static ENTRIES: &[super::super::registry::RegistryEntry] =
+            &[super::super::registry::RegistryEntry { path: &["build"], meta: META }];
+        let registry = CommandRegistry::new(ENTRIES);
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+        let violations = capability_violations(&doc);
+        assert_eq!(violations.len(), 1, "got {violations:?}");
+        assert!(violations[0].contains("envelope requires capabilities.result_schema_ref"));
+    }
+
+    #[test]
+    fn capability_violations_passes_for_well_formed_envelope() {
+        static META: CommandMeta = CommandMeta {
+            command_id: None,
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::Envelope,
+                result_schema_ref: Some("foundry:demo.build@v1"),
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
+        };
+        static ENTRIES: &[super::super::registry::RegistryEntry] =
+            &[super::super::registry::RegistryEntry { path: &["build"], meta: META }];
+        let registry = CommandRegistry::new(ENTRIES);
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+        let violations = capability_violations(&doc);
+        assert!(violations.is_empty(), "unexpected violations: {violations:?}");
+    }
+
+    #[test]
+    fn capability_violations_rejects_empty_schema_ref() {
+        static META: CommandMeta = CommandMeta {
+            command_id: None,
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::Envelope,
+                result_schema_ref: Some(""),
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
+        };
+        let registry = registry_with_one_build_entry(&META);
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+        let v = capability_violations(&doc);
+        assert!(v.iter().any(|s| s.contains("must not be empty")), "got {v:?}");
+    }
+
+    #[test]
+    fn capability_violations_rejects_malformed_schema_ref() {
+        static META: CommandMeta = CommandMeta {
+            command_id: None,
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::Envelope,
+                result_schema_ref: Some("not-a-foundry-ref"),
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
+        };
+        let registry = registry_with_one_build_entry(&META);
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+        let v = capability_violations(&doc);
+        assert!(v.iter().any(|s| s.contains("does not match")), "got {v:?}");
+    }
+
+    #[test]
+    fn capability_violations_rejects_envelope_with_event_ref() {
+        static META: CommandMeta = CommandMeta {
+            command_id: None,
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::Envelope,
+                result_schema_ref: Some("foundry:demo.build@v1"),
+                event_schema_ref: Some("foundry:demo.build.event@v1"),
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
+        };
+        let registry = registry_with_one_build_entry(&META);
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+        let v = capability_violations(&doc);
+        assert!(v.iter().any(|s| s.contains("must not carry event_schema_ref")), "got {v:?}");
+    }
+
+    #[test]
+    fn capability_violations_rejects_none_with_schema_ref() {
+        static META: CommandMeta = CommandMeta {
+            command_id: None,
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::None,
+                result_schema_ref: Some("foundry:demo.build@v1"),
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
+        };
+        let registry = registry_with_one_build_entry(&META);
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+        let v = capability_violations(&doc);
+        assert!(v.iter().any(|s| s.contains("must not carry any schema refs")), "got {v:?}");
+    }
+
+    #[test]
+    fn capability_violations_session_requires_stateful() {
+        static META: CommandMeta = CommandMeta {
+            command_id: None,
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::Session,
+                session_schema_ref: Some("foundry:demo.session@v1"),
+                long_running: true,
+                stateful: false,
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
+        };
+        let registry = registry_with_one_build_entry(&META);
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+        let v = capability_violations(&doc);
+        assert!(v.iter().any(|s| s.contains("implies stateful")), "got {v:?}");
+    }
+
+    #[test]
+    fn capability_violations_stream_requires_long_running() {
+        static META: CommandMeta = CommandMeta {
+            command_id: None,
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::Stream,
+                event_schema_ref: Some("foundry:demo.event@v1"),
+                long_running: false,
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
+        };
+        let registry = registry_with_one_build_entry(&META);
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+        let v = capability_violations(&doc);
+        assert!(v.iter().any(|s| s.contains("implies long_running")), "got {v:?}");
     }
 
     #[test]

@@ -2,7 +2,6 @@ use crate::{
     opts::{Chisel, ChiselSubcommand},
     prelude::{ChiselCommand, ChiselDispatcher, SolidityHelper},
 };
-use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
@@ -14,10 +13,11 @@ use yansi::Paint;
 pub fn run() -> Result<()> {
     setup()?;
 
+    foundry_cli::machine::check_machine();
     foundry_cli::opts::GlobalArgs::check_introspect::<Chisel>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Chisel>();
 
-    let args = Chisel::parse();
+    let args = foundry_cli::parse_or_exit::<Chisel>();
     args.global.init()?;
     args.global.tokio_runtime().block_on(run_command(args))
 }
@@ -193,5 +193,15 @@ mod tests {
         let doc = build_document(&cmd, &CommandRegistry::EMPTY);
         let dups = duplicate_command_ids(&doc);
         assert!(dups.is_empty(), "duplicate chisel command_ids: {dups:?}");
+    }
+
+    /// Capability self-consistency for every `chisel` command.
+    #[test]
+    fn introspect_capabilities_are_consistent() {
+        use foundry_cli::introspect::{CommandRegistry, build_document, capability_violations};
+        let cmd = Chisel::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let v = capability_violations(&doc);
+        assert!(v.is_empty(), "chisel capability violations: {v:?}");
     }
 }

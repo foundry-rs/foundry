@@ -28,8 +28,15 @@ pub struct GlobalArgs {
     quiet: bool,
 
     /// Format log messages as JSON.
-    #[arg(help_heading = "Display options", global = true, long, alias = "format-json", conflicts_with_all = &["quiet", "color"])]
+    #[arg(help_heading = "Display options", global = true, long, alias = "format-json", conflicts_with_all = &["quiet", "color", "machine"])]
     json: bool,
+
+    /// Activate the agent contract: emit declared output mode only, no color,
+    /// no progress, structured early-exit. Implies no color. Mutually
+    /// exclusive with `--json` and `--md` to keep machine-mode output
+    /// unambiguous.
+    #[arg(help_heading = "Display options", global = true, long, conflicts_with_all = &["color", "md"])]
+    machine: bool,
 
     /// Format log messages as Markdown.
     #[arg(
@@ -102,6 +109,12 @@ impl GlobalArgs {
 
     /// Initialize the global options.
     pub fn init(&self) -> eyre::Result<()> {
+        // Keep the runtime machine-mode flag in sync with what clap parsed.
+        // `check_machine` runs pre-parse on the binary entry point; this
+        // covers callers that construct `GlobalArgs` programmatically and
+        // ensures the flag never goes stale.
+        crate::machine::set_machine(self.machine);
+
         // Set the global shell.
         let shell = self.shell();
         // Argument takes precedence over the env var global color choice.
@@ -120,6 +133,7 @@ impl GlobalArgs {
         // Display a warning message if the current version is not stable.
         if IS_NIGHTLY_VERSION
             && !self.json
+            && !self.machine
             && std::env::var_os("FOUNDRY_DISABLE_NIGHTLY_WARNING").is_none()
         {
             let _ = sh_warn!("{}", NIGHTLY_VERSION_WARNING_MESSAGE);
@@ -134,7 +148,11 @@ impl GlobalArgs {
             true => OutputMode::Quiet,
             false => OutputMode::Normal,
         };
-        let color = self.json.then_some(ColorChoice::Never).or(self.color).unwrap_or_default();
+        // `--machine` forces no-color; `--json` already forces no-color.
+        let color = (self.json || self.machine)
+            .then_some(ColorChoice::Never)
+            .or(self.color)
+            .unwrap_or_default();
         let format = if self.json {
             OutputFormat::Json
         } else if self.md {

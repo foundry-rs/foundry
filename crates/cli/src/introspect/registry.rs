@@ -14,31 +14,88 @@
 //! registered explicitly. Once a command is registered, its `command_id` is
 //! considered frozen and CI uniqueness checks ensure it cannot collide.
 
-use super::document::{Capabilities, ExitCodeInfo};
+use super::document::{OutputMode, SideEffects};
 
 /// Per-leaf metadata that overlays the clap-derived defaults.
-#[derive(Clone, Debug)]
+///
+/// All fields are `&'static`-friendly so each binary can declare its
+/// registry as a `static` slice without heap allocation. The serialized
+/// [`Capabilities`](super::Capabilities) / [`ExitCodeInfo`](super::ExitCodeInfo)
+/// types use owned `String`s; conversion happens in
+/// [`build_document`](super::build_document).
+#[derive(Clone, Copy, Debug)]
 pub struct CommandMeta {
     /// Stable machine identifier, e.g. `"forge.build"`.
     ///
     /// When set, this overrides the path-derived default.
     pub command_id: Option<&'static str>,
     /// Capabilities reported for agent consumers.
-    pub capabilities: Capabilities,
+    pub capabilities: CapabilityMeta,
     /// Command-specific exit codes, in addition to the global table.
-    pub exit_codes: &'static [ExitCodeInfo],
+    pub exit_codes: &'static [ExitCodeMeta],
 }
 
 impl CommandMeta {
     /// Const-constructible default suitable for use in `static` registries.
     pub const DEFAULT: Self =
-        Self { command_id: None, capabilities: Capabilities::NONE, exit_codes: &[] };
+        Self { command_id: None, capabilities: CapabilityMeta::NONE, exit_codes: &[] };
 }
 
 impl Default for CommandMeta {
     fn default() -> Self {
         Self::DEFAULT
     }
+}
+
+/// Const-friendly capability metadata stored in a static registry.
+///
+/// Mirrors [`Capabilities`](super::Capabilities) but with `&'static str` in
+/// place of `String` so the whole struct can live in a `static`. Converted to
+/// owned form during introspection rendering.
+#[derive(Clone, Copy, Debug)]
+pub struct CapabilityMeta {
+    pub output_mode: OutputMode,
+    pub result_schema_ref: Option<&'static str>,
+    pub event_schema_ref: Option<&'static str>,
+    pub session_schema_ref: Option<&'static str>,
+    pub reads_stdin: bool,
+    pub supports_output_path: bool,
+    pub requires_project: bool,
+    pub side_effects: SideEffects,
+    pub long_running: bool,
+    pub stateful: bool,
+}
+
+impl CapabilityMeta {
+    /// Default with no machine-mode contract.
+    pub const NONE: Self = Self {
+        output_mode: OutputMode::None,
+        result_schema_ref: None,
+        event_schema_ref: None,
+        session_schema_ref: None,
+        reads_stdin: false,
+        supports_output_path: false,
+        requires_project: false,
+        side_effects: SideEffects::None,
+        long_running: false,
+        stateful: false,
+    };
+}
+
+impl Default for CapabilityMeta {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
+/// Const-friendly exit-code entry stored in a static registry.
+///
+/// Mirrors [`ExitCodeInfo`](super::ExitCodeInfo) with borrowed strings.
+#[derive(Clone, Copy, Debug)]
+pub struct ExitCodeMeta {
+    pub code: i32,
+    pub name: &'static str,
+    pub description: &'static str,
 }
 
 /// A binary's command registry.
@@ -51,7 +108,7 @@ pub struct CommandRegistry {
 }
 
 /// A single registry entry.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct RegistryEntry {
     /// Clap path components, e.g. `&["build"]` for `forge build`.
     ///
@@ -86,24 +143,18 @@ impl CommandRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::introspect::document::OutputMode;
 
     fn fixture_registry() -> CommandRegistry {
         static ENTRIES: &[RegistryEntry] = &[RegistryEntry {
             path: &["build"],
             meta: CommandMeta {
                 command_id: Some("forge.build"),
-                capabilities: Capabilities {
+                capabilities: CapabilityMeta {
                     output_mode: OutputMode::Envelope,
-                    result_schema_ref: None,
-                    event_schema_ref: None,
-                    session_schema_ref: None,
-                    reads_stdin: false,
-                    supports_output_path: false,
+                    result_schema_ref: Some("foundry:forge.build@v1"),
                     requires_project: true,
                     side_effects: super::super::document::SideEffects::FsWrite,
-                    long_running: false,
-                    stateful: false,
+                    ..CapabilityMeta::NONE
                 },
                 exit_codes: &[],
             },

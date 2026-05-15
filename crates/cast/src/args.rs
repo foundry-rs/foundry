@@ -12,7 +12,7 @@ use alloy_network::Ethereum;
 use alloy_primitives::{Address, B256, eip191_hash_message, hex, keccak256};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
-use clap::{CommandFactory, Parser};
+use clap::CommandFactory;
 use clap_complete::generate;
 use eyre::{Result, WrapErr};
 use foundry_cli::utils::{self, LoadConfig};
@@ -38,10 +38,11 @@ use tempo_alloy::TempoNetwork;
 pub fn run() -> Result<()> {
     setup()?;
 
+    foundry_cli::machine::check_machine();
     foundry_cli::opts::GlobalArgs::check_introspect::<CastArgs>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<CastArgs>();
 
-    let args = CastArgs::parse();
+    let args = foundry_cli::parse_or_exit::<CastArgs>();
     args.global.init()?;
     args.global.tokio_runtime().block_on(run_command(args))
 }
@@ -850,7 +851,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_cli::introspect::{CommandRegistry, build_document, duplicate_command_ids};
+    use foundry_cli::introspect::{
+        CommandRegistry, build_document, capability_violations, duplicate_command_ids,
+    };
 
     /// Every `command_id` exposed by `cast --introspect` MUST be unique.
     /// This is the foundation of the agent contract — agents key on
@@ -873,5 +876,23 @@ mod tests {
             .join()
             .expect("worker thread join");
         assert!(dups.is_empty(), "duplicate cast command_ids: {dups:?}");
+    }
+
+    /// Capability self-consistency: any command declaring an output mode
+    /// must wire the matching schema reference. See
+    /// [`capability_violations`].
+    #[test]
+    fn introspect_capabilities_are_consistent() {
+        let v = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let cmd = <CastArgs as clap::CommandFactory>::command();
+                let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+                capability_violations(&doc)
+            })
+            .expect("spawn worker thread")
+            .join()
+            .expect("worker thread join");
+        assert!(v.is_empty(), "cast capability violations: {v:?}");
     }
 }

@@ -2,7 +2,7 @@ use crate::{
     cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch},
     opts::{Forge, ForgeSubcommand},
 };
-use clap::{CommandFactory, Parser};
+use clap::CommandFactory;
 use clap_complete::generate;
 use eyre::Result;
 use foundry_cli::utils;
@@ -13,10 +13,11 @@ use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 pub fn run() -> Result<()> {
     setup()?;
 
+    foundry_cli::machine::check_machine();
     foundry_cli::opts::GlobalArgs::check_introspect::<Forge>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Forge>();
 
-    let args = Forge::parse();
+    let args = foundry_cli::parse_or_exit::<Forge>();
     args.global.init()?;
 
     run_command(args)
@@ -147,7 +148,9 @@ pub fn run_command(args: Forge) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_cli::introspect::{CommandRegistry, build_document, duplicate_command_ids};
+    use foundry_cli::introspect::{
+        CommandRegistry, build_document, capability_violations, duplicate_command_ids,
+    };
 
     /// Every `command_id` exposed by `forge --introspect` MUST be unique.
     /// This is the foundation of the agent contract — agents key on
@@ -159,5 +162,16 @@ mod tests {
         let doc = build_document(&cmd, &CommandRegistry::EMPTY);
         let dups = duplicate_command_ids(&doc);
         assert!(dups.is_empty(), "duplicate forge command_ids: {dups:?}");
+    }
+
+    /// Capability self-consistency: any command declaring an output mode
+    /// must wire the matching schema reference. See
+    /// [`capability_violations`].
+    #[test]
+    fn introspect_capabilities_are_consistent() {
+        let cmd = <Forge as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let v = capability_violations(&doc);
+        assert!(v.is_empty(), "forge capability violations: {v:?}");
     }
 }
