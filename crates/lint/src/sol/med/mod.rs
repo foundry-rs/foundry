@@ -1,5 +1,8 @@
 use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
 
+mod assert_state_change;
+use assert_state_change::ASSERT_STATE_CHANGE;
+
 mod div_mul;
 use div_mul::DIVIDE_BEFORE_MULTIPLY;
 
@@ -19,6 +22,7 @@ mod unsafe_typecast;
 use unsafe_typecast::UNSAFE_TYPECAST;
 
 register_lints!(
+    (AssertStateChange, late, (ASSERT_STATE_CHANGE)),
     (DivideBeforeMultiply, early, (DIVIDE_BEFORE_MULTIPLY)),
     (IncorrectERC20Interface, late, (INCORRECT_ERC20_INTERFACE)),
     (IncorrectERC721Interface, late, (INCORRECT_ERC721_INTERFACE)),
