@@ -25,6 +25,16 @@ interface IERC721 {
     function safeTransferFrom(address from, address to, uint256 tokenId, bytes calldata data) external;
 }
 
+interface IERC3156FlashBorrower {
+    function onFlashLoan(
+        address initiator,
+        address token,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) external returns (bytes32);
+}
+
 library SafeERC20 {
     function safeTransferFrom(
         IERC20 token,
@@ -456,6 +466,28 @@ contract ArbitrarySendErc20 {
 
     function okLibrarySelf(address to, uint256 a) public {
         SafeERC20.safeTransferFrom(token, address(this), to, a);
+    }
+
+    // Explicit `else` inherits the negated guard.
+    function okExplicitElseGuard(address from, address to, uint256 a) public {
+        if (from != msg.sender) {
+            revert("auth");
+        } else {
+            token.transferFrom(from, to, a);
+        }
+    }
+
+    // EIP-3156 lender repayment: receiver is trusted after `.onFlashLoan(...)`.
+    function okFlashLender(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public returns (bool) {
+        token.transfer(address(receiver), amount);
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        token.transferFrom(address(receiver), address(this), amount + fee);
+        return true;
     }
 }
 

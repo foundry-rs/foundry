@@ -45,6 +45,8 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
         for m in func.modifiers {
             collect_modifier_safety(hir, m, &mut a.safe_vars);
         }
+        // EIP-3156: receivers of `.onFlashLoan(...)` are trusted by protocol commitment.
+        collect_flash_loan_receivers(hir, body.stmts, &mut a.safe_vars);
         for stmt in body.stmts {
             let _ = a.visit_stmt(stmt);
         }
@@ -220,8 +222,10 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                 let after_then_safe = std::mem::replace(&mut self.safe_vars, baseline_safe);
                 let after_then_permits = std::mem::replace(&mut self.permits, baseline_permits);
 
+                // Both the explicit `else` body and the implicit fall-through inherit `!cond`.
                 let (after_else_safe, after_else_permits, else_exits) = match else_ {
                     Some(e) => {
+                        self.add_facts(cond, true);
                         let _ = self.visit_stmt(e);
                         (
                             std::mem::take(&mut self.safe_vars),
@@ -324,6 +328,31 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
     }
 }
 
+/// HIR walker used by [`collect_flash_loan_receivers`] to harvest `.onFlashLoan(...)` callees.
+struct OnFlashLoanScanner<'a, 'hir> {
+    hir: &'hir hir::Hir<'hir>,
+    out: &'a mut HashSet<hir::VariableId>,
+}
+
+impl<'hir> hir::Visit<'hir> for OnFlashLoanScanner<'_, 'hir> {
+    type BreakValue = Never;
+
+    fn hir(&self) -> &'hir hir::Hir<'hir> {
+        self.hir
+    }
+
+    fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let ExprKind::Call(callee, _, _) = &expr.kind
+            && let ExprKind::Member(recv, ident) = &callee.peel_parens().kind
+            && ident.name.as_str() == "onFlashLoan"
+            && let Some(vid) = underlying_var(recv)
+        {
+            self.out.insert(vid);
+        }
+        self.walk_expr(expr)
+    }
+}
+
 /// Matches an ERC20-like transfer sink. Returns `(from_arg, token_var)` where `token_var` is
 /// the receiver's underlying variable id when available (used for permit correlation).
 ///
@@ -418,6 +447,18 @@ fn collect_modifier_safety(
         if a.safe_vars.contains(&mp) {
             out_safe.insert(caller);
         }
+    }
+}
+
+/// Records the receiver of every `<expr>.onFlashLoan(...)` call in `stmts`.
+fn collect_flash_loan_receivers<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    stmts: &'hir [hir::Stmt<'hir>],
+    out: &mut HashSet<hir::VariableId>,
+) {
+    let mut s = OnFlashLoanScanner { hir, out };
+    for stmt in stmts {
+        let _ = s.visit_stmt(stmt);
     }
 }
 
