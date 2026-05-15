@@ -38,8 +38,7 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
 
         let Some(body) = func.body else { return };
 
-        // Start from payable entry points so helper functions are only linted when reachable
-        // through a call path that can preserve a non-zero `msg.value`.
+        // Only payable entry paths can preserve a non-zero `msg.value` into helpers.
         let mut checker = DelegatecallLoopChecker {
             ctx,
             hir,
@@ -55,7 +54,7 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
 }
 
 fn is_payable_entry_point(func: &Function<'_>) -> bool {
-    // Match Slither's scope: implemented payable entry points, not internal helpers.
+    // Match Slither's scope: implemented public/external payable entry points.
     func.state_mutability == StateMutability::Payable
         && matches!(func.visibility, Visibility::Public | Visibility::External)
 }
@@ -80,8 +79,7 @@ impl<'a, 's, 'hir> DelegatecallLoopChecker<'a, 's, 'hir> {
         index: usize,
         body: Block<'hir>,
     ) {
-        // Solidity modifiers wrap the function body. Walk each modifier in order and replace
-        // the `_` placeholder with the remaining modifier chain and final function body.
+        // Walk modifiers as wrappers; `_` resumes the remaining modifiers and function body.
         let Some(modifier) = modifiers.get(index) else {
             self.visit_block_with_placeholder(body, None);
             return;
@@ -140,6 +138,7 @@ impl<'hir> Visit<'hir> for DelegatecallLoopChecker<'_, '_, 'hir> {
             // HIR lowers `for` update expressions into the loop body, so this covers loop
             // bodies and `for (...; ...; next)` delegatecalls with the same scope tracking.
             StmtKind::Loop(block, _) => self.visit_loop_block(block),
+            // Modifier `_` executes at this statement, preserving the current loop context.
             StmtKind::Placeholder => {
                 if let Some((modifiers, index, body)) = self.placeholder {
                     self.visit_modifier_chain(modifiers, index, body);
@@ -160,8 +159,7 @@ impl<'hir> Visit<'hir> for DelegatecallLoopChecker<'_, '_, 'hir> {
             return result;
         }
 
-        // Internal helper calls inherit the current loop context. This catches cases where the
-        // loop body calls a helper that performs the delegatecall.
+        // Internal helper calls inherit the current loop context and `msg.value`.
         if let ExprKind::Call(callee, args, _) = &expr.kind {
             if let Some(func_id) = self.resolved_internal_function_id(callee, args) {
                 self.visit_internal_call(func_id);
@@ -174,8 +172,7 @@ impl<'hir> Visit<'hir> for DelegatecallLoopChecker<'_, '_, 'hir> {
 
 impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
     fn visit_loop_block(&mut self, block: Block<'hir>) -> ControlFlow<()> {
-        // Keep loop state as traversal context rather than as a property of a single function,
-        // so delegatecalls inside internal helpers reached from a loop are also reported.
+        // Track loop state across helper traversal, not just within the current function.
         self.loop_depth += 1;
         self.visit_block_stmts(block);
         self.loop_depth -= 1;
@@ -183,8 +180,7 @@ impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
     }
 
     fn visit_internal_call(&mut self, func_id: FunctionId) {
-        // Avoid infinite recursion on cyclic internal call graphs while still following each
-        // acyclic helper path from the payable entry point.
+        // Avoid recursive call cycles while still following acyclic helper paths.
         if self.call_stack.contains(&func_id) {
             return;
         }
@@ -211,8 +207,7 @@ impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
             return false;
         }
 
-        // Only the address builtin `delegatecall` is the low-level EVM operation.
-        // Contract/interface methods with the same name are ordinary external calls.
+        // Only address builtin `delegatecall` maps to the low-level EVM operation.
         self.expr_ty(receiver).is_none_or(is_address_ty)
     }
 
