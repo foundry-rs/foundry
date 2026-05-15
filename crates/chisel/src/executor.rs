@@ -312,29 +312,18 @@ fn format_token(token: DynSolValue) -> String {
         DynSolValue::Bool(b) => {
             format!("Type: {}\n└ Value: {}", "bool".red(), b.cyan())
         }
-        DynSolValue::String(_) | DynSolValue::Bytes(_) => {
-            let hex = hex::encode(token.abi_encode());
-            let s = token.as_str();
-            format!(
-                "Type: {}\n{}├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
-                if s.is_some() { "string" } else { "dynamic bytes" }.red(),
-                if let Some(s) = s {
-                    format!("├ UTF-8: {}\n", s.cyan())
-                } else {
-                    String::default()
-                },
-                "[0x00:0x20]".yellow(),
-                format!("0x{}", &hex[64..128]).cyan(),
-                "[0x20:..]".yellow(),
-                format!("0x{}", &hex[128..]).cyan(),
-                "[0x00:0x20]".yellow(),
-                format!("0x{}", &hex[..64]).cyan(),
-                "[0x20:0x40]".yellow(),
-                format!("0x{}", &hex[64..128]).cyan(),
-                "[0x40:..]".yellow(),
-                format!("0x{}", &hex[128..]).cyan(),
-            )
-        }
+        DynSolValue::String(s) => format_dynamic_token(
+            "string",
+            Some(&s),
+            s.as_bytes(),
+            DynSolValue::String(s.clone()).abi_encode(),
+        ),
+        DynSolValue::Bytes(bytes) => format_dynamic_token(
+            "dynamic bytes",
+            None,
+            &bytes,
+            DynSolValue::Bytes(bytes.clone()).abi_encode(),
+        ),
         DynSolValue::FixedArray(tokens) | DynSolValue::Array(tokens) => {
             let mut out = format!(
                 "{}({}) = {}",
@@ -370,6 +359,35 @@ fn format_token(token: DynSolValue) -> String {
             unimplemented!()
         }
     }
+}
+
+fn format_dynamic_token(
+    kind: &str,
+    utf8: Option<&str>,
+    contents: &[u8],
+    tuple_encoded: Vec<u8>,
+) -> String {
+    let length_hex = hex::encode(U256::from(contents.len()).to_be_bytes::<32>());
+    let mut memory_contents = contents.to_vec();
+    memory_contents.resize(contents.len().next_multiple_of(32), 0);
+    let memory_contents_hex = hex::encode(memory_contents);
+    let tuple_encoded_hex = hex::encode(tuple_encoded);
+
+    format!(
+        "Type: {}\n{}├ Hex (Memory):\n├─ Length ({}): {}\n├─ Contents ({}): {}\n├ Hex (Tuple Encoded):\n├─ Pointer ({}): {}\n├─ Length ({}): {}\n└─ Contents ({}): {}",
+        kind.red(),
+        if let Some(s) = utf8 { format!("├ UTF-8: {}\n", s.cyan()) } else { String::default() },
+        "[0x00:0x20]".yellow(),
+        format!("0x{length_hex}").cyan(),
+        "[0x20:..]".yellow(),
+        format!("0x{memory_contents_hex}").cyan(),
+        "[0x00:0x20]".yellow(),
+        format!("0x{}", &tuple_encoded_hex[..64]).cyan(),
+        "[0x20:0x40]".yellow(),
+        format!("0x{}", &tuple_encoded_hex[64..128]).cyan(),
+        "[0x40:..]".yellow(),
+        format!("0x{}", &tuple_encoded_hex[128..]).cyan(),
+    )
 }
 
 /// Formats an [`Event`] into an inspection message.

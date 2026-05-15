@@ -35,6 +35,29 @@ repl_test!(abi_encode_decode, |repl| {
     repl.expect("hello");
 });
 
+// Issue #5253: ABI-encoded bytes should be displayed with their actual memory layout.
+repl_test!(abi_encoded_bytes_memory_display, |repl| {
+    repl.sendln(r#"bytes memory revertStringOne = abi.encode("Not initialized")"#);
+    repl.sendln("bytes memory decoded = abi.decode(revertStringOne, (bytes))");
+    repl.sendln(r#"bytes memory revertStringTwo = bytes("Not initialized")"#);
+
+    repl.sendln("decoded");
+    repl.expect(
+        "Length ([0x00:0x20]): 0x000000000000000000000000000000000000000000000000000000000000000f",
+    );
+    repl.expect(
+        "Contents ([0x20:..]): 0x4e6f7420696e697469616c697a65640000000000000000000000000000000000",
+    );
+
+    repl.sendln("revertStringTwo");
+    repl.expect(
+        "Length ([0x00:0x20]): 0x000000000000000000000000000000000000000000000000000000000000000f",
+    );
+    repl.expect(
+        "Contents ([0x20:..]): 0x4e6f7420696e697469616c697a65640000000000000000000000000000000000",
+    );
+});
+
 // Test 0x prefixed strings.
 repl_test!(hex_string_interpretation, |repl| {
     repl.sendln("string memory s = \"0x1234\"");
