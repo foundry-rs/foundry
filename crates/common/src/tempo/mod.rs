@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, Signature};
 use alloy_signer::Signer;
 use eyre::{Context, Result};
 use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 mod keystore;
 
@@ -36,21 +36,42 @@ pub const TEMPO_BROWSER_GAS_BUFFER: u64 = 7_000;
 /// Gas sponsor configuration for Tempo fee-payer signatures.
 #[derive(Clone, Debug)]
 pub struct TempoSponsor {
-    sponsor: Address,
-    signer: Option<Arc<WalletSigner>>,
-    signature: Option<Signature>,
+    sponsor: Option<Address>,
+    source: SponsorSource,
+}
+
+#[derive(Clone, Debug)]
+enum SponsorSource {
+    /// Pre-signed sponsor signature.
+    Presigned(Signature),
+    /// Local signer that can produce signatures on demand.
+    Local(Arc<WalletSigner>),
+    /// Remote sponsor service URL (JSON-RPC `tempo_signSponsorHash`).
+    Remote(String),
 }
 
 impl TempoSponsor {
-    pub const fn new(
+    pub fn new(
         sponsor: Address,
         signer: Option<Arc<WalletSigner>>,
         signature: Option<Signature>,
     ) -> Self {
-        Self { sponsor, signer, signature }
+        let source = if let Some(sig) = signature {
+            SponsorSource::Presigned(sig)
+        } else if let Some(signer) = signer {
+            SponsorSource::Local(signer)
+        } else {
+            unreachable!("TempoSponsor::new requires either a signer or signature")
+        };
+        Self { sponsor: Some(sponsor), source }
     }
 
-    pub const fn sponsor(&self) -> Address {
+    /// Creates a remote sponsor that fetches signatures from a URL.
+    pub fn remote(url: String, expected_sponsor: Option<Address>) -> Self {
+        Self { sponsor: expected_sponsor, source: SponsorSource::Remote(url) }
+    }
+
+    pub fn sponsor(&self) -> Option<Address> {
         self.sponsor
     }
 
@@ -62,11 +83,13 @@ impl TempoSponsor {
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
-        if self.sponsor == sender {
-            eyre::bail!(
-                "invalid Tempo sponsorship: sponsor {} must not equal transaction sender",
-                self.sponsor
-            );
+        if let Some(sponsor) = self.sponsor {
+            if sponsor == sender {
+                eyre::bail!(
+                    "invalid Tempo sponsorship: sponsor {} must not equal transaction sender",
+                    sponsor
+                );
+            }
         }
 
         let digest = tx.compute_sponsor_hash(sender).ok_or_else(|| {
@@ -75,8 +98,27 @@ impl TempoSponsor {
             )
         })?;
 
+        let (sponsor, signature) = match &self.source {
+            SponsorSource::Presigned(sig) => (self.sponsor.expect("presigned requires sponsor"), *sig),
+            SponsorSource::Local(signer) => {
+                let sig = signer.sign_hash(&digest).await.context("failed to sign Tempo sponsor digest")?;
+                (self.sponsor.expect("local signer requires sponsor"), sig)
+            }
+            SponsorSource::Remote(url) => {
+                let (addr, sig) = fetch_remote_sponsor_signature(url, digest, sender).await?;
+                if let Some(expected) = self.sponsor {
+                    if addr != expected {
+                        eyre::bail!(
+                            "remote sponsor returned address {addr}, expected --tempo.sponsor {expected}"
+                        );
+                    }
+                }
+                (addr, sig)
+            }
+        };
+
         let preview = TempoSponsorPreview {
-            sponsor: self.sponsor,
+            sponsor,
             fee_token: tx.fee_token(),
             valid_before: tx.valid_before().map(|v| v.get()),
             valid_after: tx.valid_after().map(|v| v.get()),
@@ -84,19 +126,11 @@ impl TempoSponsor {
         };
         preview.print()?;
 
-        let signature = if let Some(signature) = self.signature {
-            signature
-        } else if let Some(signer) = &self.signer {
-            signer.sign_hash(&digest).await.context("failed to sign Tempo sponsor digest")?
-        } else {
-            eyre::bail!("missing Tempo sponsor signature or signer")
-        };
-
         let recovered = signature
             .recover_address_from_prehash(&digest)
             .context("failed to recover Tempo sponsor signature")?;
-        if recovered != self.sponsor {
-            eyre::bail!("Tempo sponsor signature recovered {recovered}, expected {}", self.sponsor);
+        if recovered != sponsor {
+            eyre::bail!("Tempo sponsor signature recovered {recovered}, expected {sponsor}");
         }
         if recovered == sender {
             eyre::bail!(
@@ -107,6 +141,76 @@ impl TempoSponsor {
         tx.set_fee_payer_signature(signature);
         Ok(preview)
     }
+}
+
+/// Fetches a sponsor signature from a remote JSON-RPC service.
+///
+/// Calls `tempo_signSponsorHash` with the sponsor digest and sender address.
+/// Returns the sponsor address and signature.
+async fn fetch_remote_sponsor_signature(
+    url: &str,
+    digest: B256,
+    sender: Address,
+) -> Result<(Address, Signature)> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("failed to build HTTP client for sponsor URL")?;
+
+    let request_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tempo_signSponsorHash",
+        "params": [{
+            "hash": format!("{digest:?}"),
+            "sender": format!("{sender:?}")
+        }]
+    });
+
+    let response = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .json(&request_body)
+        .send()
+        .await
+        .context("failed to reach sponsor URL")?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        eyre::bail!("sponsor URL returned HTTP {status}: {body}");
+    }
+
+    let body: serde_json::Value =
+        response.json().await.context("sponsor URL returned invalid JSON")?;
+
+    if let Some(error) = body.get("error") {
+        let msg = error
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error");
+        eyre::bail!("sponsor URL returned JSON-RPC error: {msg}");
+    }
+
+    let result = body
+        .get("result")
+        .ok_or_else(|| eyre::eyre!("sponsor URL response missing 'result' field"))?;
+
+    let sponsor_hex = result
+        .get("sponsor")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| eyre::eyre!("sponsor URL response missing 'result.sponsor' field"))?;
+    let sponsor = Address::from_str(sponsor_hex)
+        .map_err(|e| eyre::eyre!("invalid sponsor address from sponsor URL: {e}"))?;
+
+    let sig_hex = result
+        .get("signature")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| eyre::eyre!("sponsor URL response missing 'result.signature' field"))?;
+    let signature = Signature::from_str(sig_hex)
+        .map_err(|e| eyre::eyre!("invalid signature from sponsor URL: {e}"))?;
+
+    Ok((sponsor, signature))
 }
 
 /// User-visible sponsor digest metadata for a single outgoing Tempo transaction.

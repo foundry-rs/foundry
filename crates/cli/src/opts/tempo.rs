@@ -88,7 +88,7 @@ pub struct TempoOpts {
         long = "tempo.sponsor-signer",
         value_name = "SIGNER",
         requires = "sponsor",
-        conflicts_with = "sponsor_sig"
+        conflicts_with_all = &["sponsor_sig", "sponsor_url"]
     )]
     pub sponsor_signer: Option<String>,
 
@@ -101,9 +101,22 @@ pub struct TempoOpts {
         alias = "tempo.sponsor-signature",
         value_parser = parse_signature,
         requires = "sponsor",
-        conflicts_with = "sponsor_signer"
+        conflicts_with_all = &["sponsor_signer", "sponsor_url"]
     )]
     pub sponsor_sig: Option<Signature>,
+
+    /// URL of a remote sponsor service for Tempo fee payer signatures.
+    ///
+    /// The service must implement the `tempo_signSponsorHash` JSON-RPC method.
+    /// When set, the sponsor address is returned by the service and `--tempo.sponsor`
+    /// is optional (used only as an assertion).
+    #[arg(
+        long = "tempo.sponsor-url",
+        alias = "sponsor-url",
+        value_name = "URL",
+        conflicts_with_all = &["sponsor_signer", "sponsor_sig"]
+    )]
+    pub sponsor_url: Option<String>,
 
     /// Print the sponsor signature hash and exit.
     ///
@@ -111,7 +124,7 @@ pub struct TempoOpts {
     /// knows what hash to sign. The transaction is not sent.
     #[arg(
         long = "tempo.print-sponsor-hash",
-        conflicts_with_all = &["sponsor", "sponsor_signer", "sponsor_sig"]
+        conflicts_with_all = &["sponsor", "sponsor_signer", "sponsor_sig", "sponsor_url"]
     )]
     pub print_sponsor_hash: bool,
 
@@ -154,6 +167,7 @@ impl TempoOpts {
             || self.sponsor.is_some()
             || self.sponsor_signer.is_some()
             || self.sponsor_sig.is_some()
+            || self.sponsor_url.is_some()
             || self.print_sponsor_hash
             || self.key_id.is_some()
             || self.expiring_nonce
@@ -182,11 +196,19 @@ impl TempoOpts {
 
     /// Returns `true` if a sponsor signature should be attached before submission.
     pub const fn has_sponsor_submission(&self) -> bool {
-        self.sponsor.is_some() || self.sponsor_signer.is_some() || self.sponsor_sig.is_some()
+        self.sponsor.is_some()
+            || self.sponsor_signer.is_some()
+            || self.sponsor_sig.is_some()
+            || self.sponsor_url.is_some()
     }
 
     /// Resolves sponsor CLI options into a reusable sponsor config for transaction submission.
     pub async fn sponsor_config(&self) -> Result<Option<TempoSponsor>> {
+        // Remote sponsor URL: sponsor address is optional (returned by the service).
+        if let Some(url) = &self.sponsor_url {
+            return Ok(Some(TempoSponsor::remote(url.clone(), self.sponsor)));
+        }
+
         let Some(sponsor) = self.sponsor else {
             return Ok(None);
         };
@@ -208,7 +230,7 @@ impl TempoOpts {
 
         if signer.is_none() && self.sponsor_sig.is_none() {
             eyre::bail!(
-                "--tempo.sponsor requires either --tempo.sponsor-signer or --tempo.sponsor-sig"
+                "--tempo.sponsor requires either --tempo.sponsor-signer, --tempo.sponsor-sig, or --tempo.sponsor-url"
             );
         }
 
@@ -416,6 +438,76 @@ mod tests {
                 "--tempo.print-sponsor-hash",
                 "--tempo.sponsor",
                 "0x1111111111111111111111111111111111111111",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parse_sponsor_url() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.sponsor-url",
+            "https://sponsor.tempo.xyz",
+        ])
+        .unwrap();
+
+        assert_eq!(opts.sponsor_url.as_deref(), Some("https://sponsor.tempo.xyz"));
+        assert!(opts.sponsor.is_none());
+        assert!(opts.is_tempo());
+        assert!(opts.has_sponsor_submission());
+    }
+
+    #[test]
+    fn sponsor_url_alias() {
+        let opts =
+            TempoOpts::try_parse_from(["", "--sponsor-url", "https://sponsor.tempo.xyz"]).unwrap();
+
+        assert_eq!(opts.sponsor_url.as_deref(), Some("https://sponsor.tempo.xyz"));
+    }
+
+    #[test]
+    fn sponsor_url_with_optional_sponsor_address() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.sponsor-url",
+            "https://sponsor.tempo.xyz",
+            "--tempo.sponsor",
+            "0x1111111111111111111111111111111111111111",
+        ])
+        .unwrap();
+
+        assert_eq!(opts.sponsor_url.as_deref(), Some("https://sponsor.tempo.xyz"));
+        assert_eq!(opts.sponsor, Some(address!("0x1111111111111111111111111111111111111111")));
+    }
+
+    #[test]
+    fn sponsor_url_conflicts_with_sponsor_signer() {
+        assert!(
+            TempoOpts::try_parse_from([
+                "",
+                "--tempo.sponsor-url",
+                "https://sponsor.tempo.xyz",
+                "--tempo.sponsor",
+                "0x1111111111111111111111111111111111111111",
+                "--tempo.sponsor-signer",
+                "env://SPONSOR",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn sponsor_url_conflicts_with_sponsor_sig() {
+        assert!(
+            TempoOpts::try_parse_from([
+                "",
+                "--tempo.sponsor-url",
+                "https://sponsor.tempo.xyz",
+                "--tempo.sponsor",
+                "0x1111111111111111111111111111111111111111",
+                "--tempo.sponsor-sig",
+                "0x0eb96ca19e8a77102767a41fc85a36afd5c61ccb09911cec5d3e86e193d9c5ae3a456401896b1b6055311536bf00a718568c744d8c1f9df59879e8350220ca182b",
             ])
             .is_err()
         );
