@@ -210,7 +210,7 @@ fn resolved_internal_function_ids<'hir>(
     })
 }
 
-fn is_internal_callable(func: &Function<'_>) -> bool {
+const fn is_internal_callable(func: &Function<'_>) -> bool {
     func.kind.is_function()
         && matches!(func.visibility, Visibility::Internal | Visibility::Private)
         && !matches!(func.state_mutability, StateMutability::Pure)
@@ -257,7 +257,7 @@ fn is_address_like(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
     }
 }
 
-fn type_is_contract_like(ty: &hir::Type<'_>) -> bool {
+const fn type_is_contract_like(ty: &hir::Type<'_>) -> bool {
     matches!(ty.kind, TypeKind::Custom(ItemId::Contract(_)))
 }
 
