@@ -18,9 +18,19 @@ pub mod test {
     pub(crate) const ALL: &[&str] = &[FAILED, SETUP_FAILED, WARNING];
 }
 
+/// `forge script` diagnostic codes.
+pub mod script {
+    pub use foundry_cli::diagnostic::script::{
+        BROADCAST_FAILED, MISSING_RPC_URL, NO_TRANSACTIONS, NOOP_TARGET,
+    };
+
+    pub(crate) const ALL: &[&str] =
+        &[BROADCAST_FAILED, NO_TRANSACTIONS, MISSING_RPC_URL, NOOP_TARGET];
+}
+
 /// All diagnostic codes declared by `forge`.
 pub fn known_codes() -> Vec<&'static str> {
-    let groups: &[&[&str]] = &[build::ALL, test::ALL];
+    let groups: &[&[&str]] = &[build::ALL, test::ALL, script::ALL];
     groups.iter().flat_map(|g| g.iter().copied()).collect()
 }
 

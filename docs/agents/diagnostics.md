@@ -28,6 +28,9 @@ Examples:
 - `test.setup_failed`
 - `test.warning`
 - `script.broadcast_failed`
+- `script.no_transactions`
+- `script.missing_rpc_url`
+- `script.noop_target`
 
 Stream-event `code` fields (e.g. the `code` carried on `kind: "warning"`
 records under `foundry:forge.test.event@v1`) draw from this same
@@ -43,7 +46,7 @@ registry: any code mirrored from a stream event into a terminal envelope
 | `network`  | RPC / HTTP layers               | `network.rpc.timeout`                     |
 | `wallet`   | `foundry-wallets`               | `wallet.key.missing`                      |
 | `test`     | `forge test`                    | `test.failed`, `test.setup_failed`, `test.warning` |
-| `script`   | `forge script`                  | `script.broadcast_failed`                 |
+| `script`   | `forge script`                  | `script.broadcast_failed`, `script.no_transactions`, `script.missing_rpc_url`, `script.noop_target` |
 | `cast`     | `cast`                          | `cast.tx.not_found`                       |
 | `anvil`    | `anvil`                         | `anvil.fork.unreachable`                  |
 | `chisel`   | `chisel`                        | `chisel.session.invalid`                  |

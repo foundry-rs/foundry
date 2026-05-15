@@ -158,8 +158,15 @@ pub mod test {
 /// `forge script` diagnostic codes.
 pub mod script {
     pub const BROADCAST_FAILED: &str = "script.broadcast_failed";
+    /// `--broadcast` was requested but the script produced no transactions.
+    pub const NO_TRANSACTIONS: &str = "script.no_transactions";
+    /// On-chain simulation was skipped because no `--rpc-url` was provided.
+    pub const MISSING_RPC_URL: &str = "script.missing_rpc_url";
+    /// Script contains a transaction whose target address has no contract code.
+    pub const NOOP_TARGET: &str = "script.noop_target";
 
-    pub(crate) const ALL: &[&str] = &[BROADCAST_FAILED];
+    pub(crate) const ALL: &[&str] =
+        &[BROADCAST_FAILED, NO_TRANSACTIONS, MISSING_RPC_URL, NOOP_TARGET];
 }
 
 /// `cast` diagnostic codes.

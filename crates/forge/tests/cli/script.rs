@@ -3892,3 +3892,255 @@ forgetest_async!(script_check_contract_sizes_honors_config_limit, |prj, cmd| {
         .assert_success()
         .stderr_eq(str![[r#""#]]);
 });
+
+// Stream + envelope shape on a no-tx `--broadcast`: phases, dry-run payload,
+// and `script.no_transactions` warning duality.
+forgetest!(machine_mode_emits_ndjson_stream_and_aggregates_warnings, |prj, cmd| {
+    let script = prj.add_source(
+        "Foo",
+        r#"
+contract Demo {
+    function run() external {}
+}
+   "#,
+    );
+
+    let assert = cmd.arg("--machine").arg("script").arg(script).arg("--broadcast").assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert!(lines.len() >= 2, "expected stream + envelope, got: {stdout}");
+
+    let stream: Vec<Value> =
+        lines[..lines.len() - 1].iter().map(|l| serde_json::from_str(l).unwrap()).collect();
+    for rec in &stream {
+        assert_eq!(rec["schema_id"], "foundry:forge.script.event@v1");
+        assert_eq!(rec["command_id"], "forge.script");
+        assert!(rec["ts"].is_string());
+    }
+    assert!(
+        stream.iter().any(|r| r["kind"] == "phase" && r["phase"] == "compile"),
+        "missing compile phase: {stream:?}"
+    );
+
+    let envelope: Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    assert_eq!(envelope["schema_version"], 1);
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"]["mode"], "dry_run");
+    assert_eq!(envelope["data"]["tx_count"], 0);
+    assert!(envelope["data"]["tx_hashes"].as_array().unwrap().is_empty());
+
+    // Warning duality: same `(code, message)` on the stream record and in `warnings[]`.
+    let stream_warning =
+        stream.iter().find(|r| r["kind"] == "warning").expect("stream warning record");
+    let warnings = envelope["warnings"].as_array().unwrap();
+    assert_eq!(stream_warning["code"], "script.no_transactions");
+    assert_eq!(warnings[0]["code"], "script.no_transactions");
+    assert_eq!(stream_warning["message"], warnings[0]["message"]);
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// Broadcast failure: `script.broadcast_failed` with `data: null`, cause chain,
+// and prior `script.noop_target` warning preserved in `warnings[]`.
+forgetest_async!(machine_mode_broadcast_failed_emits_typed_envelope, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+
+    // 0-value call to an empty-code address triggers `script.noop_target` during simulation;
+    // the unfunded sender then fails the broadcast.
+    let script = prj.add_source(
+        "Deploy",
+        r#"
+import "forge-std/Script.sol";
+contract DeployScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        (bool ok, ) = address(0xdEaD).call("");
+        ok;
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+    let unfunded_pk = "0x0000000000000000000000000000000000000000000000000000000000000001";
+
+    let assert = cmd
+        .args([
+            "--machine",
+            "script",
+            script.to_str().unwrap(),
+            "--target-contract",
+            "DeployScript",
+            "--broadcast",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--private-key",
+            unfunded_pk,
+        ])
+        .assert_failure();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value =
+        serde_json::from_str(stdout.lines().rfind(|l| !l.is_empty()).unwrap()).unwrap();
+    assert_eq!(envelope["success"], false);
+    // `data: null` (key present + explicitly Null); `is_null()` alone also passes when absent.
+    assert_eq!(envelope.get("data"), Some(&Value::Null), "{envelope}");
+    assert_eq!(envelope["errors"][0]["code"], "script.broadcast_failed");
+    assert!(
+        !envelope["errors"][0]["details"]["cause_chain"].as_array().unwrap().is_empty(),
+        "{envelope}"
+    );
+    let warnings = envelope["warnings"].as_array().unwrap();
+    assert!(warnings.iter().any(|w| w["code"] == "script.noop_target"), "{envelope}");
+});
+
+// Reject flags whose stdout would corrupt the stream or whose runtime would
+// block on user/device input. One representative per class.
+forgetest!(machine_mode_rejects_unsupported_flags, |prj, cmd| {
+    let script = prj.add_source(
+        "Foo",
+        r#"
+contract Demo {
+    function run() external {}
+}
+   "#,
+    );
+
+    for flag in ["--debug", "--interactive", "--ledger"] {
+        cmd.forge_fuse().arg("--machine").arg("script").arg(&script).arg(flag);
+        let assert = cmd.assert_failure();
+        let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+        let envelope: Value = serde_json::from_str(stdout.trim()).unwrap();
+        assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+        assert_eq!(assert.get_output().status.code(), Some(2));
+        assert!(
+            envelope["errors"][0]["message"].as_str().unwrap().contains(flag),
+            "missing {flag} mention: {envelope}"
+        );
+    }
+});
+
+// Happy-path broadcast pins the `@v1` payload shape (mode, tx hashes, CREATEs).
+forgetest_async!(machine_mode_broadcast_success_emits_payload, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let deploy_script = prj.add_source(
+        "Deploy",
+        r#"
+import "forge-std/Script.sol";
+contract Deployed {}
+contract DeployScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Deployed();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+    let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    // Anvil's standard prefunded dev account #0.
+    let private_key = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    cmd.set_current_dir(prj.root());
+
+    let assert = cmd
+        .args([
+            "--machine",
+            "script",
+            &deploy_contract,
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--broadcast",
+            "--private-key",
+            private_key,
+        ])
+        .assert_success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value =
+        serde_json::from_str(stdout.lines().rfind(|l| !l.is_empty()).unwrap()).unwrap();
+    let data = &envelope["data"];
+    assert_eq!(envelope["success"], true, "{envelope}");
+    assert_eq!(data["mode"], "broadcast", "{envelope}");
+    assert!(data["tx_count"].as_u64().unwrap_or(0) >= 1, "{envelope}");
+    let tx_hashes = data["tx_hashes"].as_array().unwrap();
+    assert!(
+        !tx_hashes.is_empty() && tx_hashes.iter().all(|h| h.as_str().unwrap().starts_with("0x")),
+        "{envelope}"
+    );
+    assert!(
+        data["created_contracts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["address"].as_str().unwrap().starts_with("0x")),
+        "{envelope}"
+    );
+});
+
+// Compile errors emit `compiler.solc.error` with exit `Build (4)`.
+forgetest!(machine_mode_compile_error_emits_typed_envelope, |prj, cmd| {
+    let script = prj.add_source(
+        "Bad",
+        r#"
+contract Bad {
+    function run() external { this is not solidity }
+}
+"#,
+    );
+
+    let assert = cmd.arg("--machine").arg("script").arg(script).assert_failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value =
+        serde_json::from_str(stdout.lines().rfind(|l| !l.is_empty()).unwrap()).unwrap();
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "compiler.solc.error");
+    assert_eq!(assert.get_output().status.code(), Some(4));
+});
+
+// Noop-target tx must not prompt; emits the warning and proceeds. Regressions hang.
+forgetest_async!(machine_mode_noop_tx_does_not_prompt, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let script = prj.add_source(
+        "Noop",
+        r#"
+import "forge-std/Script.sol";
+contract NoopScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        (bool ok,) = address(0xdEaD).call("");
+        require(ok);
+        vm.stopBroadcast();
+    }
+}
+"#,
+    );
+
+    let assert = cmd
+        .args([
+            "--machine",
+            "script",
+            script.to_str().unwrap(),
+            "--target-contract",
+            "NoopScript",
+            "--broadcast",
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--private-key",
+            "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        ])
+        .assert_success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value =
+        serde_json::from_str(stdout.lines().rfind(|l| !l.is_empty()).unwrap()).unwrap();
+    assert_eq!(envelope["success"], true, "{envelope}");
+    assert!(
+        envelope["warnings"].as_array().unwrap().iter().any(|w| w["code"] == "script.noop_target"),
+        "{envelope}"
+    );
+});

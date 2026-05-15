@@ -219,34 +219,40 @@ termination).
 
 ### Per-command event ordering
 
-For each per-command event schema (e.g. `foundry:forge.test.event@v1`),
-each grouping unit (suite for `forge.test`, simulation phase for
-`forge.script`, etc.) emits records in this order:
+Stream records come in two shapes:
 
-1. zero or more child records (e.g. `test_result`)
-2. zero or more non-terminal annotations on that group (e.g. `warning`)
-3. exactly one terminator record for the group (e.g. `suite_finished`)
+- **Group records** — the command emits a grouped lifecycle per unit
+  (e.g. one suite per group for `forge.test`). For each group:
 
-After a group's terminator, no more records targeting that group may be
-emitted. Groups themselves are not ordered against each other; agents
-should key on the group identifier in the payload (e.g. `suite` for
-`forge.test`) when correlating per-group records.
+  1. zero or more child records (e.g. `test_result`)
+  2. zero or more non-terminal annotations on that group (e.g. `warning`)
+  3. exactly one terminator record for the group (e.g. `suite_finished`)
+
+  After a group's terminator, no more records targeting that group may be
+  emitted. Groups themselves are not ordered against each other; agents
+  should key on the group identifier in the payload (e.g. `suite` for
+  `forge.test`) when correlating per-group records.
+
+- **Progress records** — standalone, no per-group lifecycle (e.g. `phase`
+  records for `forge.script`). No terminators; treat as point-in-time
+  signals between stream start and the terminal envelope.
+
+Each event schema documents its shape in "Concrete shapes" below.
 
 ### Warning duality
 
 When a command surfaces a warning that is also relevant to the terminal
-outcome, the warning is emitted **twice**:
+outcome, the warning may be emitted **twice**:
 
-1. as a per-suite `warning` stream event with `kind: "warning"` and the
-   per-event `code` (e.g. `test.warning`) — for real-time visibility
+1. as a command-specific `kind: "warning"` stream event — for real-time
+   visibility
 2. as an entry in the terminal envelope's `warnings[]` — for the
    end-of-run summary
 
-Both surfaces carry the same `code` and `message` and identify the suite
-via the same `suite` key — `suite` as a top-level field on the stream
-event, and `details.suite` on the terminal envelope warning. Agents
-consuming both surfaces should de-duplicate by `(suite, message)`. The
-terminal envelope's `warnings[]` is the authoritative aggregated set.
+Both surfaces carry the same `code` and `message`. Additional correlation
+fields are command-specific: `forge.test` keys on `(suite, code, message)`
+(`suite` on the stream, `details.suite` on the envelope); `forge.script`
+keys on `(code, message)`. The terminal `warnings[]` is authoritative.
 
 ### Failure-envelope conventions
 
@@ -281,6 +287,28 @@ tolerated failures, `success: true` and `data.failed` may be non-zero — see
 the `Success` exit-code description on the per-command introspection. On
 test failure (`success: false`, `errors[0].code: test.failed`), the same
 payload appears under `errors[0].details`.
+
+The `forge.script` event payloads under `foundry:forge.script.event@v1`
+(progress-record shape — no terminators):
+
+- `kind: "phase"` — `{ phase }`, `phase ∈ { "compile", "simulate", "broadcast" }`.
+- `kind: "warning"` — `{ code, message }`, `code` in the `script.*` domain
+  (see [diagnostics.md](diagnostics.md)). Mirrored into terminal `warnings[]`.
+
+Terminal envelope under `foundry:forge.script@v1`:
+
+```
+{
+  "mode":              "dry_run" | "broadcast",
+  "broadcast":         bool,
+  "tx_count":          uint,
+  "tx_hashes":         [String],            // 0x-prefixed, in order
+  "created_contracts": [{ "address": String, "contract_name"?: String }]
+}
+```
+
+On broadcast failure (`script.broadcast_failed`), `data` is `null` and
+`errors[0].details.cause_chain` is `[String]` (the eyre cause chain).
 
 ---
 

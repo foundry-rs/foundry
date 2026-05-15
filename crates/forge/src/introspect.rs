@@ -20,6 +20,11 @@ pub const TEST_EVENT_SCHEMA: &str = "foundry:forge.test.event@v1";
 /// Stable schema id for the terminal `forge test` envelope payload.
 pub const TEST_RESULT_SCHEMA: &str = "foundry:forge.test@v1";
 
+/// Stable schema id for `forge script` stream event records.
+pub const SCRIPT_EVENT_SCHEMA: &str = "foundry:forge.script.event@v1";
+/// Stable schema id for the terminal `forge script` envelope payload.
+pub const SCRIPT_RESULT_SCHEMA: &str = "foundry:forge.script@v1";
+
 /// Exit codes `forge build` may emit under `--machine`. Declared explicitly so
 /// agents don't have to assume "inherits global defaults"; codes not in this
 /// list are not produced by this command.
@@ -93,6 +98,33 @@ static TEST_EXIT_CODES: &[ExitCodeInfo] = &[
         ),
     },
 ];
+/// Exit codes `forge script` may emit under `--machine`.
+static SCRIPT_EXIT_CODES: &[ExitCodeInfo] = &[
+    ExitCodeInfo {
+        code: ExitCode::Success.to_i32(),
+        name: Cow::Borrowed(ExitCode::Success.name()),
+        description: Cow::Borrowed(
+            "Script ran (dry-run or broadcast accepted). Advisories in `warnings[]`.",
+        ),
+    },
+    ExitCodeInfo {
+        code: ExitCode::GenericError.to_i32(),
+        name: Cow::Borrowed(ExitCode::GenericError.name()),
+        description: Cow::Borrowed(
+            "`script.broadcast_failed` or unclassified failure (`cli.unknown`).",
+        ),
+    },
+    ExitCodeInfo {
+        code: ExitCode::Usage.to_i32(),
+        name: Cow::Borrowed(ExitCode::Usage.name()),
+        description: Cow::Borrowed("Flag combination rejected (`cli.usage.invalid`)."),
+    },
+    ExitCodeInfo {
+        code: ExitCode::Build.to_i32(),
+        name: Cow::Borrowed(ExitCode::Build.name()),
+        description: Cow::Borrowed("Solc compile errors (`compiler.solc.error`)."),
+    },
+];
 
 static ENTRIES: &[RegistryEntry] = &[
     RegistryEntry {
@@ -135,6 +167,26 @@ static ENTRIES: &[RegistryEntry] = &[
             },
             capabilities_declared: true,
             exit_codes: TEST_EXIT_CODES,
+        },
+    },
+    RegistryEntry {
+        path: &["script"],
+        meta: CommandMeta {
+            command_id: Some("forge.script"),
+            capabilities: Capabilities {
+                output_mode: OutputMode::Stream,
+                result_schema_ref: Some(Cow::Borrowed(SCRIPT_RESULT_SCHEMA)),
+                event_schema_ref: Some(Cow::Borrowed(SCRIPT_EVENT_SCHEMA)),
+                session_schema_ref: None,
+                reads_stdin: false,
+                supports_output_path: false,
+                requires_project: true,
+                side_effects: SideEffects::ChainWrite,
+                long_running: true,
+                stateful: false,
+            },
+            capabilities_declared: true,
+            exit_codes: SCRIPT_EXIT_CODES,
         },
     },
 ];

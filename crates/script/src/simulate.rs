@@ -192,10 +192,14 @@ impl<FEN: FoundryEvmNetwork> PreSimulationState<FEN> {
                     sh_warn!(
                         "Script contains a transaction to {to} which does not contain any code."
                     )?;
+                    if foundry_cli::is_machine() {
+                        crate::record_machine_warning_noop_target(to)?;
+                    }
 
-                    // Only prompt if we're broadcasting and we've not disabled interactivity.
+                    // `--machine` is implicitly non-interactive: never block on user input.
                     if self.args.should_broadcast()
                         && !self.args.non_interactive
+                        && !foundry_cli::is_machine()
                         && !Confirm::new()
                             .with_prompt("Do you wish to continue?".to_string())
                             .interact()?

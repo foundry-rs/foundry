@@ -66,14 +66,17 @@ pub fn run_command(args: Forge) -> Result<()> {
     // process-global `is_machine()` flag without ever emitting a terminal
     // envelope — spoofing `command_id` and leaving the stream unterminated.
     if foundry_cli::is_machine() {
-        let adopted = matches!(args.cmd, ForgeSubcommand::Build(_) | ForgeSubcommand::Test(_));
+        let adopted = matches!(
+            args.cmd,
+            ForgeSubcommand::Build(_) | ForgeSubcommand::Test(_) | ForgeSubcommand::Script(_)
+        );
         if !adopted {
             let name = subcommand_name(&args.cmd);
             foundry_cli::machine::bail_machine_usage_with_details(
                 format!(
                     "`forge {name}` is not yet adopted for `--machine`; only \
-                     `forge build` and `forge test` are. Run without `--machine` \
-                     or use an adopted subcommand."
+                     `forge build`, `forge test`, and `forge script` are. Run without \
+                     `--machine` or use an adopted subcommand."
                 ),
                 serde_json::json!({ "subcommand": name }),
             );
@@ -321,12 +324,14 @@ mod tests {
         }
         let pinned: Vec<(&str, OutputMode)> = doc.commands.iter().flat_map(walk).collect();
         let pinned_ids: Vec<&str> = pinned.iter().map(|(id, _)| *id).collect();
-        for id in ["forge.build", "forge.test"] {
+        for id in ["forge.build", "forge.test", "forge.script"] {
             assert!(pinned_ids.contains(&id), "{id} missing from pinned ids: {pinned_ids:?}");
         }
-        assert!(
-            pinned.iter().any(|(id, m)| *id == "forge.test" && matches!(m, OutputMode::Stream)),
-            "forge.test must be Stream: {pinned:?}"
-        );
+        for id in ["forge.test", "forge.script"] {
+            assert!(
+                pinned.iter().any(|(p, m)| *p == id && matches!(m, OutputMode::Stream)),
+                "{id} must be Stream: {pinned:?}"
+            );
+        }
     }
 }

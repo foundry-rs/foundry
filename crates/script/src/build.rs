@@ -18,7 +18,7 @@ use foundry_common::{
     ContractData, ContractsByArtifact, compile::ProjectCompiler, provider::ProviderBuilder,
 };
 use foundry_compilers::{
-    ArtifactId, ProjectCompileOutput,
+    ArtifactId, CompilationError, ProjectCompileOutput,
     artifacts::{BytecodeObject, Libraries},
     compilers::{Language, multi::MultiCompilerLanguage},
     info::ContractInfo,
@@ -229,7 +229,32 @@ impl<FEN: FoundryEvmNetwork> PreprocessedState<FEN> {
         )
         .chain([target_path.clone()]);
 
-        let output = ProjectCompiler::new().files(sources_to_compile).compile(&project)?;
+        // Under `--machine`: emit typed `compiler.solc.error` with exit `Build (4)`.
+        let machine_mode = foundry_cli::is_machine();
+        let mut compiler = ProjectCompiler::new().files(sources_to_compile);
+        if machine_mode {
+            compiler = compiler.bail(false).quiet(true);
+        }
+        let output = compiler.compile(&project)?;
+
+        if machine_mode && output.has_compiler_errors() {
+            let errors = output
+                .output()
+                .errors
+                .iter()
+                .filter(|e| e.is_error())
+                .map(|e| {
+                    foundry_cli::json::JsonMessage::error(
+                        foundry_cli::diagnostic::compiler::SOLC_ERROR,
+                        e.to_string(),
+                    )
+                })
+                .collect();
+            let _ = foundry_cli::json::print_json(&foundry_cli::json::JsonEnvelope::<()>::failure(
+                errors,
+            ));
+            std::process::exit(foundry_cli::ExitCode::Build.to_i32());
+        }
 
         let mut target_id: Option<ArtifactId> = None;
 
