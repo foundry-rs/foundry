@@ -65,8 +65,24 @@ LL │         receiver.ping(value);
 warning[calls-loop]: external call inside a loop
    ╭▸ ROOT/testdata/CallsLoop.sol:LL:CC
    │
+LL │         target_.purePing(value);
+   │         ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+   ╭▸ ROOT/testdata/CallsLoop.sol:LL:CC
+   │
 LL │             this.externalOnly(i);
    │             ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+   ╭▸ ROOT/testdata/CallsLoop.sol:LL:CC
+   │
+LL │         receiver.ping(0);
+   │         ━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/calls-loop
 

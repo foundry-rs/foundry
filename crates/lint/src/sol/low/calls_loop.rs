@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{ElementaryType, StateMutability, Visibility},
+    ast::{ElementaryType, Visibility},
     interface::{kw, sym},
     sema::hir::{
         self, Block, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Res, Stmt, StmtKind,
@@ -25,9 +25,11 @@ impl<'hir> LateLintPass<'hir> for CallsLoop {
         let Some(body) = func.body else { return };
 
         let mut analyzer = Analyzer::new(ctx, hir);
-        analyzer.analyze_block(body, 0);
+        analyzer.analyze_callable(func, body, 0);
     }
 }
+
+type Placeholder<'hir> = Option<(&'hir [hir::Modifier<'hir>], usize, Block<'hir>)>;
 
 struct Analyzer<'ctx, 's, 'c, 'hir> {
     ctx: &'ctx LintContext<'s, 'c>,
@@ -41,13 +43,60 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         Self { ctx, hir, call_stack: Vec::new(), emitted: HashSet::new() }
     }
 
-    fn analyze_block(&mut self, block: Block<'hir>, loop_depth: u32) {
+    fn analyze_callable(&mut self, func: &'hir Function<'hir>, body: Block<'hir>, loop_depth: u32) {
+        self.analyze_modifier_chain(func.modifiers, 0, body, loop_depth);
+    }
+
+    fn analyze_modifier_chain(
+        &mut self,
+        modifiers: &'hir [hir::Modifier<'hir>],
+        index: usize,
+        body: Block<'hir>,
+        loop_depth: u32,
+    ) {
+        let Some(modifier) = modifiers.get(index) else {
+            return self.analyze_block(body, None, loop_depth);
+        };
+
+        for arg in modifier.args.exprs() {
+            self.analyze_expr(arg, loop_depth);
+        }
+
+        let Some(modifier_id) = modifier.id.as_function() else {
+            return self.analyze_modifier_chain(modifiers, index + 1, body, loop_depth);
+        };
+
+        if self.call_stack.contains(&modifier_id) {
+            return self.analyze_modifier_chain(modifiers, index + 1, body, loop_depth);
+        }
+
+        let modifier_func = self.hir.function(modifier_id);
+        let Some(modifier_body) = modifier_func.body else {
+            return self.analyze_modifier_chain(modifiers, index + 1, body, loop_depth);
+        };
+
+        self.call_stack.push(modifier_id);
+        self.analyze_block(modifier_body, Some((modifiers, index + 1, body)), loop_depth);
+        self.call_stack.pop();
+    }
+
+    fn analyze_block(
+        &mut self,
+        block: Block<'hir>,
+        placeholder: Placeholder<'hir>,
+        loop_depth: u32,
+    ) {
         for stmt in block.stmts {
-            self.analyze_stmt(stmt, loop_depth);
+            self.analyze_stmt(stmt, placeholder, loop_depth);
         }
     }
 
-    fn analyze_stmt(&mut self, stmt: &'hir Stmt<'hir>, loop_depth: u32) {
+    fn analyze_stmt(
+        &mut self,
+        stmt: &'hir Stmt<'hir>,
+        placeholder: Placeholder<'hir>,
+        loop_depth: u32,
+    ) {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
                 if let Some(init) = self.hir.variable(var_id).initializer {
@@ -58,7 +107,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 self.analyze_expr(expr, loop_depth);
             }
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-                self.analyze_block(block, loop_depth);
+                self.analyze_block(block, placeholder, loop_depth);
             }
             StmtKind::Emit(expr) | StmtKind::Revert(expr) => {
                 self.analyze_expr(expr, loop_depth);
@@ -67,26 +116,27 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 self.analyze_expr(expr, loop_depth);
             }
             StmtKind::Loop(block, _) => {
-                self.analyze_block(block, loop_depth + 1);
+                self.analyze_block(block, placeholder, loop_depth + 1);
             }
             StmtKind::If(cond, then_stmt, else_stmt) => {
                 self.analyze_expr(cond, loop_depth);
-                self.analyze_stmt(then_stmt, loop_depth);
+                self.analyze_stmt(then_stmt, placeholder, loop_depth);
                 if let Some(else_stmt) = else_stmt {
-                    self.analyze_stmt(else_stmt, loop_depth);
+                    self.analyze_stmt(else_stmt, placeholder, loop_depth);
                 }
             }
             StmtKind::Try(try_stmt) => {
                 self.analyze_expr(&try_stmt.expr, loop_depth);
                 for clause in try_stmt.clauses {
-                    self.analyze_block(clause.block, loop_depth);
+                    self.analyze_block(clause.block, placeholder, loop_depth);
                 }
             }
-            StmtKind::Return(None)
-            | StmtKind::Break
-            | StmtKind::Continue
-            | StmtKind::Placeholder
-            | StmtKind::Err(_) => {}
+            StmtKind::Placeholder => {
+                if let Some((modifiers, index, body)) = placeholder {
+                    self.analyze_modifier_chain(modifiers, index, body, loop_depth);
+                }
+            }
+            StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Err(_) => {}
         }
     }
 
@@ -168,7 +218,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         let Some(body) = func.body else { return };
 
         self.call_stack.push(func_id);
-        self.analyze_block(body, loop_depth);
+        self.analyze_callable(func, body, loop_depth);
         self.call_stack.pop();
     }
 
@@ -211,9 +261,7 @@ fn resolved_internal_function_ids<'hir>(
 }
 
 const fn is_internal_callable(func: &Function<'_>) -> bool {
-    func.kind.is_function()
-        && matches!(func.visibility, Visibility::Internal | Visibility::Private)
-        && !matches!(func.state_mutability, StateMutability::Pure)
+    func.kind.is_function() && matches!(func.visibility, Visibility::Internal | Visibility::Private)
 }
 
 fn is_this(expr: &Expr<'_>) -> bool {

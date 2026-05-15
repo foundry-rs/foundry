@@ -3,6 +3,7 @@ pragma solidity ^0.8.15;
 
 interface IReceiver {
     function ping(uint256 value) external returns (bool);
+    function purePing(uint256 value) external pure returns (bool);
 }
 
 library LocalLib {
@@ -30,6 +31,10 @@ contract Receiver {
         emit Ping(value);
         return true;
     }
+
+    function purePing(uint256) external pure returns (bool) {
+        return true;
+    }
 }
 
 contract CallsLoop {
@@ -41,6 +46,12 @@ contract CallsLoop {
     mapping(address => IReceiver) internal receiverByAddress;
     Target internal target;
     LocalLib.Box[] internal boxes;
+
+    modifier loopedPlaceholder() {
+        for (uint256 i; i < 1; ++i) {
+            _;
+        }
+    }
 
     function lowLevelCalls(address[] calldata targets) external {
         for (uint256 i; i < targets.length; ++i) {
@@ -93,10 +104,20 @@ contract CallsLoop {
         }
     }
 
+    function callsThroughPureInternalHelper(IReceiver target_) external {
+        for (uint256 i; i < receivers.length; ++i) {
+            _pureNotify(target_, i);
+        }
+    }
+
     function selfExternalCall() external {
         for (uint256 i; i < receivers.length; ++i) {
             this.externalOnly(i);
         }
+    }
+
+    function callsThroughLoopedModifier() external loopedPlaceholder {
+        receiver.ping(0);
     }
 
     function noLoopCall() external {
@@ -124,6 +145,10 @@ contract CallsLoop {
 
     function _notify(uint256 value) internal {
         receiver.ping(value);
+    }
+
+    function _pureNotify(IReceiver target_, uint256 value) internal pure {
+        target_.purePing(value);
     }
 
     function _local(uint256 value) internal {
