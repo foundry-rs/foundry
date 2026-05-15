@@ -105,13 +105,29 @@ pub struct TempoOpts {
     )]
     pub sponsor_sig: Option<Signature>,
 
+    /// Remote sponsor (fee payer) service URL.
+    ///
+    /// When set, the user-signed transaction is forwarded to this URL via
+    /// `eth_sendRawTransaction`. The service adds its fee payer signature and
+    /// broadcasts the transaction to the chain. No local sponsor key is required.
+    ///
+    /// Example: `cast send 0x... --sponsor-url https://sponsor.tempo.xyz/tp_abc123`
+    #[arg(
+        long = "sponsor-url",
+        alias = "tempo.sponsor-url",
+        value_name = "URL",
+        conflicts_with_all = &["sponsor", "sponsor_signer", "sponsor_sig", "print_sponsor_hash"],
+        env = "TEMPO_SPONSOR_URL"
+    )]
+    pub sponsor_url: Option<String>,
+
     /// Print the sponsor signature hash and exit.
     ///
     /// Computes the `fee_payer_signature_hash` for the transaction so that a sponsor
     /// knows what hash to sign. The transaction is not sent.
     #[arg(
         long = "tempo.print-sponsor-hash",
-        conflicts_with_all = &["sponsor", "sponsor_signer", "sponsor_sig"]
+        conflicts_with_all = &["sponsor", "sponsor_signer", "sponsor_sig", "sponsor_url"]
     )]
     pub print_sponsor_hash: bool,
 
@@ -146,7 +162,7 @@ pub struct TempoOpts {
 
 impl TempoOpts {
     /// Returns `true` if any Tempo-specific option is set.
-    pub const fn is_tempo(&self) -> bool {
+    pub fn is_tempo(&self) -> bool {
         self.fee_token.is_some()
             || self.expires.is_some()
             || self.nonce_key.is_some()
@@ -154,6 +170,7 @@ impl TempoOpts {
             || self.sponsor.is_some()
             || self.sponsor_signer.is_some()
             || self.sponsor_sig.is_some()
+            || self.sponsor_url.is_some()
             || self.print_sponsor_hash
             || self.key_id.is_some()
             || self.expiring_nonce
@@ -263,7 +280,11 @@ impl TempoOpts {
         // gas estimation so that `--tempo.print-sponsor-hash` and
         // `--tempo.sponsor-signature` produce identical gas estimates. Callers
         // should call `set_fee_payer_signature` on the built tx request.
-        if (self.has_sponsor_submission() || self.print_sponsor_hash) && tx.nonce_key().is_none() {
+        if (self.has_sponsor_submission()
+            || self.sponsor_url.is_some()
+            || self.print_sponsor_hash)
+            && tx.nonce_key().is_none()
+        {
             tx.set_nonce_key(U256::ZERO);
         }
     }
@@ -414,6 +435,40 @@ mod tests {
             TempoOpts::try_parse_from([
                 "",
                 "--tempo.print-sponsor-hash",
+                "--tempo.sponsor",
+                "0x1111111111111111111111111111111111111111",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parse_sponsor_url() {
+        let opts =
+            TempoOpts::try_parse_from(["", "--sponsor-url", "https://sponsor.tempo.xyz/tp_abc123"])
+                .unwrap();
+        assert_eq!(opts.sponsor_url.as_deref(), Some("https://sponsor.tempo.xyz/tp_abc123"));
+        assert!(opts.is_tempo());
+    }
+
+    #[test]
+    fn sponsor_url_alias() {
+        let opts = TempoOpts::try_parse_from([
+            "",
+            "--tempo.sponsor-url",
+            "https://sponsor.tempo.xyz/tp_abc123",
+        ])
+        .unwrap();
+        assert_eq!(opts.sponsor_url.as_deref(), Some("https://sponsor.tempo.xyz/tp_abc123"));
+    }
+
+    #[test]
+    fn sponsor_url_conflicts_with_sponsor() {
+        assert!(
+            TempoOpts::try_parse_from([
+                "",
+                "--sponsor-url",
+                "https://sponsor.tempo.xyz",
                 "--tempo.sponsor",
                 "0x1111111111111111111111111111111111111111",
             ])
