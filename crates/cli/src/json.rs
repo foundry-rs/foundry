@@ -3,7 +3,6 @@
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, to_string};
-use std::io::Write as _;
 
 /// The current version of Foundry's top-level JSON output envelope.
 pub const JSON_SCHEMA_VERSION: u32 = 1;
@@ -132,13 +131,56 @@ impl JsonMessage {
 
 /// Prints a value as compact, single-line JSON to stdout.
 ///
-/// Bypasses the shell verbosity layer so `--quiet` cannot suppress structured
-/// output the caller explicitly asked for.
+/// Bypasses the shell verbosity layer so neither `--quiet` nor the
+/// `--machine`-induced Quiet mode can suppress structured output the
+/// caller explicitly asked for. Always flushes before returning so that
+/// callers which immediately `std::process::exit` cannot drop the record
+/// on a piped stdout. The trailing newline makes this suitable for
+/// NDJSON streams when each call emits one self-contained JSON record.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
-    let mut stdout = std::io::stdout().lock();
-    writeln!(stdout, "{}", to_string(value)?)?;
-    stdout.flush()?;
+    let s = to_string(value)?;
+    let mut shell = foundry_common::shell::Shell::get();
+    writeln!(shell.out(), "{s}")?;
+    shell.out().flush()?;
     Ok(())
+}
+
+/// One NDJSON record emitted on the stream of a long-running command.
+///
+/// Carries the per-record fields required by `docs/agents/spec.md` §6
+/// (`schema_id`, `command_id`, `kind`, `ts`) and flattens the kind-specific
+/// payload into the same object.
+#[derive(Clone, Debug, Serialize)]
+pub struct StreamRecord<T> {
+    pub schema_id: &'static str,
+    pub command_id: &'static str,
+    pub kind: &'static str,
+    /// RFC 3339 timestamp.
+    pub ts: String,
+    #[serde(flatten)]
+    pub payload: T,
+}
+
+impl<T: Serialize> StreamRecord<T> {
+    /// Build a record stamped with the current UTC time.
+    pub fn new(
+        schema_id: &'static str,
+        command_id: &'static str,
+        kind: &'static str,
+        payload: T,
+    ) -> Self {
+        Self { schema_id, command_id, kind, ts: chrono::Utc::now().to_rfc3339(), payload }
+    }
+}
+
+/// Emits a single NDJSON record on stdout for a streaming command.
+pub fn print_stream_record<T: Serialize>(
+    schema_id: &'static str,
+    command_id: &'static str,
+    kind: &'static str,
+    payload: T,
+) -> Result<()> {
+    print_json(&StreamRecord::new(schema_id, command_id, kind, payload))
 }
 
 /// Prints a successful JSON envelope to stdout.
@@ -189,6 +231,32 @@ mod tests {
         assert_eq!(value["warnings"][0]["level"], "warning");
         assert_eq!(value["warnings"][0]["code"], "compiler.remappings");
         assert_eq!(value["warnings"][0]["details"]["count"], 3);
+    }
+
+    #[test]
+    fn stream_record_includes_required_fields_and_flattens_payload() {
+        #[derive(Serialize)]
+        struct TestEvent {
+            contract: String,
+            passed: usize,
+        }
+        let payload = TestEvent { contract: "Counter.t.sol:CounterTest".into(), passed: 3 };
+        let rec = StreamRecord::new(
+            "foundry:forge.test.event@v1",
+            "forge.test",
+            "suite_finished",
+            payload,
+        );
+        let json = to_string(&rec).unwrap();
+        // Compact, no pretty-printing.
+        assert!(!json.contains('\n'), "expected compact json, got: {json}");
+        let v = serde_json::from_str::<Value>(&json).unwrap();
+        assert_eq!(v["schema_id"], "foundry:forge.test.event@v1");
+        assert_eq!(v["command_id"], "forge.test");
+        assert_eq!(v["kind"], "suite_finished");
+        assert!(v["ts"].is_string());
+        assert_eq!(v["contract"], "Counter.t.sol:CounterTest");
+        assert_eq!(v["passed"], 3);
     }
 
     #[test]

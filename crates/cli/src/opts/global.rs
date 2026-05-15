@@ -140,7 +140,11 @@ impl GlobalArgs {
 
     /// Create a new shell instance.
     pub fn shell(&self) -> Shell {
-        let mode = match self.quiet {
+        // `--machine` owns stdout; force the global shell to Quiet so all
+        // `sh_println!`/`sh_warn!` sites become no-ops. Explicit machine
+        // output (envelopes, NDJSON records) goes through `print_json`,
+        // which bypasses the quiet check.
+        let mode = match self.quiet || self.machine {
             true => OutputMode::Quiet,
             false => OutputMode::Normal,
         };
