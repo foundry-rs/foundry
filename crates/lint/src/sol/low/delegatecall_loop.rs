@@ -6,7 +6,10 @@ use crate::{
 use solar::{
     ast::{StateMutability, Visibility},
     interface::{Span, kw},
-    sema::hir::{self, Expr, ExprKind, FunctionId, ItemId, Res, Stmt, StmtKind, Visit},
+    sema::hir::{
+        Block, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Modifier, Res, Stmt, StmtKind,
+        Visit,
+    },
 };
 use std::{collections::HashSet, ops::ControlFlow};
 
@@ -21,8 +24,8 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        hir: &'hir hir::Hir<'hir>,
-        func: &'hir hir::Function<'hir>,
+        hir: &'hir Hir<'hir>,
+        func: &'hir Function<'hir>,
     ) {
         if !is_payable_entry_point(func) {
             return;
@@ -37,6 +40,7 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
             hir,
             loop_depth: 0,
             emitted: HashSet::new(),
+            placeholder: None,
             modifier_stack: Vec::new(),
             call_stack: Vec::new(),
         };
@@ -44,7 +48,7 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
     }
 }
 
-fn is_payable_entry_point(func: &hir::Function<'_>) -> bool {
+fn is_payable_entry_point(func: &Function<'_>) -> bool {
     // Match Slither's scope: implemented payable entry points, not internal helpers.
     func.state_mutability == StateMutability::Payable
         && matches!(func.visibility, Visibility::Public | Visibility::External)
@@ -52,24 +56,27 @@ fn is_payable_entry_point(func: &hir::Function<'_>) -> bool {
 
 struct DelegatecallLoopChecker<'a, 's, 'hir> {
     ctx: &'a LintContext<'s, 'a>,
-    hir: &'hir hir::Hir<'hir>,
+    hir: &'hir Hir<'hir>,
     loop_depth: usize,
     emitted: HashSet<Span>,
+    placeholder: Option<ModifierContinuation<'hir>>,
     modifier_stack: Vec<FunctionId>,
     call_stack: Vec<FunctionId>,
 }
 
+type ModifierContinuation<'hir> = (&'hir [Modifier<'hir>], usize, Block<'hir>);
+
 impl<'a, 's, 'hir> DelegatecallLoopChecker<'a, 's, 'hir> {
     fn visit_modifier_chain(
         &mut self,
-        modifiers: &'hir [hir::Modifier<'hir>],
+        modifiers: &'hir [Modifier<'hir>],
         index: usize,
-        body: hir::Block<'hir>,
+        body: Block<'hir>,
     ) {
         // Solidity modifiers wrap the function body. Walk each modifier in order and replace
         // the `_` placeholder with the remaining modifier chain and final function body.
         let Some(modifier) = modifiers.get(index) else {
-            self.visit_block_stmts(body);
+            self.visit_block_with_placeholder(body, None);
             return;
         };
 
@@ -96,7 +103,7 @@ impl<'a, 's, 'hir> DelegatecallLoopChecker<'a, 's, 'hir> {
         self.modifier_stack.pop();
     }
 
-    fn visit_block_stmts(&mut self, block: hir::Block<'hir>) {
+    fn visit_block_stmts(&mut self, block: Block<'hir>) {
         for stmt in block.stmts {
             let _ = self.visit_stmt(stmt);
         }
@@ -104,33 +111,20 @@ impl<'a, 's, 'hir> DelegatecallLoopChecker<'a, 's, 'hir> {
 
     fn visit_block_with_placeholder(
         &mut self,
-        block: hir::Block<'hir>,
-        placeholder: Option<(&'hir [hir::Modifier<'hir>], usize, hir::Block<'hir>)>,
+        block: Block<'hir>,
+        placeholder: Option<ModifierContinuation<'hir>>,
     ) {
-        for stmt in block.stmts {
-            self.visit_stmt_with_placeholder(stmt, placeholder);
-        }
-    }
-
-    fn visit_stmt_with_placeholder(
-        &mut self,
-        stmt: &'hir Stmt<'hir>,
-        placeholder: Option<(&'hir [hir::Modifier<'hir>], usize, hir::Block<'hir>)>,
-    ) {
-        if matches!(stmt.kind, StmtKind::Placeholder) {
-            if let Some((modifiers, index, body)) = placeholder {
-                self.visit_modifier_chain(modifiers, index, body);
-            }
-        } else {
-            let _ = self.visit_stmt(stmt);
-        }
+        let previous = self.placeholder;
+        self.placeholder = placeholder;
+        self.visit_block_stmts(block);
+        self.placeholder = previous;
     }
 }
 
 impl<'hir> Visit<'hir> for DelegatecallLoopChecker<'_, '_, 'hir> {
     type BreakValue = ();
 
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
+    fn hir(&self) -> &'hir Hir<'hir> {
         self.hir
     }
 
@@ -139,6 +133,12 @@ impl<'hir> Visit<'hir> for DelegatecallLoopChecker<'_, '_, 'hir> {
             // HIR lowers `for` update expressions into the loop body, so this covers loop
             // bodies and `for (...; ...; next)` delegatecalls with the same scope tracking.
             StmtKind::Loop(block, _) => self.visit_loop_block(block),
+            StmtKind::Placeholder => {
+                if let Some((modifiers, index, body)) = self.placeholder {
+                    self.visit_modifier_chain(modifiers, index, body);
+                }
+                ControlFlow::Continue(())
+            }
             _ => self.walk_stmt(stmt),
         }
     }
@@ -166,7 +166,7 @@ impl<'hir> Visit<'hir> for DelegatecallLoopChecker<'_, '_, 'hir> {
 }
 
 impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
-    fn visit_loop_block(&mut self, block: hir::Block<'hir>) -> ControlFlow<()> {
+    fn visit_loop_block(&mut self, block: Block<'hir>) -> ControlFlow<()> {
         // Keep loop state as traversal context rather than as a property of a single function,
         // so delegatecalls inside internal helpers reached from a loop are also reported.
         self.loop_depth += 1;
@@ -200,7 +200,7 @@ fn is_delegatecall(expr: &Expr<'_>) -> bool {
 }
 
 fn resolved_function_ids<'hir>(
-    callee: &'hir hir::Expr<'hir>,
+    callee: &'hir Expr<'hir>,
 ) -> impl Iterator<Item = FunctionId> + 'hir {
     // Only direct internal calls resolve to function IDs here. Member calls and external calls
     // are intentionally ignored because they do not execute in the current function's HIR body.
