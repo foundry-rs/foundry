@@ -67,9 +67,9 @@ Traces:
     ├─ [..] ReturnsNothing::func() [staticcall]
     │   └─ ← [Stop]
     ├─ [..] ReturnsString::func() [staticcall]
-    │   └─ ← [Return] 0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000006737472696e670000000000000000000000000000000000000000000000000000
+    │   └─ ← [Return] "string"
     ├─ [..] ReturnsUint::func() [staticcall]
-    │   └─ ← [Return] 0x0000000000000000000000000000000000000000000000000000000000000001
+    │   └─ ← [Return] 1
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
