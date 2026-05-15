@@ -83,6 +83,11 @@ Display options:
       --json
           Format log messages as JSON
 
+      --machine
+          Activate the agent contract: emit declared output mode only, no color, no progress,
+          structured early-exit. Implies no color. Mutually exclusive with `--json` and `--md` to
+          keep machine-mode output unambiguous
+
       --md
           Format log messages as Markdown
 
