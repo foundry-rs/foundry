@@ -45,7 +45,9 @@ use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_fuzz::{
     BasicTxDetails,
     invariant::FuzzRunIdentifiedContracts,
-    strategies::{EvmFuzzState, generate_msg_value, mutate_param_value},
+    strategies::{
+        EvmFuzzState, FuzzStateReader, InvariantFuzzState, generate_msg_value, mutate_param_value,
+    },
 };
 use proptest::{
     prelude::{Just, Rng, Strategy},
@@ -574,7 +576,7 @@ impl WorkerCorpus {
     pub fn new_inputs(
         &mut self,
         test_runner: &mut TestRunner,
-        fuzz_state: &EvmFuzzState,
+        fuzz_state: &InvariantFuzzState,
         targeted_contracts: &FuzzRunIdentifiedContracts,
     ) -> Result<Vec<BasicTxDetails>> {
         let mut new_seq = vec![];
@@ -667,7 +669,7 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::Abi => {
-                    let targets = targeted_contracts.targets.lock();
+                    let targets = targeted_contracts.targets();
                     let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
 
@@ -800,7 +802,7 @@ impl WorkerCorpus {
         tx: &mut BasicTxDetails,
         function: &Function,
         test_runner: &mut TestRunner,
-        fuzz_state: &EvmFuzzState,
+        fuzz_state: &impl FuzzStateReader,
     ) -> Result<()> {
         // Mutate value with 15% probability for payable functions.
         if function.state_mutability == alloy_json_abi::StateMutability::Payable
@@ -1129,7 +1131,7 @@ impl WorkerCorpus {
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> bool {
-        fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
+        fuzzed_contracts.is_some_and(|contracts| contracts.targets().can_replay(tx))
             || fuzzed_function.is_some_and(|function| {
                 tx.call_details
                     .calldata
