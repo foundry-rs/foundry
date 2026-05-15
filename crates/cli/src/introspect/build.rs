@@ -36,15 +36,13 @@ pub fn collect_command_ids(doc: &IntrospectDocument) -> Vec<String> {
 ///
 /// Per-mode rules (see also spec §3, §4, §8):
 ///
-/// - [`OutputMode::None`](super::OutputMode::None) and
-///   [`OutputMode::LegacyJson`](super::OutputMode::LegacyJson) MUST NOT carry schema refs.
-/// - [`OutputMode::Envelope`](super::OutputMode::Envelope) requires `result_schema_ref`; MUST NOT
-///   carry `event_schema_ref` or `session_schema_ref`.
-/// - [`OutputMode::Stream`](super::OutputMode::Stream) requires `event_schema_ref`; implies
-///   `long_running = true`. `result_schema_ref` MAY also be set when the stream ends with a
-///   terminal envelope.
-/// - [`OutputMode::Session`](super::OutputMode::Session) requires `session_schema_ref`; implies
-///   `stateful = true` and `long_running = true`.
+/// - [`OutputMode::None`] and [`OutputMode::LegacyJson`] MUST NOT carry schema refs.
+/// - [`OutputMode::Envelope`] requires `result_schema_ref`; MUST NOT carry `event_schema_ref` or
+///   `session_schema_ref`.
+/// - [`OutputMode::Stream`] requires `event_schema_ref`; implies `long_running = true`.
+///   `result_schema_ref` MAY also be set when the stream ends with a terminal envelope.
+/// - [`OutputMode::Session`] requires `session_schema_ref`; implies `stateful = true` and
+///   `long_running = true`.
 ///
 /// Schema refs, when present, must be non-empty and match
 /// `^foundry:[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*(\.event|\.session)?@v\d+$`.
