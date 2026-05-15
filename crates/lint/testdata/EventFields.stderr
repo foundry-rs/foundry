@@ -78,14 +78,6 @@ LL │     event PayableAddr(address payable receiver);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: c (address)
-   ╭▸ ROOT/testdata/EventFields.sol:LL:CC
-   │
-LL │     event PartialCap(address indexed a, address indexed b, address c, address d);
-   │           ━━━━━━━━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/event-fields
-
 note[event-fields]: event has unindexed fields that should be indexed: a (address), b (address), c (address), d (address)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
@@ -99,14 +91,6 @@ note[event-fields]: event has unindexed fields that should be indexed: parameter
    │
 LL │     event Unnamed(address, uint256);
    │           ━━━━━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/event-fields
-
-note[event-fields]: event has unindexed fields that should be indexed: d (address)
-   ╭▸ ROOT/testdata/EventFields.sol:LL:CC
-   │
-LL │     event AnonPartial(address indexed a, address indexed b, address indexed c, address d, address e) anonymous;
-   │           ━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 

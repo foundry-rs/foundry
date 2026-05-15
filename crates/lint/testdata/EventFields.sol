@@ -36,22 +36,26 @@ contract EventFieldsTest {
 
     event PayableAddr(address payable receiver); //~NOTE: event has unindexed fields that should be indexed: receiver (address payable)
 
-    // Truncation: 2 indexed already, only 1 slot left, but 2 unindexed addresses.
-    event PartialCap(address indexed a, address indexed b, address c, address d); //~NOTE: event has unindexed fields that should be indexed: c (address)
-
     // Anonymous events allow up to 4 indexed.
     event AnonFour(address a, address b, address c, address d) anonymous; //~NOTE: event has unindexed fields that should be indexed: a (address), b (address), c (address), d (address)
 
     // Unnamed param is reported using its positional index.
     event Unnamed(address, uint256); //~NOTE: event has unindexed fields that should be indexed: parameter #1 (address)
 
-    // Anonymous partial-cap: only one slot left, so only `d` is reported.
-    event AnonPartial(address indexed a, address indexed b, address indexed c, address d, address e) anonymous; //~NOTE: event has unindexed fields that should be indexed: d (address)
-
     // --- non-triggering cases --------------------------------------------
 
     // Already fully indexed.
     event TransferOk(address indexed from, address indexed to, uint256 value);
+
+    // Partially indexed: the author has chosen what to index, so we stay silent.
+    // Matches Slither's behavior; figtracer's regression case from #14751.
+    event PartiallyIndexed(address indexed from, address to, uint256 value);
+
+    // Same rule for non-anonymous partial cap: at least one indexed param ⇒ no warning.
+    event PartialCap(address indexed a, address indexed b, address c, address d);
+
+    // Same rule for anonymous events.
+    event AnonPartial(address indexed a, address indexed b, address indexed c, address d, address e) anonymous;
 
     // Non-id uint/bytes are not flagged.
     event AmountOnly(uint256 amount);

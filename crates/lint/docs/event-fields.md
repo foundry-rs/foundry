@@ -12,7 +12,8 @@ For each event, identifies unindexed `address`, `address payable`, `uint256`, an
 `bytes32` parameters that look filterable (addresses or id-like names) and reports a
 single warning listing them. The lint respects the EVM cap on indexed parameters
 (3 for normal events, 4 for `anonymous`) and does not flag events that are already at
-capacity.
+capacity. Events that already have at least one indexed parameter are left alone:
+the author has clearly chosen what to index, so we stay silent.
 
 ## Why is this bad?
 

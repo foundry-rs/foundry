@@ -31,6 +31,10 @@ fn check_event<'ast>(ctx: &LintContext, event: &'ast ItemEvent<'ast>) {
     if indexed_count >= max_indexed {
         return;
     }
+    // Partially-indexed events: treat the author's choices as intentional (matches Slither).
+    if indexed_count > 0 {
+        return;
+    }
     let slots_available = max_indexed - indexed_count;
 
     // Collect offending unindexed params (with their positional index) in declaration order.
