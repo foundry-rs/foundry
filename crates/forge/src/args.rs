@@ -1,12 +1,16 @@
 use crate::{
-    cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch},
+    cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, test::TestSummaryData, watch},
     introspect::REGISTRY,
     opts::{Forge, ForgeSubcommand},
+    result::TestOutcome,
 };
 use clap::CommandFactory;
 use clap_complete::generate;
 use eyre::Result;
-use foundry_cli::utils;
+use foundry_cli::{
+    json::{JsonEnvelope, JsonMessage, print_json},
+    utils,
+};
 use foundry_common::{sh_warn, shell};
 use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 
@@ -58,11 +62,20 @@ pub fn run_command(args: Forge) -> Result<()> {
     // Run the subcommand.
     match args.cmd {
         ForgeSubcommand::Test(cmd) => {
+            // Preflight runs before the watcher dispatch so `--watch` (and
+            // every other unsupported flag) is rejected at the top level
+            // rather than swallowed by the watch loop.
+            cmd.reject_machine_unsupported_flags()?;
             if cmd.is_watch() {
                 global.block_on(watch::watch_test(cmd))
             } else {
-                let silent = cmd.junit || shell::is_json();
+                let machine_mode = foundry_cli::is_machine();
+                let silent = machine_mode || cmd.junit || shell::is_json();
+                let started = std::time::Instant::now();
                 let outcome = global.block_on(cmd.run())?;
+                if machine_mode {
+                    return finalize_test_machine_mode(outcome, started.elapsed());
+                }
                 outcome.ensure_ok(silent)
             }
         }
@@ -147,6 +160,43 @@ pub fn run_command(args: Forge) -> Result<()> {
     }
 }
 
+/// Emit the terminal `forge test` envelope and exit appropriately under
+/// `--machine`. Bypasses [`TestOutcome::ensure_ok`]'s human output entirely;
+/// the agent stream owns stdout for the run.
+fn finalize_test_machine_mode(outcome: TestOutcome, wall_clock: std::time::Duration) -> Result<()> {
+    let summary = TestSummaryData::from_outcome(&outcome, wall_clock);
+    let warnings = aggregate_test_warnings(&outcome);
+
+    if outcome.allow_failure || outcome.failed() == 0 {
+        print_json(&JsonEnvelope::success_with_warnings(summary, warnings))?;
+        return Ok(());
+    }
+    let details = serde_json::to_value(&summary).unwrap_or(serde_json::Value::Null);
+    let message =
+        format!("{} test(s) failed across {} suite(s)", outcome.failed(), outcome.results.len());
+    let mut envelope = JsonEnvelope::error(
+        JsonMessage::error(foundry_cli::diagnostic::test::FAILED, message).with_details(details),
+    );
+    envelope.warnings = warnings;
+    print_json(&envelope)?;
+    std::process::exit(foundry_cli::ExitCode::TestFailure.to_i32());
+}
+
+/// Collect every `SuiteResult.warnings` string into structured envelope
+/// messages keyed by the stable `test.warning` code.
+fn aggregate_test_warnings(outcome: &TestOutcome) -> Vec<JsonMessage> {
+    outcome
+        .results
+        .iter()
+        .flat_map(|(suite, sr)| {
+            sr.warnings.iter().map(move |w| {
+                JsonMessage::warning(foundry_cli::diagnostic::test::WARNING, w.clone())
+                    .with_details(serde_json::json!({ "suite": suite }))
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,25 +227,31 @@ mod tests {
         assert!(v.is_empty(), "forge capability violations: {v:?}");
     }
 
-    /// Every adopted command (`output_mode = Envelope`) must pin a stable
-    /// `command_id` matching its registry entry. Catches accidental drift
-    /// between the registry and the clap tree.
+    /// Every adopted command must pin a stable `command_id` matching its
+    /// registry entry. Catches accidental drift between the registry and the
+    /// clap tree across both envelope- and stream-mode commands.
     #[test]
     fn registered_commands_pin_stable_ids() {
         let cmd = <Forge as clap::CommandFactory>::command();
         let doc = build_document(&cmd, &REGISTRY);
-        fn walk(c: &foundry_cli::introspect::CommandInfo) -> Vec<&str> {
+        fn walk(c: &foundry_cli::introspect::CommandInfo) -> Vec<(&str, OutputMode)> {
             let mut out = Vec::new();
-            if matches!(c.capabilities.output_mode, OutputMode::Envelope) {
-                out.push(c.command_id.as_str());
+            if !matches!(c.capabilities.output_mode, OutputMode::None) {
+                out.push((c.command_id.as_str(), c.capabilities.output_mode));
             }
             for sub in &c.subcommands {
                 out.extend(walk(sub));
             }
             out
         }
-        let mut envelope_ids: Vec<&str> = doc.commands.iter().flat_map(walk).collect();
-        envelope_ids.sort();
-        assert!(envelope_ids.contains(&"forge.build"), "forge.build missing: {envelope_ids:?}");
+        let pinned: Vec<(&str, OutputMode)> = doc.commands.iter().flat_map(walk).collect();
+        let pinned_ids: Vec<&str> = pinned.iter().map(|(id, _)| *id).collect();
+        for id in ["forge.build", "forge.test"] {
+            assert!(pinned_ids.contains(&id), "{id} missing from pinned ids: {pinned_ids:?}");
+        }
+        assert!(
+            pinned.iter().any(|(id, m)| *id == "forge.test" && matches!(m, OutputMode::Stream)),
+            "forge.test must be Stream: {pinned:?}"
+        );
     }
 }

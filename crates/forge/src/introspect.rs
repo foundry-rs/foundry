@@ -10,20 +10,43 @@ use foundry_cli::introspect::{
 /// Stable schema id for the `forge build` envelope payload.
 pub const BUILD_RESULT_SCHEMA: &str = "foundry:forge.build@v1";
 
-static ENTRIES: &[RegistryEntry] = &[RegistryEntry {
-    path: &["build"],
-    meta: CommandMeta {
-        command_id: Some("forge.build"),
-        capabilities: CapabilityMeta {
-            output_mode: OutputMode::Envelope,
-            result_schema_ref: Some(BUILD_RESULT_SCHEMA),
-            requires_project: true,
-            side_effects: SideEffects::FsWrite,
-            ..CapabilityMeta::NONE
+/// Stable schema id for `forge test` stream event records.
+pub const TEST_EVENT_SCHEMA: &str = "foundry:forge.test.event@v1";
+/// Stable schema id for the terminal `forge test` envelope payload.
+pub const TEST_RESULT_SCHEMA: &str = "foundry:forge.test@v1";
+
+static ENTRIES: &[RegistryEntry] = &[
+    RegistryEntry {
+        path: &["build"],
+        meta: CommandMeta {
+            command_id: Some("forge.build"),
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::Envelope,
+                result_schema_ref: Some(BUILD_RESULT_SCHEMA),
+                requires_project: true,
+                side_effects: SideEffects::FsWrite,
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
         },
-        exit_codes: &[],
     },
-}];
+    RegistryEntry {
+        path: &["test"],
+        meta: CommandMeta {
+            command_id: Some("forge.test"),
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::Stream,
+                event_schema_ref: Some(TEST_EVENT_SCHEMA),
+                result_schema_ref: Some(TEST_RESULT_SCHEMA),
+                requires_project: true,
+                side_effects: SideEffects::None,
+                long_running: true,
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
+        },
+    },
+];
 
 /// The `forge` command registry. Used by `--introspect` and by adoption code
 /// that needs to look up command metadata.

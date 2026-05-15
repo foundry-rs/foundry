@@ -226,6 +226,37 @@ impl TestArgs {
         self.compile_and_run().await
     }
 
+    /// Reject flags whose stdout shape conflicts with the NDJSON stream
+    /// contract under `--machine`. Called from the binary entry point
+    /// before any subcommand dispatch so `--watch` is also rejected.
+    pub(crate) fn reject_machine_unsupported_flags(&self) -> Result<()> {
+        if !foundry_cli::is_machine() {
+            return Ok(());
+        }
+        let unsupported = [
+            ("--watch", self.is_watch()),
+            ("--debug", self.debug),
+            ("--flamegraph", self.flamegraph),
+            ("--flamechart", self.flamechart),
+            ("--gas-report", self.gas_report),
+            ("--summary", self.summary),
+            ("--list", self.list),
+            ("--junit", self.junit),
+            ("--show-progress", self.show_progress),
+        ]
+        .into_iter()
+        .filter_map(|(name, on)| on.then_some(name))
+        .collect::<Vec<_>>();
+        if !unsupported.is_empty() {
+            foundry_cli::machine::bail_machine_usage(format!(
+                "`forge test` under `--machine` does not yet support {}; \
+                 run without `--machine` or omit those flags.",
+                unsupported.join(", ")
+            ));
+        }
+        Ok(())
+    }
+
     /// Returns a list of files that need to be compiled in order to run all the tests that match
     /// the given filter.
     ///
@@ -291,7 +322,7 @@ impl TestArgs {
 
         let compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
-            .quiet(shell::is_json() || self.junit)
+            .quiet(shell::is_json() || self.junit || foundry_cli::is_machine())
             .files(self.get_sources_to_compile(&config, &filter)?);
         let output = compiler.compile(&project)?;
 
@@ -420,10 +451,11 @@ impl TestArgs {
             }
 
             // Print the merged summary (per-pass summaries are suppressed in `run_tests_inner`).
-            if !self.summary && !shell::is_json() {
+            // Machine mode emits a terminal envelope from the binary entry point instead.
+            if !self.summary && !shell::is_json() && !foundry_cli::is_machine() {
                 sh_println!("{}", outcome.summary(multi_pass_timer.elapsed()))?;
             }
-            if self.summary && !outcome.results.is_empty() {
+            if self.summary && !outcome.results.is_empty() && !foundry_cli::is_machine() {
                 let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
                 sh_println!("{}", &summary_report)?;
             }
@@ -610,8 +642,12 @@ impl TestArgs {
 
         trace!(target: "forge::test", "running all tests");
 
+        let machine_mode = foundry_cli::is_machine();
+
         // If we need to render to a serialized format, we should not print anything else to stdout.
-        let silent = self.gas_report && shell::is_json() || self.summary && shell::is_json();
+        // Machine mode is also a structured stream and must not interleave human output.
+        let silent =
+            machine_mode || self.gas_report && shell::is_json() || self.summary && shell::is_json();
 
         let num_filtered = runner.matching_test_functions(filter).count();
 
@@ -621,22 +657,24 @@ impl TestArgs {
             } else {
                 runner.matching_test_functions(&EmptyTestFilter::default()).count()
             };
-            if total_tests == 0 {
-                sh_println!(
-                    "No tests found in project! Forge looks for functions that start with `test`"
-                )?;
-            } else {
-                let mut msg = format!("no tests match the provided pattern:\n{filter}");
-                // Try to suggest a test when there's no match.
-                if let Some(test_pattern) = &filter.args().test_pattern {
-                    let test_name = test_pattern.as_str();
-                    // Filter contracts but not test functions.
-                    let candidates = runner.all_test_functions(filter).map(|f| &f.name);
-                    if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
-                        write!(msg, "\nDid you mean `{suggestion}`?")?;
+            if !machine_mode {
+                if total_tests == 0 {
+                    sh_println!(
+                        "No tests found in project! Forge looks for functions that start with `test`"
+                    )?;
+                } else {
+                    let mut msg = format!("no tests match the provided pattern:\n{filter}");
+                    // Try to suggest a test when there's no match.
+                    if let Some(test_pattern) = &filter.args().test_pattern {
+                        let test_name = test_pattern.as_str();
+                        // Filter contracts but not test functions.
+                        let candidates = runner.all_test_functions(filter).map(|f| &f.name);
+                        if let Some(suggestion) = utils::did_you_mean(test_name, candidates).pop() {
+                            write!(msg, "\nDid you mean `{suggestion}`?")?;
+                        }
                     }
+                    sh_warn!("{msg}")?;
                 }
-                sh_warn!("{msg}")?;
             }
             return Ok(TestOutcome::empty(Some(runner.known_contracts.clone()), false));
         }
@@ -666,7 +704,8 @@ impl TestArgs {
         }
 
         // Run tests in a non-streaming fashion and collect results for serialization.
-        if !self.gas_report && !self.summary && shell::is_json() {
+        // `--machine` takes precedence over `--json`; the agent stream wins.
+        if !machine_mode && !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
             for suite_result in results.values_mut() {
                 for test_result in suite_result.test_results.values_mut() {
@@ -815,6 +854,10 @@ impl TestArgs {
                             sh_println!()?;
                         }
                     }
+                }
+
+                if machine_mode {
+                    emit_test_result_event(&contract_name, name, result)?;
                 }
 
                 // We shouldn't break out of the outer loop directly here so that we finish
@@ -1011,6 +1054,15 @@ impl TestArgs {
                 sh_println!("{}", suite_result.summary())?;
             }
 
+            if machine_mode {
+                for warning in &suite_result.warnings {
+                    emit_warning_event(&contract_name, warning)?;
+                }
+                if has_tests {
+                    emit_suite_finished_event(&contract_name, &suite_result)?;
+                }
+            }
+
             // Add the suite result to the outcome.
             outcome.results.insert(contract_name, suite_result);
 
@@ -1030,11 +1082,11 @@ impl TestArgs {
             outcome.gas_report = Some(finalized);
         }
 
-        if !is_multi_pass && !self.summary && !shell::is_json() {
+        if !is_multi_pass && !self.summary && !shell::is_json() && !machine_mode {
             sh_println!("{}", outcome.summary(duration))?;
         }
 
-        if !is_multi_pass && self.summary && !outcome.results.is_empty() {
+        if !is_multi_pass && self.summary && !outcome.results.is_empty() && !machine_mode {
             let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
             sh_println!("{summary_report}")?;
         }
@@ -1086,6 +1138,111 @@ impl TestArgs {
             Ok([config.src, config.test])
         })
     }
+}
+
+/// Stable payload emitted in the terminal `forge test` envelope under `--machine`.
+///
+/// See `docs/agents/spec.md` §6 for the contract: counts are aggregated across
+/// every suite that ran. Times are reported in milliseconds.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct TestSummaryData {
+    pub suites: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub duration_ms: u128,
+}
+
+impl TestSummaryData {
+    pub fn from_outcome(outcome: &TestOutcome, wall_clock: Duration) -> Self {
+        Self {
+            suites: outcome.results.len(),
+            passed: outcome.passed(),
+            failed: outcome.failed(),
+            skipped: outcome.skipped(),
+            duration_ms: wall_clock.as_millis(),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct TestResultEvent<'a> {
+    contract: &'a str,
+    name: &'a str,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+    duration_ms: u128,
+}
+
+#[derive(serde::Serialize)]
+struct SuiteFinishedEvent<'a> {
+    contract: &'a str,
+    passed: usize,
+    failed: usize,
+    skipped: usize,
+    duration_ms: u128,
+}
+
+#[derive(serde::Serialize)]
+struct WarningEvent<'a> {
+    contract: &'a str,
+    code: &'static str,
+    message: &'a str,
+}
+
+const fn status_str(status: TestStatus) -> &'static str {
+    match status {
+        TestStatus::Success => "passed",
+        TestStatus::Failure => "failed",
+        TestStatus::Skipped => "skipped",
+    }
+}
+
+fn emit_test_result_event(
+    contract: &str,
+    name: &str,
+    result: &crate::result::TestResult,
+) -> Result<()> {
+    foundry_cli::json::print_stream_record(
+        crate::introspect::TEST_EVENT_SCHEMA,
+        "forge.test",
+        "test_result",
+        TestResultEvent {
+            contract,
+            name,
+            status: status_str(result.status),
+            reason: result.reason.as_deref(),
+            duration_ms: result.duration.as_millis(),
+        },
+    )?;
+    Ok(())
+}
+
+fn emit_suite_finished_event(contract: &str, suite: &SuiteResult) -> Result<()> {
+    foundry_cli::json::print_stream_record(
+        crate::introspect::TEST_EVENT_SCHEMA,
+        "forge.test",
+        "suite_finished",
+        SuiteFinishedEvent {
+            contract,
+            passed: suite.passed(),
+            failed: suite.failed(),
+            skipped: suite.skipped(),
+            duration_ms: suite.duration.as_millis(),
+        },
+    )?;
+    Ok(())
+}
+
+fn emit_warning_event(contract: &str, message: &str) -> Result<()> {
+    foundry_cli::json::print_stream_record(
+        crate::introspect::TEST_EVENT_SCHEMA,
+        "forge.test",
+        "warning",
+        WarningEvent { contract, code: foundry_cli::diagnostic::test::WARNING, message },
+    )?;
+    Ok(())
 }
 
 impl Provider for TestArgs {
