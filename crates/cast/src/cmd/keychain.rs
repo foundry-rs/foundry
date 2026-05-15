@@ -116,7 +116,12 @@ pub enum KeychainSubcommand {
         recipient: Option<Address>,
 
         /// Fee token to check the root account balance for. Defaults to PathUSD.
-        #[arg(id = "doctor_fee_token", long, value_parser = parse_policy_token)]
+        #[arg(
+            id = "doctor_fee_token",
+            long = "fee-token",
+            value_name = "TOKEN",
+            value_parser = parse_policy_token
+        )]
         fee_token: Option<Address>,
 
         #[command(flatten)]
@@ -3194,6 +3199,26 @@ mod tests {
                     tempo.fee_token,
                     Some(Address::from_str("0x20C0000000000000000000000000000000000002").unwrap())
                 );
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_doctor_parses_fee_token_option() {
+        let cmd = KeychainSubcommand::try_parse_from([
+            "keychain",
+            "doctor",
+            "0x1111111111111111111111111111111111111111",
+            "--root-account",
+            "0x2222222222222222222222222222222222222222",
+            "--fee-token",
+            "PathUSD",
+        ])
+        .unwrap();
+        match cmd {
+            KeychainSubcommand::Doctor { fee_token, .. } => {
+                assert_eq!(fee_token, Some(PATH_USD_ADDRESS));
             }
             other => panic!("unexpected: {other:?}"),
         }
