@@ -127,6 +127,22 @@ pub fn bail_machine_usage(message: impl Into<String>) -> ! {
     std::process::exit(ExitCode::Usage.to_i32());
 }
 
+/// Emit a typed error envelope on stdout and exit with `exit_code`.
+///
+/// Use at call sites that have enough context to classify a failure
+/// precisely (e.g. broadcast / RPC / wallet) and want the agent contract
+/// to reflect the typed code rather than the generic
+/// [`report_machine_error`] heuristic in the binary entry point.
+pub fn bail_machine_diagnostic(
+    code: &'static str,
+    exit_code: ExitCode,
+    message: impl Into<String>,
+) -> ! {
+    let envelope = JsonEnvelope::error(JsonMessage::error(code, message));
+    let _ = print_json(&envelope);
+    std::process::exit(exit_code.to_i32());
+}
+
 /// Emit a structured error envelope on stdout for an `eyre::Report`.
 ///
 /// Used by binary entry points to wrap an uncaught command failure as a

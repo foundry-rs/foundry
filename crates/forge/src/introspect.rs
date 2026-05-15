@@ -15,6 +15,11 @@ pub const TEST_EVENT_SCHEMA: &str = "foundry:forge.test.event@v1";
 /// Stable schema id for the terminal `forge test` envelope payload.
 pub const TEST_RESULT_SCHEMA: &str = "foundry:forge.test@v1";
 
+/// Stable schema id for `forge script` stream event records.
+pub const SCRIPT_EVENT_SCHEMA: &str = "foundry:forge.script.event@v1";
+/// Stable schema id for the terminal `forge script` envelope payload.
+pub const SCRIPT_RESULT_SCHEMA: &str = "foundry:forge.script@v1";
+
 static ENTRIES: &[RegistryEntry] = &[
     RegistryEntry {
         path: &["build"],
@@ -40,6 +45,22 @@ static ENTRIES: &[RegistryEntry] = &[
                 result_schema_ref: Some(TEST_RESULT_SCHEMA),
                 requires_project: true,
                 side_effects: SideEffects::None,
+                long_running: true,
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
+        },
+    },
+    RegistryEntry {
+        path: &["script"],
+        meta: CommandMeta {
+            command_id: Some("forge.script"),
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::Stream,
+                event_schema_ref: Some(SCRIPT_EVENT_SCHEMA),
+                result_schema_ref: Some(SCRIPT_RESULT_SCHEMA),
+                requires_project: true,
+                side_effects: SideEffects::ChainWrite,
                 long_running: true,
                 ..CapabilityMeta::NONE
             },

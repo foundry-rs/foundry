@@ -303,6 +303,9 @@ impl ScriptArgs {
     pub async fn run_script(self) -> Result<()> {
         trace!(target: "script", "executing script command");
 
+        self.reject_machine_unsupported_flags()?;
+        let machine_mode = foundry_cli::is_machine();
+
         let (config, evm_opts) = self.resolved_evm_opts().await?;
 
         let is_tempo = evm_opts.networks.is_tempo();
@@ -311,27 +314,97 @@ impl ScriptArgs {
             eyre::bail!("--batch mode is only supported on Tempo networks");
         }
 
-        if is_tempo {
+        let machine_payload: Option<ScriptResultData> = if is_tempo {
             let batch = self.batch;
-            let bundled = match self.prepare_bundled::<TempoEvmNetwork>(config, evm_opts).await? {
-                Some(bundled) => bundled,
-                None => return Ok(()),
-            };
-            let bundled = bundled.wait_for_pending().await?;
-            let broadcasted =
-                if batch { bundled.broadcast_batch().await? } else { bundled.broadcast().await? };
-            if broadcasted.args.verify {
-                broadcasted.verify().await?;
+            match self.prepare_bundled::<TempoEvmNetwork>(config, evm_opts).await? {
+                Some(bundled) => {
+                    let bundled = bundled.wait_for_pending().await?;
+                    if machine_mode {
+                        emit_phase("broadcast")?;
+                    }
+                    let broadcasted = match if batch {
+                        bundled.broadcast_batch().await
+                    } else {
+                        bundled.broadcast().await
+                    } {
+                        Ok(b) => b,
+                        Err(e) if machine_mode => foundry_cli::machine::bail_machine_diagnostic(
+                            foundry_cli::diagnostic::script::BROADCAST_FAILED,
+                            foundry_cli::ExitCode::GenericError,
+                            format!("broadcast failed: {e}"),
+                        ),
+                        Err(e) => return Err(e),
+                    };
+                    let verify_requested = broadcasted.args.verify;
+                    let payload = machine_mode
+                        .then(|| ScriptResultData::from_sequence(&broadcasted.sequence, None));
+                    let verified = if verify_requested {
+                        match broadcasted.verify().await {
+                            Ok(()) => Some(true),
+                            Err(e) if machine_mode => {
+                                let _ =
+                                    record_machine_warning(&format!("verification failed: {e}"));
+                                Some(false)
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    } else {
+                        None
+                    };
+                    payload.map(|mut p| {
+                        p.verified = verified;
+                        p
+                    })
+                }
+                None => machine_mode.then(ScriptResultData::dry_run),
             }
+        } else {
+            #[cfg(feature = "optimism")]
+            {
+                if evm_opts.networks.is_optimism() {
+                    self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await?
+                } else {
+                    self.run_generic_script::<EthEvmNetwork>(config, evm_opts).await?
+                }
+            }
+            #[cfg(not(feature = "optimism"))]
+            {
+                self.run_generic_script::<EthEvmNetwork>(config, evm_opts).await?
+            }
+        };
+
+        if machine_mode {
+            let warnings = drain_machine_warnings();
+            let payload = machine_payload.unwrap_or_else(ScriptResultData::dry_run);
+            foundry_cli::json::print_json(
+                &foundry_cli::json::JsonEnvelope::success_with_warnings(payload, warnings),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Reject flags whose stdout shape conflicts with the NDJSON stream
+    /// contract under `--machine`. `--debug` opens a TUI that can't share
+    /// stdout with the agent stream; `--resume` and `--verify` drive
+    /// state-machine paths whose envelope shape is not part of `@v1`.
+    fn reject_machine_unsupported_flags(&self) -> Result<()> {
+        if !foundry_cli::is_machine() {
             return Ok(());
         }
-
-        #[cfg(feature = "optimism")]
-        if evm_opts.networks.is_optimism() {
-            return self.run_generic_script::<OpEvmNetwork>(config, evm_opts).await;
+        let unsupported =
+            [("--debug", self.debug), ("--resume", self.resume), ("--verify", self.verify)]
+                .into_iter()
+                .filter_map(|(name, on)| on.then_some(name))
+                .collect::<Vec<_>>();
+        if !unsupported.is_empty() {
+            foundry_cli::machine::bail_machine_usage(format!(
+                "`forge script` under `--machine` does not support {}; \
+                 run without `--machine` or omit those flags.",
+                unsupported.join(", ")
+            ));
         }
-
-        self.run_generic_script::<EthEvmNetwork>(config, evm_opts).await
+        Ok(())
     }
 
     /// Prepares the bundled state (compile, simulate, bundle) and returns it
@@ -345,6 +418,9 @@ impl ScriptArgs {
     ) -> Result<Option<BundledState<FEN>>> {
         let state = self.preprocess::<FEN>(config, evm_opts).await?;
         let create2_deployer = state.script_config.evm_opts.create2_deployer;
+        if foundry_cli::is_machine() {
+            emit_phase("compile")?;
+        }
         let compiled = state.compile()?;
 
         // Move from `CompiledState` to `BundledState` either by resuming or executing and
@@ -362,6 +438,10 @@ impl ScriptArgs {
                 .await?
                 .prepare_simulation()
                 .await?;
+
+            if foundry_cli::is_machine() {
+                emit_phase("simulate")?;
+            }
 
             if pre_simulation.args.debug {
                 return match pre_simulation.args.dump.clone() {
@@ -386,6 +466,9 @@ impl ScriptArgs {
             {
                 if pre_simulation.args.broadcast {
                     sh_warn!("No transactions to broadcast.")?;
+                    if foundry_cli::is_machine() {
+                        record_machine_warning("no transactions to broadcast")?;
+                    }
                 }
 
                 return Ok(None);
@@ -395,6 +478,11 @@ impl ScriptArgs {
             if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
                 if !shell::is_json() {
                     sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                }
+                if foundry_cli::is_machine() {
+                    record_machine_warning(
+                        "missing RPC URL: pass --rpc-url to enable on-chain simulation",
+                    )?;
                 }
 
                 return Ok(None);
@@ -436,20 +524,48 @@ impl ScriptArgs {
         self,
         config: Config,
         evm_opts: EvmOpts,
-    ) -> Result<()> {
+    ) -> Result<Option<ScriptResultData>> {
+        let machine_mode = foundry_cli::is_machine();
         let bundled = match self.prepare_bundled::<FEN>(config, evm_opts).await? {
             Some(bundled) => bundled,
-            None => return Ok(()),
+            None => return Ok(machine_mode.then(ScriptResultData::dry_run)),
         };
 
         // Wait for pending txes and broadcast others.
-        let broadcasted = bundled.wait_for_pending().await?.broadcast().await?;
-
-        if broadcasted.args.verify {
-            broadcasted.verify().await?;
+        let bundled = bundled.wait_for_pending().await?;
+        if machine_mode {
+            emit_phase("broadcast")?;
         }
+        let broadcasted = match bundled.broadcast().await {
+            Ok(b) => b,
+            Err(e) if machine_mode => foundry_cli::machine::bail_machine_diagnostic(
+                foundry_cli::diagnostic::script::BROADCAST_FAILED,
+                foundry_cli::ExitCode::GenericError,
+                format!("broadcast failed: {e}"),
+            ),
+            Err(e) => return Err(e),
+        };
 
-        Ok(())
+        let verify_requested = broadcasted.args.verify;
+        let payload =
+            machine_mode.then(|| ScriptResultData::from_sequence(&broadcasted.sequence, None));
+        let verified = if verify_requested {
+            match broadcasted.verify().await {
+                Ok(()) => Some(true),
+                Err(e) if machine_mode => {
+                    let _ = record_machine_warning(&format!("verification failed: {e}"));
+                    Some(false)
+                }
+                Err(e) => return Err(e),
+            }
+        } else {
+            None
+        };
+
+        Ok(payload.map(|mut p| {
+            p.verified = verified;
+            p
+        }))
     }
 
     /// In case the user has loaded *only* one private-key or a single remote signer (e.g.,
@@ -591,8 +707,10 @@ impl ScriptArgs {
         }
 
         // Only prompt if we're broadcasting and we've not disabled interactivity.
+        // `--machine` is implicitly non-interactive: never block on user input.
         if prompt_user
             && !self.non_interactive
+            && !foundry_cli::is_machine()
             && !Confirm::new().with_prompt("Do you wish to continue?".to_string()).interact()?
         {
             eyre::bail!("User canceled the script.");
@@ -604,6 +722,159 @@ impl ScriptArgs {
     /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
     const fn should_broadcast(&self) -> bool {
         self.broadcast || self.resume || self.verify
+    }
+}
+
+/// Stable schema id for `forge script` stream event records.
+/// Must match `crate::introspect::SCRIPT_EVENT_SCHEMA` in the `forge` crate;
+/// the registered_commands_pin_stable_ids test pins the registry side.
+const SCRIPT_EVENT_SCHEMA: &str = "foundry:forge.script.event@v1";
+
+#[derive(Serialize)]
+struct PhaseEvent {
+    phase: &'static str,
+}
+
+fn emit_phase(phase: &'static str) -> Result<()> {
+    foundry_cli::json::print_stream_record(
+        SCRIPT_EVENT_SCHEMA,
+        "forge.script",
+        "phase",
+        PhaseEvent { phase },
+    )?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct ScriptWarningEvent<'a> {
+    code: &'static str,
+    message: &'a str,
+}
+
+thread_local! {
+    /// Per-invocation collector of structured warnings; drained into the
+    /// terminal envelope's `warnings[]` so machine consumers see what the
+    /// silenced human path would have printed.
+    static MACHINE_WARNINGS: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Emit a warning event on the stream and stash it for the terminal envelope.
+fn record_machine_warning(message: &str) -> Result<()> {
+    foundry_cli::json::print_stream_record(
+        SCRIPT_EVENT_SCHEMA,
+        "forge.script",
+        "warning",
+        ScriptWarningEvent { code: foundry_cli::diagnostic::script::WARNING, message },
+    )?;
+    MACHINE_WARNINGS.with(|w| w.borrow_mut().push(message.to_string()));
+    Ok(())
+}
+
+fn drain_machine_warnings() -> Vec<foundry_cli::json::JsonMessage> {
+    MACHINE_WARNINGS
+        .with(|w| std::mem::take(&mut *w.borrow_mut()))
+        .into_iter()
+        .map(|m| {
+            foundry_cli::json::JsonMessage::warning(foundry_cli::diagnostic::script::WARNING, m)
+        })
+        .collect()
+}
+
+/// Stable payload emitted in the terminal `forge script` envelope under `--machine`.
+///
+/// Carries enough to reason about the script's on-chain effect (mode, tx
+/// count, hashes, created contracts) without reading the saved sequence file.
+#[derive(Serialize)]
+struct ScriptResultData {
+    /// `"dry_run"` when no transactions were submitted on-chain, `"broadcast"`
+    /// when at least one transaction was sent.
+    mode: &'static str,
+    /// Whether at least one transaction was submitted on-chain.
+    broadcast: bool,
+    /// Number of transactions in the script's sequence(s).
+    tx_count: usize,
+    /// Submitted transaction hashes, in order. Empty in dry-run.
+    tx_hashes: Vec<String>,
+    /// Contracts created by the script (best-effort; depends on metadata).
+    created_contracts: Vec<CreatedContract>,
+    /// `Some(true)` if `--verify` ran and reported success; `Some(false)` if
+    /// it ran and reported failure; `None` if `--verify` was not requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verified: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct CreatedContract {
+    /// 0x-prefixed deployed address.
+    address: String,
+    /// Best-effort contract name (may be missing for unlinked / dynamic deploys).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    contract_name: Option<String>,
+}
+
+impl ScriptResultData {
+    /// Empty payload for the dry-run / no-broadcast case.
+    const fn dry_run() -> Self {
+        Self {
+            mode: "dry_run",
+            broadcast: false,
+            tx_count: 0,
+            tx_hashes: Vec::new(),
+            created_contracts: Vec::new(),
+            verified: None,
+        }
+    }
+
+    /// Build the broadcast-mode payload from a finished sequence.
+    fn from_sequence<N: alloy_network::Network>(
+        sequence: &crate::sequence::ScriptSequenceKind<N>,
+        verified: Option<bool>,
+    ) -> Self
+    where
+        N::TxEnvelope: for<'d> serde::Deserialize<'d> + Serialize,
+    {
+        let mut tx_count = 0usize;
+        let mut tx_hashes = Vec::new();
+        let mut created_contracts = Vec::new();
+        for seq in sequence.sequences() {
+            for tx in &seq.transactions {
+                tx_count += 1;
+
+                if let Some(h) = tx.hash {
+                    tx_hashes.push(format!("{h:#x}"));
+                }
+
+                // Top-level CREATE / CREATE2: `contract_address` is also populated for
+                // ordinary CALLs, so gate on `call_kind` to avoid reporting callees as
+                // newly-created contracts.
+                if tx.call_kind.is_any_create()
+                    && let Some(addr) = tx.contract_address
+                {
+                    created_contracts.push(CreatedContract {
+                        address: format!("{addr:#x}"),
+                        contract_name: tx.contract_name.clone().filter(|s| !s.is_empty()),
+                    });
+                }
+
+                // Nested contracts created during the tx's execution (recorded in
+                // sequence metadata at simulation time).
+                for c in &tx.additional_contracts {
+                    created_contracts.push(CreatedContract {
+                        address: format!("{:#x}", c.address),
+                        contract_name: c.contract_name.clone().filter(|s| !s.is_empty()),
+                    });
+                }
+            }
+        }
+        Self {
+            mode: "broadcast",
+            broadcast: true,
+            tx_count,
+            tx_hashes,
+            created_contracts,
+            verified,
+        }
     }
 }
 

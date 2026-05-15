@@ -246,12 +246,14 @@ mod tests {
         }
         let pinned: Vec<(&str, OutputMode)> = doc.commands.iter().flat_map(walk).collect();
         let pinned_ids: Vec<&str> = pinned.iter().map(|(id, _)| *id).collect();
-        for id in ["forge.build", "forge.test"] {
+        for id in ["forge.build", "forge.test", "forge.script"] {
             assert!(pinned_ids.contains(&id), "{id} missing from pinned ids: {pinned_ids:?}");
         }
-        assert!(
-            pinned.iter().any(|(id, m)| *id == "forge.test" && matches!(m, OutputMode::Stream)),
-            "forge.test must be Stream: {pinned:?}"
-        );
+        for id in ["forge.test", "forge.script"] {
+            assert!(
+                pinned.iter().any(|(p, m)| *p == id && matches!(m, OutputMode::Stream)),
+                "{id} must be Stream: {pinned:?}"
+            );
+        }
     }
 }

@@ -3706,3 +3706,240 @@ forgetest!(can_execute_script_command_with_tempo, |prj, cmd| {
         .arg(prj.root())
         .assert_success();
 });
+
+// `forge --machine script <Foo>` emits NDJSON phase events terminating in a
+// success envelope. Uses a tiny no-broadcast script.
+forgetest!(machine_mode_emits_ndjson_stream, |prj, cmd| {
+    let script = prj.add_source(
+        "Foo",
+        r#"
+contract Demo {
+    function run() external {}
+}
+   "#,
+    );
+
+    let assert = cmd.arg("--machine").arg("script").arg(script).assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert!(lines.len() >= 2, "expected stream + envelope, got: {stdout}");
+
+    let mut phases = Vec::new();
+    for line in &lines[..lines.len() - 1] {
+        let v: Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("non-json stream line: {line}: {e}"));
+        assert_eq!(v["schema_id"], "foundry:forge.script.event@v1");
+        assert_eq!(v["command_id"], "forge.script");
+        assert!(v["ts"].is_string());
+        if v["kind"] == "phase" {
+            phases.push(v["phase"].as_str().unwrap_or("").to_string());
+        }
+    }
+    assert!(phases.iter().any(|p| p == "compile"), "missing compile phase: {phases:?}");
+
+    let envelope: Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    assert_eq!(envelope["schema_version"], 1);
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"]["mode"], "dry_run");
+    assert_eq!(envelope["data"]["broadcast"], false);
+    assert_eq!(envelope["data"]["tx_count"], 0);
+    assert!(envelope["data"]["tx_hashes"].as_array().unwrap().is_empty());
+    assert!(envelope["data"]["created_contracts"].as_array().unwrap().is_empty());
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// `forge --machine script <Foo> --broadcast` on a script with no transactions
+// emits a `warning` stream event AND aggregates the warning into the terminal
+// envelope's `warnings[]` so machine consumers don't lose what the silenced
+// human path would have printed.
+forgetest!(machine_mode_aggregates_warnings_into_envelope, |prj, cmd| {
+    let script = prj.add_source(
+        "Foo",
+        r#"
+contract Demo {
+    function run() external {}
+}
+   "#,
+    );
+
+    let assert = cmd.arg("--machine").arg("script").arg(script).arg("--broadcast").assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    assert!(lines.len() >= 2, "expected stream + envelope, got: {stdout}");
+
+    // Last line is the terminal envelope; preceding lines are stream records.
+    let envelope: Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"]["broadcast"], false);
+    let warnings = envelope["warnings"].as_array().expect("warnings must be an array");
+    assert!(!warnings.is_empty(), "expected warnings in envelope, got: {envelope}");
+    assert_eq!(warnings[0]["level"], "warning");
+    assert_eq!(warnings[0]["code"], "script.warning");
+    assert!(
+        warnings[0]["message"].as_str().unwrap_or("").contains("no transactions"),
+        "unexpected warning: {}",
+        warnings[0]
+    );
+
+    // The same warning must also appear as a stream `warning` record.
+    let saw_stream_warning = lines[..lines.len() - 1].iter().any(|l| {
+        let v: Value = serde_json::from_str(l).unwrap();
+        v["kind"] == "warning"
+    });
+    assert!(saw_stream_warning, "expected a `warning` stream record, got: {stdout}");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// A broadcast failure under `--machine` emits a typed error envelope keyed
+// by `script.broadcast_failed` instead of falling through to the generic
+// `cli.unknown` heuristic in the binary entry point.
+//
+// Trigger: anvil running, but the broadcast key is not in anvil's
+// pre-funded set so `eth_sendRawTransaction` rejects with insufficient
+// funds at the broadcast step (simulation against the fork still
+// succeeds).
+forgetest_async!(machine_mode_broadcast_failed_emits_typed_envelope, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let http_endpoint = handle.http_endpoint();
+
+    let script = prj.add_source(
+        "Deploy",
+        r#"
+import "forge-std/Script.sol";
+contract Empty {}
+contract DeployScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Empty();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+
+    // Private key for an address with zero anvil balance.
+    let unfunded_pk = "0x0000000000000000000000000000000000000000000000000000000000000001";
+
+    let assert = cmd
+        .arg("--machine")
+        .arg("script")
+        .arg(script)
+        .arg("--target-contract")
+        .arg("DeployScript")
+        .arg("--broadcast")
+        .arg("--rpc-url")
+        .arg(&http_endpoint)
+        .arg("--private-key")
+        .arg(unfunded_pk)
+        .assert_failure();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    let envelope: Value = serde_json::from_str(lines.last().unwrap())
+        .unwrap_or_else(|e| panic!("trailing line not envelope: {stdout}: {e}"));
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "script.broadcast_failed");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// `--machine` rejects flags whose stdout shape would corrupt the NDJSON
+// stream contract (`--debug`, `--resume`, `--verify`).
+forgetest!(machine_mode_rejects_unsupported_flags, |prj, cmd| {
+    let script = prj.add_source(
+        "Foo",
+        r#"
+contract Demo {
+    function run() external {}
+}
+   "#,
+    );
+
+    let assert = cmd.arg("--machine").arg("script").arg(script).arg("--debug").assert_failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("expected single-envelope error: {stdout}: {e}"));
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("--debug"), "missing --debug mention: {envelope}");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// Happy-path broadcast: `--machine script ... --broadcast` against anvil
+// emits the `@v1` envelope with mode=broadcast, real tx hashes, and the
+// CREATE'd contract address. Pins the v1 payload shape.
+forgetest_async!(machine_mode_broadcast_success_emits_payload, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    let deploy_script = prj.add_source(
+        "Deploy",
+        r#"
+import "forge-std/Script.sol";
+contract Deployed {}
+contract DeployScript is Script {
+    function run() external {
+        vm.startBroadcast();
+        new Deployed();
+        vm.stopBroadcast();
+    }
+}
+   "#,
+    );
+    let deploy_contract = deploy_script.display().to_string() + ":DeployScript";
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    // Anvil's standard prefunded dev account #0.
+    let private_key = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    cmd.set_current_dir(prj.root());
+
+    let assert = cmd
+        .args([
+            "--machine",
+            "script",
+            &deploy_contract,
+            "--root",
+            prj.root().to_str().unwrap(),
+            "--rpc-url",
+            &handle.http_endpoint(),
+            "--broadcast",
+            "--private-key",
+            private_key,
+        ])
+        .assert_success();
+
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    let envelope: Value = serde_json::from_str(lines.last().unwrap())
+        .unwrap_or_else(|e| panic!("trailing line not envelope: {stdout}: {e}"));
+
+    assert_eq!(envelope["success"], true, "envelope: {envelope}");
+    let data = &envelope["data"];
+    assert_eq!(data["mode"], "broadcast", "envelope: {envelope}");
+    assert_eq!(data["broadcast"], true, "envelope: {envelope}");
+    let tx_count = data["tx_count"].as_u64().unwrap_or(0);
+    assert!(tx_count >= 1, "expected tx_count >= 1, got {tx_count}: {envelope}");
+    let tx_hashes = data["tx_hashes"].as_array().expect("tx_hashes array");
+    assert!(!tx_hashes.is_empty(), "tx_hashes empty: {envelope}");
+    for h in tx_hashes {
+        assert!(h.as_str().unwrap_or("").starts_with("0x"), "tx hash not 0x-prefixed: {h}");
+    }
+    let created = data["created_contracts"].as_array().expect("created_contracts array");
+    assert!(!created.is_empty(), "created_contracts empty: {envelope}");
+    assert!(
+        created.iter().any(|c| c["address"].as_str().unwrap_or("").starts_with("0x")),
+        "no created_contracts entry with 0x address: {envelope}"
+    );
+    assert!(data.get("verified").is_none(), "verified should be absent: {envelope}");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});

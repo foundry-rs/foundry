@@ -156,8 +156,10 @@ pub mod test {
 /// `forge script` diagnostic codes.
 pub mod script {
     pub const BROADCAST_FAILED: &str = "script.broadcast_failed";
+    /// Non-fatal advisory surfaced by `forge script`.
+    pub const WARNING: &str = "script.warning";
 
-    pub(crate) const ALL: &[&str] = &[BROADCAST_FAILED];
+    pub(crate) const ALL: &[&str] = &[BROADCAST_FAILED, WARNING];
 }
 
 /// `cast` diagnostic codes.
