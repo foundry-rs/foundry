@@ -203,3 +203,42 @@ contract BaseCtorArgWritten is AcceptsArg {
         initVal = v; // written in body, so not flagged
     }
 }
+
+// ── Abstract contracts: not directly deployed, skip entirely ──────────────────
+
+abstract contract AbstractBase {
+    uint256 public unset; // would fire if abstract were not skipped
+
+    function getUnset() public view returns (uint256) {
+        return unset;
+    }
+}
+
+// ── Mappings: always default-initialized, skip to avoid false positives ───────
+
+contract ReadOnlyMapping {
+    mapping(address => uint256) public balances; // public getter reads it; no explicit write
+
+    function get(address a) public view returns (uint256) {
+        return balances[a];
+    }
+}
+
+// ── Storage-ref internal call: _set(data, v) writes `data` via storage ref ───
+
+contract StorageRefCall {
+    struct Data { uint256 val; }
+    Data public slot;
+
+    function _set(Data storage target, uint256 v) internal {
+        target.val = v;
+    }
+
+    function set(uint256 v) external {
+        _set(slot, v);
+    }
+
+    function get() public view returns (uint256) {
+        return slot.val;
+    }
+}

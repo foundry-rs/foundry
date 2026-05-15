@@ -8,7 +8,10 @@ use solar::{
     interface::{data_structures::Never, sym},
     sema::{
         Hir,
-        hir::{Block, ContractId, Expr, ExprKind, ItemId, Res, Stmt, StmtKind, VariableId, Visit},
+        hir::{
+            Block, ContractId, DataLocation, Expr, ExprKind, ItemId, Res, Stmt, StmtKind, TypeKind,
+            VariableId, Visit,
+        },
     },
 };
 use std::{collections::HashSet, ops::ControlFlow};
@@ -29,7 +32,7 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
     ) {
         let contract = hir.contract(contract_id);
 
-        if contract.kind == ContractKind::Interface {
+        if matches!(contract.kind, ContractKind::Interface | ContractKind::AbstractContract) {
             return;
         }
 
@@ -54,7 +57,9 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
             .flat_map(|&cid| hir.contract(cid).variables())
             .filter(|&var_id| {
                 let var = hir.variable(var_id);
-                !var.is_constant() && !var.is_immutable()
+                !var.is_constant()
+                    && !var.is_immutable()
+                    && !matches!(var.ty.kind, TypeKind::Mapping(_))
             })
             .collect();
 
@@ -82,7 +87,8 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
 
                 for modifier in function.modifiers {
                     for expr in modifier.args.exprs() {
-                        if collect_expr_writes_checked(expr, &candidate_set, &mut written).is_err()
+                        if collect_expr_writes_checked(hir, expr, &candidate_set, &mut written)
+                            .is_err()
                         {
                             return;
                         }
@@ -99,7 +105,8 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
 
             for base_modifier in hir.contract(cid).bases_args {
                 for expr in base_modifier.args.exprs() {
-                    if collect_expr_writes_checked(expr, &candidate_set, &mut written).is_err() {
+                    if collect_expr_writes_checked(hir, expr, &candidate_set, &mut written).is_err()
+                    {
                         return;
                     }
                 }
@@ -156,34 +163,35 @@ fn collect_stmt_writes_checked<'hir>(
             collect_block_writes_checked(hir, *block, candidates, writes)?;
         }
         StmtKind::If(condition, then_stmt, else_stmt) => {
-            collect_expr_writes_checked(condition, candidates, writes)?;
+            collect_expr_writes_checked(hir, condition, candidates, writes)?;
             collect_stmt_writes_checked(hir, then_stmt, candidates, writes)?;
             if let Some(else_stmt) = else_stmt {
                 collect_stmt_writes_checked(hir, else_stmt, candidates, writes)?;
             }
         }
         StmtKind::Try(stmt_try) => {
-            collect_expr_writes_checked(&stmt_try.expr, candidates, writes)?;
+            collect_expr_writes_checked(hir, &stmt_try.expr, candidates, writes)?;
             for clause in stmt_try.clauses {
                 collect_block_writes_checked(hir, clause.block, candidates, writes)?;
             }
         }
         StmtKind::DeclSingle(var_id) => {
             if let Some(initializer) = hir.variable(*var_id).initializer {
-                collect_expr_writes_checked(initializer, candidates, writes)?;
+                collect_expr_writes_checked(hir, initializer, candidates, writes)?;
             }
         }
         StmtKind::DeclMulti(_, expr)
         | StmtKind::Emit(expr)
         | StmtKind::Revert(expr)
         | StmtKind::Return(Some(expr))
-        | StmtKind::Expr(expr) => collect_expr_writes_checked(expr, candidates, writes)?,
+        | StmtKind::Expr(expr) => collect_expr_writes_checked(hir, expr, candidates, writes)?,
         StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder => {}
     }
     Ok(())
 }
 
 fn collect_expr_writes_checked<'hir>(
+    hir: &'hir Hir<'hir>,
     expr: &'hir Expr<'hir>,
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
@@ -191,27 +199,27 @@ fn collect_expr_writes_checked<'hir>(
     match &expr.kind {
         ExprKind::Assign(lhs, _, rhs) => {
             collect_lvalue_writes(lhs, candidates, writes);
-            collect_expr_writes_checked(lhs, candidates, writes)?;
-            collect_expr_writes_checked(rhs, candidates, writes)?;
+            collect_expr_writes_checked(hir, lhs, candidates, writes)?;
+            collect_expr_writes_checked(hir, rhs, candidates, writes)?;
         }
         ExprKind::Delete(inner) => {
             collect_lvalue_writes(inner, candidates, writes);
-            collect_expr_writes_checked(inner, candidates, writes)?;
+            collect_expr_writes_checked(hir, inner, candidates, writes)?;
         }
         ExprKind::Unary(op, inner) => {
             if op.kind.has_side_effects() {
                 collect_lvalue_writes(inner, candidates, writes);
             }
-            collect_expr_writes_checked(inner, candidates, writes)?;
+            collect_expr_writes_checked(hir, inner, candidates, writes)?;
         }
         ExprKind::Array(exprs) => {
             for expr in *exprs {
-                collect_expr_writes_checked(expr, candidates, writes)?;
+                collect_expr_writes_checked(hir, expr, candidates, writes)?;
             }
         }
         ExprKind::Binary(lhs, _, rhs) => {
-            collect_expr_writes_checked(lhs, candidates, writes)?;
-            collect_expr_writes_checked(rhs, candidates, writes)?;
+            collect_expr_writes_checked(hir, lhs, candidates, writes)?;
+            collect_expr_writes_checked(hir, rhs, candidates, writes)?;
         }
         ExprKind::Call(callee, args, named_args) => {
             // arr.push(...) / arr.pop() mutate a dynamic array stored in a
@@ -222,42 +230,60 @@ fn collect_expr_writes_checked<'hir>(
                     collect_lvalue_writes(base, candidates, writes);
                 }
             }
-            collect_expr_writes_checked(callee, candidates, writes)?;
+
+            // Direct calls to internal functions that take a `storage` parameter
+            // mutate the corresponding argument in place; treat it as a write.
+            if let ExprKind::Ident(resolutions) = &callee.kind {
+                for res in *resolutions {
+                    if let Res::Item(ItemId::Function(func_id)) = res {
+                        let func = hir.function(*func_id);
+                        for (&param_id, arg_expr) in func.parameters.iter().zip(args.exprs()) {
+                            if matches!(
+                                hir.variable(param_id).data_location,
+                                Some(DataLocation::Storage)
+                            ) {
+                                collect_lvalue_writes(arg_expr, candidates, writes);
+                            }
+                        }
+                    }
+                }
+            }
+            collect_expr_writes_checked(hir, callee, candidates, writes)?;
             for expr in args.exprs() {
-                collect_expr_writes_checked(expr, candidates, writes)?;
+                collect_expr_writes_checked(hir, expr, candidates, writes)?;
             }
             if let Some(named_args) = named_args {
                 for arg in *named_args {
-                    collect_expr_writes_checked(&arg.value, candidates, writes)?;
+                    collect_expr_writes_checked(hir, &arg.value, candidates, writes)?;
                 }
             }
         }
         ExprKind::Index(base, index) => {
-            collect_expr_writes_checked(base, candidates, writes)?;
+            collect_expr_writes_checked(hir, base, candidates, writes)?;
             if let Some(index) = index {
-                collect_expr_writes_checked(index, candidates, writes)?;
+                collect_expr_writes_checked(hir, index, candidates, writes)?;
             }
         }
         ExprKind::Slice(base, start, end) => {
-            collect_expr_writes_checked(base, candidates, writes)?;
+            collect_expr_writes_checked(hir, base, candidates, writes)?;
             if let Some(start) = start {
-                collect_expr_writes_checked(start, candidates, writes)?;
+                collect_expr_writes_checked(hir, start, candidates, writes)?;
             }
             if let Some(end) = end {
-                collect_expr_writes_checked(end, candidates, writes)?;
+                collect_expr_writes_checked(hir, end, candidates, writes)?;
             }
         }
         ExprKind::Member(base, _) | ExprKind::Payable(base) => {
-            collect_expr_writes_checked(base, candidates, writes)?;
+            collect_expr_writes_checked(hir, base, candidates, writes)?;
         }
         ExprKind::Ternary(condition, then_expr, else_expr) => {
-            collect_expr_writes_checked(condition, candidates, writes)?;
-            collect_expr_writes_checked(then_expr, candidates, writes)?;
-            collect_expr_writes_checked(else_expr, candidates, writes)?;
+            collect_expr_writes_checked(hir, condition, candidates, writes)?;
+            collect_expr_writes_checked(hir, then_expr, candidates, writes)?;
+            collect_expr_writes_checked(hir, else_expr, candidates, writes)?;
         }
         ExprKind::Tuple(exprs) => {
             for expr in exprs.iter().flatten() {
-                collect_expr_writes_checked(expr, candidates, writes)?;
+                collect_expr_writes_checked(hir, expr, candidates, writes)?;
             }
         }
         ExprKind::Ident(_)
