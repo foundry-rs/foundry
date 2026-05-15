@@ -1,6 +1,6 @@
 //! Tests for tracing functionality
 
-use foundry_test_utils::{str, util::OutputExt};
+use foundry_test_utils::str;
 
 forgetest_init!(conflicting_signatures, |prj, cmd| {
     prj.add_test(
@@ -143,16 +143,25 @@ contract TraceStructOutputsTest is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--mt", "testStructTracesUseContractAbi", "-vvvv"])
+    cmd.args(["test", "--mt", "testStructTracesUseContractAbi", "-vvvv"])
         .assert_success()
-        .get_output()
-        .stdout_lossy();
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/TraceStructOutputs.t.sol:TraceStructOutputsTest
+[PASS] testStructTracesUseContractAbi() ([GAS])
+Traces:
+  [..] TraceStructOutputsTest::testStructTracesUseContractAbi()
+    ├─ [..] ZWow::item(1) [staticcall]
+    │   └─ ← [Return] WowStruct({ a: 1, b: 2 })
+    ├─ [..] AAAMuchWow::item(2) [staticcall]
+    │   └─ ← [Return] MuchWowStruct({ c: 3, d: 4 })
+    └─ ← [Stop]
 
-    assert!(stdout.contains("ZWow::item(1) [staticcall]"), "{stdout}");
-    assert!(stdout.contains("← [Return] WowStruct({ a: 1, b: 2 })"), "{stdout}");
-    assert!(stdout.contains("AAAMuchWow::item(2) [staticcall]"), "{stdout}");
-    assert!(stdout.contains("← [Return] MuchWowStruct({ c: 3, d: 4 })"), "{stdout}");
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 #[cfg(not(feature = "isolate-by-default"))]
