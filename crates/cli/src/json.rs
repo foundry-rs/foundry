@@ -131,12 +131,13 @@ impl JsonMessage {
 
 /// Prints a value as compact, single-line JSON to stdout.
 ///
-/// Bypasses the shell verbosity layer so neither `--quiet` nor the
-/// `--machine`-induced Quiet mode can suppress structured output the
-/// caller explicitly asked for. Always flushes before returning so that
-/// callers which immediately `std::process::exit` cannot drop the record
-/// on a piped stdout. The trailing newline makes this suitable for
-/// NDJSON streams when each call emits one self-contained JSON record.
+/// Bypasses the shell verbosity layer (see
+/// [`foundry_common::shell::Shell::is_quiet`]) so neither `--quiet` nor the
+/// `--machine`-induced Quiet mode can suppress structured output the caller
+/// explicitly asked for. Always flushes before returning so that callers
+/// which immediately `std::process::exit` cannot drop the record on a piped
+/// stdout. The trailing newline makes this suitable for NDJSON streams when
+/// each call emits one self-contained JSON record.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     let s = to_string(value)?;
     let mut shell = foundry_common::shell::Shell::get();
