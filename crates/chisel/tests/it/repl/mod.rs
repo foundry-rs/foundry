@@ -40,6 +40,13 @@ repl_test!(abi_encoded_bytes_memory_display, |repl| {
     repl.sendln(r#"bytes memory revertStringOne = abi.encode("Not initialized")"#);
     repl.sendln("bytes memory decoded = abi.decode(revertStringOne, (bytes))");
     repl.sendln(r#"bytes memory revertStringTwo = bytes("Not initialized")"#);
+    repl.sendln("bytes memory emptyBytes = hex\"\"");
+    repl.sendln(
+        "bytes memory exactWord = hex\"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20\"",
+    );
+    repl.sendln(
+        "bytes memory overWord = hex\"0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2021\"",
+    );
 
     repl.sendln("decoded");
     repl.expect(
@@ -55,6 +62,28 @@ repl_test!(abi_encoded_bytes_memory_display, |repl| {
     );
     repl.expect(
         "Contents ([0x20:..]): 0x4e6f7420696e697469616c697a65640000000000000000000000000000000000",
+    );
+
+    repl.sendln("emptyBytes");
+    repl.expect(
+        "Length ([0x00:0x20]): 0x0000000000000000000000000000000000000000000000000000000000000000",
+    );
+    repl.expect("Contents ([0x20:..]): 0x");
+
+    repl.sendln("exactWord");
+    repl.expect(
+        "Length ([0x00:0x20]): 0x0000000000000000000000000000000000000000000000000000000000000020",
+    );
+    repl.expect(
+        "Contents ([0x20:..]): 0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+    );
+
+    repl.sendln("overWord");
+    repl.expect(
+        "Length ([0x00:0x20]): 0x0000000000000000000000000000000000000000000000000000000000000021",
+    );
+    repl.expect(
+        "Contents ([0x20:..]): 0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202100000000000000000000000000000000000000000000000000000000000000",
     );
 });
 
