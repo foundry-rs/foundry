@@ -19,7 +19,6 @@ impl<'hir> LateLintPass<'hir> for UnwrappedModifierLogic {
     fn check_function(
         &mut self,
         ctx: &LintContext,
-        _gcx: solar::sema::Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
         func: &'hir hir::Function<'hir>,
     ) {

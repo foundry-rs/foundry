@@ -193,6 +193,17 @@ contract DelegatecallLoop is ParentOrdinaryDelegatecall {
         }
     }
 
+    function payableLoopCallsConditionalOrdinaryDelegatecall(
+        OrdinaryDelegatecall a,
+        OrdinaryDelegatecall b,
+        bytes[] calldata payloads,
+        bool flag
+    ) external payable {
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            require((flag ? a : b).delegatecall(payloads[i]));
+        }
+    }
+
     function delegatecall(bytes calldata) public pure override returns (bool) {
         return true;
     }

@@ -61,10 +61,18 @@ pub trait LateLintPass<'hir>: Send + Sync {
     fn check_function(
         &mut self,
         _ctx: &LintContext,
-        _gcx: Gcx<'hir>,
         _hir: &'hir hir::Hir<'hir>,
         _func: &'hir hir::Function<'hir>,
     ) {
+    }
+    fn check_function_with_gcx(
+        &mut self,
+        ctx: &LintContext,
+        _gcx: Gcx<'hir>,
+        hir: &'hir hir::Hir<'hir>,
+        func: &'hir hir::Function<'hir>,
+    ) {
+        self.check_function(ctx, hir, func);
     }
     fn check_modifier(
         &mut self,
@@ -189,7 +197,7 @@ where
 
     fn visit_function(&mut self, func: &'hir hir::Function<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_function(self.ctx, self.gcx, self.hir, func);
+            pass.check_function_with_gcx(self.ctx, self.gcx, self.hir, func);
         }
         self.walk_function(func)
     }

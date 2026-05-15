@@ -25,7 +25,7 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
-    fn check_function(
+    fn check_function_with_gcx(
         &mut self,
         ctx: &LintContext,
         gcx: Gcx<'hir>,
@@ -38,7 +38,7 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
 
         let Some(body) = func.body else { return };
 
-        // Only payable entry paths can preserve a non-zero `msg.value` into helpers.
+        // Start at payable entry points; internal calls inherit their `msg.value`.
         let mut checker = DelegatecallLoopChecker {
             ctx,
             hir,
@@ -208,7 +208,7 @@ impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
         }
 
         // Only address builtin `delegatecall` maps to the low-level EVM operation.
-        self.expr_ty(receiver).is_none_or(is_address_ty)
+        self.expr_ty(receiver).is_some_and(is_address_ty)
     }
 
     fn resolved_internal_function_id(
@@ -441,6 +441,8 @@ fn member_ty<'gcx>(
     base: &Expr<'gcx>,
     member_name: solar::interface::Symbol,
 ) -> Option<Ty<'gcx>> {
+    // Resolve `base.member` through semantic members while keeping `this`/`super`
+    // out of address-builtin detection.
     let base_ty = match &base.peel_parens().kind {
         ExprKind::Ident(reses)
             if reses.iter().any(|res| {
