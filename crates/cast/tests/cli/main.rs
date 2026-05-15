@@ -3464,6 +3464,61 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
         .assert_success();
 });
 
+// `cast --machine call` emits a single envelope on stdout against an
+// empty account, returning the deterministic `0x` result.
+forgetest_async!(cast_call_machine_mode_emits_envelope, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let http_endpoint = handle.http_endpoint();
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &http_endpoint,
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
+
+    assert_eq!(envelope["schema_version"], 1);
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"]["result"], "0x");
+    assert_eq!(envelope["errors"], serde_json::json!([]));
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
+});
+
+// `--machine` rejects flags that would corrupt the envelope-only stdout
+// contract. Asserts the stable `code` + exit code, not just message text.
+forgetest_async!(cast_call_machine_mode_rejects_unsupported_flags, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let http_endpoint = handle.http_endpoint();
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "call",
+            "--trace",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &http_endpoint,
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
+
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("--trace"), "missing --trace mention: {envelope}");
+});
+
 // https://github.com/foundry-rs/foundry/issues/10848
 forgetest_async!(cast_call_disable_labels, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;

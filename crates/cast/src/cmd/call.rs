@@ -16,6 +16,7 @@ use alloy_rpc_types::{
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
+    json::{JsonEnvelope, print_json},
     opts::{ChainValueParser, RpcOpts, TransactionOpts},
     utils::{LoadConfig, TraceResult, parse_ether_value},
 };
@@ -46,7 +47,17 @@ use foundry_evm::{
 };
 use foundry_wallets::WalletOpts;
 use regex::Regex;
+use serde::Serialize;
 use std::{str::FromStr, sync::LazyLock};
+
+/// Stable payload emitted in the `cast call` envelope under `--machine`.
+#[derive(Clone, Debug, Serialize)]
+pub struct CallData {
+    /// Display string for the call's return value: raw hex when no
+    /// signature was supplied, otherwise the decoded value formatted as
+    /// `cast` would print it. Opaque-by-design at `@v1`.
+    pub result: String,
+}
 
 // matches override pattern <address>:<slot>:<value>
 // e.g. 0x123:0x1:0x1234
@@ -219,6 +230,26 @@ pub enum CallSubcommands {
 
 impl CallArgs {
     pub async fn run(self) -> Result<()> {
+        // Reject flags whose stdout shape conflicts with the envelope contract.
+        if foundry_cli::is_machine() {
+            let unsupported = [
+                ("--trace", self.trace),
+                ("--debug", self.debug),
+                ("--decode-internal", self.decode_internal),
+                ("--curl", self.rpc.curl),
+            ]
+            .into_iter()
+            .filter_map(|(name, on)| on.then_some(name))
+            .collect::<Vec<_>>();
+            if !unsupported.is_empty() {
+                foundry_cli::machine::bail_machine_usage(format!(
+                    "`cast call` under `--machine` does not yet support {}; \
+                     run without `--machine` or omit those flags.",
+                    unsupported.join(", ")
+                ));
+            }
+        }
+
         // Handle --curl mode early, before any provider interaction
         if self.rpc.curl {
             return self.run_curl().await;
@@ -434,7 +465,12 @@ impl CallArgs {
                 sh_warn!("Contract code is empty")?;
             }
         }
-        sh_println!("{}", response)?;
+
+        if foundry_cli::is_machine() {
+            print_json(&JsonEnvelope::success(CallData { result: response }))?;
+        } else {
+            sh_println!("{}", response)?;
+        }
 
         Ok(())
     }

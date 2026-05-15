@@ -1,6 +1,7 @@
 use crate::utils::generate_large_init_contract;
 use foundry_test_utils::{forgetest, forgetest_init, snapbox::IntoData, str};
 use globset::Glob;
+use serde_json::Value;
 use std::fs;
 
 forgetest_init!(can_parse_build_filters, |prj, cmd| {
@@ -509,6 +510,40 @@ forgetest_init!(build_no_warning_without_foundry_lock, |prj, cmd| {
 
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
 "#]]);
+});
+
+// `forge --machine build` emits a single envelope on stdout. Asserts the
+// contract surface, not artifact counts (those drift with templates).
+forgetest_init!(machine_mode_emits_envelope, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let assert = cmd.args(["--machine", "build", "--force"]).assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value =
+        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
+
+    assert_eq!(envelope["schema_version"], 1);
+    assert_eq!(envelope["success"], true);
+    assert!(envelope["data"]["artifacts"].as_u64().is_some(), "missing artifacts: {envelope}");
+    assert!(envelope["data"]["errors"].as_u64().is_some(), "missing errors: {envelope}");
+    assert!(envelope["data"]["warnings"].as_u64().is_some(), "missing warnings: {envelope}");
+    assert!(envelope["data"]["cache_hit"].as_bool().is_some(), "missing cache_hit: {envelope}");
+    assert_eq!(envelope["errors"], serde_json::json!([]));
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
+});
+
+// `--machine` rejects flags that would corrupt the envelope-only stdout
+// contract. Asserts the stable `code` + exit code, not just message text.
+forgetest_init!(machine_mode_rejects_unsupported_flags, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let assert = cmd.args(["--machine", "build", "--names"]).assert_failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value = serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
+
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("--names"), "missing --names mention: {envelope}");
 });
 
 // tests that build warns when foundry.lock revision differs from actual submodule revision

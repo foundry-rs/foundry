@@ -3,6 +3,7 @@ use clap::Parser;
 use eyre::Result;
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
+    json::{JsonEnvelope, print_json},
     opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
     utils::{Git, LoadConfig, cache_local_signatures},
 };
@@ -84,6 +85,22 @@ pub struct BuildArgs {
 
 impl BuildArgs {
     pub async fn run(self) -> Result<ProjectCompileOutput> {
+        // Reject flags whose stdout shape conflicts with the envelope contract.
+        if foundry_cli::is_machine() {
+            let unsupported =
+                [("--watch", self.is_watch()), ("--names", self.names), ("--sizes", self.sizes)]
+                    .into_iter()
+                    .filter_map(|(name, on)| on.then_some(name))
+                    .collect::<Vec<_>>();
+            if !unsupported.is_empty() {
+                foundry_cli::machine::bail_machine_usage(format!(
+                    "`forge build` under `--machine` does not yet support {}; \
+                     run without `--machine` or omit those flags.",
+                    unsupported.join(", ")
+                ));
+            }
+        }
+
         let mut config = self.load_config()?;
 
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
@@ -110,7 +127,9 @@ impl BuildArgs {
             }
         }
 
+        let machine_mode = foundry_cli::is_machine();
         let format_json = shell::is_json();
+        // `--machine` reserves stdout for the terminal envelope.
         let compiler = ProjectCompiler::new()
             .files(files)
             .dynamic_test_linking(config.dynamic_test_linking)
@@ -123,6 +142,7 @@ impl BuildArgs {
                     .map(ContractSizeLimits::with_runtime_limit)
                     .unwrap_or_default(),
             )
+            .quiet(machine_mode)
             .bail(!format_json);
 
         let mut output = compiler.compile(&project)?;
@@ -130,12 +150,18 @@ impl BuildArgs {
         // Cache project selectors.
         cache_local_signatures(&output)?;
 
-        if format_json && !self.names && !self.sizes {
+        if format_json && !self.names && !self.sizes && !machine_mode {
             sh_println!("{}", serde_json::to_string_pretty(&output.output())?)?;
         }
 
+        if machine_mode {
+            let payload = BuildData::from_output(&output);
+            print_json(&JsonEnvelope::success(payload))?;
+        }
+
         // Only run the `SolidityLinter` if lint on build and no compilation errors.
-        if !self.no_lint
+        if !machine_mode
+            && !self.no_lint
             && config.lint.lint_on_build
             && !output.output().errors.iter().any(|e| e.is_error())
             && let Err(err) = self.lint(&project, &config, self.paths.as_deref(), &mut output)
@@ -340,6 +366,35 @@ impl BuildArgs {
                 .ok();
             }
         }
+    }
+}
+
+/// Stable payload emitted in the `forge build` envelope under `--machine`.
+#[derive(Clone, Debug, Serialize)]
+pub struct BuildData {
+    /// Total number of compiled artifacts in the project.
+    pub artifacts: usize,
+    /// Number of compiler errors in the output.
+    pub errors: usize,
+    /// Number of compiler warnings in the output.
+    pub warnings: usize,
+    /// Whether the build was a no-op cache hit.
+    pub cache_hit: bool,
+}
+
+impl BuildData {
+    fn from_output(output: &ProjectCompileOutput) -> Self {
+        let artifacts = output.artifact_ids().count();
+        let mut errors = 0usize;
+        let mut warnings = 0usize;
+        for diag in &output.output().errors {
+            if diag.is_error() {
+                errors += 1;
+            } else {
+                warnings += 1;
+            }
+        }
+        Self { artifacts, errors, warnings, cache_hit: output.is_unchanged() }
     }
 }
 
