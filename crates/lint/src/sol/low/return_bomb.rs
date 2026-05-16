@@ -271,11 +271,13 @@ fn expr_contract_id(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::Con
 
 /// Returns the contract containing an expression span.
 fn enclosing_contract(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::ContractId> {
-    hir.function_ids().find_map(|id| {
-        let function = hir.function(id);
-        (function.body.is_some() && function.body_span.contains(expr.span))
-            .then_some(function.contract?)
-    })
+    hir.function_ids()
+        .find_map(|id| {
+            let function = hir.function(id);
+            (function.body.is_some() && function.body_span.contains(expr.span))
+                .then_some(function.contract?)
+        })
+        .or_else(|| hir.contract_ids().find(|&id| hir.contract(id).span.contains(expr.span)))
 }
 
 fn is_this(reses: &[hir::Res]) -> bool {
@@ -354,7 +356,25 @@ fn expr_type<'hir>(
             ExprKind::Type(ty) | ExprKind::New(ty) => Some(ty),
             _ => call_return_type(hir, callee, args),
         },
+        ExprKind::Ternary(_, true_, false_) => common_expr_type(hir, true_, false_),
         _ => None,
+    }
+}
+
+/// Returns the common type for a ternary expression when one branch type can accept the other.
+fn common_expr_type<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    true_: &hir::Expr<'hir>,
+    false_: &hir::Expr<'hir>,
+) -> Option<&'hir hir::Type<'hir>> {
+    let true_ty = expr_type(hir, true_)?;
+    let false_ty = expr_type(hir, false_)?;
+    if types_match(hir, true_ty, false_ty) {
+        Some(false_ty)
+    } else if types_match(hir, false_ty, true_ty) {
+        Some(true_ty)
+    } else {
+        None
     }
 }
 
@@ -444,8 +464,12 @@ fn types_match(hir: &hir::Hir<'_>, a: &hir::Type<'_>, b: &hir::Type<'_>) -> bool
         ) => true,
         (TypeKind::Elementary(a), TypeKind::Elementary(b)) => elementary_type_matches(*a, *b),
         (TypeKind::Array(a), TypeKind::Array(b)) => {
-            array_sizes_match(a.size, b.size) && types_match(hir, &a.element, &b.element)
+            array_sizes_match(hir, a.size, b.size) && types_match(hir, &a.element, &b.element)
         }
+        (
+            TypeKind::Custom(ItemId::Contract(actual)),
+            TypeKind::Custom(ItemId::Contract(expected)),
+        ) => contract_type_matches(hir, *actual, *expected),
         (TypeKind::Custom(a), TypeKind::Custom(b)) => a == b,
         (TypeKind::Function(a), TypeKind::Function(b)) => {
             a.parameters.len() == b.parameters.len()
@@ -463,23 +487,115 @@ fn types_match(hir: &hir::Hir<'_>, a: &hir::Type<'_>, b: &hir::Type<'_>) -> bool
     }
 }
 
+/// Returns true if an actual contract type can be used where the expected contract type is needed.
+fn contract_type_matches(
+    hir: &hir::Hir<'_>,
+    actual: hir::ContractId,
+    expected: hir::ContractId,
+) -> bool {
+    actual == expected || hir.contract(actual).linearized_bases.contains(&expected)
+}
+
 /// Returns true if two array sizes are equivalent for overload resolution.
-fn array_sizes_match(a: Option<&hir::Expr<'_>>, b: Option<&hir::Expr<'_>>) -> bool {
+fn array_sizes_match(
+    hir: &hir::Hir<'_>,
+    a: Option<&hir::Expr<'_>>,
+    b: Option<&hir::Expr<'_>>,
+) -> bool {
     match (a, b) {
         (None, None) => true,
-        (Some(a), Some(b)) => fixed_array_sizes_match(a, b),
+        (Some(a), Some(b)) => fixed_array_sizes_match(hir, a, b),
         _ => false,
     }
 }
 
-fn fixed_array_sizes_match(a: &hir::Expr<'_>, b: &hir::Expr<'_>) -> bool {
-    match (&a.peel_parens().kind, &b.peel_parens().kind) {
-        (ExprKind::Lit(a), ExprKind::Lit(b)) => match (&a.kind, &b.kind) {
-            (LitKind::Number(a), LitKind::Number(b)) => a == b,
-            _ => false,
-        },
-        _ => false,
+fn fixed_array_sizes_match(hir: &hir::Hir<'_>, a: &hir::Expr<'_>, b: &hir::Expr<'_>) -> bool {
+    matches!(
+        (const_array_size(hir, a), const_array_size(hir, b)),
+        (Some(LitKind::Number(a)), Some(LitKind::Number(b))) if a == b
+    )
+}
+
+type ConstArraySize = LitKind<'static>;
+
+fn const_array_size(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<ConstArraySize> {
+    const MAX_DEPTH: usize = 64;
+    const_array_size_inner(hir, expr, MAX_DEPTH)
+}
+
+fn const_array_size_inner(
+    hir: &hir::Hir<'_>,
+    expr: &hir::Expr<'_>,
+    depth: usize,
+) -> Option<ConstArraySize> {
+    if depth == 0 {
+        return None;
     }
+
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(reses) => {
+            let var = reses.iter().find_map(hir::Res::as_variable)?;
+            let var = hir.variable(var);
+            if !var.is_constant() {
+                return None;
+            }
+            const_array_size_inner(hir, var.initializer?, depth - 1)
+        }
+        ExprKind::Lit(lit) => match lit.kind {
+            LitKind::Number(value) => Some(LitKind::Number(value)),
+            _ => None,
+        },
+        ExprKind::Unary(op, expr) => {
+            let LitKind::Number(value) = const_array_size_inner(hir, expr, depth - 1)? else {
+                return None;
+            };
+            match op.kind {
+                hir::UnOpKind::BitNot => Some(LitKind::Number(!value)),
+                hir::UnOpKind::Neg => Some(LitKind::Number(value.wrapping_neg())),
+                _ => None,
+            }
+        }
+        ExprKind::Binary(left, op, right) => {
+            let left = const_array_size_inner(hir, left, depth - 1)?;
+            let right = const_array_size_inner(hir, right, depth - 1)?;
+            const_array_size_binary_op(left, op.kind, right)
+        }
+        _ => None,
+    }
+}
+
+fn const_array_size_binary_op(
+    left: ConstArraySize,
+    op: hir::BinOpKind,
+    right: ConstArraySize,
+) -> Option<ConstArraySize> {
+    let (LitKind::Number(left), LitKind::Number(right)) = (left, right) else {
+        return None;
+    };
+
+    let value = match op {
+        hir::BinOpKind::BitOr => left | right,
+        hir::BinOpKind::BitAnd => left & right,
+        hir::BinOpKind::BitXor => left ^ right,
+        hir::BinOpKind::Shr => left.wrapping_shr(right.try_into().unwrap_or(usize::MAX)),
+        hir::BinOpKind::Shl => left.wrapping_shl(right.try_into().unwrap_or(usize::MAX)),
+        hir::BinOpKind::Sar => left.arithmetic_shr(right.try_into().unwrap_or(usize::MAX)),
+        hir::BinOpKind::Add => left.checked_add(right)?,
+        hir::BinOpKind::Sub => left.checked_sub(right)?,
+        hir::BinOpKind::Mul => left.checked_mul(right)?,
+        hir::BinOpKind::Div => left.checked_div(right)?,
+        hir::BinOpKind::Rem => left.checked_rem(right)?,
+        hir::BinOpKind::Pow => left.checked_pow(right)?,
+        hir::BinOpKind::Lt
+        | hir::BinOpKind::Le
+        | hir::BinOpKind::Gt
+        | hir::BinOpKind::Ge
+        | hir::BinOpKind::Eq
+        | hir::BinOpKind::Ne
+        | hir::BinOpKind::Or
+        | hir::BinOpKind::And => return None,
+    };
+    Some(LitKind::Number(value))
 }
 
 /// Returns true if an elementary value can be used for an expected elementary type.

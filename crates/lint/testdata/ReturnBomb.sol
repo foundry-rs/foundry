@@ -31,9 +31,24 @@ interface IReturnBombWideningTarget {
     function fetch(uint256 value) external returns (bytes memory);
 }
 
+contract ReturnBombBaseArgument {}
+
+contract ReturnBombDerivedArgument is ReturnBombBaseArgument {}
+
+interface IReturnBombBaseArgumentTarget {
+    function fetch(ReturnBombBaseArgument value) external returns (bytes memory);
+}
+
 interface IReturnBombFixedArrayOverloadedTarget {
     function fetch(uint256[2] calldata values) external returns (bytes memory);
     function fetch(uint256[3] calldata values) external returns (uint256);
+}
+
+uint256 constant RETURN_BOMB_FIXED_ARRAY_BASE = 1;
+uint256 constant RETURN_BOMB_FIXED_ARRAY_LENGTH = RETURN_BOMB_FIXED_ARRAY_BASE + 1;
+
+interface IReturnBombConstantFixedArrayTarget {
+    function fetch(uint256[RETURN_BOMB_FIXED_ARRAY_LENGTH] calldata values) external returns (bytes memory);
 }
 
 contract ReturnBombCreatedTarget {
@@ -46,6 +61,8 @@ contract ReturnBomb {
     event DynamicReturn(bytes result);
 
     error DynamicReturnError(bytes result);
+
+    bytes initializedData = this.ownDynamicReturn{gas: 10_000}(); //~WARN: external calls with a gas limit should not consume unbounded return data
 
     struct Result {
         bytes data;
@@ -212,6 +229,15 @@ contract ReturnBomb {
         this.ownDynamicReturn{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
     }
 
+    modifier withDynamicReturn(bytes memory) {
+        _;
+    }
+
+    function thisHighLevelDynamicReturnInModifierArgument(uint256 gasLimit)
+        public
+        withDynamicReturn(this.ownDynamicReturn{gas: gasLimit}()) //~WARN: external calls with a gas limit should not consume unbounded return data
+    {}
+
     function thisExternalStaticOverloadIgnoresInternal(uint256 value, uint256 gasLimit) public {
         uint256 result = this.externalStaticOverload{gas: gasLimit}(value + 1);
         require(result >= 0);
@@ -280,6 +306,15 @@ contract ReturnBomb {
         require(result.length >= 0);
     }
 
+    function derivedContractArgumentDynamicReturn(
+        IReturnBombBaseArgumentTarget target,
+        ReturnBombDerivedArgument value,
+        uint256 gasLimit
+    ) public {
+        bytes memory result = target.fetch{gas: gasLimit}(value); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
+    }
+
     function fixedArrayOverloadDynamicReturn(
         IReturnBombFixedArrayOverloadedTarget target,
         uint256[2] calldata values,
@@ -287,6 +322,35 @@ contract ReturnBomb {
     ) public {
         bytes memory result = target.fetch{gas: gasLimit}(values); //~WARN: external calls with a gas limit should not consume unbounded return data
         require(result.length >= 0);
+    }
+
+    function constantFixedArrayLengthDynamicReturn(
+        IReturnBombConstantFixedArrayTarget target,
+        uint256[RETURN_BOMB_FIXED_ARRAY_BASE + 1] calldata values,
+        uint256 gasLimit
+    ) public {
+        bytes memory result = target.fetch{gas: gasLimit}(values); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
+    }
+
+    function ternaryHighLevelDynamicReturn(
+        IReturnBombTarget first,
+        IReturnBombTarget second,
+        bool useFirst,
+        uint256 gasLimit
+    ) public {
+        bytes memory result = (useFirst ? first : second).fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
+    }
+
+    function ternaryLowLevelCall(
+        address first,
+        address second,
+        bool useFirst,
+        bytes memory payload,
+        uint256 gasLimit
+    ) public {
+        (useFirst ? first : second).call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
     }
 
     function castDynamicReturn(address target, uint256 gasLimit) public {

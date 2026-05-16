@@ -1,6 +1,14 @@
 warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
    ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
    │
+LL │     bytes initializedData = this.ownDynamicReturn{gas: 10_000}();
+   │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/return-bomb
+
+warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
+   ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
+   │
 LL │ …     (bool success, ) = target.call{gas: gasLimit}(payload);
    │                          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
@@ -201,6 +209,14 @@ LL │         this.ownDynamicReturn{gas: gasLimit}();
 warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
    ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
    │
+LL │ …     withDynamicReturn(this.ownDynamicReturn{gas: gasLimit}())
+   │                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/return-bomb
+
+warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
+   ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
+   │
 LL │ …     if (target.fetch{gas: gasLimit}().length > 0) {}
    │           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
@@ -257,8 +273,40 @@ LL │ …     bytes memory result = target.fetch{gas: gasLimit}(value);
 warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
    ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
    │
+LL │ …     bytes memory result = target.fetch{gas: gasLimit}(value);
+   │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/return-bomb
+
+warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
+   ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
+   │
 LL │ …     bytes memory result = target.fetch{gas: gasLimit}(values);
    │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/return-bomb
+
+warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
+   ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
+   │
+LL │ …     bytes memory result = target.fetch{gas: gasLimit}(values);
+   │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/return-bomb
+
+warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
+   ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
+   │
+LL │ …     bytes memory result = (useFirst ? first : second).fetch{gas: gasLimit}();
+   │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/return-bomb
+
+warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
+   ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
+   │
+LL │ …     (useFirst ? first : second).call{gas: gasLimit}(payload);
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/return-bomb
 
