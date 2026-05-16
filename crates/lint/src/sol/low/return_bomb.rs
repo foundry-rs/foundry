@@ -23,6 +23,7 @@ impl<'hir> LateLintPass<'hir> for ReturnBomb {
         hir: &'hir hir::Hir<'hir>,
         expr: &'hir hir::Expr<'hir>,
     ) {
+        // Flag gas-limited calls that can force the caller to copy unbounded returndata.
         if low_level_call_with_gas_consumes_unbounded_return_data(hir, expr)
             || call_with_gas_returns_dynamic_data(hir, expr)
         {
@@ -31,16 +32,18 @@ impl<'hir> LateLintPass<'hir> for ReturnBomb {
     }
 }
 
+/// Returns true for gas-limited calls that return dynamic data.
 fn call_with_gas_returns_dynamic_data(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     is_call_with_gas_limit(expr) && call_returns_dynamic_data(hir, expr)
 }
-
+/// Returns true if a call resolves to functions that return dynamic data.
 fn call_returns_dynamic_data(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     let ExprKind::Call(callee, args, _) = &expr.peel_parens().kind else { return false };
     matching_functions_for_callee(hir, callee, args)
         .is_some_and(|functions| functions_return_dynamic_data(hir, &functions))
 }
 
+/// Returns true for gas-limited low-level calls that copy unbounded returndata.
 fn low_level_call_with_gas_consumes_unbounded_return_data(
     hir: &hir::Hir<'_>,
     expr: &hir::Expr<'_>,
@@ -54,7 +57,7 @@ fn low_level_call_with_gas_consumes_unbounded_return_data(
     matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
         && expr_is_address(hir, receiver)
 }
-
+/// Returns the function overloads that can match a callee and its arguments.
 fn matching_functions_for_callee<'hir>(
     hir: &'hir hir::Hir<'hir>,
     callee: &hir::Expr<'hir>,
@@ -77,6 +80,7 @@ fn matching_functions_for_callee<'hir>(
     }
 }
 
+/// Returns function candidates with the given member name on a contract.
 fn function_candidates_for_member<'hir>(
     hir: &'hir hir::Hir<'hir>,
     contract: hir::ContractId,
@@ -89,6 +93,7 @@ fn function_candidates_for_member<'hir>(
     })
 }
 
+/// Selects the candidate functions that best match the call arguments.
 fn select_functions_for_args<'hir>(
     hir: &'hir hir::Hir<'hir>,
     candidates: impl Iterator<Item = hir::FunctionId>,
@@ -107,7 +112,7 @@ fn select_functions_for_args<'hir>(
 
     if exact.is_empty() { maybe } else { exact }
 }
-
+/// Returns true if the matched functions all return dynamic data.
 fn functions_return_dynamic_data(hir: &hir::Hir<'_>, functions: &[hir::FunctionId]) -> bool {
     match functions {
         [] => false,
@@ -120,6 +125,7 @@ fn functions_return_dynamic_data(hir: &hir::Hir<'_>, functions: &[hir::FunctionI
     }
 }
 
+/// Returns true if a function has any dynamically encoded return value.
 fn function_returns_dynamic_data(hir: &hir::Hir<'_>, function: hir::FunctionId) -> bool {
     hir.function(function).returns.iter().any(|&var| is_dynamic_type(hir, &hir.variable(var).ty))
 }
@@ -129,7 +135,7 @@ enum ArgMatch {
     Maybe,
     No,
 }
-
+/// Returns how well call arguments match a candidate function signature.
 fn function_arg_match(hir: &hir::Hir<'_>, id: hir::FunctionId, args: &CallArgs<'_>) -> ArgMatch {
     let function = hir.function(id);
     if args.len() != function.parameters.len() {
@@ -158,7 +164,7 @@ fn function_arg_match(hir: &hir::Hir<'_>, id: hir::FunctionId, args: &CallArgs<'
         }
     }
 }
-
+/// Returns how well positional arguments match their expected parameter types.
 fn params_match_args<'hir>(
     hir: &hir::Hir<'hir>,
     params_and_args: impl Iterator<Item = (hir::VariableId, &'hir hir::Expr<'hir>)>,
@@ -173,7 +179,7 @@ fn params_match_args<'hir>(
     }
     if maybe { ArgMatch::Maybe } else { ArgMatch::Exact }
 }
-
+/// Returns the contract id for expressions known to be contract-typed.
 fn expr_contract_id(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::ContractId> {
     match &expr.peel_parens().kind {
         ExprKind::Call(callee, _, _) => match &callee.peel_parens().kind {
@@ -189,12 +195,12 @@ fn expr_contract_id(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::Con
         _ => expr_type(hir, expr).and_then(type_contract_id),
     }
 }
-
+/// Returns the contract id for contract-typed values.
 const fn type_contract_id(ty: &hir::Type<'_>) -> Option<hir::ContractId> {
     let TypeKind::Custom(ItemId::Contract(id)) = ty.kind else { return None };
     Some(id)
 }
-
+/// Returns true if an expression is known to have an address type.
 fn expr_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Lit(lit) => matches!(lit.kind, LitKind::Address(_)),
@@ -209,7 +215,7 @@ fn expr_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
         _ => expr_type(hir, expr).is_some_and(is_address_type),
     }
 }
-
+/// Returns whether an expression can match the expected type, if known.
 fn expr_matches_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>, ty: &hir::Type<'_>) -> Option<bool> {
     match &expr.peel_parens().kind {
         ExprKind::Lit(lit) => return Some(lit_matches_type(lit, ty)),
@@ -219,7 +225,7 @@ fn expr_matches_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>, ty: &hir::Type<'_
 
     expr_type(hir, expr).map(|expr_ty| types_match(hir, expr_ty, ty))
 }
-
+/// Returns the type of simple expressions needed by this lint.
 fn expr_type<'hir>(
     hir: &'hir hir::Hir<'hir>,
     expr: &hir::Expr<'hir>,
@@ -250,10 +256,11 @@ fn expr_type<'hir>(
     }
 }
 
+/// Returns true if the type is an address type
 const fn is_address_type(ty: &hir::Type<'_>) -> bool {
     matches!(ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
 }
-
+/// Returns true if a literal can be used for a value of the given type.
 const fn lit_matches_type(lit: &solar::ast::Lit<'_>, ty: &hir::Type<'_>) -> bool {
     matches!(
         (&lit.kind, &ty.kind),
@@ -279,6 +286,7 @@ const fn lit_matches_type(lit: &solar::ast::Lit<'_>, ty: &hir::Type<'_>) -> bool
     )
 }
 
+/// Returns true if two types are equivalent for overload resolution.
 fn types_match(hir: &hir::Hir<'_>, a: &hir::Type<'_>, b: &hir::Type<'_>) -> bool {
     match (&a.kind, &b.kind) {
         (
@@ -306,6 +314,7 @@ fn types_match(hir: &hir::Hir<'_>, a: &hir::Type<'_>, b: &hir::Type<'_>) -> bool
     }
 }
 
+/// Returns true if the type contains dynamically encoded ABI data.
 fn is_dynamic_type(hir: &hir::Hir<'_>, ty: &hir::Type<'_>) -> bool {
     match &ty.kind {
         TypeKind::Elementary(ElementaryType::Bytes | ElementaryType::String) => true,
