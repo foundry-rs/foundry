@@ -750,10 +750,16 @@ impl CallTraceDecoder {
     #[track_caller]
     fn fallback_call_data(&self, trace: &CallTrace) -> Option<DecodedCallData> {
         let cdata = &trace.data;
+        let known_contract = self.receive_contracts.contains(&trace.address)
+            || self.fallback_contracts.contains_key(&trace.address);
         let signature = if cdata.is_empty() && self.receive_contracts.contains(&trace.address) {
             "receive()"
         } else if self.fallback_contracts.contains_key(&trace.address) {
             "fallback()"
+        } else if !known_contract && cdata.is_empty() && trace.success {
+            // Unknown contract (e.g. deployed from raw bytecode): per Solidity semantics,
+            // empty calldata + successful call means receive() was invoked.
+            "receive()"
         } else {
             return None;
         }

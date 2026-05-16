@@ -574,3 +574,60 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
 "#]]);
 });
+
+// Regression test for https://github.com/foundry-rs/foundry/issues/12962
+// Verifies that empty calldata calls show `receive()` instead of `fallback()` in traces.
+forgetest_init!(receive_vs_fallback_trace, |prj, cmd| {
+    prj.add_test(
+        "ReceiveVsFallback.t.sol",
+        r#"
+pragma solidity ^0.8.18;
+
+import "forge-std/Test.sol";
+
+contract Router {
+    event Log(string func, address sender, uint value, bytes data);
+
+    receive() external payable {
+        emit Log("receive", msg.sender, msg.value, "");
+    }
+
+    fallback() external payable {
+        emit Log("fallback", msg.sender, msg.value, msg.data);
+    }
+}
+
+contract ReceiveVsFallbackTest is Test {
+    function testReceiveTrace() public {
+        // Deploy Router from raw bytecode to avoid ABI-based decoding
+        bytes memory code = type(Router).runtimeCode;
+        address deployed;
+        assembly {
+            deployed := create(0, add(code, 0x20), mload(code))
+        }
+        require(deployed != address(0), "deploy failed");
+
+        // Empty calldata + zero value should invoke receive()
+        (bool success,) = deployed.call{value: 0}("");
+        assertTrue(success, "call failed");
+    }
+}
+"#,
+    );
+
+    cmd.args(["test", "-vvvv", "--match-test", "testReceiveTrace"]).assert_success().stdout_eq(
+        str![[r#"
+...
+[PASS] testReceiveTrace() ([GAS])
+Traces:
+  [..] ReceiveVsFallbackTest::testReceiveTrace()
+    ├─ [..] → new <unknown>@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] [..] bytes of code
+    ├─ [..] 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f::receive()
+    │   ├─ emit Log(func: "receive", sender: ReceiveVsFallbackTest: [0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496], value: 0, data: 0x)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+...
+"#]],
+    );
+});
