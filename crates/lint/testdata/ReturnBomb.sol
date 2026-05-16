@@ -27,6 +27,10 @@ interface IReturnBombAmbiguousOverloadedTarget {
     function fetch(bool value) external returns (uint256);
 }
 
+interface IReturnBombWideningTarget {
+    function fetch(uint256 value) external returns (bytes memory);
+}
+
 contract ReturnBomb {
     event DynamicReturn(bytes result);
 
@@ -236,6 +240,15 @@ contract ReturnBomb {
         uint256 gasLimit
     ) public {
         bytes memory result = target.fetch{gas: gasLimit}(value + 1); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
+    }
+
+    function integerWideningDynamicReturn(
+        IReturnBombWideningTarget target,
+        uint8 value,
+        uint256 gasLimit
+    ) public {
+        bytes memory result = target.fetch{gas: gasLimit}(value); //~WARN: external calls with a gas limit should not consume unbounded return data
         require(result.length >= 0);
     }
 

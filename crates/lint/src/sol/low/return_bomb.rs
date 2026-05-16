@@ -423,7 +423,7 @@ fn types_match(hir: &hir::Hir<'_>, a: &hir::Type<'_>, b: &hir::Type<'_>) -> bool
             TypeKind::Elementary(ElementaryType::Address(_)),
             TypeKind::Elementary(ElementaryType::Address(_)),
         ) => true,
-        (TypeKind::Elementary(a), TypeKind::Elementary(b)) => a == b,
+        (TypeKind::Elementary(a), TypeKind::Elementary(b)) => elementary_type_matches(*a, *b),
         (TypeKind::Array(a), TypeKind::Array(b)) => {
             a.size.is_some() == b.size.is_some() && types_match(hir, &a.element, &b.element)
         }
@@ -439,6 +439,25 @@ fn types_match(hir: &hir::Hir<'_>, a: &hir::Type<'_>, b: &hir::Type<'_>) -> bool
                     .iter()
                     .zip(b.returns)
                     .all(|(&a, &b)| types_match(hir, &hir.variable(a).ty, &hir.variable(b).ty))
+        }
+        _ => false,
+    }
+}
+
+/// Returns true if an elementary value can be used for an expected elementary type.
+fn elementary_type_matches(actual: ElementaryType, expected: ElementaryType) -> bool {
+    use ElementaryType::{Address, Bool, Bytes, Fixed, FixedBytes, Int, String, UFixed, UInt};
+
+    match (actual, expected) {
+        (Address(_), Address(false)) => true,
+        (Address(payable), Address(true)) => payable,
+        (UInt(actual), UInt(expected))
+        | (Int(actual), Int(expected))
+        | (FixedBytes(actual), FixedBytes(expected)) => actual.bits() <= expected.bits(),
+        (Bool, Bool) | (String, String) | (Bytes, Bytes) => true,
+        (Fixed(actual_size, actual_scale), Fixed(expected_size, expected_scale))
+        | (UFixed(actual_size, actual_scale), UFixed(expected_size, expected_scale)) => {
+            actual_size == expected_size && actual_scale == expected_scale
         }
         _ => false,
     }
