@@ -87,6 +87,18 @@ contract ReturnBomb {
         require(result.length >= 0);
     }
 
+    function msgSenderCall(bytes memory payload, uint256 gasLimit) public {
+        msg.sender.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
+    }
+
+    function blockCoinbaseCall(bytes memory payload, uint256 gasLimit) public {
+        block.coinbase.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
+    }
+
+    function txOriginCall(bytes memory payload, uint256 gasLimit) public {
+        tx.origin.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
+    }
+
     function existingBytes(address target, bytes memory payload, uint256 gasLimit) public {
         (bool success, bytes memory result) = target.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
         (success, existingData) = target.call{gas: gasLimit}(result); //~WARN: external calls with a gas limit should not consume unbounded return data
@@ -140,6 +152,14 @@ contract ReturnBomb {
     function memberHighLevelDynamicReturn(TargetSlot memory slot, uint256 gasLimit) public {
         bytes memory result = slot.target.fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
         require(result.length >= 0);
+    }
+
+    function ownDynamicReturn() external returns (bytes memory) {
+        return "";
+    }
+
+    function thisHighLevelDynamicReturn(uint256 gasLimit) public {
+        this.ownDynamicReturn{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
     }
 
     function highLevelStaticReturn(IReturnBombTarget target, uint256 gasLimit) public {

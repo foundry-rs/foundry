@@ -5,7 +5,7 @@ use crate::{
 };
 use solar::{
     ast::{ElementaryType, LitKind, StrKind},
-    interface::{Symbol, kw},
+    interface::{Symbol, kw, sym},
     sema::hir::{self, CallArgs, CallArgsKind, ExprKind, ItemId, TypeKind},
 };
 
@@ -182,6 +182,7 @@ fn params_match_args<'hir>(
 /// Returns the contract id for expressions known to be contract-typed.
 fn expr_contract_id(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::ContractId> {
     match &expr.peel_parens().kind {
+        ExprKind::Ident(reses) if is_this(reses) => enclosing_contract(hir, expr),
         ExprKind::Call(callee, _, _) => match &callee.peel_parens().kind {
             ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
                 hir::Res::Item(ItemId::Contract(id)) => Some(*id),
@@ -195,6 +196,20 @@ fn expr_contract_id(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::Con
         _ => expr_type(hir, expr).and_then(type_contract_id),
     }
 }
+
+/// Returns the contract containing an expression span.
+fn enclosing_contract(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::ContractId> {
+    hir.function_ids().find_map(|id| {
+        let function = hir.function(id);
+        (function.body.is_some() && function.body_span.contains(expr.span))
+            .then_some(function.contract?)
+    })
+}
+
+fn is_this(reses: &[hir::Res]) -> bool {
+    reses.iter().any(|res| matches!(res, hir::Res::Builtin(builtin) if builtin.name() == sym::this))
+}
+
 /// Returns the contract id for contract-typed values.
 const fn type_contract_id(ty: &hir::Type<'_>) -> Option<hir::ContractId> {
     let TypeKind::Custom(ItemId::Contract(id)) = ty.kind else { return None };
@@ -212,9 +227,22 @@ fn expr_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
                 ..
             })
         ),
+        ExprKind::Member(base, member) if member_is_builtin_address(base, member.name) => true,
         _ => expr_type(hir, expr).is_some_and(is_address_type),
     }
 }
+
+fn member_is_builtin_address(base: &hir::Expr<'_>, member: Symbol) -> bool {
+    let ExprKind::Ident(reses) = &base.peel_parens().kind else { return false };
+    reses.iter().any(|res| {
+        let hir::Res::Builtin(builtin) = res else { return false };
+        matches!(
+            (builtin.name(), member),
+            (sym::msg, sym::sender) | (sym::block, kw::Coinbase) | (sym::tx, kw::Origin)
+        )
+    })
+}
+
 /// Returns whether an expression can match the expected type, if known.
 fn expr_matches_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>, ty: &hir::Type<'_>) -> Option<bool> {
     match &expr.peel_parens().kind {
