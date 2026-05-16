@@ -7,10 +7,10 @@ Flags external calls that set an explicit gas limit while copying unbounded dyna
 
 ## What it does
 
-Detects low-level `call`, `delegatecall`, and `staticcall` expressions that specify `{gas: ...}`
-and bind or return the raw returndata as `bytes`. It also detects high-level external calls with
-`{gas: ...}` that consume dynamically encoded return values such as `bytes`, `string`, dynamic
-arrays, or structs containing dynamic fields.
+Detects low-level `call`, `delegatecall`, and `staticcall` expressions that specify `{gas: ...}`.
+Solidity copies the full returndata for these calls even when the second tuple element is ignored.
+It also detects high-level external calls with `{gas: ...}` that consume dynamically encoded return
+values such as `bytes`, `string`, dynamic arrays, or structs containing dynamic fields.
 
 ## Why is this bad?
 
@@ -24,7 +24,7 @@ causing the caller to run out of gas while implicitly copying the result.
 
 ```solidity
 function callTarget(address target, bytes memory payload, uint256 gasLimit) external {
-    (bool ok, bytes memory result) = target.call{gas: gasLimit}(payload);
+    (bool ok, ) = target.call{gas: gasLimit}(payload);
     require(ok);
 }
 ```
@@ -33,10 +33,13 @@ function callTarget(address target, bytes memory payload, uint256 gasLimit) exte
 
 ```solidity
 function callTarget(address target, bytes memory payload, uint256 gasLimit) external {
-    (bool ok, ) = target.call{gas: gasLimit}(payload);
+    bool ok;
+    assembly {
+        ok := call(gasLimit, target, 0, add(payload, 0x20), mload(payload), 0, 0)
+    }
     require(ok);
 }
 ```
 
-If the returndata is needed, copy only a bounded number of bytes with a helper that caps returndata
-size.
+Ignoring the second tuple element does not avoid the copy. If the returndata is needed, copy only a
+bounded number of bytes with a helper that caps returndata size.
