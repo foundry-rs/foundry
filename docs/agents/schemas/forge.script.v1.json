@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:forge.script@v1",
+  "title": "forge script result payload",
+  "description": "Shape of the `data` field in the `forge script --machine` terminal envelope.",
+  "type": "object",
+  "required": ["mode", "broadcast", "tx_count", "tx_hashes", "created_contracts"],
+  "additionalProperties": false,
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["dry_run", "broadcast"],
+      "description": "`dry_run` if no transactions were submitted on-chain; `broadcast` if at least one was sent."
+    },
+    "broadcast": {
+      "type": "boolean",
+      "description": "Whether the script reached the broadcast step. `true` iff `mode == \"broadcast\"`."
+    },
+    "tx_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of transactions in the script's sequence(s)."
+    },
+    "tx_hashes": {
+      "type": "array",
+      "description": "Submitted transaction hashes, in order. Empty in dry-run.",
+      "items": { "type": "string", "pattern": "^0x[0-9a-fA-F]{64}$" }
+    },
+    "created_contracts": {
+      "type": "array",
+      "description": "Contracts created by the script (top-level CREATEs and nested deploys).",
+      "items": { "$ref": "#/$defs/CreatedContract" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "mode": { "const": "broadcast" } } },
+      "then": { "properties": { "broadcast": { "const": true } } }
+    },
+    {
+      "if": { "properties": { "mode": { "const": "dry_run" } } },
+      "then": {
+        "properties": {
+          "broadcast": { "const": false },
+          "tx_hashes": { "maxItems": 0 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "CreatedContract": {
+      "type": "object",
+      "required": ["address"],
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{40}$",
+          "description": "0x-prefixed deployed address."
+        },
+        "contract_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Best-effort contract name."
+        }
+      }
+    }
+  }
+}

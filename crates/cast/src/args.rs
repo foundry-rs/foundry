@@ -898,33 +898,100 @@ mod tests {
         assert!(v.is_empty(), "cast capability violations: {v:?}");
     }
 
-    /// Every adopted command (`output_mode = Envelope`) must pin a stable
-    /// `command_id` matching its registry entry.
+    /// Every `*_schema_ref` exposed by `cast --introspect` MUST point at a
+    /// committed JSON Schema file under `docs/agents/schemas/`. Guards
+    /// against typos and ref bumps that would leave agent tooling with
+    /// dangling pointers.
     #[test]
-    fn registered_commands_pin_stable_ids() {
-        let ids = std::thread::Builder::new()
+    fn introspect_schema_refs_resolve_to_committed_schemas() {
+        let errs = std::thread::Builder::new()
             .stack_size(16 * 1024 * 1024)
             .spawn(|| {
+                use foundry_test_utils::agent_schema;
+                let known: std::collections::BTreeSet<&'static str> =
+                    agent_schema::known_schema_ids().collect();
                 let cmd = <CastArgs as clap::CommandFactory>::command();
                 let doc = build_document(&cmd, &REGISTRY);
-                fn walk(c: &foundry_cli::introspect::CommandInfo) -> Vec<String> {
-                    let mut out = Vec::new();
-                    if matches!(c.capabilities.output_mode, OutputMode::Envelope) {
-                        out.push(c.command_id.clone());
+
+                fn walk(
+                    c: &foundry_cli::introspect::CommandInfo,
+                    known: &std::collections::BTreeSet<&'static str>,
+                    errs: &mut Vec<String>,
+                ) {
+                    let caps = &c.capabilities;
+                    for (name, v) in [
+                        ("result_schema_ref", caps.result_schema_ref.as_deref()),
+                        ("event_schema_ref", caps.event_schema_ref.as_deref()),
+                        ("session_schema_ref", caps.session_schema_ref.as_deref()),
+                    ] {
+                        if let Some(id) = v
+                            && !known.contains(id)
+                        {
+                            errs.push(format!(
+                                "{}: {name} points to unknown schema `{id}`",
+                                c.command_id
+                            ));
+                        }
                     }
                     for sub in &c.subcommands {
-                        out.extend(walk(sub));
+                        walk(sub, known, errs);
                     }
-                    out
                 }
-                doc.commands.iter().flat_map(walk).collect::<Vec<_>>()
+
+                let mut errs = Vec::new();
+                for c in &doc.commands {
+                    walk(c, &known, &mut errs);
+                }
+                errs
             })
             .expect("spawn worker thread")
             .join()
             .expect("worker thread join");
-        assert!(
-            ids.iter().any(|s| s == "cast.call"),
-            "cast.call missing from envelope ids: {ids:?}"
+        assert!(errs.is_empty(), "dangling cast schema refs: {errs:?}");
+    }
+
+    /// Every adopted command must pin its exact `command_id`, output mode,
+    /// and schema refs. A drift in any of those is an agent-contract break.
+    #[test]
+    fn registered_commands_pin_stable_ids() {
+        let pinned = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let cmd = <CastArgs as clap::CommandFactory>::command();
+                let doc = build_document(&cmd, &REGISTRY);
+                fn find(
+                    c: &foundry_cli::introspect::CommandInfo,
+                    id: &str,
+                ) -> Option<(OutputMode, Option<String>, Option<String>)> {
+                    if c.command_id == id {
+                        return Some((
+                            c.capabilities.output_mode,
+                            c.capabilities.result_schema_ref.clone(),
+                            c.capabilities.event_schema_ref.clone(),
+                        ));
+                    }
+                    for sub in &c.subcommands {
+                        if let Some(v) = find(sub, id) {
+                            return Some(v);
+                        }
+                    }
+                    None
+                }
+                doc.commands
+                    .iter()
+                    .find_map(|c| find(c, "cast.call"))
+                    .expect("cast.call missing from cast introspect")
+            })
+            .expect("spawn worker thread")
+            .join()
+            .expect("worker thread join");
+        let (mode, result_ref, event_ref) = pinned;
+        assert_eq!(mode, OutputMode::Envelope, "cast.call output_mode drift");
+        assert_eq!(
+            result_ref.as_deref(),
+            Some("foundry:cast.call@v1"),
+            "cast.call result_schema_ref drift"
         );
+        assert_eq!(event_ref, None, "cast.call must not declare event_schema_ref");
     }
 }

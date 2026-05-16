@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:forge.script.event@v1",
+  "title": "forge script stream event record",
+  "description": "One NDJSON line emitted on stdout by `forge script --machine` before the terminal envelope. Per-record meta fields (`schema_id`, `command_id`, `kind`, `ts`) are flattened together with kind-specific payload fields.",
+  "type": "object",
+  "required": ["schema_id", "command_id", "kind", "ts"],
+  "unevaluatedProperties": false,
+  "properties": {
+    "schema_id": { "type": "string", "const": "foundry:forge.script.event@v1" },
+    "command_id": { "type": "string", "const": "forge.script" },
+    "kind": { "type": "string", "enum": ["phase", "warning"] },
+    "ts": { "type": "string", "format": "date-time" }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "kind": { "const": "phase" },
+        "phase": { "type": "string", "enum": ["compile", "simulate", "broadcast"] }
+      },
+      "required": ["phase"]
+    },
+    {
+      "properties": {
+        "kind": { "const": "warning" },
+        "code": { "type": "string", "const": "script.warning" },
+        "message": { "type": "string", "minLength": 1 }
+      },
+      "required": ["code", "message"]
+    }
+  ]
+}

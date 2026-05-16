@@ -10,8 +10,7 @@
 //! # Implementation choice
 //!
 //! Codes are exposed as `&'static str` constants, organised in per-domain
-//! modules colocated with this crate (or, for adoption PRs, with the owning
-//! crate). [`JsonMessage::error`](crate::json::JsonMessage::error) accepts
+//! modules. [`JsonMessage::error`](crate::json::JsonMessage::error) accepts
 //! `impl Into<String>`, so call sites pass the constant directly. The
 //! [`DiagnosticCode`] newtype is available when callers want a parsed,
 //! validated value.
@@ -162,6 +161,19 @@ pub mod script {
     pub(crate) const ALL: &[&str] = &[BROADCAST_FAILED, WARNING];
 }
 
+/// Shared chain-write diagnostic codes.
+///
+/// Used by commands whose `side_effects` are `chain_write` and that submit
+/// transactions outside the `forge script` pipeline (e.g. `forge create`,
+/// `cast send`). `forge script` continues to emit `script.broadcast_failed`
+/// for compatibility with the already-frozen `foundry:forge.script@v1`
+/// contract.
+pub mod chain {
+    pub const BROADCAST_FAILED: &str = "chain.broadcast_failed";
+
+    pub(crate) const ALL: &[&str] = &[BROADCAST_FAILED];
+}
+
 /// `cast` diagnostic codes.
 pub mod cast {
     pub const TX_NOT_FOUND: &str = "cast.tx.not_found";
@@ -195,6 +207,7 @@ pub fn known_codes() -> Vec<&'static str> {
         wallet::ALL,
         test::ALL,
         script::ALL,
+        chain::ALL,
         cast::ALL,
         anvil::ALL,
         chisel::ALL,

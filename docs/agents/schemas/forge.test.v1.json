@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:forge.test@v1",
+  "title": "forge test result payload",
+  "description": "Shape of the `data` field in the `forge test --machine` terminal envelope.",
+  "type": "object",
+  "required": ["suites", "passed", "failed", "skipped", "duration_ms"],
+  "additionalProperties": false,
+  "properties": {
+    "suites": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of test suites executed."
+    },
+    "passed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total tests that passed."
+    },
+    "failed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total tests that failed."
+    },
+    "skipped": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total tests skipped."
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total wall-clock execution time in milliseconds."
+    }
+  }
+}

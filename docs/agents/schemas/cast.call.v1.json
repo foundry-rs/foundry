@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:cast.call@v1",
+  "title": "cast call result payload",
+  "description": "Shape of the `data` field in the `cast call --machine` terminal envelope.",
+  "type": "object",
+  "required": ["result"],
+  "additionalProperties": false,
+  "properties": {
+    "result": {
+      "type": "string",
+      "description": "Raw hex when no signature was supplied; otherwise the decoded return value formatted as `cast` would print it."
+    }
+  }
+}

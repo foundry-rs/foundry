@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:forge.build@v1",
+  "title": "forge build result payload",
+  "description": "Shape of the `data` field in the `forge build --machine` terminal envelope.",
+  "type": "object",
+  "required": ["artifacts", "errors", "warnings", "cache_hit"],
+  "additionalProperties": false,
+  "properties": {
+    "artifacts": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of artifacts written to disk."
+    },
+    "errors": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of compiler errors."
+    },
+    "warnings": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of compiler warnings."
+    },
+    "cache_hit": {
+      "type": "boolean",
+      "description": "Whether the build was a no-op cache hit."
+    }
+  }
+}

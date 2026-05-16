@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:forge.test.event@v1",
+  "title": "forge test stream event record",
+  "description": "One NDJSON line emitted on stdout by `forge test --machine` before the terminal envelope. Per-record meta fields (`schema_id`, `command_id`, `kind`, `ts`) are flattened together with kind-specific payload fields.",
+  "type": "object",
+  "required": ["schema_id", "command_id", "kind", "ts"],
+  "unevaluatedProperties": false,
+  "properties": {
+    "schema_id": { "type": "string", "const": "foundry:forge.test.event@v1" },
+    "command_id": { "type": "string", "const": "forge.test" },
+    "kind": { "type": "string", "enum": ["test_result", "suite_finished", "warning"] },
+    "ts": { "type": "string", "format": "date-time" }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "kind": { "const": "test_result" },
+        "contract": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["passed", "failed", "skipped"] },
+        "reason": { "type": "string" },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["contract", "name", "status", "duration_ms"]
+    },
+    {
+      "properties": {
+        "kind": { "const": "suite_finished" },
+        "contract": { "type": "string", "minLength": 1 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["contract", "passed", "failed", "skipped", "duration_ms"]
+    },
+    {
+      "properties": {
+        "kind": { "const": "warning" },
+        "contract": { "type": "string", "minLength": 1 },
+        "code": { "type": "string", "const": "test.warning" },
+        "message": { "type": "string", "minLength": 1 }
+      },
+      "required": ["contract", "code", "message"]
+    }
+  ]
+}

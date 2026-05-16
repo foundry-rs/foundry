@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:envelope@v1",
+  "title": "Foundry agent envelope",
+  "description": "Terminal command outcome emitted on stdout under `--machine`. Per-command result payloads (e.g. `foundry:forge.build@v1`) define the shape of the `data` field; this schema describes the envelope itself.",
+  "type": "object",
+  "required": ["schema_version", "success", "data", "errors", "warnings"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Envelope schema version."
+    },
+    "success": {
+      "type": "boolean",
+      "description": "Whether the command completed successfully."
+    },
+    "data": {
+      "description": "Command-specific payload on success; `null` on failure. See `result_schema_ref` in the introspect document for the per-command success shape.",
+      "type": ["object", "null"]
+    },
+    "errors": {
+      "type": "array",
+      "description": "Structured errors emitted by the command.",
+      "items": { "$ref": "#/$defs/JsonMessage" }
+    },
+    "warnings": {
+      "type": "array",
+      "description": "Structured warnings emitted by the command.",
+      "items": { "$ref": "#/$defs/JsonMessage" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "success": { "const": true } } },
+      "then": {
+        "properties": {
+          "data": { "type": "object" },
+          "errors": { "maxItems": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "success": { "const": false } } },
+      "then": {
+        "properties": {
+          "data": { "type": "null" },
+          "errors": { "minItems": 1 }
+        }
+      }
+    },
+    {
+      "properties": {
+        "errors": { "items": { "properties": { "level": { "const": "error" } } } },
+        "warnings": { "items": { "properties": { "level": { "const": "warning" } } } }
+      }
+    }
+  ],
+  "$defs": {
+    "JsonMessage": {
+      "type": "object",
+      "required": ["level", "code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["error", "warning"]
+        },
+        "code": {
+          "type": "string",
+          "description": "Stable diagnostic code (see `docs/agents/diagnostics.md`).",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "description": "Optional structured context.",
+          "type": ["object", "array", "string", "number", "boolean", "null"]
+        }
+      }
+    }
+  }
+}

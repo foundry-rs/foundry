@@ -27,6 +27,7 @@ use tempo_primitives::TempoTxEnvelope;
 #[macro_use]
 extern crate foundry_test_utils;
 
+mod agent_contract;
 mod erc20;
 mod keychain;
 mod selectors;
@@ -3481,11 +3482,12 @@ forgetest_async!(cast_call_machine_mode_emits_envelope, |_prj, cmd| {
     let envelope: serde_json::Value =
         serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
 
-    assert_eq!(envelope["schema_version"], 1);
     assert_eq!(envelope["success"], true);
     assert_eq!(envelope["data"]["result"], "0x");
-    assert_eq!(envelope["errors"], serde_json::json!([]));
-    assert_eq!(envelope["warnings"], serde_json::json!([]));
+    foundry_test_utils::agent_schema::validate_envelope_data(&envelope, "foundry:cast.call@v1");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
 });
 
 // `--machine` rejects flags that would corrupt the envelope-only stdout
@@ -3505,15 +3507,21 @@ forgetest_async!(cast_call_machine_mode_rejects_unsupported_flags, |_prj, cmd| {
             &http_endpoint,
         ])
         .assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(2));
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     let envelope: serde_json::Value =
         serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
 
     assert_eq!(envelope["success"], false);
+    assert!(envelope["data"].is_null(), "data must be null on failure: {envelope}");
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
     assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
     let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
     assert!(msg.contains("--trace"), "missing --trace mention: {envelope}");
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
 });
 
 // https://github.com/foundry-rs/foundry/issues/10848

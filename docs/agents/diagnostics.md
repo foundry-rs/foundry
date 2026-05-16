@@ -38,6 +38,7 @@ Examples:
 | `wallet`   | `foundry-wallets`               | `wallet.key.missing`                      |
 | `test`     | `forge test`                    | `test.failed`, `test.setup_failed`        |
 | `script`   | `forge script`                  | `script.broadcast_failed`                 |
+| `chain`    | shared chain-write commands     | `chain.broadcast_failed`                  |
 | `cast`     | `cast`                          | `cast.tx.not_found`                       |
 | `anvil`    | `anvil`                         | `anvil.fork.unreachable`                  |
 | `chisel`   | `chisel`                        | `chisel.session.invalid`                  |
@@ -55,8 +56,9 @@ are allowed:
 2. **per-domain enums** (`ConfigDiagnostic`, `NetworkDiagnostic`, …) that
    serialize to namespaced strings.
 
-A repo-wide test asserts every emitted code matches the format above and
-appears in this document.
+A unit test in `foundry-cli` asserts every code declared via the
+in-crate registry validates against the format above. Domain-table
+sync with this document is enforced by review.
 
 ## Versioning
 

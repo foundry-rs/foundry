@@ -500,14 +500,11 @@ forgetest_init!(machine_mode_emits_envelope, |prj, cmd| {
     let envelope: Value =
         serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
 
-    assert_eq!(envelope["schema_version"], 1);
     assert_eq!(envelope["success"], true);
-    assert!(envelope["data"]["artifacts"].as_u64().is_some(), "missing artifacts: {envelope}");
-    assert!(envelope["data"]["errors"].as_u64().is_some(), "missing errors: {envelope}");
-    assert!(envelope["data"]["warnings"].as_u64().is_some(), "missing warnings: {envelope}");
-    assert!(envelope["data"]["cache_hit"].as_bool().is_some(), "missing cache_hit: {envelope}");
-    assert_eq!(envelope["errors"], serde_json::json!([]));
-    assert_eq!(envelope["warnings"], serde_json::json!([]));
+    foundry_test_utils::agent_schema::validate_envelope_data(&envelope, "foundry:forge.build@v1");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
 });
 
 // `--machine` rejects flags that would corrupt the envelope-only stdout
@@ -515,14 +512,20 @@ forgetest_init!(machine_mode_emits_envelope, |prj, cmd| {
 forgetest_init!(machine_mode_rejects_unsupported_flags, |prj, cmd| {
     prj.initialize_default_contracts();
     let assert = cmd.args(["--machine", "build", "--names"]).assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(2));
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     let envelope: Value = serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
 
     assert_eq!(envelope["success"], false);
+    assert!(envelope["data"].is_null(), "data must be null on failure: {envelope}");
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
     assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
     let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
     assert!(msg.contains("--names"), "missing --names mention: {envelope}");
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
 });
 
 // tests that build warns when foundry.lock revision differs from actual submodule revision

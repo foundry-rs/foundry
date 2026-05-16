@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:introspect@v1",
+  "title": "Foundry binary introspection document",
+  "description": "Emitted on stdout by `<binary> --introspect`. Describes the binary's command tree and per-command agent capabilities.",
+  "type": "object",
+  "required": ["schema_id", "schema_version", "binary", "commands"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_id": {
+      "type": "string",
+      "const": "foundry:introspect@v1"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "binary": { "$ref": "#/$defs/BinaryInfo" },
+    "commands": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/CommandInfo" }
+    }
+  },
+  "$defs": {
+    "BinaryInfo": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "long_version": { "type": "string" },
+        "description": { "type": "string" }
+      }
+    },
+    "CommandInfo": {
+      "type": "object",
+      "required": [
+        "command_id",
+        "path",
+        "aliases",
+        "args",
+        "subcommands",
+        "capabilities",
+        "exit_codes"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "command_id": {
+          "type": "string",
+          "description": "Stable, non-empty machine identifier scoped under the binary name (e.g. `forge.build`, `cast.4byte-event`). Uniqueness across the document is enforced by binary-side tests.",
+          "minLength": 1
+        },
+        "path": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "aliases": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "summary": { "type": "string" },
+        "description": { "type": "string" },
+        "args": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ArgInfo" }
+        },
+        "subcommands": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CommandInfo" }
+        },
+        "capabilities": { "$ref": "#/$defs/Capabilities" },
+        "exit_codes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExitCodeInfo" }
+        },
+        "hidden": { "type": "boolean" }
+      }
+    },
+    "Capabilities": {
+      "type": "object",
+      "required": [
+        "output_mode",
+        "reads_stdin",
+        "supports_output_path",
+        "requires_project",
+        "side_effects",
+        "long_running",
+        "stateful"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "output_mode": {
+          "type": "string",
+          "enum": ["none", "legacy_json", "envelope", "stream", "session"]
+        },
+        "result_schema_ref": {
+          "type": "string",
+          "description": "Per-command success-payload schema id. Must NOT carry an `.event` or `.session` suffix.",
+          "pattern": "^foundry:[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*@v\\d+$"
+        },
+        "event_schema_ref": {
+          "type": "string",
+          "description": "Per-record stream schema id. Must carry an `.event` suffix.",
+          "pattern": "^foundry:[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.event@v\\d+$"
+        },
+        "session_schema_ref": {
+          "type": "string",
+          "description": "Per-record session schema id. Must carry a `.session` suffix.",
+          "pattern": "^foundry:[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.session@v\\d+$"
+        },
+        "reads_stdin": { "type": "boolean" },
+        "supports_output_path": { "type": "boolean" },
+        "requires_project": { "type": "boolean" },
+        "side_effects": {
+          "type": "string",
+          "enum": ["none", "fs_write", "network", "chain_write", "spawn_server"]
+        },
+        "long_running": { "type": "boolean" },
+        "stateful": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "output_mode": { "const": "envelope" } } },
+          "then": { "required": ["result_schema_ref"] }
+        },
+        {
+          "if": { "properties": { "output_mode": { "const": "stream" } } },
+          "then": { "required": ["result_schema_ref", "event_schema_ref"] }
+        },
+        {
+          "if": { "properties": { "output_mode": { "const": "session" } } },
+          "then": { "required": ["session_schema_ref"] }
+        }
+      ]
+    },
+    "ArgInfo": {
+      "type": "object",
+      "required": [
+        "name",
+        "kind",
+        "value_type",
+        "aliases",
+        "possible_values",
+        "required",
+        "repeatable",
+        "conflicts_with"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["flag", "option", "positional"]
+        },
+        "value_type": {
+          "type": "string",
+          "enum": [
+            "bool",
+            "string",
+            "integer",
+            "path",
+            "url",
+            "address",
+            "selector",
+            "hex",
+            "json",
+            "other"
+          ]
+        },
+        "help": { "type": "string" },
+        "long": { "type": "string" },
+        "short": { "type": "string", "maxLength": 1 },
+        "aliases": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "env": { "type": "string" },
+        "default": { "type": "string" },
+        "possible_values": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "required": { "type": "boolean" },
+        "repeatable": { "type": "boolean" },
+        "conflicts_with": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "help_heading": { "type": "string" },
+        "hidden": { "type": "boolean" }
+      }
+    },
+    "ExitCodeInfo": {
+      "type": "object",
+      "required": ["code", "name", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "integer" },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" }
+      }
+    }
+  }
+}

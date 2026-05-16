@@ -123,9 +123,7 @@ contract MachinePassTest is Test {
     for line in &lines[..lines.len() - 1] {
         let v: Value = serde_json::from_str(line)
             .unwrap_or_else(|e| panic!("non-json stream line: {line}: {e}"));
-        assert_eq!(v["schema_id"], "foundry:forge.test.event@v1");
-        assert_eq!(v["command_id"], "forge.test");
-        assert!(v["ts"].is_string());
+        foundry_test_utils::agent_schema::validate("foundry:forge.test.event@v1", &v);
         match v["kind"].as_str().unwrap_or("") {
             "test_result" => saw_test_result = true,
             "suite_finished" => saw_suite_finished = true,
@@ -135,13 +133,16 @@ contract MachinePassTest is Test {
     assert!(saw_test_result, "missing any test_result event in: {stdout}");
     assert!(saw_suite_finished, "missing any suite_finished event in: {stdout}");
 
-    // Terminal envelope.
+    // Terminal envelope: 2-test, 1-suite fixture pinned exactly.
     let envelope: Value = serde_json::from_str(lines.last().unwrap()).unwrap();
-    assert_eq!(envelope["schema_version"], 1);
     assert_eq!(envelope["success"], true);
-    assert!(envelope["data"]["passed"].as_u64().is_some(), "missing passed: {envelope}");
-    assert!(envelope["data"]["failed"].as_u64().is_some(), "missing failed: {envelope}");
-    assert!(envelope["data"]["suites"].as_u64().is_some(), "missing suites: {envelope}");
+    assert_eq!(envelope["data"]["passed"].as_u64(), Some(2));
+    assert_eq!(envelope["data"]["failed"].as_u64(), Some(0));
+    assert_eq!(envelope["data"]["suites"].as_u64(), Some(1));
+    foundry_test_utils::agent_schema::validate_envelope_data(&envelope, "foundry:forge.test@v1");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
 });
 
 // On a failing test, `forge --machine test` ends with an error envelope and
@@ -166,19 +167,29 @@ contract MachineFailTest is Test {
     assert_eq!(envelope["errors"][0]["code"], "test.failed");
     let failed = envelope["errors"][0]["details"]["failed"].as_u64().unwrap_or(0);
     assert!(failed >= 1, "expected at least one failed test in details: {envelope}");
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
 });
 
 // `--machine` rejects flags that would corrupt the NDJSON stream contract.
 forgetest_init!(machine_mode_rejects_unsupported_flags, |_prj, cmd| {
     let assert = cmd.args(["--machine", "test", "--gas-report"]).assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(2));
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     let envelope: Value = serde_json::from_str(stdout.trim())
         .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
     assert_eq!(envelope["success"], false);
+    assert!(envelope["data"].is_null(), "data must be null on failure: {envelope}");
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
     assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
     let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
     assert!(msg.contains("--gas-report"), "missing --gas-report mention: {envelope}");
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
 });
 
 // `--watch` is dispatched separately from `cmd.run()`, so the rejection
@@ -186,14 +197,20 @@ forgetest_init!(machine_mode_rejects_unsupported_flags, |_prj, cmd| {
 // against the dispatch boundary moving back under the rejection path.
 forgetest_init!(machine_mode_rejects_watch, |_prj, cmd| {
     let assert = cmd.args(["--machine", "test", "--watch"]).assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(2));
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     let envelope: Value = serde_json::from_str(stdout.trim())
         .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
     assert_eq!(envelope["success"], false);
+    assert!(envelope["data"].is_null(), "data must be null on failure: {envelope}");
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
     assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
     let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
     assert!(msg.contains("--watch"), "missing --watch mention: {envelope}");
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
 });
 
 forgetest_init!(payment_failure, |prj, cmd| {

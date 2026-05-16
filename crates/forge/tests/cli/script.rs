@@ -3728,23 +3728,23 @@ contract Demo {
     for line in &lines[..lines.len() - 1] {
         let v: Value = serde_json::from_str(line)
             .unwrap_or_else(|e| panic!("non-json stream line: {line}: {e}"));
-        assert_eq!(v["schema_id"], "foundry:forge.script.event@v1");
-        assert_eq!(v["command_id"], "forge.script");
-        assert!(v["ts"].is_string());
+        foundry_test_utils::agent_schema::validate("foundry:forge.script.event@v1", &v);
         if v["kind"] == "phase" {
             phases.push(v["phase"].as_str().unwrap_or("").to_string());
         }
     }
+    // Dry-run must emit both `compile` and `simulate` phases; the
+    // `broadcast` phase is dry-run-suppressed.
     assert!(phases.iter().any(|p| p == "compile"), "missing compile phase: {phases:?}");
+    assert!(phases.iter().any(|p| p == "simulate"), "missing simulate phase: {phases:?}");
+    assert!(!phases.iter().any(|p| p == "broadcast"), "unexpected broadcast phase: {phases:?}");
 
     let envelope: Value = serde_json::from_str(lines.last().unwrap()).unwrap();
-    assert_eq!(envelope["schema_version"], 1);
     assert_eq!(envelope["success"], true);
     assert_eq!(envelope["data"]["mode"], "dry_run");
-    assert_eq!(envelope["data"]["broadcast"], false);
     assert_eq!(envelope["data"]["tx_count"], 0);
-    assert!(envelope["data"]["tx_hashes"].as_array().unwrap().is_empty());
     assert!(envelope["data"]["created_contracts"].as_array().unwrap().is_empty());
+    foundry_test_utils::agent_schema::validate_envelope_data(&envelope, "foundry:forge.script@v1");
 
     let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
     assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
@@ -3783,12 +3783,19 @@ contract Demo {
         warnings[0]
     );
 
-    // The same warning must also appear as a stream `warning` record.
-    let saw_stream_warning = lines[..lines.len() - 1].iter().any(|l| {
-        let v: Value = serde_json::from_str(l).unwrap();
-        v["kind"] == "warning"
-    });
-    assert!(saw_stream_warning, "expected a `warning` stream record, got: {stdout}");
+    // The same warning must appear in the stream and be the one aggregated
+    // into the terminal envelope — not just any warning.
+    let stream_warning = lines[..lines.len() - 1]
+        .iter()
+        .find_map(|l| {
+            let v: Value = serde_json::from_str(l).unwrap();
+            foundry_test_utils::agent_schema::validate("foundry:forge.script.event@v1", &v);
+            (v["kind"] == "warning").then_some(v)
+        })
+        .unwrap_or_else(|| panic!("expected a `warning` stream record, got: {stdout}"));
+    assert_eq!(stream_warning["code"], "script.warning");
+    assert_eq!(stream_warning["message"], warnings[0]["message"]);
+    foundry_test_utils::agent_schema::validate_envelope_data(&envelope, "foundry:forge.script@v1");
 
     let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
     assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
@@ -3843,7 +3850,10 @@ contract DeployScript is Script {
     let envelope: Value = serde_json::from_str(lines.last().unwrap())
         .unwrap_or_else(|e| panic!("trailing line not envelope: {stdout}: {e}"));
     assert_eq!(envelope["success"], false);
+    assert!(envelope["data"].is_null(), "data must be null on failure: {envelope}");
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
     assert_eq!(envelope["errors"][0]["code"], "script.broadcast_failed");
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
 
     let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
     assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
@@ -3862,14 +3872,17 @@ contract Demo {
     );
 
     let assert = cmd.arg("--machine").arg("script").arg(script).arg("--debug").assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(2));
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
     let envelope: Value = serde_json::from_str(stdout.trim())
         .unwrap_or_else(|e| panic!("expected single-envelope error: {stdout}: {e}"));
     assert_eq!(envelope["success"], false);
+    assert!(envelope["data"].is_null(), "data must be null on failure: {envelope}");
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
     assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
-    assert_eq!(assert.get_output().status.code(), Some(2));
     let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
     assert!(msg.contains("--debug"), "missing --debug mention: {envelope}");
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
 
     let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
     assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
@@ -3924,21 +3937,16 @@ contract DeployScript is Script {
     assert_eq!(envelope["success"], true, "envelope: {envelope}");
     let data = &envelope["data"];
     assert_eq!(data["mode"], "broadcast", "envelope: {envelope}");
-    assert_eq!(data["broadcast"], true, "envelope: {envelope}");
     let tx_count = data["tx_count"].as_u64().unwrap_or(0);
     assert!(tx_count >= 1, "expected tx_count >= 1, got {tx_count}: {envelope}");
-    let tx_hashes = data["tx_hashes"].as_array().expect("tx_hashes array");
-    assert!(!tx_hashes.is_empty(), "tx_hashes empty: {envelope}");
-    for h in tx_hashes {
-        assert!(h.as_str().unwrap_or("").starts_with("0x"), "tx hash not 0x-prefixed: {h}");
-    }
-    let created = data["created_contracts"].as_array().expect("created_contracts array");
-    assert!(!created.is_empty(), "created_contracts empty: {envelope}");
+    assert!(!data["tx_hashes"].as_array().unwrap().is_empty(), "tx_hashes empty: {envelope}");
     assert!(
-        created.iter().any(|c| c["address"].as_str().unwrap_or("").starts_with("0x")),
-        "no created_contracts entry with 0x address: {envelope}"
+        !data["created_contracts"].as_array().unwrap().is_empty(),
+        "created_contracts empty: {envelope}"
     );
-    assert!(data.get("verified").is_none(), "verified should be absent: {envelope}");
+    // `--verify` is rejected under `--machine`, so this field must not appear.
+    assert!(data.get("verified").is_none(), "verified must be absent under @v1: {envelope}");
+    foundry_test_utils::agent_schema::validate_envelope_data(&envelope, "foundry:forge.script@v1");
 
     let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
     assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");

@@ -227,32 +227,108 @@ mod tests {
         assert!(v.is_empty(), "forge capability violations: {v:?}");
     }
 
-    /// Every adopted command must pin a stable `command_id` matching its
-    /// registry entry. Catches accidental drift between the registry and the
-    /// clap tree across both envelope- and stream-mode commands.
+    /// Every `*_schema_ref` exposed by `forge --introspect` MUST point at a
+    /// committed JSON Schema file under `docs/agents/schemas/`. Guards
+    /// against typos and ref bumps that would leave agent tooling with
+    /// dangling pointers.
+    #[test]
+    fn introspect_schema_refs_resolve_to_committed_schemas() {
+        use foundry_test_utils::agent_schema;
+        let known: std::collections::BTreeSet<&'static str> =
+            agent_schema::known_schema_ids().collect();
+        let cmd = <Forge as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &REGISTRY);
+
+        fn walk(
+            c: &foundry_cli::introspect::CommandInfo,
+            known: &std::collections::BTreeSet<&'static str>,
+            errs: &mut Vec<String>,
+        ) {
+            let caps = &c.capabilities;
+            for (name, v) in [
+                ("result_schema_ref", caps.result_schema_ref.as_deref()),
+                ("event_schema_ref", caps.event_schema_ref.as_deref()),
+                ("session_schema_ref", caps.session_schema_ref.as_deref()),
+            ] {
+                if let Some(id) = v
+                    && !known.contains(id)
+                {
+                    errs.push(format!("{}: {name} points to unknown schema `{id}`", c.command_id));
+                }
+            }
+            for sub in &c.subcommands {
+                walk(sub, known, errs);
+            }
+        }
+
+        let mut errs = Vec::new();
+        for c in &doc.commands {
+            walk(c, &known, &mut errs);
+        }
+        assert!(errs.is_empty(), "dangling forge schema refs: {errs:?}");
+    }
+
+    /// Every adopted command must pin its exact `command_id`, output mode,
+    /// and schema refs. A drift in any of those is an agent-contract break.
     #[test]
     fn registered_commands_pin_stable_ids() {
         let cmd = <Forge as clap::CommandFactory>::command();
         let doc = build_document(&cmd, &REGISTRY);
-        fn walk(c: &foundry_cli::introspect::CommandInfo) -> Vec<(&str, OutputMode)> {
-            let mut out = Vec::new();
-            if !matches!(c.capabilities.output_mode, OutputMode::None) {
-                out.push((c.command_id.as_str(), c.capabilities.output_mode));
+        fn find<'a>(
+            c: &'a foundry_cli::introspect::CommandInfo,
+            id: &str,
+        ) -> Option<&'a foundry_cli::introspect::CommandInfo> {
+            if c.command_id == id {
+                return Some(c);
             }
             for sub in &c.subcommands {
-                out.extend(walk(sub));
+                if let Some(found) = find(sub, id) {
+                    return Some(found);
+                }
             }
-            out
+            None
         }
-        let pinned: Vec<(&str, OutputMode)> = doc.commands.iter().flat_map(walk).collect();
-        let pinned_ids: Vec<&str> = pinned.iter().map(|(id, _)| *id).collect();
-        for id in ["forge.build", "forge.test", "forge.script"] {
-            assert!(pinned_ids.contains(&id), "{id} missing from pinned ids: {pinned_ids:?}");
-        }
-        for id in ["forge.test", "forge.script"] {
-            assert!(
-                pinned.iter().any(|(p, m)| *p == id && matches!(m, OutputMode::Stream)),
-                "{id} must be Stream: {pinned:?}"
+        let lookup = |id: &str| -> &foundry_cli::introspect::CommandInfo {
+            doc.commands
+                .iter()
+                .find_map(|c| find(c, id))
+                .unwrap_or_else(|| panic!("{id} missing from forge introspect"))
+        };
+
+        // (command_id, expected output_mode, expected result_schema_ref,
+        // expected event_schema_ref). `session_schema_ref` must be absent
+        // for every adopted command in this PR.
+        let pins: &[(&str, OutputMode, &str, Option<&str>)] = &[
+            ("forge.build", OutputMode::Envelope, "foundry:forge.build@v1", None),
+            (
+                "forge.test",
+                OutputMode::Stream,
+                "foundry:forge.test@v1",
+                Some("foundry:forge.test.event@v1"),
+            ),
+            (
+                "forge.script",
+                OutputMode::Stream,
+                "foundry:forge.script@v1",
+                Some("foundry:forge.script.event@v1"),
+            ),
+        ];
+        for (id, mode, result_ref, event_ref) in pins {
+            let info = lookup(id);
+            assert_eq!(info.capabilities.output_mode, *mode, "{id} output_mode drift");
+            assert_eq!(
+                info.capabilities.result_schema_ref.as_deref(),
+                Some(*result_ref),
+                "{id} result_schema_ref drift"
+            );
+            assert_eq!(
+                info.capabilities.event_schema_ref.as_deref(),
+                *event_ref,
+                "{id} event_schema_ref drift"
+            );
+            assert_eq!(
+                info.capabilities.session_schema_ref, None,
+                "{id} must not declare session_schema_ref"
             );
         }
     }
