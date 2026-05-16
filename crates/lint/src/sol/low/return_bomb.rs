@@ -63,23 +63,32 @@ fn matching_functions_for_callee<'hir>(
     callee: &hir::Expr<'hir>,
     args: &CallArgs<'hir>,
 ) -> Option<FunctionCandidates<'hir>> {
-    match &callee.peel_parens().kind {
+    let functions = match &callee.peel_parens().kind {
         ExprKind::Ident(reses) => {
             let candidates = reses.iter().filter_map(res_function_id);
-            let functions = select_functions_for_args(hir, candidates, args);
-            (!functions.is_empty()).then_some(functions).or_else(|| {
-                expr_type(hir, callee)
-                    .and_then(|ty| function_type_returns_for_args(hir, ty, args))
-                    .map(FunctionCandidates::Pointer)
-            })
-        }
-        ExprKind::Member(base, member) => {
-            let contract = expr_contract_id(hir, base)?;
-            let candidates = function_candidates_for_member(hir, contract, member.name);
             Some(select_functions_for_args(hir, candidates, args))
         }
+        ExprKind::Member(base, member) => expr_contract_id(hir, base).map(|contract| {
+            let candidates = function_candidates_for_member(hir, contract, member.name);
+            select_functions_for_args(hir, candidates, args)
+        }),
         _ => None,
-    }
+    };
+
+    functions
+        .filter(|functions| !functions.is_empty())
+        .or_else(|| function_pointer_candidates_for_callee(hir, callee, args))
+}
+
+/// Returns an external function pointer callee if its arguments can match.
+fn function_pointer_candidates_for_callee<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    callee: &hir::Expr<'hir>,
+    args: &CallArgs<'_>,
+) -> Option<FunctionCandidates<'hir>> {
+    expr_type(hir, callee)
+        .and_then(|ty| function_type_returns_for_args(hir, ty, args))
+        .map(FunctionCandidates::Pointer)
 }
 
 /// Returns function candidates with the given member name on a contract.
@@ -91,8 +100,13 @@ fn function_candidates_for_member<'hir>(
     hir.contract_item_ids(contract).filter_map(move |item| {
         let ItemId::Function(id) = item else { return None };
         let function = hir.function(id);
-        (function.name?.name == member).then_some(id)
+        (function.name?.name == member && is_externally_callable(function)).then_some(id)
     })
+}
+
+/// Returns true if a function can be called through `this.foo()` or `contract.foo()`.
+fn is_externally_callable(function: &hir::Function<'_>) -> bool {
+    matches!(function.visibility, hir::Visibility::Public | hir::Visibility::External)
 }
 
 /// Selects the candidate functions that best match the call arguments.
@@ -231,6 +245,7 @@ fn params_match_args<'hir>(
 fn expr_contract_id(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::ContractId> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(reses) if is_this(reses) => enclosing_contract(hir, expr),
+        ExprKind::New(hir::Type { kind: TypeKind::Custom(ItemId::Contract(id)), .. }) => Some(*id),
         ExprKind::Call(callee, _, _) => {
             expr_type(hir, expr).and_then(type_contract_id).or_else(|| {
                 match &callee.peel_parens().kind {
@@ -239,6 +254,10 @@ fn expr_contract_id(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::Con
                         _ => None,
                     }),
                     ExprKind::Type(hir::Type {
+                        kind: TypeKind::Custom(ItemId::Contract(id)),
+                        ..
+                    }) => Some(*id),
+                    ExprKind::New(hir::Type {
                         kind: TypeKind::Custom(ItemId::Contract(id)),
                         ..
                     }) => Some(*id),
@@ -332,7 +351,7 @@ fn expr_type<'hir>(
             })
         }
         ExprKind::Call(callee, args, _) => match &callee.peel_parens().kind {
-            ExprKind::Type(ty) => Some(ty),
+            ExprKind::Type(ty) | ExprKind::New(ty) => Some(ty),
             _ => call_return_type(hir, callee, args),
         },
         _ => None,
@@ -425,7 +444,7 @@ fn types_match(hir: &hir::Hir<'_>, a: &hir::Type<'_>, b: &hir::Type<'_>) -> bool
         ) => true,
         (TypeKind::Elementary(a), TypeKind::Elementary(b)) => elementary_type_matches(*a, *b),
         (TypeKind::Array(a), TypeKind::Array(b)) => {
-            a.size.is_some() == b.size.is_some() && types_match(hir, &a.element, &b.element)
+            array_sizes_match(a.size, b.size) && types_match(hir, &a.element, &b.element)
         }
         (TypeKind::Custom(a), TypeKind::Custom(b)) => a == b,
         (TypeKind::Function(a), TypeKind::Function(b)) => {
@@ -440,6 +459,25 @@ fn types_match(hir: &hir::Hir<'_>, a: &hir::Type<'_>, b: &hir::Type<'_>) -> bool
                     .zip(b.returns)
                     .all(|(&a, &b)| types_match(hir, &hir.variable(a).ty, &hir.variable(b).ty))
         }
+        _ => false,
+    }
+}
+
+/// Returns true if two array sizes are equivalent for overload resolution.
+fn array_sizes_match(a: Option<&hir::Expr<'_>>, b: Option<&hir::Expr<'_>>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => fixed_array_sizes_match(a, b),
+        _ => false,
+    }
+}
+
+fn fixed_array_sizes_match(a: &hir::Expr<'_>, b: &hir::Expr<'_>) -> bool {
+    match (&a.peel_parens().kind, &b.peel_parens().kind) {
+        (ExprKind::Lit(a), ExprKind::Lit(b)) => match (&a.kind, &b.kind) {
+            (LitKind::Number(a), LitKind::Number(b)) => a == b,
+            _ => false,
+        },
         _ => false,
     }
 }

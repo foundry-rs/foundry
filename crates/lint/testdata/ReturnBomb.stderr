@@ -257,6 +257,14 @@ LL │ …     bytes memory result = target.fetch{gas: gasLimit}(value);
 warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
    ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
    │
+LL │ …     bytes memory result = target.fetch{gas: gasLimit}(values);
+   │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/return-bomb
+
+warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
+   ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
+   │
 LL │ …     bytes memory result = IReturnBombTarget(target).fetch{gas: gasLimit}();
    │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
@@ -275,6 +283,30 @@ warning[return-bomb]: external calls with a gas limit should not consume unbound
    │
 LL │ …     bytes memory result = fetcher{gas: gasLimit}();
    │                             ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/return-bomb
+
+warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
+   ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
+   │
+LL │ …     bytes memory result = slot.fetcher{gas: gasLimit}();
+   │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/return-bomb
+
+warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
+   ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
+   │
+LL │ …     bytes memory result = getFetcher(){gas: gasLimit}();
+   │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/return-bomb
+
+warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
+   ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
+   │
+LL │ …     bytes memory result = (new ReturnBombCreatedTarget()).fetch{gas: gasLimit}();
+   │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/return-bomb
 
