@@ -31,9 +31,14 @@ contract ReturnBomb {
         bytes data;
     }
 
+    struct TargetSlot {
+        IReturnBombTarget target;
+    }
+
     bytes existingData;
     bytes[] results;
     Result storedResult;
+    mapping(uint256 => IReturnBombTarget) mappedTargets;
 
     // SHOULD PASS: Calls without a gas cap.
     function valueOnlyOption(address payable target, bytes memory payload, uint256 value) public {
@@ -120,6 +125,21 @@ contract ReturnBomb {
 
     function directHighLevelDynamicReturn(IReturnBombTarget target, uint256 gasLimit) public returns (bytes memory) {
         return target.fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
+    }
+
+    function indexedHighLevelDynamicReturn(IReturnBombTarget[] memory targets, uint256 index, uint256 gasLimit) public {
+        bytes memory result = targets[index].fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
+    }
+
+    function mappedHighLevelDynamicReturn(uint256 index, uint256 gasLimit) public {
+        bytes memory result = mappedTargets[index].fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
+    }
+
+    function memberHighLevelDynamicReturn(TargetSlot memory slot, uint256 gasLimit) public {
+        bytes memory result = slot.target.fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
     }
 
     function highLevelStaticReturn(IReturnBombTarget target, uint256 gasLimit) public {

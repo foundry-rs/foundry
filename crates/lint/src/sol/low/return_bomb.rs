@@ -176,10 +176,6 @@ fn params_match_args<'hir>(
 
 fn expr_contract_id(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::ContractId> {
     match &expr.peel_parens().kind {
-        ExprKind::Ident(reses) => reses
-            .iter()
-            .find_map(hir::Res::as_variable)
-            .and_then(|var| type_contract_id(&hir.variable(var).ty)),
         ExprKind::Call(callee, _, _) => match &callee.peel_parens().kind {
             ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
                 hir::Res::Item(ItemId::Contract(id)) => Some(*id),
@@ -190,7 +186,7 @@ fn expr_contract_id(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::Con
             }
             _ => None,
         },
-        _ => None,
+        _ => expr_type(hir, expr).and_then(type_contract_id),
     }
 }
 
@@ -233,10 +229,11 @@ fn expr_type<'hir>(
             let var = reses.iter().filter_map(hir::Res::as_variable).next()?;
             Some(&hir.variable(var).ty)
         }
-        ExprKind::Index(base, _) => {
-            let TypeKind::Array(array) = &expr_type(hir, base)?.kind else { return None };
-            Some(&array.element)
-        }
+        ExprKind::Index(base, _) => match &expr_type(hir, base)?.kind {
+            TypeKind::Array(array) => Some(&array.element),
+            TypeKind::Mapping(mapping) => Some(&mapping.value),
+            _ => None,
+        },
         ExprKind::Member(base, member) => {
             let TypeKind::Custom(ItemId::Struct(id)) = expr_type(hir, base)?.kind else {
                 return None;
