@@ -12,6 +12,8 @@ use solar::{
 };
 use std::{collections::BTreeMap, path::Path};
 
+const HALMOS_CONFIG_PREFIX: &str = "@custom:halmos";
+
 /// Convenient struct to hold in-line per-test configurations
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NatSpec {
@@ -123,6 +125,119 @@ impl NatSpec {
                 .map(|idx| line[idx + INLINE_CONFIG_PREFIX.len()..].trim())
         })
     }
+
+    /// Returns Foundry inline config values translated from legacy Halmos annotations.
+    ///
+    /// Native `forge-config:` annotations remain preferred. This compatibility path only
+    /// translates the Halmos flags that map cleanly onto Foundry symbolic config.
+    pub fn halmos_config_values(&self) -> Result<Vec<String>, InlineConfigError> {
+        let mut values = Vec::new();
+        for line in self.docs.lines() {
+            let Some(idx) = line.find(HALMOS_CONFIG_PREFIX) else { continue };
+            let args = line[idx + HALMOS_CONFIG_PREFIX.len()..].trim();
+            translate_halmos_config(args, &mut values).map_err(|message| InlineConfigError {
+                location: self.location_string(),
+                kind: InlineConfigErrorKind::InvalidHalmosConfig(message),
+            })?;
+        }
+        Ok(values)
+    }
+}
+
+fn translate_halmos_config(args: &str, values: &mut Vec<String>) -> Result<(), String> {
+    let tokens = args.split_whitespace().collect::<Vec<_>>();
+    let mut idx = 0;
+    while idx < tokens.len() {
+        let token = tokens[idx];
+        if token == "--array-lengths" {
+            idx += 1;
+            let Some(value) = tokens.get(idx) else {
+                return Err("missing value for --array-lengths".to_string());
+            };
+            push_halmos_array_lengths(values, value)?;
+        } else if let Some(value) = token.strip_prefix("--array-lengths=") {
+            push_halmos_array_lengths(values, value)?;
+        } else if let Some(field) = halmos_numeric_symbolic_field(token) {
+            idx += 1;
+            let Some(value) = tokens.get(idx) else {
+                return Err(format!("missing value for {token}"));
+            };
+            push_halmos_u32(values, field, value, token)?;
+        } else if let Some(value) = token.strip_prefix("--invariant-depth=") {
+            push_halmos_u32(values, "invariant_depth", value, "--invariant-depth")?;
+        } else if let Some(value) = token.strip_prefix("--loop=") {
+            push_halmos_u32(values, "loop", value, "--loop")?;
+        } else if let Some(value) = token.strip_prefix("--width=") {
+            push_halmos_u32(values, "width", value, "--width")?;
+        } else if let Some(value) = token.strip_prefix("--depth=") {
+            push_halmos_u32(values, "depth", value, "--depth")?;
+        } else if let Some(value) = token.strip_prefix("--solver-timeout=") {
+            push_halmos_u32(values, "timeout", value, "--solver-timeout")?;
+        } else if let Some(value) = token.strip_prefix("--solver-timeout-branching=") {
+            push_halmos_u32(values, "timeout", value, "--solver-timeout-branching")?;
+        } else if let Some(value) = token.strip_prefix("--solver-timeout-assertion=") {
+            push_halmos_u32(values, "timeout", value, "--solver-timeout-assertion")?;
+        } else if token.starts_with("--")
+            && tokens.get(idx + 1).is_some_and(|next| !next.starts_with("--"))
+        {
+            idx += 1;
+        }
+        idx += 1;
+    }
+    Ok(())
+}
+
+fn halmos_numeric_symbolic_field(flag: &str) -> Option<&'static str> {
+    match flag {
+        "--loop" => Some("loop"),
+        "--width" => Some("width"),
+        "--depth" => Some("depth"),
+        "--invariant-depth" => Some("invariant_depth"),
+        "--solver-timeout" | "--solver-timeout-branching" | "--solver-timeout-assertion" => {
+            Some("timeout")
+        }
+        _ => None,
+    }
+}
+
+fn push_halmos_array_lengths(values: &mut Vec<String>, value: &str) -> Result<(), String> {
+    values.push(format!(
+        "default.symbolic.array_lengths = [{}]",
+        parse_halmos_lengths(value)?.iter().format(", ")
+    ));
+    Ok(())
+}
+
+fn push_halmos_u32(
+    values: &mut Vec<String>,
+    field: &str,
+    value: &str,
+    flag: &str,
+) -> Result<(), String> {
+    values.push(format!("default.symbolic.{field} = {}", parse_halmos_u32(value, flag)?));
+    Ok(())
+}
+
+fn parse_halmos_u32(value: &str, flag: &str) -> Result<u32, String> {
+    value.parse::<u32>().map_err(|_| format!("invalid value `{value}` for {flag}"))
+}
+
+fn parse_halmos_lengths(value: &str) -> Result<Vec<u32>, String> {
+    let mut lengths = Vec::new();
+    for length in value.split(',') {
+        let length = length.trim();
+        if length.is_empty() {
+            return Err(format!("invalid empty length in --array-lengths `{value}`"));
+        }
+        let length = length
+            .parse::<u32>()
+            .map_err(|_| format!("invalid length `{length}` in --array-lengths `{value}`"))?;
+        lengths.push(length);
+    }
+    if lengths.is_empty() {
+        return Err("missing value for --array-lengths".to_string());
+    }
+    Ok(lengths)
 }
 
 struct SolcParser {
@@ -204,7 +319,7 @@ impl SolcParser {
     fn get_node_docs(&self, data: &BTreeMap<String, Value>) -> Option<(String, String)> {
         if let Value::Object(fn_docs) = data.get("documentation")?
             && let Value::String(comment) = fn_docs.get("text")?
-            && comment.contains(INLINE_CONFIG_PREFIX)
+            && contains_inline_config(comment)
         {
             let mut src_line = fn_docs
                 .get("src")
@@ -244,7 +359,7 @@ impl<'a> SolarParser<'a> {
                 .iter()
                 .filter_map(|d| {
                     let s = d.symbol.as_str();
-                    if !s.contains(INLINE_CONFIG_PREFIX) {
+                    if !contains_inline_config(s) {
                         return None;
                     }
                     span = if span.is_dummy() { d.span } else { span.to(d.span) };
@@ -252,7 +367,7 @@ impl<'a> SolarParser<'a> {
                         ast::CommentKind::Line => Some(s.trim().to_string()),
                         ast::CommentKind::Block => Some(
                             s.lines()
-                                .filter(|line| line.contains(INLINE_CONFIG_PREFIX))
+                                .filter(|line| contains_inline_config(line))
                                 .map(|line| line.trim_start().trim_start_matches('*').trim())
                                 .collect::<Vec<_>>()
                                 .join("\n"),
@@ -301,6 +416,10 @@ impl<'a> SolarParser<'a> {
     }
 }
 
+fn contains_inline_config(s: &str) -> bool {
+    s.contains(INLINE_CONFIG_PREFIX) || s.contains(HALMOS_CONFIG_PREFIX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,7 +432,7 @@ mod tests {
 
     fn parse(natspecs: &mut Vec<NatSpec>, src: &str, contract_id: &str, contract_name: &str) {
         // Fast path to avoid parsing the file.
-        if !src.contains(INLINE_CONFIG_PREFIX) {
+        if !contains_inline_config(src) {
             return;
         }
 
@@ -624,6 +743,84 @@ contract FuzzInlineConf is DSTest {
     },
 ]
 "#]]
+        );
+    }
+
+    #[test]
+    fn translates_legacy_halmos_array_lengths() {
+        let natspec = NatSpec {
+            contract: "dir/TestContract.t.sol:SymbolicContract".to_string(),
+            function: Some("checkBytes".to_string()),
+            line: "10:1".to_string(),
+            docs: "@custom:halmos --loop 256 --array-lengths 2,4,8 --depth 100".to_string(),
+        };
+
+        assert_eq!(
+            natspec.halmos_config_values().unwrap(),
+            vec![
+                "default.symbolic.loop = 256",
+                "default.symbolic.array_lengths = [2, 4, 8]",
+                "default.symbolic.depth = 100",
+            ]
+        );
+    }
+
+    #[test]
+    fn translates_legacy_halmos_width_depth_and_solver_timeout() {
+        let natspec = NatSpec {
+            contract: "dir/TestContract.t.sol:SymbolicContract".to_string(),
+            function: Some("invariant_state".to_string()),
+            line: "10:1".to_string(),
+            docs: "@custom:halmos --width=32 --depth 128 --solver-timeout-branching 5".to_string(),
+        };
+
+        assert_eq!(
+            natspec.halmos_config_values().unwrap(),
+            vec![
+                "default.symbolic.width = 32",
+                "default.symbolic.depth = 128",
+                "default.symbolic.timeout = 5",
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_legacy_halmos_array_lengths() {
+        let natspec = NatSpec {
+            contract: "dir/TestContract.t.sol:SymbolicContract".to_string(),
+            function: Some("checkBytes".to_string()),
+            line: "10:1".to_string(),
+            docs: "@custom:halmos --array-lengths nope".to_string(),
+        };
+
+        let err = natspec.halmos_config_values().unwrap_err();
+
+        assert!(err.to_string().contains("invalid @custom:halmos annotation"));
+        assert!(err.to_string().contains("invalid length `nope`"));
+    }
+
+    #[test]
+    fn parse_solar_legacy_halmos_only_config() {
+        let src = r#"
+contract SymbolicHalmosLengths {
+    /// @custom:halmos --array-lengths 3
+    function checkArray(uint256[] memory values) public pure {
+        values;
+    }
+}
+        "#;
+        let mut natspecs = vec![];
+        parse(
+            &mut natspecs,
+            src,
+            "inline/SymbolicHalmosLengths.t.sol:SymbolicHalmosLengths",
+            "SymbolicHalmosLengths",
+        );
+
+        assert_eq!(natspecs.len(), 1);
+        assert_eq!(
+            natspecs[0].halmos_config_values().unwrap(),
+            vec!["default.symbolic.array_lengths = [3]"]
         );
     }
 }

@@ -111,6 +111,9 @@ pub use fuzz::{FuzzConfig, FuzzCorpusConfig, FuzzDictionaryConfig};
 mod invariant;
 pub use invariant::InvariantConfig;
 
+mod symbolic;
+pub use symbolic::{SymbolicConfig, SymbolicStorageLayout};
+
 mod inline;
 pub use inline::{InlineConfig, InlineConfigError, NatSpec};
 
@@ -357,6 +360,8 @@ pub struct Config {
     pub fuzz: FuzzConfig,
     /// Configuration for invariant testing
     pub invariant: InvariantConfig,
+    /// Configuration for symbolic testing
+    pub symbolic: SymbolicConfig,
     /// Whether to allow ffi cheatcodes in test
     pub ffi: bool,
     /// Whether to show `console.log` outputs in realtime during script/test execution
@@ -2686,6 +2691,7 @@ impl Default for Config {
             show_progress: false,
             fuzz: FuzzConfig::new("cache/fuzz".into()),
             invariant: InvariantConfig::new("cache/invariant".into()),
+            symbolic: SymbolicConfig::default(),
             always_use_create_2_factory: false,
             ffi: false,
             live_logs: false,

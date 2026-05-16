@@ -33,7 +33,11 @@ use foundry_evm::{
         strategies::EvmFuzzState,
     },
     revm::primitives::hardfork::SpecId,
-    traces::{TraceKind, TraceMode, load_contracts},
+    traces::{SparsedTraceArena, TraceKind, TraceMode, load_contracts},
+};
+use foundry_evm_symbolic::{
+    SymbolicExecutor, SymbolicInvariantRunInput, SymbolicInvariantRunResult, SymbolicInvariantStep,
+    SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -427,6 +431,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             .abi
             .functions()
             .filter(|func| filter.matches_test_function(func))
+            .filter(|func| self.config.symbolic.enabled || !func.is_symbolic_test())
             .filter(|func| self.function_matches_network_pass(func))
             .collect::<Vec<_>>();
         debug!(
@@ -593,6 +598,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             TestFunctionKind::UnitTest { .. } => self.run_unit_test(func),
             TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func),
             TestFunctionKind::TableTest => self.run_table_test(func),
+            TestFunctionKind::SymbolicTest => self.run_symbolic_test(func),
             TestFunctionKind::InvariantTest => self.run_invariant_test(
                 func,
                 invariant_fns,
@@ -642,6 +648,238 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.executor.is_raw_call_mut_success(self.address, &mut raw_call_result, false);
         self.result.single_result(success, reason, raw_call_result);
         self.result
+    }
+
+    /// Runs a symbolic test and replays any discovered counterexample concretely.
+    fn run_symbolic_test(mut self, func: &Function) -> TestResult {
+        if self.prepare_test(func).is_err() {
+            return self.result;
+        }
+
+        let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
+        let result = symbolic.run(SymbolicRunInput {
+            executor: self.executor.as_ref(),
+            target: self.address,
+            sender: self.sender,
+            function: func,
+            value: U256::ZERO,
+            ffi_enabled: self.config.ffi,
+        });
+
+        match result {
+            SymbolicRunResult::Safe(stats) => {
+                self.result.symbolic_result(true, None, None, stats.paths, stats.solver_queries);
+            }
+            SymbolicRunResult::Incomplete { kind, reason, stats } => {
+                self.result.symbolic_result(
+                    false,
+                    Some(format!("incomplete symbolic execution ({kind:?}): {reason}")),
+                    None,
+                    stats.paths,
+                    stats.solver_queries,
+                );
+            }
+            SymbolicRunResult::Counterexample { args, calldata, stats } => {
+                let (mut raw_call_result, reason) = match self.executor.call(
+                    self.sender,
+                    self.address,
+                    func,
+                    &args,
+                    U256::ZERO,
+                    Some(self.revert_decoder()),
+                ) {
+                    Ok(res) => (res.raw, None),
+                    Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
+                    Err(EvmError::Skip(reason)) => {
+                        self.result.single_skip(reason);
+                        return self.result;
+                    }
+                    Err(err) => {
+                        self.result.symbolic_result(
+                            false,
+                            Some(err.to_string()),
+                            None,
+                            stats.paths,
+                            stats.solver_queries,
+                        );
+                        return self.result;
+                    }
+                };
+
+                let success = self.executor.is_raw_call_mut_success(
+                    self.address,
+                    &mut raw_call_result,
+                    false,
+                );
+                let counterexample = CounterExample::Single(BaseCounterExample::from_fuzz_call(
+                    calldata,
+                    args,
+                    raw_call_result.traces.clone(),
+                ));
+                self.result.extend(raw_call_result);
+                self.result.symbolic_result(
+                    false,
+                    if success {
+                        Some("symbolic counterexample did not replay".to_string())
+                    } else {
+                        reason
+                    },
+                    Some(counterexample),
+                    stats.paths,
+                    stats.solver_queries,
+                );
+            }
+        }
+
+        self.result
+    }
+
+    /// Runs a bounded symbolic invariant sequence and replays any discovered sequence concretely.
+    fn run_symbolic_invariant_test(
+        mut self,
+        func: &Function,
+        invariants: Vec<(&Function, bool)>,
+        call_after_invariant: bool,
+        identified_contracts: &ContractsByAddress,
+    ) -> TestResult {
+        let runner = self.invariant_runner();
+        let mut evm = InvariantExecutor::new(
+            self.clone_executor(),
+            runner,
+            self.config.invariant.clone(),
+            identified_contracts,
+            &self.cr.mcr.known_contracts,
+        );
+
+        if let Err(e) = evm.select_contract_artifacts(self.address) {
+            self.result.invariant_setup_fail(e);
+            return self.result;
+        }
+
+        let (sender_filters, targeted_contracts) =
+            match evm.select_contracts_and_senders(self.address) {
+                Ok(targets) => targets,
+                Err(e) => {
+                    self.result.invariant_setup_fail(e);
+                    return self.result;
+                }
+            };
+
+        let targets = {
+            let targets = targeted_contracts.targets.lock();
+            targets
+                .fuzzed_functions()
+                .map(|(address, function)| SymbolicInvariantTarget {
+                    address: *address,
+                    contract_name: targets.get(address).map(|target| target.identifier.clone()),
+                    function: function.clone(),
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let senders = if sender_filters.targeted.is_empty() {
+            vec![self.sender]
+        } else {
+            sender_filters.targeted.clone()
+        };
+
+        let after_invariant = call_after_invariant.then(|| {
+            self.cr
+                .contract
+                .abi
+                .functions()
+                .find(|function| function.name.is_after_invariant())
+                .expect("afterInvariant function was validated before test execution")
+        });
+
+        let fail_on_revert = invariants
+            .iter()
+            .find_map(|(invariant, fail_on_revert)| (*invariant == func).then_some(*fail_on_revert))
+            .unwrap_or(self.config.invariant.fail_on_revert);
+
+        let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
+        let result = symbolic.run_invariant(SymbolicInvariantRunInput {
+            executor: self.executor.as_ref(),
+            invariant_address: self.address,
+            sender: self.sender,
+            invariant: func,
+            after_invariant,
+            targets,
+            senders,
+            depth: self.config.symbolic.invariant_depth as usize,
+            fail_on_revert,
+            ffi_enabled: self.config.ffi,
+        });
+
+        match result {
+            SymbolicInvariantRunResult::Safe(stats) => {
+                self.result.symbolic_result(true, None, None, stats.paths, stats.solver_queries);
+            }
+            SymbolicInvariantRunResult::Incomplete { kind, reason, stats } => {
+                self.result.symbolic_result(
+                    false,
+                    Some(format!("incomplete symbolic invariant execution ({kind:?}): {reason}")),
+                    None,
+                    stats.paths,
+                    stats.solver_queries,
+                );
+            }
+            SymbolicInvariantRunResult::Counterexample { sequence, stats } => {
+                let (replayed, reason, replay_sequence) =
+                    self.replay_symbolic_invariant_sequence(func, &sequence, fail_on_revert);
+                self.result.symbolic_result(
+                    false,
+                    if replayed {
+                        reason.or_else(|| Some("symbolic invariant counterexample".to_string()))
+                    } else {
+                        Some("symbolic invariant counterexample did not replay".to_string())
+                    },
+                    Some(CounterExample::Sequence(replay_sequence.len(), replay_sequence)),
+                    stats.paths,
+                    stats.solver_queries,
+                );
+            }
+        }
+
+        self.result
+    }
+
+    fn replay_symbolic_invariant_sequence(
+        &self,
+        invariant: &Function,
+        sequence: &[SymbolicInvariantStep],
+        fail_on_revert: bool,
+    ) -> (bool, Option<String>, Vec<BaseCounterExample>) {
+        let mut executor = self.clone_executor();
+        let mut counterexample = Vec::with_capacity(sequence.len());
+
+        for step in sequence {
+            let raw = match executor.transact_raw(
+                step.sender,
+                step.address,
+                step.calldata.clone(),
+                U256::ZERO,
+            ) {
+                Ok(raw) => raw,
+                Err(err) => {
+                    counterexample.push(symbolic_step_counterexample(step, None));
+                    return (false, Some(err.to_string()), counterexample);
+                }
+            };
+            counterexample.push(symbolic_step_counterexample(step, raw.traces.clone()));
+            if raw.reverted {
+                return (fail_on_revert, None, counterexample);
+            }
+        }
+
+        let invariant_calldata = Bytes::from(invariant.selector().to_vec());
+        let mut raw = match executor.call_raw(CALLER, self.address, invariant_calldata, U256::ZERO)
+        {
+            Ok(raw) => raw,
+            Err(err) => return (false, Some(err.to_string()), counterexample),
+        };
+        let success = executor.is_raw_call_mut_success(self.address, &mut raw, false);
+        (success == false, None, counterexample)
     }
 
     /// Runs a table test.
@@ -793,6 +1031,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             self.result.invariant_skip(reason);
             return self.result;
         };
+
+        if self.config.symbolic.enabled {
+            return self.run_symbolic_invariant_test(
+                func,
+                invariants,
+                call_after_invariant,
+                identified_contracts,
+            );
+        }
 
         let runner = self.invariant_runner();
         let invariant_config = self.config.invariant.clone();
@@ -1467,6 +1714,27 @@ fn fuzzer_with_cases(seed: Option<U256>, cases: u32, max_global_rejects: u32) ->
     } else {
         trace!(target: "forge::test", "building stochastic fuzzer");
         TestRunner::new(config)
+    }
+}
+
+fn symbolic_step_counterexample(
+    step: &SymbolicInvariantStep,
+    traces: Option<SparsedTraceArena>,
+) -> BaseCounterExample {
+    BaseCounterExample {
+        warp: None,
+        roll: None,
+        sender: Some(step.sender),
+        addr: Some(step.address),
+        calldata: step.calldata.clone(),
+        contract_name: step.contract_name.clone(),
+        func_name: Some(step.function_name.clone()),
+        signature: Some(step.signature.clone()),
+        args: Some(foundry_common::fmt::format_tokens(&step.args).format(", ").to_string()),
+        raw_args: Some(foundry_common::fmt::format_tokens_raw(&step.args).format(", ").to_string()),
+        traces,
+        show_solidity: false,
+        fuzz: Default::default(),
     }
 }
 

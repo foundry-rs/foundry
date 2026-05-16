@@ -17,6 +17,9 @@ mod invariant;
 mod logs;
 mod repros;
 mod spec;
+mod symbolic;
+mod symbolic_conformance;
+mod symbolic_limits;
 mod table;
 mod trace;
 

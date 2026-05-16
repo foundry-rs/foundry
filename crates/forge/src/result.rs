@@ -902,6 +902,22 @@ impl TestResult {
         self.deprecated_cheatcodes = result.deprecated_cheatcodes;
     }
 
+    /// Returns the result for a symbolic test.
+    pub fn symbolic_result(
+        &mut self,
+        success: bool,
+        reason: Option<String>,
+        counterexample: Option<CounterExample>,
+        paths: usize,
+        solver_queries: usize,
+    ) {
+        self.kind = TestKind::Symbolic { paths, solver_queries };
+        self.status = if success { TestStatus::Success } else { TestStatus::Failure };
+        self.reason = reason;
+        self.counterexample = counterexample;
+        self.duration = Duration::default();
+    }
+
     /// Returns `true` if this is the result of a fuzz test
     pub const fn is_fuzz(&self) -> bool {
         matches!(self.kind, TestKind::Fuzz { .. })
@@ -949,6 +965,10 @@ pub enum TestKindReport {
         mean_gas: u64,
         median_gas: u64,
     },
+    Symbolic {
+        paths: usize,
+        solver_queries: usize,
+    },
 }
 
 impl fmt::Display for TestKindReport {
@@ -990,6 +1010,9 @@ impl fmt::Display for TestKindReport {
             Self::Table { runs, mean_gas, median_gas } => {
                 write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
+            Self::Symbolic { paths, solver_queries } => {
+                write!(f, "(paths: {paths}, queries: {solver_queries})")
+            }
         }
     }
 }
@@ -1002,7 +1025,7 @@ impl TestKindReport {
             // We use the median for comparisons
             Self::Fuzz { median_gas, .. } | Self::Table { median_gas, .. } => median_gas,
             // We return 0 since it's not applicable
-            Self::Invariant { .. } => 0,
+            Self::Invariant { .. } | Self::Symbolic { .. } => 0,
         }
     }
 }
@@ -1033,6 +1056,8 @@ pub enum TestKind {
     },
     /// A table test.
     Table { runs: usize, mean_gas: u64, median_gas: u64 },
+    /// A symbolic test.
+    Symbolic { paths: usize, solver_queries: usize },
 }
 
 impl Default for TestKind {
@@ -1081,6 +1106,9 @@ impl TestKind {
             },
             Self::Table { runs, mean_gas, median_gas } => {
                 TestKindReport::Table { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
+            }
+            Self::Symbolic { paths, solver_queries } => {
+                TestKindReport::Symbolic { paths: *paths, solver_queries: *solver_queries }
             }
         }
     }

@@ -186,6 +186,84 @@ pub struct TestArgs {
     #[arg(long)]
     pub fuzz_input_file: Option<String>,
 
+    /// Run symbolic check*/prove*/invariant*/statefulFuzz* tests.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC")]
+    pub symbolic: bool,
+
+    /// Solver executable used for symbolic tests.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER", value_name = "PATH_OR_NAME")]
+    pub symbolic_solver: Option<String>,
+
+    /// Timeout for symbolic execution in seconds.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_TIMEOUT", value_name = "SECONDS")]
+    pub symbolic_timeout: Option<u32>,
+
+    /// Halmos-compatible symbolic loop bound.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_LOOP", value_name = "N")]
+    pub symbolic_loop: Option<u32>,
+
+    /// Halmos-compatible symbolic execution depth alias.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_DEPTH", value_name = "N")]
+    pub symbolic_depth: Option<u32>,
+
+    /// Halmos-compatible symbolic path width alias.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_WIDTH", value_name = "N")]
+    pub symbolic_width: Option<u32>,
+
+    /// Maximum number of opcodes executed along a symbolic path.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_MAX_DEPTH", value_name = "N")]
+    pub symbolic_max_depth: Option<u32>,
+
+    /// Maximum number of symbolic paths to explore per test.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_MAX_PATHS", value_name = "N")]
+    pub symbolic_max_paths: Option<u32>,
+
+    /// Maximum number of calls in a bounded symbolic invariant sequence.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_INVARIANT_DEPTH", value_name = "N")]
+    pub symbolic_invariant_depth: Option<u32>,
+
+    /// Maximum number of solver queries per symbolic test.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_MAX_SOLVER_QUERIES", value_name = "N")]
+    pub symbolic_max_solver_queries: Option<u32>,
+
+    /// Default bounded length for symbolic dynamic ABI inputs.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_DEFAULT_DYNAMIC_LENGTH", value_name = "N")]
+    pub symbolic_default_dynamic_length: Option<u32>,
+
+    /// Maximum permitted bounded length for symbolic dynamic ABI inputs.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_MAX_DYNAMIC_LENGTH", value_name = "N")]
+    pub symbolic_max_dynamic_length: Option<u32>,
+
+    /// Per-dynamic-input symbolic lengths, applied in ABI traversal order.
+    #[arg(
+        long,
+        env = "FOUNDRY_SYMBOLIC_ARRAY_LENGTHS",
+        value_delimiter = ',',
+        value_name = "N,..."
+    )]
+    pub symbolic_array_lengths: Option<Vec<u32>>,
+
+    /// Maximum symbolic calldata size in bytes.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_MAX_CALLDATA_BYTES", value_name = "N")]
+    pub symbolic_max_calldata_bytes: Option<u32>,
+
+    /// Expand symbolic external call targets over known deployed contracts.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_CALL_TARGETS")]
+    pub symbolic_call_targets: bool,
+
+    /// Dump SMT-LIB queries issued by symbolic tests.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_DUMP_SMT")]
+    pub symbolic_dump_smt: bool,
+
+    /// Symbolic storage modelling mode.
+    #[arg(
+        long,
+        env = "FOUNDRY_SYMBOLIC_STORAGE_LAYOUT",
+        value_name = "solidity|generic",
+        value_parser = ["solidity", "generic"]
+    )]
+    pub symbolic_storage_layout: Option<String>,
+
     /// Show test execution progress.
     #[arg(long, conflicts_with_all = ["quiet", "json"], help_heading = "Display options")]
     pub show_progress: bool,
@@ -1116,6 +1194,61 @@ impl Provider for TestArgs {
             fuzz_dict.insert("failure_persist_file".to_string(), fuzz_input_file.into());
         }
         dict.insert("fuzz".to_string(), fuzz_dict.into());
+
+        let mut symbolic_dict = Dict::default();
+        if self.symbolic {
+            symbolic_dict.insert("enabled".to_string(), true.into());
+        }
+        if let Some(solver) = self.symbolic_solver.clone() {
+            symbolic_dict.insert("solver".to_string(), solver.into());
+        }
+        if let Some(timeout) = self.symbolic_timeout {
+            symbolic_dict.insert("timeout".to_string(), timeout.into());
+        }
+        if let Some(loop_bound) = self.symbolic_loop {
+            symbolic_dict.insert("loop".to_string(), loop_bound.into());
+        }
+        if let Some(depth) = self.symbolic_depth {
+            symbolic_dict.insert("depth".to_string(), depth.into());
+        }
+        if let Some(width) = self.symbolic_width {
+            symbolic_dict.insert("width".to_string(), width.into());
+        }
+        if let Some(max_depth) = self.symbolic_max_depth {
+            symbolic_dict.insert("max_depth".to_string(), max_depth.into());
+        }
+        if let Some(max_paths) = self.symbolic_max_paths {
+            symbolic_dict.insert("max_paths".to_string(), max_paths.into());
+        }
+        if let Some(invariant_depth) = self.symbolic_invariant_depth {
+            symbolic_dict.insert("invariant_depth".to_string(), invariant_depth.into());
+        }
+        if let Some(max_solver_queries) = self.symbolic_max_solver_queries {
+            symbolic_dict.insert("max_solver_queries".to_string(), max_solver_queries.into());
+        }
+        if let Some(default_dynamic_length) = self.symbolic_default_dynamic_length {
+            symbolic_dict
+                .insert("default_dynamic_length".to_string(), default_dynamic_length.into());
+        }
+        if let Some(max_dynamic_length) = self.symbolic_max_dynamic_length {
+            symbolic_dict.insert("max_dynamic_length".to_string(), max_dynamic_length.into());
+        }
+        if let Some(array_lengths) = self.symbolic_array_lengths.clone() {
+            symbolic_dict.insert("array_lengths".to_string(), array_lengths.into());
+        }
+        if let Some(max_calldata_bytes) = self.symbolic_max_calldata_bytes {
+            symbolic_dict.insert("max_calldata_bytes".to_string(), max_calldata_bytes.into());
+        }
+        if self.symbolic_call_targets {
+            symbolic_dict.insert("symbolic_call_targets".to_string(), true.into());
+        }
+        if self.symbolic_dump_smt {
+            symbolic_dict.insert("dump_smt".to_string(), true.into());
+        }
+        if let Some(storage_layout) = self.symbolic_storage_layout.clone() {
+            symbolic_dict.insert("storage_layout".to_string(), storage_layout.into());
+        }
+        dict.insert("symbolic".to_string(), symbolic_dict.into());
 
         if let Some(etherscan_api_key) =
             self.etherscan_api_key.as_ref().filter(|s| !s.trim().is_empty())

@@ -4622,6 +4622,7 @@ dependencies = [
  "foundry-debugger",
  "foundry-evm",
  "foundry-evm-networks",
+ "foundry-evm-symbolic",
  "foundry-linking",
  "foundry-test-utils",
  "foundry-wallets",
@@ -5434,6 +5435,23 @@ dependencies = [
 [[package]]
 name = "foundry-evm-sancov"
 version = "1.7.2"
+
+[[package]]
+name = "foundry-evm-symbolic"
+version = "1.7.2"
+dependencies = [
+ "alloy-dyn-abi",
+ "alloy-json-abi",
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "base64 0.22.1",
+ "foundry-config",
+ "foundry-evm",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "foundry-evm-traces"
