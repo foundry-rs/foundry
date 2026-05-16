@@ -18,6 +18,18 @@ library LocalLib {
     function transfer(Box storage box_, uint256 value) internal {
         box_.value = value;
     }
+
+    function call(Box storage box_, uint256 value) internal {
+        box_.value = value;
+    }
+
+    function delegatecall(Box storage box_, uint256 value) internal {
+        box_.value = value;
+    }
+
+    function staticcall(Box storage box_, uint256 value) internal view returns (uint256) {
+        return box_.value + value;
+    }
 }
 
 struct Target {
@@ -71,6 +83,12 @@ contract CallsLoop {
     function highLevelCalls() external {
         for (uint256 i; i < receivers.length; ++i) {
             receivers[i].ping(i);
+        }
+    }
+
+    function callsInterfaceCast(address targetAddress) external {
+        for (uint256 i; i < receivers.length; ++i) {
+            IReceiver(targetAddress).ping(i);
         }
     }
 
@@ -128,6 +146,12 @@ contract CallsLoop {
         for (uint256 i; i < boxes.length; ++i) {
             boxes[i].ping(i);
             boxes[i].transfer(i);
+            // forge-lint: disable-next-line(unchecked-call)
+            boxes[i].call(i);
+            // forge-lint: disable-next-line(unchecked-call)
+            boxes[i].delegatecall(i);
+            // forge-lint: disable-next-line(unchecked-call)
+            boxes[i].staticcall(i);
         }
     }
 

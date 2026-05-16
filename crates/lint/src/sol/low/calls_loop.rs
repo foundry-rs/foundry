@@ -232,7 +232,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
 fn is_external_call(hir: &Hir<'_>, callee: &Expr<'_>) -> bool {
     let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
 
-    if matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall) {
+    if matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
+        && is_address_like(hir, base)
+    {
         return true;
     }
 
@@ -276,14 +278,7 @@ fn is_this(expr: &Expr<'_>) -> bool {
 
 fn is_contract_like(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
-        ExprKind::Call(callee, _, _)
-            if matches!(
-                &callee.peel_parens().kind,
-                ExprKind::Type(hir::Type { kind: TypeKind::Custom(ItemId::Contract(_)), .. })
-            ) =>
-        {
-            true
-        }
+        ExprKind::Call(callee, _, _) if is_contract_type_expr(callee) => true,
         ExprKind::New(hir::Type { kind: TypeKind::Custom(ItemId::Contract(_)), .. }) => true,
         _ => expr_type(hir, expr).is_some_and(type_is_contract_like),
     }
@@ -292,8 +287,26 @@ fn is_contract_like(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
 fn is_address_like(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Payable(_) => true,
+        ExprKind::Call(callee, _, _) if is_address_type_expr(callee) => true,
         _ => expr_type(hir, expr).is_some_and(type_is_address_like),
     }
+}
+
+fn is_contract_type_expr(expr: &Expr<'_>) -> bool {
+    match &expr.peel_parens().kind {
+        ExprKind::Type(hir::Type { kind: TypeKind::Custom(ItemId::Contract(_)), .. }) => true,
+        ExprKind::Ident(reses) => {
+            reses.iter().any(|res| matches!(res, Res::Item(ItemId::Contract(_))))
+        }
+        _ => false,
+    }
+}
+
+fn is_address_type_expr(expr: &Expr<'_>) -> bool {
+    matches!(
+        &expr.peel_parens().kind,
+        ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ElementaryType::Address(_)), .. })
+    )
 }
 
 const fn type_is_contract_like(ty: &hir::Type<'_>) -> bool {
