@@ -22,6 +22,11 @@ interface IReturnBombOverloadedReverseTarget {
     function fetch(uint256 value) external returns (uint256);
 }
 
+interface IReturnBombAmbiguousOverloadedTarget {
+    function fetch(uint256 value) external returns (bytes memory);
+    function fetch(bool value) external returns (uint256);
+}
+
 contract ReturnBomb {
     event DynamicReturn(bytes result);
 
@@ -39,6 +44,7 @@ contract ReturnBomb {
     bytes[] results;
     Result storedResult;
     mapping(uint256 => IReturnBombTarget) mappedTargets;
+    IReturnBombTarget storedTarget;
 
     // SHOULD PASS: Calls without a gas cap.
     function valueOnlyOption(address payable target, bytes memory payload, uint256 value) public {
@@ -99,6 +105,14 @@ contract ReturnBomb {
         tx.origin.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
     }
 
+    function getAddress() public view returns (address) {
+        return address(this);
+    }
+
+    function returnedAddressLowLevelCall(bytes memory payload, uint256 gasLimit) public {
+        getAddress().call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
+    }
+
     function existingBytes(address target, bytes memory payload, uint256 gasLimit) public {
         (bool success, bytes memory result) = target.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
         (success, existingData) = target.call{gas: gasLimit}(result); //~WARN: external calls with a gas limit should not consume unbounded return data
@@ -151,6 +165,15 @@ contract ReturnBomb {
 
     function memberHighLevelDynamicReturn(TargetSlot memory slot, uint256 gasLimit) public {
         bytes memory result = slot.target.fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
+    }
+
+    function getTarget() public view returns (IReturnBombTarget) {
+        return storedTarget;
+    }
+
+    function returnedTargetHighLevelDynamicReturn(uint256 gasLimit) public {
+        bytes memory result = getTarget().fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
         require(result.length >= 0);
     }
 
@@ -207,6 +230,15 @@ contract ReturnBomb {
         require(result >= 0);
     }
 
+    function overloadedUnknownArgumentDynamicReturn(
+        IReturnBombAmbiguousOverloadedTarget target,
+        uint256 value,
+        uint256 gasLimit
+    ) public {
+        bytes memory result = target.fetch{gas: gasLimit}(value + 1); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
+    }
+
     function castDynamicReturn(address target, uint256 gasLimit) public {
         bytes memory result = IReturnBombTarget(target).fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
         require(result.length >= 0);
@@ -218,6 +250,14 @@ contract ReturnBomb {
         uint256 gasLimit
     ) public {
         bytes memory result = IReturnBombOverloadedTarget(target).fetch{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
+    }
+
+    function externalFunctionPointerDynamicReturn(
+        function() external returns (bytes memory) fetcher,
+        uint256 gasLimit
+    ) public {
+        bytes memory result = fetcher{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
         require(result.length >= 0);
     }
 }

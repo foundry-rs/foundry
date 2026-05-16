@@ -62,14 +62,16 @@ fn matching_functions_for_callee<'hir>(
     hir: &'hir hir::Hir<'hir>,
     callee: &hir::Expr<'hir>,
     args: &CallArgs<'hir>,
-) -> Option<Vec<hir::FunctionId>> {
+) -> Option<FunctionCandidates<'hir>> {
     match &callee.peel_parens().kind {
         ExprKind::Ident(reses) => {
-            let candidates = reses.iter().filter_map(|res| match res {
-                hir::Res::Item(ItemId::Function(id)) => Some(*id),
-                _ => None,
-            });
-            Some(select_functions_for_args(hir, candidates, args))
+            let candidates = reses.iter().filter_map(res_function_id);
+            let functions = select_functions_for_args(hir, candidates, args);
+            (!functions.is_empty()).then_some(functions).or_else(|| {
+                expr_type(hir, callee)
+                    .and_then(|ty| function_type_returns_for_args(hir, ty, args))
+                    .map(FunctionCandidates::Pointer)
+            })
         }
         ExprKind::Member(base, member) => {
             let contract = expr_contract_id(hir, base)?;
@@ -98,7 +100,7 @@ fn select_functions_for_args<'hir>(
     hir: &'hir hir::Hir<'hir>,
     candidates: impl Iterator<Item = hir::FunctionId>,
     args: &CallArgs<'hir>,
-) -> Vec<hir::FunctionId> {
+) -> FunctionCandidates<'hir> {
     let mut exact = Vec::new();
     let mut maybe = Vec::new();
 
@@ -110,24 +112,61 @@ fn select_functions_for_args<'hir>(
         }
     }
 
-    if exact.is_empty() { maybe } else { exact }
+    if exact.is_empty() {
+        FunctionCandidates::Maybe(maybe)
+    } else {
+        FunctionCandidates::Exact(exact)
+    }
 }
-/// Returns true if the matched functions all return dynamic data.
-fn functions_return_dynamic_data(hir: &hir::Hir<'_>, functions: &[hir::FunctionId]) -> bool {
+/// Returns true if a gas-limited call can return dynamic data.
+fn functions_return_dynamic_data(hir: &hir::Hir<'_>, functions: &FunctionCandidates<'_>) -> bool {
     match functions {
-        [] => false,
-        &[function] => function_returns_dynamic_data(hir, function),
-        [first, rest @ ..] => {
-            let first = function_returns_dynamic_data(hir, *first);
-            rest.iter().all(|&function| function_returns_dynamic_data(hir, function) == first)
-                && first
+        FunctionCandidates::Exact(functions) => match functions.as_slice() {
+            [] => false,
+            [function] => function_returns_dynamic_data(hir, *function),
+            [first, rest @ ..] => {
+                let first = function_returns_dynamic_data(hir, *first);
+                rest.iter().all(|&function| function_returns_dynamic_data(hir, function) == first)
+                    && first
+            }
+        },
+        FunctionCandidates::Maybe(functions) => {
+            functions.iter().any(|&function| function_returns_dynamic_data(hir, function))
         }
+        FunctionCandidates::Pointer(returns) => returns_dynamic_data(hir, returns),
+    }
+}
+
+enum FunctionCandidates<'hir> {
+    Exact(Vec<hir::FunctionId>),
+    Maybe(Vec<hir::FunctionId>),
+    Pointer(&'hir [hir::VariableId]),
+}
+
+impl FunctionCandidates<'_> {
+    const fn is_empty(&self) -> bool {
+        match self {
+            Self::Exact(functions) | Self::Maybe(functions) => functions.is_empty(),
+            Self::Pointer(returns) => returns.is_empty(),
+        }
+    }
+}
+
+/// Returns true if any return variable has a dynamically encoded return type.
+fn returns_dynamic_data(hir: &hir::Hir<'_>, returns: &[hir::VariableId]) -> bool {
+    returns.iter().any(|&var| is_dynamic_type(hir, &hir.variable(var).ty))
+}
+
+const fn res_function_id(res: &hir::Res) -> Option<hir::FunctionId> {
+    match res {
+        hir::Res::Item(ItemId::Function(id)) => Some(*id),
+        _ => None,
     }
 }
 
 /// Returns true if a function has any dynamically encoded return value.
 fn function_returns_dynamic_data(hir: &hir::Hir<'_>, function: hir::FunctionId) -> bool {
-    hir.function(function).returns.iter().any(|&var| is_dynamic_type(hir, &hir.variable(var).ty))
+    returns_dynamic_data(hir, hir.function(function).returns)
 }
 
 enum ArgMatch {
@@ -138,18 +177,27 @@ enum ArgMatch {
 /// Returns how well call arguments match a candidate function signature.
 fn function_arg_match(hir: &hir::Hir<'_>, id: hir::FunctionId, args: &CallArgs<'_>) -> ArgMatch {
     let function = hir.function(id);
-    if args.len() != function.parameters.len() {
+    params_arg_match(hir, function.parameters, args)
+}
+
+/// Returns how well call arguments match the expected parameter types.
+fn params_arg_match(
+    hir: &hir::Hir<'_>,
+    parameters: &[hir::VariableId],
+    args: &CallArgs<'_>,
+) -> ArgMatch {
+    if args.len() != parameters.len() {
         return ArgMatch::No;
     }
 
     match &args.kind {
         CallArgsKind::Unnamed(exprs) => {
-            params_match_args(hir, function.parameters.iter().copied().zip(exprs.iter()))
+            params_match_args(hir, parameters.iter().copied().zip(exprs.iter()))
         }
         CallArgsKind::Named(named_args) => {
             let mut maybe = false;
             for named_arg in *named_args {
-                let Some(param) = function.parameters.iter().copied().find(|&param| {
+                let Some(param) = parameters.iter().copied().find(|&param| {
                     hir.variable(param).name.is_some_and(|name| name.name == named_arg.name.name)
                 }) else {
                     return ArgMatch::No;
@@ -183,16 +231,21 @@ fn params_match_args<'hir>(
 fn expr_contract_id(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::ContractId> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(reses) if is_this(reses) => enclosing_contract(hir, expr),
-        ExprKind::Call(callee, _, _) => match &callee.peel_parens().kind {
-            ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
-                hir::Res::Item(ItemId::Contract(id)) => Some(*id),
-                _ => None,
-            }),
-            ExprKind::Type(hir::Type { kind: TypeKind::Custom(ItemId::Contract(id)), .. }) => {
-                Some(*id)
-            }
-            _ => None,
-        },
+        ExprKind::Call(callee, _, _) => {
+            expr_type(hir, expr).and_then(type_contract_id).or_else(|| {
+                match &callee.peel_parens().kind {
+                    ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
+                        hir::Res::Item(ItemId::Contract(id)) => Some(*id),
+                        _ => None,
+                    }),
+                    ExprKind::Type(hir::Type {
+                        kind: TypeKind::Custom(ItemId::Contract(id)),
+                        ..
+                    }) => Some(*id),
+                    _ => None,
+                }
+            })
+        }
         _ => expr_type(hir, expr).and_then(type_contract_id),
     }
 }
@@ -220,13 +273,15 @@ fn expr_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Lit(lit) => matches!(lit.kind, LitKind::Address(_)),
         ExprKind::Payable(_) => true,
-        ExprKind::Call(callee, _, _) => matches!(
-            &callee.peel_parens().kind,
-            ExprKind::Type(hir::Type {
-                kind: TypeKind::Elementary(ElementaryType::Address(_)),
-                ..
-            })
-        ),
+        ExprKind::Call(callee, _, _) => {
+            matches!(
+                &callee.peel_parens().kind,
+                ExprKind::Type(hir::Type {
+                    kind: TypeKind::Elementary(ElementaryType::Address(_)),
+                    ..
+                })
+            ) || expr_type(hir, expr).is_some_and(is_address_type)
+        }
         ExprKind::Member(base, member) if member_is_builtin_address(base, member.name) => true,
         _ => expr_type(hir, expr).is_some_and(is_address_type),
     }
@@ -276,12 +331,59 @@ fn expr_type<'hir>(
                 (hir.variable(field).name?.name == member.name).then_some(&hir.variable(field).ty)
             })
         }
-        ExprKind::Call(callee, _, _) => match &callee.peel_parens().kind {
+        ExprKind::Call(callee, args, _) => match &callee.peel_parens().kind {
             ExprKind::Type(ty) => Some(ty),
-            _ => None,
+            _ => call_return_type(hir, callee, args),
         },
         _ => None,
     }
+}
+
+/// Returns the single return type for a statically resolved call expression.
+fn call_return_type<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    callee: &hir::Expr<'hir>,
+    args: &CallArgs<'hir>,
+) -> Option<&'hir hir::Type<'hir>> {
+    let functions = match matching_functions_for_callee(hir, callee, args)? {
+        FunctionCandidates::Exact(functions) | FunctionCandidates::Maybe(functions) => functions,
+        FunctionCandidates::Pointer(_) => return None,
+    };
+    let function = single_function(functions.into_iter())?;
+    single_return_type(hir, hir.function(function).returns)
+}
+
+/// Returns exactly one function id from an iterator.
+fn single_function(
+    mut functions: impl Iterator<Item = hir::FunctionId>,
+) -> Option<hir::FunctionId> {
+    let function = functions.next()?;
+    functions.next().is_none().then_some(function)
+}
+
+/// Returns exactly one return type.
+fn single_return_type<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    returns: &[hir::VariableId],
+) -> Option<&'hir hir::Type<'hir>> {
+    let &[ret] = returns else { return None };
+    Some(&hir.variable(ret).ty)
+}
+
+/// Returns external function-type return variables when the arguments can match.
+fn function_type_returns_for_args<'hir>(
+    hir: &hir::Hir<'_>,
+    ty: &'hir hir::Type<'hir>,
+    args: &CallArgs<'_>,
+) -> Option<&'hir [hir::VariableId]> {
+    let TypeKind::Function(function) = ty.kind else { return None };
+    if function.visibility != hir::Visibility::External {
+        return None;
+    }
+    if matches!(params_arg_match(hir, function.parameters, args), ArgMatch::No) {
+        return None;
+    }
+    Some(function.returns)
 }
 
 /// Returns true if the type is an address type
