@@ -149,6 +149,17 @@ contract ReturnBomb {
         getAddress().call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
     }
 
+    function ecrecoverLowLevelCall(
+        bytes32 h,
+        uint8 v,
+        bytes32 r,
+        bytes32 s,
+        bytes memory payload,
+        uint256 gasLimit
+    ) public {
+        ecrecover(h, v, r, s).call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
+    }
+
     function existingBytes(address target, bytes memory payload, uint256 gasLimit) public {
         (bool success, bytes memory result) = target.call{gas: gasLimit}(payload); //~WARN: external calls with a gas limit should not consume unbounded return data
         (success, existingData) = target.call{gas: gasLimit}(result); //~WARN: external calls with a gas limit should not consume unbounded return data
@@ -389,6 +400,14 @@ contract ReturnBomb {
 
     function returnedExternalFunctionPointerDynamicReturn(uint256 gasLimit) public {
         bytes memory result = getFetcher(){gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
+    }
+
+    function externalFunctionPointerReturnedTargetDynamicReturn(
+        function() external returns (IReturnBombTarget) targetGetter,
+        uint256 gasLimit
+    ) public {
+        bytes memory result = targetGetter().fetch{gas: gasLimit}(); //~WARN: external calls with a gas limit should not consume unbounded return data
         require(result.length >= 0);
     }
 

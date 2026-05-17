@@ -301,11 +301,19 @@ fn expr_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
                     kind: TypeKind::Elementary(ElementaryType::Address(_)),
                     ..
                 })
-            ) || expr_type(hir, expr).is_some_and(is_address_type)
+            ) || callee_is_address_returning_builtin(callee)
+                || expr_type(hir, expr).is_some_and(is_address_type)
         }
         ExprKind::Member(base, member) if member_is_builtin_address(base, member.name) => true,
         _ => expr_type(hir, expr).is_some_and(is_address_type),
     }
+}
+
+fn callee_is_address_returning_builtin(callee: &hir::Expr<'_>) -> bool {
+    let ExprKind::Ident(reses) = &callee.peel_parens().kind else { return false };
+    reses
+        .iter()
+        .any(|res| matches!(res, hir::Res::Builtin(builtin) if builtin.name() == sym::ecrecover))
 }
 
 fn member_is_builtin_address(base: &hir::Expr<'_>, member: Symbol) -> bool {
@@ -386,7 +394,7 @@ fn call_return_type<'hir>(
 ) -> Option<&'hir hir::Type<'hir>> {
     let functions = match matching_functions_for_callee(hir, callee, args)? {
         FunctionCandidates::Exact(functions) | FunctionCandidates::Maybe(functions) => functions,
-        FunctionCandidates::Pointer(_) => return None,
+        FunctionCandidates::Pointer(returns) => return single_return_type(hir, returns),
     };
     let function = single_function(functions.into_iter())?;
     single_return_type(hir, hir.function(function).returns)
