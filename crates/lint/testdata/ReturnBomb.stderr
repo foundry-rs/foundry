@@ -281,6 +281,14 @@ LL │ …     bytes memory result = target.fetch{gas: gasLimit}(value);
 warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
    ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
    │
+LL │ …     bytes memory result = target.fetch{gas: gasLimit}(300);
+   │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/return-bomb
+
+warning[return-bomb]: external calls with a gas limit should not consume unbounded return data
+   ╭▸ ROOT/testdata/ReturnBomb.sol:LL:CC
+   │
 LL │ …     bytes memory result = target.fetch{gas: gasLimit}(value);
    │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │

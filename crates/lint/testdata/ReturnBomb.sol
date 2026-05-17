@@ -31,6 +31,16 @@ interface IReturnBombWideningTarget {
     function fetch(uint256 value) external returns (bytes memory);
 }
 
+interface IReturnBombLiteralRangeTarget {
+    function fetch(uint8 value) external returns (uint256);
+    function fetch(uint256 value) external returns (bytes memory);
+}
+
+interface IReturnBombNegativeLiteralTarget {
+    function fetch(int8 value) external returns (uint256);
+    function fetch(uint256 value) external returns (bytes memory);
+}
+
 contract ReturnBombBaseArgument {}
 
 contract ReturnBombDerivedArgument is ReturnBombBaseArgument {}
@@ -315,6 +325,22 @@ contract ReturnBomb {
     ) public {
         bytes memory result = target.fetch{gas: gasLimit}(value); //~WARN: external calls with a gas limit should not consume unbounded return data
         require(result.length >= 0);
+    }
+
+    function overloadedLiteralRangeDynamicReturn(
+        IReturnBombLiteralRangeTarget target,
+        uint256 gasLimit
+    ) public {
+        bytes memory result = target.fetch{gas: gasLimit}(300); //~WARN: external calls with a gas limit should not consume unbounded return data
+        require(result.length >= 0);
+    }
+
+    function overloadedNegativeLiteralStaticReturn(
+        IReturnBombNegativeLiteralTarget target,
+        uint256 gasLimit
+    ) public {
+        uint256 result = target.fetch{gas: gasLimit}(-1);
+        require(result >= 0);
     }
 
     function derivedContractArgumentDynamicReturn(

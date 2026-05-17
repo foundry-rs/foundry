@@ -105,7 +105,7 @@ fn function_candidates_for_member<'hir>(
 }
 
 /// Returns true if a function can be called through `this.foo()` or `contract.foo()`.
-fn is_externally_callable(function: &hir::Function<'_>) -> bool {
+const fn is_externally_callable(function: &hir::Function<'_>) -> bool {
     matches!(function.visibility, hir::Visibility::Public | hir::Visibility::External)
 }
 
@@ -329,6 +329,12 @@ fn member_is_builtin_address(base: &hir::Expr<'_>, member: Symbol) -> bool {
 
 /// Returns whether an expression can match the expected type, if known.
 fn expr_matches_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>, ty: &hir::Type<'_>) -> Option<bool> {
+    if let Some(literal) = integer_literal(expr)
+        && let Some(matches) = integer_literal_matches_type(literal, ty)
+    {
+        return Some(matches);
+    }
+
     match &expr.peel_parens().kind {
         ExprKind::Lit(lit) => return Some(lit_matches_type(lit, ty)),
         ExprKind::Payable(_) => return Some(is_address_type(ty)),
@@ -437,6 +443,56 @@ fn function_type_returns_for_args<'hir>(
 const fn is_address_type(ty: &hir::Type<'_>) -> bool {
     matches!(ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
 }
+
+#[derive(Clone, Copy)]
+struct IntegerLiteral {
+    negative: bool,
+    bits: usize,
+    is_zero: bool,
+    is_power_of_two: bool,
+}
+
+/// Returns an integer literal's sign and precision, including unary negation.
+fn integer_literal(expr: &hir::Expr<'_>) -> Option<IntegerLiteral> {
+    match &expr.peel_parens().kind {
+        ExprKind::Lit(lit) => match lit.kind {
+            LitKind::Number(value) => Some(IntegerLiteral {
+                negative: false,
+                bits: value.bit_len().max(1),
+                is_zero: value.is_zero(),
+                is_power_of_two: value.is_power_of_two(),
+            }),
+            _ => None,
+        },
+        ExprKind::Unary(op, expr) if op.kind == hir::UnOpKind::Neg => {
+            let mut literal = integer_literal(expr)?;
+            if !literal.is_zero {
+                literal.negative = !literal.negative;
+            }
+            Some(literal)
+        }
+        _ => None,
+    }
+}
+
+/// Returns whether an integer literal fits in an expected integer type.
+fn integer_literal_matches_type(literal: IntegerLiteral, ty: &hir::Type<'_>) -> Option<bool> {
+    match ty.kind {
+        TypeKind::Elementary(ElementaryType::UInt(size)) => {
+            Some(!literal.negative && literal.bits <= usize::from(size.bits()))
+        }
+        TypeKind::Elementary(ElementaryType::Int(size)) => {
+            let bits = usize::from(size.bits());
+            Some(if literal.negative {
+                literal.bits < bits || (literal.bits == bits && literal.is_power_of_two)
+            } else {
+                literal.bits < bits
+            })
+        }
+        _ => None,
+    }
+}
+
 /// Returns true if a literal can be used for a value of the given type.
 const fn lit_matches_type(lit: &solar::ast::Lit<'_>, ty: &hir::Type<'_>) -> bool {
     matches!(
@@ -444,7 +500,11 @@ const fn lit_matches_type(lit: &solar::ast::Lit<'_>, ty: &hir::Type<'_>) -> bool
         (LitKind::Address(_), TypeKind::Elementary(ElementaryType::Address(_)))
             | (LitKind::Bool(_), TypeKind::Elementary(ElementaryType::Bool))
             | (
-                LitKind::Number(_) | LitKind::Rational(_),
+                LitKind::Number(_),
+                TypeKind::Elementary(ElementaryType::Fixed(_, _) | ElementaryType::UFixed(_, _)),
+            )
+            | (
+                LitKind::Rational(_),
                 TypeKind::Elementary(
                     ElementaryType::Int(_)
                         | ElementaryType::UInt(_)
