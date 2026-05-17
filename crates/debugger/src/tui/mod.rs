@@ -43,10 +43,10 @@ impl<'a> TUI<'a> {
                     TuiMode::Fallback(reason) => non_interactive_debugger_message(reason),
                     TuiMode::Interactive => String::from(
                         "Cannot open the debugger TUI in this environment. Re-run in an \
-                         interactive terminal, or pass `--dump <PATH>` to export debugger steps.",
+                         interactive terminal.",
                     ),
                 };
-                eyre::bail!("{message}");
+                eyre::bail!("{message} {}", debugger_dump_hint());
             }
         }
     }
@@ -54,20 +54,28 @@ impl<'a> TUI<'a> {
 
 fn non_interactive_debugger_message(reason: TuiFallbackReason) -> String {
     format!(
-        "Cannot open the debugger TUI because {}. Re-run in an interactive terminal, or pass \
-         `--dump <PATH>` to export debugger steps.",
+        "Cannot open the debugger TUI because {}. Re-run in an interactive terminal.",
         reason.as_str()
     )
 }
 
+fn debugger_dump_hint() -> &'static str {
+    "Pass `--dump <PATH>` to export debugger steps."
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{TuiFallbackReason, non_interactive_debugger_message};
+    use super::{TuiFallbackReason, debugger_dump_hint, non_interactive_debugger_message};
 
     #[test]
-    fn fallback_message_includes_reason_and_dump_hint() {
+    fn fallback_message_includes_reason() {
         let msg = non_interactive_debugger_message(TuiFallbackReason::Ci);
         assert!(msg.contains("running in CI"));
-        assert!(msg.contains("--dump <PATH>"));
+        assert!(!msg.contains("--dump <PATH>"));
+    }
+
+    #[test]
+    fn dump_hint_includes_dump_flag() {
+        assert!(debugger_dump_hint().contains("--dump <PATH>"));
     }
 }
