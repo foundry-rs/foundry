@@ -155,6 +155,10 @@ pub struct CallTraceDecoder {
     ///
     /// Key is: `(topics[0], topics.len() - 1)`.
     pub events: BTreeMap<(B256, usize), Vec<Event>>,
+    /// Events identified for a specific contract address.
+    ///
+    /// Key is: `(topics[0], topics.len() - 1)`.
+    pub events_by_address: HashMap<Address, BTreeMap<(B256, usize), Vec<Event>>>,
     /// Revert decoder. Contains all known custom errors.
     pub revert_decoder: RevertDecoder,
 
@@ -256,6 +260,7 @@ impl CallTraceDecoder {
                 .flatten()
                 .map(|event| ((event.selector(), indexed_inputs(&event)), vec![event]))
                 .collect(),
+            events_by_address: Default::default(),
             revert_decoder: Default::default(),
 
             signature_identifier: None,
@@ -282,6 +287,7 @@ impl CallTraceDecoder {
         self.fallback_contracts.clear();
         self.non_fallback_contracts.clear();
         self.functions_by_address.clear();
+        self.events_by_address.clear();
     }
 
     /// Identify unknown addresses in the specified call trace using the specified identifier.
@@ -315,6 +321,16 @@ impl CallTraceDecoder {
     /// Adds a single event to the decoder.
     pub fn push_event(&mut self, event: Event) {
         self.events.entry((event.selector(), indexed_inputs(&event))).or_default().push(event);
+    }
+
+    /// Adds a single event to the decoder for a specific contract address.
+    pub fn push_address_event(&mut self, address: Address, event: Event) {
+        self.events_by_address
+            .entry(address)
+            .or_default()
+            .entry((event.selector(), indexed_inputs(&event)))
+            .or_default()
+            .push(event);
     }
 
     /// Adds a single function to the decoder.
@@ -354,6 +370,17 @@ impl CallTraceDecoder {
             .get(&address)
             .and_then(|functions| functions.get(selector))
             .or_else(|| self.functions.get(selector))
+            .map(Vec::as_slice)
+    }
+
+    fn events_for_log(&self, address: Option<Address>, log: &LogData) -> Option<&[Event]> {
+        let &[t0, ..] = log.topics() else { return None };
+        let key = (t0, log.topics().len() - 1);
+        address
+            .and_then(|address| {
+                self.events_by_address.get(&address).and_then(|events| events.get(&key))
+            })
+            .or_else(|| self.events.get(&key))
             .map(Vec::as_slice)
     }
 
@@ -429,6 +456,9 @@ impl CallTraceDecoder {
             self.push_function(function.clone());
         }
         for event in abi.events() {
+            if let Some(address) = address {
+                self.push_address_event(address, event.clone());
+            }
             self.push_event(event.clone());
         }
         for error in abi.errors() {
@@ -456,7 +486,8 @@ impl CallTraceDecoder {
         for node in traces {
             node.trace.decoded = Some(Box::new(self.decode_function(&node.trace).await));
             for log in &mut node.logs {
-                log.decoded = Some(Box::new(self.decode_event(&log.raw_log).await));
+                log.decoded =
+                    Some(Box::new(self.decode_event_for_address(log.address, &log.raw_log).await));
             }
 
             if let Some(debug) = self.debug_identifier.as_ref()
@@ -808,10 +839,22 @@ impl CallTraceDecoder {
 
     /// Decodes an event.
     pub async fn decode_event(&self, log: &LogData) -> DecodedCallLog {
+        self.decode_event_for_log(None, log).await
+    }
+
+    async fn decode_event_for_address(&self, address: Address, log: &LogData) -> DecodedCallLog {
+        self.decode_event_for_log(Some(address), log).await
+    }
+
+    async fn decode_event_for_log(
+        &self,
+        address: Option<Address>,
+        log: &LogData,
+    ) -> DecodedCallLog {
         let &[t0, ..] = log.topics() else { return DecodedCallLog { name: None, params: None } };
 
         let mut events = Vec::new();
-        let events = match self.events.get(&(t0, log.topics().len() - 1)) {
+        let events = match self.events_for_log(address, log) {
             Some(es) => es,
             None => {
                 if let Some(identifier) = &self.signature_identifier
@@ -954,7 +997,7 @@ fn indexed_inputs(event: &Event) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::hex;
+    use alloy_primitives::{U256, hex};
 
     #[test]
     fn test_selector_collision_resolution() {
@@ -1011,6 +1054,35 @@ mod tests {
         // Should return only the function that can decode the calldata (func2)
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].signature(), "gasprice_bit_ether(int128)");
+    }
+
+    #[tokio::test]
+    async fn test_decode_event_prefers_address_scoped_abi() {
+        let mut decoder = CallTraceDecoder::new().clone();
+        let address_a = Address::from([0x11; 20]);
+        let address_b = Address::from([0x22; 20]);
+
+        let global_abi = JsonAbi::parse(["event Shared(uint256 right)"]).unwrap();
+        let abi_a = JsonAbi::parse(["event Shared(uint256 left)"]).unwrap();
+        let abi_b = JsonAbi::parse(["event Shared(uint256 right)"]).unwrap();
+        let event_a = abi_a.events().next().unwrap();
+        let event_b = abi_b.events().next().unwrap();
+        assert_eq!(event_a.selector(), event_b.selector());
+
+        decoder.collect_abi(&global_abi, None);
+        decoder.collect_abi(&abi_a, Some(address_a));
+        decoder.collect_abi(&abi_b, Some(address_b));
+
+        let log = LogData::new_unchecked(
+            vec![event_a.selector()],
+            U256::from(1).to_be_bytes::<32>().to_vec().into(),
+        );
+
+        let decoded_a = decoder.decode_event_for_address(address_a, &log).await;
+        let decoded_b = decoder.decode_event_for_address(address_b, &log).await;
+
+        assert_eq!(decoded_a.params.unwrap()[0].0, "left");
+        assert_eq!(decoded_b.params.unwrap()[0].0, "right");
     }
 
     #[test]
