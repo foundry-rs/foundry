@@ -502,6 +502,16 @@ casttest!(erc20_curl_total_supply, |_prj, cmd| {
     assert!(output.contains(rpc));
 });
 
+casttest!(erc20_transfer_help_includes_tempo_expires, |_prj, cmd| {
+    let output =
+        cmd.args(["erc20", "transfer", "--help"]).assert_success().get_output().stdout_lossy();
+
+    assert!(
+        output.contains("--tempo.expires <SECONDS>"),
+        "expected erc20 transfer help to expose --tempo.expires, got:\n{output}",
+    );
+});
+
 // tests that `balance` command works correctly with --json flag
 forgetest_async!(erc20_balance_json, |prj, cmd| {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
