@@ -1,3 +1,4 @@
+use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 use std::process::Command;
 
@@ -28,7 +29,7 @@ contract SymbolicIgnored {
 
 forgetest_init!(symbolic_passes_scalar_test, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_passes_scalar_test because z3 is not available");
+        let _ = sh_eprintln!("skipping symbolic_passes_scalar_test because z3 is not available");
         return;
     }
 
@@ -53,7 +54,7 @@ contract SymbolicPass {
 
 forgetest_init!(symbolic_opcode_byte_and_signextend_accept_symbolic_index, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_opcode_byte_and_signextend_accept_symbolic_index because z3 is not available"
         );
         return;
@@ -106,7 +107,7 @@ contract SymbolicByteSignextend {
 
 forgetest_init!(symbolic_shift_opcodes_accept_symbolic_amount, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_shift_opcodes_accept_symbolic_amount because z3 is not available"
         );
         return;
@@ -155,7 +156,7 @@ contract SymbolicShift {
 
 forgetest_init!(symbolic_exp_accepts_larger_bounded_symbolic_base, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_exp_accepts_larger_bounded_symbolic_base because z3 is not available"
         );
         return;
@@ -187,7 +188,7 @@ contract SymbolicExp {
 
 forgetest_init!(symbolic_exp_accepts_bounded_symbolic_exponent, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_exp_accepts_bounded_symbolic_exponent because z3 is not available"
         );
         return;
@@ -220,7 +221,7 @@ contract SymbolicExpExponent {
 
 forgetest_init!(symbolic_exp_accepts_wider_symbolic_exponent_for_concrete_base, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_exp_accepts_wider_symbolic_exponent_for_concrete_base because z3 is not available"
         );
         return;
@@ -253,7 +254,7 @@ contract SymbolicExpWideExponent {
 
 forgetest_init!(symbolic_calldataload_accepts_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_calldataload_accepts_symbolic_offset because z3 is not available"
         );
         return;
@@ -292,7 +293,7 @@ contract SymbolicCalldataLoad {
 
 forgetest_init!(symbolic_calldatacopy_accepts_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_calldatacopy_accepts_symbolic_offset because z3 is not available"
         );
         return;
@@ -332,7 +333,7 @@ contract SymbolicCalldataCopy {
 
 forgetest_init!(symbolic_calldatacopy_accepts_symbolic_dest, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_calldatacopy_accepts_symbolic_dest because z3 is not available"
         );
         return;
@@ -369,7 +370,7 @@ contract SymbolicCalldataCopyDest {
 
 forgetest_init!(symbolic_calldatacopy_accepts_bounded_symbolic_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_calldatacopy_accepts_bounded_symbolic_size because z3 is not available"
         );
         return;
@@ -412,7 +413,7 @@ contract SymbolicCalldataCopySize {
 
 forgetest_init!(symbolic_calldatacopy_accepts_symbolic_dest_and_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_calldatacopy_accepts_symbolic_dest_and_size because z3 is not available"
         );
         return;
@@ -457,7 +458,9 @@ contract SymbolicCalldataCopyDestAndSize {
 
 forgetest_init!(symbolic_mload_accepts_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_mload_accepts_symbolic_offset because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_mload_accepts_symbolic_offset because z3 is not available"
+        );
         return;
     }
 
@@ -495,7 +498,7 @@ contract SymbolicMload {
 
 forgetest_init!(symbolic_mstore_accepts_constrained_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_mstore_accepts_constrained_symbolic_offset because z3 is not available"
         );
         return;
@@ -534,7 +537,7 @@ contract SymbolicMstoreConstrained is Test {
 
 forgetest_init!(symbolic_mstore_accepts_unconstrained_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_mstore_accepts_unconstrained_symbolic_offset because z3 is not available"
         );
         return;
@@ -569,7 +572,7 @@ contract SymbolicMstoreUnconstrained {
 
 forgetest_init!(symbolic_mstore8_accepts_unconstrained_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_mstore8_accepts_unconstrained_symbolic_offset because z3 is not available"
         );
         return;
@@ -604,7 +607,7 @@ contract SymbolicMstore8Unconstrained {
 
 forgetest_init!(symbolic_msize_after_symbolic_write_is_modeled, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_msize_after_symbolic_write_is_modeled because z3 is not available"
         );
         return;
@@ -639,7 +642,9 @@ contract SymbolicMsizeAfterWrite {
 
 forgetest_init!(symbolic_sha3_accepts_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_sha3_accepts_symbolic_offset because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_sha3_accepts_symbolic_offset because z3 is not available"
+        );
         return;
     }
 
@@ -676,7 +681,7 @@ contract SymbolicSha3 {
 
 forgetest_init!(symbolic_sha3_accepts_constrained_symbolic_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_sha3_accepts_constrained_symbolic_size because z3 is not available"
         );
         return;
@@ -717,7 +722,7 @@ contract SymbolicSha3ConstrainedSize is Test {
 
 forgetest_init!(symbolic_sha3_accepts_bounded_symbolic_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_sha3_accepts_bounded_symbolic_size because z3 is not available"
         );
         return;
@@ -758,7 +763,9 @@ contract SymbolicSha3BoundedSize is Test {
 
 forgetest_init!(symbolic_log_accepts_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_log_accepts_symbolic_offset because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_log_accepts_symbolic_offset because z3 is not available"
+        );
         return;
     }
 
@@ -797,7 +804,7 @@ contract SymbolicLogOffset is Test {
 
 forgetest_init!(symbolic_log_accepts_bounded_symbolic_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_log_accepts_bounded_symbolic_size because z3 is not available"
         );
         return;
@@ -833,7 +840,7 @@ contract SymbolicLogSize is Test {
 
 forgetest_init!(symbolic_returndatacopy_accepts_constrained_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_returndatacopy_accepts_constrained_symbolic_offset because z3 is not available"
         );
         return;
@@ -891,7 +898,7 @@ contract SymbolicReturndataCopyConstrained is Test {
 
 forgetest_init!(symbolic_returndatacopy_accepts_bounded_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_returndatacopy_accepts_bounded_symbolic_offset because z3 is not available"
         );
         return;
@@ -952,7 +959,7 @@ contract SymbolicReturndataCopyOffset is Test {
 
 forgetest_init!(symbolic_returndatacopy_accepts_symbolic_dest, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_returndatacopy_accepts_symbolic_dest because z3 is not available"
         );
         return;
@@ -1002,7 +1009,7 @@ contract SymbolicReturndataCopyDest {
 
 forgetest_init!(symbolic_returndatacopy_accepts_bounded_symbolic_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_returndatacopy_accepts_bounded_symbolic_size because z3 is not available"
         );
         return;
@@ -1063,7 +1070,7 @@ contract SymbolicReturndataCopySize is Test {
 
 forgetest_init!(symbolic_return_revert_accept_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_return_revert_accept_symbolic_offset because z3 is not available"
         );
         return;
@@ -1128,7 +1135,7 @@ contract SymbolicReturnRevertOffset {
 
 forgetest_init!(symbolic_mcopy_accepts_symbolic_source_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_mcopy_accepts_symbolic_source_offset because z3 is not available"
         );
         return;
@@ -1166,7 +1173,7 @@ contract SymbolicMcopy {
 
 forgetest_init!(symbolic_call_accepts_symbolic_input_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_call_accepts_symbolic_input_offset because z3 is not available"
         );
         return;
@@ -1221,7 +1228,7 @@ contract SymbolicCallInputOffset {
 
 forgetest_init!(symbolic_call_accepts_bounded_symbolic_output_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_call_accepts_bounded_symbolic_output_size because z3 is not available"
         );
         return;
@@ -1276,7 +1283,7 @@ contract SymbolicCallOutputSize {
 
 forgetest_init!(symbolic_call_accepts_bounded_symbolic_input_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_call_accepts_bounded_symbolic_input_size because z3 is not available"
         );
         return;
@@ -1331,7 +1338,7 @@ contract SymbolicCallInputSize {
 
 forgetest_init!(symbolic_return_accepts_bounded_symbolic_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_return_accepts_bounded_symbolic_size because z3 is not available"
         );
         return;
@@ -1386,7 +1393,7 @@ contract SymbolicReturnSize {
 
 forgetest_init!(symbolic_revert_accepts_bounded_symbolic_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_revert_accepts_bounded_symbolic_size because z3 is not available"
         );
         return;
@@ -1441,7 +1448,7 @@ contract SymbolicRevertSize {
 
 forgetest_init!(symbolic_loop_bound_limits_symbolic_unrolling, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_loop_bound_limits_symbolic_unrolling because z3 is not available"
         );
         return;
@@ -1475,7 +1482,9 @@ contract SymbolicLoopBound {
 
 forgetest_init!(symbolic_finds_assert_counterexample, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_finds_assert_counterexample because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_finds_assert_counterexample because z3 is not available"
+        );
         return;
     }
 
@@ -1504,7 +1513,7 @@ contract SymbolicAssert {
 
 forgetest_init!(symbolic_finds_wrapping_arithmetic_riddle_counterexample, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_finds_wrapping_arithmetic_riddle_counterexample because z3 is not available"
         );
         return;
@@ -1545,7 +1554,9 @@ contract SymbolicRiddle {
 
 forgetest_init!(symbolic_ignores_plain_require_revert, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_ignores_plain_require_revert because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_ignores_plain_require_revert because z3 is not available"
+        );
         return;
     }
 
@@ -1572,7 +1583,8 @@ contract SymbolicRequire {
 
 forgetest_init!(symbolic_vm_assume_prunes_paths, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_assume_prunes_paths because z3 is not available");
+        let _ =
+            sh_eprintln!("skipping symbolic_vm_assume_prunes_paths because z3 is not available");
         return;
     }
 
@@ -1602,7 +1614,7 @@ contract SymbolicAssume is Test {
 
 forgetest_init!(symbolic_finds_bytes_counterexample_with_native_inline_config, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_finds_bytes_counterexample_with_native_inline_config because z3 is not available"
         );
         return;
@@ -1634,7 +1646,9 @@ contract SymbolicBytes {
 
 forgetest_init!(symbolic_replays_string_counterexample, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_replays_string_counterexample because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_replays_string_counterexample because z3 is not available"
+        );
         return;
     }
 
@@ -1665,7 +1679,8 @@ contract SymbolicString {
 
 forgetest_init!(symbolic_uses_native_array_lengths, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_uses_native_array_lengths because z3 is not available");
+        let _ =
+            sh_eprintln!("skipping symbolic_uses_native_array_lengths because z3 is not available");
         return;
     }
 
@@ -1692,7 +1707,9 @@ contract SymbolicNativeArrayLengths {
 
 forgetest_init!(symbolic_uses_legacy_halmos_array_lengths, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_uses_legacy_halmos_array_lengths because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_uses_legacy_halmos_array_lengths because z3 is not available"
+        );
         return;
     }
 
@@ -1719,7 +1736,7 @@ contract SymbolicHalmosLengths {
 
 forgetest_init!(symbolic_handles_nested_struct_dynamic_input, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_handles_nested_struct_dynamic_input because z3 is not available"
         );
         return;
@@ -1779,7 +1796,9 @@ contract SymbolicMalformedHalmos {
 
 forgetest_init!(symbolic_executes_typed_external_call, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_executes_typed_external_call because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_executes_typed_external_call because z3 is not available"
+        );
         return;
     }
 
@@ -1819,7 +1838,9 @@ contract SymbolicExternalCall {
 
 forgetest_init!(symbolic_executes_low_level_external_call, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_executes_low_level_external_call because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_executes_low_level_external_call because z3 is not available"
+        );
         return;
     }
 
@@ -1863,7 +1884,7 @@ contract SymbolicLowLevelCall {
 
 forgetest_init!(symbolic_external_call_with_symbolic_selector_finds_backdoor, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_external_call_with_symbolic_selector_finds_backdoor because z3 is not available"
         );
         return;
@@ -1915,7 +1936,7 @@ contract SymbolicSelectorBackdoor {
 
 forgetest_init!(symbolic_external_call_with_symbolic_target_finds_backdoor, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_external_call_with_symbolic_target_finds_backdoor because z3 is not available"
         );
         return;
@@ -1974,7 +1995,7 @@ contract SymbolicTargetBackdoor is Test {
 
 forgetest_init!(symbolic_external_call_with_single_known_target_auto_expands, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_external_call_with_single_known_target_auto_expands because z3 is not available"
         );
         return;
@@ -2024,7 +2045,7 @@ forgetest_init!(
     symbolic_external_call_with_unbounded_symbolic_target_requires_config,
     |prj, cmd| {
         if !z3_available() {
-            eprintln!(
+            let _ = sh_eprintln!(
                 "skipping symbolic_external_call_with_unbounded_symbolic_target_requires_config because z3 is not available"
             );
             return;
@@ -2054,7 +2075,7 @@ contract SymbolicTargetDefaultOff {
 
 forgetest_init!(symbolic_external_call_with_empty_unknown_target_is_modeled, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_external_call_with_empty_unknown_target_is_modeled because z3 is not available"
         );
         return;
@@ -2091,7 +2112,7 @@ contract SymbolicUnboundedTarget {
 
 forgetest_init!(symbolic_delegatecall_with_symbolic_target_executes, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_delegatecall_with_symbolic_target_executes because z3 is not available"
         );
         return;
@@ -2149,7 +2170,7 @@ contract SymbolicDelegateTarget is Test {
 
 forgetest_init!(symbolic_external_unknown_selector_returns_call_failure, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_external_unknown_selector_returns_call_failure because z3 is not available"
         );
         return;
@@ -2195,7 +2216,7 @@ contract SymbolicUnknownSelector {
 
 forgetest_init!(symbolic_svm_create_bytes4_can_drive_selector_dispatch, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_svm_create_bytes4_can_drive_selector_dispatch because z3 is not available"
         );
         return;
@@ -2247,7 +2268,7 @@ contract SymbolicSvmBytes4Selector {
 
 forgetest_init!(symbolic_svm_create_calldata_generates_bounded_dispatch, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_svm_create_calldata_generates_bounded_dispatch because z3 is not available"
         );
         return;
@@ -2306,7 +2327,9 @@ contract SymbolicSvmCreateCalldata {
 
 forgetest_init!(symbolic_external_require_is_call_failure, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_external_require_is_call_failure because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_external_require_is_call_failure because z3 is not available"
+        );
         return;
     }
 
@@ -2353,7 +2376,9 @@ contract SymbolicExternalRequire {
 
 forgetest_init!(symbolic_staticcall_rejects_storage_write, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_staticcall_rejects_storage_write because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_staticcall_rejects_storage_write because z3 is not available"
+        );
         return;
     }
 
@@ -2396,7 +2421,7 @@ contract SymbolicStaticCall {
 
 forgetest_init!(symbolic_delegatecall_writes_caller_storage, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_delegatecall_writes_caller_storage because z3 is not available"
         );
         return;
@@ -2443,7 +2468,7 @@ contract SymbolicDelegateCall {
 
 forgetest_init!(symbolic_call_transfers_value_and_checks_balance, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_call_transfers_value_and_checks_balance because z3 is not available"
         );
         return;
@@ -2491,7 +2516,9 @@ contract SymbolicValueCall is Test {
 
 forgetest_init!(symbolic_call_accepts_symbolic_value, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_call_accepts_symbolic_value because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_call_accepts_symbolic_value because z3 is not available"
+        );
         return;
     }
 
@@ -2546,7 +2573,7 @@ contract SymbolicValueCall is Test {
 
 forgetest_init!(symbolic_call_splits_symbolic_insufficient_value, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_call_splits_symbolic_insufficient_value because z3 is not available"
         );
         return;
@@ -2594,7 +2621,9 @@ contract SymbolicInsufficientValueCall is Test {
 
 forgetest_init!(symbolic_callcode_accepts_symbolic_value, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_callcode_accepts_symbolic_value because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_callcode_accepts_symbolic_value because z3 is not available"
+        );
         return;
     }
 
@@ -2648,7 +2677,7 @@ contract SymbolicCallcodeValue is Test {
 
 forgetest_init!(symbolic_cheatcodes_accept_symbolic_address_targets, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_cheatcodes_accept_symbolic_address_targets because z3 is not available"
         );
         return;
@@ -2709,7 +2738,9 @@ contract SymbolicAddressCheatcodes is Test {
 
 forgetest_init!(symbolic_prank_accepts_symbolic_sender, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_prank_accepts_symbolic_sender because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_prank_accepts_symbolic_sender because z3 is not available"
+        );
         return;
     }
 
@@ -2802,7 +2833,9 @@ contract SymbolicPrankSender is Test {
 
 forgetest_init!(symbolic_balance_accepts_symbolic_target, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_balance_accepts_symbolic_target because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_balance_accepts_symbolic_target because z3 is not available"
+        );
         return;
     }
 
@@ -2835,7 +2868,7 @@ contract SymbolicBalance is Test {
 
 forgetest_init!(symbolic_extcodesize_accepts_symbolic_target, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_extcodesize_accepts_symbolic_target because z3 is not available"
         );
         return;
@@ -2870,7 +2903,7 @@ contract SymbolicExtcodeSize is Test {
 
 forgetest_init!(symbolic_extcodehash_accepts_symbolic_target, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_extcodehash_accepts_symbolic_target because z3 is not available"
         );
         return;
@@ -2905,7 +2938,7 @@ contract SymbolicExtcodeHash is Test {
 
 forgetest_init!(symbolic_extcodecopy_accepts_symbolic_target, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_extcodecopy_accepts_symbolic_target because z3 is not available"
         );
         return;
@@ -2946,7 +2979,9 @@ contract SymbolicExtcodeCopy is Test {
 
 forgetest_init!(symbolic_create_deploys_and_calls_helper, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_create_deploys_and_calls_helper because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_deploys_and_calls_helper because z3 is not available"
+        );
         return;
     }
 
@@ -2981,7 +3016,7 @@ contract SymbolicCreate {
 
 forgetest_init!(symbolic_create_preserves_symbolic_constructor_args, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_create_preserves_symbolic_constructor_args because z3 is not available"
         );
         return;
@@ -3022,7 +3057,7 @@ contract SymbolicCreateConstructorArgs {
 
 forgetest_init!(symbolic_create_accepts_constrained_symbolic_initcode_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_create_accepts_constrained_symbolic_initcode_offset because z3 is not available"
         );
         return;
@@ -3065,7 +3100,9 @@ contract SymbolicCreateInitcodeOffset is Test {
 
 forgetest_init!(symbolic_create2_deploys_and_calls_helper, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_create2_deploys_and_calls_helper because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_create2_deploys_and_calls_helper because z3 is not available"
+        );
         return;
     }
 
@@ -3100,7 +3137,7 @@ contract SymbolicCreate2 {
 
 forgetest_init!(symbolic_create2_preserves_symbolic_constructor_args, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_create2_preserves_symbolic_constructor_args because z3 is not available"
         );
         return;
@@ -3143,7 +3180,7 @@ contract SymbolicCreate2Args {
 
 forgetest_init!(symbolic_vm_expect_create_matches_and_reports_missing, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_create_matches_and_reports_missing because z3 is not available"
         );
         return;
@@ -3242,7 +3279,7 @@ contract SymbolicExpectCreate is Test {
 
 forgetest_init!(symbolic_create2_supports_symbolic_salt_and_self_address, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_create2_supports_symbolic_salt_and_self_address because z3 is not available"
         );
         return;
@@ -3286,7 +3323,9 @@ contract SymbolicCreate2SelfAddress {
 
 forgetest_init!(symbolic_create2_collision_returns_zero, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_create2_collision_returns_zero because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_create2_collision_returns_zero because z3 is not available"
+        );
         return;
     }
 
@@ -3326,7 +3365,7 @@ contract SymbolicCreate2Collision is Test {
 
 forgetest_init!(symbolic_create_failure_bumps_creator_nonce, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_create_failure_bumps_creator_nonce because z3 is not available"
         );
         return;
@@ -3366,7 +3405,7 @@ contract SymbolicCreateFailureNonce is Test {
 
 forgetest_init!(symbolic_compute_create_address_cheatcodes, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_compute_create_address_cheatcodes because z3 is not available"
         );
         return;
@@ -3481,7 +3520,7 @@ contract SymbolicComputeCreateAddresses is Test {
 
 forgetest_init!(symbolic_vm_nonce_cheatcodes, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_nonce_cheatcodes because z3 is not available");
+        let _ = sh_eprintln!("skipping symbolic_vm_nonce_cheatcodes because z3 is not available");
         return;
     }
 
@@ -3537,7 +3576,9 @@ contract SymbolicNonceCheatcodes is Test {
 
 forgetest_init!(symbolic_vm_set_nonce_rejects_decrement, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_set_nonce_rejects_decrement because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_set_nonce_rejects_decrement because z3 is not available"
+        );
         return;
     }
 
@@ -3569,7 +3610,7 @@ contract SymbolicSetNonceRejectsDecrement is Test {
 
 forgetest_init!(symbolic_create_transfers_value_and_checks_balance, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_create_transfers_value_and_checks_balance because z3 is not available"
         );
         return;
@@ -3613,7 +3654,9 @@ contract SymbolicCreateValue is Test {
 
 forgetest_init!(symbolic_create_accepts_symbolic_value, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_create_accepts_symbolic_value because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_accepts_symbolic_value because z3 is not available"
+        );
         return;
     }
 
@@ -3657,7 +3700,7 @@ contract SymbolicCreateSymbolicValue is Test {
 
 forgetest_init!(symbolic_create_splits_symbolic_insufficient_value, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_create_splits_symbolic_insufficient_value because z3 is not available"
         );
         return;
@@ -3707,7 +3750,9 @@ contract SymbolicCreateInsufficientValue is Test {
 
 forgetest_init!(symbolic_create2_accepts_symbolic_value, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_create2_accepts_symbolic_value because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_create2_accepts_symbolic_value because z3 is not available"
+        );
         return;
     }
 
@@ -3752,7 +3797,7 @@ contract SymbolicCreate2SymbolicValue is Test {
 
 forgetest_init!(symbolic_create_accepts_bounded_symbolic_initcode_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_create_accepts_bounded_symbolic_initcode_size because z3 is not available"
         );
         return;
@@ -3793,7 +3838,8 @@ contract SymbolicCreateInitcodeSize is Test {
 
 forgetest_init!(symbolic_staticcall_rejects_create, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_staticcall_rejects_create because z3 is not available");
+        let _ =
+            sh_eprintln!("skipping symbolic_staticcall_rejects_create because z3 is not available");
         return;
     }
 
@@ -3837,7 +3883,7 @@ contract SymbolicStaticCreate {
 
 forgetest_init!(symbolic_mapping_storage_finds_counterexample, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_mapping_storage_finds_counterexample because z3 is not available"
         );
         return;
@@ -3875,7 +3921,7 @@ contract SymbolicMappingStorage {
 
 forgetest_init!(symbolic_nested_mapping_storage_round_trips, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_nested_mapping_storage_round_trips because z3 is not available"
         );
         return;
@@ -3907,7 +3953,7 @@ contract SymbolicNestedMappingStorage {
 
 forgetest_init!(symbolic_vm_store_load_accepts_symbolic_slot, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_store_load_accepts_symbolic_slot because z3 is not available"
         );
         return;
@@ -3940,7 +3986,7 @@ contract SymbolicVmStoreLoadSlot is Test {
 
 forgetest_init!(symbolic_mapping_dynamic_array_storage_round_trips, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_mapping_dynamic_array_storage_round_trips because z3 is not available"
         );
         return;
@@ -3981,7 +4027,9 @@ contract SymbolicMappingDynamicArrayStorage is Test {
 
 forgetest_init!(symbolic_packed_storage_round_trips, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_packed_storage_round_trips because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_packed_storage_round_trips because z3 is not available"
+        );
         return;
     }
 
@@ -4020,7 +4068,9 @@ contract SymbolicPackedStorage {
 
 forgetest_init!(symbolic_erc20_storage_paths_round_trip, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_erc20_storage_paths_round_trip because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_erc20_storage_paths_round_trip because z3 is not available"
+        );
         return;
     }
 
@@ -4057,7 +4107,7 @@ contract SymbolicErc20Storage {
 
 forgetest_init!(symbolic_svm_storage_helpers_are_supported, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_svm_storage_helpers_are_supported because z3 is not available"
         );
         return;
@@ -4107,7 +4157,7 @@ contract SymbolicSvmStorageHelpers {
 
 forgetest_init!(symbolic_generic_storage_exposes_arbitrary_uninitialized_reads, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_generic_storage_exposes_arbitrary_uninitialized_reads because z3 is not available"
         );
         return;
@@ -4153,7 +4203,9 @@ contract SymbolicGenericStorage {
 
 forgetest_init!(symbolic_vm_prank_propagates_callers, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_prank_propagates_callers because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_prank_propagates_callers because z3 is not available"
+        );
         return;
     }
 
@@ -4212,7 +4264,7 @@ contract SymbolicPrank is Test {
 
 forgetest_init!(symbolic_vm_assert_cheatcodes_find_counterexample, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_assert_cheatcodes_find_counterexample because z3 is not available"
         );
         return;
@@ -4245,7 +4297,9 @@ contract SymbolicVmAssert is Test {
 
 forgetest_init!(symbolic_vm_recorded_logs_round_trip, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_recorded_logs_round_trip because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_recorded_logs_round_trip because z3 is not available"
+        );
         return;
     }
 
@@ -4333,7 +4387,7 @@ contract SymbolicRecordedLogs is Test {
 
 forgetest_init!(symbolic_vm_env_crypto_and_console_helpers, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_env_crypto_and_console_helpers because z3 is not available"
         );
         return;
@@ -4460,7 +4514,8 @@ contract SymbolicEnvCryptoConsole is Test {
 
 forgetest_init!(symbolic_vm_ffi_is_config_gated, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_ffi_is_config_gated because z3 is not available");
+        let _ =
+            sh_eprintln!("skipping symbolic_vm_ffi_is_config_gated because z3 is not available");
         return;
     }
 
@@ -4490,7 +4545,9 @@ contract SymbolicFfiDisabled is Test {
 
 forgetest_init!(symbolic_vm_ffi_success_when_enabled, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_ffi_success_when_enabled because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_ffi_success_when_enabled because z3 is not available"
+        );
         return;
     }
 
@@ -4527,7 +4584,9 @@ contract SymbolicFfiEnabled is Test {
 
 forgetest_init!(symbolic_vm_etch_and_get_deployed_code, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_etch_and_get_deployed_code because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_etch_and_get_deployed_code because z3 is not available"
+        );
         return;
     }
 
@@ -4591,7 +4650,7 @@ contract SymbolicEtch is Test {
 
 forgetest_init!(symbolic_extcodehash_distinguishes_empty_existing_account, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_extcodehash_distinguishes_empty_existing_account because z3 is not available"
         );
         return;
@@ -4627,7 +4686,7 @@ contract SymbolicCodeHash is Test {
 
 forgetest_init!(symbolic_extcodecopy_pads_partial_code_ranges, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_extcodecopy_pads_partial_code_ranges because z3 is not available"
         );
         return;
@@ -4669,7 +4728,9 @@ contract SymbolicExtcodeCopy is Test {
 
 forgetest_init!(symbolic_codecopy_accepts_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_codecopy_accepts_symbolic_offset because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_codecopy_accepts_symbolic_offset because z3 is not available"
+        );
         return;
     }
 
@@ -4706,7 +4767,7 @@ contract SymbolicCodeCopy {
 
 forgetest_init!(symbolic_extcodecopy_accepts_symbolic_offset, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_extcodecopy_accepts_symbolic_offset because z3 is not available"
         );
         return;
@@ -4750,7 +4811,7 @@ contract SymbolicExtcodeCopyOffset is Test {
 
 forgetest_init!(symbolic_codecopy_accepts_bounded_symbolic_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_codecopy_accepts_bounded_symbolic_size because z3 is not available"
         );
         return;
@@ -4791,7 +4852,7 @@ contract SymbolicCodeCopySize {
 
 forgetest_init!(symbolic_extcodecopy_accepts_bounded_symbolic_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_extcodecopy_accepts_bounded_symbolic_size because z3 is not available"
         );
         return;
@@ -4835,7 +4896,7 @@ contract SymbolicExtcodeCopySize is Test {
 
 forgetest_init!(symbolic_selfdestruct_updates_account_overlay, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_selfdestruct_updates_account_overlay because z3 is not available"
         );
         return;
@@ -4888,7 +4949,7 @@ contract SymbolicSelfdestruct is Test {
 
 forgetest_init!(symbolic_selfdestruct_accepts_symbolic_beneficiary, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_selfdestruct_accepts_symbolic_beneficiary because z3 is not available"
         );
         return;
@@ -4940,7 +5001,7 @@ contract SymbolicSelfdestructBeneficiary is Test {
 
 forgetest_init!(symbolic_precompiles_execute_concrete_inputs, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_precompiles_execute_concrete_inputs because z3 is not available"
         );
         return;
@@ -5028,7 +5089,7 @@ contract SymbolicPrecompiles is Test {
 
 forgetest_init!(symbolic_hash_precompiles_accept_symbolic_input, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_hash_precompiles_accept_symbolic_input because z3 is not available"
         );
         return;
@@ -5080,7 +5141,7 @@ contract SymbolicPrecompileInput {
 
 forgetest_init!(symbolic_identity_precompile_accepts_symbolic_input, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_identity_precompile_accepts_symbolic_input because z3 is not available"
         );
         return;
@@ -5117,7 +5178,7 @@ contract SymbolicIdentityPrecompileInput is Test {
 
 forgetest_init!(symbolic_advanced_precompiles_accept_symbolic_payloads, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_advanced_precompiles_accept_symbolic_payloads because z3 is not available"
         );
         return;
@@ -5179,7 +5240,7 @@ contract SymbolicAdvancedPrecompileInput is Test {
 
 forgetest_init!(symbolic_precompiles_accept_symbolic_input_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_precompiles_accept_symbolic_input_size because z3 is not available"
         );
         return;
@@ -5257,7 +5318,7 @@ contract SymbolicPrecompileInputSize is Test {
 
 forgetest_init!(symbolic_vm_set_blockhash, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_set_blockhash because z3 is not available");
+        let _ = sh_eprintln!("skipping symbolic_vm_set_blockhash because z3 is not available");
         return;
     }
 
@@ -5293,7 +5354,7 @@ contract SymbolicBlockhash is Test {
 
 forgetest_init!(symbolic_blockhash_accepts_symbolic_number, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_blockhash_accepts_symbolic_number because z3 is not available"
         );
         return;
@@ -5331,7 +5392,7 @@ contract SymbolicBlockhashNumber is Test {
 
 forgetest_init!(symbolic_vm_set_blockhash_accepts_symbolic_hash, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_set_blockhash_accepts_symbolic_hash because z3 is not available"
         );
         return;
@@ -5365,7 +5426,9 @@ contract SymbolicBlockhashValue is Test {
 
 forgetest_init!(symbolic_vm_block_environment_breadth, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_block_environment_breadth because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_block_environment_breadth because z3 is not available"
+        );
         return;
     }
 
@@ -5421,7 +5484,7 @@ contract SymbolicBlockEnvironment is Test {
 
 forgetest_init!(symbolic_uses_prepared_executor_environment, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_uses_prepared_executor_environment because z3 is not available"
         );
         return;
@@ -5469,7 +5532,7 @@ contract SymbolicPreparedEnvironment is Test {
 
 forgetest_init!(symbolic_vm_state_snapshots, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_state_snapshots because z3 is not available");
+        let _ = sh_eprintln!("skipping symbolic_vm_state_snapshots because z3 is not available");
         return;
     }
 
@@ -5528,7 +5591,7 @@ contract SymbolicStateSnapshots is Test {
 
 forgetest_init!(symbolic_vm_random_bytes, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_random_bytes because z3 is not available");
+        let _ = sh_eprintln!("skipping symbolic_vm_random_bytes because z3 is not available");
         return;
     }
 
@@ -5565,7 +5628,7 @@ contract SymbolicRandomBytes is Test {
 
 forgetest_init!(symbolic_vm_random_bytes_accepts_bounded_symbolic_length, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_random_bytes_accepts_bounded_symbolic_length because z3 is not available"
         );
         return;
@@ -5602,7 +5665,7 @@ contract SymbolicRandomBytesLength is Test {
 
 forgetest_init!(symbolic_cheatcodes_accept_constrained_scalar_args, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_cheatcodes_accept_constrained_scalar_args because z3 is not available"
         );
         return;
@@ -5649,7 +5712,7 @@ contract SymbolicConstrainedCheatcodes is Test {
 
 forgetest_init!(symbolic_cheatcodes_accept_bounded_symbolic_input_size, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_cheatcodes_accept_bounded_symbolic_input_size because z3 is not available"
         );
         return;
@@ -5691,7 +5754,7 @@ contract SymbolicCheatcodeInputSize is Test {
 
 forgetest_init!(symbolic_svm_creator_breadth, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_svm_creator_breadth because z3 is not available");
+        let _ = sh_eprintln!("skipping symbolic_svm_creator_breadth because z3 is not available");
         return;
     }
 
@@ -5744,7 +5807,7 @@ contract SymbolicSvmCreators {
 
 forgetest_init!(symbolic_invariant_finds_single_step_counterexample, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_invariant_finds_single_step_counterexample because z3 is not available"
         );
         return;
@@ -5795,7 +5858,7 @@ contract SymbolicInvariantSingle is Test {
 
 forgetest_init!(symbolic_invariant_respects_sequence_depth, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_invariant_respects_sequence_depth because z3 is not available"
         );
         return;
@@ -5853,7 +5916,9 @@ contract SymbolicInvariantDepth is Test {
 
 forgetest_init!(symbolic_invariant_uses_target_sender, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_invariant_uses_target_sender because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_invariant_uses_target_sender because z3 is not available"
+        );
         return;
     }
 
@@ -5905,7 +5970,7 @@ contract SymbolicInvariantSender is Test {
 
 forgetest_init!(symbolic_vm_expect_revert_matches_external_reverts, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_matches_external_reverts because z3 is not available"
         );
         return;
@@ -5960,7 +6025,7 @@ contract SymbolicExpectRevert is Test {
 
 forgetest_init!(symbolic_vm_expect_revert_missing_is_counterexample, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_missing_is_counterexample because z3 is not available"
         );
         return;
@@ -6002,7 +6067,7 @@ contract SymbolicExpectRevertMissing is Test {
 
 forgetest_init!(symbolic_vm_expect_revert_mismatch_is_counterexample, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_mismatch_is_counterexample because z3 is not available"
         );
         return;
@@ -6048,7 +6113,7 @@ contract SymbolicExpectRevertMismatch is Test {
 
 forgetest_init!(symbolic_vm_expect_revert_accepts_symbolic_data, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_accepts_symbolic_data because z3 is not available"
         );
         return;
@@ -6126,7 +6191,7 @@ contract SymbolicExpectRevertSymbolicData is Test {
 
 forgetest_init!(symbolic_vm_expect_revert_symbolic_data_mismatch_fails, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_revert_symbolic_data_mismatch_fails because z3 is not available"
         );
         return;
@@ -6189,7 +6254,7 @@ contract SymbolicExpectRevertSymbolicMismatch is Test {
 
 forgetest_init!(symbolic_vm_expect_emit_matches_external_logs, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_emit_matches_external_logs because z3 is not available"
         );
         return;
@@ -6246,7 +6311,7 @@ contract SymbolicExpectEmit is Test {
 
 forgetest_init!(symbolic_vm_expect_emit_mismatch_is_counterexample, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_emit_mismatch_is_counterexample because z3 is not available"
         );
         return;
@@ -6312,7 +6377,7 @@ contract SymbolicExpectEmitMismatch is Test {
 
 forgetest_init!(symbolic_vm_expect_call_matches_and_reports_missing, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_call_matches_and_reports_missing because z3 is not available"
         );
         return;
@@ -6452,7 +6517,9 @@ contract SymbolicExpectCall is Test {
 
 forgetest_init!(symbolic_vm_mock_call_returns_and_reverts, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_mock_call_returns_and_reverts because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_mock_call_returns_and_reverts because z3 is not available"
+        );
         return;
     }
 
@@ -6603,7 +6670,7 @@ contract SymbolicMockCall is Test {
 
 forgetest_init!(symbolic_vm_call_expectations_allow_symbolic_value_when_unpinned, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_call_expectations_allow_symbolic_value_when_unpinned because z3 is not available"
         );
         return;
@@ -6673,7 +6740,7 @@ contract SymbolicUnpinnedCallValue is Test {
 
 forgetest_init!(symbolic_vm_call_expectations_branch_symbolic_pinned_value, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_call_expectations_branch_symbolic_pinned_value because z3 is not available"
         );
         return;
@@ -6787,7 +6854,7 @@ contract SymbolicPinnedCallValue is Test {
 
 forgetest_init!(symbolic_vm_expect_and_mock_call_accept_symbolic_data, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_expect_and_mock_call_accept_symbolic_data because z3 is not available"
         );
         return;
@@ -6908,7 +6975,7 @@ contract SymbolicCallDataCheatcodes is Test {
 
 forgetest_init!(symbolic_vm_call_data_match_branches_find_mismatch, |prj, _cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_call_data_match_branches_find_mismatch because z3 is not available"
         );
         return;
@@ -7027,7 +7094,7 @@ contract SymbolicCallDataMismatch is Test {
 
 forgetest_init!(symbolic_vm_mock_function_routes_to_target, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_mock_function_routes_to_target because z3 is not available"
         );
         return;
@@ -7103,7 +7170,7 @@ contract SymbolicMockFunction is Test {
 
 forgetest_init!(symbolic_vm_record_accesses_tracks_symbolic_slots, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_record_accesses_tracks_symbolic_slots because z3 is not available"
         );
         return;
@@ -7205,7 +7272,9 @@ contract SymbolicRecordAccesses is Test {
 
 forgetest_init!(symbolic_vm_bound_skip_and_gas_noops, |prj, cmd| {
     if !z3_available() {
-        eprintln!("skipping symbolic_vm_bound_skip_and_gas_noops because z3 is not available");
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_bound_skip_and_gas_noops because z3 is not available"
+        );
         return;
     }
 
@@ -7363,7 +7432,7 @@ contract SymbolicBoundSkip is Test {
 
 forgetest_init!(symbolic_vm_bound_invalid_range_fails_without_stuck, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_bound_invalid_range_fails_without_stuck because z3 is not available"
         );
         return;
@@ -7401,7 +7470,7 @@ contract SymbolicBoundInvalid is Test {
 
 forgetest_init!(symbolic_vm_assume_no_revert_prunes_reverting_call, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_assume_no_revert_prunes_reverting_call because z3 is not available"
         );
         return;
@@ -7447,7 +7516,7 @@ contract SymbolicAssumeNoRevert is Test {
 
 forgetest_init!(symbolic_vm_assume_no_revert_filters_revert_matches, |prj, cmd| {
     if !z3_available() {
-        eprintln!(
+        let _ = sh_eprintln!(
             "skipping symbolic_vm_assume_no_revert_filters_revert_matches because z3 is not available"
         );
         return;

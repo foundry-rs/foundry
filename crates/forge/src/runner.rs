@@ -780,7 +780,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let senders = if sender_filters.targeted.is_empty() {
             vec![self.sender]
         } else {
-            sender_filters.targeted.clone()
+            sender_filters.targeted
         };
 
         let after_invariant = call_after_invariant.then(|| {
@@ -879,7 +879,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             Err(err) => return (false, Some(err.to_string()), counterexample),
         };
         let success = executor.is_raw_call_mut_success(self.address, &mut raw, false);
-        (success == false, None, counterexample)
+        (!success, None, counterexample)
     }
 
     /// Runs a table test.

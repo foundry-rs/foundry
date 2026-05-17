@@ -1,3 +1,4 @@
+use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 use std::{env, process::Command};
 
@@ -11,11 +12,11 @@ fn z3_available() -> bool {
 
 fn should_skip(test: &str) -> bool {
     if !symbolic_limits_enabled() {
-        eprintln!("skipping {test} because SYMBOLIC_LIMITS is not set");
+        let _ = sh_eprintln!("skipping {test} because SYMBOLIC_LIMITS is not set");
         return true;
     }
     if !z3_available() {
-        eprintln!("skipping {test} because z3 is not available");
+        let _ = sh_eprintln!("skipping {test} because z3 is not available");
         return true;
     }
     false

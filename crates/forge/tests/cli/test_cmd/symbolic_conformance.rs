@@ -1,3 +1,4 @@
+use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 use std::{env, process::Command};
 
@@ -11,11 +12,13 @@ fn z3_available() -> bool {
 
 fn should_skip() -> bool {
     if !symbolic_conformance_enabled() {
-        eprintln!("skipping symbolic conformance test because SYMBOLIC_CONFORMANCE is not set");
+        let _ = sh_eprintln!(
+            "skipping symbolic conformance test because SYMBOLIC_CONFORMANCE is not set"
+        );
         return true;
     }
     if !z3_available() {
-        eprintln!("skipping symbolic conformance test because z3 is not available");
+        let _ = sh_eprintln!("skipping symbolic conformance test because z3 is not available");
         return true;
     }
     false
