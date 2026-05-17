@@ -1,7 +1,11 @@
 use super::build::BuildArgs;
 use clap::Parser;
 use eyre::Result;
-use foundry_cli::{opts::EvmArgs, utils::LoadConfig};
+use foundry_cli::{
+    json::{JsonMessage, print_json_success_with_warnings},
+    opts::EvmArgs,
+    utils::LoadConfig,
+};
 use foundry_common::shell;
 use foundry_config::fix::fix_tomls;
 
@@ -29,8 +33,26 @@ pub struct ConfigArgs {
 impl ConfigArgs {
     pub fn run(self) -> Result<()> {
         if self.fix {
-            for warning in fix_tomls() {
-                sh_warn!("{warning}")?;
+            let warnings = fix_tomls();
+            if shell::is_json() {
+                let warnings = warnings
+                    .into_iter()
+                    .map(|warning| {
+                        let details = serde_json::to_value(&warning).ok();
+                        let message = warning.to_string();
+                        let warning = JsonMessage::warning("config.fix", message);
+                        if let Some(details) = details {
+                            warning.with_details(details)
+                        } else {
+                            warning
+                        }
+                    })
+                    .collect();
+                print_json_success_with_warnings((), warnings)?;
+            } else {
+                for warning in warnings {
+                    sh_warn!("{warning}")?;
+                }
             }
             return Ok(());
         }

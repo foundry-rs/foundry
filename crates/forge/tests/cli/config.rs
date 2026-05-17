@@ -1018,6 +1018,42 @@ Please use [profile.default] instead or run `forge config --fix`.
 "#]]);
 });
 
+forgetest_init!(config_fix_json_envelope_contains_structured_warnings, |prj, _cmd| {
+    prj.initialize_default_contracts();
+
+    let mut cmd = prj.forge_bin();
+    cmd.arg("config")
+        .arg("--fix")
+        .arg("--json")
+        .arg("--root")
+        .arg(prj.root())
+        .env("FOUNDRY_CONFIG", "missing-foundry.toml");
+
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "forge config --fix --json failed\nstdout:\n{}\nstderr:\n{}",
+        output.stdout_lossy(),
+        output.stderr_lossy()
+    );
+
+    let envelope: Value = serde_json::from_str(&output.stdout_lossy()).unwrap();
+    assert_eq!(envelope["schema_version"], 1);
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"], Value::Null);
+    assert_eq!(envelope["errors"], Value::Array(Vec::new()));
+
+    let warnings = envelope["warnings"].as_array().unwrap();
+    assert!(!warnings.is_empty(), "expected structured warnings in JSON envelope");
+    assert_eq!(warnings[0]["level"], "warning");
+    assert_eq!(warnings[0]["code"], "config.fix");
+    assert!(warnings[0]["message"].as_str().unwrap().contains("No local TOML found to fix"));
+    assert!(
+        warnings[0].get("details").is_none() || warnings[0]["details"].is_null(),
+        "unexpected details payload for NoLocalToml warning"
+    );
+});
+
 forgetest_init!(can_skip_remappings_auto_detection, |prj, cmd| {
     prj.initialize_default_contracts();
     // explicitly set remapping and libraries
