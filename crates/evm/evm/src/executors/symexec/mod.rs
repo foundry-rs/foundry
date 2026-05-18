@@ -1,23 +1,22 @@
-//! Symbolic-assist worker — concolic-lite v1.
+//! Symbolic-assist worker.
 //!
-//! Implements the *worker-side* of the architectural plan inspired by
-//! Echidna's `Echidna.SymExec.Exploration` and the SaferMaker writeup at
-//! <https://hackmd.io/@SaferMaker/EVM-Sym-Exec>.
-//!
-//! It is *not* a full symbolic-execution engine; it is a directed mutation
-//! assistant that:
+//! Directed-mutation helper for coverage-guided fuzzing. Each cycle:
 //!
 //! 1. takes a corpus seed (`Vec<BasicTxDetails>`),
 //! 2. replays it concretely under a [`crate::inspectors::BranchTraceInspector`],
-//! 3. picks the deepest *unseen* opposite-side branch as the "frontier",
-//! 4. proposes ABI-aware calldata rewrites that — given the recovered compare operands — would flip
-//!    the frontier branch,
-//! 5. validates each candidate through the normal executor (requiring a real new edge in coverage),
-//!    and
-//! 6. writes accepted candidates to the master worker's `sync/` directory so the existing corpus
-//!    protocol distributes them.
+//! 3. picks unseen opposite-side branches ("frontiers") from the trace,
+//! 4. proposes ABI-aware calldata rewrites that — given the recovered
+//!    compare operands — would flip a frontier,
+//! 5. validates each candidate through a clone of the live executor,
+//!    requiring a real new EVM edge in coverage, and
+//! 6. writes accepted candidates to the master worker's `sync/` directory
+//!    so the existing corpus protocol distributes them.
 //!
-//! v1 is intentionally minimal:
+//! There is no SMT solver here; the worker has no symbolic engine of its
+//! own to feed one, so it can only flip branches whose compare operands
+//! are visible at runtime and reachable by rewriting a scalar ABI arg.
+//!
+//! Scope:
 //! - master worker only,
 //! - EVM `EdgeCovInspector`-based coverage only (no sancov),
 //! - mutates only the final tx of the seed sequence,
@@ -49,79 +48,62 @@ use select::pick_seed;
 use types::Candidate;
 pub use types::SymExecState;
 
-/// Backend abstraction so v2 can swap the heuristic engine for a real SMT
-/// solver (or external `hevm`) without touching the assist loop.
-pub trait SymBackend {
-    /// Generate candidate sequences from a seed and its branch trace.
-    /// `tx_index` identifies the call to mutate (the last one, in v1).
-    #[allow(clippy::too_many_arguments)]
-    fn propose(
-        &self,
-        seed: &[BasicTxDetails],
-        trace: &BranchTrace,
-        tx_index: usize,
-        function: Option<&Function>,
-        state: &SymExecState,
-        history_map: &[u8],
-        hash_builder: &DefaultHashBuilder,
-    ) -> Vec<Candidate>;
-}
-
-/// v1 backend: ABI-aware Redqueen-style rewrites; no SMT.
-#[derive(Clone, Debug, Default)]
-pub struct HeuristicAbiRewrite;
-
-impl SymBackend for HeuristicAbiRewrite {
-    fn propose(
-        &self,
-        seed: &[BasicTxDetails],
-        trace: &BranchTrace,
-        tx_index: usize,
-        function: Option<&Function>,
-        state: &SymExecState,
-        history_map: &[u8],
-        hash_builder: &DefaultHashBuilder,
-    ) -> Vec<Candidate> {
-        let Some(tx) = seed.get(tx_index) else { return Vec::new() };
-        let calldata = &tx.call_details.calldata;
-        if calldata.len() < 4 {
-            return Vec::new();
-        }
-        let mut selector = [0u8; 4];
-        selector.copy_from_slice(&calldata[..4]);
-
-        // Collect several deepest-first frontiers, not just the very last
-        // one — the deepest unseen branch is often in post-call test-harness
-        // bookkeeping (e.g. forge-std asserting on the returned bool) and
-        // not in the contract under test. Propose calldata rewrites for
-        // each so a single replay cycle can flip a guard several frames
-        // back along the trace.
-        let frontiers = select::collect_frontiers(
-            trace,
-            tx_index as u32,
-            selector,
-            state,
-            history_map,
-            hash_builder,
-            select::unseen_in_history,
-            MAX_FRONTIERS_PER_CYCLE,
-        );
-        if frontiers.is_empty() {
-            return Vec::new();
-        }
-
-        let source_uuid = uuid::Uuid::nil();
-        let mut out = Vec::new();
-        for (frontier, obs) in frontiers {
-            let rewrites = propose_calldata_rewrites(tx, function, &obs);
-            for new_tx in rewrites {
-                let mut tx_seq = seed.to_vec();
-                tx_seq[tx_index] = new_tx;
-                out.push(Candidate { tx_seq, frontier, source_uuid });
-            }
-        }
-        out
+/// Generate ABI-rewrite candidate sequences from a seed and its branch
+/// trace. `tx_index` identifies the call to mutate (always the last one).
+///
+/// This is the only backend the worker has today; it has no SMT solver
+/// and no symbolic engine to feed one, so it can only flip branches whose
+/// compare operands are visible at runtime and reachable by rewriting a
+/// scalar ABI arg.
+#[allow(clippy::too_many_arguments)]
+pub fn propose_candidates(
+    seed: &[BasicTxDetails],
+    trace: &BranchTrace,
+    tx_index: usize,
+    function: Option<&Function>,
+    state: &SymExecState,
+    history_map: &[u8],
+    hash_builder: &DefaultHashBuilder,
+) -> Vec<Candidate> {
+    let Some(tx) = seed.get(tx_index) else { return Vec::new() };
+    let calldata = &tx.call_details.calldata;
+    if calldata.len() < 4 {
+        return Vec::new();
     }
+    let mut selector = [0u8; 4];
+    selector.copy_from_slice(&calldata[..4]);
+
+    // Collect several deepest-first frontiers, not just the very last
+    // one — the deepest unseen branch is often in post-call test-harness
+    // bookkeeping (e.g. forge-std asserting on the returned bool) and
+    // not in the contract under test. Propose calldata rewrites for
+    // each so a single replay cycle can flip a guard several frames
+    // back along the trace.
+    let frontiers = select::collect_frontiers(
+        trace,
+        tx_index as u32,
+        selector,
+        state,
+        history_map,
+        hash_builder,
+        select::unseen_in_history,
+        MAX_FRONTIERS_PER_CYCLE,
+    );
+    if frontiers.is_empty() {
+        return Vec::new();
+    }
+
+    let source_uuid = uuid::Uuid::nil();
+    let mut out = Vec::new();
+    for (frontier, obs) in frontiers {
+        let rewrites = propose_calldata_rewrites(tx, function, &obs);
+        for new_tx in rewrites {
+            let mut tx_seq = seed.to_vec();
+            tx_seq[tx_index] = new_tx;
+            out.push(Candidate { tx_seq, frontier, source_uuid });
+        }
+    }
+    out
 }
 
 /// Maximum number of distinct frontier branches a single replay cycle is
@@ -133,7 +115,7 @@ const MAX_FRONTIERS_PER_CYCLE: usize = 16;
 /// Run a single symbolic-assist cycle on the master worker.
 ///
 /// `function` is the ABI of the call slot the worker is allowed to mutate
-/// for stateless fuzz (v1 always mutates the *last* tx of the seed).
+/// for stateless fuzz (the worker always mutates the *last* tx of the seed).
 /// `targeted_contracts` is used by stateful invariant tests to resolve
 /// the final tx's ABI dynamically — pass `None` for stateless fuzz.
 /// Exactly one of `function` / `targeted_contracts` must be `Some`.
@@ -168,7 +150,7 @@ pub fn run_symexec_assist<FEN: FoundryEvmNetwork>(
     // map.
     replay_executor.inspector_mut().collect_edge_coverage(false);
 
-    // v1: only the final tx's branches are eligible for mutation, so we
+    // Only the final tx's branches are eligible for mutation, so we
     // only need to *trace* that final tx — the prefix is replayed purely
     // to set up state for stateful tests.
     let tx_index = seed.tx_seq.len().saturating_sub(1);
@@ -213,10 +195,9 @@ pub fn run_symexec_assist<FEN: FoundryEvmNetwork>(
     };
 
     // 3. Pick a frontier + propose candidates.
-    let backend = HeuristicAbiRewrite;
     let history = corpus.history_map_snapshot();
     let hash_builder = DefaultHashBuilder::default();
-    let candidates = backend.propose(
+    let candidates = propose_candidates(
         &seed.tx_seq,
         &trace,
         tx_index,

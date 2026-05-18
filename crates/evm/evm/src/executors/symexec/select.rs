@@ -20,7 +20,7 @@ pub struct SeedSnapshot {
 
 /// Score a seed for symbolic exploration. Higher is better.
 ///
-/// v1 scoring (intentionally simple):
+/// Scoring (intentionally simple):
 /// 1. favored seeds first
 /// 2. seeds with more `new_finds_produced` (proven productive)
 /// 3. shorter sequences (cheaper to replay & easier to mutate)
@@ -46,35 +46,16 @@ pub fn pick_seed(candidates: &[SeedSnapshot]) -> Option<&SeedSnapshot> {
     candidates.iter().max_by_key(|s| score_seed(s))
 }
 
-/// Pick a frontier from a replay trace.
+/// Collect up to `limit` eligible frontiers from a replay trace, deepest first.
 ///
 /// Strategy:
-/// - prefer the *deepest* observation whose opposite edge is currently unseen (the seed already
-///   satisfies all earlier guards),
-/// - skip frontiers that have hit `MAX_FRONTIER_ATTEMPTS`,
-/// - skip frontiers without a recoverable compare (v1 has no symbolic reasoning beyond ABI rewrites
-///   of compare operands).
-pub fn pick_frontier<F>(
-    trace: &BranchTrace,
-    tx_index: u32,
-    selector: [u8; 4],
-    state: &SymExecState,
-    history_map: &[u8],
-    hash_builder: &DefaultHashBuilder,
-    is_unseen: F,
-) -> Option<(FrontierKey, BranchObservation)>
-where
-    F: Fn(&[u8], usize) -> bool,
-{
-    collect_frontiers(trace, tx_index, selector, state, history_map, hash_builder, is_unseen, 1)
-        .into_iter()
-        .next()
-}
-
-/// Collect up to `limit` eligible frontiers from the trace, deepest first.
-/// Used by the assist loop to fan out a single replay across several
-/// candidate frontiers when the deepest one is uninteresting (e.g. it
-/// lives in test-harness post-call code).
+/// - walk the trace in reverse so that branches the seed reached late are
+///   preferred (the seed already satisfies all earlier guards),
+/// - skip branches without a recoverable compare (this worker only does
+///   ABI rewrites of compare operands),
+/// - skip trivially uninvertible `EQ(a, a)` compares emitted by Solidity
+///   runtime cleanup,
+/// - skip frontiers that have hit `MAX_FRONTIER_ATTEMPTS`.
 #[allow(clippy::too_many_arguments)]
 pub fn collect_frontiers<F>(
     trace: &BranchTrace,
@@ -94,7 +75,7 @@ where
         if out.len() >= limit {
             break;
         }
-        // No compare → v1 has no targeted mutation to offer.
+        // No compare → no targeted mutation to offer.
         let Some(cmp) = obs.cmp else { continue };
 
         // Skip trivially uninvertible frontiers — equality-class compares

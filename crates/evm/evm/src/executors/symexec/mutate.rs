@@ -4,8 +4,8 @@
 //! `BasicTxDetails`, produce a small bounded set of new calldatas that — if
 //! the branch's left-hand side is calldata-derived — would flip the branch.
 //!
-//! v1 only handles scalar ABI args (`uintN`, `intN`, `bool`, `address`,
-//! `bytes32`). Dynamic types (`bytes`, `string`, arrays) are skipped.
+//! Only scalar ABI args (`uintN`, `intN`, `bool`, `address`, `bytes32`)
+//! are mutated. Dynamic types (`bytes`, `string`, arrays) are skipped.
 
 use super::types::MAX_CANDIDATES_PER_FRONTIER;
 use crate::inspectors::{BranchObservation, CmpKind};
@@ -14,8 +14,8 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, I256, U256};
 use foundry_evm_fuzz::{BasicTxDetails, CallDetails};
 
-/// Generate the set of "interesting" RHS values for a compare. These are the
-/// classic Redqueen tries: the operand itself plus boundary values.
+/// Generate the set of "interesting" RHS values for a compare: the
+/// operand itself plus boundary values.
 fn target_values(obs: &BranchObservation) -> Vec<U256> {
     let Some(cmp) = obs.cmp else { return Vec::new() };
 
@@ -134,7 +134,7 @@ fn rewrite_scalar(current: &DynSolValue, target: U256) -> Option<DynSolValue> {
             let bytes: [u8; 32] = target.to_be_bytes();
             Some(DynSolValue::FixedBytes(B256::from(bytes), *size))
         }
-        // Dynamic types and tuples skipped in v1.
+        // Dynamic types and tuples are not mutated.
         _ => None,
     }
 }

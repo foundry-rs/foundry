@@ -1,19 +1,15 @@
 //! Branch-trace inspector for the symbolic-assist worker.
 //!
-//! Records every conditional jump (`JUMPI`) the EVM executes, together with the
-//! comparator operands of the immediately preceding compare opcode
-//! (`EQ` / `LT` / `GT` / `SLT` / `SGT` / `ISZERO`) when present. The resulting
-//! [`BranchTrace`] is consumed by the symbolic-assist worker
-//! (`crate::executors::symexec`) to:
+//! Records every conditional jump (`JUMPI`) the EVM executes, together with
+//! the comparator operands of the immediately preceding compare opcode
+//! (`EQ` / `LT` / `GT` / `SLT` / `SGT` / `ISZERO`, plus `SUB` / `XOR` used
+//! as equality lowerings) when present. The resulting [`BranchTrace`] is
+//! consumed by the symbolic-assist worker (`crate::executors::symexec`) to:
 //!
 //! 1. find "frontier" branches whose opposite edge has never been covered, and
 //! 2. propose ABI-aware mutations of the calldata that would flip the branch.
 //!
-//! This is the first piece of the concolic-lite engine described in the
-//! architectural plan: it captures the same information AFL/Redqueen and
-//! libFuzzer's `trace_cmp` use, but at the EVM level.
-//!
-//! NOTE: this inspector is intentionally *observational* only. It must not
+//! This inspector is intentionally *observational* only. It must not
 //! mutate any EVM state and must be safe to run alongside the normal
 //! `EdgeCovInspector`.
 
