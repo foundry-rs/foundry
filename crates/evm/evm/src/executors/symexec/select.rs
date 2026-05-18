@@ -5,7 +5,7 @@
 //! done by `mod.rs`.
 
 use super::types::{FrontierKey, SymExecState};
-use crate::inspectors::{BranchObservation, BranchTrace};
+use crate::inspectors::{BranchObservation, BranchTrace, CmpKind};
 use alloy_primitives::map::DefaultHashBuilder;
 use foundry_evm_fuzz::BasicTxDetails;
 
@@ -66,9 +66,42 @@ pub fn pick_frontier<F>(
 where
     F: Fn(&[u8], usize) -> bool,
 {
+    collect_frontiers(trace, tx_index, selector, state, history_map, hash_builder, is_unseen, 1)
+        .into_iter()
+        .next()
+}
+
+/// Collect up to `limit` eligible frontiers from the trace, deepest first.
+/// Used by the assist loop to fan out a single replay across several
+/// candidate frontiers when the deepest one is uninteresting (e.g. it
+/// lives in test-harness post-call code).
+#[allow(clippy::too_many_arguments)]
+pub fn collect_frontiers<F>(
+    trace: &BranchTrace,
+    tx_index: u32,
+    selector: [u8; 4],
+    state: &SymExecState,
+    history_map: &[u8],
+    hash_builder: &DefaultHashBuilder,
+    is_unseen: F,
+    limit: usize,
+) -> Vec<(FrontierKey, BranchObservation)>
+where
+    F: Fn(&[u8], usize) -> bool,
+{
+    let mut out = Vec::new();
     for obs in trace.branches.iter().rev() {
+        if out.len() >= limit {
+            break;
+        }
         // No compare → v1 has no targeted mutation to offer.
-        if obs.cmp.is_none() {
+        let Some(cmp) = obs.cmp else { continue };
+
+        // Skip trivially uninvertible frontiers — equality-class compares
+        // where both operands are already equal (e.g. `EQ(0, 0)` emitted
+        // by Solidity's runtime cleanup) cannot be flipped by rewriting a
+        // single calldata word.
+        if matches!(cmp.kind, CmpKind::Eq) && cmp.lhs == cmp.rhs {
             continue;
         }
 
@@ -87,10 +120,10 @@ where
         };
 
         if state.should_try(&key) {
-            return Some((key, obs.clone()));
+            out.push((key, obs.clone()));
         }
     }
-    None
+    out
 }
 
 /// Default predicate: an edge is "unseen" if its hitcount in the history map

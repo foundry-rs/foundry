@@ -58,6 +58,12 @@ pub struct CmpObservation {
     pub lhs: U256,
     /// `U256::ZERO` for `ISZERO`.
     pub rhs: U256,
+    /// `true` when the underlying compare was negated by an `ISZERO`
+    /// before reaching the `JUMPI`. Solidity's `if (a == b)` lowers to
+    /// `EQ; ISZERO; JUMPI`, so the JUMPI-taken direction is the
+    /// *opposite* of the predicate holding. Mutation heuristics use this
+    /// to decide whether they need to satisfy or break the predicate.
+    pub inverted: bool,
 }
 
 /// One observed `JUMPI` along the executed path.
@@ -162,7 +168,7 @@ impl BranchTraceInspector {
         self.prev_pending_cmp = None;
     }
 
-    fn record_cmp(&mut self, kind: CmpKind, interp: &Interpreter) {
+    fn record_cmp(&mut self, kind: CmpKind, interp: &Interpreter, inverted: bool) {
         // Operand order on the EVM stack: top = a, next = b.
         // Comparisons compute `a OP b`; `ISZERO` just consumes `a`.
         let lhs = interp.stack.peek(0).unwrap_or(U256::ZERO);
@@ -174,7 +180,7 @@ impl BranchTraceInspector {
         // Shift the previous pending compare down so we can recover it past an
         // intervening `ISZERO`.
         self.prev_pending_cmp = self.pending_cmp.take();
-        self.pending_cmp = Some(CmpObservation { kind, lhs, rhs });
+        self.pending_cmp = Some(CmpObservation { kind, lhs, rhs, inverted });
     }
 
     fn record_jumpi(&mut self, interp: &Interpreter) {
@@ -191,9 +197,15 @@ impl BranchTraceInspector {
 
         // Prefer the underlying compare if the immediate predecessor was
         // `ISZERO` (Solidity's `if (x == y)` becomes `EQ; ISZERO; PUSH; JUMPI`
-        // and its negation `EQ; PUSH; JUMPI`).
+        // and its negation `EQ; PUSH; JUMPI`). When we unwrap past an
+        // `ISZERO`, mark the recovered compare as `inverted` so mutation
+        // heuristics know the JUMPI-taken direction is the *opposite* of
+        // the predicate holding.
         let cmp = match self.pending_cmp {
-            Some(c) if c.kind == CmpKind::IsZero => self.prev_pending_cmp,
+            Some(c) if c.kind == CmpKind::IsZero => self.prev_pending_cmp.map(|mut prev| {
+                prev.inverted = !prev.inverted;
+                prev
+            }),
             other => other,
         };
 
@@ -213,12 +225,23 @@ impl<CTX> Inspector<CTX> for BranchTraceInspector {
     fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
         let op = interp.bytecode.opcode();
         match op {
-            opcode::EQ => self.record_cmp(CmpKind::Eq, interp),
-            opcode::LT => self.record_cmp(CmpKind::Lt, interp),
-            opcode::GT => self.record_cmp(CmpKind::Gt, interp),
-            opcode::SLT => self.record_cmp(CmpKind::Slt, interp),
-            opcode::SGT => self.record_cmp(CmpKind::Sgt, interp),
-            opcode::ISZERO => self.record_cmp(CmpKind::IsZero, interp),
+            opcode::EQ => self.record_cmp(CmpKind::Eq, interp, false),
+            opcode::LT => self.record_cmp(CmpKind::Lt, interp, false),
+            opcode::GT => self.record_cmp(CmpKind::Gt, interp, false),
+            opcode::SLT => self.record_cmp(CmpKind::Slt, interp, false),
+            opcode::SGT => self.record_cmp(CmpKind::Sgt, interp, false),
+            opcode::ISZERO => self.record_cmp(CmpKind::IsZero, interp, false),
+            // Solidity with the optimizer enabled lowers `if (a == b)` to
+            // `SUB(a, b); JUMPI(skip, diff)` — diff is zero iff `a == b`,
+            // so the JUMPI-taken direction is the *opposite* of EQ. Record
+            // SUB as an equality-class compare with `inverted = true` so
+            // mutation heuristics see the same `EQ`-shaped operands. If
+            // SUB is being used for plain arithmetic, the next non-inert
+            // opcode (e.g. ADD, MUL, ...) clears the pending window.
+            opcode::SUB => self.record_cmp(CmpKind::Eq, interp, true),
+            // `XOR(a, b)` is also zero iff `a == b`; the Yul IR pipeline
+            // sometimes prefers it over SUB. Same logic as SUB.
+            opcode::XOR => self.record_cmp(CmpKind::Eq, interp, true),
             opcode::JUMPI => {
                 self.record_jumpi(interp);
                 // Reset pending compares — we only care about the cmp that
@@ -226,6 +249,16 @@ impl<CTX> Inspector<CTX> for BranchTraceInspector {
                 self.pending_cmp = None;
                 self.prev_pending_cmp = None;
             }
+            // PUSH0..PUSH32, JUMPDEST, and DUP/SWAP/POP are pure stack /
+            // no-op fillers that commonly sit between the compare and the
+            // JUMPI in Solidity's `EQ; ISZERO; PUSH; JUMPI` lowering and
+            // similar IR-emitted patterns (e.g. `EQ; SWAP; ISZERO; PUSH;
+            // JUMPI`). Keep the pending compare window open across them.
+            opcode::PUSH0..=opcode::PUSH32
+            | opcode::DUP1..=opcode::DUP16
+            | opcode::SWAP1..=opcode::SWAP16
+            | opcode::POP
+            | opcode::JUMPDEST => {}
             _ => {
                 // Any other opcode invalidates the pending-compare window.
                 if self.pending_cmp.is_some() {

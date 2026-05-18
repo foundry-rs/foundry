@@ -20,13 +20,16 @@ fn target_values(obs: &BranchObservation) -> Vec<U256> {
     let Some(cmp) = obs.cmp else { return Vec::new() };
 
     // We want LHS to satisfy `LHS OP RHS` to land on the *other* side.
-    // If the branch was taken, the predicate currently holds; we want to
-    // negate it. If the branch was not taken, we want to satisfy it.
-    // Both can be achieved by trying values near `rhs`.
+    // The underlying compare predicate may be inverted by an ISZERO before
+    // the JUMPI (Solidity's `if (a == b)` lowers to `EQ; ISZERO; JUMPI`),
+    // so the predicate currently holds iff `took_branch XOR cmp.inverted`.
+    // If it holds, we want to break it; if it doesn't, we want to satisfy
+    // it. Both are achieved by trying values near `rhs`.
+    let predicate_held = obs.took_branch ^ cmp.inverted;
     let r = cmp.rhs;
     let candidates: Vec<U256> = match cmp.kind {
         CmpKind::Eq => {
-            if obs.took_branch {
+            if predicate_held {
                 // Currently `lhs == rhs`. Flip by trying `rhs ± 1`.
                 vec![r.wrapping_add(U256::from(1)), r.wrapping_sub(U256::from(1))]
             } else {

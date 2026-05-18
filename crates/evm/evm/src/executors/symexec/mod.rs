@@ -90,7 +90,13 @@ impl SymBackend for HeuristicAbiRewrite {
         let mut selector = [0u8; 4];
         selector.copy_from_slice(&calldata[..4]);
 
-        let Some((frontier, obs)) = select::pick_frontier(
+        // Collect several deepest-first frontiers, not just the very last
+        // one — the deepest unseen branch is often in post-call test-harness
+        // bookkeeping (e.g. forge-std asserting on the returned bool) and
+        // not in the contract under test. Propose calldata rewrites for
+        // each so a single replay cycle can flip a guard several frames
+        // back along the trace.
+        let frontiers = select::collect_frontiers(
             trace,
             tx_index as u32,
             selector,
@@ -98,24 +104,31 @@ impl SymBackend for HeuristicAbiRewrite {
             history_map,
             hash_builder,
             select::unseen_in_history,
-        ) else {
+            MAX_FRONTIERS_PER_CYCLE,
+        );
+        if frontiers.is_empty() {
             return Vec::new();
-        };
+        }
 
-        let rewrites = propose_calldata_rewrites(tx, function, &obs);
-
-        // The mutation only changes the final tx; build the full sequence.
         let source_uuid = uuid::Uuid::nil();
-        rewrites
-            .into_iter()
-            .map(|new_tx| {
+        let mut out = Vec::new();
+        for (frontier, obs) in frontiers {
+            let rewrites = propose_calldata_rewrites(tx, function, &obs);
+            for new_tx in rewrites {
                 let mut tx_seq = seed.to_vec();
                 tx_seq[tx_index] = new_tx;
-                Candidate { tx_seq, frontier, source_uuid }
-            })
-            .collect()
+                out.push(Candidate { tx_seq, frontier, source_uuid });
+            }
+        }
+        out
     }
 }
+
+/// Maximum number of distinct frontier branches a single replay cycle is
+/// allowed to fan candidate calldata rewrites over. Keeps the per-cycle
+/// validation cost bounded while still letting the worker reach guards
+/// that live *before* the test-harness post-call code.
+const MAX_FRONTIERS_PER_CYCLE: usize = 16;
 
 /// Run a single symbolic-assist cycle on the master worker.
 ///
