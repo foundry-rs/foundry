@@ -1,10 +1,7 @@
 use crate::{bytecode::VerifyBytecodeArgs, types::VerificationType};
 use alloy_dyn_abi::DynSolValue;
 use alloy_primitives::{Address, Bytes, TxKind};
-use alloy_provider::{
-    Provider,
-    network::{AnyNetwork, AnyRpcBlock},
-};
+use alloy_provider::{Provider, network::BlockResponse};
 use alloy_rpc_types::BlockId;
 use clap::ValueEnum;
 use eyre::{OptionExt, Result};
@@ -19,8 +16,9 @@ use foundry_config::Config;
 use foundry_evm::{
     constants::DEFAULT_CREATE2_DEPLOYER,
     core::{
+        FoundryBlock as _,
         decode::RevertDecoder,
-        evm::{EvmEnvFor, FoundryEvmFactory, FoundryEvmNetwork, SpecFor},
+        evm::{BlockEnvFor, BlockResponseFor, EvmEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
     },
     executors::TracingExecutor,
     opts::EvmOpts,
@@ -29,11 +27,7 @@ use foundry_evm::{
 };
 use foundry_evm_networks::NetworkConfigs;
 use reqwest::Url;
-use revm::{
-    bytecode::Bytecode,
-    context::{BlockEnv, TxEnv},
-    database::Database,
-};
+use revm::{bytecode::Bytecode, context::Block as _, database::Database};
 use semver::{BuildMetadata, Version};
 use serde::{Deserialize, Serialize};
 use yansi::Paint;
@@ -274,9 +268,9 @@ pub async fn get_tracing_executor<FEN>(
     fork_blk_num: u64,
     evm_version: EvmVersion,
     evm_opts: EvmOpts,
-) -> Result<(EvmEnvFor<FEN>, TxEnv, TracingExecutor<FEN>)>
+) -> Result<(EvmEnvFor<FEN>, TxEnvFor<FEN>, TracingExecutor<FEN>)>
 where
-    FEN: FoundryEvmNetwork<EvmFactory: FoundryEvmFactory<BlockEnv = BlockEnv, Tx = TxEnv>>,
+    FEN: FoundryEvmNetwork,
 {
     fork_config.fork_block_number = Some(fork_blk_num);
     fork_config.evm_version = evm_version;
@@ -300,32 +294,31 @@ where
 
 pub fn configure_env_block<FEN>(
     evm_env: &mut EvmEnvFor<FEN>,
-    block: &AnyRpcBlock,
+    block: &BlockResponseFor<FEN>,
     config: NetworkConfigs,
 ) where
-    FEN: FoundryEvmNetwork<EvmFactory: FoundryEvmFactory<BlockEnv = BlockEnv>>,
+    FEN: FoundryEvmNetwork,
 {
-    let number = evm_env.block_env.number;
-    evm_env.block_env = block_env_from_header(&block.header);
-    evm_env.block_env.number = number;
-    apply_chain_and_block_specific_env_changes::<AnyNetwork, _, _>(evm_env, block, config);
+    let number = evm_env.block_env.number();
+    evm_env.block_env = block_env_from_header::<BlockEnvFor<FEN>>(block.header());
+    evm_env.block_env.set_number(number);
+    apply_chain_and_block_specific_env_changes::<FEN::Network, _, _>(evm_env, block, config);
 }
 
 pub fn deploy_contract<FEN>(
     executor: &mut TracingExecutor<FEN>,
     evm_env: &EvmEnvFor<FEN>,
-    tx_env: &TxEnv,
+    tx_env: &TxEnvFor<FEN>,
     spec_id: SpecFor<FEN>,
-    to: Option<TxKind>,
+    to: TxKind,
 ) -> Result<Address, eyre::ErrReport>
 where
-    FEN: FoundryEvmNetwork<EvmFactory: FoundryEvmFactory<Tx = TxEnv>>,
+    FEN: FoundryEvmNetwork,
 {
     let mut evm_env = evm_env.clone();
     evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec_id);
 
-    if to.is_some_and(|to| to.is_call()) {
-        let TxKind::Call(to) = to.unwrap() else { unreachable!() };
+    if let TxKind::Call(to) = to {
         if to != DEFAULT_CREATE2_DEPLOYER {
             eyre::bail!(
                 "Transaction `to` address is not the default create2 deployer i.e the tx is not a contract creation tx."
@@ -369,7 +362,7 @@ where
 
 pub async fn get_runtime_codes<FEN>(
     executor: &mut TracingExecutor<FEN>,
-    provider: &impl Provider<AnyNetwork>,
+    provider: &impl Provider<FEN::Network>,
     address: Address,
     fork_address: Address,
     block: Option<u64>,
