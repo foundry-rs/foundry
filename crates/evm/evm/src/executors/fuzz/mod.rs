@@ -263,11 +263,12 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         address: Address,
         calldata: Bytes,
         coverage_metrics: &mut WorkerCorpus,
-        shared_state: &SharedFuzzState,
+        _shared_state: &SharedFuzzState,
     ) -> Result<FuzzOutcome<FEN>, TestCaseError> {
         let mut call = executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
+        let cmp_values = call.evm_cmp_values.take().unwrap_or_default();
         let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
         coverage_metrics.process_inputs(
             &[BasicTxDetails {
@@ -280,6 +281,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     value: None,
                 },
             }],
+            &[cmp_values],
             new_coverage,
             None,
         );
@@ -287,10 +289,6 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         // Handle `vm.assume`.
         if call.result.as_ref() == MAGIC_ASSUME {
             return Err(TestCaseError::reject(FuzzError::AssumeReject));
-        }
-
-        if call.evm_cmp_values.is_some() {
-            shared_state.state.collect_typed_cmp_values(call.evm_cmp_dictionary_values());
         }
 
         let (breakpoints, deprecated_cheatcodes) =

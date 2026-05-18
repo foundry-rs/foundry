@@ -7,13 +7,12 @@
 // the concrete `Executor` type.
 
 use crate::inspectors::{
-    Cheatcodes, CmpKind, CmpOperands, InspectorData, InspectorStack,
-    cheatcodes::BroadcastableTransactions,
+    Cheatcodes, CmpOperands, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Address, B256, Bytes, Log, TxKind, U256, keccak256,
+    Address, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
@@ -1039,39 +1038,6 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
-    /// Converts EVM comparison operands into dictionary candidates.
-    pub fn evm_cmp_dictionary_values(&self) -> Vec<(u16, bool, B256)> {
-        let Some(cmp_values) = &self.evm_cmp_values else {
-            return Vec::new();
-        };
-
-        let mut sites = HashMap::<CmpSiteKey, CmpSiteSummary>::default();
-        for cmp in cmp_values {
-            sites.entry(CmpSiteKey::new(cmp)).or_default().observe(cmp);
-        }
-
-        let mut values = Vec::with_capacity(cmp_values.len() * 4);
-        for site in sites.values() {
-            if site.kind == CmpKind::IsZero || site.is_likely_loop_counter() {
-                continue;
-            }
-
-            match site.classification() {
-                CmpSiteClassification::Op1Constant => {
-                    push_evm_cmp_value(&mut values, site.first_op1, site);
-                }
-                CmpSiteClassification::Op2Constant => {
-                    push_evm_cmp_value(&mut values, site.first_op2, site);
-                }
-                CmpSiteClassification::Unknown => {
-                    push_evm_cmp_value(&mut values, site.first_op1, site);
-                    push_evm_cmp_value(&mut values, site.first_op2, site);
-                }
-            }
-        }
-        values
-    }
-
     /// Unpacks an EVM result.
     pub fn from_evm_result(r: Result<Self, EvmError<FEN>>) -> eyre::Result<(Self, Option<String>)> {
         match r {
@@ -1318,125 +1284,6 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct CmpSiteKey {
-    address: Address,
-    pc: usize,
-    opcode: u8,
-}
-
-impl CmpSiteKey {
-    const fn new(cmp: &CmpOperands) -> Self {
-        Self { address: cmp.address, pc: cmp.pc, opcode: cmp.opcode }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct CmpSiteSummary {
-    kind: CmpKind,
-    signed: bool,
-    width: u16,
-    first_op1: U256,
-    first_op2: U256,
-    last_op1: U256,
-    last_op2: U256,
-    count: usize,
-    op1_changed: bool,
-    op2_changed: bool,
-    op1_monotonic_step: bool,
-    op2_monotonic_step: bool,
-}
-
-impl Default for CmpSiteSummary {
-    fn default() -> Self {
-        Self {
-            kind: CmpKind::Eq,
-            signed: false,
-            width: 256,
-            first_op1: U256::ZERO,
-            first_op2: U256::ZERO,
-            last_op1: U256::ZERO,
-            last_op2: U256::ZERO,
-            count: 0,
-            op1_changed: false,
-            op2_changed: false,
-            op1_monotonic_step: true,
-            op2_monotonic_step: true,
-        }
-    }
-}
-
-impl CmpSiteSummary {
-    fn observe(&mut self, cmp: &CmpOperands) {
-        if self.count == 0 {
-            self.kind = cmp.kind;
-            self.signed = cmp.signed;
-            self.width = cmp.width;
-            self.first_op1 = cmp.op1;
-            self.first_op2 = cmp.op2;
-            self.last_op1 = cmp.op1;
-            self.last_op2 = cmp.op2;
-            self.count = 1;
-            return;
-        }
-
-        self.op1_changed |= cmp.op1 != self.first_op1;
-        self.op2_changed |= cmp.op2 != self.first_op2;
-        self.op1_monotonic_step &= is_small_monotonic_step(self.last_op1, cmp.op1);
-        self.op2_monotonic_step &= is_small_monotonic_step(self.last_op2, cmp.op2);
-        self.last_op1 = cmp.op1;
-        self.last_op2 = cmp.op2;
-        self.count += 1;
-    }
-
-    const fn classification(&self) -> CmpSiteClassification {
-        match (self.op1_changed, self.op2_changed) {
-            (false, true) => CmpSiteClassification::Op1Constant,
-            (true, false) => CmpSiteClassification::Op2Constant,
-            _ => CmpSiteClassification::Unknown,
-        }
-    }
-
-    const fn is_likely_loop_counter(&self) -> bool {
-        const MIN_LOOP_CMP_OBSERVATIONS: usize = 8;
-        self.count >= MIN_LOOP_CMP_OBSERVATIONS
-            && ((self.op1_monotonic_step && self.op1_changed && !self.op2_changed)
-                || (self.op2_monotonic_step && self.op2_changed && !self.op1_changed))
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CmpSiteClassification {
-    Op1Constant,
-    Op2Constant,
-    Unknown,
-}
-
-fn push_evm_cmp_boundary_candidates(
-    values: &mut Vec<(u16, bool, B256)>,
-    value: U256,
-    site: &CmpSiteSummary,
-) {
-    push_evm_cmp_candidate(values, value.wrapping_sub(U256::from(1)), site);
-    push_evm_cmp_candidate(values, value.wrapping_add(U256::from(1)), site);
-}
-
-fn push_evm_cmp_value(values: &mut Vec<(u16, bool, B256)>, value: U256, site: &CmpSiteSummary) {
-    push_evm_cmp_candidate(values, value, site);
-    if matches!(site.kind, CmpKind::Lt | CmpKind::Gt) {
-        push_evm_cmp_boundary_candidates(values, value, site);
-    }
-}
-
-fn push_evm_cmp_candidate(values: &mut Vec<(u16, bool, B256)>, value: U256, site: &CmpSiteSummary) {
-    values.push((site.width, site.signed, value.into()));
-}
-
-fn is_small_monotonic_step(prev: U256, next: U256) -> bool {
-    let diff = if next >= prev { next - prev } else { prev - next };
-    diff <= U256::from(1)
-}
-
 /// Timer for a fuzz test.
 pub struct FuzzTestTimer {
     /// Inner fuzz test timer - (test start time, test duration).
@@ -1496,7 +1343,7 @@ impl EarlyExit {
 mod tests {
     use super::*;
     use foundry_evm_core::constants::MAGIC_SKIP;
-    use revm::{bytecode::opcode, context::Cfg, primitives::hardfork::SpecId};
+    use revm::{context::Cfg, primitives::hardfork::SpecId};
 
     #[test]
     fn cheatcode_skip_payload_is_classified_as_skip() {
@@ -1535,90 +1382,6 @@ mod tests {
     }
 
     #[test]
-    fn evm_cmp_dictionary_values_prefers_constant_side() {
-        let raw = RawCallResult::<EthEvmNetwork> {
-            evm_cmp_values: Some(vec![
-                cmp_operand(opcode::EQ, CmpKind::Eq, U256::from(1), U256::from(42)),
-                cmp_operand(opcode::EQ, CmpKind::Eq, U256::from(2), U256::from(42)),
-            ]),
-            ..Default::default()
-        };
-
-        let values = raw.evm_cmp_dictionary_values();
-
-        assert!(values.contains(&(256, false, U256::from(42).into())));
-        assert!(!values.contains(&(256, false, U256::from(1).into())));
-        assert!(!values.contains(&(256, false, U256::from(2).into())));
-    }
-
-    #[test]
-    fn evm_cmp_dictionary_values_adds_order_boundaries() {
-        let raw = RawCallResult::<EthEvmNetwork> {
-            evm_cmp_values: Some(vec![cmp_operand(
-                opcode::LT,
-                CmpKind::Lt,
-                U256::from(10),
-                U256::from(20),
-            )]),
-            ..Default::default()
-        };
-
-        let values = raw.evm_cmp_dictionary_values();
-
-        assert!(values.contains(&(256, false, U256::from(9).into())));
-        assert!(values.contains(&(256, false, U256::from(10).into())));
-        assert!(values.contains(&(256, false, U256::from(11).into())));
-        assert!(values.contains(&(256, false, U256::from(19).into())));
-        assert!(values.contains(&(256, false, U256::from(20).into())));
-        assert!(values.contains(&(256, false, U256::from(21).into())));
-    }
-
-    #[test]
-    fn evm_cmp_dictionary_values_filters_loop_counter_sites() {
-        let raw = RawCallResult::<EthEvmNetwork> {
-            evm_cmp_values: Some(
-                (0..8)
-                    .map(|i| cmp_operand(opcode::LT, CmpKind::Lt, U256::from(i), U256::from(8)))
-                    .collect(),
-            ),
-            ..Default::default()
-        };
-
-        assert!(raw.evm_cmp_dictionary_values().is_empty());
-    }
-
-    #[test]
-    fn evm_cmp_dictionary_values_preserves_signed_width() {
-        let mut cmp = cmp_operand(opcode::SLT, CmpKind::Lt, U256::MAX, U256::from(42));
-        cmp.signed = true;
-        cmp.width = 256;
-        let raw = RawCallResult::<EthEvmNetwork> {
-            evm_cmp_values: Some(vec![cmp]),
-            ..Default::default()
-        };
-
-        let values = raw.evm_cmp_dictionary_values();
-
-        assert!(values.contains(&(256, true, U256::MAX.into())));
-        assert!(values.contains(&(256, true, U256::from(42).into())));
-    }
-
-    #[test]
-    fn evm_cmp_dictionary_values_skips_iszero_dictionary_candidates() {
-        let raw = RawCallResult::<EthEvmNetwork> {
-            evm_cmp_values: Some(vec![cmp_operand(
-                opcode::ISZERO,
-                CmpKind::IsZero,
-                U256::from(1),
-                U256::ZERO,
-            )]),
-            ..Default::default()
-        };
-
-        assert!(raw.evm_cmp_dictionary_values().is_empty());
-    }
-
-    #[test]
     fn set_spec_id_updates_spec_dependent_cfg_state() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default().build(
@@ -1642,18 +1405,5 @@ mod tests {
             &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
         );
         assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
-    }
-
-    fn cmp_operand(opcode: u8, kind: CmpKind, op1: U256, op2: U256) -> CmpOperands {
-        CmpOperands {
-            op1,
-            op2,
-            pc: 42,
-            address: Address::repeat_byte(0xaa),
-            opcode,
-            kind,
-            signed: false,
-            width: 256,
-        }
     }
 }
