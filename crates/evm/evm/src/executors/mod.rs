@@ -7,12 +7,13 @@
 // the concrete `Executor` type.
 
 use crate::inspectors::{
-    Cheatcodes, CmpOperands, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
+    Cheatcodes, CmpKind, CmpOperands, InspectorData, InspectorStack,
+    cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
 use alloy_primitives::{
-    Address, Bytes, Log, TxKind, U256, keccak256,
+    Address, B256, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, HashMap},
 };
 use alloy_sol_types::{SolCall, sol};
@@ -1038,6 +1039,25 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
+    /// Converts EVM comparison operands into dictionary candidates.
+    pub fn evm_cmp_dictionary_values(&self) -> Vec<(u8, B256)> {
+        let Some(cmp_values) = &self.evm_cmp_values else {
+            return Vec::new();
+        };
+
+        let mut values = Vec::with_capacity(cmp_values.len() * 6);
+        for cmp in cmp_values {
+            push_evm_cmp_candidate(&mut values, cmp.op1);
+            push_evm_cmp_candidate(&mut values, cmp.op2);
+
+            if matches!(cmp.kind, CmpKind::Lt | CmpKind::Gt) {
+                push_evm_cmp_boundary_candidates(&mut values, cmp.op1);
+                push_evm_cmp_boundary_candidates(&mut values, cmp.op2);
+            }
+        }
+        values
+    }
+
     /// Unpacks an EVM result.
     pub fn from_evm_result(r: Result<Self, EvmError<FEN>>) -> eyre::Result<(Self, Option<String>)> {
         match r {
@@ -1282,6 +1302,26 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         chisel_state,
         reverter,
     })
+}
+
+fn push_evm_cmp_boundary_candidates(values: &mut Vec<(u8, B256)>, value: U256) {
+    push_evm_cmp_candidate(values, value.wrapping_sub(U256::from(1)));
+    push_evm_cmp_candidate(values, value.wrapping_add(U256::from(1)));
+}
+
+fn push_evm_cmp_candidate(values: &mut Vec<(u8, B256)>, value: U256) {
+    let width = if value <= U256::from(u8::MAX) {
+        8
+    } else if value <= U256::from(u16::MAX) {
+        16
+    } else if value <= U256::from(u32::MAX) {
+        32
+    } else if value <= U256::from(u64::MAX) {
+        64
+    } else {
+        0
+    };
+    values.push((width, value.into()));
 }
 
 /// Timer for a fuzz test.

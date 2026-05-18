@@ -115,7 +115,7 @@ impl EvmFuzzState {
         }
     }
 
-    /// Collects typed trace-cmp operands from sancov-instrumented code.
+    /// Collects typed comparison operands.
     /// Values are inserted into both persistent state values (survive reverts) and typed
     /// sample buckets (for ABI-aware mutation).
     pub fn collect_typed_cmp_values(&self, values: impl IntoIterator<Item = (u8, B256)>) {
@@ -152,7 +152,7 @@ impl EvmFuzzState {
 
 // We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
 // for performance when iterating over the sets.
-/// Maximum number of persistent values from sancov trace-cmp.
+/// Maximum number of persistent values from comparison operand logs.
 const MAX_PERSISTENT_VALUES: usize = 2048;
 
 pub struct FuzzDictionary {
@@ -178,7 +178,7 @@ pub struct FuzzDictionary {
     /// Set to `true` on first call to `seed_samples()`. Before seeding, `samples()` checks both
     /// maps separately. After seeding, literals are merged in, so only `sample_values` is checked.
     samples_seeded: bool,
-    /// Persistent values from sancov trace-cmp that survive `revert()` across runs.
+    /// Persistent values from comparison operand logs that survive `revert()` across runs.
     persistent_values: B256IndexSet,
 
     misses: usize,
@@ -440,7 +440,7 @@ impl FuzzDictionary {
     }
 
     /// Insert a persistent value that survives `revert()` across invariant runs.
-    /// Used for trace-cmp operands that should compound over time.
+    /// Used for comparison operands that should compound over time.
     fn insert_persistent_value(&mut self, value: B256) {
         if self.persistent_values.len() >= MAX_PERSISTENT_VALUES {
             return;
@@ -450,8 +450,8 @@ impl FuzzDictionary {
         }
     }
 
-    /// Insert a typed trace-cmp value into the `sample_values` map.
-    /// Maps sancov width to `DynSolType` buckets and promotes to larger types.
+    /// Insert a typed comparison value into the `sample_values` map.
+    /// Maps operand width to `DynSolType` buckets and promotes to larger types.
     fn insert_typed_cmp_value(&mut self, width: u8, value: B256) {
         if !self.samples_seeded {
             self.seed_samples();
@@ -479,6 +479,8 @@ impl FuzzDictionary {
         if width <= 64 {
             insert(&mut self.sample_values, DynSolType::Uint(128), value);
             insert(&mut self.sample_values, DynSolType::Uint(256), value);
+            insert(&mut self.sample_values, DynSolType::Int(256), value);
+        } else {
             insert(&mut self.sample_values, DynSolType::Int(256), value);
         }
     }

@@ -263,6 +263,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         address: Address,
         calldata: Bytes,
         coverage_metrics: &mut WorkerCorpus,
+        shared_state: &SharedFuzzState,
     ) -> Result<FuzzOutcome<FEN>, TestCaseError> {
         let mut call = executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
@@ -287,6 +288,8 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         if call.result.as_ref() == MAGIC_ASSUME {
             return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
+
+        shared_state.state.collect_typed_cmp_values(call.evm_cmp_dictionary_values());
 
         let (breakpoints, deprecated_cheatcodes) =
             call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {
@@ -589,7 +592,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             };
 
             worker.last_run_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
-            match self.single_fuzz(&executor, address, input, &mut corpus) {
+            match self.single_fuzz(&executor, address, input, &mut corpus, shared_state) {
                 Ok(fuzz_outcome) => match fuzz_outcome {
                     FuzzOutcome::Case(case) => {
                         let total_runs = inc_runs();
