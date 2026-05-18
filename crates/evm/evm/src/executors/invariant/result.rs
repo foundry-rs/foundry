@@ -227,13 +227,16 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     let is_optimization = invariant_contract.is_optimization();
     let mut broken: Option<&'a Function> = None;
 
+    // Use the handler-gate variant so a stale committed `GLOBAL_FAIL_SLOT` from a
+    // previously-recorded handler bug doesn't poison this gate (which would otherwise silently
+    // skip every subsequent `assert_invariants` evaluation under `assertions_revert = false`).
+    // Handler bugs are tracked separately in `failures.broken_handlers`.
     let handlers_succeeded = || {
         invariant_test.targeted_contracts.targets.lock().keys().all(|address| {
-            invariant_run.executor.is_success(
+            invariant_run.executor.is_success_handler_gate(
                 *address,
                 false,
                 Cow::Borrowed(state_changeset),
-                false,
             )
         })
     };
@@ -297,11 +300,6 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 reverted,
                 is_optimization,
             );
-
-            // Non-reverting `vm.assert*` (`assertions_revert = false`) leaves
-            // `GLOBAL_FAIL_SLOT = 1` committed; clear it so it doesn't poison
-            // `handlers_succeeded` / `assert_invariants` on subsequent calls.
-            invariant_run.executor.clear_global_failure();
 
             // No invariant predicate broke; `broken = None`.
             let continues = invariant_test

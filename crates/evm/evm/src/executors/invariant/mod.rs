@@ -694,10 +694,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 call_reverted,
                                 invariant_contract.is_optimization(),
                             );
-                            // Non-reverting `vm.assert*` (`assertions_revert = false`) leaves
-                            // `GLOBAL_FAIL_SLOT = 1` committed; clear it so it doesn't poison
-                            // `handlers_succeeded` / `assert_invariants` on subsequent calls.
-                            current_run.executor.clear_global_failure();
                             (true, None)
                         } else if call_result.reverted && self.config.fail_on_revert {
                             // Plain revert under fail_on_revert: attribute to the anchor.
@@ -1422,24 +1418,33 @@ fn collect_data<FEN: FoundryEvmNetwork>(
 /// Calls the `afterInvariant()` function on a contract.
 /// Returns call result and if call succeeded.
 /// The state after the call is not persisted.
+///
+/// Uses the handler-gate success check so a stale committed `GLOBAL_FAIL_SLOT` from a
+/// previously-recorded handler bug doesn't false-positive this call (the slot is `1` from
+/// the prior bug, but `afterInvariant` itself didn't write it in this changeset).
 pub(crate) fn call_after_invariant_function<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     to: Address,
 ) -> Result<(RawCallResult<FEN>, bool), EvmError<FEN>> {
     let calldata = Bytes::from_static(&IInvariantTest::afterInvariantCall::SELECTOR);
     let mut call_result = executor.call_raw(CALLER, to, calldata, U256::ZERO)?;
-    let success = executor.is_raw_call_mut_success(to, &mut call_result, false);
+    let success = executor.is_raw_call_mut_success_handler_gate(to, &mut call_result);
     Ok((call_result, success))
 }
 
 /// Calls the invariant function and returns call result and if succeeded.
+///
+/// Uses the handler-gate success check (same rationale as `call_after_invariant_function`):
+/// the predicate is broken iff this call's own changeset writes `GLOBAL_FAIL_SLOT` (via `t()` /
+/// `vm.assert*`) or the call reverts; a stale committed slot from a prior handler bug must not
+/// poison every later predicate evaluation in the run.
 pub(crate) fn call_invariant_function<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     address: Address,
     calldata: Bytes,
 ) -> Result<(RawCallResult<FEN>, bool)> {
     let mut call_result = executor.call_raw(CALLER, address, calldata, U256::ZERO)?;
-    let success = executor.is_raw_call_mut_success(address, &mut call_result, false);
+    let success = executor.is_raw_call_mut_success_handler_gate(address, &mut call_result);
     Ok((call_result, success))
 }
 
