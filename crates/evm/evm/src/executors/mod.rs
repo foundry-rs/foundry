@@ -1040,7 +1040,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
 
 impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
     /// Converts EVM comparison operands into dictionary candidates.
-    pub fn evm_cmp_dictionary_values(&self) -> Vec<(u8, B256)> {
+    pub fn evm_cmp_dictionary_values(&self) -> Vec<(u16, bool, B256)> {
         let Some(cmp_values) = &self.evm_cmp_values else {
             return Vec::new();
         };
@@ -1052,20 +1052,20 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
 
         let mut values = Vec::with_capacity(cmp_values.len() * 4);
         for site in sites.values() {
-            if site.is_likely_loop_counter() {
+            if site.kind == CmpKind::IsZero || site.is_likely_loop_counter() {
                 continue;
             }
 
             match site.classification() {
                 CmpSiteClassification::Op1Constant => {
-                    push_evm_cmp_value(&mut values, site.first_op1, site.kind);
+                    push_evm_cmp_value(&mut values, site.first_op1, site);
                 }
                 CmpSiteClassification::Op2Constant => {
-                    push_evm_cmp_value(&mut values, site.first_op2, site.kind);
+                    push_evm_cmp_value(&mut values, site.first_op2, site);
                 }
                 CmpSiteClassification::Unknown => {
-                    push_evm_cmp_value(&mut values, site.first_op1, site.kind);
-                    push_evm_cmp_value(&mut values, site.first_op2, site.kind);
+                    push_evm_cmp_value(&mut values, site.first_op1, site);
+                    push_evm_cmp_value(&mut values, site.first_op2, site);
                 }
             }
         }
@@ -1334,6 +1334,8 @@ impl CmpSiteKey {
 #[derive(Clone, Copy, Debug)]
 struct CmpSiteSummary {
     kind: CmpKind,
+    signed: bool,
+    width: u16,
     first_op1: U256,
     first_op2: U256,
     last_op1: U256,
@@ -1349,6 +1351,8 @@ impl Default for CmpSiteSummary {
     fn default() -> Self {
         Self {
             kind: CmpKind::Eq,
+            signed: false,
+            width: 256,
             first_op1: U256::ZERO,
             first_op2: U256::ZERO,
             last_op1: U256::ZERO,
@@ -1366,6 +1370,8 @@ impl CmpSiteSummary {
     fn observe(&mut self, cmp: &CmpOperands) {
         if self.count == 0 {
             self.kind = cmp.kind;
+            self.signed = cmp.signed;
+            self.width = cmp.width;
             self.first_op1 = cmp.op1;
             self.first_op2 = cmp.op2;
             self.last_op1 = cmp.op1;
@@ -1406,31 +1412,24 @@ enum CmpSiteClassification {
     Unknown,
 }
 
-fn push_evm_cmp_boundary_candidates(values: &mut Vec<(u8, B256)>, value: U256) {
-    push_evm_cmp_candidate(values, value.wrapping_sub(U256::from(1)));
-    push_evm_cmp_candidate(values, value.wrapping_add(U256::from(1)));
+fn push_evm_cmp_boundary_candidates(
+    values: &mut Vec<(u16, bool, B256)>,
+    value: U256,
+    site: &CmpSiteSummary,
+) {
+    push_evm_cmp_candidate(values, value.wrapping_sub(U256::from(1)), site);
+    push_evm_cmp_candidate(values, value.wrapping_add(U256::from(1)), site);
 }
 
-fn push_evm_cmp_value(values: &mut Vec<(u8, B256)>, value: U256, kind: CmpKind) {
-    push_evm_cmp_candidate(values, value);
-    if matches!(kind, CmpKind::Lt | CmpKind::Gt) {
-        push_evm_cmp_boundary_candidates(values, value);
+fn push_evm_cmp_value(values: &mut Vec<(u16, bool, B256)>, value: U256, site: &CmpSiteSummary) {
+    push_evm_cmp_candidate(values, value, site);
+    if matches!(site.kind, CmpKind::Lt | CmpKind::Gt) {
+        push_evm_cmp_boundary_candidates(values, value, site);
     }
 }
 
-fn push_evm_cmp_candidate(values: &mut Vec<(u8, B256)>, value: U256) {
-    let width = if value <= U256::from(u8::MAX) {
-        8
-    } else if value <= U256::from(u16::MAX) {
-        16
-    } else if value <= U256::from(u32::MAX) {
-        32
-    } else if value <= U256::from(u64::MAX) {
-        64
-    } else {
-        0
-    };
-    values.push((width, value.into()));
+fn push_evm_cmp_candidate(values: &mut Vec<(u16, bool, B256)>, value: U256, site: &CmpSiteSummary) {
+    values.push((site.width, site.signed, value.into()));
 }
 
 fn is_small_monotonic_step(prev: U256, next: U256) -> bool {
@@ -1547,9 +1546,9 @@ mod tests {
 
         let values = raw.evm_cmp_dictionary_values();
 
-        assert!(values.contains(&(8, U256::from(42).into())));
-        assert!(!values.contains(&(8, U256::from(1).into())));
-        assert!(!values.contains(&(8, U256::from(2).into())));
+        assert!(values.contains(&(256, false, U256::from(42).into())));
+        assert!(!values.contains(&(256, false, U256::from(1).into())));
+        assert!(!values.contains(&(256, false, U256::from(2).into())));
     }
 
     #[test]
@@ -1566,12 +1565,12 @@ mod tests {
 
         let values = raw.evm_cmp_dictionary_values();
 
-        assert!(values.contains(&(8, U256::from(9).into())));
-        assert!(values.contains(&(8, U256::from(10).into())));
-        assert!(values.contains(&(8, U256::from(11).into())));
-        assert!(values.contains(&(8, U256::from(19).into())));
-        assert!(values.contains(&(8, U256::from(20).into())));
-        assert!(values.contains(&(8, U256::from(21).into())));
+        assert!(values.contains(&(256, false, U256::from(9).into())));
+        assert!(values.contains(&(256, false, U256::from(10).into())));
+        assert!(values.contains(&(256, false, U256::from(11).into())));
+        assert!(values.contains(&(256, false, U256::from(19).into())));
+        assert!(values.contains(&(256, false, U256::from(20).into())));
+        assert!(values.contains(&(256, false, U256::from(21).into())));
     }
 
     #[test]
@@ -1582,6 +1581,37 @@ mod tests {
                     .map(|i| cmp_operand(opcode::LT, CmpKind::Lt, U256::from(i), U256::from(8)))
                     .collect(),
             ),
+            ..Default::default()
+        };
+
+        assert!(raw.evm_cmp_dictionary_values().is_empty());
+    }
+
+    #[test]
+    fn evm_cmp_dictionary_values_preserves_signed_width() {
+        let mut cmp = cmp_operand(opcode::SLT, CmpKind::Lt, U256::MAX, U256::from(42));
+        cmp.signed = true;
+        cmp.width = 256;
+        let raw = RawCallResult::<EthEvmNetwork> {
+            evm_cmp_values: Some(vec![cmp]),
+            ..Default::default()
+        };
+
+        let values = raw.evm_cmp_dictionary_values();
+
+        assert!(values.contains(&(256, true, U256::MAX.into())));
+        assert!(values.contains(&(256, true, U256::from(42).into())));
+    }
+
+    #[test]
+    fn evm_cmp_dictionary_values_skips_iszero_dictionary_candidates() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            evm_cmp_values: Some(vec![cmp_operand(
+                opcode::ISZERO,
+                CmpKind::IsZero,
+                U256::from(1),
+                U256::ZERO,
+            )]),
             ..Default::default()
         };
 
@@ -1623,7 +1653,7 @@ mod tests {
             opcode,
             kind,
             signed: false,
-            width: 0,
+            width: 256,
         }
     }
 }

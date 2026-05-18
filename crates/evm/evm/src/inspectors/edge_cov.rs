@@ -36,7 +36,7 @@ pub struct CmpOperands {
     pub kind: CmpKind,
     /// Whether the comparison interprets operands as signed integers.
     pub signed: bool,
-    /// Inferred operand width in bits, or zero when unknown.
+    /// Operand width in bits.
     pub width: u16,
 }
 
@@ -205,7 +205,7 @@ impl EdgeCovInspector {
                         opcode: op,
                         kind: CmpKind::Eq,
                         signed: false,
-                        width: 0,
+                        width: 256,
                     });
                 }
             }
@@ -219,7 +219,7 @@ impl EdgeCovInspector {
                         opcode: op,
                         kind: CmpKind::Lt,
                         signed: op == opcode::SLT,
-                        width: 0,
+                        width: 256,
                     });
                 }
             }
@@ -233,7 +233,7 @@ impl EdgeCovInspector {
                         opcode: op,
                         kind: CmpKind::Gt,
                         signed: op == opcode::SGT,
-                        width: 0,
+                        width: 256,
                     });
                 }
             }
@@ -247,7 +247,7 @@ impl EdgeCovInspector {
                         opcode: op,
                         kind: CmpKind::IsZero,
                         signed: false,
-                        width: 0,
+                        width: 256,
                     });
                 }
             }

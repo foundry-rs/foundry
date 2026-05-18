@@ -118,11 +118,11 @@ impl EvmFuzzState {
     /// Collects typed comparison operands.
     /// Values are inserted into both persistent state values (survive reverts) and typed
     /// sample buckets (for ABI-aware mutation).
-    pub fn collect_typed_cmp_values(&self, values: impl IntoIterator<Item = (u8, B256)>) {
+    pub fn collect_typed_cmp_values(&self, values: impl IntoIterator<Item = (u16, bool, B256)>) {
         let mut dict = self.inner.write();
-        for (width, value) in values {
+        for (width, signed, value) in values {
             dict.insert_persistent_value(value);
-            dict.insert_typed_cmp_value(width, value);
+            dict.insert_typed_cmp_value(width, signed, value);
         }
     }
 
@@ -452,19 +452,24 @@ impl FuzzDictionary {
 
     /// Insert a typed comparison value into the `sample_values` map.
     /// Maps operand width to `DynSolType` buckets and promotes to larger types.
-    fn insert_typed_cmp_value(&mut self, width: u8, value: B256) {
+    fn insert_typed_cmp_value(&mut self, width: u16, signed: bool, value: B256) {
         if !self.samples_seeded {
             self.seed_samples();
         }
 
         const MAX_TYPED_CMP_PER_BUCKET: usize = 1024;
 
-        let native_type = match width {
-            8 => DynSolType::Uint(8),
-            16 => DynSolType::Uint(16),
-            32 => DynSolType::Uint(32),
-            64 => DynSolType::Uint(64),
-            _ => DynSolType::Uint(256),
+        let native_type = match (signed, width) {
+            (true, 8) => DynSolType::Int(8),
+            (true, 16) => DynSolType::Int(16),
+            (true, 32) => DynSolType::Int(32),
+            (true, 64) => DynSolType::Int(64),
+            (true, _) => DynSolType::Int(256),
+            (false, 8) => DynSolType::Uint(8),
+            (false, 16) => DynSolType::Uint(16),
+            (false, 32) => DynSolType::Uint(32),
+            (false, 64) => DynSolType::Uint(64),
+            (false, _) => DynSolType::Uint(256),
         };
 
         let insert = |map: &mut HashMap<DynSolType, B256IndexSet>, ty: DynSolType, val: B256| {
@@ -476,11 +481,14 @@ impl FuzzDictionary {
 
         insert(&mut self.sample_values, native_type, value);
 
-        if width <= 64 {
+        if signed {
+            insert(&mut self.sample_values, DynSolType::Int(256), value);
+        } else if width <= 64 {
             insert(&mut self.sample_values, DynSolType::Uint(128), value);
             insert(&mut self.sample_values, DynSolType::Uint(256), value);
+        } else {
+            insert(&mut self.sample_values, DynSolType::Uint(256), value);
         }
-        insert(&mut self.sample_values, DynSolType::Int(256), value);
     }
 
     fn insert_value_u256(&mut self, value: U256) -> bool {
