@@ -6,7 +6,7 @@ use alloy_ens::NameOrAddress;
 use alloy_network::{
     Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, TransactionBuilder,
 };
-use alloy_primitives::{Address, hex};
+use alloy_primitives::{Address, B256, hex};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
@@ -22,6 +22,7 @@ use foundry_common::{
     tempo::TEMPO_BROWSER_GAS_BUFFER,
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
+use serde_json::Value;
 use tempo_alloy::TempoNetwork;
 
 use crate::{
@@ -245,6 +246,21 @@ impl SendTxArgs {
         // Launch browser signer if `--browser` flag is set
         let browser = send_tx.browser.run::<N>().await?;
 
+        // --sponsor-url is only valid with a local signer (Case 4). Bail early with a clear
+        // error rather than silently ignoring it in the other signing paths.
+        if let Some(ref url) = sponsor_url {
+            validate_sponsor_url(url)?;
+            if unlocked {
+                eyre::bail!("--sponsor-url cannot be combined with --unlocked");
+            }
+            if browser.is_some() {
+                eyre::bail!("--sponsor-url cannot be combined with --browser");
+            }
+            if access_key.is_some() {
+                eyre::bail!("--sponsor-url cannot be combined with a Tempo access key");
+            }
+        }
+
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
         // This should be the only way this RPC method is used as it requires a local node
@@ -351,11 +367,22 @@ impl SendTxArgs {
 
             tx::validate_from_address(send_tx.eth.wallet.from, from)?;
 
-            let (tx_request, _) = builder.build(&signer).await?;
+            let (mut tx_request, _) = builder.build(&signer).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
                 tx_request.nonce().unwrap_or_default(),
             )?;
+
+            // Set a placeholder fee_payer_signature so encode_for_signing produces the
+            // *sponsored* signing payload. The sender must commit to this variant; otherwise
+            // the sponsor can't attach its real signature later without invalidating the
+            // sender's hash. The sponsor service will overwrite this placeholder.
+            let dummy_sponsor_sig = Signature::from_scalars_and_parity(
+                B256::with_last_byte(1),
+                B256::with_last_byte(1),
+                false,
+            );
+            tx_request.set_fee_payer_signature(dummy_sponsor_sig);
 
             // Sign the tx locally.
             let wallet = EthereumWallet::from(signer);
@@ -473,6 +500,29 @@ where
     CastTxSender::new(provider).print_tx_result(tx_hash, cast_async, confirmations, timeout).await
 }
 
+/// Validates that a sponsor URL uses https:// (localhost/127.0.0.1 may use http://).
+fn validate_sponsor_url(url: &str) -> Result<()> {
+    let lower = url.to_lowercase();
+    if lower.starts_with("https://") {
+        return Ok(());
+    }
+    if lower.starts_with("http://") {
+        // Allow plain http only for local testing.
+        let host_part = lower.trim_start_matches("http://");
+        if host_part.starts_with("localhost") || host_part.starts_with("127.0.0.1") {
+            return Ok(());
+        }
+        eyre::bail!(
+            "--sponsor-url must use https:// for non-local endpoints (got {url}). \
+             The sponsor relay is a trusted third party; use an encrypted channel."
+        );
+    }
+    eyre::bail!(
+        "--sponsor-url must start with https:// (got {url}). \
+         The sponsor relay is a trusted third party; use an encrypted channel."
+    );
+}
+
 /// Sends a user-signed raw transaction to a remote sponsor service via JSON-RPC
 /// `eth_signRawTransaction`. The service adds its fee payer signature and returns the
 /// fully-sponsored raw transaction bytes, which are then ready for submission via the
@@ -503,13 +553,13 @@ async fn sign_via_sponsor_url(url: &str, raw_tx_hex: &str) -> Result<String> {
 
     #[derive(serde::Deserialize)]
     struct JsonRpcResponse {
-        result: Option<String>,
+        result: Option<Value>,
         error: Option<JsonRpcError>,
     }
+    // Standard JSON-RPC error object: {code, message, data?}
     #[derive(serde::Deserialize)]
     struct JsonRpcError {
         message: Option<String>,
-        name: Option<String>,
         code: Option<i64>,
     }
 
@@ -517,10 +567,13 @@ async fn sign_via_sponsor_url(url: &str, raw_tx_hex: &str) -> Result<String> {
         serde_json::from_str(&text).map_err(|e| eyre!("invalid sponsor service response: {e}"))?;
 
     if let Some(err) = parsed.error {
-        let msg =
-            err.message.or(err.name).unwrap_or_else(|| format!("code {}", err.code.unwrap_or(-1)));
+        let msg = err.message.unwrap_or_else(|| format!("code {}", err.code.unwrap_or(-1)));
         eyre::bail!("sponsor service error: {msg}");
     }
 
-    parsed.result.ok_or_else(|| eyre!("sponsor service returned no signed transaction"))
+    match parsed.result {
+        Some(serde_json::Value::String(s)) => Ok(s),
+        Some(other) => Err(eyre!("sponsor service returned unexpected result type: {other}")),
+        None => Err(eyre!("sponsor service returned no result")),
+    }
 }
