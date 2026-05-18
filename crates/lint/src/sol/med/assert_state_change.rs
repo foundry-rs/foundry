@@ -5,8 +5,11 @@ use crate::{
 };
 use solar::{
     ast::UnOpKind,
-    interface::{Span, sym},
-    sema::hir::{self, ExprKind, ItemId, Res},
+    interface::{Span, kw, sym},
+    sema::{
+        Hir,
+        hir::{ContractId, Expr, ExprKind, FunctionId, ItemId, Res, TypeKind},
+    },
 };
 
 declare_forge_lint!(
@@ -17,13 +20,8 @@ declare_forge_lint!(
 );
 
 impl<'hir> LateLintPass<'hir> for AssertStateChange {
-    fn check_expr(
-        &mut self,
-        ctx: &LintContext,
-        hir: &'hir hir::Hir<'hir>,
-        expr: &'hir hir::Expr<'hir>,
-    ) {
-        let hir::ExprKind::Call(callee, args, _) = &expr.kind else { return };
+    fn check_expr(&mut self, ctx: &LintContext, hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) {
+        let ExprKind::Call(callee, args, _) = &expr.kind else { return };
         if !is_assert(callee) {
             return;
         }
@@ -42,14 +40,14 @@ impl<'hir> LateLintPass<'hir> for AssertStateChange {
     }
 }
 
-fn is_assert(callee: &hir::Expr<'_>) -> bool {
+fn is_assert(callee: &Expr<'_>) -> bool {
     let ExprKind::Ident(reses) = &callee.kind else { return false };
     reses.iter().any(|r| matches!(r, Res::Builtin(b) if b.name() == sym::assert))
 }
 
 /// Recursively searches `expr` for the first sub-expression that modifies state.
 /// Returns its span so the diagnostic points at exactly where the mutation occurs.
-fn find_state_change<'hir>(hir: &hir::Hir<'hir>, expr: &'hir hir::Expr<'hir>) -> Option<Span> {
+fn find_state_change<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Span> {
     match &expr.kind {
         // x = y, x += y, etc., only when the lvalue targets a state variable
         ExprKind::Assign(lhs, _, rhs) => {
@@ -87,6 +85,21 @@ fn find_state_change<'hir>(hir: &hir::Hir<'hir>, expr: &'hir hir::Expr<'hir>) ->
                 && lvalue_is_state_var(hir, base)
             {
                 return Some(expr.span);
+            }
+
+            // Known always-mutating member calls: .call(), .delegatecall(), .send(), .transfer()
+            if let ExprKind::Member(_, method) = &callee.kind {
+                let n = method.name;
+                if n == kw::Call || n == kw::Delegatecall || n == sym::send || n == sym::transfer {
+                    return Some(expr.span);
+                }
+            }
+
+            // Resolvable contract member calls: check mutates_state() via HIR
+            if let Some(fid) = resolve_member_function(hir, callee) {
+                if hir.function(fid).mutates_state() {
+                    return Some(expr.span);
+                }
             }
 
             // Bare-identifier internal function calls: check mutates_state()
@@ -143,9 +156,40 @@ fn find_state_change<'hir>(hir: &hir::Hir<'hir>, expr: &'hir hir::Expr<'hir>) ->
     }
 }
 
+/// Resolves a member-call callee expression to a HIR `FunctionId` if the base is a
+/// typed contract variable or interface cast, enabling `mutates_state()` checks.
+fn resolve_member_function<'hir>(hir: &Hir<'hir>, callee: &'hir Expr<'hir>) -> Option<FunctionId> {
+    let ExprKind::Member(base, method) = &callee.peel_parens().kind else { return None };
+    let cid = contract_id_of(hir, base)?;
+    hir.contract_item_ids(cid).find_map(|item| {
+        let fid = item.as_function()?;
+        hir.function(fid).name.is_some_and(|n| n.name == method.name).then_some(fid)
+    })
+}
+
+/// Extracts the contract ID from an expression that is a contract variable or interface cast.
+fn contract_id_of<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<ContractId> {
+    match &expr.peel_parens().kind {
+        // `token.foo()` where `token` is a state/local variable of contract type
+        ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
+            if let TypeKind::Custom(ItemId::Contract(cid)) = hir.variable(*id).ty.kind {
+                Some(cid)
+            } else {
+                None
+            }
+        }
+        // `IToken(addr).foo()` — explicit interface cast
+        ExprKind::Call(
+            Expr { kind: ExprKind::Ident([Res::Item(ItemId::Contract(cid))]), .. },
+            ..,
+        ) => Some(*cid),
+        _ => None,
+    }
+}
+
 /// Returns `true` if the lvalue expression ultimately targets a storage variable.
 /// Peels through index, slice, member, and payable wrappers to find the root identifier.
-fn lvalue_is_state_var(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+fn lvalue_is_state_var(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
             hir.variable(*id).is_state_variable()

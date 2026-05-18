@@ -81,3 +81,28 @@ contract AssertStateChange {
         assert((local = val) > 0);
     }
 }
+
+interface IToken {
+    function transfer(address to, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+}
+
+contract AssertStateChangeExternal {
+    IToken public token;
+    address payable public recipient;
+
+    // Bad: .send() always transfers ether (state-changing), returns bool
+    function badSend() external {
+        assert(recipient.send(1 ether)); //~WARN: assert() argument contains a state-modifying expression
+    }
+
+    // Bad: interface call to a non-view function
+    function badInterfaceCall(address to, uint256 amt) external {
+        assert(token.transfer(to, amt)); //~WARN: assert() argument contains a state-modifying expression
+    }
+
+    // Good: view function on an interface does not mutate state
+    function goodInterfaceView(uint256 expected) external view {
+        assert(token.balanceOf(address(this)) >= expected);
+    }
+}
