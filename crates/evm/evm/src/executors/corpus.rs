@@ -119,6 +119,14 @@ struct CorpusEntry {
     /// Timestamp of when this entry was written to disk in seconds.
     #[serde(skip_serializing)]
     timestamp: u64,
+    /// Transient flag: when `true`, `new_input` returns this entry's
+    /// calldata verbatim on its next selection and then clears the flag.
+    /// Only set by `insert_symexec_candidate` so that a candidate whose
+    /// scalar argument is the precise magic the worker discovered gets
+    /// one un-mutated shot at the contract before `abi_mutate` scrambles
+    /// it. Not serialized — restarts lose the hint, which is fine.
+    #[serde(skip_serializing, default)]
+    try_verbatim_once: bool,
 }
 
 impl CorpusEntry {
@@ -149,6 +157,7 @@ impl CorpusEntry {
                 .duration_since(UNIX_EPOCH)
                 .expect("time went backwards")
                 .as_secs(),
+            try_verbatim_once: false,
         }
     }
 
@@ -717,23 +726,22 @@ impl WorkerCorpus {
             self.new_tx(test_runner)?
         } else {
             let idx = test_runner.rng().random_range(0..self.in_memory_corpus.len());
-            // If a corpus entry has never been tried verbatim
-            // (`total_mutations == 0`), return its calldata as-is so that
-            // newly-imported entries (in particular ones the symbolic-assist
-            // worker pushes via `insert_symexec_candidate`) get one shot at
-            // the contract before their bytes are scrambled by `abi_mutate`.
-            // Without this, candidates that hit a precise guard (e.g. a
-            // 32-byte EQ magic the worker copied from a runtime compare)
-            // are immediately mutated and lose the value the worker spent
-            // effort discovering.
-            let is_pristine = self.in_memory_corpus[idx].total_mutations == 0;
-            if is_pristine {
-                let tx = self.in_memory_corpus[idx].tx_seq.first().unwrap().clone();
-                // Bump `total_mutations` so the same entry isn't returned
-                // verbatim forever; the next selection will go through
-                // `abi_mutate` normally.
-                self.in_memory_corpus[idx].total_mutations += 1;
-                tx
+            // If a corpus entry was inserted with `try_verbatim_once`
+            // (i.e. via `insert_symexec_candidate`), run it as-is once so
+            // the precise scalar the worker discovered (e.g. a 32-byte EQ
+            // magic copied from a runtime compare) isn't scrambled by
+            // `abi_mutate` on its very first selection. Clear the flag so
+            // subsequent selections of the same entry follow the normal
+            // mutate-then-credit path.
+            if self.in_memory_corpus[idx].try_verbatim_once {
+                self.in_memory_corpus[idx].try_verbatim_once = false;
+                let corpus = &self.in_memory_corpus[idx];
+                // Set `current_mutated` so `process_inputs` still credits
+                // this entry if the verbatim run produces new coverage —
+                // a productive verbatim hit should affect favorability,
+                // just like a productive mutated hit would.
+                self.current_mutated = Some(corpus.uuid);
+                corpus.tx_seq.first().unwrap().clone()
             } else {
                 let corpus = &self.in_memory_corpus[idx];
                 self.current_mutated = Some(corpus.uuid);
@@ -1179,13 +1187,6 @@ impl WorkerCorpus {
         self.history_map.clone()
     }
 
-    /// Path to the master worker's `sync/` directory. The symbolic-assist
-    /// worker writes accepted candidates here so the next `sync()` cycle
-    /// imports them.
-    pub fn master_sync_dir(&self) -> Option<PathBuf> {
-        self.config.corpus_dir.as_ref().map(|d| d.join(format!("{WORKER}0")).join(SYNC_DIR))
-    }
-
     /// Directly insert a validated symbolic-assist candidate into the
     /// master's in-memory corpus *and* persist it to disk.
     ///
@@ -1199,7 +1200,11 @@ impl WorkerCorpus {
         let corpus_dir = worker_dir.join(CORPUS_DIR);
         foundry_common::fs::create_dir_all(&corpus_dir)?;
 
-        let corpus = CorpusEntry::new(tx_seq);
+        let mut corpus = CorpusEntry::new(tx_seq);
+        // Ask `new_input` to return this entry as-is on its very first
+        // selection so the magic value the worker spent effort discovering
+        // gets one un-mutated shot.
+        corpus.try_verbatim_once = true;
         if let Err(err) = corpus.write_to_disk_in(&corpus_dir, self.config.corpus_gzip) {
             debug!(target: "corpus", %err, "failed to persist symexec corpus entry");
         }
@@ -1232,13 +1237,17 @@ impl WorkerCorpus {
         if !self.config.collect_evm_edge_coverage() {
             return Ok(false);
         }
+        // DO NOT call `collect_edge_coverage(true)` here: it replaces the
+        // `EdgeCovInspector` with a fresh one whose `DefaultHashBuilder`
+        // is a *different* random seed, so the resulting
+        // `result.edge_coverage` would bucket edges under indices that do
+        // not correspond to anything in `self.history_map`. If the live
+        // executor truly has no `EdgeCovInspector` we have no way to
+        // produce comparable buckets, so bail out conservatively.
+        if executor.inspector().inner.edge_coverage.is_none() {
+            return Ok(false);
+        }
         let mut executor = executor.clone();
-        // Ensure edge coverage is enabled on the clone we replay through.
-        // Without this the cloned inspector could be missing the
-        // `EdgeCovInspector` (depending on how the caller built it), and
-        // `result.edge_coverage` would be `None`, making `merge_all_coverage`
-        // silently report no new coverage.
-        executor.inspector_mut().collect_edge_coverage(true);
         let mut history = self.history_map.clone();
         let mut sancov_history = self.sancov_history_map.clone();
         let mut produced_new = false;

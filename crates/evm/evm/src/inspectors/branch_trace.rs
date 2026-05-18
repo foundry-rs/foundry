@@ -245,16 +245,14 @@ impl<CTX> Inspector<CTX> for BranchTraceInspector {
                 self.pending_cmp = None;
                 self.prev_pending_cmp = None;
             }
-            // PUSH0..PUSH32, JUMPDEST, and DUP/SWAP/POP are pure stack /
-            // no-op fillers that commonly sit between the compare and the
-            // JUMPI in Solidity's `EQ; ISZERO; PUSH; JUMPI` lowering and
-            // similar IR-emitted patterns (e.g. `EQ; SWAP; ISZERO; PUSH;
-            // JUMPI`). Keep the pending compare window open across them.
-            opcode::PUSH0..=opcode::PUSH32
-            | opcode::DUP1..=opcode::DUP16
-            | opcode::SWAP1..=opcode::SWAP16
-            | opcode::POP
-            | opcode::JUMPDEST => {}
+            // Only opcodes that cannot move or consume the compare result
+            // before it reaches the next `JUMPI`. PUSH/JUMPDEST are
+            // common between the compare and the JUMPI in Solidity
+            // lowerings (`EQ; ISZERO; PUSH dest; JUMPI`). DUP/SWAP/POP
+            // are deliberately not included: they can copy, reorder, or
+            // discard the cmp result on the stack, which would let us
+            // attribute a stale compare to an unrelated JUMPI.
+            opcode::PUSH0..=opcode::PUSH32 | opcode::JUMPDEST => {}
             _ => {
                 // Any other opcode invalidates the pending-compare window.
                 if self.pending_cmp.is_some() {

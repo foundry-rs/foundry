@@ -24,19 +24,24 @@
 //! - hard CPU budget per cycle.
 
 use crate::{
-    executors::{Executor, corpus::WorkerCorpus},
+    executors::{Executor, corpus::WorkerCorpus, invariant::execute_tx},
     inspectors::BranchTrace,
 };
 use alloy_json_abi::Function;
-use alloy_primitives::{B256, U256, keccak256, map::DefaultHashBuilder};
+use alloy_primitives::{B256, keccak256, map::DefaultHashBuilder};
 use eyre::Result;
-use foundry_common::fs::write_json_file;
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
-use std::{
-    path::Path,
-    time::{SystemTime, UNIX_EPOCH},
-};
+
+/// Fallback hash builder used when the live executor has no
+/// `EdgeCovInspector`. This is only safe to use as a *parity*-with-itself
+/// builder — frontier IDs computed against it will not match `history_map`,
+/// so the worker only ever produces this when there is nothing to compare
+/// against. Real cycles must use [`Executor::inspector().inner.edge_coverage`]'s
+/// hash builder instead (see `run_symexec_assist`).
+fn fallback_hash_builder() -> DefaultHashBuilder {
+    DefaultHashBuilder::default()
+}
 
 mod mutate;
 mod select;
@@ -152,7 +157,10 @@ pub fn run_symexec_assist<FEN: FoundryEvmNetwork>(
 
     // Only the final tx's branches are eligible for mutation, so we
     // only need to *trace* that final tx — the prefix is replayed purely
-    // to set up state for stateful tests.
+    // to set up state for stateful tests. Use `execute_tx` (the same
+    // helper invariant/fuzz use) so warp, roll and bounded value are
+    // honored faithfully — otherwise the replay can diverge from the
+    // path the real fuzz loop took.
     let tx_index = seed.tx_seq.len().saturating_sub(1);
     let mut trace = BranchTrace::default();
     for (i, tx) in seed.tx_seq.iter().enumerate() {
@@ -161,12 +169,7 @@ pub fn run_symexec_assist<FEN: FoundryEvmNetwork>(
         } else {
             replay_executor.inspector_mut().collect_branch_trace(false);
         }
-        let mut result = replay_executor.call_raw(
-            tx.sender,
-            tx.call_details.target,
-            tx.call_details.calldata.clone(),
-            U256::ZERO,
-        )?;
+        let mut result = execute_tx(&mut replay_executor, tx)?;
         if i == tx_index
             && let Some(t) = result.branch_trace.take()
         {
@@ -196,7 +199,18 @@ pub fn run_symexec_assist<FEN: FoundryEvmNetwork>(
 
     // 3. Pick a frontier + propose candidates.
     let history = corpus.history_map_snapshot();
-    let hash_builder = DefaultHashBuilder::default();
+    // CRITICAL: frontier IDs must hash through the *same* `BuildHasher`
+    // that `EdgeCovInspector::store_hit` used to populate `history_map`.
+    // `DefaultHashBuilder` (alloy's `foldhash::fast::RandomState`) is
+    // randomly seeded per instance, so a fresh `::default()` here would
+    // index into a completely different bucket than the live history map.
+    let hash_builder = executor
+        .inspector()
+        .inner
+        .edge_coverage
+        .as_deref()
+        .map(|ec| ec.hash_builder().clone())
+        .unwrap_or_else(fallback_hash_builder);
     let candidates = propose_candidates(
         &seed.tx_seq,
         &trace,
@@ -222,14 +236,11 @@ pub fn run_symexec_assist<FEN: FoundryEvmNetwork>(
             continue;
         }
 
-        // Insert directly into the master's in-memory corpus instead of
-        // routing through `sync/` + `calibrate()`. The sync timestamp is
-        // only second-resolution, so candidates produced within the same
-        // second as the most recent sync were silently filtered out.
-        // Also persist a `sync/` copy for inspection / crash recovery.
-        if let Some(sync_dir) = corpus.master_sync_dir() {
-            let _ = write_sync_entry(&sync_dir, &candidate.tx_seq);
-        }
+        // Insert directly into the master's in-memory corpus and on
+        // disk. We deliberately do NOT also write to `worker0/sync/`:
+        // that path is second-resolution and would cause the same
+        // candidate to be re-imported (or stale-skipped) by a later
+        // `calibrate()` call.
         corpus.insert_symexec_candidate(candidate.tx_seq)?;
         accepted += 1;
     }
@@ -250,12 +261,4 @@ fn candidate_hash(seq: &[BasicTxDetails]) -> B256 {
     keccak256(&bytes)
 }
 
-/// Helper used by [`run_symexec_assist`] to write a raw `Vec<BasicTxDetails>`
-/// JSON file into a worker's `sync/` directory.
-pub fn write_sync_entry(sync_dir: &Path, seq: &[BasicTxDetails]) -> Result<()> {
-    let uuid = uuid::Uuid::new_v4();
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let path = sync_dir.join(format!("{uuid}-{ts}.json"));
-    write_json_file(&path, &seq)?;
-    Ok(())
-}
+

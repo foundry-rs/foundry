@@ -53,6 +53,17 @@ impl EdgeCovInspector {
         self.hitcount
     }
 
+    /// Returns the `BuildHasher` this inspector uses for edge IDs.
+    ///
+    /// `DefaultHashBuilder` (alloy's `foldhash::fast::RandomState`) is
+    /// randomly seeded per-instance, so any helper that wants to compute
+    /// the same `edge_id` as `store_hit` MUST hash through this exact
+    /// builder. The symbolic-assist worker uses it to derive frontier
+    /// edge IDs that match the same buckets in `history_map`.
+    pub const fn hash_builder(&self) -> &DefaultHashBuilder {
+        &self.hash_builder
+    }
+
     /// Mark the edge, H(address, pc, jump_dest), as hit.
     fn store_hit(&mut self, address: Address, pc: usize, jump_dest: U256) {
         let mut hasher = self.hash_builder.build_hasher();
