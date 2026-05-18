@@ -1,6 +1,6 @@
-use super::symbolic_helpers::assert_symbolic_witness;
+use super::assert_symbolic_witness;
 use crate::skip_unless_z3;
-use foundry_test_utils::forgetest_init;
+use foundry_test_utils::{forgetest_init, str};
 
 // SWC-104 unchecked low-level call: failure is reachable when the callee
 // returns false, but the caller still marks the operation as complete.
@@ -27,5 +27,16 @@ contract SwcUncheckedCallTarget {
     );
 
     assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkUncheckedCall"]))
-        .failure();
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SwcUncheckedCall.t.sol:SwcUncheckedCallTarget
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic CALL target] checkUncheckedCall(address) ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });

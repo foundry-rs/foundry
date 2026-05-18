@@ -1,6 +1,6 @@
-use super::symbolic_helpers::assert_symbolic_witness;
+use super::assert_symbolic_witness;
 use crate::skip_unless_z3;
-use foundry_test_utils::forgetest_init;
+use foundry_test_utils::{forgetest_init, str};
 
 // hevm-style symbolic calldata constraint: a magic calldata value should be
 // solved directly rather than found through random fuzzing.
@@ -21,5 +21,16 @@ contract HevmCalldataConstraint {
     );
 
     assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkMagic"]))
-        .failure();
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/HevmCalldataConstraint.t.sol:HevmCalldataConstraint
+[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkMagic(bytes4,uint256) ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });

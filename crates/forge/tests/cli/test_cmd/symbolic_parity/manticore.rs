@@ -1,6 +1,6 @@
-use super::symbolic_helpers::assert_symbolic_witness;
+use super::assert_symbolic_witness;
 use crate::skip_unless_z3;
-use foundry_test_utils::forgetest_init;
+use foundry_test_utils::{forgetest_init, str};
 
 // Manticore-style multi-transaction state exploration: the bug requires a
 // setup transaction before the final assertion can fail.
@@ -31,5 +31,18 @@ contract ManticoreMultiTx {
         "--match-test",
         "invariant_neverArmed",
     ]))
-    .failure();
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/ManticoreMultiTx.t.sol:ManticoreMultiTx
+[FAIL: failed to set up invariant testing environment: No contracts to fuzz.] invariant_neverArmed() (runs: 0, calls: 0, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
 });

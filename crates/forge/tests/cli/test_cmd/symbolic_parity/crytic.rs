@@ -1,4 +1,4 @@
-use super::symbolic_helpers::assert_symbolic_witness;
+use super::assert_symbolic_witness;
 use crate::skip_unless_z3;
 use foundry_test_utils::{forgetest_init, str};
 

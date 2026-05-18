@@ -1,6 +1,6 @@
-use super::symbolic_helpers::assert_symbolic_witness;
+use super::assert_symbolic_witness;
 use crate::skip_unless_z3;
-use foundry_test_utils::forgetest_init;
+use foundry_test_utils::{forgetest_init, str};
 
 // Scribble/Harvey-style instrumented property: the annotation is represented
 // as an inserted assert, which is what the engine ultimately has to prove.
@@ -34,5 +34,16 @@ contract ScribbleInstrumentedSupply {
         "--match-test",
         "checkSupplyAnnotation",
     ]))
-    .failure();
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/ScribbleInstrumentedSupply.t.sol:ScribbleInstrumentedSupply
+[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkSupplyAnnotation(address,uint8) ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
