@@ -271,16 +271,17 @@ pub fn spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> OpSpecId {
 /// Trait for converting an [`EvmVersion`] into a network-specific spec type.
 pub trait FromEvmVersion: From<FoundryHardfork> {
     fn from_evm_version(version: EvmVersion) -> Self;
+}
 
+/// Trait for parsing and displaying a network-specific execution spec.
+pub trait ExecutionSpec: FromEvmVersion {
     fn evm_version_name(&self) -> String;
 
     fn from_network_hardfork(_: &str) -> Option<Self> {
         None
     }
 
-    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
-        Some(hardfork.into())
-    }
+    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self>;
 }
 
 impl FromEvmVersion for SpecId {
@@ -302,7 +303,9 @@ impl FromEvmVersion for SpecId {
             EvmVersion::Osaka => Self::OSAKA,
         }
     }
+}
 
+impl ExecutionSpec for SpecId {
     fn evm_version_name(&self) -> String {
         self.to_string()
     }
@@ -338,7 +341,9 @@ impl FromEvmVersion for OpSpecId {
             EvmVersion::Osaka => Self::JOVIAN,
         }
     }
+}
 
+impl ExecutionSpec for OpSpecId {
     fn evm_version_name(&self) -> String {
         let name: &'static str = (*self).into();
         name.to_string()
@@ -360,7 +365,9 @@ impl FromEvmVersion for TempoHardfork {
     fn from_evm_version(_: EvmVersion) -> Self {
         Self::default()
     }
+}
 
+impl ExecutionSpec for TempoHardfork {
     fn evm_version_name(&self) -> String {
         self.to_string()
     }
@@ -381,7 +388,9 @@ impl FromEvmVersion for MonadHardfork {
     fn from_evm_version(_: EvmVersion) -> Self {
         Self::default()
     }
+}
 
+impl ExecutionSpec for MonadHardfork {
     fn evm_version_name(&self) -> String {
         self.to_string()
     }
@@ -404,7 +413,7 @@ pub fn evm_spec_id<SPEC: FromEvmVersion>(evm_version: EvmVersion) -> SPEC {
 }
 
 /// Parses an EVM version or network-specific hardfork into the given spec type.
-pub fn evm_spec_id_from_str<SPEC: FromEvmVersion>(evm_version: &str) -> Option<SPEC> {
+pub fn evm_spec_id_from_str<SPEC: ExecutionSpec>(evm_version: &str) -> Option<SPEC> {
     let evm_version = evm_version.trim();
 
     if let Ok(version) = EvmVersion::from_str(evm_version) {

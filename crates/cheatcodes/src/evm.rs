@@ -50,7 +50,7 @@ use std::{
 
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
-use foundry_config::{FromEvmVersion, evm_spec_id_from_str};
+use foundry_config::{ExecutionSpec, evm_spec_id_from_str};
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::Serialize;
 

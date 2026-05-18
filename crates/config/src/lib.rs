@@ -54,7 +54,7 @@ mod macros;
 
 pub mod utils;
 pub use foundry_evm_hardforks::{
-    FoundryHardfork, FromEvmVersion, evm_spec_id, evm_spec_id_from_str,
+    ExecutionSpec, FoundryHardfork, FromEvmVersion, evm_spec_id, evm_spec_id_from_str,
 };
 pub use utils::*;
 

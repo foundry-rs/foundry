@@ -15,7 +15,7 @@ use alloy_op_evm::OpEvmFactory;
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
-use foundry_config::FromEvmVersion;
+use foundry_config::ExecutionSpec;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
 use op_alloy_network::Optimism;
 use op_revm::OpHaltReason;
@@ -111,7 +111,7 @@ pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
 
 pub trait FoundryEvmFactory:
     EvmFactory<
-        Spec: Into<SpecId> + FromEvmVersion + Default + Copy + Unpin + Send + 'static,
+        Spec: Into<SpecId> + ExecutionSpec + Default + Copy + Unpin + Send + 'static,
         BlockEnv: FoundryBlock + ForkBlockEnv + Default + Unpin,
         Tx: Clone + Debug + FoundryTransaction + FromAnyRpcTransaction + Default + Send + Sync,
         HaltReason: IntoInstructionResult,
