@@ -121,7 +121,7 @@ impl FoundryHardfork {
 
     /// Auto-detect the active hardfork for a given chain at a specific timestamp.
     ///
-    /// Tries Ethereum, then Optimism. Returns `None` for unknown chains.
+    /// Tries Ethereum, Optimism, then Tempo. Returns `None` for unknown chains.
     pub fn from_chain_and_timestamp(chain_id: u64, timestamp: u64) -> Option<Self> {
         let chain = Chain::from_id(chain_id);
         if let Some(fork) = EthereumHardfork::from_chain_and_timestamp(chain, timestamp) {
@@ -131,8 +131,9 @@ impl FoundryHardfork {
         if let Some(fork) = OpHardfork::from_chain_and_timestamp(chain, timestamp) {
             return Some(Self::Optimism(fork));
         }
-        // TODO: add tempo support after https://github.com/tempoxyz/tempo/pull/3514 release
-        // providing TempoHardfork::from_chain_and_timestamp
+        if let Some(fork) = TempoHardfork::from_chain_and_timestamp(chain_id, timestamp) {
+            return Some(Self::Tempo(fork));
+        }
         None
     }
 }
@@ -447,6 +448,14 @@ mod tests {
     }
 
     #[test]
+    fn test_foundry_hardfork_from_str_parses_tempo_t5() {
+        assert_eq!(
+            "tempo:T5".parse::<FoundryHardfork>(),
+            Ok(FoundryHardfork::Tempo(TempoHardfork::T5))
+        );
+    }
+
+    #[test]
     fn test_hardfork_from_block_tag_numbers() {
         assert_eq!(
             ethereum_hardfork_from_block_tag(MAINNET_HOMESTEAD_BLOCK - 1),
@@ -480,6 +489,28 @@ mod tests {
     #[test]
     fn test_from_chain_and_timestamp_unknown_chain() {
         assert_eq!(FoundryHardfork::from_chain_and_timestamp(999999, 0), None);
+    }
+
+    #[test]
+    fn test_from_chain_and_timestamp_tempo_presto() {
+        let presto_chain_id = 4217;
+        let t3_activation = TempoHardfork::T3.mainnet_activation_timestamp().unwrap();
+
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(presto_chain_id, t3_activation),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T3))
+        );
+    }
+
+    #[test]
+    fn test_from_chain_and_timestamp_tempo_moderato() {
+        let moderato_chain_id = 42431;
+        let t3_activation = TempoHardfork::T3.moderato_activation_timestamp().unwrap();
+
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(moderato_chain_id, t3_activation),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T3))
+        );
     }
 
     #[cfg(feature = "optimism")]

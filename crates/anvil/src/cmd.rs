@@ -250,9 +250,22 @@ impl NodeArgs {
 
         let funded_accounts = self.parse_funded_accounts()?;
 
+        let networks = if let Some(chain_id) = self.evm.chain_id
+            && !self.evm.networks.has_network_config()
+        {
+            self.evm.networks.with_chain_id(u64::from(chain_id))
+        } else {
+            self.evm.networks
+        };
         let hardfork = match &self.hardfork {
-            Some(hf) => Some(parse_hardfork(hf, &self.evm.networks)?),
+            Some(hf) => Some(parse_hardfork(hf, &networks)?),
             None => None,
+        };
+        let networks = match hardfork {
+            Some(hardfork) => {
+                networks.normalize_for_hardfork(hardfork).map_err(eyre::Report::msg)?
+            }
+            None => networks,
         };
 
         Ok(NodeConfig::default()
@@ -308,7 +321,7 @@ impl NodeArgs {
             .with_transaction_block_keeper(self.transaction_block_keeper)
             .with_max_transactions(self.max_transactions)
             .with_max_persisted_states(self.max_persisted_states)
-            .with_networks(self.evm.networks)
+            .with_networks(networks)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
@@ -877,6 +890,10 @@ impl FromStr for ForkUrl {
 
 /// Parses a hardfork string against the active network configuration.
 fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHardfork> {
+    if let Ok(hardfork) = FoundryHardfork::from_str(hf) {
+        return Ok(hardfork);
+    }
+
     #[cfg(feature = "optimism")]
     if networks.is_optimism() {
         return Ok(OpHardfork::from_str(hf)?.into());
@@ -941,6 +958,60 @@ mod tests {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "berlin"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, Some(EthereumHardfork::Berlin.into()));
+    }
+
+    #[test]
+    fn can_parse_namespaced_tempo_hardfork() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "tempo:T5"]);
+        let config = args.into_node_config().unwrap();
+
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+        assert!(config.networks.is_tempo());
+    }
+
+    #[test]
+    fn chain_id_infers_tempo_network() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--chain-id", "42431"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+    }
+
+    #[test]
+    fn chain_id_inferred_tempo_network_parses_tempo_hardfork() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--chain-id", "42431", "--hardfork", "T5"]);
+        let config = args.into_node_config().unwrap();
+
+        assert_eq!(config.hardfork, Some(TempoHardfork::T5.into()));
+        assert!(config.networks.is_tempo());
+    }
+
+    #[test]
+    fn explicit_celo_network_takes_precedence_over_tempo_chain_id() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--celo", "--chain-id", "42431"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_celo());
+        assert!(!config.networks.is_tempo());
+    }
+
+    #[test]
+    fn explicit_tempo_network_takes_precedence_over_celo_chain_id() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--tempo", "--chain-id", "42220"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_tempo());
+        assert!(!config.networks.is_celo());
+    }
+
+    #[test]
+    fn explicit_ethereum_network_rejects_tempo_hardfork() {
+        let args: NodeArgs =
+            NodeArgs::parse_from(["anvil", "--network", "ethereum", "--hardfork", "tempo:T5"]);
+        let err = args.into_node_config().unwrap_err();
+
+        assert!(err.to_string().contains("network config `ethereum`"));
     }
 
     #[test]

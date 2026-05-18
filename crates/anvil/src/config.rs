@@ -580,6 +580,14 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
+        if self.networks.is_tempo()
+            && let Some(hardfork) = TempoHardfork::from_chain_and_timestamp(
+                self.get_chain_id(),
+                self.get_genesis_timestamp(),
+            )
+        {
+            return hardfork.into();
+        }
         #[cfg(feature = "optimism")]
         if self.networks.is_optimism() {
             return foundry_evm::hardforks::OpHardfork::default().into();
@@ -1782,5 +1790,14 @@ mod tests {
         config.set_chain_id(Some(10u64));
 
         assert!(config.networks.is_optimism());
+    }
+
+    #[test]
+    fn get_hardfork_detects_tempo_chain_timestamp() {
+        let config = NodeConfig::test_tempo().with_chain_id(Some(42431u64)).with_genesis_timestamp(
+            Some(TempoHardfork::T3.moderato_activation_timestamp().unwrap()),
+        );
+
+        assert_eq!(config.get_hardfork(), TempoHardfork::T3.into());
     }
 }

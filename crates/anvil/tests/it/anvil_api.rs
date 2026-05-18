@@ -1267,6 +1267,59 @@ async fn can_get_node_info_tempo_t1() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_get_node_info_tempo_t5() {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let config = NodeConfig::test_tempo().with_hardfork(Some(TempoHardfork::T5.into()));
+    let (api, handle) = spawn(config).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+
+    let provider = handle.http_provider();
+
+    let block_number = provider.get_block_number().await.unwrap();
+    let block = provider.get_block(BlockId::from(block_number)).await.unwrap().unwrap();
+
+    let expected_node_info = NodeInfo {
+        current_block_number: 0_u64,
+        current_block_timestamp: 1,
+        current_block_hash: block.header.hash,
+        hard_fork: "T5".to_string(),
+        transaction_order: "fees".to_owned(),
+        environment: NodeEnvironment {
+            base_fee: 20_000_000_000,
+            chain_id: 31337,
+            gas_limit: 30_000_000,
+            gas_price: 21_000_000_000,
+        },
+        fork_config: NodeForkConfig {
+            fork_url: None,
+            fork_block_number: None,
+            fork_retry_backoff: None,
+        },
+        network: Some("tempo".to_string()),
+    };
+
+    assert_eq!(node_info, expected_node_info);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_get_node_info_infers_tempo_hardfork_from_chain_timestamp() {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let timestamp = TempoHardfork::T3.moderato_activation_timestamp().unwrap();
+    let config =
+        NodeConfig::test().with_chain_id(Some(42431u64)).with_genesis_timestamp(Some(timestamp));
+    let (api, _handle) = spawn(config).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+
+    assert_eq!(node_info.hard_fork, "T3");
+    assert_eq!(node_info.environment.chain_id, 42431);
+    assert_eq!(node_info.network.as_deref(), Some("tempo"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_deal_erc20_tempo() {
     use alloy_primitives::address;
     use foundry_evm::core::tempo::PATH_USD_ADDRESS;

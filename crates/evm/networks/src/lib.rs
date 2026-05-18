@@ -69,6 +69,15 @@ impl NetworkVariant {
             Self::Tempo => "tempo",
         }
     }
+
+    const fn hardfork_namespace(&self) -> Option<&'static str> {
+        match self {
+            Self::Ethereum => None,
+            #[cfg(feature = "optimism")]
+            Self::Optimism => Some("optimism"),
+            Self::Tempo => Some("tempo"),
+        }
+    }
 }
 
 impl std::fmt::Display for NetworkVariant {
@@ -154,6 +163,19 @@ impl NetworkConfigs {
         self.celo
     }
 
+    /// Returns true when a network was explicitly configured through the canonical network field
+    /// or a legacy network flag.
+    pub const fn has_network_config(&self) -> bool {
+        if self.network.is_some() || self.celo || self.tempo {
+            return true;
+        }
+        #[cfg(feature = "optimism")]
+        if self.optimism {
+            return true;
+        }
+        false
+    }
+
     /// Returns the resolved network variant, folding legacy flags.
     const fn resolved_network(&self) -> Option<NetworkVariant> {
         if let Some(n) = self.network {
@@ -175,6 +197,15 @@ impl NetworkConfigs {
             NetworkVariant::Ethereum => None,
             _ => Some(n.name()),
         })
+    }
+
+    /// Returns the hardfork namespace accepted by the configured network and the network name used
+    /// in diagnostics. Celo accepts Ethereum hardforks.
+    fn configured_hardfork_network(&self) -> Option<(Option<&'static str>, &'static str)> {
+        if self.celo {
+            return Some((None, "celo"));
+        }
+        self.resolved_network().map(|n| (n.hardfork_namespace(), n.name()))
     }
 
     /// Returns the base fee parameters for the configured network.
@@ -226,13 +257,13 @@ impl NetworkConfigs {
     ///
     /// Returns `Err` when the hardfork's network family conflicts with the configured one.
     pub fn normalize_for_hardfork(self, hardfork: FoundryHardfork) -> Result<Self, String> {
-        if let Some(configured) =
-            self.active_network_name().filter(|&n| Some(n) != hardfork.namespace())
-        {
-            return Err(format!(
-                "hardfork `{}` conflicts with network config `{configured}`",
-                String::from(hardfork),
-            ));
+        if let Some((configured_namespace, configured)) = self.configured_hardfork_network() {
+            if configured_namespace != hardfork.namespace() {
+                return Err(format!(
+                    "hardfork `{}` conflicts with network config `{configured}`",
+                    String::from(hardfork),
+                ));
+            }
         }
 
         let network = match hardfork {
@@ -314,6 +345,50 @@ mod tests {
     #[test]
     fn active_network_name_default_is_none() {
         assert_eq!(NetworkConfigs::default().active_network_name(), None);
+    }
+
+    #[test]
+    fn has_network_config_detects_explicit_networks() {
+        assert!(!NetworkConfigs::default().has_network_config());
+        assert!(
+            NetworkConfigs { network: Some(NetworkVariant::Ethereum), ..Default::default() }
+                .has_network_config()
+        );
+        assert!(NetworkConfigs::with_celo().has_network_config());
+        assert!(NetworkConfigs::with_tempo().has_network_config());
+    }
+
+    #[test]
+    fn normalize_for_hardfork_sets_tempo_when_unconfigured() {
+        let hardfork = "tempo:T5".parse::<FoundryHardfork>().unwrap();
+        let cfg = NetworkConfigs::default().normalize_for_hardfork(hardfork).unwrap();
+
+        assert!(cfg.is_tempo());
+    }
+
+    #[test]
+    fn normalize_for_hardfork_rejects_tempo_when_ethereum_is_configured() {
+        let hardfork = "tempo:T5".parse::<FoundryHardfork>().unwrap();
+        let cfg = NetworkConfigs { network: Some(NetworkVariant::Ethereum), ..Default::default() };
+
+        let err = cfg.normalize_for_hardfork(hardfork).unwrap_err();
+        assert!(err.contains("network config `ethereum`"));
+    }
+
+    #[test]
+    fn normalize_for_hardfork_allows_ethereum_hardforks_for_celo() {
+        let hardfork = "berlin".parse::<FoundryHardfork>().unwrap();
+        let cfg = NetworkConfigs::with_celo().normalize_for_hardfork(hardfork).unwrap();
+
+        assert!(cfg.is_celo());
+    }
+
+    #[test]
+    fn normalize_for_hardfork_rejects_tempo_when_celo_is_configured() {
+        let hardfork = "tempo:T5".parse::<FoundryHardfork>().unwrap();
+
+        let err = NetworkConfigs::with_celo().normalize_for_hardfork(hardfork).unwrap_err();
+        assert!(err.contains("network config `celo`"));
     }
 
     // --- Serde round-trip ---
