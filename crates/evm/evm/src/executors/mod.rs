@@ -1497,7 +1497,7 @@ impl EarlyExit {
 mod tests {
     use super::*;
     use foundry_evm_core::constants::MAGIC_SKIP;
-    use revm::{context::Cfg, primitives::hardfork::SpecId};
+    use revm::{bytecode::opcode, context::Cfg, primitives::hardfork::SpecId};
 
     #[test]
     fn cheatcode_skip_payload_is_classified_as_skip() {
@@ -1536,6 +1536,59 @@ mod tests {
     }
 
     #[test]
+    fn evm_cmp_dictionary_values_prefers_constant_side() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            evm_cmp_values: Some(vec![
+                cmp_operand(opcode::EQ, CmpKind::Eq, U256::from(1), U256::from(42)),
+                cmp_operand(opcode::EQ, CmpKind::Eq, U256::from(2), U256::from(42)),
+            ]),
+            ..Default::default()
+        };
+
+        let values = raw.evm_cmp_dictionary_values();
+
+        assert!(values.contains(&(8, U256::from(42).into())));
+        assert!(!values.contains(&(8, U256::from(1).into())));
+        assert!(!values.contains(&(8, U256::from(2).into())));
+    }
+
+    #[test]
+    fn evm_cmp_dictionary_values_adds_order_boundaries() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            evm_cmp_values: Some(vec![cmp_operand(
+                opcode::LT,
+                CmpKind::Lt,
+                U256::from(10),
+                U256::from(20),
+            )]),
+            ..Default::default()
+        };
+
+        let values = raw.evm_cmp_dictionary_values();
+
+        assert!(values.contains(&(8, U256::from(9).into())));
+        assert!(values.contains(&(8, U256::from(10).into())));
+        assert!(values.contains(&(8, U256::from(11).into())));
+        assert!(values.contains(&(8, U256::from(19).into())));
+        assert!(values.contains(&(8, U256::from(20).into())));
+        assert!(values.contains(&(8, U256::from(21).into())));
+    }
+
+    #[test]
+    fn evm_cmp_dictionary_values_filters_loop_counter_sites() {
+        let raw = RawCallResult::<EthEvmNetwork> {
+            evm_cmp_values: Some(
+                (0..8)
+                    .map(|i| cmp_operand(opcode::LT, CmpKind::Lt, U256::from(i), U256::from(8)))
+                    .collect(),
+            ),
+            ..Default::default()
+        };
+
+        assert!(raw.evm_cmp_dictionary_values().is_empty());
+    }
+
+    #[test]
     fn set_spec_id_updates_spec_dependent_cfg_state() {
         let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
         let mut executor = ExecutorBuilder::default().build(
@@ -1559,5 +1612,18 @@ mod tests {
             &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
         );
         assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+    }
+
+    fn cmp_operand(opcode: u8, kind: CmpKind, op1: U256, op2: U256) -> CmpOperands {
+        CmpOperands {
+            op1,
+            op2,
+            pc: 42,
+            address: Address::repeat_byte(0xaa),
+            opcode,
+            kind,
+            signed: false,
+            width: 0,
+        }
     }
 }
