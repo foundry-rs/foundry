@@ -108,8 +108,9 @@ pub struct TempoOpts {
     /// Remote sponsor (fee payer) service URL.
     ///
     /// When set, the user-signed transaction is forwarded to this URL via
-    /// `eth_sendRawTransaction`. The service adds its fee payer signature and
-    /// broadcasts the transaction to the chain. No local sponsor key is required.
+    /// `eth_signRawTransaction`. The service adds its fee payer signature and returns
+    /// the fully-sponsored transaction, which is then submitted via the regular RPC.
+    /// No local sponsor key is required.
     ///
     /// Example: `cast send 0x... --sponsor-url https://sponsor.tempo.xyz/tp_abc123`
     #[arg(
