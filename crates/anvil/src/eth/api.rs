@@ -1366,13 +1366,18 @@ impl EthApi<FoundryNetwork> {
         // configured gas limit
         let mut highest_gas_limit = request.gas.map_or(block_env.gas_limit.into(), |g| g as u128);
 
-        // Tempo AA transactions pay fees in ERC-20 tokens, not ETH
-        let is_tempo_tx = request.other.get("feeToken").is_some_and(|v| !v.is_null());
+        // Tempo AA transactions pay fees in ERC-20 tokens, not ETH. Only treat requests as
+        // Tempo AA in Tempo mode, otherwise `feeToken` should not bypass ETH funds checks.
+        let is_tempo_aa_tx =
+            self.backend.is_tempo() && request.other.get("feeToken").is_some_and(|v| !v.is_null());
 
         let gas_price = fees.gas_price.unwrap_or_default();
         // Check transfer value before any fast path, and cap gas limit by sender balance when the
         // request has a non-zero gas price.
-        if !is_tempo_tx && let Some(from) = request.from {
+        if !is_tempo_aa_tx {
+            // Match `build_call_env` caller fallback so requests without `from` still perform
+            // funds checks against the effective caller.
+            let from = request.from.unwrap_or_default();
             let mut available_funds = self.backend.get_balance_with_state(state, from)?;
             if let Some(value) = request.value {
                 if value > available_funds {
