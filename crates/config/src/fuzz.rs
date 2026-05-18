@@ -135,6 +135,8 @@ pub struct FuzzCorpusConfig {
     /// Whether to capture comparison operands from sancov-instrumented crates
     /// and inject them into the fuzz dictionary. Independent of `sancov_edges`.
     pub sancov_trace_cmp: bool,
+    /// Whether to capture EVM comparison operands and inject them into the fuzz dictionary.
+    pub evm_cmp_log: bool,
 }
 
 impl FuzzCorpusConfig {
@@ -157,6 +159,11 @@ impl FuzzCorpusConfig {
     /// contributes dictionary entries, not edge coverage.
     pub const fn collect_evm_edge_coverage(&self) -> bool {
         !self.sancov_edges && (self.corpus_dir.is_some() || self.show_edge_coverage)
+    }
+
+    /// Whether EVM comparison operand capture is enabled.
+    pub const fn collect_evm_cmp_log(&self) -> bool {
+        !self.sancov_edges && (self.corpus_dir.is_some() || self.evm_cmp_log)
     }
 
     /// Whether sancov edge coverage collection is enabled.
@@ -190,6 +197,7 @@ impl Default for FuzzCorpusConfig {
             show_edge_coverage: false,
             sancov_edges: false,
             sancov_trace_cmp: false,
+            evm_cmp_log: false,
         }
     }
 }
