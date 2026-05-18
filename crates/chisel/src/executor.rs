@@ -9,8 +9,12 @@ use alloy_primitives::{Address, B256, U256, hex};
 use eyre::{Result, WrapErr};
 use foundry_compilers::Artifact;
 use foundry_evm::{
-    backend::Backend, decode::decode_console_logs, executors::ExecutorBuilder,
-    inspectors::CheatsConfig, traces::TraceMode,
+    backend::Backend,
+    core::evm::{BlockEnvFor, FoundryEvmNetwork, SpecFor, TxEnvFor},
+    decode::decode_console_logs,
+    executors::ExecutorBuilder,
+    inspectors::CheatsConfig,
+    traces::TraceMode,
 };
 use solar::{
     ast::{BinOpKind, ElementaryType, FunctionKind, LitKind, StateMutability, StrKind, UnOpKind},
@@ -27,7 +31,7 @@ use std::ops::ControlFlow;
 use yansi::Paint;
 
 /// Executor implementation for [SessionSource]
-impl SessionSource {
+impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     /// Runs the source with the [ChiselRunner]
     pub async fn execute(&mut self) -> Result<ChiselResult> {
         // Recompile the project and ensure no errors occurred.
@@ -114,7 +118,7 @@ impl SessionSource {
         let Some((stack, memory)) = &res.state else {
             // Show traces and logs, if there are any, and return an error
             if let Ok(decoder) = ChiselDispatcher::decode_traces(&source.config, &mut res).await {
-                ChiselDispatcher::show_traces(&decoder, &mut res).await?;
+                ChiselDispatcher::<FEN>::show_traces(&decoder, &mut res).await?;
             }
             let decoded_logs = decode_console_logs(&res.logs);
             if !decoded_logs.is_empty() {
@@ -182,8 +186,9 @@ impl SessionSource {
         Ok((c, Some(format_token(token))))
     }
 
-    async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner> {
-        let (evm_env, tx_env, fork_block) = self.config.evm_opts.env().await?;
+    async fn build_runner(&mut self, final_pc: usize) -> Result<ChiselRunner<FEN>> {
+        let (evm_env, tx_env, fork_block) =
+            self.config.evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
 
         let backend = match self.config.backend.clone() {
             Some(backend) => backend,
@@ -217,7 +222,7 @@ impl SessionSource {
                     )
             })
             .gas_limit(self.config.evm_opts.gas_limit())
-            .spec_id(self.config.foundry_config.evm_spec_id())
+            .spec_id(self.config.foundry_config.evm_spec_id::<SpecFor<FEN>>())
             .legacy_assertions(self.config.foundry_config.legacy_assertions)
             .build(evm_env, tx_env, backend);
 
