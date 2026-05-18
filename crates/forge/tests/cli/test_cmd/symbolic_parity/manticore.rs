@@ -10,16 +10,27 @@ forgetest_init!(manticore_multitx_state_machine, |prj, cmd| {
     prj.add_test(
         "ManticoreMultiTx.t.sol",
         r#"
-contract ManticoreMultiTx {
-    bool armed;
+import "forge-std/Test.sol";
 
-    /// forge-config: default.symbolic.invariant_depth = 2
+contract ArmTarget {
+    bool public armed;
+
     function arm(uint256 key) public {
         if (key == 0xfeed) armed = true;
     }
+}
 
+contract ManticoreMultiTx is Test {
+    ArmTarget target;
+
+    function setUp() public {
+        target = new ArmTarget();
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
     function invariant_neverArmed() public view {
-        assert(!armed);
+        assert(!target.armed());
     }
 }
 "#,
@@ -36,13 +47,14 @@ contract ManticoreMultiTx {
 ...
 Failing tests:
 Encountered 1 failing test in test/ManticoreMultiTx.t.sol:ManticoreMultiTx
-[FAIL: failed to set up invariant testing environment: No contracts to fuzz.] invariant_neverArmed() (runs: 0, calls: 0, reverts: 0)
+[FAIL: symbolic invariant counterexample]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] addr=[test/ManticoreMultiTx.t.sol:ArmTarget]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=arm(uint256) [ARGS]
+ invariant_neverArmed() ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
-
-[SEED] (use `--fuzz-seed` to reproduce)
 
 "#]]);
 });
