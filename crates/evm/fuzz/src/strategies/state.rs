@@ -479,10 +479,8 @@ impl FuzzDictionary {
         if width <= 64 {
             insert(&mut self.sample_values, DynSolType::Uint(128), value);
             insert(&mut self.sample_values, DynSolType::Uint(256), value);
-            insert(&mut self.sample_values, DynSolType::Int(256), value);
-        } else {
-            insert(&mut self.sample_values, DynSolType::Int(256), value);
         }
+        insert(&mut self.sample_values, DynSolType::Int(256), value);
     }
 
     fn insert_value_u256(&mut self, value: U256) -> bool {

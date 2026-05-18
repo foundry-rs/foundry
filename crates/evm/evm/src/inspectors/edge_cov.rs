@@ -144,20 +144,11 @@ impl EdgeCovInspector {
     }
 
     /// Store comparison operands for CmpLog-style guided fuzzing.
-    fn store_cmp(
-        &mut self,
-        address: Address,
-        pc: usize,
-        opcode: u8,
-        kind: CmpKind,
-        signed: bool,
-        op1: U256,
-        op2: U256,
-    ) {
+    fn store_cmp(&mut self, cmp: CmpOperands) {
         if let Some(cmp_log) = &mut self.cmp_log
             && cmp_log.len() < MAX_CMP_LOG_ENTRIES
         {
-            cmp_log.push(CmpOperands { op1, op2, pc, address, opcode, kind, signed, width: 0 });
+            cmp_log.push(cmp);
         }
     }
 
@@ -206,46 +197,58 @@ impl EdgeCovInspector {
         match interp.bytecode.opcode() {
             op @ opcode::EQ => {
                 if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
-                    self.store_cmp(address, current_pc, op, CmpKind::Eq, false, op1, op2);
+                    self.store_cmp(CmpOperands {
+                        op1,
+                        op2,
+                        pc: current_pc,
+                        address,
+                        opcode: op,
+                        kind: CmpKind::Eq,
+                        signed: false,
+                        width: 0,
+                    });
                 }
             }
             op @ (opcode::LT | opcode::SLT) => {
                 if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
-                    self.store_cmp(
-                        address,
-                        current_pc,
-                        op,
-                        CmpKind::Lt,
-                        op == opcode::SLT,
+                    self.store_cmp(CmpOperands {
                         op1,
                         op2,
-                    );
+                        pc: current_pc,
+                        address,
+                        opcode: op,
+                        kind: CmpKind::Lt,
+                        signed: op == opcode::SLT,
+                        width: 0,
+                    });
                 }
             }
             op @ (opcode::GT | opcode::SGT) => {
                 if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
-                    self.store_cmp(
-                        address,
-                        current_pc,
-                        op,
-                        CmpKind::Gt,
-                        op == opcode::SGT,
+                    self.store_cmp(CmpOperands {
                         op1,
                         op2,
-                    );
+                        pc: current_pc,
+                        address,
+                        opcode: op,
+                        kind: CmpKind::Gt,
+                        signed: op == opcode::SGT,
+                        width: 0,
+                    });
                 }
             }
             op @ opcode::ISZERO => {
                 if let Ok(op1) = interp.stack.peek(0) {
-                    self.store_cmp(
-                        address,
-                        current_pc,
-                        op,
-                        CmpKind::IsZero,
-                        false,
+                    self.store_cmp(CmpOperands {
                         op1,
-                        U256::ZERO,
-                    );
+                        op2: U256::ZERO,
+                        pc: current_pc,
+                        address,
+                        opcode: op,
+                        kind: CmpKind::IsZero,
+                        signed: false,
+                        width: 0,
+                    });
                 }
             }
             _ => {}
@@ -318,15 +321,16 @@ mod tests {
         let mut inspector = EdgeCovInspector::with_cmp_log();
 
         inspector.hitcount[0] = 1;
-        inspector.store_cmp(
-            Address::ZERO,
-            42,
-            opcode::EQ,
-            CmpKind::Eq,
-            false,
-            U256::from(123),
-            U256::from(456),
-        );
+        inspector.store_cmp(CmpOperands {
+            op1: U256::from(123),
+            op2: U256::from(456),
+            pc: 42,
+            address: Address::ZERO,
+            opcode: opcode::EQ,
+            kind: CmpKind::Eq,
+            signed: false,
+            width: 0,
+        });
 
         inspector.reset();
 
@@ -339,15 +343,16 @@ mod tests {
         let mut inspector = EdgeCovInspector::with_cmp_log();
 
         for i in 0..MAX_CMP_LOG_ENTRIES + 1 {
-            inspector.store_cmp(
-                Address::ZERO,
-                i,
-                opcode::EQ,
-                CmpKind::Eq,
-                false,
-                U256::from(i),
-                U256::from(i + 1),
-            );
+            inspector.store_cmp(CmpOperands {
+                op1: U256::from(i),
+                op2: U256::from(i + 1),
+                pc: i,
+                address: Address::ZERO,
+                opcode: opcode::EQ,
+                kind: CmpKind::Eq,
+                signed: false,
+                width: 0,
+            });
         }
 
         assert_eq!(inspector.get_cmp_log().len(), MAX_CMP_LOG_ENTRIES);

@@ -1383,7 +1383,7 @@ impl CmpSiteSummary {
         self.count += 1;
     }
 
-    fn classification(&self) -> CmpSiteClassification {
+    const fn classification(&self) -> CmpSiteClassification {
         match (self.op1_changed, self.op2_changed) {
             (false, true) => CmpSiteClassification::Op1Constant,
             (true, false) => CmpSiteClassification::Op2Constant,
@@ -1391,7 +1391,7 @@ impl CmpSiteSummary {
         }
     }
 
-    fn is_likely_loop_counter(&self) -> bool {
+    const fn is_likely_loop_counter(&self) -> bool {
         const MIN_LOOP_CMP_OBSERVATIONS: usize = 8;
         self.count >= MIN_LOOP_CMP_OBSERVATIONS
             && ((self.op1_monotonic_step && self.op1_changed && !self.op2_changed)
