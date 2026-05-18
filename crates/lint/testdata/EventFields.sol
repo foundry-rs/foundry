@@ -32,6 +32,8 @@ contract EventFieldsTest {
 
     event ScreamingId(uint256 ID); //~NOTE: event has unindexed fields that should be indexed: ID (uint256)
 
+    event CamelCapsId(uint256 tokenID); //~NOTE: event has unindexed fields that should be indexed: tokenID (uint256)
+
     event SnakeId(bytes32 token_id); //~NOTE: event has unindexed fields that should be indexed: token_id (bytes32)
 
     event PayableAddr(address payable receiver); //~NOTE: event has unindexed fields that should be indexed: receiver (address payable)
@@ -47,8 +49,7 @@ contract EventFieldsTest {
     // Already fully indexed.
     event TransferOk(address indexed from, address indexed to, uint256 value);
 
-    // Partially indexed: the author has chosen what to index, so we stay silent.
-    // Matches Slither's behavior; figtracer's regression case from #14751.
+    // Partially indexed: the author has chosen what to index.
     event PartiallyIndexed(address indexed from, address to, uint256 value);
 
     // Same rule for non-anonymous partial cap: at least one indexed param ⇒ no warning.
@@ -61,8 +62,8 @@ contract EventFieldsTest {
     event AmountOnly(uint256 amount);
     event HashOnly(bytes32 hash);
 
-    // Conservative heuristic: do not flag names containing "id" as a substring.
     event NoFalsePositive(uint256 liquid, bytes32 valid);
+    event NoFalsePositiveCaps(uint256 VALID, uint256 LIQUID, bytes32 GRID);
 
     // Smaller integer / bytes widths are not flagged even when id-like.
     event SmallId(uint128 id, bytes16 orderId);

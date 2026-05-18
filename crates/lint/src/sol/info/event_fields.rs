@@ -25,24 +25,14 @@ impl<'ast> EarlyLintPass<'ast> for EventFields {
 }
 
 fn check_event<'ast>(ctx: &LintContext, event: &'ast ItemEvent<'ast>) {
-    // Respect EVM indexed-parameter capacity; do not suggest infeasible fixes.
-    let max_indexed = if event.anonymous { MAX_INDEXED_ANON } else { MAX_INDEXED_NON_ANON };
-    let indexed_count = event.parameters.iter().filter(|p| p.indexed).count();
-    if indexed_count >= max_indexed {
+    if event.parameters.iter().any(|p| p.indexed) {
         return;
     }
-    // Partially-indexed events: treat the author's choices as intentional (matches Slither).
-    if indexed_count > 0 {
-        return;
-    }
-    let slots_available = max_indexed - indexed_count;
+    let slots_available = if event.anonymous { MAX_INDEXED_ANON } else { MAX_INDEXED_NON_ANON };
 
     // Collect offending unindexed params (with their positional index) in declaration order.
     let mut offenders: Vec<(usize, &VariableDefinition<'ast>)> = Vec::new();
     for (idx, param) in event.parameters.iter().enumerate() {
-        if param.indexed {
-            continue;
-        }
         if is_filterable_field(param) {
             offenders.push((idx, param));
             if offenders.len() == slots_available {
@@ -73,16 +63,24 @@ fn is_filterable_field(param: &VariableDefinition<'_>) -> bool {
     }
 }
 
-/// Conservative id-like name heuristic. Avoids false positives like `liquid`, `valid`, etc.
+/// Returns true when the parameter name matches `id`/`ID`, ends with `Id`, `_id`, `_ID`, or ends
+/// with `ID` preceded by a lowercase ASCII letter.
 fn has_id_like_name(param: &VariableDefinition<'_>) -> bool {
     let Some(ident) = &param.name else { return false };
     let name = ident.as_str();
-    name == "id"
-        || name == "ID"
-        || name.ends_with("Id")
-        || name.ends_with("ID")
-        || name.ends_with("_id")
-        || name.ends_with("_ID")
+
+    if name == "id" || name == "ID" {
+        return true;
+    }
+    if name.ends_with("_id") || name.ends_with("_ID") || name.ends_with("Id") {
+        return true;
+    }
+    if let Some(prefix) = name.strip_suffix("ID")
+        && let Some(last) = prefix.chars().last()
+    {
+        return last.is_ascii_lowercase();
+    }
+    false
 }
 
 /// Render a parameter as `name (type)` (or `parameter #N (type)` if unnamed) for the diagnostic.

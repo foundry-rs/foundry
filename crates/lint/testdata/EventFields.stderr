@@ -62,6 +62,14 @@ LL │     event ScreamingId(uint256 ID);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
+note[event-fields]: event has unindexed fields that should be indexed: tokenID (uint256)
+   ╭▸ ROOT/testdata/EventFields.sol:LL:CC
+   │
+LL │     event CamelCapsId(uint256 tokenID);
+   │           ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/event-fields
+
 note[event-fields]: event has unindexed fields that should be indexed: token_id (bytes32)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
