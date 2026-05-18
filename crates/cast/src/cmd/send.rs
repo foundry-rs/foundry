@@ -127,12 +127,11 @@ impl SendTxArgs {
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
         let sponsor_url = tx.tempo.sponsor_url.clone();
         let expires_at = tx.tempo.resolve_expires();
-        let tempo_sponsor =
-            if print_sponsor_hash || sponsor_url.is_some() {
-                None
-            } else {
-                tx.tempo.sponsor_config().await?
-            };
+        let tempo_sponsor = if print_sponsor_hash || sponsor_url.is_some() {
+            None
+        } else {
+            tx.tempo.sponsor_config().await?
+        };
 
         let blob_data = if let Some(path) = path { Some(std::fs::read(path)?) } else { None };
 
@@ -371,8 +370,7 @@ impl SendTxArgs {
             let cast = CastTxSender::new(&provider);
             let pending = cast.send_raw(&sponsored_bytes).await?;
             let tx_hash = *pending.inner().tx_hash();
-            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout)
-                .await
+            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
         // Case 5:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -496,10 +494,8 @@ async fn sign_via_sponsor_url(url: &str, raw_tx_hex: &str) -> Result<String> {
         .map_err(|e| eyre!("sponsor service request failed: {e}"))?;
 
     let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| eyre!("failed to read sponsor service response: {e}"))?;
+    let text =
+        resp.text().await.map_err(|e| eyre!("failed to read sponsor service response: {e}"))?;
 
     if !status.is_success() {
         eyre::bail!("sponsor service returned HTTP {status}: {text}");
@@ -521,14 +517,10 @@ async fn sign_via_sponsor_url(url: &str, raw_tx_hex: &str) -> Result<String> {
         serde_json::from_str(&text).map_err(|e| eyre!("invalid sponsor service response: {e}"))?;
 
     if let Some(err) = parsed.error {
-        let msg = err
-            .message
-            .or(err.name)
-            .unwrap_or_else(|| format!("code {}", err.code.unwrap_or(-1)));
+        let msg =
+            err.message.or(err.name).unwrap_or_else(|| format!("code {}", err.code.unwrap_or(-1)));
         eyre::bail!("sponsor service error: {msg}");
     }
 
-    parsed
-        .result
-        .ok_or_else(|| eyre!("sponsor service returned no signed transaction"))
+    parsed.result.ok_or_else(|| eyre!("sponsor service returned no signed transaction"))
 }

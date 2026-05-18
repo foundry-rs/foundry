@@ -281,9 +281,7 @@ impl TempoOpts {
         // gas estimation so that `--tempo.print-sponsor-hash` and
         // `--tempo.sponsor-signature` produce identical gas estimates. Callers
         // should call `set_fee_payer_signature` on the built tx request.
-        if (self.has_sponsor_submission()
-            || self.sponsor_url.is_some()
-            || self.print_sponsor_hash)
+        if (self.has_sponsor_submission() || self.sponsor_url.is_some() || self.print_sponsor_hash)
             && tx.nonce_key().is_none()
         {
             tx.set_nonce_key(U256::ZERO);
