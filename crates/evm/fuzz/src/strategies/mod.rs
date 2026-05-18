@@ -8,6 +8,7 @@ mod param;
 pub use param::{
     fuzz_msg_value, fuzz_param, fuzz_param_from_state, fuzz_param_with_fixtures,
     generate_msg_value, mutate_param_value, mutate_param_value_with_senders,
+    replace_param_value_from_state,
 };
 
 mod calldata;

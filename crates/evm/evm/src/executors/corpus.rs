@@ -45,7 +45,9 @@ use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_fuzz::{
     BasicTxDetails,
     invariant::FuzzRunIdentifiedContracts,
-    strategies::{EvmFuzzState, generate_msg_value, mutate_param_value},
+    strategies::{
+        EvmFuzzState, generate_msg_value, mutate_param_value, replace_param_value_from_state,
+    },
 };
 use proptest::{
     prelude::{Just, Rng, Strategy},
@@ -825,17 +827,17 @@ impl WorkerCorpus {
 
         while arg_mutation_rounds > 0 {
             let idx = round_arg_idx[arg_mutation_rounds - 1];
-            prev_inputs[idx] = mutate_param_value(
-                &function
-                    .inputs
-                    .get(idx)
-                    .expect("Could not get input to mutate")
-                    .selector_type()
-                    .parse()?,
-                prev_inputs[idx].clone(),
-                test_runner,
-                fuzz_state,
-            );
+            let param = function
+                .inputs
+                .get(idx)
+                .expect("Could not get input to mutate")
+                .selector_type()
+                .parse()?;
+            prev_inputs[idx] = if test_runner.rng().random::<bool>() {
+                replace_param_value_from_state(&param, test_runner, fuzz_state)
+            } else {
+                mutate_param_value(&param, prev_inputs[idx].clone(), test_runner, fuzz_state)
+            };
             arg_mutation_rounds -= 1;
         }
 
