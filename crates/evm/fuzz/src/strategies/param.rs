@@ -1,4 +1,4 @@
-use super::state::EvmFuzzState;
+use super::{UintStrategy, state::EvmFuzzState};
 use crate::{
     invariant::SenderFilters,
     strategies::mutators::{
@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_dyn_abi::{DynSolType, DynSolValue, Word};
 use alloy_primitives::{Address, B256, I256, U256};
-use proptest::{prelude::*, test_runner::TestRunner};
+use proptest::{prelude::*, strategy::ValueTree, test_runner::TestRunner};
 use rand::{SeedableRng, prelude::IndexedMutRandom, rngs::StdRng};
 use std::mem::replace;
 
@@ -510,6 +510,33 @@ fn mutate_random_array_value(
     let old_val = replace(elem, DynSolValue::Bool(false));
     let new_val = mutate_param_value_inner(element_type, old_val, test_runner, state, senders);
     *elem = new_val;
+}
+
+/// Probability (out of 100) that a payable call carries a non-zero msg.value.
+const PAYABLE_VALUE_PROB: u32 = 15;
+
+/// Returns a proptest strategy for generating random msg.value for payable functions.
+///
+/// Most calls (85%) carry no value. The remaining 15% delegate to [`UintStrategy`],
+/// which biases toward edge cases (around 0 / max) and dictionary fixtures, with
+/// random fallback. Over-budget values are clamped to sender balance at execute time.
+pub fn fuzz_msg_value() -> impl Strategy<Value = Option<U256>> {
+    proptest::prop_oneof![
+        100 - PAYABLE_VALUE_PROB => proptest::strategy::Just(None),
+        PAYABLE_VALUE_PROB       => UintStrategy::new(256, None).prop_map(Some),
+    ]
+}
+
+/// Generates a msg.value for payable functions using `TestRunner`'s RNG (corpus mutation path).
+///
+/// Mirrors [`fuzz_msg_value`] by sampling from [`UintStrategy`]. The 15% mutation gate is
+/// applied at the call site in `corpus.rs`. Over-budget values are clamped to sender
+/// balance at execute time.
+pub fn generate_msg_value(test_runner: &mut TestRunner) -> U256 {
+    UintStrategy::new(256, None)
+        .new_tree(test_runner)
+        .expect("UintStrategy::new_tree is infallible")
+        .current()
 }
 
 #[cfg(test)]
