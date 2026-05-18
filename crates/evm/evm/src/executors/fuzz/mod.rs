@@ -289,7 +289,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             return Err(TestCaseError::reject(FuzzError::AssumeReject));
         }
 
-        shared_state.state.collect_typed_cmp_values(call.evm_cmp_dictionary_values());
+        if call.evm_cmp_values.is_some() {
+            shared_state.state.collect_typed_cmp_values(call.evm_cmp_dictionary_values());
+        }
 
         let (breakpoints, deprecated_cheatcodes) =
             call.cheatcodes.as_ref().map_or_else(Default::default, |cheats| {

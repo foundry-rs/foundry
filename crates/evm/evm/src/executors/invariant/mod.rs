@@ -1410,7 +1410,9 @@ fn collect_data<FEN: FoundryEvmNetwork>(
                 .map(|s| (u16::from(s.width), false, alloy_primitives::B256::from(s.value))),
         );
     }
-    invariant_test.fuzz_state.collect_typed_cmp_values(call_result.evm_cmp_dictionary_values());
+    if call_result.evm_cmp_values.is_some() {
+        invariant_test.fuzz_state.collect_typed_cmp_values(call_result.evm_cmp_dictionary_values());
+    }
 
     // Re-add changes
     if let Some(changed) = sender_changeset {
