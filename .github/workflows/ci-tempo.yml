@@ -71,7 +71,6 @@ jobs:
 
       - name: Run Tempo check on mainnet
         if: |
-          github.event_name == 'schedule' ||
           github.event.inputs.network == 'mainnet' ||
           github.event.inputs.network == 'all'
         env:

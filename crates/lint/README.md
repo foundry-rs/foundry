@@ -18,7 +18,9 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
+  - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
+  - `uninitialized-local`: Local variable is read before being explicitly initialized.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
 - **Low Severity:**
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
@@ -44,6 +46,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `low-level-calls`: Direct use of low-level calls should be avoided.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
+  - `costly-loop`: Flags storage variable writes inside loops; accumulate into a local variable and write once after the loop instead.
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
   - `could-be-constant`: Recommends declaring never-written state variables with a compile-time-constant initializer as `constant`.
   - `custom-errors`: Recommends using custom errors instead of strings and plain reverts for potential gas savings.
