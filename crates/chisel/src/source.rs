@@ -14,7 +14,14 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{Config, SolcReq};
-use foundry_evm::{backend::Backend, core::bytecode::InstIter, opts::EvmOpts};
+use foundry_evm::{
+    backend::Backend,
+    core::{
+        bytecode::InstIter,
+        evm::{EthEvmNetwork, FoundryEvmNetwork},
+    },
+    opts::EvmOpts,
+};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solang_parser::pt;
@@ -369,7 +376,8 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
 
 /// Configuration for the [SessionSource]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct SessionSourceConfig {
+#[serde(bound = "")]
+pub struct SessionSourceConfig<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// Foundry configuration
     pub foundry_config: Config,
     /// EVM Options
@@ -378,7 +386,7 @@ pub struct SessionSourceConfig {
     pub no_vm: bool,
     /// In-memory REVM db for the session's runner.
     #[serde(skip)]
-    pub backend: Option<Backend>,
+    pub backend: Option<Backend<FEN>>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
     /// Optionally set calldata for the REPL contract execution
@@ -390,7 +398,7 @@ pub struct SessionSourceConfig {
     pub ir_minimum: bool,
 }
 
-impl SessionSourceConfig {
+impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
     /// Detect the solc version to know if VM can be injected.
     pub fn detect_solc(&mut self) -> Result<()> {
         if self.foundry_config.solc.is_none() {
@@ -412,14 +420,15 @@ impl SessionSourceConfig {
 ///
 /// Heavily based on soli's [`ConstructedSource`](https://github.com/jpopesculian/soli/blob/master/src/main.rs#L166)
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SessionSource {
+#[serde(bound = "")]
+pub struct SessionSource<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The file name
     pub file_name: String,
     /// The contract name
     pub contract_name: String,
 
     /// Session Source configuration
-    pub config: SessionSourceConfig,
+    pub config: SessionSourceConfig<FEN>,
 
     /// Global level Solidity code.
     ///
@@ -444,7 +453,7 @@ fn vm_source() -> Source {
     Source::new(VM_SOURCE)
 }
 
-impl Clone for SessionSource {
+impl<FEN: FoundryEvmNetwork> Clone for SessionSource<FEN> {
     fn clone(&self) -> Self {
         Self {
             file_name: self.file_name.clone(),
@@ -459,7 +468,7 @@ impl Clone for SessionSource {
     }
 }
 
-impl SessionSource {
+impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     /// Creates a new source given a solidity compiler version
     ///
     /// # Panics
@@ -474,7 +483,7 @@ impl SessionSource {
     /// ### Returns
     ///
     /// A new instance of [SessionSource]
-    pub fn new(mut config: SessionSourceConfig) -> Result<Self> {
+    pub fn new(mut config: SessionSourceConfig<FEN>) -> Result<Self> {
         config.detect_solc()?;
         Ok(Self {
             file_name: "ReplContract.sol".to_string(),

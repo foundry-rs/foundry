@@ -133,6 +133,14 @@ repl_test!(eval_subcommand, "eval type(uint8).max", |repl| {
     repl.expect("Decimal: 255");
 });
 
+repl_test!(
+    eval_tempo_network_uses_tempo_executor,
+    "--network tempo eval address(0xfeEC000000000000000000000000000000000000).code.length",
+    |repl| {
+        repl.expect("Decimal: 1");
+    }
+);
+
 // Issue #4938: Test memory/stack dumps with assembly.
 repl_test!(assembly_memory_dump, |repl| {
     let input = r#"
