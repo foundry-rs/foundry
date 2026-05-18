@@ -2,6 +2,7 @@ use alloy_primitives::U256;
 use foundry_evm::fuzz::BaseCounterExample;
 use foundry_test_utils::{TestCommand, forgetest_init, str};
 use regex::Regex;
+use std::fs::{read_dir, read_to_string};
 
 forgetest_init!(test_can_scrape_bytecode, |prj, cmd| {
     prj.update_config(|config| config.optimizer = Some(true));
@@ -1068,18 +1069,15 @@ contract SymExecAssistTest is Test {
     cmd.args(["test", "--mt", "testFuzz_FindMagic"]).assert_success();
 
     // Master corpus directory: `<corpus_dir>/<contract>/<test>/worker0/corpus/`.
-    let corpus_root = prj
-        .root()
-        .join("symexec_corpus")
-        .join("SymExecAssistTest")
-        .join("testFuzz_FindMagic");
+    let corpus_root =
+        prj.root().join("symexec_corpus").join("SymExecAssistTest").join("testFuzz_FindMagic");
     let master_corpus = corpus_root.join("worker0").join("corpus");
     let master_sync = corpus_root.join("worker0").join("sync");
 
     let magic_hex = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
 
-    let mut search_dirs = vec![master_corpus.clone(), master_sync.clone()];
-    if let Ok(entries) = std::fs::read_dir(&corpus_root) {
+    let mut search_dirs = vec![master_corpus, master_sync];
+    if let Ok(entries) = read_dir(&corpus_root) {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
@@ -1091,13 +1089,13 @@ contract SymExecAssistTest is Test {
 
     let mut found = false;
     'outer: for dir in &search_dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        let Ok(entries) = read_dir(dir) else { continue };
         for entry in entries.flatten() {
             let path = entry.path();
             if !path.is_file() {
                 continue;
             }
-            let Ok(contents) = std::fs::read_to_string(&path) else { continue };
+            let Ok(contents) = read_to_string(&path) else { continue };
             if contents.to_ascii_lowercase().contains(magic_hex) {
                 found = true;
                 break 'outer;

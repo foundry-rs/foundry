@@ -97,6 +97,7 @@ pub fn propose_calldata_rewrites(
                 call_details: CallDetails {
                     target: tx.call_details.target,
                     calldata: Bytes::from(new_calldata),
+                    value: tx.call_details.value,
                 },
             });
 

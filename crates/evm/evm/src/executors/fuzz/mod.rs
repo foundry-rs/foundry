@@ -511,8 +511,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         // that flip an unseen branch, validates them via normal coverage,
         // and writes accepted candidates into its own `sync/` directory so
         // the existing corpus protocol distributes them.
-        let symexec_active =
-            worker_id == 0 && self.config.corpus.symexec_assist_active();
+        let symexec_active = worker_id == 0 && self.config.corpus.symexec_assist_active();
         let symexec_interval = self.config.corpus.symexec_assist_interval.max(1);
         let mut runs_since_symexec: u32 = 0;
         let mut symexec_state = SymExecState::default();

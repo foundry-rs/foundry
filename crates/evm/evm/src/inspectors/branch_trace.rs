@@ -121,11 +121,11 @@ impl BranchTrace {
         self.branches.clear();
     }
 
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.branches.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.branches.is_empty()
     }
 }

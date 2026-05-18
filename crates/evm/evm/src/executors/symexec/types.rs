@@ -30,7 +30,7 @@ pub struct FrontierKey {
     pub selector: [u8; 4],
 }
 
-/// Per-frontier attempt bookkeeping, kept separately from [`super::corpus`]
+/// Per-frontier attempt bookkeeping, kept separately from the corpus
 /// stats so the symbolic worker doesn't pollute the fuzzer's counters.
 #[derive(Clone, Debug, Default)]
 pub struct FrontierStats {
@@ -45,9 +45,6 @@ pub const MAX_FRONTIER_ATTEMPTS: u16 = 3;
 
 /// Hard cap on candidates evaluated per frontier per cycle.
 pub const MAX_CANDIDATES_PER_FRONTIER: usize = 8;
-
-/// Hard cap on seeds processed per assist cycle.
-pub const MAX_SEEDS_PER_CYCLE: usize = 1;
 
 /// In-process state for the symbolic worker. Owned by the master worker; not
 /// persisted to disk (regenerated fresh each campaign).

@@ -49,11 +49,11 @@ pub fn pick_seed(candidates: &[SeedSnapshot]) -> Option<&SeedSnapshot> {
 /// Pick a frontier from a replay trace.
 ///
 /// Strategy:
-/// - prefer the *deepest* observation whose opposite edge is currently unseen
-///   (the seed already satisfies all earlier guards),
+/// - prefer the *deepest* observation whose opposite edge is currently unseen (the seed already
+///   satisfies all earlier guards),
 /// - skip frontiers that have hit `MAX_FRONTIER_ATTEMPTS`,
-/// - skip frontiers without a recoverable compare (v1 has no symbolic
-///   reasoning beyond ABI rewrites of compare operands).
+/// - skip frontiers without a recoverable compare (v1 has no symbolic reasoning beyond ABI rewrites
+///   of compare operands).
 pub fn pick_frontier<F>(
     trace: &BranchTrace,
     tx_index: u32,

@@ -1,5 +1,6 @@
 use alloy_primitives::U256;
 use foundry_test_utils::{TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str};
+use std::fs::{read_dir, read_to_string};
 
 mod common;
 mod handler;
@@ -1919,11 +1920,9 @@ contract SymExecAssistInvariantTest is Test {
 
     let magic_hex = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
 
-    let mut search_dirs = vec![
-        corpus_root.join("worker0").join("corpus"),
-        corpus_root.join("worker0").join("sync"),
-    ];
-    if let Ok(entries) = std::fs::read_dir(&corpus_root) {
+    let mut search_dirs =
+        vec![corpus_root.join("worker0").join("corpus"), corpus_root.join("worker0").join("sync")];
+    if let Ok(entries) = read_dir(&corpus_root) {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
@@ -1935,13 +1934,13 @@ contract SymExecAssistInvariantTest is Test {
 
     let mut found = false;
     'outer: for dir in &search_dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        let Ok(entries) = read_dir(dir) else { continue };
         for entry in entries.flatten() {
             let path = entry.path();
             if !path.is_file() {
                 continue;
             }
-            let Ok(contents) = std::fs::read_to_string(&path) else { continue };
+            let Ok(contents) = read_to_string(&path) else { continue };
             if contents.to_ascii_lowercase().contains(magic_hex) {
                 found = true;
                 break 'outer;

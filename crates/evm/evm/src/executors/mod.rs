@@ -7,7 +7,7 @@
 // the concrete `Executor` type.
 
 use crate::inspectors::{
-    Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
+    BranchTrace, Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -63,7 +63,7 @@ pub use invariant::InvariantExecutor;
 
 mod corpus;
 mod sancov;
-pub mod symexec;
+pub(crate) mod symexec;
 mod trace;
 
 pub use trace::TracingExecutor;
@@ -985,7 +985,7 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The edge coverage info collected during the call
     pub edge_coverage: Option<Vec<u8>>,
     /// Branch observations collected by the symbolic-assist worker.
-    pub branch_trace: Option<crate::inspectors::BranchTrace>,
+    pub branch_trace: Option<BranchTrace>,
     /// Sancov edge coverage from instrumented native Rust crates (e.g. precompiles).
     /// Tracked separately from EVM edge coverage to avoid ID-space collisions.
     pub sancov_coverage: Option<Vec<u8>>,

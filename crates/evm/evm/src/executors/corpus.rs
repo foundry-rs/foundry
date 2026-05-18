@@ -34,7 +34,7 @@
 //! - This all happens periodically, there is no clear order in which workers export or import
 //!   entries since it doesn't matter as long as the corpus eventually syncs across all workers
 
-use crate::executors::{Executor, RawCallResult, invariant::execute_tx};
+use crate::executors::{Executor, RawCallResult, invariant::execute_tx, symexec::SeedSnapshot};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Bytes, I256};
@@ -1138,13 +1138,13 @@ impl WorkerCorpus {
     /// Snapshot a small candidate pool of seeds for symbolic-assist seed
     /// scoring. Returns at most `MAX` entries (kept tiny so scoring stays
     /// cheap).
-    pub fn symexec_seed_pool(&self) -> Vec<crate::executors::symexec::SeedSnapshot> {
+    pub fn symexec_seed_pool(&self) -> Vec<SeedSnapshot> {
         const MAX: usize = 16;
         self.in_memory_corpus
             .iter()
             .rev()
             .take(MAX)
-            .map(|e| crate::executors::symexec::SeedSnapshot {
+            .map(|e| SeedSnapshot {
                 uuid: e.uuid,
                 tx_seq: e.tx_seq.clone(),
                 is_favored: e.is_favored,

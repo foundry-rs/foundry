@@ -2,7 +2,7 @@
 //!
 //! Implements the *worker-side* of the architectural plan inspired by
 //! Echidna's `Echidna.SymExec.Exploration` and the SaferMaker writeup at
-//! https://hackmd.io/@SaferMaker/EVM-Sym-Exec.
+//! <https://hackmd.io/@SaferMaker/EVM-Sym-Exec>.
 //!
 //! It is *not* a full symbolic-execution engine; it is a directed mutation
 //! assistant that:
@@ -10,12 +10,12 @@
 //! 1. takes a corpus seed (`Vec<BasicTxDetails>`),
 //! 2. replays it concretely under a [`crate::inspectors::BranchTraceInspector`],
 //! 3. picks the deepest *unseen* opposite-side branch as the "frontier",
-//! 4. proposes ABI-aware calldata rewrites that — given the recovered
-//!    compare operands — would flip the frontier branch,
-//! 5. validates each candidate through the normal executor (requiring a real
-//!    new edge in coverage), and
-//! 6. writes accepted candidates to the master worker's `sync/` directory so
-//!    the existing corpus protocol distributes them.
+//! 4. proposes ABI-aware calldata rewrites that — given the recovered compare operands — would flip
+//!    the frontier branch,
+//! 5. validates each candidate through the normal executor (requiring a real new edge in coverage),
+//!    and
+//! 6. writes accepted candidates to the master worker's `sync/` directory so the existing corpus
+//!    protocol distributes them.
 //!
 //! v1 is intentionally minimal:
 //! - master worker only,
@@ -29,28 +29,32 @@ use crate::{
     inspectors::BranchTrace,
 };
 use alloy_json_abi::Function;
-use alloy_primitives::{B256, keccak256, map::DefaultHashBuilder};
+use alloy_primitives::{B256, U256, keccak256, map::DefaultHashBuilder};
 use eyre::Result;
+use foundry_common::fs::write_json_file;
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_fuzz::{BasicTxDetails, invariant::FuzzRunIdentifiedContracts};
-use std::path::Path;
+use std::{
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 mod mutate;
 mod select;
 mod types;
 
-pub use mutate::propose_calldata_rewrites;
-pub use select::{SeedSnapshot, pick_frontier, pick_seed, score_seed, unseen_in_history};
-pub use types::{
-    Candidate, FrontierKey, FrontierStats, MAX_CANDIDATES_PER_FRONTIER, MAX_FRONTIER_ATTEMPTS,
-    MAX_SEEDS_PER_CYCLE, SymExecState,
-};
+use mutate::propose_calldata_rewrites;
+pub use select::SeedSnapshot;
+use select::pick_seed;
+use types::Candidate;
+pub use types::SymExecState;
 
 /// Backend abstraction so v2 can swap the heuristic engine for a real SMT
 /// solver (or external `hevm`) without touching the assist loop.
 pub trait SymBackend {
     /// Generate candidate sequences from a seed and its branch trace.
     /// `tx_index` identifies the call to mutate (the last one, in v1).
+    #[allow(clippy::too_many_arguments)]
     fn propose(
         &self,
         seed: &[BasicTxDetails],
@@ -166,7 +170,7 @@ pub fn run_symexec_assist<FEN: FoundryEvmNetwork>(
             tx.sender,
             tx.call_details.target,
             tx.call_details.calldata.clone(),
-            alloy_primitives::U256::ZERO,
+            U256::ZERO,
         )?;
         if i == tx_index
             && let Some(t) = result.branch_trace.take()
@@ -181,9 +185,8 @@ pub fn run_symexec_assist<FEN: FoundryEvmNetwork>(
         return Ok(0);
     }
 
-    // 2. Resolve the ABI of the call slot we're allowed to mutate. For
-    //    invariant tests this is looked up from the targeted contracts;
-    //    for stateless fuzz the caller already supplied it.
+    // 2. Resolve the ABI of the call slot we're allowed to mutate. For invariant tests this is
+    //    looked up from the targeted contracts; for stateless fuzz the caller already supplied it.
     let resolved_function: Option<Function> = match (function, targeted_contracts) {
         (Some(f), _) => Some(f.clone()),
         (None, Some(targets)) => seed
@@ -251,11 +254,8 @@ fn candidate_hash(seq: &[BasicTxDetails]) -> B256 {
 /// JSON file into a worker's `sync/` directory.
 pub fn write_sync_entry(sync_dir: &Path, seq: &[BasicTxDetails]) -> Result<()> {
     let uuid = uuid::Uuid::new_v4();
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let path = sync_dir.join(format!("{uuid}-{ts}.json"));
-    foundry_common::fs::write_json_file(&path, &seq)?;
+    write_json_file(&path, &seq)?;
     Ok(())
 }
