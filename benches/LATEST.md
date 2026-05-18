@@ -1,6 +1,6 @@
 # 📊 Foundry Benchmark Results
 
-**Generated at**: 2026-05-02 21:53:46 UTC
+**Generated at**: 2026-05-18 09:57:40 UTC
 
 ## Forge Test
 
@@ -17,19 +17,19 @@
 
 | Repository | v1.5.1 | v1.7.0 |
 |------------|----------|----------|
-| ithacaxyz-account | 2.78 s | 0.965 s |
-| vectorized-solady | 0.995 s | 0.645 s |
-| uniswap-v4-core | 5.97 s | 1.51 s |
-| sparkdotfi-spark-psm | 19.98 s | 10.20 s |
+| ithacaxyz-account | 2.88 s | 0.960 s |
+| vectorized-solady | 0.967 s | 0.634 s |
+| uniswap-v4-core | 6.15 s | 1.62 s |
+| sparkdotfi-spark-psm | 22.80 s | 10.00 s |
 
 ## Forge Fuzz Test
 
 | Repository | v1.5.1 | v1.7.0 |
 |------------|----------|----------|
-| ithacaxyz-account | 2.54 s | 0.923 s |
-| vectorized-solady | 0.929 s | 0.617 s |
-| uniswap-v4-core | 6.44 s | 1.40 s |
-| sparkdotfi-spark-psm | 2.25 s | 2.03 s |
+| ithacaxyz-account | 2.54 s | 0.868 s |
+| vectorized-solady | 0.859 s | 0.604 s |
+| uniswap-v4-core | 5.42 s | 1.44 s |
+| sparkdotfi-spark-psm | 2.35 s | 2.01 s |
 
 ## Forge Test (Isolated)
 
@@ -46,10 +46,10 @@
 
 | Repository | v1.5.1 | v1.7.0 |
 |------------|----------|----------|
-| ithacaxyz-account | 3.05 s | 1.02 s |
-| vectorized-solady | 0.871 s | 0.741 s |
-| uniswap-v4-core | 6.81 s | 1.68 s |
-| sparkdotfi-spark-psm | 21.96 s | 11.26 s |
+| ithacaxyz-account | 2.79 s | 0.938 s |
+| vectorized-solady | 0.841 s | 0.702 s |
+| uniswap-v4-core | 7.11 s | 1.62 s |
+| sparkdotfi-spark-psm | 22.34 s | 10.96 s |
 
 ## Forge Build
 
@@ -68,19 +68,19 @@
 
 | Repository | v1.5.1 | v1.7.0 |
 |------------|----------|----------|
-| ithacaxyz-account | 34.58 s | 33.29 s |
-| vectorized-solady | 14.40 s | 14.41 s |
-| uniswap-v4-core | 2m 17.6s | 2m 17.7s |
-| sparkdotfi-spark-psm | 12.62 s | 12.61 s |
+| ithacaxyz-account | 34.58 s | 32.82 s |
+| vectorized-solady | 14.34 s | 14.35 s |
+| uniswap-v4-core | 2m 15.7s | 2m 16.4s |
+| sparkdotfi-spark-psm | 12.58 s | 12.55 s |
 
 ### With Cache
 
 | Repository | v1.5.1 | v1.7.0 |
 |------------|----------|----------|
-| ithacaxyz-account | 0.083 s | 0.089 s |
-| vectorized-solady | 0.062 s | 0.064 s |
-| uniswap-v4-core | 0.071 s | 0.074 s |
-| sparkdotfi-spark-psm | 0.066 s | 0.068 s |
+| ithacaxyz-account | 0.082 s | 0.090 s |
+| vectorized-solady | 0.062 s | 0.063 s |
+| uniswap-v4-core | 0.070 s | 0.073 s |
+| sparkdotfi-spark-psm | 0.065 s | 0.068 s |
 
 ## Forge Coverage
 
@@ -96,9 +96,9 @@
 
 | Repository | v1.5.1 | v1.7.0 |
 |------------|----------|----------|
-| ithacaxyz-account | 29.35 s | 18.69 s |
-| uniswap-v4-core | 1m 26.8s | 1m 4.1s |
-| sparkdotfi-spark-psm | 2m 1.6s | 1m 28.4s |
+| ithacaxyz-account | 29.88 s | 18.49 s |
+| uniswap-v4-core | 1m 26.5s | 1m 3.3s |
+| sparkdotfi-spark-psm | 1m 58.3s | 1m 26.5s |
 
 ## System Information
 
