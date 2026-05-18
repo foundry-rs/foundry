@@ -716,12 +716,31 @@ impl WorkerCorpus {
         let tx = if self.in_memory_corpus.is_empty() {
             self.new_tx(test_runner)?
         } else {
-            let corpus = &self.in_memory_corpus
-                [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
-            self.current_mutated = Some(corpus.uuid);
-            let mut tx = corpus.tx_seq.first().unwrap().clone();
-            self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
-            tx
+            let idx = test_runner.rng().random_range(0..self.in_memory_corpus.len());
+            // If a corpus entry has never been tried verbatim
+            // (`total_mutations == 0`), return its calldata as-is so that
+            // newly-imported entries (in particular ones the symbolic-assist
+            // worker pushes via `insert_symexec_candidate`) get one shot at
+            // the contract before their bytes are scrambled by `abi_mutate`.
+            // Without this, candidates that hit a precise guard (e.g. a
+            // 32-byte EQ magic the worker copied from a runtime compare)
+            // are immediately mutated and lose the value the worker spent
+            // effort discovering.
+            let is_pristine = self.in_memory_corpus[idx].total_mutations == 0;
+            if is_pristine {
+                let tx = self.in_memory_corpus[idx].tx_seq.first().unwrap().clone();
+                // Bump `total_mutations` so the same entry isn't returned
+                // verbatim forever; the next selection will go through
+                // `abi_mutate` normally.
+                self.in_memory_corpus[idx].total_mutations += 1;
+                tx
+            } else {
+                let corpus = &self.in_memory_corpus[idx];
+                self.current_mutated = Some(corpus.uuid);
+                let mut tx = corpus.tx_seq.first().unwrap().clone();
+                self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+                tx
+            }
         };
 
         Ok(tx.call_details.calldata)
@@ -1167,6 +1186,32 @@ impl WorkerCorpus {
         self.config.corpus_dir.as_ref().map(|d| d.join(format!("{WORKER}0")).join(SYNC_DIR))
     }
 
+    /// Directly insert a validated symbolic-assist candidate into the
+    /// master's in-memory corpus *and* persist it to disk.
+    ///
+    /// Going through the usual `sync/` → `calibrate()` path is not
+    /// reliable for short campaigns: `last_sync_timestamp` is in seconds
+    /// resolution, so any candidate the worker produces within the same
+    /// second as the last sync would be filtered out by `load_sync_corpus`
+    /// and never imported. Inserting here avoids that race entirely.
+    pub fn insert_symexec_candidate(&mut self, tx_seq: Vec<BasicTxDetails>) -> Result<()> {
+        let Some(worker_dir) = &self.worker_dir else { return Ok(()) };
+        let corpus_dir = worker_dir.join(CORPUS_DIR);
+        foundry_common::fs::create_dir_all(&corpus_dir)?;
+
+        let corpus = CorpusEntry::new(tx_seq);
+        if let Err(err) = corpus.write_to_disk_in(&corpus_dir, self.config.corpus_gzip) {
+            debug!(target: "corpus", %err, "failed to persist symexec corpus entry");
+        }
+
+        // Track so the next master `export_to_workers` distributes this entry.
+        let new_index = self.in_memory_corpus.len();
+        self.new_entry_indices.push(new_index);
+        self.metrics.corpus_count += 1;
+        self.in_memory_corpus.push(corpus);
+        Ok(())
+    }
+
     /// Validate a candidate sequence produced by the symbolic-assist
     /// worker: re-run it through a clone of `executor` and report whether
     /// it produced at least one previously-unseen EVM edge against a
@@ -1188,6 +1233,12 @@ impl WorkerCorpus {
             return Ok(false);
         }
         let mut executor = executor.clone();
+        // Ensure edge coverage is enabled on the clone we replay through.
+        // Without this the cloned inspector could be missing the
+        // `EdgeCovInspector` (depending on how the caller built it), and
+        // `result.edge_coverage` would be `None`, making `merge_all_coverage`
+        // silently report no new coverage.
+        executor.inspector_mut().collect_edge_coverage(true);
         let mut history = self.history_map.clone();
         let mut sancov_history = self.sancov_history_map.clone();
         let mut produced_new = false;

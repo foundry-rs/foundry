@@ -86,12 +86,17 @@ pub fn propose_calldata_rewrites(
             };
             let mut new_args = decoded.clone();
             new_args[arg_idx] = new_value;
-            let Ok(encoded) = function.abi_encode_input(&new_args) else {
+            // `abi_encode_input` *includes* the function selector at the
+            // front — using it here would double-prepend the 4-byte
+            // selector and produce a calldata that is 4 bytes longer than
+            // the contract expects. Use `abi_encode_input_raw` (args only)
+            // and prepend the original selector ourselves.
+            let Ok(encoded_args) = function.abi_encode_input_raw(&new_args) else {
                 continue;
             };
-            let mut new_calldata = Vec::with_capacity(4 + encoded.len());
+            let mut new_calldata = Vec::with_capacity(4 + encoded_args.len());
             new_calldata.extend_from_slice(&calldata[..4]);
-            new_calldata.extend_from_slice(&encoded);
+            new_calldata.extend_from_slice(&encoded_args);
 
             out.push(BasicTxDetails {
                 warp: tx.warp,

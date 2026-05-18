@@ -222,10 +222,16 @@ pub fn run_symexec_assist<FEN: FoundryEvmNetwork>(
             continue;
         }
 
+        // Insert directly into the master's in-memory corpus instead of
+        // routing through `sync/` + `calibrate()`. The sync timestamp is
+        // only second-resolution, so candidates produced within the same
+        // second as the most recent sync were silently filtered out.
+        // Also persist a `sync/` copy for inspection / crash recovery.
         if let Some(sync_dir) = corpus.master_sync_dir() {
-            write_sync_entry(&sync_dir, &candidate.tx_seq)?;
-            accepted += 1;
+            let _ = write_sync_entry(&sync_dir, &candidate.tx_seq);
         }
+        corpus.insert_symexec_candidate(candidate.tx_seq)?;
+        accepted += 1;
     }
 
     Ok(accepted)
