@@ -7,8 +7,8 @@ use solar::{
     ast::{ElementaryType, Visibility},
     interface::{kw, sym},
     sema::hir::{
-        self, Block, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Res, Stmt, StmtKind,
-        TypeKind,
+        self, Block, ContractId, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Res, Stmt,
+        StmtKind, TypeKind,
     },
 };
 use std::collections::HashSet;
@@ -35,12 +35,19 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     ctx: &'ctx LintContext<'s, 'c>,
     hir: &'hir Hir<'hir>,
     call_stack: Vec<FunctionId>,
+    analyzed_loop_calls: HashSet<FunctionId>,
     emitted: HashSet<solar::interface::Span>,
 }
 
 impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     fn new(ctx: &'ctx LintContext<'s, 'c>, hir: &'hir Hir<'hir>) -> Self {
-        Self { ctx, hir, call_stack: Vec::new(), emitted: HashSet::new() }
+        Self {
+            ctx,
+            hir,
+            call_stack: Vec::new(),
+            analyzed_loop_calls: HashSet::new(),
+            emitted: HashSet::new(),
+        }
     }
 
     fn analyze_callable(&mut self, func: &'hir Function<'hir>, body: Block<'hir>, loop_depth: u32) {
@@ -213,6 +220,9 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         if self.call_stack.contains(&func_id) {
             return;
         }
+        if !self.analyzed_loop_calls.insert(func_id) {
+            return;
+        }
 
         let func = self.hir.function(func_id);
         let Some(body) = func.body else { return };
@@ -278,7 +288,7 @@ fn is_this(expr: &Expr<'_>) -> bool {
 
 fn is_contract_like(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
-        ExprKind::Call(callee, _, _) if is_contract_type_expr(callee) => true,
+        ExprKind::Call(callee, _, _) if contract_type_expr_id(callee).is_some() => true,
         ExprKind::New(hir::Type { kind: TypeKind::Custom(ItemId::Contract(_)), .. }) => true,
         _ => expr_type(hir, expr).is_some_and(type_is_contract_like),
     }
@@ -292,13 +302,14 @@ fn is_address_like(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
     }
 }
 
-fn is_contract_type_expr(expr: &Expr<'_>) -> bool {
+fn contract_type_expr_id(expr: &Expr<'_>) -> Option<ContractId> {
     match &expr.peel_parens().kind {
-        ExprKind::Type(hir::Type { kind: TypeKind::Custom(ItemId::Contract(_)), .. }) => true,
-        ExprKind::Ident(reses) => {
-            reses.iter().any(|res| matches!(res, Res::Item(ItemId::Contract(_))))
-        }
-        _ => false,
+        ExprKind::Type(hir::Type { kind: TypeKind::Custom(ItemId::Contract(id)), .. }) => Some(*id),
+        ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
+            Res::Item(ItemId::Contract(id)) => Some(*id),
+            _ => None,
+        }),
+        _ => None,
     }
 }
 
@@ -313,6 +324,13 @@ const fn type_is_contract_like(ty: &hir::Type<'_>) -> bool {
     matches!(ty.kind, TypeKind::Custom(ItemId::Contract(_)))
 }
 
+const fn type_contract_id(ty: &hir::Type<'_>) -> Option<ContractId> {
+    match ty.kind {
+        TypeKind::Custom(ItemId::Contract(id)) => Some(id),
+        _ => None,
+    }
+}
+
 const fn type_is_address_like(ty: &hir::Type<'_>) -> bool {
     matches!(ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
 }
@@ -323,7 +341,7 @@ fn expr_type<'hir>(hir: &'hir Hir<'hir>, expr: &Expr<'hir>) -> Option<&'hir hir:
             let var_id = res.as_variable()?;
             Some(&hir.variable(var_id).ty)
         }),
-        ExprKind::Call(callee, _, _) => single_return_type(hir, callee),
+        ExprKind::Call(callee, args, _) => single_return_type(hir, callee, args.len()),
         ExprKind::Index(base, _) => indexed_element_type(hir, base),
         ExprKind::Member(base, member) => member_type(hir, base, *member),
         _ => None,
@@ -333,14 +351,55 @@ fn expr_type<'hir>(hir: &'hir Hir<'hir>, expr: &Expr<'hir>) -> Option<&'hir hir:
 fn single_return_type<'hir>(
     hir: &'hir Hir<'hir>,
     callee: &Expr<'hir>,
+    arity: usize,
 ) -> Option<&'hir hir::Type<'hir>> {
-    let ExprKind::Ident(reses) = &callee.peel_parens().kind else { return None };
-    reses.iter().find_map(|res| {
-        let Res::Item(ItemId::Function(func_id)) = res else { return None };
-        let func = hir.function(*func_id);
-        let [ret] = func.returns else { return None };
-        Some(&hir.variable(*ret).ty)
-    })
+    match &callee.peel_parens().kind {
+        ExprKind::Ident(reses) => reses.iter().find_map(|res| {
+            let Res::Item(ItemId::Function(func_id)) = res else { return None };
+            let func = hir.function(*func_id);
+            let [ret] = func.returns else { return None };
+            Some(&hir.variable(*ret).ty)
+        }),
+        ExprKind::Member(base, member) => member_return_type(hir, base, *member, arity),
+        _ => None,
+    }
+}
+
+fn member_return_type<'hir>(
+    hir: &'hir Hir<'hir>,
+    base: &Expr<'hir>,
+    member: solar::interface::Ident,
+    arity: usize,
+) -> Option<&'hir hir::Type<'hir>> {
+    let contract_id = receiver_contract_id(hir, base)?;
+    let mut ret = None;
+    for item in hir.contract_item_ids(contract_id) {
+        let Some(func_id) = item.as_function() else { continue };
+        let func = hir.function(func_id);
+        if !func.name.is_some_and(|name| name.name == member.name) || func.parameters.len() != arity
+        {
+            continue;
+        }
+        let [ret_id] = func.returns else { return None };
+        if ret.replace(&hir.variable(*ret_id).ty).is_some() {
+            return None;
+        }
+    }
+    ret
+}
+
+fn receiver_contract_id(hir: &Hir<'_>, expr: &Expr<'_>) -> Option<ContractId> {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
+            Res::Item(ItemId::Contract(id)) => Some(*id),
+            Res::Item(ItemId::Variable(id)) => type_contract_id(&hir.variable(*id).ty),
+            _ => None,
+        }),
+        ExprKind::Call(callee, _, _) => contract_type_expr_id(callee)
+            .or_else(|| expr_type(hir, expr).and_then(type_contract_id)),
+        ExprKind::New(hir::Type { kind: TypeKind::Custom(ItemId::Contract(id)), .. }) => Some(*id),
+        _ => expr_type(hir, expr).and_then(type_contract_id),
+    }
 }
 
 fn indexed_element_type<'hir>(

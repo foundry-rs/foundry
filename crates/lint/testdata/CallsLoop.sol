@@ -6,6 +6,10 @@ interface IReceiver {
     function purePing(uint256 value) external pure returns (bool);
 }
 
+interface IFactory {
+    function getReceiver() external view returns (IReceiver);
+}
+
 library LocalLib {
     struct Box {
         uint256 value;
@@ -55,6 +59,7 @@ contract CallsLoop {
     address payable[] public recipients;
     IReceiver[] public receivers;
     IReceiver public receiver;
+    IFactory public factory;
     mapping(address => IReceiver) internal receiverByAddress;
     Target internal target;
     LocalLib.Box[] internal boxes;
@@ -95,6 +100,12 @@ contract CallsLoop {
     function callsReturnedReceiver() external {
         for (uint256 i; i < receivers.length; ++i) {
             getReceiver().ping(i);
+        }
+    }
+
+    function callsChainedReturnedReceiver() external {
+        for (uint256 i; i < receivers.length; ++i) {
+            factory.getReceiver().ping(i);
         }
     }
 
