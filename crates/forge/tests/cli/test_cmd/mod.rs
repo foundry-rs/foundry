@@ -19,6 +19,7 @@ mod repros;
 mod spec;
 mod symbolic;
 mod symbolic_conformance;
+mod symbolic_fuzz_parity;
 mod symbolic_limits;
 mod table;
 mod trace;
