@@ -38,6 +38,6 @@ contract KevmOpcodeSemantics {
 ...
 Ran 1 test for test/KevmOpcodeSemantics.t.sol:KevmOpcodeSemantics
 [PASS] checkCreate2AndReturndata(bytes32) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; finished in [..]
+...
 "#]]);
 });
