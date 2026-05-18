@@ -59,6 +59,23 @@ contract Child { //~WARN: contract can receive ETH but has no mechanism to send 
     constructor() payable {}
 }
 
+// Unreachable internal helpers don't count as exits.
+contract LockedUnreachableInternal { //~WARN: contract can receive ETH but has no mechanism to send it out
+    receive() external payable {}
+
+    function _sweep(address payable to, uint256 amount) internal {
+        to.transfer(amount);
+    }
+}
+
+contract LockedUnreachablePrivate { //~WARN: contract can receive ETH but has no mechanism to send it out
+    function deposit() external payable {}
+
+    function _drain(address payable to) private {
+        selfdestruct(to);
+    }
+}
+
 // SHOULD PASS:
 
 contract OkTransfer {
@@ -130,10 +147,7 @@ contract OkTransitive {
     }
 }
 
-// Regression: `this.<fn>(...)` member-call dispatch. The callee is not a plain
-// `Ident` resolved to a `FunctionId` inside `SendChecker`, but `_doSend` is
-// public/external on `self`, so it's already seeded into the worklist via
-// `linearized_bases.all_functions()` and its body is analyzed transitively.
+// `this.<fn>(...)` member-call dispatch.
 contract OkExternalSelfCall {
     function deposit() external payable {}
 
@@ -146,10 +160,7 @@ contract OkExternalSelfCall {
     }
 }
 
-// Regression: inline assembly is lowered to `StmtKind::Err` and is opaque to the
-// HIR visitor. The lint bails conservatively on any contract whose inheritance
-// chain contains assembly, to avoid false positives like `call(...)` /
-// `selfdestruct` exits expressed in Yul.
+// Inline assembly: opaque, bails when reached.
 contract OkAssemblyExit {
     function deposit() external payable {}
 
@@ -177,6 +188,77 @@ contract OkDelegatecall {
     function delegate(address impl, bytes calldata data) external {
         (bool ok,) = impl.delegatecall(data);
         require(ok);
+    }
+}
+
+// Payable surface that always reverts.
+contract OkReceiveAlwaysReverts {
+    receive() external payable {
+        revert();
+    }
+}
+
+contract OkFallbackAlwaysReverts {
+    fallback() external payable {
+        revert("disabled");
+    }
+}
+
+contract OkPayableFnAlwaysReverts {
+    function deposit() external payable {
+        revert("disabled");
+    }
+}
+
+contract OkPayableRequireFalse {
+    function deposit() external payable {
+        require(false, "disabled");
+    }
+}
+
+contract OkPayableAssertFalse {
+    function deposit() external payable {
+        assert(false);
+    }
+}
+
+// Modifier always reverts before `_`.
+contract OkPayableModifierReverts {
+    modifier disabled() {
+        revert("disabled");
+        _;
+    }
+
+    function deposit() external payable disabled {}
+}
+
+// `super.<m>(...)` member-call dispatch.
+abstract contract SuperWithdrawBase {
+    function _doSend(address payable to, uint256 amount) internal {
+        to.transfer(amount);
+    }
+}
+
+contract OkSuperCall is SuperWithdrawBase {
+    function deposit() external payable {}
+
+    function withdraw(address payable to, uint256 amount) external {
+        super._doSend(to, amount);
+    }
+}
+
+// `Lib.<fn>(...)` member-call dispatch.
+library SendLib {
+    function pay(address payable to, uint256 amount) internal {
+        to.transfer(amount);
+    }
+}
+
+contract OkLibraryCall {
+    function deposit() external payable {}
+
+    function withdraw(address payable to, uint256 amount) external {
+        SendLib.pay(to, amount);
     }
 }
 

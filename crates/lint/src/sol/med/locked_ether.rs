@@ -4,11 +4,11 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{ContractKind, LitKind, StateMutability},
+    ast::{ContractKind, LitKind, StateMutability, Visibility},
     interface::{kw, sym},
     sema::{
         builtins::Builtin,
-        hir::{self, ExprKind, FunctionId, ItemId, Res, StmtKind, Visit as _},
+        hir::{self, ExprKind, FunctionId, FunctionKind, ItemId, Res, StmtKind, Visit as _},
     },
 };
 use std::{collections::HashSet, ops::ControlFlow};
@@ -41,25 +41,24 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
             return;
         }
 
-        // `receive()` and payable `fallback()` are required to be `Payable`, so a single
-        // mutability check also covers them along with payable constructors and functions.
+        // Any `Payable` function counts as a receive vector except those that always revert.
         let has_payable_entry = contract.linearized_bases.iter().any(|&cid| {
-            hir.contract(cid)
-                .all_functions()
-                .any(|fid| hir.function(fid).state_mutability == StateMutability::Payable)
+            hir.contract(cid).all_functions().any(|fid| {
+                let f = hir.function(fid);
+                f.state_mutability == StateMutability::Payable && !function_always_reverts(hir, f)
+            })
         });
         if !has_payable_entry {
             return;
         }
 
-        // Walk every function in `self` and its bases. Internal/library calls resolved to a
-        // `FunctionId` are queued for transitive analysis; unresolved external calls are
-        // conservatively ignored.
+        // Seed entry points; internal helpers are reached transitively by `SendChecker`.
         let mut visited: HashSet<FunctionId> = HashSet::new();
         let mut worklist: Vec<FunctionId> = contract
             .linearized_bases
             .iter()
             .flat_map(|&cid| hir.contract(cid).all_functions())
+            .filter(|&fid| is_externally_reachable(hir.function(fid)))
             .collect();
 
         while let Some(fid) = worklist.pop() {
@@ -70,16 +69,28 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
 
             for modifier in func.modifiers {
                 for arg in modifier.args.exprs() {
-                    let mut checker =
-                        SendChecker { hir, worklist: &mut worklist, visited: &visited };
+                    let mut checker = SendChecker {
+                        hir,
+                        bases: contract.linearized_bases,
+                        worklist: &mut worklist,
+                        visited: &visited,
+                    };
                     if checker.visit_expr(arg).is_break() {
                         return;
                     }
                 }
+                if let Some(modifier_fid) = modifier.id.as_function() {
+                    worklist.push(modifier_fid);
+                }
             }
 
             if let Some(body) = func.body {
-                let mut checker = SendChecker { hir, worklist: &mut worklist, visited: &visited };
+                let mut checker = SendChecker {
+                    hir,
+                    bases: contract.linearized_bases,
+                    worklist: &mut worklist,
+                    visited: &visited,
+                };
                 for stmt in body.stmts {
                     if checker.visit_stmt(stmt).is_break() {
                         return;
@@ -92,12 +103,116 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
     }
 }
 
+/// Returns `true` if invoking `func` always reverts, either via its body or an attached modifier.
+fn function_always_reverts(hir: &hir::Hir<'_>, func: &hir::Function<'_>) -> bool {
+    if func.modifiers.iter().any(|m| {
+        m.id.as_function().is_some_and(|mid| modifier_reverts_before_placeholder(hir.function(mid)))
+    }) {
+        return true;
+    }
+    func.body.is_some_and(|body| stmts_always_revert(body.stmts))
+}
+
+/// Returns `true` if the modifier body always reverts before reaching the `_` placeholder.
+fn modifier_reverts_before_placeholder(modifier: &hir::Function<'_>) -> bool {
+    let Some(body) = modifier.body else { return false };
+    let before_placeholder = body
+        .stmts
+        .iter()
+        .position(|s| matches!(s.kind, StmtKind::Placeholder))
+        .map_or(body.stmts, |i| &body.stmts[..i]);
+    stmts_always_revert(before_placeholder)
+}
+
+fn stmts_always_revert(stmts: &[hir::Stmt<'_>]) -> bool {
+    stmts.last().is_some_and(stmt_always_reverts)
+}
+
+fn stmt_always_reverts(stmt: &hir::Stmt<'_>) -> bool {
+    match &stmt.kind {
+        StmtKind::Revert(_) => true,
+        StmtKind::Expr(expr) => is_unconditional_revert_call(expr),
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+            stmts_always_revert(block.stmts)
+        }
+        StmtKind::If(_, t, Some(e)) => stmt_always_reverts(t) && stmt_always_reverts(e),
+        _ => false,
+    }
+}
+
+/// Matches `revert()`/`revert("msg")`, `require(false[, "msg"])`, and `assert(false)`.
+fn is_unconditional_revert_call(expr: &hir::Expr<'_>) -> bool {
+    let ExprKind::Call(callee, args, _) = &expr.kind else { return false };
+    let ExprKind::Ident(reses) = &callee.peel_parens().kind else { return false };
+    reses.iter().any(|r| match r {
+        Res::Builtin(Builtin::Revert | Builtin::RevertMsg) => true,
+        Res::Builtin(Builtin::Require | Builtin::RequireMsg | Builtin::Assert) => {
+            args.exprs().next().is_some_and(is_literal_false)
+        }
+        _ => false,
+    })
+}
+
+fn is_literal_false(expr: &hir::Expr<'_>) -> bool {
+    if let ExprKind::Lit(lit) = &expr.peel_parens().kind
+        && let LitKind::Bool(b) = &lit.kind
+    {
+        return !b;
+    }
+    false
+}
+
+/// Returns `true` if `func` is callable from outside the contract.
+const fn is_externally_reachable(func: &hir::Function<'_>) -> bool {
+    match func.kind {
+        FunctionKind::Constructor | FunctionKind::Receive | FunctionKind::Fallback => true,
+        FunctionKind::Function => {
+            matches!(func.visibility, Visibility::Public | Visibility::External)
+        }
+        FunctionKind::Modifier => false,
+    }
+}
+
 /// HIR visitor that short-circuits on the first ETH-sending expression and queues
 /// internally-resolved callees for transitive exploration by the outer worklist loop.
 struct SendChecker<'a, 'hir> {
     hir: &'hir hir::Hir<'hir>,
+    bases: &'a [hir::ContractId],
     worklist: &'a mut Vec<FunctionId>,
     visited: &'a HashSet<FunctionId>,
+}
+
+impl<'hir> SendChecker<'_, 'hir> {
+    /// Queues functions matching `member` in the contract(s) referred to by `receiver`.
+    fn queue_member_callee(&mut self, receiver: &hir::Expr<'_>, member: solar::interface::Ident) {
+        let ExprKind::Ident(reses) = &receiver.peel_parens().kind else { return };
+        for res in *reses {
+            match res {
+                Res::Builtin(Builtin::Super) => {
+                    for &cid in self.bases.iter().skip(1) {
+                        self.queue_named(cid, member.name);
+                    }
+                }
+                Res::Builtin(Builtin::This) => {
+                    for &cid in self.bases {
+                        self.queue_named(cid, member.name);
+                    }
+                }
+                Res::Item(ItemId::Contract(cid)) => self.queue_named(*cid, member.name),
+                _ => {}
+            }
+        }
+    }
+
+    fn queue_named(&mut self, cid: hir::ContractId, name: solar::interface::Symbol) {
+        for fid in self.hir.contract(cid).all_functions() {
+            if !self.visited.contains(&fid)
+                && self.hir.function(fid).name.is_some_and(|n| n.name == name)
+            {
+                self.worklist.push(fid);
+            }
+        }
+    }
 }
 
 impl<'hir> hir::Visit<'hir> for SendChecker<'_, 'hir> {
@@ -125,15 +240,21 @@ impl<'hir> hir::Visit<'hir> for SendChecker<'_, 'hir> {
         }
 
         // Queue calls whose callee resolves statically to a `FunctionId`.
-        if let ExprKind::Call(callee, ..) = &expr.kind
-            && let ExprKind::Ident(reses) = &callee.peel_parens().kind
-        {
-            for res in *reses {
-                if let Res::Item(ItemId::Function(fid)) = res
-                    && !self.visited.contains(fid)
-                {
-                    self.worklist.push(*fid);
+        if let ExprKind::Call(callee, ..) = &expr.kind {
+            match &callee.peel_parens().kind {
+                ExprKind::Ident(reses) => {
+                    for res in *reses {
+                        if let Res::Item(ItemId::Function(fid)) = res
+                            && !self.visited.contains(fid)
+                        {
+                            self.worklist.push(*fid);
+                        }
+                    }
                 }
+                ExprKind::Member(receiver, member) => {
+                    self.queue_member_callee(receiver, *member);
+                }
+                _ => {}
             }
         }
 

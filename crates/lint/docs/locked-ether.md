@@ -9,24 +9,17 @@ permanently trapped.
 
 ## What it does
 
-For every concrete or abstract contract, the lint:
+For each concrete or abstract contract that has a payable entry point (`receive()`, payable
+`fallback()`, payable constructor, or any payable function — directly or through inheritance),
+the lint looks for an expression that can move Ether out:
 
-1. Checks whether the contract — or any contract in its inheritance chain — has at least one
-   payable entry point (`receive()`, payable `fallback()`, payable constructor, or any payable
-   function).
-2. Walks every function defined in the contract and its linearized bases looking for a code path
-   that can move Ether out. The following are recognized as ETH-sending operations:
-   - `addr.transfer(amount)` and `addr.send(amount)` with a non-literal-zero amount.
-   - Any call carrying a non-zero `{value: x}` option, including
-     `addr.call{value: x}(...)` and `new C{value: x}(...)`.
-   - Low-level `addr.delegatecall(...)` / `addr.callcode(...)` (the callee runs in this contract's
-     context and can `selfdestruct`, draining the balance).
-   - The `selfdestruct(addr)` builtin.
-3. Internal and library calls whose callee statically resolves to a function are followed
-   transitively, so a withdrawal helper buried behind several internal hops is detected. External
-   calls through unresolved member access are not followed, to keep false positives down.
+- `addr.transfer(amount)` / `addr.send(amount)` with a non-zero amount.
+- A call carrying a non-zero `{value: x}` option, such as `addr.call{value: x}(...)` or
+  `new C{value: x}(...)`.
+- `addr.delegatecall(...)` / `addr.callcode(...)`.
+- `selfdestruct(addr)`.
 
-If no ETH-sending path is found, the lint reports the contract as locked at the contract's name.
+If none is found, the contract is reported as locked at the contract's name.
 
 ## Why is this bad?
 

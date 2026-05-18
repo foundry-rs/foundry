@@ -62,3 +62,19 @@ LL │ contract Child {
    │
    ╰ help: https://getfoundry.sh/forge/linting/locked-ether
 
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedUnreachableInternal {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedUnreachablePrivate {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
