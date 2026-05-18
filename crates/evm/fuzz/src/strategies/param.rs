@@ -343,18 +343,6 @@ pub fn mutate_param_value(
     mutate_param_value_inner(param, value, test_runner, state, None)
 }
 
-/// Replaces the current value with a value sampled from the fuzz state dictionary.
-pub fn replace_param_value_from_state(
-    param: &DynSolType,
-    test_runner: &mut TestRunner,
-    state: &EvmFuzzState,
-) -> DynSolValue {
-    fuzz_param_from_state(param, state)
-        .new_tree(test_runner)
-        .expect("Could not generate case")
-        .current()
-}
-
 /// Mutates the current value of the given parameter type and value, with optional sender filters.
 ///
 /// When `senders` is provided and has targeted addresses, address mutations will prefer
@@ -377,7 +365,10 @@ fn mutate_param_value_inner(
     senders: Option<&SenderFilters>,
 ) -> DynSolValue {
     let new_value = |param: &DynSolType, test_runner: &mut TestRunner| {
-        replace_param_value_from_state(param, test_runner, state)
+        fuzz_param_from_state(param, state)
+            .new_tree(test_runner)
+            .expect("Could not generate case")
+            .current()
     };
 
     match value {

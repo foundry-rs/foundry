@@ -115,14 +115,14 @@ impl EvmFuzzState {
         }
     }
 
-    /// Collects typed comparison operands.
+    /// Collects typed trace-cmp operands from sancov-instrumented code.
     /// Values are inserted into both persistent state values (survive reverts) and typed
     /// sample buckets (for ABI-aware mutation).
-    pub fn collect_typed_cmp_values(&self, values: impl IntoIterator<Item = (u16, bool, B256)>) {
+    pub fn collect_typed_cmp_values(&self, values: impl IntoIterator<Item = (u8, B256)>) {
         let mut dict = self.inner.write();
-        for (width, signed, value) in values {
+        for (width, value) in values {
             dict.insert_persistent_value(value);
-            dict.insert_typed_cmp_value(width, signed, value);
+            dict.insert_typed_cmp_value(width, value);
         }
     }
 
@@ -152,7 +152,7 @@ impl EvmFuzzState {
 
 // We're using `IndexSet` to have a stable element order when restoring persisted state, as well as
 // for performance when iterating over the sets.
-/// Maximum number of persistent values from comparison operand logs.
+/// Maximum number of persistent values from sancov trace-cmp.
 const MAX_PERSISTENT_VALUES: usize = 2048;
 
 pub struct FuzzDictionary {
@@ -178,7 +178,7 @@ pub struct FuzzDictionary {
     /// Set to `true` on first call to `seed_samples()`. Before seeding, `samples()` checks both
     /// maps separately. After seeding, literals are merged in, so only `sample_values` is checked.
     samples_seeded: bool,
-    /// Persistent values from comparison operand logs that survive `revert()` across runs.
+    /// Persistent values from sancov trace-cmp that survive `revert()` across runs.
     persistent_values: B256IndexSet,
 
     misses: usize,
@@ -440,7 +440,7 @@ impl FuzzDictionary {
     }
 
     /// Insert a persistent value that survives `revert()` across invariant runs.
-    /// Used for comparison operands that should compound over time.
+    /// Used for trace-cmp operands that should compound over time.
     fn insert_persistent_value(&mut self, value: B256) {
         if self.persistent_values.len() >= MAX_PERSISTENT_VALUES {
             return;
@@ -450,26 +450,21 @@ impl FuzzDictionary {
         }
     }
 
-    /// Insert a typed comparison value into the `sample_values` map.
-    /// Maps operand width to `DynSolType` buckets and promotes to larger types.
-    fn insert_typed_cmp_value(&mut self, width: u16, signed: bool, value: B256) {
+    /// Insert a typed trace-cmp value into the `sample_values` map.
+    /// Maps sancov width to `DynSolType` buckets and promotes to larger types.
+    fn insert_typed_cmp_value(&mut self, width: u8, value: B256) {
         if !self.samples_seeded {
             self.seed_samples();
         }
 
         const MAX_TYPED_CMP_PER_BUCKET: usize = 1024;
 
-        let native_type = match (signed, width) {
-            (true, 8) => DynSolType::Int(8),
-            (true, 16) => DynSolType::Int(16),
-            (true, 32) => DynSolType::Int(32),
-            (true, 64) => DynSolType::Int(64),
-            (true, _) => DynSolType::Int(256),
-            (false, 8) => DynSolType::Uint(8),
-            (false, 16) => DynSolType::Uint(16),
-            (false, 32) => DynSolType::Uint(32),
-            (false, 64) => DynSolType::Uint(64),
-            (false, _) => DynSolType::Uint(256),
+        let native_type = match width {
+            8 => DynSolType::Uint(8),
+            16 => DynSolType::Uint(16),
+            32 => DynSolType::Uint(32),
+            64 => DynSolType::Uint(64),
+            _ => DynSolType::Uint(256),
         };
 
         let insert = |map: &mut HashMap<DynSolType, B256IndexSet>, ty: DynSolType, val: B256| {
@@ -481,13 +476,10 @@ impl FuzzDictionary {
 
         insert(&mut self.sample_values, native_type, value);
 
-        if signed {
-            insert(&mut self.sample_values, DynSolType::Int(256), value);
-        } else if width <= 64 {
+        if width <= 64 {
             insert(&mut self.sample_values, DynSolType::Uint(128), value);
             insert(&mut self.sample_values, DynSolType::Uint(256), value);
-        } else {
-            insert(&mut self.sample_values, DynSolType::Uint(256), value);
+            insert(&mut self.sample_values, DynSolType::Int(256), value);
         }
     }
 

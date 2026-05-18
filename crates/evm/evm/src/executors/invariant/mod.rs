@@ -1419,9 +1419,7 @@ fn collect_data<FEN: FoundryEvmNetwork>(
     // Inject typed sancov trace-cmp operands into the fuzz dictionary.
     if let Some(cmp_values) = &call_result.sancov_cmp_values {
         invariant_test.fuzz_state.collect_typed_cmp_values(
-            cmp_values
-                .iter()
-                .map(|s| (u16::from(s.width), false, alloy_primitives::B256::from(s.value))),
+            cmp_values.iter().map(|s| (s.width, alloy_primitives::B256::from(s.value))),
         );
     }
     // Re-add changes

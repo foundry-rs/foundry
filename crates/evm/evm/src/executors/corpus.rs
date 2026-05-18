@@ -1370,7 +1370,6 @@ fn parse_corpus_filename(name: &str) -> Result<(Uuid, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inspectors::CmpKind;
     use alloy_dyn_abi::DynSolValue;
     use alloy_primitives::{Address, U256};
     use std::fs;
@@ -1417,9 +1416,6 @@ mod tests {
             pc: 0,
             address: Address::ZERO,
             opcode: 0,
-            kind: CmpKind::Eq,
-            signed: false,
-            width: 256,
         };
         let config =
             proptest::test_runner::Config { failure_persistence: None, ..Default::default() };

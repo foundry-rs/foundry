@@ -39,26 +39,6 @@ pub struct CmpOperands {
     pub address: Address,
     /// EVM opcode that performed the comparison.
     pub opcode: u8,
-    /// Comparison kind.
-    pub kind: CmpKind,
-    /// Whether the comparison interprets operands as signed integers.
-    pub signed: bool,
-    /// Operand width in bits.
-    pub width: u16,
-}
-
-/// EVM comparison kind.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CmpKind {
-    /// Equality comparison.
-    #[default]
-    Eq,
-    /// Less-than comparison.
-    Lt,
-    /// Greater-than comparison.
-    Gt,
-    /// Zero comparison.
-    IsZero,
 }
 
 /// An `Inspector` that tracks [edge coverage](https://clang.llvm.org/docs/SanitizerCoverage.html#edge-coverage).
@@ -216,46 +196,9 @@ impl EdgeCovInspector {
         let current_pc = interp.bytecode.pc();
 
         match interp.bytecode.opcode() {
-            op @ opcode::EQ => {
+            op @ (opcode::EQ | opcode::LT | opcode::SLT | opcode::GT | opcode::SGT) => {
                 if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
-                    self.store_cmp(CmpOperands {
-                        op1,
-                        op2,
-                        pc: current_pc,
-                        address,
-                        opcode: op,
-                        kind: CmpKind::Eq,
-                        signed: false,
-                        width: 256,
-                    });
-                }
-            }
-            op @ (opcode::LT | opcode::SLT) => {
-                if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
-                    self.store_cmp(CmpOperands {
-                        op1,
-                        op2,
-                        pc: current_pc,
-                        address,
-                        opcode: op,
-                        kind: CmpKind::Lt,
-                        signed: op == opcode::SLT,
-                        width: 256,
-                    });
-                }
-            }
-            op @ (opcode::GT | opcode::SGT) => {
-                if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
-                    self.store_cmp(CmpOperands {
-                        op1,
-                        op2,
-                        pc: current_pc,
-                        address,
-                        opcode: op,
-                        kind: CmpKind::Gt,
-                        signed: op == opcode::SGT,
-                        width: 256,
-                    });
+                    self.store_cmp(CmpOperands { op1, op2, pc: current_pc, address, opcode: op });
                 }
             }
             op @ opcode::ISZERO => {
@@ -266,9 +209,6 @@ impl EdgeCovInspector {
                         pc: current_pc,
                         address,
                         opcode: op,
-                        kind: CmpKind::IsZero,
-                        signed: false,
-                        width: 256,
                     });
                 }
             }
@@ -326,16 +266,13 @@ mod tests {
             pc: 42,
             address: Address::repeat_byte(0xaa),
             opcode: opcode::EQ,
-            kind: CmpKind::Eq,
-            signed: false,
-            width: 0,
         };
 
         assert_eq!(cmp.op1, U256::from(123));
         assert_eq!(cmp.op2, U256::from(456));
         assert_eq!(cmp.pc, 42);
 
-        assert_eq!(CmpOperands::default().kind, CmpKind::Eq);
+        assert_eq!(CmpOperands::default(), CmpOperands::default());
         let cloned = cmp;
         assert_eq!(cloned, cmp);
     }
@@ -363,9 +300,6 @@ mod tests {
             pc: 42,
             address: Address::ZERO,
             opcode: opcode::EQ,
-            kind: CmpKind::Eq,
-            signed: false,
-            width: 0,
         });
 
         inspector.reset();
@@ -385,9 +319,6 @@ mod tests {
                 pc: 42,
                 address: Address::ZERO,
                 opcode: opcode::EQ,
-                kind: CmpKind::Eq,
-                signed: false,
-                width: 0,
             });
         }
 
@@ -405,9 +336,6 @@ mod tests {
                 pc: 1,
                 address: Address::ZERO,
                 opcode: opcode::EQ,
-                kind: CmpKind::Eq,
-                signed: false,
-                width: 0,
             });
         }
         inspector.store_cmp(CmpOperands {
@@ -416,9 +344,6 @@ mod tests {
             pc: 2,
             address: Address::ZERO,
             opcode: opcode::EQ,
-            kind: CmpKind::Eq,
-            signed: false,
-            width: 0,
         });
 
         assert_eq!(inspector.get_cmp_log().len(), usize::from(MAX_CMP_OBSERVATIONS_PER_SITE) + 1);
