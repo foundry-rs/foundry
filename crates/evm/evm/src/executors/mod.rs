@@ -1045,14 +1045,28 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
             return Vec::new();
         };
 
-        let mut values = Vec::with_capacity(cmp_values.len() * 6);
+        let mut sites = HashMap::<CmpSiteKey, CmpSiteSummary>::default();
         for cmp in cmp_values {
-            push_evm_cmp_candidate(&mut values, cmp.op1);
-            push_evm_cmp_candidate(&mut values, cmp.op2);
+            sites.entry(CmpSiteKey::new(cmp)).or_default().observe(cmp);
+        }
 
-            if matches!(cmp.kind, CmpKind::Lt | CmpKind::Gt) {
-                push_evm_cmp_boundary_candidates(&mut values, cmp.op1);
-                push_evm_cmp_boundary_candidates(&mut values, cmp.op2);
+        let mut values = Vec::with_capacity(cmp_values.len() * 4);
+        for site in sites.values() {
+            if site.is_likely_loop_counter() {
+                continue;
+            }
+
+            match site.classification() {
+                CmpSiteClassification::Op1Constant => {
+                    push_evm_cmp_value(&mut values, site.first_op1, site.kind);
+                }
+                CmpSiteClassification::Op2Constant => {
+                    push_evm_cmp_value(&mut values, site.first_op2, site.kind);
+                }
+                CmpSiteClassification::Unknown => {
+                    push_evm_cmp_value(&mut values, site.first_op1, site.kind);
+                    push_evm_cmp_value(&mut values, site.first_op2, site.kind);
+                }
             }
         }
         values
@@ -1304,9 +1318,104 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct CmpSiteKey {
+    address: Address,
+    pc: usize,
+    opcode: u8,
+}
+
+impl CmpSiteKey {
+    const fn new(cmp: &CmpOperands) -> Self {
+        Self { address: cmp.address, pc: cmp.pc, opcode: cmp.opcode }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CmpSiteSummary {
+    kind: CmpKind,
+    first_op1: U256,
+    first_op2: U256,
+    last_op1: U256,
+    last_op2: U256,
+    count: usize,
+    op1_changed: bool,
+    op2_changed: bool,
+    op1_monotonic_step: bool,
+    op2_monotonic_step: bool,
+}
+
+impl Default for CmpSiteSummary {
+    fn default() -> Self {
+        Self {
+            kind: CmpKind::Eq,
+            first_op1: U256::ZERO,
+            first_op2: U256::ZERO,
+            last_op1: U256::ZERO,
+            last_op2: U256::ZERO,
+            count: 0,
+            op1_changed: false,
+            op2_changed: false,
+            op1_monotonic_step: true,
+            op2_monotonic_step: true,
+        }
+    }
+}
+
+impl CmpSiteSummary {
+    fn observe(&mut self, cmp: &CmpOperands) {
+        if self.count == 0 {
+            self.kind = cmp.kind;
+            self.first_op1 = cmp.op1;
+            self.first_op2 = cmp.op2;
+            self.last_op1 = cmp.op1;
+            self.last_op2 = cmp.op2;
+            self.count = 1;
+            return;
+        }
+
+        self.op1_changed |= cmp.op1 != self.first_op1;
+        self.op2_changed |= cmp.op2 != self.first_op2;
+        self.op1_monotonic_step &= is_small_monotonic_step(self.last_op1, cmp.op1);
+        self.op2_monotonic_step &= is_small_monotonic_step(self.last_op2, cmp.op2);
+        self.last_op1 = cmp.op1;
+        self.last_op2 = cmp.op2;
+        self.count += 1;
+    }
+
+    fn classification(&self) -> CmpSiteClassification {
+        match (self.op1_changed, self.op2_changed) {
+            (false, true) => CmpSiteClassification::Op1Constant,
+            (true, false) => CmpSiteClassification::Op2Constant,
+            _ => CmpSiteClassification::Unknown,
+        }
+    }
+
+    fn is_likely_loop_counter(&self) -> bool {
+        const MIN_LOOP_CMP_OBSERVATIONS: usize = 8;
+        self.count >= MIN_LOOP_CMP_OBSERVATIONS
+            && ((self.op1_monotonic_step && self.op1_changed && !self.op2_changed)
+                || (self.op2_monotonic_step && self.op2_changed && !self.op1_changed))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CmpSiteClassification {
+    Op1Constant,
+    Op2Constant,
+    Unknown,
+}
+
 fn push_evm_cmp_boundary_candidates(values: &mut Vec<(u8, B256)>, value: U256) {
     push_evm_cmp_candidate(values, value.wrapping_sub(U256::from(1)));
     push_evm_cmp_candidate(values, value.wrapping_add(U256::from(1)));
+}
+
+fn push_evm_cmp_value(values: &mut Vec<(u8, B256)>, value: U256, kind: CmpKind) {
+    push_evm_cmp_candidate(values, value);
+    if matches!(kind, CmpKind::Lt | CmpKind::Gt) {
+        push_evm_cmp_boundary_candidates(values, value);
+    }
 }
 
 fn push_evm_cmp_candidate(values: &mut Vec<(u8, B256)>, value: U256) {
@@ -1322,6 +1431,11 @@ fn push_evm_cmp_candidate(values: &mut Vec<(u8, B256)>, value: U256) {
         0
     };
     values.push((width, value.into()));
+}
+
+fn is_small_monotonic_step(prev: U256, next: U256) -> bool {
+    let diff = if next >= prev { next - prev } else { prev - next };
+    diff <= U256::from(1)
 }
 
 /// Timer for a fuzz test.
