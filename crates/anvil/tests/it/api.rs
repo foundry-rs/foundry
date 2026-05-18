@@ -145,6 +145,49 @@ async fn can_get_block_by_number() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn can_resolve_safe_and_finalized_block_tags_with_configured_epoch_slots() {
+    let slots_in_an_epoch = 3;
+    let (api, handle) = spawn(NodeConfig::test().with_slots_in_an_epoch(slots_in_an_epoch)).await;
+    let provider = handle.http_provider();
+
+    api.anvil_mine(Some(U256::from(8)), None).await.unwrap();
+    let latest = provider.get_block_number().await.unwrap();
+    assert_eq!(latest, 8);
+
+    let safe = provider.get_block(BlockId::Number(BlockNumberOrTag::Safe)).await.unwrap().unwrap();
+    assert_eq!(safe.header.number, latest - slots_in_an_epoch);
+
+    let finalized =
+        provider.get_block(BlockId::Number(BlockNumberOrTag::Finalized)).await.unwrap().unwrap();
+    assert_eq!(finalized.header.number, latest - slots_in_an_epoch * 2);
+
+    let fee_history = api.fee_history(U256::from(1), BlockNumberOrTag::Safe, vec![]).await.unwrap();
+    assert_eq!(fee_history.oldest_block, latest - slots_in_an_epoch);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn can_resolve_safe_and_finalized_block_tags_to_genesis_before_configured_epoch() {
+    let (api, handle) = spawn(NodeConfig::test().with_slots_in_an_epoch(3)).await;
+    let provider = handle.http_provider();
+
+    api.anvil_mine(Some(U256::from(2)), None).await.unwrap();
+    let genesis = provider.get_block(BlockId::number(0)).await.unwrap().unwrap();
+
+    let safe = provider.get_block(BlockId::Number(BlockNumberOrTag::Safe)).await.unwrap().unwrap();
+    assert_eq!(safe.header.number, genesis.header.number);
+    assert_eq!(safe.header.hash, genesis.header.hash);
+
+    let finalized =
+        provider.get_block(BlockId::Number(BlockNumberOrTag::Finalized)).await.unwrap().unwrap();
+    assert_eq!(finalized.header.number, genesis.header.number);
+    assert_eq!(finalized.header.hash, genesis.header.hash);
+
+    let fee_history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Finalized, vec![]).await.unwrap();
+    assert_eq!(fee_history.oldest_block, genesis.header.number);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn can_get_pending_block() {
     let (api, handle) = spawn(NodeConfig::test()).await;
 

@@ -27,7 +27,17 @@ const SETTINGS_OVERRIDES_KEYS: &[&str] =
 /// Allowed keys for VyperConfig.
 /// Required because VyperConfig uses `skip_serializing_if = "Option::is_none"` on all fields,
 /// causing the default serialization to produce an empty dict.
-const VYPER_KEYS: &[&str] = &["optimize", "path", "experimental_codegen"];
+const VYPER_KEYS: &[&str] = &[
+    "optimize",
+    "opt_level",
+    "optLevel",
+    "path",
+    "experimental_codegen",
+    "venom_experimental",
+    "debug",
+    "enable_decimals",
+    "venom",
+];
 
 /// Allowed keys for DocConfig.
 /// Required because DocConfig uses `skip_serializing_if = "Option::is_none"` on some fields
