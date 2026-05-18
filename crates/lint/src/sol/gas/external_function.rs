@@ -302,25 +302,23 @@ impl<'hir> hir::Visit<'hir> for ParamEscapeFinder<'_, 'hir> {
                     return ControlFlow::Break(());
                 }
             }
-            ExprKind::Call(callee, args, opts) => {
-                if !is_type_conversion_callee(callee) {
-                    for arg in args.exprs() {
-                        if expr_root_is_param(arg, self.params) {
+            ExprKind::Call(callee, args, opts) if !is_type_conversion_callee(callee) => {
+                for arg in args.exprs() {
+                    if expr_root_is_param(arg, self.params) {
+                        return ControlFlow::Break(());
+                    }
+                }
+                if let Some(opts) = opts {
+                    for opt in *opts {
+                        if expr_root_is_param(&opt.value, self.params) {
                             return ControlFlow::Break(());
                         }
                     }
-                    if let Some(opts) = opts {
-                        for opt in *opts {
-                            if expr_root_is_param(&opt.value, self.params) {
-                                return ControlFlow::Break(());
-                            }
-                        }
-                    }
-                    if let ExprKind::Member(receiver, _) = &callee.peel_parens().kind
-                        && expr_root_is_param(receiver, self.params)
-                    {
-                        return ControlFlow::Break(());
-                    }
+                }
+                if let ExprKind::Member(receiver, _) = &callee.peel_parens().kind
+                    && expr_root_is_param(receiver, self.params)
+                {
+                    return ControlFlow::Break(());
                 }
             }
             _ => {}
