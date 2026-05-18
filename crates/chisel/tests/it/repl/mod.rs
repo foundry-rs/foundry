@@ -125,7 +125,7 @@ repl_test!(trailing_whitespace, |repl| {
 // Issue #4652: Test that solc flags are respected.
 repl_test!(solc_flags, "--use 0.8.23", |repl| {
     repl.sendln("pragma solidity 0.8.24;");
-    repl.expect("invalid solc version");
+    repl.expect("invalid compiler version");
 });
 
 // Issue #4915: `chisel eval`
