@@ -21,7 +21,6 @@ declare_forge_lint!(
 #[derive(Clone, Copy)]
 struct LengthRead<'hir> {
     expr: &'hir hir::Expr<'hir>,
-    receiver: &'hir hir::Expr<'hir>,
 }
 
 impl<'hir> LateLintPass<'hir> for CacheArrayLength {
@@ -36,7 +35,7 @@ impl<'hir> LateLintPass<'hir> for CacheArrayLength {
 
         let mut reads = Vec::new();
         collect_condition_length_reads(hir, condition, &mut reads);
-        if reads.is_empty() || stmt_mutates_any_length_receiver(hir, body, &reads) {
+        if reads.is_empty() || stmt_mutates_array_length(hir, body) {
             return;
         }
         for read in reads {
@@ -88,7 +87,7 @@ fn collect_length_reads<'hir>(
         && member.name == sym::length
         && is_array_like(hir, base)
     {
-        reads.push(LengthRead { expr, receiver: base });
+        reads.push(LengthRead { expr });
         return;
     }
 
@@ -151,92 +150,73 @@ fn collect_length_reads<'hir>(
     }
 }
 
-fn stmt_mutates_any_length_receiver<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    stmt: &'hir hir::Stmt<'hir>,
-    reads: &[LengthRead<'hir>],
-) -> bool {
+fn stmt_mutates_array_length<'hir>(hir: &'hir hir::Hir<'hir>, stmt: &'hir hir::Stmt<'hir>) -> bool {
     match &stmt.kind {
         StmtKind::DeclSingle(var_id) => hir
             .variable(*var_id)
             .initializer
-            .is_some_and(|expr| expr_mutates_any_length_receiver(hir, expr, reads)),
+            .is_some_and(|expr| expr_mutates_array_length(hir, expr)),
         StmtKind::DeclMulti(_, expr)
         | StmtKind::Emit(expr)
         | StmtKind::Revert(expr)
-        | StmtKind::Expr(expr) => expr_mutates_any_length_receiver(hir, expr, reads),
-        StmtKind::Return(expr) => {
-            expr.is_some_and(|expr| expr_mutates_any_length_receiver(hir, expr, reads))
-        }
+        | StmtKind::Expr(expr) => expr_mutates_array_length(hir, expr),
+        StmtKind::Return(expr) => expr.is_some_and(|expr| expr_mutates_array_length(hir, expr)),
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-            block.stmts.iter().any(|stmt| stmt_mutates_any_length_receiver(hir, stmt, reads))
+            block.stmts.iter().any(|stmt| stmt_mutates_array_length(hir, stmt))
         }
         StmtKind::If(condition, then_stmt, else_stmt) => {
-            expr_mutates_any_length_receiver(hir, condition, reads)
-                || stmt_mutates_any_length_receiver(hir, then_stmt, reads)
-                || else_stmt.is_some_and(|stmt| stmt_mutates_any_length_receiver(hir, stmt, reads))
+            expr_mutates_array_length(hir, condition)
+                || stmt_mutates_array_length(hir, then_stmt)
+                || else_stmt.is_some_and(|stmt| stmt_mutates_array_length(hir, stmt))
         }
         StmtKind::Try(stmt_try) => {
-            expr_mutates_any_length_receiver(hir, &stmt_try.expr, reads)
+            expr_mutates_array_length(hir, &stmt_try.expr)
                 || stmt_try.clauses.iter().any(|clause| {
-                    clause
-                        .block
-                        .stmts
-                        .iter()
-                        .any(|stmt| stmt_mutates_any_length_receiver(hir, stmt, reads))
+                    clause.block.stmts.iter().any(|stmt| stmt_mutates_array_length(hir, stmt))
                 })
         }
         StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => false,
     }
 }
 
-fn expr_mutates_any_length_receiver<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    expr: &'hir hir::Expr<'hir>,
-    reads: &[LengthRead<'hir>],
-) -> bool {
+fn expr_mutates_array_length<'hir>(hir: &'hir hir::Hir<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
     let expr = expr.peel_parens();
-    if receiver_length_mutated(hir, expr, reads) {
+    if array_length_mutated(hir, expr) {
         return true;
     }
 
     match &expr.kind {
-        ExprKind::Array(exprs) => {
-            exprs.iter().any(|expr| expr_mutates_any_length_receiver(hir, expr, reads))
-        }
+        ExprKind::Array(exprs) => exprs.iter().any(|expr| expr_mutates_array_length(hir, expr)),
         ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
-            expr_mutates_any_length_receiver(hir, lhs, reads)
-                || expr_mutates_any_length_receiver(hir, rhs, reads)
+            expr_mutates_array_length(hir, lhs) || expr_mutates_array_length(hir, rhs)
         }
         ExprKind::Call(callee, args, named_args) => {
-            expr_mutates_any_length_receiver(hir, callee, reads)
-                || args.exprs().any(|arg| expr_mutates_any_length_receiver(hir, arg, reads))
+            expr_mutates_array_length(hir, callee)
+                || args.exprs().any(|arg| expr_mutates_array_length(hir, arg))
                 || named_args.is_some_and(|named_args| {
-                    named_args
-                        .iter()
-                        .any(|arg| expr_mutates_any_length_receiver(hir, &arg.value, reads))
+                    named_args.iter().any(|arg| expr_mutates_array_length(hir, &arg.value))
                 })
         }
         ExprKind::Delete(inner) | ExprKind::Payable(inner) | ExprKind::Unary(_, inner) => {
-            expr_mutates_any_length_receiver(hir, inner, reads)
+            expr_mutates_array_length(hir, inner)
         }
         ExprKind::Index(base, index) => {
-            expr_mutates_any_length_receiver(hir, base, reads)
-                || index.is_some_and(|index| expr_mutates_any_length_receiver(hir, index, reads))
+            expr_mutates_array_length(hir, base)
+                || index.is_some_and(|index| expr_mutates_array_length(hir, index))
         }
         ExprKind::Slice(base, start, end) => {
-            expr_mutates_any_length_receiver(hir, base, reads)
-                || start.is_some_and(|start| expr_mutates_any_length_receiver(hir, start, reads))
-                || end.is_some_and(|end| expr_mutates_any_length_receiver(hir, end, reads))
+            expr_mutates_array_length(hir, base)
+                || start.is_some_and(|start| expr_mutates_array_length(hir, start))
+                || end.is_some_and(|end| expr_mutates_array_length(hir, end))
         }
-        ExprKind::Member(base, _) => expr_mutates_any_length_receiver(hir, base, reads),
+        ExprKind::Member(base, _) => expr_mutates_array_length(hir, base),
         ExprKind::Ternary(condition, then_expr, else_expr) => {
-            expr_mutates_any_length_receiver(hir, condition, reads)
-                || expr_mutates_any_length_receiver(hir, then_expr, reads)
-                || expr_mutates_any_length_receiver(hir, else_expr, reads)
+            expr_mutates_array_length(hir, condition)
+                || expr_mutates_array_length(hir, then_expr)
+                || expr_mutates_array_length(hir, else_expr)
         }
         ExprKind::Tuple(exprs) => {
-            exprs.iter().flatten().any(|expr| expr_mutates_any_length_receiver(hir, expr, reads))
+            exprs.iter().flatten().any(|expr| expr_mutates_array_length(hir, expr))
         }
         ExprKind::Ident(_)
         | ExprKind::Lit(_)
@@ -247,53 +227,15 @@ fn expr_mutates_any_length_receiver<'hir>(
     }
 }
 
-fn receiver_length_mutated<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    expr: &'hir hir::Expr<'hir>,
-    reads: &[LengthRead<'hir>],
-) -> bool {
+fn array_length_mutated<'hir>(hir: &'hir hir::Hir<'hir>, expr: &'hir hir::Expr<'hir>) -> bool {
     match &expr.kind {
-        ExprKind::Assign(lhs, _, _) | ExprKind::Delete(lhs) => {
-            reads.iter().any(|read| same_expr(lhs, read.receiver))
-        }
+        ExprKind::Assign(lhs, _, _) | ExprKind::Delete(lhs) => is_array_like(hir, lhs),
         ExprKind::Call(callee, _, _) => {
             let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
-            matches!(member.name, sym::push | kw::Pop)
-                && is_array_like(hir, base)
-                && reads.iter().any(|read| same_expr(base, read.receiver))
+            matches!(member.name, sym::push | kw::Pop) && is_array_like(hir, base)
         }
         _ => false,
     }
-}
-
-fn same_expr(lhs: &hir::Expr<'_>, rhs: &hir::Expr<'_>) -> bool {
-    match (&lhs.peel_parens().kind, &rhs.peel_parens().kind) {
-        (ExprKind::Ident(lhs), ExprKind::Ident(rhs)) => {
-            match (resolved_variable(lhs), resolved_variable(rhs)) {
-                (Some(lhs), Some(rhs)) => lhs == rhs,
-                _ => false,
-            }
-        }
-        (ExprKind::Lit(lhs), ExprKind::Lit(rhs)) => lhs.symbol == rhs.symbol,
-        (ExprKind::Member(lhs_base, lhs_member), ExprKind::Member(rhs_base, rhs_member)) => {
-            lhs_member.name == rhs_member.name && same_expr(lhs_base, rhs_base)
-        }
-        (ExprKind::Index(lhs_base, lhs_index), ExprKind::Index(rhs_base, rhs_index)) => {
-            same_expr(lhs_base, rhs_base)
-                && match (lhs_index, rhs_index) {
-                    (Some(lhs_index), Some(rhs_index)) => same_expr(lhs_index, rhs_index),
-                    (None, None) => true,
-                    _ => false,
-                }
-        }
-        _ => lhs.id == rhs.id,
-    }
-}
-
-fn resolved_variable(resolutions: &[Res]) -> Option<hir::VariableId> {
-    resolutions.iter().find_map(|res| {
-        if let Res::Item(ItemId::Variable(var_id)) = res { Some(*var_id) } else { None }
-    })
 }
 
 const fn is_comparison(op: BinOpKind) -> bool {

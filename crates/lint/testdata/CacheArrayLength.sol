@@ -118,6 +118,13 @@ contract CacheArrayLength {
         }
     }
 
+    function storageArrayAliasLengthMutation() external {
+        uint256[] storage aliasedItems = items;
+        for (uint256 i = 0; i < items.length; ++i) {
+            aliasedItems.push(i);
+        }
+    }
+
     function generatedValues() internal pure returns (uint256[] memory values) {
         values = new uint256[](3);
     }

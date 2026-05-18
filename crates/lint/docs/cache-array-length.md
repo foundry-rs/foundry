@@ -13,8 +13,8 @@ dynamic array-like value, such as `i < values.length`, `values.length > i`, or c
 that repeat the same pattern.
 
 The lint does not report loops that already compare against a local cached length variable.
-It also skips loops that mutate the checked array length, such as calling `push()` or `pop()` on the
-same storage array in the loop body, because caching the length would change the loop semantics.
+It also skips loops that mutate an array length in the loop body, such as calling `push()` or
+`pop()`, because aliases can make caching the length change the loop semantics.
 
 Fixed-size arrays are excluded because their length is a compile-time constant instead of a repeated
 dynamic length lookup. This lint currently checks `for` loops.
