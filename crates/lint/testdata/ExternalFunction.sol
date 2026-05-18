@@ -175,3 +175,82 @@ contract UnrelatedSameName {
         buf = data;
     }
 }
+
+library ItemLib {
+    struct Item {
+        address who;
+        uint256 amount;
+    }
+
+    function bumpAmount(Item memory item) internal pure {
+        item.amount += 1;
+    }
+
+    function readAmount(Item memory item) internal pure returns (uint256) {
+        return item.amount;
+    }
+}
+
+abstract contract WithGuard {
+    modifier checkBytes(bytes memory data) {
+        require(data.length > 0, "empty");
+        _;
+    }
+
+    modifier checkValues() {
+        require(msg.sender != address(0), "zero");
+        _;
+    }
+}
+
+contract EscapingParams is WithGuard {
+    using ItemLib for ItemLib.Item;
+
+    bytes public stored;
+    address public owner;
+
+    function callsInternalHelper(bytes memory data) public {
+        _mutate(data);
+        stored = data;
+    }
+
+    function _mutate(bytes memory data) internal pure {
+        if (data.length > 0) {
+            data[0] = 0x01;
+        }
+    }
+
+    function usingForReceiver(ItemLib.Item memory item) public {
+        item.bumpAmount();
+        owner = item.who;
+    }
+
+    function aliasInit(ItemLib.Item memory item) public {
+        ItemLib.Item memory alias_ = item;
+        owner = alias_.who;
+    }
+
+    function aliasAssign(ItemLib.Item memory item) public {
+        ItemLib.Item memory tmp;
+        tmp = item;
+        owner = tmp.who;
+    }
+
+    function guardedByModifier(bytes memory data) public checkBytes(data) {
+        stored = data;
+    }
+
+    function readsOnly(ItemLib.Item memory item) public { //~NOTE: public function can be declared external
+        uint256 amt = item.amount;
+        owner = item.who;
+        stored = abi.encodePacked(amt);
+    }
+
+    function modifierWithoutArgs(bytes memory data) public checkValues { //~NOTE: public function can be declared external
+        stored = data;
+    }
+
+    function returnsParam(bytes memory data) public returns (bytes memory) { //~NOTE: public function can be declared external
+        return data;
+    }
+}

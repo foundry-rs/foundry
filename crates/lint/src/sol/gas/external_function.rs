@@ -6,7 +6,9 @@ use crate::{
 use solar::{
     ast::{ContractKind, DataLocation, UnOpKind, Visibility},
     interface::{Symbol, data_structures::Never},
-    sema::hir::{self, ContractId, ExprKind, FunctionId, ItemId, Res, VariableId, Visit as _},
+    sema::hir::{
+        self, ContractId, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId, Visit as _,
+    },
 };
 use std::{
     cell::RefCell,
@@ -103,9 +105,9 @@ impl<'hir> LateLintPass<'hir> for ExternalFunction {
                 continue;
             }
 
-            // External params live in (immutable) calldata, so a body that writes to a param
-            // cannot be moved to `external` without further refactoring.
-            if body_writes_to_params(hir, &body, func.parameters) {
+            if body_escapes_params(hir, &body, func.parameters)
+                || modifier_args_reference_params(func.modifiers, func.parameters)
+            {
                 continue;
             }
 
@@ -229,48 +231,143 @@ fn any_override_referenced(
     false
 }
 
-/// Returns `true` if `body` writes to any of `params`, including via member/index access
-/// (`p.x = 1`, `p[0] = 1`), `delete p`, or `++`/`--`. Stmt/expr recursion is handled by
-/// `hir::Visit`'s default walks.
-fn body_writes_to_params<'hir>(
+/// Returns `true` if any param is written, aliased, or passed to a callee that could
+/// mutate it via the internal-call memory-reference aliasing rule.
+fn body_escapes_params<'hir>(
     hir: &'hir hir::Hir<'hir>,
     body: &hir::Block<'hir>,
     params: &[VariableId],
 ) -> bool {
-    let mut finder = ParamWriteFinder { hir, params };
+    let mut finder = ParamEscapeFinder { hir, params };
     body.stmts.iter().any(|stmt| finder.visit_stmt(stmt).is_break())
 }
 
-struct ParamWriteFinder<'a, 'hir> {
+/// Returns `true` if any modifier invocation passes one of `params` as an argument.
+/// Modifier `memory` args alias caller memory the same way internal call args do.
+fn modifier_args_reference_params(modifiers: &[hir::Modifier<'_>], params: &[VariableId]) -> bool {
+    modifiers.iter().any(|m| m.args.exprs().any(|arg| expr_root_is_param(arg, params)))
+}
+
+struct ParamEscapeFinder<'a, 'hir> {
     hir: &'hir hir::Hir<'hir>,
     params: &'a [VariableId],
 }
 
-impl<'hir> hir::Visit<'hir> for ParamWriteFinder<'_, 'hir> {
+impl<'hir> hir::Visit<'hir> for ParamEscapeFinder<'_, 'hir> {
     type BreakValue = ();
 
     fn hir(&self) -> &'hir hir::Hir<'hir> {
         self.hir
     }
 
+    fn visit_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) -> ControlFlow<Self::BreakValue> {
+        if let StmtKind::DeclSingle(vid) = &stmt.kind {
+            let var = self.hir.variable(*vid);
+            if let Some(init) = var.initializer
+                && var.ty.kind.is_reference_type()
+                && var.data_location == Some(DataLocation::Memory)
+                && expr_root_is_param(init, self.params)
+            {
+                return ControlFlow::Break(());
+            }
+        }
+        self.walk_stmt(stmt)
+    }
+
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        let writes_to_param = match &expr.kind {
-            ExprKind::Assign(lhs, _, _) => expr_root_is_param(lhs, self.params),
-            ExprKind::Delete(inner) => expr_root_is_param(inner, self.params),
+        match &expr.kind {
+            ExprKind::Assign(lhs, op, rhs) => {
+                if expr_root_is_param(lhs, self.params) {
+                    return ControlFlow::Break(());
+                }
+                if op.is_none()
+                    && lhs_is_local_memory_reference(self.hir, lhs)
+                    && expr_root_is_param(rhs, self.params)
+                {
+                    return ControlFlow::Break(());
+                }
+            }
+            ExprKind::Delete(inner) => {
+                if expr_root_is_param(inner, self.params) {
+                    return ControlFlow::Break(());
+                }
+            }
             ExprKind::Unary(op, inner)
                 if matches!(
                     op.kind,
                     UnOpKind::PreInc | UnOpKind::PreDec | UnOpKind::PostInc | UnOpKind::PostDec
                 ) =>
             {
-                expr_root_is_param(inner, self.params)
+                if expr_root_is_param(inner, self.params) {
+                    return ControlFlow::Break(());
+                }
             }
-            _ => false,
-        };
-        if writes_to_param {
-            return ControlFlow::Break(());
+            ExprKind::Call(callee, args, opts) => {
+                if !is_type_conversion_callee(callee) {
+                    for arg in args.exprs() {
+                        if expr_root_is_param(arg, self.params) {
+                            return ControlFlow::Break(());
+                        }
+                    }
+                    if let Some(opts) = opts {
+                        for opt in *opts {
+                            if expr_root_is_param(&opt.value, self.params) {
+                                return ControlFlow::Break(());
+                            }
+                        }
+                    }
+                    if let ExprKind::Member(receiver, _) = &callee.peel_parens().kind
+                        && expr_root_is_param(receiver, self.params)
+                    {
+                        return ControlFlow::Break(());
+                    }
+                }
+            }
+            _ => {}
         }
         self.walk_expr(expr)
+    }
+}
+
+/// Returns `true` if `callee` is a type conversion or `new T(...)` expression.
+fn is_type_conversion_callee(callee: &hir::Expr<'_>) -> bool {
+    let c = callee.peel_parens();
+    match &c.kind {
+        ExprKind::Type(_) | ExprKind::TypeCall(_) | ExprKind::New(_) => true,
+        ExprKind::Ident(reses) => reses.iter().any(|r| {
+            matches!(
+                r,
+                Res::Item(
+                    ItemId::Struct(_) | ItemId::Contract(_) | ItemId::Enum(_) | ItemId::Udvt(_)
+                )
+            )
+        }),
+        _ => false,
+    }
+}
+
+/// Returns `true` if the root of `lhs` resolves to a local variable with reference type
+/// in `memory`.
+fn lhs_is_local_memory_reference(hir: &hir::Hir<'_>, lhs: &hir::Expr<'_>) -> bool {
+    let mut cur = lhs.peel_parens();
+    loop {
+        match &cur.kind {
+            ExprKind::Member(base, _) | ExprKind::Payable(base) => cur = base.peel_parens(),
+            ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) => cur = base.peel_parens(),
+            ExprKind::Ident(reses) => {
+                return reses.iter().any(|r| {
+                    if let Res::Item(ItemId::Variable(vid)) = r {
+                        let v = hir.variable(*vid);
+                        v.is_local_variable()
+                            && v.ty.kind.is_reference_type()
+                            && v.data_location == Some(DataLocation::Memory)
+                    } else {
+                        false
+                    }
+                });
+            }
+            _ => return false,
+        }
     }
 }
 
