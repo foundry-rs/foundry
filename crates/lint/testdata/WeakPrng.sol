@@ -6,8 +6,17 @@ interface Receiver {
     function record(uint256 value) external;
 }
 
-contract WeakPrng {
+contract WeakPrngBase {
+    constructor(uint256 seed) {}
+}
+
+contract WeakPrng is WeakPrngBase(block.timestamp % 10) { //~WARN: weak randomness derived from a predictable on-chain value
     uint256 public deadline;
+    uint256 public initializedSeed = block.timestamp % 10; //~WARN: weak randomness derived from a predictable on-chain value
+
+    modifier seeded(uint256 seed) {
+        _;
+    }
 
     // SHOULD FAIL:
 
@@ -55,6 +64,8 @@ contract WeakPrng {
         return keccak256(abi.encodePacked(blockhash(block.number - 1))); //~WARN: weak randomness derived from a predictable on-chain value
     }
 
+    function modifierArgument() external seeded(block.timestamp % 10) {} //~WARN: weak randomness derived from a predictable on-chain value
+
     // SHOULD PASS:
 
     function timestampOnly() external view returns (uint256) {
@@ -71,6 +82,10 @@ contract WeakPrng {
 
     function timestampTimeBucket() external view returns (uint256) {
         return block.timestamp % 1 days;
+    }
+
+    function nestedTimestampTimeBucket() external view returns (uint256) {
+        return (block.timestamp % 1 days) % 10;
     }
 
     function hashInput(bytes memory data) external pure returns (bytes32) {

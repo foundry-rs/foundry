@@ -1,6 +1,22 @@
 warning[weak-prng]: weak randomness derived from a predictable on-chain value
    ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
    │
+LL │ contract WeakPrng is WeakPrngBase(block.timestamp % 10) {
+   │                                   ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/weak-prng
+
+warning[weak-prng]: weak randomness derived from a predictable on-chain value
+   ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
+   │
+LL │     uint256 public initializedSeed = block.timestamp % 10;
+   │                                      ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/weak-prng
+
+warning[weak-prng]: weak randomness derived from a predictable on-chain value
+   ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
+   │
 LL │         return block.timestamp % upper;
    │                ━━━━━━━━━━━━━━━━━━━━━━━
    │
@@ -83,6 +99,14 @@ warning[weak-prng]: weak randomness derived from a predictable on-chain value
    │
 LL │ …     return keccak256(abi.encodePacked(blockhash(block.number - 1)));
    │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/weak-prng
+
+warning[weak-prng]: weak randomness derived from a predictable on-chain value
+   ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
+   │
+LL │     function modifierArgument() external seeded(block.timestamp % 10) {}
+   │                                                 ━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/weak-prng
 

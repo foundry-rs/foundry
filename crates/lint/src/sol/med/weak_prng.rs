@@ -4,9 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{
-        BinOp, BinOpKind, Expr, ExprKind, IndexKind, ItemFunction, SubDenomination, visit::Visit,
-    },
+    ast::{BinOp, BinOpKind, Expr, ExprKind, IndexKind, SourceUnit, SubDenomination, visit::Visit},
     interface::SpannedOption,
 };
 use std::ops::ControlFlow;
@@ -19,10 +17,10 @@ declare_forge_lint!(
 );
 
 impl<'ast> EarlyLintPass<'ast> for WeakPrng {
-    fn check_item_function(&mut self, ctx: &LintContext, func: &'ast ItemFunction<'ast>) {
-        if let Some(body) = &func.body {
+    fn check_full_source_unit(&mut self, ctx: &LintContext<'ast, '_>, ast: &'ast SourceUnit<'ast>) {
+        if ctx.is_lint_enabled(WEAK_PRNG.id) {
             let mut checker = WeakPrngChecker { ctx };
-            let _ = checker.visit_block(body);
+            let _ = checker.visit_source_unit(ast);
         }
     }
 }
@@ -70,12 +68,23 @@ fn is_timestamp_time_bucket(lhs: &Expr<'_>, rhs: &Expr<'_>) -> bool {
         || (is_time_subdenomination(lhs) && is_block_timestamp(rhs.peel_parens()))
 }
 
+fn is_timestamp_time_bucket_expr(expr: &Expr<'_>) -> bool {
+    matches!(
+        &expr.peel_parens().kind,
+        ExprKind::Binary(lhs, BinOp { kind: BinOpKind::Rem, .. }, rhs)
+            if is_timestamp_time_bucket(lhs, rhs)
+    )
+}
+
 fn is_time_subdenomination(expr: &Expr<'_>) -> bool {
     matches!(&expr.peel_parens().kind, ExprKind::Lit(_, Some(SubDenomination::Time(_))))
 }
 
 fn contains_predictable_source(expr: &Expr<'_>) -> bool {
     let expr = expr.peel_parens();
+    if is_timestamp_time_bucket_expr(expr) {
+        return false;
+    }
     if is_predictable_source(expr) {
         return true;
     }
