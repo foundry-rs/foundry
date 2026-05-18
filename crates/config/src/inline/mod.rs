@@ -280,6 +280,30 @@ mod tests {
     }
 
     #[test]
+    fn legacy_halmos_named_and_default_lengths_feed_symbolic_inline_config() {
+        let mut inline = InlineConfig::new();
+        inline
+            .insert(&natspec(
+                "@custom:halmos --array-lengths values={2,4},data=8 --default-array-lengths 0,1 --default-bytes-lengths 0,65",
+            ))
+            .unwrap();
+
+        let config = Config::default()
+            .merge_inline_provider(inline.provide("test/Symbolic.t.sol:Symbolic", "check"))
+            .unwrap();
+
+        assert_eq!(
+            config.symbolic.dynamic_lengths,
+            std::collections::BTreeMap::from([
+                ("data".to_string(), vec![8]),
+                ("values".to_string(), vec![2, 4]),
+            ])
+        );
+        assert_eq!(config.symbolic.default_array_lengths, vec![0, 1]);
+        assert_eq!(config.symbolic.default_bytes_lengths, vec![0, 65]);
+    }
+
+    #[test]
     fn native_symbolic_inline_config_overrides_legacy_halmos_translation() {
         let mut inline = InlineConfig::new();
         inline

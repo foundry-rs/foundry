@@ -1,6 +1,7 @@
 //! Configuration for symbolic testing.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Storage modelling mode for symbolic tests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +46,15 @@ pub struct SymbolicConfig {
     pub max_dynamic_length: u32,
     /// Per-dynamic-leaf bounded lengths, applied in ABI traversal order.
     pub array_lengths: Vec<u32>,
+    /// Per-symbolic-input bounded lengths keyed by ABI argument name or generated symbolic name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dynamic_lengths: BTreeMap<String, Vec<u32>>,
+    /// Default bounded lengths for dynamic ABI arrays without an explicit length.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub default_array_lengths: Vec<u32>,
+    /// Default bounded lengths for ABI `bytes` and `string` values without an explicit length.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub default_bytes_lengths: Vec<u32>,
     /// Maximum symbolic calldata size in bytes.
     pub max_calldata_bytes: u32,
     /// Whether symbolic call targets may be expanded over known deployed contracts.
@@ -71,6 +81,9 @@ impl Default for SymbolicConfig {
             default_dynamic_length: 2,
             max_dynamic_length: 256,
             array_lengths: Vec::new(),
+            dynamic_lengths: BTreeMap::new(),
+            default_array_lengths: Vec::new(),
+            default_bytes_lengths: Vec::new(),
             max_calldata_bytes: 4_096,
             symbolic_call_targets: false,
             dump_smt: false,
