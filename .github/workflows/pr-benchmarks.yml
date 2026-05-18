@@ -1,0 +1,171 @@
+name: PR Benchmarks
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+
+env:
+  TEST_REPOS: >-
+    ithacaxyz/account:v0.5.7,
+    vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest|Base58Test',
+    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
+    sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
+
+  ISOLATE_TEST_REPOS: >-
+    ithacaxyz/account:v0.5.7 --nmc SimulateExecuteTest,
+    vectorized/solady:v0.1.26 --nmc 'SafeTransferLibTest|LifebuoyTest|LibBitTest|Base58Test|LibStringTest',
+    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75 --nmc 'TickMathTestTest',
+    sparkdotfi/spark-psm:v1.0.0 --nmc PSMInvariants_TimeBasedRateSetting_WithTransfers_WithPocketSetting
+
+  BUILD_REPOS: >-
+    ithacaxyz/account:v0.5.7,
+    vectorized/solady:v0.1.26,
+    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75,
+    sparkdotfi/spark-psm:v1.0.0
+
+  COVERAGE_REPOS: >-
+    ithacaxyz/account:v0.5.7,
+    uniswap/v4-core:46c6834698c48bc4a463a86d8420f4eb1d7f3b75,
+    sparkdotfi/spark-psm:v1.0.0
+
+  RUSTC_WRAPPER: "sccache"
+  FOUNDRY_DIR: ${{ github.workspace }}/.foundry
+
+jobs:
+  pr-benchmarks:
+    name: PR Benchmarks (stable vs local)
+    runs-on: depot-ubuntu-24.04-32
+    # Only run on the upstream repo, never on forks.
+    if: github.repository == 'foundry-rs/foundry'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # master
+        with:
+          toolchain: stable
+
+      - uses: rui314/setup-mold@9c9c13bf4c3f1adef0cc596abc155580bcb04444 # v1
+
+      - uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+
+      - name: Setup Foundry
+        run: |
+          ./.github/scripts/setup-foundryup.sh
+          printf '%s\n' "$FOUNDRY_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Build benchmark binary
+        run: cargo build --locked --release --bin foundry-bench
+
+      - name: Install hyperfine
+        run: |
+          curl -L https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine-v1.19.0-x86_64-unknown-linux-gnu.tar.gz | tar xz
+          sudo mv hyperfine-v1.19.0-x86_64-unknown-linux-gnu/hyperfine /usr/local/bin/
+          rm -rf hyperfine-v1.19.0-x86_64-unknown-linux-gnu
+
+      - name: Install stable Foundry
+        run: foundryup --install stable --force
+
+      - name: Run forge test benchmarks
+        env:
+          REPOS: ${{ env.TEST_REPOS }}
+        run: |
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions stable,local \
+            --repos "$REPOS" \
+            --benchmarks forge_test,forge_fuzz_test \
+            --output-file forge_test_bench.md \
+            --verbose
+
+      - name: Run forge isolate test benchmarks
+        env:
+          REPOS: ${{ env.ISOLATE_TEST_REPOS }}
+        run: |
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions stable,local \
+            --repos "$REPOS" \
+            --benchmarks forge_isolate_test \
+            --output-file forge_isolate_test_bench.md \
+            --verbose
+
+      - name: Run forge build benchmarks
+        env:
+          REPOS: ${{ env.BUILD_REPOS }}
+        run: |
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions stable,local \
+            --repos "$REPOS" \
+            --benchmarks forge_build_no_cache,forge_build_with_cache \
+            --output-file forge_build_bench.md \
+            --verbose
+
+      - name: Run forge coverage benchmarks
+        env:
+          REPOS: ${{ env.COVERAGE_REPOS }}
+        run: |
+          ./target/release/foundry-bench --output-dir ./benches \
+            --versions stable,local \
+            --repos "$REPOS" \
+            --benchmarks forge_coverage \
+            --output-file forge_coverage_bench.md \
+            --verbose
+
+      - name: Combine benchmark results
+        run: ./.github/scripts/combine-benchmarks.sh benches
+
+      - name: Print benchmark results
+        run: cat benches/LATEST.md
+
+      - name: Comment on PR
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const { execSync } = require('child_process');
+
+            const results = fs.readFileSync('benches/LATEST.md', 'utf8');
+            const formatted = execSync('./.github/scripts/format-pr-comment.sh benches/LATEST.md').toString();
+
+            // Find PR for current branch
+            const branch = context.ref.replace('refs/heads/', '');
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${branch}`,
+              state: 'open',
+            });
+
+            if (prs.length === 0) {
+              console.log(`No open PR found for branch '${branch}', skipping comment.`);
+              return;
+            }
+
+            const prNumber = prs[0].number;
+            const body = `## Benchmark Results (stable vs this branch)
+
+            ${formatted}
+
+            ---
+
+            🤖 This comment was automatically generated by the [PR Benchmarks workflow](https://github.com/${{ github.repository }}/actions/workflows/pr-benchmarks.yml).`;
+
+            await github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+            console.log(`Posted benchmark results to PR #${prNumber}`);
