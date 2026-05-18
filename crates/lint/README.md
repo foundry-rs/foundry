@@ -18,7 +18,9 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
+  - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
+  - `uninitialized-local`: Local variable is read before being explicitly initialized.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
   - `locked-ether`: Contracts that can receive ETH but have no mechanism to send it out.
 - **Low Severity:**

@@ -1,4 +1,4 @@
-use super::{fuzz_calldata, fuzz_param_from_state};
+use super::{fuzz_calldata, fuzz_msg_value, fuzz_param_from_state};
 use crate::{
     BasicTxDetails, CallDetails, FuzzFixtures,
     invariant::{FuzzRunIdentifiedContracts, SenderFilters},
@@ -153,15 +153,21 @@ pub fn fuzz_contract_with_calldata(
     target: Address,
     func: Function,
 ) -> impl Strategy<Value = CallDetails> + use<> {
+    let is_payable = func.state_mutability == alloy_json_abi::StateMutability::Payable;
+
     // We need to compose all the strategies generated for each parameter in all possible
     // combinations.
     // `prop_oneof!` / `TupleUnion` `Arc`s for cheap cloning.
-    prop_oneof![
+    let calldata_strategy = prop_oneof![
         60 => fuzz_calldata(func.clone(), fuzz_fixtures),
         40 => fuzz_calldata_from_state(func, fuzz_state),
-    ]
-    .prop_map(move |calldata| {
-        trace!(input=?calldata);
-        CallDetails { target, calldata }
+    ];
+
+    // For payable functions, generate random value using shared strategy.
+    let value_strategy = if is_payable { fuzz_msg_value().boxed() } else { Just(None).boxed() };
+
+    (calldata_strategy, value_strategy).prop_map(move |(calldata, value)| {
+        trace!(input=?calldata, ?value);
+        CallDetails { target, calldata, value }
     })
 }
