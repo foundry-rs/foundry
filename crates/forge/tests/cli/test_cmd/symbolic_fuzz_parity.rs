@@ -6,7 +6,8 @@
 //! the symbolic engine finds the same counterexamples (or proves the property)
 //! that the corresponding fuzzers do on these benchmarks.
 
-use foundry_test_utils::{forgetest_init, util::OutputExt};
+use foundry_common::sh_eprintln;
+use foundry_test_utils::{TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str};
 use std::process::Command;
 
 fn z3_available() -> bool {
@@ -16,10 +17,39 @@ fn z3_available() -> bool {
 macro_rules! skip_unless_z3 {
     ($name:literal) => {
         if !z3_available() {
-            eprintln!("skipping {} because z3 is not available", $name);
+            let _ = sh_eprintln!("skipping {} because z3 is not available", $name);
             return;
         }
     };
+}
+
+/// Run a symbolic test with redactions that mask Z3-dependent / wall-clock
+/// noise so the snapshot is stable across solver versions and runs.
+///
+/// - `[METRICS]` — `paths: N, queries: M` line suffix (engine internal metrics change with solver
+///   heuristic / engine path-pruning changes).
+/// - `[SENDER]` — `sender=0x...` symbolic invariant senders, which Z3 picks freely from an
+///   unconstrained address pool.
+fn assert_symbolic(cmd: &mut TestCommand) -> OutputAssert {
+    cmd.assert_with(&[
+        ("[METRICS]", r"paths: \d+, queries: \d+"),
+        ("[SENDER]", r"sender=0x[0-9a-fA-F]{40}"),
+    ])
+}
+
+/// Same as [`assert_symbolic`], plus redactions for counterexample witnesses
+/// whose exact values Z3 chooses freely (calldata bytes, args list, raw
+/// addresses inside args). Use for tests whose property only asserts that
+/// *some* counterexample exists, not what it is.
+fn assert_symbolic_witness(cmd: &mut TestCommand) -> OutputAssert {
+    cmd.assert_with(&[
+        ("[METRICS]", r"paths: \d+, queries: \d+"),
+        ("[SENDER]", r"sender=0x[0-9a-fA-F]{40}"),
+        ("[CALLDATA]", r"calldata=0x[0-9a-fA-F]+"),
+        // `args=[...]` may contain nested scientific-notation brackets like
+        // `args=[1234 [1.2e3], 5678 [5.6e3]]`, so allow one level of nesting.
+        ("[ARGS]", r"args=\[(?:[^\[\]]|\[[^\]]*\])*\]"),
+    ])
 }
 
 // ---------------------------------------------------------------------------
@@ -69,16 +99,42 @@ contract EchidnaFlagsParity is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "invariant_flag1_holds"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    // Witness args are free uint8 → use `[ARGS]` redaction.
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_flag1_holds",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("invariant_flag1_holds()"), "{stdout}");
-    assert!(stdout.contains("set0(uint8)"), "{stdout}");
-    assert!(stdout.contains("set1(uint8)"), "{stdout}");
+Ran 1 test for test/EchidnaFlagsParity.t.sol:EchidnaFlagsParity
+[FAIL: symbolic invariant counterexample]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] addr=[test/EchidnaFlagsParity.t.sol:EchidnaFlagsTarget]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=set0(uint8) [ARGS]
+		[SENDER] addr=[test/EchidnaFlagsParity.t.sol:EchidnaFlagsTarget]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=set1(uint8) [ARGS]
+ invariant_flag1_holds() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/EchidnaFlagsParity.t.sol:EchidnaFlagsParity
+[FAIL: symbolic invariant counterexample]
+	[Sequence] (original: 2, shrunk: 2)
+		[SENDER] addr=[test/EchidnaFlagsParity.t.sol:EchidnaFlagsTarget]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=set0(uint8) [ARGS]
+		[SENDER] addr=[test/EchidnaFlagsParity.t.sol:EchidnaFlagsTarget]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=set1(uint8) [ARGS]
+ invariant_flag1_holds() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -104,14 +160,32 @@ contract EchidnaOverflowParity {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkNoOverflow"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    // Witness values (a, b) are free uint256 — Z3 picks any pair where a+b
+    // overflows. Redact `calldata=` and `args=[...]` via
+    // [`assert_symbolic_witness`] so the snapshot captures the shape but not
+    // the solver's arbitrary choice.
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkNoOverflow"]))
+        .failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("checkNoOverflow(uint256,uint256)"), "{stdout}");
+Ran 1 test for test/EchidnaOverflowParity.t.sol:EchidnaOverflowParity
+[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkNoOverflow(uint256,uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/EchidnaOverflowParity.t.sol:EchidnaOverflowParity
+[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkNoOverflow(uint256,uint256) ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -136,14 +210,29 @@ contract MedusaAssertionParity {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkNoMagic"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    // Magic constant is uniquely determined → snapshot the full output.
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkNoMagic"]))
+        .failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("checkNoMagic(uint256)"), "{stdout}");
+Ran 1 test for test/MedusaAssertionParity.t.sol:MedusaAssertionParity
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=0xda659cbe000000000000000000000000000000000000000000000000deadbeefcafebabe args=[16045690984503098046 [1.604e19]]] checkNoMagic(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/MedusaAssertionParity.t.sol:MedusaAssertionParity
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=0xda659cbe000000000000000000000000000000000000000000000000deadbeefcafebabe args=[16045690984503098046 [1.604e19]]] checkNoMagic(uint256) ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -206,15 +295,40 @@ contract CryticPropertiesErc20Parity is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "invariant_sumOfBalances"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    // Witness sequence picks arbitrary `transfer(address,uint256)` args.
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_sumOfBalances",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("invariant_sumOfBalances()"), "{stdout}");
-    assert!(stdout.contains("transfer(address,uint256)"), "{stdout}");
+Ran 1 test for test/CryticPropertiesErc20Parity.t.sol:CryticPropertiesErc20Parity
+[FAIL: symbolic invariant counterexample]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] addr=[test/CryticPropertiesErc20Parity.t.sol:BuggyToken]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=transfer(address,uint256) [ARGS]
+ invariant_sumOfBalances() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/CryticPropertiesErc20Parity.t.sol:CryticPropertiesErc20Parity
+[FAIL: symbolic invariant counterexample]
+	[Sequence] (original: 1, shrunk: 1)
+		[SENDER] addr=[test/CryticPropertiesErc20Parity.t.sol:BuggyToken]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=transfer(address,uint256) [ARGS]
+ invariant_sumOfBalances() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -245,14 +359,29 @@ contract DevdacianRarelyFalse {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkRarelyFalse"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    // Three bit-field constraints uniquely identify x → deterministic witness.
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkRarelyFalse"]))
+        .failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("checkRarelyFalse(uint256)"), "{stdout}");
+Ran 1 test for test/DevdacianRarelyFalse.t.sol:DevdacianRarelyFalse
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=0x1d03c04b000000000000123400000000000000000000cafe000000000000000000000042 args=[29251294086901932359474778716264896192253236938588505753256002 [2.925e61]]] checkRarelyFalse(uint256) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/DevdacianRarelyFalse.t.sol:DevdacianRarelyFalse
+[FAIL: panic: assertion failed (0x01); counterexample: calldata=0x1d03c04b000000000000123400000000000000000000cafe000000000000000000000042 args=[29251294086901932359474778716264896192253236938588505753256002 [2.925e61]]] checkRarelyFalse(uint256) ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -301,22 +430,41 @@ contract IfFuzzSimpleStateBuggy is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "invariant_phaseUnderThree"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    // Magic numbers (1337, 7331, 12345) are forced by the branch structure.
+    // Symbolic senders are masked via the [SENDER] redaction in
+    // `assert_symbolic`.
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "invariant_phaseUnderThree"]))
+        .failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("invariant_phaseUnderThree()"), "{stdout}");
-    assert!(stdout.contains("step1(uint256)"), "{stdout}");
-    assert!(stdout.contains("step2(uint256)"), "{stdout}");
-    assert!(stdout.contains("step3(uint256)"), "{stdout}");
-    // Args may be formatted with a scientific-notation alias, e.g.
-    // `args=[12345 [1.234e4]]`, so just check the integer is present.
-    assert!(stdout.contains("args=[1337"), "{stdout}");
-    assert!(stdout.contains("args=[7331"), "{stdout}");
-    assert!(stdout.contains("args=[12345"), "{stdout}");
+Ran 1 test for test/IfFuzzSimpleStateBuggy.t.sol:IfFuzzSimpleStateBuggy
+[FAIL: symbolic invariant counterexample]
+	[Sequence] (original: 3, shrunk: 3)
+		[SENDER] addr=[test/IfFuzzSimpleStateBuggy.t.sol:SimpleStateMachine]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step1(uint256) args=[1337]
+		[SENDER] addr=[test/IfFuzzSimpleStateBuggy.t.sol:SimpleStateMachine]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step2(uint256) args=[7331]
+		[SENDER] addr=[test/IfFuzzSimpleStateBuggy.t.sol:SimpleStateMachine]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step3(uint256) args=[12345 [1.234e4]]
+ invariant_phaseUnderThree() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/IfFuzzSimpleStateBuggy.t.sol:IfFuzzSimpleStateBuggy
+[FAIL: symbolic invariant counterexample]
+	[Sequence] (original: 3, shrunk: 3)
+		[SENDER] addr=[test/IfFuzzSimpleStateBuggy.t.sol:SimpleStateMachine]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step1(uint256) args=[1337]
+		[SENDER] addr=[test/IfFuzzSimpleStateBuggy.t.sol:SimpleStateMachine]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step2(uint256) args=[7331]
+		[SENDER] addr=[test/IfFuzzSimpleStateBuggy.t.sol:SimpleStateMachine]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step3(uint256) args=[12345 [1.234e4]]
+ invariant_phaseUnderThree() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -373,14 +521,20 @@ contract MiniVatHolds is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "invariant_debtEqualsUrn"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "invariant_debtEqualsUrn"]))
+        .success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[PASS] invariant_debtEqualsUrn()"), "{stdout}");
-    assert!(!stdout.contains("Stuck"), "{stdout}");
+Ran 1 test for test/MiniVatHolds.t.sol:MiniVatHolds
+[PASS] invariant_debtEqualsUrn() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -433,14 +587,33 @@ contract Erc4626Inflation is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkDepositReturnsShares"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkDepositReturnsShares",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("checkDepositReturnsShares(uint64,uint128,uint64)"), "{stdout}");
+Ran 1 test for test/Erc4626Inflation.t.sol:Erc4626Inflation
+[FAIL: incomplete symbolic execution (Timeout): solver returned unknown] checkDepositReturnsShares(uint64,uint128,uint64) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Erc4626Inflation.t.sol:Erc4626Inflation
+[FAIL: incomplete symbolic execution (Timeout): solver returned unknown] checkDepositReturnsShares(uint64,uint128,uint64) ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -509,14 +682,29 @@ contract ReentrancyDao is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkVaultCannotBeDrained"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    // No symbolic args — fully deterministic.
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkVaultCannotBeDrained"]))
+        .failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("checkVaultCannotBeDrained()"), "{stdout}");
+Ran 1 test for test/ReentrancyDao.t.sol:ReentrancyDao
+[FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkVaultCannotBeDrained() ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/ReentrancyDao.t.sol:ReentrancyDao
+[FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkVaultCannotBeDrained() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -575,14 +763,33 @@ contract TxOriginBypass is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkOnlyOwnerCanTrigger"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkOnlyOwnerCanTrigger",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("checkOnlyOwnerCanTrigger(address,address)"), "{stdout}");
+Ran 1 test for test/TxOriginBypass.t.sol:TxOriginBypass
+[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkOnlyOwnerCanTrigger(address,address) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/TxOriginBypass.t.sol:TxOriginBypass
+[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkOnlyOwnerCanTrigger(address,address) ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -610,14 +817,33 @@ contract EcrecoverBasic {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkEcrecoverNeverHitsZero"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkEcrecoverNeverHitsZero",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("checkEcrecoverNeverHitsZero"), "{stdout}");
+Ran 1 test for test/EcrecoverBasic.t.sol:EcrecoverBasic
+[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkEcrecoverNeverHitsZero(bytes32,uint8,bytes32,bytes32) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/EcrecoverBasic.t.sol:EcrecoverBasic
+[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkEcrecoverNeverHitsZero(bytes32,uint8,bytes32,bytes32) ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -686,14 +912,28 @@ contract Erc20ApproveRace is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkApproveRace"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkApproveRace"]))
+        .failure()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("checkApproveRace(uint64,uint64)"), "{stdout}");
+Ran 1 test for test/Erc20ApproveRace.t.sol:Erc20ApproveRace
+[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkApproveRace(uint64,uint64) ([METRICS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/Erc20ApproveRace.t.sol:Erc20ApproveRace
+[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkApproveRace(uint64,uint64) ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -735,13 +975,20 @@ contract SoladyMinMax {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkMinMaxIdentities"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkMinMaxIdentities"]))
+        .success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[PASS] checkMinMaxIdentities(uint256,uint256)"), "{stdout}");
+Ran 1 test for test/SoladyMinMax.t.sol:SoladyMinMax
+[PASS] checkMinMaxIdentities(uint256,uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -771,15 +1018,20 @@ contract CancunTransient {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkTloadAfterTstore"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkTloadAfterTstore"]))
+        .success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[PASS] checkTloadAfterTstore(uint256)"), "{stdout}");
-    assert!(!stdout.contains("symbolic TLOAD"), "{stdout}");
-    assert!(!stdout.contains("symbolic TSTORE"), "{stdout}");
+Ran 1 test for test/CancunTransient.t.sol:CancunTransient
+[PASS] checkTloadAfterTstore(uint256) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -806,14 +1058,20 @@ contract Push0Shanghai {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkZeroIsZero"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkZeroIsZero"]))
+        .success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[PASS] checkZeroIsZero()"), "{stdout}");
-    assert!(!stdout.contains("PUSH0"), "{stdout}");
+Ran 1 test for test/Push0Shanghai.t.sol:Push0Shanghai
+[PASS] checkZeroIsZero() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -864,14 +1122,20 @@ contract Erc721Ownership is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "invariant_ownerNonZero"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "invariant_ownerNonZero"]))
+        .success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[PASS] invariant_ownerNonZero()"), "{stdout}");
-    assert!(!stdout.contains("Stuck"), "{stdout}");
+Ran 1 test for test/Erc721Ownership.t.sol:Erc721Ownership
+[PASS] invariant_ownerNonZero() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -916,13 +1180,20 @@ contract Erc4626Roundtrip {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSingleUserRoundtrip"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkSingleUserRoundtrip"]))
+        .success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[PASS] checkSingleUserRoundtrip(uint64)"), "{stdout}");
+Ran 1 test for test/Erc4626Roundtrip.t.sol:Erc4626Roundtrip
+[PASS] checkSingleUserRoundtrip(uint64) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -950,13 +1221,20 @@ contract ByteswapInvolution {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkInvolution"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkInvolution"]))
+        .success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[PASS] checkInvolution(uint16)"), "{stdout}");
+Ran 1 test for test/ByteswapInvolution.t.sol:ByteswapInvolution
+[PASS] checkInvolution(uint16) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -986,14 +1264,20 @@ contract McopyCancun {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkMcopyRoundtrip"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkMcopyRoundtrip"]))
+        .success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[PASS] checkMcopyRoundtrip(bytes32)"), "{stdout}");
-    assert!(!stdout.contains("symbolic MCOPY"), "{stdout}");
+Ran 1 test for test/McopyCancun.t.sol:McopyCancun
+[PASS] checkMcopyRoundtrip(bytes32) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -1027,14 +1311,20 @@ contract CancunBlobOps {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkBlobOpcodes"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkBlobOpcodes"]))
+        .success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[PASS] checkBlobOpcodes()"), "{stdout}");
-    assert!(!stdout.contains("symbolic BLOBBASEFEE"), "{stdout}");
+Ran 1 test for test/CancunBlobOps.t.sol:CancunBlobOps
+[PASS] checkBlobOpcodes() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -1062,13 +1352,20 @@ contract IstanbulOps {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkChainIdAndSelfBalance"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkChainIdAndSelfBalance"]))
+        .success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[PASS] checkChainIdAndSelfBalance()"), "{stdout}");
+Ran 1 test for test/IstanbulOps.t.sol:IstanbulOps
+[PASS] checkChainIdAndSelfBalance() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -1098,13 +1395,20 @@ contract SdivMinInt {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSdivMinByNegOne"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkSdivMinByNegOne"]))
+        .success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[PASS] checkSdivMinByNegOne()"), "{stdout}");
+Ran 1 test for test/SdivMinInt.t.sol:SdivMinInt
+[PASS] checkSdivMinByNegOne() ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
 
 // ---------------------------------------------------------------------------
@@ -1136,11 +1440,18 @@ contract ExpSmallBounded is Test {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkExpSmall"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkExpSmall"]))
+        .success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-    assert!(stdout.contains("[PASS] checkExpSmall(uint8)"), "{stdout}");
+Ran 1 test for test/ExpSmallBounded.t.sol:ExpSmallBounded
+[PASS] checkExpSmall(uint8) ([METRICS])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
 });
