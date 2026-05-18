@@ -105,7 +105,7 @@ use foundry_evm::{
     },
     utils::{
         block_env_from_header, get_blob_base_fee_update_fraction,
-        get_blob_base_fee_update_fraction_by_spec_id,
+        get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_spec_id,
     },
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -602,17 +602,7 @@ impl<N: Network> Backend<N> {
 
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
-        let spec_id = self.spec_id();
-
-        if spec_id >= SpecId::OSAKA {
-            return BlobParams::osaka();
-        }
-
-        if spec_id >= SpecId::PRAGUE {
-            return BlobParams::prague();
-        }
-
-        BlobParams::cancun()
+        get_blob_params_by_spec_id(self.spec_id())
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)
