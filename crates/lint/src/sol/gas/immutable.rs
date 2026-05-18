@@ -57,6 +57,7 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
         }
 
         let mut constructor_body_writes = HashSet::new();
+        let mut initializer_side_effect_writes = HashSet::new();
         let mut runtime_writes = HashSet::new();
         let mut non_constant_initializer = HashSet::new();
 
@@ -66,9 +67,8 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
                 if !is_compile_time_constant(hir, expr) {
                     non_constant_initializer.insert(var_id);
                 }
-                // State-variable initializers run at construction time, so any side-effecting
-                // writes they perform on other candidates count as constructor writes.
-                collect_expr_writes(expr, &candidate_set, &mut constructor_body_writes);
+                // Tracked separately: blocks `could-be-constant` but not `could-be-immutable`.
+                collect_expr_writes(expr, &candidate_set, &mut initializer_side_effect_writes);
             }
         }
 
@@ -122,10 +122,13 @@ impl<'hir> LateLintPass<'hir> for UnchangedStateVariables {
             let span = var.name.map_or(var.span, |name| name.span);
 
             // `could-be-constant`: requires a compile-time-constant inline initializer and no
-            // writes anywhere (constructor body or runtime).
+            // writes anywhere (constructor body, other state-var initializers, or runtime).
             let has_constant_initializer =
                 var.initializer.is_some_and(|expr| is_compile_time_constant(hir, expr));
-            if has_constant_initializer && !constructor_body_writes.contains(&var_id) {
+            if has_constant_initializer
+                && !constructor_body_writes.contains(&var_id)
+                && !initializer_side_effect_writes.contains(&var_id)
+            {
                 ctx.emit(&COULD_BE_CONSTANT, span);
                 continue;
             }
@@ -399,10 +402,19 @@ fn collect_lvalue_writes(
 fn is_compile_time_constant(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     match &expr.kind {
         ExprKind::Lit(_) | ExprKind::Type(_) | ExprKind::TypeCall(_) => true,
-        ExprKind::Ident([Res::Item(hir::ItemId::Variable(var_id)), ..]) => {
-            hir.variable(*var_id).is_constant()
+        ExprKind::Ident(resolutions) => {
+            let mut has_const_var = false;
+            let all_safe = resolutions.iter().all(|res| match res {
+                Res::Item(hir::ItemId::Variable(var_id)) => {
+                    let is_const = hir.variable(*var_id).is_constant();
+                    has_const_var |= is_const;
+                    is_const
+                }
+                Res::Item(hir::ItemId::Function(_)) => true,
+                _ => false,
+            });
+            all_safe && has_const_var
         }
-        ExprKind::Ident(_) => false,
         ExprKind::Unary(op, inner) => {
             !matches!(
                 op.kind,
@@ -427,11 +439,21 @@ fn is_compile_time_constant(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
         ExprKind::Tuple(exprs) => {
             exprs.iter().flatten().all(|expr| is_compile_time_constant(hir, expr))
         }
-        // `type(T).min`, `type(T).max`, `type(T).interfaceId` are compile-time constants.
-        ExprKind::Member(base, member) => {
-            matches!(base.kind, ExprKind::TypeCall(_))
-                && matches!(member.as_str(), "min" | "max" | "interfaceId")
-        }
+        // `type(T).min`/`type(T).max` for integer/enum types; `type(T).interfaceId` for
+        // interface types.
+        ExprKind::Member(base, member) => match (&base.kind, member.as_str()) {
+            (ExprKind::TypeCall(ty), "min" | "max") => matches!(
+                ty.kind,
+                TypeKind::Elementary(ast::ElementaryType::Int(_) | ast::ElementaryType::UInt(_))
+                    | TypeKind::Custom(hir::ItemId::Enum(_))
+            ),
+            (ExprKind::TypeCall(ty), "interfaceId") => matches!(
+                ty.kind,
+                TypeKind::Custom(hir::ItemId::Contract(cid))
+                    if hir.contract(cid).kind == ast::ContractKind::Interface
+            ),
+            _ => false,
+        },
         ExprKind::Array(_)
         | ExprKind::Assign(_, _, _)
         | ExprKind::Delete(_)
