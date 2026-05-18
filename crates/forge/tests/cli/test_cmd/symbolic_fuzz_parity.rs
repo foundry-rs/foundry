@@ -108,20 +108,7 @@ contract EchidnaFlagsParity is Test {
     ]))
     .failure()
     .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/EchidnaFlagsParity.t.sol:EchidnaFlagsParity
-[FAIL: symbolic invariant counterexample]
-	[Sequence] (original: 2, shrunk: 2)
-		[SENDER] addr=[test/EchidnaFlagsParity.t.sol:EchidnaFlagsTarget]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=set0(uint8) [ARGS]
-		[SENDER] addr=[test/EchidnaFlagsParity.t.sol:EchidnaFlagsTarget]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=set1(uint8) [ARGS]
- invariant_flag1_holds() ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
+...
 Failing tests:
 Encountered 1 failing test in test/EchidnaFlagsParity.t.sol:EchidnaFlagsParity
 [FAIL: symbolic invariant counterexample]
@@ -167,16 +154,7 @@ contract EchidnaOverflowParity {
     assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkNoOverflow"]))
         .failure()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/EchidnaOverflowParity.t.sol:EchidnaOverflowParity
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkNoOverflow(uint256,uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
+...
 Failing tests:
 Encountered 1 failing test in test/EchidnaOverflowParity.t.sol:EchidnaOverflowParity
 [FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkNoOverflow(uint256,uint256) ([METRICS])
@@ -214,16 +192,7 @@ contract MedusaAssertionParity {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkNoMagic"]))
         .failure()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/MedusaAssertionParity.t.sol:MedusaAssertionParity
-[FAIL: panic: assertion failed (0x01); counterexample: calldata=0xda659cbe000000000000000000000000000000000000000000000000deadbeefcafebabe args=[16045690984503098046 [1.604e19]]] checkNoMagic(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
+...
 Failing tests:
 Encountered 1 failing test in test/MedusaAssertionParity.t.sol:MedusaAssertionParity
 [FAIL: panic: assertion failed (0x01); counterexample: calldata=0xda659cbe000000000000000000000000000000000000000000000000deadbeefcafebabe args=[16045690984503098046 [1.604e19]]] checkNoMagic(uint256) ([METRICS])
@@ -304,19 +273,7 @@ contract CryticPropertiesErc20Parity is Test {
     ]))
     .failure()
     .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/CryticPropertiesErc20Parity.t.sol:CryticPropertiesErc20Parity
-[FAIL: symbolic invariant counterexample]
-	[Sequence] (original: 1, shrunk: 1)
-		[SENDER] addr=[test/CryticPropertiesErc20Parity.t.sol:BuggyToken]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=transfer(address,uint256) [ARGS]
- invariant_sumOfBalances() ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
+...
 Failing tests:
 Encountered 1 failing test in test/CryticPropertiesErc20Parity.t.sol:CryticPropertiesErc20Parity
 [FAIL: symbolic invariant counterexample]
@@ -363,16 +320,7 @@ contract DevdacianRarelyFalse {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkRarelyFalse"]))
         .failure()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/DevdacianRarelyFalse.t.sol:DevdacianRarelyFalse
-[FAIL: panic: assertion failed (0x01); counterexample: calldata=0x1d03c04b000000000000123400000000000000000000cafe000000000000000000000042 args=[29251294086901932359474778716264896192253236938588505753256002 [2.925e61]]] checkRarelyFalse(uint256) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
+...
 Failing tests:
 Encountered 1 failing test in test/DevdacianRarelyFalse.t.sol:DevdacianRarelyFalse
 [FAIL: panic: assertion failed (0x01); counterexample: calldata=0x1d03c04b000000000000123400000000000000000000cafe000000000000000000000042 args=[29251294086901932359474778716264896192253236938588505753256002 [2.925e61]]] checkRarelyFalse(uint256) ([METRICS])
@@ -436,21 +384,7 @@ contract IfFuzzSimpleStateBuggy is Test {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "invariant_phaseUnderThree"]))
         .failure()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/IfFuzzSimpleStateBuggy.t.sol:IfFuzzSimpleStateBuggy
-[FAIL: symbolic invariant counterexample]
-	[Sequence] (original: 3, shrunk: 3)
-		[SENDER] addr=[test/IfFuzzSimpleStateBuggy.t.sol:SimpleStateMachine]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step1(uint256) args=[1337]
-		[SENDER] addr=[test/IfFuzzSimpleStateBuggy.t.sol:SimpleStateMachine]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step2(uint256) args=[7331]
-		[SENDER] addr=[test/IfFuzzSimpleStateBuggy.t.sol:SimpleStateMachine]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step3(uint256) args=[12345 [1.234e4]]
- invariant_phaseUnderThree() ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
+...
 Failing tests:
 Encountered 1 failing test in test/IfFuzzSimpleStateBuggy.t.sol:IfFuzzSimpleStateBuggy
 [FAIL: symbolic invariant counterexample]
@@ -524,16 +458,10 @@ contract MiniVatHolds is Test {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "invariant_debtEqualsUrn"]))
         .success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/MiniVatHolds.t.sol:MiniVatHolds
 [PASS] invariant_debtEqualsUrn() ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+...
 "#]]);
 });
 
@@ -595,16 +523,7 @@ contract Erc4626Inflation is Test {
     ]))
     .failure()
     .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/Erc4626Inflation.t.sol:Erc4626Inflation
-[FAIL: incomplete symbolic execution (Timeout): solver returned unknown] checkDepositReturnsShares(uint64,uint128,uint64) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
+...
 Failing tests:
 Encountered 1 failing test in test/Erc4626Inflation.t.sol:Erc4626Inflation
 [FAIL: incomplete symbolic execution (Timeout): solver returned unknown] checkDepositReturnsShares(uint64,uint128,uint64) ([METRICS])
@@ -686,16 +605,7 @@ contract ReentrancyDao is Test {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkVaultCannotBeDrained"]))
         .failure()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/ReentrancyDao.t.sol:ReentrancyDao
-[FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkVaultCannotBeDrained() ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
+...
 Failing tests:
 Encountered 1 failing test in test/ReentrancyDao.t.sol:ReentrancyDao
 [FAIL: incomplete symbolic execution (RevertAll): all symbolic paths reverted] checkVaultCannotBeDrained() ([METRICS])
@@ -771,16 +681,7 @@ contract TxOriginBypass is Test {
     ]))
     .failure()
     .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/TxOriginBypass.t.sol:TxOriginBypass
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkOnlyOwnerCanTrigger(address,address) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
+...
 Failing tests:
 Encountered 1 failing test in test/TxOriginBypass.t.sol:TxOriginBypass
 [FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkOnlyOwnerCanTrigger(address,address) ([METRICS])
@@ -825,16 +726,7 @@ contract EcrecoverBasic {
     ]))
     .failure()
     .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/EcrecoverBasic.t.sol:EcrecoverBasic
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkEcrecoverNeverHitsZero(bytes32,uint8,bytes32,bytes32) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
+...
 Failing tests:
 Encountered 1 failing test in test/EcrecoverBasic.t.sol:EcrecoverBasic
 [FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkEcrecoverNeverHitsZero(bytes32,uint8,bytes32,bytes32) ([METRICS])
@@ -915,16 +807,7 @@ contract Erc20ApproveRace is Test {
     assert_symbolic_witness(cmd.args(["test", "--symbolic", "--match-test", "checkApproveRace"]))
         .failure()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
-Ran 1 test for test/Erc20ApproveRace.t.sol:Erc20ApproveRace
-[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkApproveRace(uint64,uint64) ([METRICS])
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
+...
 Failing tests:
 Encountered 1 failing test in test/Erc20ApproveRace.t.sol:Erc20ApproveRace
 [FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkApproveRace(uint64,uint64) ([METRICS])
@@ -978,16 +861,10 @@ contract SoladyMinMax {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkMinMaxIdentities"]))
         .success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/SoladyMinMax.t.sol:SoladyMinMax
 [PASS] checkMinMaxIdentities(uint256,uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+...
 "#]]);
 });
 
@@ -1021,16 +898,10 @@ contract CancunTransient {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkTloadAfterTstore"]))
         .success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/CancunTransient.t.sol:CancunTransient
 [PASS] checkTloadAfterTstore(uint256) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+...
 "#]]);
 });
 
@@ -1061,16 +932,10 @@ contract Push0Shanghai {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkZeroIsZero"]))
         .success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/Push0Shanghai.t.sol:Push0Shanghai
 [PASS] checkZeroIsZero() ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+...
 "#]]);
 });
 
@@ -1125,16 +990,10 @@ contract Erc721Ownership is Test {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "invariant_ownerNonZero"]))
         .success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/Erc721Ownership.t.sol:Erc721Ownership
 [PASS] invariant_ownerNonZero() ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+...
 "#]]);
 });
 
@@ -1183,16 +1042,10 @@ contract Erc4626Roundtrip {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkSingleUserRoundtrip"]))
         .success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/Erc4626Roundtrip.t.sol:Erc4626Roundtrip
 [PASS] checkSingleUserRoundtrip(uint64) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+...
 "#]]);
 });
 
@@ -1224,16 +1077,10 @@ contract ByteswapInvolution {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkInvolution"]))
         .success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/ByteswapInvolution.t.sol:ByteswapInvolution
 [PASS] checkInvolution(uint16) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+...
 "#]]);
 });
 
@@ -1267,16 +1114,10 @@ contract McopyCancun {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkMcopyRoundtrip"]))
         .success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/McopyCancun.t.sol:McopyCancun
 [PASS] checkMcopyRoundtrip(bytes32) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+...
 "#]]);
 });
 
@@ -1314,16 +1155,10 @@ contract CancunBlobOps {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkBlobOpcodes"]))
         .success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/CancunBlobOps.t.sol:CancunBlobOps
 [PASS] checkBlobOpcodes() ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+...
 "#]]);
 });
 
@@ -1355,16 +1190,10 @@ contract IstanbulOps {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkChainIdAndSelfBalance"]))
         .success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/IstanbulOps.t.sol:IstanbulOps
 [PASS] checkChainIdAndSelfBalance() ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+...
 "#]]);
 });
 
@@ -1398,16 +1227,10 @@ contract SdivMinInt {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkSdivMinByNegOne"]))
         .success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/SdivMinInt.t.sol:SdivMinInt
 [PASS] checkSdivMinByNegOne() ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+...
 "#]]);
 });
 
@@ -1443,15 +1266,9 @@ contract ExpSmallBounded is Test {
     assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkExpSmall"]))
         .success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-
+...
 Ran 1 test for test/ExpSmallBounded.t.sol:ExpSmallBounded
 [PASS] checkExpSmall(uint8) ([METRICS])
-Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
-
+...
 "#]]);
 });
