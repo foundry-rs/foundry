@@ -45,8 +45,6 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
         for m in func.modifiers {
             collect_modifier_safety(hir, m, &mut a.safe_vars);
         }
-        // EIP-3156: receivers of `.onFlashLoan(...)` are trusted by protocol commitment.
-        collect_flash_loan_receivers(hir, body.stmts, &mut a.safe_vars);
         for stmt in body.stmts {
             let _ = a.visit_stmt(stmt);
         }
@@ -187,6 +185,39 @@ impl<'hir> Analyzer<'hir> {
         !var.kind.is_state() || var.is_immutable() || var.is_constant()
     }
 
+    /// Handles single-var and tuple LHS; tuple slots align with a tuple-literal RHS.
+    fn handle_assign(&mut self, lhs: &hir::Expr<'_>, rhs: &hir::Expr<'_>) {
+        let lhs = lhs.peel_parens();
+        if let ExprKind::Tuple(lhs_elems) = &lhs.kind {
+            let rhs_elems = match &rhs.peel_parens().kind {
+                ExprKind::Tuple(r) => Some(*r),
+                _ => None,
+            };
+            for (i, lhs_elem) in lhs_elems.iter().enumerate() {
+                if let Some(lhs_expr) = lhs_elem {
+                    let rhs_expr = rhs_elems.and_then(|r| r.get(i).copied()).flatten();
+                    self.assign_one(lhs_expr, rhs_expr);
+                }
+            }
+        } else {
+            self.assign_one(lhs, Some(rhs));
+        }
+    }
+
+    /// `rhs == None` (unknown slot) drops the target's safe-fact.
+    fn assign_one(&mut self, lhs: &hir::Expr<'_>, rhs: Option<&hir::Expr<'_>>) {
+        let Some(target) = underlying_var(lhs) else { return };
+        self.kill_permits_for(target);
+        if self.hir.variable(target).kind.is_state() {
+            return;
+        }
+        if rhs.is_some_and(|r| self.is_safe(r)) {
+            self.safe_vars.insert(target);
+        } else {
+            self.safe_vars.remove(&target);
+        }
+    }
+
     /// Visits a body that may execute zero times or out-of-line (loops, try clauses):
     /// in-body kills survive, in-body additions don't.
     fn visit_isolated(&mut self, stmts: &'hir [hir::Stmt<'hir>]) {
@@ -304,7 +335,10 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                 }
             }
             ExprKind::Call(..) => {
-                if let Some(p) = match_permit_call(expr) {
+                // EIP-3156: trust the receiver from this point on.
+                if let Some(vid) = match_flash_loan_call(self.hir, expr) {
+                    self.safe_vars.insert(vid);
+                } else if let Some(p) = match_permit_call(expr) {
                     self.permits.insert(p);
                 } else if let Some((from, token)) = match_sink(self.hir, expr)
                     && !self.is_safe(from)
@@ -313,44 +347,32 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                     self.hits.push(expr.span);
                 }
             }
-            // Kill permits on every write; only track safety for non-state address locals.
-            ExprKind::Assign(lhs, _, rhs) => {
-                if let Some(target) = underlying_var(lhs) {
-                    self.kill_permits_for(target);
-                    if !self.hir.variable(target).kind.is_state() && is_address(self.hir, target) {
-                        self.assign(target, rhs);
-                    }
-                }
-            }
+            ExprKind::Assign(lhs, _, rhs) => self.handle_assign(lhs, rhs),
             _ => {}
         }
         self.walk_expr(expr)
     }
 }
 
-/// HIR walker used by [`collect_flash_loan_receivers`] to harvest `.onFlashLoan(...)` callees.
-struct OnFlashLoanScanner<'a, 'hir> {
-    hir: &'hir hir::Hir<'hir>,
-    out: &'a mut HashSet<hir::VariableId>,
-}
-
-impl<'hir> hir::Visit<'hir> for OnFlashLoanScanner<'_, 'hir> {
-    type BreakValue = Never;
-
-    fn hir(&self) -> &'hir hir::Hir<'hir> {
-        self.hir
+/// EIP-3156 `onFlashLoan(address,address,uint256,uint256,bytes) returns (bytes32)`. Returns
+/// the receiver's variable id only when its static contract type declares the exact sig.
+fn match_flash_loan_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::VariableId> {
+    let ExprKind::Call(callee, _, _) = &expr.kind else { return None };
+    let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
+    if ident.name.as_str() != "onFlashLoan" {
+        return None;
     }
-
-    fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        if let ExprKind::Call(callee, _, _) = &expr.kind
-            && let ExprKind::Member(recv, ident) = &callee.peel_parens().kind
-            && ident.name.as_str() == "onFlashLoan"
-            && let Some(vid) = underlying_var(recv)
-        {
-            self.out.insert(vid);
-        }
-        self.walk_expr(expr)
+    let cid = receiver_contract_id(hir, recv)?;
+    if !contract_has_function(
+        hir,
+        cid,
+        "onFlashLoan",
+        &["address", "address", "uint256", "uint256", "bytes"],
+        &["bytes32"],
+    ) {
+        return None;
     }
+    underlying_var(recv)
 }
 
 /// Matches an ERC20-like transfer sink. Returns `(from_arg, token_var)` where `token_var` is
@@ -447,18 +469,6 @@ fn collect_modifier_safety(
         if a.safe_vars.contains(&mp) {
             out_safe.insert(caller);
         }
-    }
-}
-
-/// Records the receiver of every `<expr>.onFlashLoan(...)` call in `stmts`.
-fn collect_flash_loan_receivers<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    stmts: &'hir [hir::Stmt<'hir>],
-    out: &mut HashSet<hir::VariableId>,
-) {
-    let mut s = OnFlashLoanScanner { hir, out };
-    for stmt in stmts {
-        let _ = s.visit_stmt(stmt);
     }
 }
 

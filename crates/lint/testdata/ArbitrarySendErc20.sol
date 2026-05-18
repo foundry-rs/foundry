@@ -35,6 +35,11 @@ interface IERC3156FlashBorrower {
     ) external returns (bytes32);
 }
 
+// Same method name as EIP-3156, different signature.
+interface IFakeFlashBorrower {
+    function onFlashLoan(bytes calldata data) external;
+}
+
 library SafeERC20 {
     function safeTransferFrom(
         IERC20 token,
@@ -488,6 +493,48 @@ contract ArbitrarySendErc20 {
         receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
         token.transferFrom(address(receiver), address(this), amount + fee);
         return true;
+    }
+
+    function badTupleReassignKillsSafe(address from, address to, uint256 a) public {
+        address x = msg.sender;
+        address y;
+        (x, y) = (from, to);
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function badFlashLoanInBranch(
+        bool flag,
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public {
+        if (flag) {
+            receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        }
+        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function badFlashLoanReceiverReassigned(
+        IERC3156FlashBorrower receiver,
+        IERC3156FlashBorrower untrusted,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        receiver = untrusted;
+        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function badFakeFlashLoan(
+        IFakeFlashBorrower fake,
+        address to,
+        uint256 a,
+        bytes calldata data
+    ) public {
+        fake.onFlashLoan(data);
+        token.transferFrom(address(fake), to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 }
 
