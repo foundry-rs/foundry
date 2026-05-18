@@ -16,14 +16,32 @@ use revm::{
 // and precision (less collisions).
 const MAX_EDGE_COUNT: usize = 65536;
 
+// Maximum number of comparison operand pairs to track for CmpLog-style feedback.
+const MAX_CMP_LOG_ENTRIES: usize = 1024;
+
+/// A comparison operand pair captured during execution.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CmpOperands {
+    /// First operand of the comparison.
+    pub op1: U256,
+    /// Second operand of the comparison.
+    pub op2: U256,
+    /// Program counter where the comparison occurred.
+    pub pc: usize,
+}
+
 /// An `Inspector` that tracks [edge coverage](https://clang.llvm.org/docs/SanitizerCoverage.html#edge-coverage).
 /// Covered edges will not wrap to zero e.g. a loop edge hit more than 255 will still be retained.
+///
+/// Also tracks comparison operands for CmpLog-style guided fuzzing.
 // see https://github.com/AFLplusplus/AFLplusplus/blob/5777ceaf23f48ae4ceae60e4f3a79263802633c6/instrumentation/afl-llvm-pass.so.cc#L810-L829
 #[derive(Clone)]
 pub struct EdgeCovInspector {
     /// Map of hitcounts that can be diffed against to determine if new coverage was reached.
     hitcount: Vec<u8>,
     hash_builder: DefaultHashBuilder,
+    /// Comparison operand log for CmpLog-style guided fuzzing.
+    cmp_log: Vec<CmpOperands>,
 }
 
 impl fmt::Debug for EdgeCovInspector {
@@ -35,12 +53,17 @@ impl fmt::Debug for EdgeCovInspector {
 impl EdgeCovInspector {
     /// Create a new `EdgeCovInspector` with `MAX_EDGE_COUNT` size.
     pub fn new() -> Self {
-        Self { hitcount: vec![0; MAX_EDGE_COUNT], hash_builder: DefaultHashBuilder::default() }
+        Self {
+            hitcount: vec![0; MAX_EDGE_COUNT],
+            hash_builder: DefaultHashBuilder::default(),
+            cmp_log: Vec::with_capacity(MAX_CMP_LOG_ENTRIES),
+        }
     }
 
-    /// Reset the hitcount to zero.
+    /// Reset the hitcount to zero and clear the comparison log.
     pub fn reset(&mut self) {
         self.hitcount.fill(0);
+        self.cmp_log.clear();
     }
 
     /// Get an immutable reference to the hitcount.
@@ -48,9 +71,19 @@ impl EdgeCovInspector {
         self.hitcount.as_slice()
     }
 
+    /// Get an immutable reference to the comparison operand log.
+    pub const fn get_cmp_log(&self) -> &[CmpOperands] {
+        self.cmp_log.as_slice()
+    }
+
     /// Consume the inspector and take ownership of the hitcount.
     pub fn into_hitcount(self) -> Vec<u8> {
         self.hitcount
+    }
+
+    /// Consume the inspector and take ownership of both the hitcount and comparison log.
+    pub fn into_parts(self) -> (Vec<u8>, Vec<CmpOperands>) {
+        (self.hitcount, self.cmp_log)
     }
 
     /// Mark the edge, H(address, pc, jump_dest), as hit.
@@ -63,6 +96,13 @@ impl EdgeCovInspector {
         // so it must be modulo the maximum edge count.
         let edge_id = (hasher.finish() % MAX_EDGE_COUNT as u64) as usize;
         self.hitcount[edge_id] = self.hitcount[edge_id].checked_add(1).unwrap_or(1);
+    }
+
+    /// Store comparison operands for CmpLog-style guided fuzzing.
+    fn store_cmp(&mut self, pc: usize, op1: U256, op2: U256) {
+        if self.cmp_log.len() < MAX_CMP_LOG_ENTRIES {
+            self.cmp_log.push(CmpOperands { op1, op2, pc });
+        }
     }
 
     #[cold]
@@ -97,6 +137,25 @@ impl EdgeCovInspector {
             }
         }
     }
+
+    #[cold]
+    fn do_cmp_step(&mut self, interp: &mut Interpreter) {
+        let current_pc = interp.bytecode.pc();
+
+        match interp.bytecode.opcode() {
+            opcode::EQ | opcode::LT | opcode::GT | opcode::SLT | opcode::SGT => {
+                if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
+                    self.store_cmp(current_pc, op1, op2);
+                }
+            }
+            opcode::ISZERO => {
+                if let Ok(op1) = interp.stack.peek(0) {
+                    self.store_cmp(current_pc, op1, U256::ZERO);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Default for EdgeCovInspector {
@@ -108,8 +167,70 @@ impl Default for EdgeCovInspector {
 impl<CTX> Inspector<CTX> for EdgeCovInspector {
     #[inline]
     fn step(&mut self, interp: &mut Interpreter, _context: &mut CTX) {
-        if matches!(interp.bytecode.opcode(), opcode::JUMP | opcode::JUMPI) {
+        let op = interp.bytecode.opcode();
+        if matches!(op, opcode::JUMP | opcode::JUMPI) {
             self.do_step(interp);
         }
+        if matches!(
+            op,
+            opcode::EQ | opcode::LT | opcode::GT | opcode::SLT | opcode::SGT | opcode::ISZERO
+        ) {
+            self.do_cmp_step(interp);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cmp_operands_defaults_and_clones() {
+        let cmp = CmpOperands { op1: U256::from(123), op2: U256::from(456), pc: 42 };
+
+        assert_eq!(cmp.op1, U256::from(123));
+        assert_eq!(cmp.op2, U256::from(456));
+        assert_eq!(cmp.pc, 42);
+
+        assert_eq!(CmpOperands::default(), CmpOperands { op1: U256::ZERO, op2: U256::ZERO, pc: 0 });
+        let cloned = cmp;
+        assert_eq!(cloned, cmp);
+    }
+
+    #[test]
+    fn cmp_log_starts_empty_and_is_returned_by_into_parts() {
+        let inspector = EdgeCovInspector::new();
+
+        assert!(inspector.get_cmp_log().is_empty());
+        assert!(inspector.get_hitcount().iter().all(|&x| x == 0));
+
+        let (hitcount, cmp_log) = inspector.into_parts();
+        assert_eq!(hitcount.len(), MAX_EDGE_COUNT);
+        assert!(cmp_log.is_empty());
+    }
+
+    #[test]
+    fn reset_clears_hitcount_and_cmp_log() {
+        let mut inspector = EdgeCovInspector::new();
+
+        inspector.hitcount[0] = 1;
+        inspector.store_cmp(42, U256::from(123), U256::from(456));
+
+        inspector.reset();
+
+        assert!(inspector.get_hitcount().iter().all(|&x| x == 0));
+        assert!(inspector.get_cmp_log().is_empty());
+    }
+
+    #[test]
+    fn cmp_log_is_capped() {
+        let mut inspector = EdgeCovInspector::new();
+
+        for i in 0..MAX_CMP_LOG_ENTRIES + 1 {
+            inspector.store_cmp(i, U256::from(i), U256::from(i + 1));
+        }
+
+        assert_eq!(inspector.get_cmp_log().len(), MAX_CMP_LOG_ENTRIES);
+        assert_eq!(inspector.get_cmp_log()[MAX_CMP_LOG_ENTRIES - 1].pc, MAX_CMP_LOG_ENTRIES - 1);
     }
 }
