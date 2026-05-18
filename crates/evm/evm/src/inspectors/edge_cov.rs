@@ -28,6 +28,30 @@ pub struct CmpOperands {
     pub op2: U256,
     /// Program counter where the comparison occurred.
     pub pc: usize,
+    /// Contract address where the comparison occurred.
+    pub address: Address,
+    /// EVM opcode that performed the comparison.
+    pub opcode: u8,
+    /// Comparison kind.
+    pub kind: CmpKind,
+    /// Whether the comparison interprets operands as signed integers.
+    pub signed: bool,
+    /// Inferred operand width in bits, or zero when unknown.
+    pub width: u16,
+}
+
+/// EVM comparison kind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CmpKind {
+    /// Equality comparison.
+    #[default]
+    Eq,
+    /// Less-than comparison.
+    Lt,
+    /// Greater-than comparison.
+    Gt,
+    /// Zero comparison.
+    IsZero,
 }
 
 /// An `Inspector` that tracks [edge coverage](https://clang.llvm.org/docs/SanitizerCoverage.html#edge-coverage).
@@ -41,7 +65,7 @@ pub struct EdgeCovInspector {
     hitcount: Vec<u8>,
     hash_builder: DefaultHashBuilder,
     /// Comparison operand log for CmpLog-style guided fuzzing.
-    cmp_log: Vec<CmpOperands>,
+    cmp_log: Option<Vec<CmpOperands>>,
 }
 
 impl fmt::Debug for EdgeCovInspector {
@@ -56,14 +80,32 @@ impl EdgeCovInspector {
         Self {
             hitcount: vec![0; MAX_EDGE_COUNT],
             hash_builder: DefaultHashBuilder::default(),
-            cmp_log: Vec::with_capacity(MAX_CMP_LOG_ENTRIES),
+            cmp_log: None,
+        }
+    }
+
+    /// Create a new `EdgeCovInspector` with comparison operand logging enabled.
+    pub fn with_cmp_log() -> Self {
+        let mut inspector = Self::new();
+        inspector.enable_cmp_log(true);
+        inspector
+    }
+
+    /// Set whether to collect comparison operand logs.
+    pub fn enable_cmp_log(&mut self, yes: bool) {
+        if yes {
+            self.cmp_log.get_or_insert_with(|| Vec::with_capacity(MAX_CMP_LOG_ENTRIES));
+        } else {
+            self.cmp_log = None;
         }
     }
 
     /// Reset the hitcount to zero and clear the comparison log.
     pub fn reset(&mut self) {
         self.hitcount.fill(0);
-        self.cmp_log.clear();
+        if let Some(cmp_log) = &mut self.cmp_log {
+            cmp_log.clear();
+        }
     }
 
     /// Get an immutable reference to the hitcount.
@@ -73,7 +115,10 @@ impl EdgeCovInspector {
 
     /// Get an immutable reference to the comparison operand log.
     pub const fn get_cmp_log(&self) -> &[CmpOperands] {
-        self.cmp_log.as_slice()
+        match &self.cmp_log {
+            Some(cmp_log) => cmp_log.as_slice(),
+            None => &[],
+        }
     }
 
     /// Consume the inspector and take ownership of the hitcount.
@@ -83,7 +128,7 @@ impl EdgeCovInspector {
 
     /// Consume the inspector and take ownership of both the hitcount and comparison log.
     pub fn into_parts(self) -> (Vec<u8>, Vec<CmpOperands>) {
-        (self.hitcount, self.cmp_log)
+        (self.hitcount, self.cmp_log.unwrap_or_default())
     }
 
     /// Mark the edge, H(address, pc, jump_dest), as hit.
@@ -99,9 +144,20 @@ impl EdgeCovInspector {
     }
 
     /// Store comparison operands for CmpLog-style guided fuzzing.
-    fn store_cmp(&mut self, pc: usize, op1: U256, op2: U256) {
-        if self.cmp_log.len() < MAX_CMP_LOG_ENTRIES {
-            self.cmp_log.push(CmpOperands { op1, op2, pc });
+    fn store_cmp(
+        &mut self,
+        address: Address,
+        pc: usize,
+        opcode: u8,
+        kind: CmpKind,
+        signed: bool,
+        op1: U256,
+        op2: U256,
+    ) {
+        if let Some(cmp_log) = &mut self.cmp_log
+            && cmp_log.len() < MAX_CMP_LOG_ENTRIES
+        {
+            cmp_log.push(CmpOperands { op1, op2, pc, address, opcode, kind, signed, width: 0 });
         }
     }
 
@@ -140,17 +196,56 @@ impl EdgeCovInspector {
 
     #[cold]
     fn do_cmp_step(&mut self, interp: &mut Interpreter) {
+        if self.cmp_log.is_none() {
+            return;
+        }
+
+        let address = interp.input.target_address();
         let current_pc = interp.bytecode.pc();
 
         match interp.bytecode.opcode() {
-            opcode::EQ | opcode::LT | opcode::GT | opcode::SLT | opcode::SGT => {
+            op @ opcode::EQ => {
                 if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
-                    self.store_cmp(current_pc, op1, op2);
+                    self.store_cmp(address, current_pc, op, CmpKind::Eq, false, op1, op2);
                 }
             }
-            opcode::ISZERO => {
+            op @ (opcode::LT | opcode::SLT) => {
+                if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
+                    self.store_cmp(
+                        address,
+                        current_pc,
+                        op,
+                        CmpKind::Lt,
+                        op == opcode::SLT,
+                        op1,
+                        op2,
+                    );
+                }
+            }
+            op @ (opcode::GT | opcode::SGT) => {
+                if let (Ok(op1), Ok(op2)) = (interp.stack.peek(0), interp.stack.peek(1)) {
+                    self.store_cmp(
+                        address,
+                        current_pc,
+                        op,
+                        CmpKind::Gt,
+                        op == opcode::SGT,
+                        op1,
+                        op2,
+                    );
+                }
+            }
+            op @ opcode::ISZERO => {
                 if let Ok(op1) = interp.stack.peek(0) {
-                    self.store_cmp(current_pc, op1, U256::ZERO);
+                    self.store_cmp(
+                        address,
+                        current_pc,
+                        op,
+                        CmpKind::IsZero,
+                        false,
+                        op1,
+                        U256::ZERO,
+                    );
                 }
             }
             _ => {}
@@ -186,13 +281,22 @@ mod tests {
 
     #[test]
     fn cmp_operands_defaults_and_clones() {
-        let cmp = CmpOperands { op1: U256::from(123), op2: U256::from(456), pc: 42 };
+        let cmp = CmpOperands {
+            op1: U256::from(123),
+            op2: U256::from(456),
+            pc: 42,
+            address: Address::repeat_byte(0xaa),
+            opcode: opcode::EQ,
+            kind: CmpKind::Eq,
+            signed: false,
+            width: 0,
+        };
 
         assert_eq!(cmp.op1, U256::from(123));
         assert_eq!(cmp.op2, U256::from(456));
         assert_eq!(cmp.pc, 42);
 
-        assert_eq!(CmpOperands::default(), CmpOperands { op1: U256::ZERO, op2: U256::ZERO, pc: 0 });
+        assert_eq!(CmpOperands::default().kind, CmpKind::Eq);
         let cloned = cmp;
         assert_eq!(cloned, cmp);
     }
@@ -211,10 +315,18 @@ mod tests {
 
     #[test]
     fn reset_clears_hitcount_and_cmp_log() {
-        let mut inspector = EdgeCovInspector::new();
+        let mut inspector = EdgeCovInspector::with_cmp_log();
 
         inspector.hitcount[0] = 1;
-        inspector.store_cmp(42, U256::from(123), U256::from(456));
+        inspector.store_cmp(
+            Address::ZERO,
+            42,
+            opcode::EQ,
+            CmpKind::Eq,
+            false,
+            U256::from(123),
+            U256::from(456),
+        );
 
         inspector.reset();
 
@@ -224,10 +336,18 @@ mod tests {
 
     #[test]
     fn cmp_log_is_capped() {
-        let mut inspector = EdgeCovInspector::new();
+        let mut inspector = EdgeCovInspector::with_cmp_log();
 
         for i in 0..MAX_CMP_LOG_ENTRIES + 1 {
-            inspector.store_cmp(i, U256::from(i), U256::from(i + 1));
+            inspector.store_cmp(
+                Address::ZERO,
+                i,
+                opcode::EQ,
+                CmpKind::Eq,
+                false,
+                U256::from(i),
+                U256::from(i + 1),
+            );
         }
 
         assert_eq!(inspector.get_cmp_log().len(), MAX_CMP_LOG_ENTRIES);
