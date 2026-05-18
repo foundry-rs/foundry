@@ -502,6 +502,50 @@ casttest!(erc20_curl_total_supply, |_prj, cmd| {
     assert!(output.contains(rpc));
 });
 
+casttest!(erc20_transfer_help_includes_tempo_expires, |_prj, cmd| {
+    let output =
+        cmd.args(["erc20", "transfer", "--help"]).assert_success().get_output().stdout_lossy();
+
+    assert!(
+        output.contains("--tempo.expires <SECONDS>"),
+        "expected erc20 transfer help to expose --tempo.expires, got:\n{output}",
+    );
+});
+
+forgetest_async!(erc20_transfer_prints_tempo_sponsor_hash, |_prj, cmd| {
+    let (_, _handle) = anvil::spawn(NodeConfig::test()).await;
+    let rpc = _handle.http_endpoint();
+
+    let output = cmd
+        .cast_fuse()
+        .args([
+            "erc20",
+            "transfer",
+            anvil_const::TOKEN,
+            anvil_const::ADDR2,
+            "1",
+            "--rpc-url",
+            &rpc,
+            "--private-key",
+            anvil_const::PK1,
+            "--tempo.print-sponsor-hash",
+            "--nonce",
+            "0",
+            "--gas-limit",
+            "100000",
+            "--gas-price",
+            "1",
+            "--priority-gas-price",
+            "1",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let hash = output.trim();
+    assert!(hash.starts_with("0x") && hash.len() == 66, "expected sponsor hash, got:\n{output}",);
+});
+
 // tests that `balance` command works correctly with --json flag
 forgetest_async!(erc20_balance_json, |prj, cmd| {
     let (rpc, token, _handle) = setup_token_test(&prj, &mut cmd).await;
