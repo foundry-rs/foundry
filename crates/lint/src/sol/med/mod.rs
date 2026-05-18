@@ -15,6 +15,9 @@ use tautology::TYPE_BASED_TAUTOLOGY;
 mod tx_origin;
 use tx_origin::TX_ORIGIN;
 
+mod uninitialized_local;
+use uninitialized_local::UNINITIALIZED_LOCAL;
+
 mod unsafe_typecast;
 use unsafe_typecast::UNSAFE_TYPECAST;
 
@@ -24,5 +27,6 @@ register_lints!(
     (IncorrectERC721Interface, late, (INCORRECT_ERC721_INTERFACE)),
     (TypeBasedTautology, late, (TYPE_BASED_TAUTOLOGY)),
     (TxOrigin, early, (TX_ORIGIN)),
+    (UninitializedLocal, late, (UNINITIALIZED_LOCAL)),
     (UnsafeTypecast, late, (UNSAFE_TYPECAST))
 );
