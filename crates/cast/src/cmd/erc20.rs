@@ -362,6 +362,12 @@ impl Erc20Subcommand {
                 $provider:ident |
                 $build_tx:expr
             ) => {{
+                let mut tx_opts = $tx_opts;
+                let expires_at = tx_opts.tempo.resolve_expires();
+                if let Some(ts) = expires_at {
+                    sh_println!("Transaction expires at unix timestamp {ts}")?;
+                }
+
                 let timeout = $send_tx.timeout.unwrap_or(config.transaction_timeout);
                 if let Some(ref access_key) = tempo_keychain {
                     let signer = pre_resolved_signer
@@ -371,7 +377,7 @@ impl Erc20Subcommand {
                         ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
                     let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
                     let mut tx = { $build_tx }.into_transaction_request();
-                    $tx_opts.apply::<TempoNetwork>(
+                    tx_opts.apply::<TempoNetwork>(
                         &mut tx,
                         get_chain(config.chain, &$provider).await?.is_legacy(),
                     );
@@ -393,7 +399,7 @@ impl Erc20Subcommand {
                     let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
                     let mut tx = { $build_tx }.into_transaction_request();
                     let chain = get_chain(config.chain, &$provider).await?;
-                    $tx_opts.apply::<N>(&mut tx, chain.is_legacy());
+                    tx_opts.apply::<N>(&mut tx, chain.is_legacy());
                     if chain.is_tempo() && tx.fee_token().is_none() {
                         tx.set_fee_token(PATH_USD_ADDRESS);
                     }
@@ -412,7 +418,7 @@ impl Erc20Subcommand {
                     let $provider = build_provider_with_signer::<N>(&$send_tx, signer)?;
                     let $erc20 = IERC20::new($token.resolve(&$provider).await?, &$provider);
                     let mut tx = { $build_tx }.into_transaction_request();
-                    $tx_opts.apply::<N>(
+                    tx_opts.apply::<N>(
                         &mut tx,
                         get_chain(config.chain, &$provider).await?.is_legacy(),
                     );
