@@ -558,7 +558,10 @@ impl SessionSource {
                 .filter_map(|e| e.ok())
                 .find(|e| e.file_name() == "Vm.sol")
         {
-            vm_import = format!("import {{Vm}} from \"{}\";\n", vm_path.path().display());
+            vm_import = format!(
+                "import {{Vm}} from \"{}\";\n",
+                vm_path.path().to_string_lossy().replace('\\', "/")
+            );
             vm_constant = "Vm internal constant vm = Vm(address(uint160(uint256(keccak256(\"hevm cheat code\")))));\n".to_string();
         }
 
@@ -610,4 +613,58 @@ enum ParseTreeFragment {
     Contract,
     /// Code for the "run()" function
     Function,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_compilers::artifacts::remappings::{RelativeRemapping, RelativeRemappingPathBuf};
+    use std::fs;
+
+    /// Regression test for <https://github.com/foundry-rs/foundry/issues/14711>.
+    ///
+    /// `to_repl_source()` must use forward slashes in the Vm import path regardless of OS,
+    /// because Solidity import statements require `/` as the path separator.
+    #[test]
+    fn test_vm_import_path_uses_forward_slashes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vm_sol = tmp.path().join("Vm.sol");
+        fs::write(&vm_sol, "// dummy").unwrap();
+
+        let remapping = RelativeRemapping {
+            context: None,
+            name: "forge-std/".to_string(),
+            path: RelativeRemappingPathBuf { parent: None, path: tmp.path().to_path_buf() },
+        };
+
+        let mut config = SessionSourceConfig {
+            foundry_config: Config {
+                solc: Some(SolcReq::Version(Version::new(0, 8, 29))),
+                remappings: vec![remapping],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Pre-set solc so detect_solc() skips the ensure_installed I/O.
+        config.detect_solc().unwrap();
+
+        let source = SessionSource {
+            file_name: "ReplContract.sol".to_string(),
+            contract_name: "REPL".to_string(),
+            config,
+            global_code: Default::default(),
+            contract_code: Default::default(),
+            run_code: Default::default(),
+            vm_source: vm_source(),
+            output: Default::default(),
+        };
+
+        let repl = source.to_repl_source();
+        let import_line = repl.lines().find(|l| l.contains("import {Vm}")).unwrap();
+        assert!(
+            !import_line.contains('\\'),
+            "Vm import path must not contain backslashes, got: {import_line}"
+        );
+        assert!(import_line.contains('/'), "Vm import path must use forward slashes");
+    }
 }

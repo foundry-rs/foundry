@@ -120,6 +120,13 @@ pub struct CloneArgs {
     #[command(flatten)]
     pub etherscan: EtherscanOpts,
 
+    /// Do not create a commit after cloning.
+    ///
+    /// This is a noop flag kept for backwards compatibility, as `forge clone` no longer commits
+    /// by default. Use `--commit` to opt into creating a commit.
+    #[arg(long, hide = true)]
+    pub no_commit: bool,
+
     #[command(flatten)]
     pub install: DependencyInstallOpts,
 }
@@ -135,6 +142,7 @@ impl CloneArgs {
             keep_directory_structure,
             source,
             sourcify_url,
+            no_commit: _,
         } = self;
 
         // step 0. get the chain and api key from the config

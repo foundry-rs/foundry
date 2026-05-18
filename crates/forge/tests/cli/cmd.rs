@@ -741,6 +741,21 @@ Compiler run successful!
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
 });
 
+// Checks that `--no-commit` is accepted as a noop backwards-compatibility flag for clone
+forgetest!(flaky_can_clone_with_no_commit, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--no-commit",
+        "0x044b75f554b886A065b9567891e45c79542d7357",
+    ])
+    .arg(prj.root())
+    .assert_success();
+});
+
 // Checks that quiet mode does not print anything for clone
 forgetest!(flaky_can_clone_quiet, |prj, cmd| {
     prj.wipe();

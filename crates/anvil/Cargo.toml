@@ -124,7 +124,7 @@ tokio = { workspace = true, features = ["full"] }
 tempo-alloy.workspace = true
 
 [features]
-default = ["cli", "jemalloc", "asm-keccak", "optimism"]
+default = ["cli", "jemalloc", "asm-keccak", "optimism", "js-tracer"]
 optimism = [
     "dep:op-alloy-consensus",
     "dep:op-alloy-rpc-types",
