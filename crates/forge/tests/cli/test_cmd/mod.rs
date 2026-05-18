@@ -943,6 +943,11 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(should_exit_early_on_invariant_failure, |prj, cmd| {
+    // Early-exit semantics require `assert_all = false`; under the post-#12587 default the
+    // campaign runs the full budget and surfaces a different failure shape.
+    prj.update_config(|config| {
+        config.invariant.assert_all = false;
+    });
     prj.add_test(
         "CounterInvariant.t.sol",
         r#"
