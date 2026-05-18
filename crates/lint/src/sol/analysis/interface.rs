@@ -7,26 +7,21 @@ pub fn is_elementary(hir: &hir::Hir<'_>, id: VariableId, abi: &str) -> bool {
     matches!(&hir.variable(id).ty.kind, TypeKind::Elementary(ty) if ty.to_abi_str() == abi)
 }
 
-/// Static contract type of a method-call receiver: a contract-typed variable,
-/// a direct contract reference (libraries), or an `IFoo(addr)` interface wrap.
+/// Static contract type of a method-call receiver: a contract-typed variable
+/// or an `IFoo(addr)` interface wrap.
 pub fn receiver_contract_id(hir: &hir::Hir<'_>, recv: &Expr<'_>) -> Option<ContractId> {
-    let recv = recv.peel_parens();
     match &recv.kind {
-        ExprKind::Ident(reses) => reses.iter().find_map(|r| match r {
-            Res::Item(ItemId::Variable(vid)) => match hir.variable(*vid).ty.kind {
-                TypeKind::Custom(ItemId::Contract(cid)) => Some(cid),
-                _ => None,
-            },
-            Res::Item(ItemId::Contract(cid)) => Some(*cid),
-            _ => None,
-        }),
-        ExprKind::Call(callee, ..) => match &callee.peel_parens().kind {
-            ExprKind::Ident(reses) => reses.iter().find_map(|r| match r {
-                Res::Item(ItemId::Contract(cid)) => Some(*cid),
-                _ => None,
-            }),
-            _ => None,
-        },
+        ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
+            if let TypeKind::Custom(ItemId::Contract(cid)) = hir.variable(*id).ty.kind {
+                Some(cid)
+            } else {
+                None
+            }
+        }
+        ExprKind::Call(
+            Expr { kind: ExprKind::Ident([Res::Item(ItemId::Contract(cid))]), .. },
+            ..,
+        ) => Some(*cid),
         _ => None,
     }
 }

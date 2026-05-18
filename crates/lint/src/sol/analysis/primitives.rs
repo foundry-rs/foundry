@@ -1,6 +1,7 @@
 //! Side-effect-free syntactic/semantic probes over solar HIR.
 
 use solar::{
+    ast::LitKind,
     interface::{Symbol, kw, sym},
     sema::hir::{self, ElementaryType, Expr, ExprKind, Res, Stmt, StmtKind, TypeKind, VariableId},
 };
@@ -64,7 +65,7 @@ fn is_exit_call(expr: &Expr<'_>) -> bool {
         && let Some(first) = args.exprs().next()
         && matches!(
             &first.peel_parens().kind,
-            ExprKind::Lit(lit) if matches!(lit.kind, solar::ast::LitKind::Bool(false))
+            ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Bool(false))
         )
     {
         return true;
