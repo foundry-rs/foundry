@@ -2790,6 +2790,7 @@ dependencies = [
  "rand 0.9.4",
  "rayon",
  "regex",
+ "reqwest 0.13.3",
  "revm",
  "rpassword",
  "semver 1.0.28",
