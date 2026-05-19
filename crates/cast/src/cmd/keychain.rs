@@ -1123,6 +1123,7 @@ async fn run_sign_authorization(
         expiry: expiry.and_then(NonZeroU64::new),
         limits: primitive_limits,
         allowed_calls: primitive_allowed_calls,
+        witness: None,
     };
 
     // Spin up the local browser-wallet bridge and ask the connected passkey
