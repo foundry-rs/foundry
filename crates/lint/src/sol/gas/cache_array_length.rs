@@ -32,7 +32,7 @@ struct LoopFacts {
 }
 
 impl LoopFacts {
-    fn should_skip(&self) -> bool {
+    const fn should_skip(&self) -> bool {
         self.mutates_array_length || self.has_state_mutating_call
     }
 
