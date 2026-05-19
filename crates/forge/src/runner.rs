@@ -62,6 +62,10 @@ use tracing::Span;
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
 pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
 
+fn is_symbolic_entrypoint(func: &Function) -> bool {
+    func.name.starts_with("check") || func.name.starts_with("prove")
+}
+
 /// A type that executes all tests of a contract
 pub struct ContractRunner<'a, FEN: FoundryEvmNetwork> {
     /// The name of the contract.
@@ -426,12 +430,18 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         // Filter out functions sequentially since it's very fast and there is no need to do it
         // in parallel.
         let find_timer = Instant::now();
+        let symbolic_enabled = self.config.symbolic.enabled;
         let functions = self
             .contract
             .abi
             .functions()
-            .filter(|func| filter.matches_test_function(func))
-            .filter(|func| self.config.symbolic.enabled || !func.is_symbolic_test())
+            .filter(|func| {
+                if symbolic_enabled && is_symbolic_entrypoint(func) {
+                    filter.matches_test(&func.signature())
+                } else {
+                    filter.matches_test_function(func)
+                }
+            })
             .filter(|func| self.function_matches_network_pass(func))
             .collect::<Vec<_>>();
         debug!(
@@ -484,7 +494,11 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 }
 
                 let sig = func.signature();
-                let kind = func.test_function_kind();
+                let kind = if self.config.symbolic.enabled && is_symbolic_entrypoint(func) {
+                    TestFunctionKind::SymbolicTest
+                } else {
+                    func.test_function_kind()
+                };
 
                 let _guard = debug_span!(
                     "test",
@@ -1799,6 +1813,7 @@ fn symbolic_step_counterexample(
         sender: Some(step.sender),
         addr: Some(step.address),
         calldata: step.calldata.clone(),
+        value: None,
         contract_name: step.contract_name.clone(),
         func_name: Some(step.function_name.clone()),
         signature: Some(step.signature.clone()),

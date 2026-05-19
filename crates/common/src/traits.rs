@@ -156,7 +156,7 @@ pub enum TestFunctionKind {
     InvariantTest,
     /// `table*`, with arguments.
     TableTest,
-    /// `check*` or `prove*`.
+    /// `check*` or `prove*`, when selected by symbolic test mode.
     SymbolicTest,
     /// `afterInvariant`.
     AfterInvariant,
@@ -182,7 +182,6 @@ impl TestFunctionKind {
                 Self::InvariantTest
             }
             _ if name.starts_with("table") => Self::TableTest,
-            _ if name.starts_with("check") || name.starts_with("prove") => Self::SymbolicTest,
             _ if name.eq_ignore_ascii_case("setup") && !has_inputs => Self::Setup,
             _ if name.eq_ignore_ascii_case("afterinvariant") => Self::AfterInvariant,
             _ if name.starts_with("fixture") => Self::Fixture,
