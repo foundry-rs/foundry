@@ -62,6 +62,31 @@ impl TempoSponsor {
     where
         N::TransactionRequest: FoundryTransactionBuilder<N>,
     {
+        let preview = self.attach_inner::<N>(tx, sender, true).await?;
+        Ok(preview)
+    }
+
+    /// Same as [`Self::attach_and_print`] but does not write the preview to stderr.
+    pub async fn attach_silent<N: Network>(
+        &self,
+        tx: &mut N::TransactionRequest,
+        sender: Address,
+    ) -> Result<TempoSponsorPreview>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
+        self.attach_inner::<N>(tx, sender, false).await
+    }
+
+    async fn attach_inner<N: Network>(
+        &self,
+        tx: &mut N::TransactionRequest,
+        sender: Address,
+        print: bool,
+    ) -> Result<TempoSponsorPreview>
+    where
+        N::TransactionRequest: FoundryTransactionBuilder<N>,
+    {
         if self.sponsor == sender {
             eyre::bail!(
                 "invalid Tempo sponsorship: sponsor {} must not equal transaction sender",
@@ -82,7 +107,9 @@ impl TempoSponsor {
             valid_after: tx.valid_after().map(|v| v.get()),
             digest,
         };
-        preview.print()?;
+        if print {
+            preview.print()?;
+        }
 
         let signature = if let Some(signature) = self.signature {
             signature

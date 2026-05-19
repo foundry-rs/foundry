@@ -103,7 +103,10 @@ pub fn run_command(args: Forge) -> Result<()> {
             CacheSubcommands::Clean(cmd) => cmd.run(),
             CacheSubcommands::Ls(cmd) => cmd.run(),
         },
-        ForgeSubcommand::Create(cmd) => global.block_on(cmd.run()),
+        ForgeSubcommand::Create(cmd) => {
+            cmd.reject_machine_unsupported_flags()?;
+            global.block_on(cmd.run())
+        }
         ForgeSubcommand::Update(cmd) => cmd.run(),
         ForgeSubcommand::Install(cmd) => global.block_on(cmd.run()),
         ForgeSubcommand::Remove(cmd) => cmd.run(),
@@ -269,9 +272,11 @@ mod tests {
     }
 
     /// Every adopted command must pin its exact `command_id`, output mode,
-    /// and schema refs. A drift in any of those is an agent-contract break.
+    /// schema refs, `side_effects`, and `reads_stdin`. A drift in any of
+    /// those is an agent-contract break.
     #[test]
     fn registered_commands_pin_stable_ids() {
+        use foundry_cli::introspect::SideEffects;
         let cmd = <Forge as clap::CommandFactory>::command();
         let doc = build_document(&cmd, &REGISTRY);
         fn find<'a>(
@@ -295,41 +300,69 @@ mod tests {
                 .unwrap_or_else(|| panic!("{id} missing from forge introspect"))
         };
 
-        // (command_id, expected output_mode, expected result_schema_ref,
-        // expected event_schema_ref). `session_schema_ref` must be absent
-        // for every adopted command in this PR.
-        let pins: &[(&str, OutputMode, &str, Option<&str>)] = &[
-            ("forge.build", OutputMode::Envelope, "foundry:forge.build@v1", None),
-            (
-                "forge.test",
-                OutputMode::Stream,
-                "foundry:forge.test@v1",
-                Some("foundry:forge.test.event@v1"),
-            ),
-            (
-                "forge.script",
-                OutputMode::Stream,
-                "foundry:forge.script@v1",
-                Some("foundry:forge.script.event@v1"),
-            ),
+        struct Pin {
+            id: &'static str,
+            mode: OutputMode,
+            result_ref: &'static str,
+            event_ref: Option<&'static str>,
+            side_effects: SideEffects,
+            reads_stdin: bool,
+        }
+
+        let pins = &[
+            Pin {
+                id: "forge.build",
+                mode: OutputMode::Envelope,
+                result_ref: "foundry:forge.build@v1",
+                event_ref: None,
+                side_effects: SideEffects::FsWrite,
+                reads_stdin: false,
+            },
+            Pin {
+                id: "forge.create",
+                mode: OutputMode::Envelope,
+                result_ref: "foundry:forge.create@v1",
+                event_ref: None,
+                side_effects: SideEffects::ChainWrite,
+                reads_stdin: false,
+            },
+            Pin {
+                id: "forge.test",
+                mode: OutputMode::Stream,
+                result_ref: "foundry:forge.test@v1",
+                event_ref: Some("foundry:forge.test.event@v1"),
+                side_effects: SideEffects::None,
+                reads_stdin: false,
+            },
+            Pin {
+                id: "forge.script",
+                mode: OutputMode::Stream,
+                result_ref: "foundry:forge.script@v1",
+                event_ref: Some("foundry:forge.script.event@v1"),
+                side_effects: SideEffects::ChainWrite,
+                reads_stdin: false,
+            },
         ];
-        for (id, mode, result_ref, event_ref) in pins {
+        for pin in pins {
+            let id = pin.id;
             let info = lookup(id);
-            assert_eq!(info.capabilities.output_mode, *mode, "{id} output_mode drift");
+            assert_eq!(info.capabilities.output_mode, pin.mode, "{id} output_mode drift");
             assert_eq!(
                 info.capabilities.result_schema_ref.as_deref(),
-                Some(*result_ref),
+                Some(pin.result_ref),
                 "{id} result_schema_ref drift"
             );
             assert_eq!(
                 info.capabilities.event_schema_ref.as_deref(),
-                *event_ref,
+                pin.event_ref,
                 "{id} event_schema_ref drift"
             );
             assert_eq!(
                 info.capabilities.session_schema_ref, None,
                 "{id} must not declare session_schema_ref"
             );
+            assert_eq!(info.capabilities.side_effects, pin.side_effects, "{id} side_effects drift");
+            assert_eq!(info.capabilities.reads_stdin, pin.reads_stdin, "{id} reads_stdin drift");
         }
     }
 }

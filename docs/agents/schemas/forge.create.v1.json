@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:forge.create@v1",
+  "title": "forge create result payload",
+  "description": "Shape of the `data` field in the `forge create --machine` terminal envelope.",
+  "type": "object",
+  "required": ["contract", "broadcast", "deployer", "deployed_to", "tx_hash"],
+  "additionalProperties": false,
+  "properties": {
+    "contract": {
+      "type": "string",
+      "description": "Contract identifier name (the `<contractname>` from `<path>:<contractname>`).",
+      "minLength": 1
+    },
+    "broadcast": {
+      "type": "boolean",
+      "description": "True when the deployment transaction was broadcast; false for dry-run."
+    },
+    "deployer": {
+      "type": "string",
+      "description": "0x-prefixed deployer EOA address.",
+      "pattern": "^0x[0-9a-fA-F]{40}$"
+    },
+    "deployed_to": {
+      "type": ["string", "null"],
+      "description": "0x-prefixed deployed contract address. Null on dry-run.",
+      "pattern": "^0x[0-9a-fA-F]{40}$"
+    },
+    "tx_hash": {
+      "type": ["string", "null"],
+      "description": "0x-prefixed deployment transaction hash. Null on dry-run.",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "broadcast": { "const": true } }, "required": ["broadcast"] },
+      "then": {
+        "required": ["deployed_to", "tx_hash"],
+        "properties": {
+          "deployed_to": { "type": "string" },
+          "tx_hash": { "type": "string" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "broadcast": { "const": false } }, "required": ["broadcast"] },
+      "then": {
+        "properties": {
+          "deployed_to": { "const": null },
+          "tx_hash": { "const": null }
+        }
+      }
+    }
+  ]
+}

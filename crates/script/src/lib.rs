@@ -331,7 +331,7 @@ impl ScriptArgs {
                         Err(e) if machine_mode => foundry_cli::machine::bail_machine_diagnostic(
                             foundry_cli::diagnostic::script::BROADCAST_FAILED,
                             foundry_cli::ExitCode::GenericError,
-                            format!("broadcast failed: {e}"),
+                            format!("broadcast failed: {e:#}"),
                         ),
                         Err(e) => return Err(e),
                     };
@@ -541,7 +541,7 @@ impl ScriptArgs {
             Err(e) if machine_mode => foundry_cli::machine::bail_machine_diagnostic(
                 foundry_cli::diagnostic::script::BROADCAST_FAILED,
                 foundry_cli::ExitCode::GenericError,
-                format!("broadcast failed: {e}"),
+                format!("broadcast failed: {e:#}"),
             ),
             Err(e) => return Err(e),
         };

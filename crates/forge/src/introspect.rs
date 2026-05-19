@@ -10,6 +10,9 @@ use foundry_cli::introspect::{
 /// Stable schema id for the `forge build` envelope payload.
 pub const BUILD_RESULT_SCHEMA: &str = "foundry:forge.build@v1";
 
+/// Schema id for the `forge create` envelope payload.
+pub const CREATE_RESULT_SCHEMA: &str = "foundry:forge.create@v1";
+
 /// Stable schema id for `forge test` stream event records.
 pub const TEST_EVENT_SCHEMA: &str = "foundry:forge.test.event@v1";
 /// Stable schema id for the terminal `forge test` envelope payload.
@@ -46,6 +49,20 @@ static ENTRIES: &[RegistryEntry] = &[
                 requires_project: true,
                 side_effects: SideEffects::None,
                 long_running: true,
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
+        },
+    },
+    RegistryEntry {
+        path: &["create"],
+        meta: CommandMeta {
+            command_id: Some("forge.create"),
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::Envelope,
+                result_schema_ref: Some(CREATE_RESULT_SCHEMA),
+                requires_project: true,
+                side_effects: SideEffects::ChainWrite,
                 ..CapabilityMeta::NONE
             },
             exit_codes: &[],

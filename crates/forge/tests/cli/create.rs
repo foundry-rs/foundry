@@ -535,3 +535,178 @@ Error: deployment transaction failed (receipt status 0): [..]
 
 "#]]);
 });
+
+// `forge --machine create` dry-run emits a single envelope with
+// `broadcast: false` and no `deployed_to` / `tx_hash`.
+forgetest_async!(machine_mode_dry_run_emits_envelope, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "--machine",
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
+
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["errors"], serde_json::json!([]));
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
+    assert_eq!(envelope["data"]["contract"], TEMPLATE_CONTRACT);
+    assert_eq!(envelope["data"]["broadcast"], false);
+    assert!(envelope["data"]["deployed_to"].is_null());
+    assert!(envelope["data"]["tx_hash"].is_null());
+    foundry_test_utils::agent_schema::validate_envelope_data(&envelope, "foundry:forge.create@v1");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// `forge --machine create --broadcast` emits an envelope with the
+// deployed address and transaction hash from the anvil receipt.
+forgetest_async!(machine_mode_broadcast_emits_envelope, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "--machine",
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
+
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"]["contract"], TEMPLATE_CONTRACT);
+    assert_eq!(envelope["data"]["broadcast"], true);
+    let deployer = envelope["data"]["deployer"].as_str().expect("deployer is a string");
+    let deployed_to = envelope["data"]["deployed_to"].as_str().expect("deployed_to is a string");
+    let tx_hash = envelope["data"]["tx_hash"].as_str().expect("tx_hash is a string");
+    assert!(deployer.starts_with("0x") && deployer.len() == 42, "{deployer}");
+    assert!(deployed_to.starts_with("0x") && deployed_to.len() == 42, "{deployed_to}");
+    assert!(tx_hash.starts_with("0x") && tx_hash.len() == 66, "{tx_hash}");
+    foundry_test_utils::agent_schema::validate_envelope_data(&envelope, "foundry:forge.create@v1");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// `forge --machine create --broadcast` against a reverting constructor
+// emits a typed `chain.broadcast_failed` error envelope.
+forgetest_async!(flaky_machine_mode_broadcast_failed_emits_envelope, |prj, cmd| {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    prj.add_source(
+        "RevertingContract.sol",
+        r#"
+contract RevertingContract {
+    constructor() {
+        revert("deployment failed");
+    }
+}
+    "#,
+    );
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "--machine",
+            "create",
+            "./src/RevertingContract.sol:RevertingContract",
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+            "--gas-limit",
+            "1000000",
+        ])
+        .assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(1));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
+
+    assert_eq!(envelope["success"], false);
+    assert!(envelope["data"].is_null(), "data must be null: {envelope}");
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
+    assert_eq!(envelope["errors"][0]["code"], "chain.broadcast_failed");
+    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("receipt status 0"), "missing cause-chain detail: {envelope}");
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// `forge --machine create --verify` is rejected with a typed
+// `cli.usage.invalid` envelope and exit code 2.
+forgetest_async!(machine_mode_rejects_unsupported_flags, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let assert = cmd
+        .forge_fuse()
+        .args([
+            "--machine",
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--verify",
+        ])
+        .assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
+
+    assert_eq!(envelope["success"], false);
+    assert!(envelope["data"].is_null(), "data must be null: {envelope}");
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
+    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("--verify"), "missing --verify mention: {envelope}");
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});

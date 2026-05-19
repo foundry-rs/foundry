@@ -12,6 +12,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, ContextCompat, Result};
 use forge_verify::{RetryArgs, VerifierArgs, VerifyArgs};
 use foundry_cli::{
+    json::{JsonEnvelope, print_json},
     opts::{BuildOpts, EthereumOpts, EtherscanOpts, TransactionOpts},
     utils::{
         LoadConfig, ResolvedLane, find_contract_artifacts, maybe_print_resolved_lane,
@@ -40,11 +41,22 @@ use foundry_config::{
 use foundry_wallets::{
     BrowserWalletOpts, TempoAccessKeyConfig, WalletSigner, wallet_browser::signer::BrowserSigner,
 };
+use serde::Serialize;
 use serde_json::json;
 use std::{borrow::Borrow, marker::PhantomData, path::PathBuf, sync::Arc, time::Duration};
 use tempo_alloy::{TempoNetwork, contracts::precompiles::DEFAULT_FEE_TOKEN};
 
 merge_impl_figment_convert!(CreateArgs, build, eth);
+
+/// `forge create --machine` payload.
+#[derive(Clone, Debug, Serialize)]
+struct CreateData {
+    contract: String,
+    broadcast: bool,
+    deployer: String,
+    deployed_to: Option<String>,
+    tx_hash: Option<String>,
+}
 
 /// CLI arguments for `forge create`.
 #[derive(Clone, Debug, Parser)]
@@ -114,6 +126,29 @@ pub struct CreateArgs {
 }
 
 impl CreateArgs {
+    /// Rejects flags whose stdout shape conflicts with the envelope contract.
+    pub fn reject_machine_unsupported_flags(&self) -> Result<()> {
+        if !foundry_cli::is_machine() {
+            return Ok(());
+        }
+        let unsupported = [
+            ("--verify", self.verify),
+            ("--show-standard-json-input", self.show_standard_json_input),
+            ("--browser", self.browser.browser),
+        ]
+        .into_iter()
+        .filter_map(|(name, on)| on.then_some(name))
+        .collect::<Vec<_>>();
+        if !unsupported.is_empty() {
+            foundry_cli::machine::bail_machine_usage(format!(
+                "`forge create` under `--machine` does not yet support {}; \
+                 run without `--machine` or omit those flags.",
+                unsupported.join(", ")
+            ));
+        }
+        Ok(())
+    }
+
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
         let (signer, tempo_access_key) = self.eth.wallet.maybe_signer().await?;
@@ -149,8 +184,11 @@ impl CreateArgs {
     {
         let mut config = self.load_config()?;
 
-        // Install missing dependencies.
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        // Install missing dependencies. Skipped under `--machine` so the
+        // installer's stdout can't corrupt the single-envelope contract.
+        if !foundry_cli::is_machine()
+            && install::install_missing_dependencies(&mut config).await
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
@@ -165,7 +203,11 @@ impl CreateArgs {
             project.find_contract_path(&self.contract.name)?
         };
 
-        let output = compile::compile_target(&target_path, &project, shell::is_json())?;
+        let output = compile::compile_target(
+            &target_path,
+            &project,
+            shell::is_json() || foundry_cli::is_machine(),
+        )?;
 
         let (abi, bin, id) = find_contract_artifacts(output, &target_path, &self.contract.name)?;
 
@@ -196,7 +238,9 @@ impl CreateArgs {
                 constructor_args.as_deref().unwrap_or(&self.constructor_args),
             )?
         } else {
-            if !self.constructor_args.is_empty() || self.constructor_args_path.is_some() {
+            if (!self.constructor_args.is_empty() || self.constructor_args_path.is_some())
+                && !foundry_cli::is_machine()
+            {
                 sh_warn!(
                     "`{}` has no constructor; ignoring provided constructor arguments",
                     self.contract.name
@@ -446,7 +490,12 @@ impl CreateArgs {
             deployer.tx.set_nonce(provider.get_transaction_count(deployer_address).await?);
         }
 
-        maybe_print_resolved_lane(resolved_lane.as_ref(), deployer.tx.nonce().unwrap_or_default())?;
+        if !foundry_cli::is_machine() {
+            maybe_print_resolved_lane(
+                resolved_lane.as_ref(),
+                deployer.tx.nonce().unwrap_or_default(),
+            )?;
+        }
 
         if let Some((_, ref ak)) = tempo_keychain {
             deployer
@@ -511,7 +560,15 @@ impl CreateArgs {
         }
 
         if dry_run {
-            if shell::is_json() {
+            if foundry_cli::is_machine() {
+                print_json(&JsonEnvelope::success(CreateData {
+                    contract: self.contract.name.clone(),
+                    broadcast: false,
+                    deployer: deployer_address.to_string(),
+                    deployed_to: None,
+                    tx_hash: None,
+                }))?;
+            } else if shell::is_json() {
                 let output = json!({
                     "contract": self.contract.name,
                     "transaction": &deployer.tx,
@@ -538,67 +595,97 @@ impl CreateArgs {
 
         let tempo_sponsor = self.tx.tempo.sponsor_config().await?;
         if let Some(sponsor) = &tempo_sponsor {
-            sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
+            if foundry_cli::is_machine() {
+                sponsor.attach_silent::<N>(&mut deployer.tx, deployer_address).await?;
+            } else {
+                sponsor.attach_and_print::<N>(&mut deployer.tx, deployer_address).await?;
+            }
         }
 
-        // Deploy the actual contract
-        let (deployed_contract, receipt) = if let Some(browser) = browser_signer {
-            // Browser wallet signs and sends the transaction
-            let tx_hash = browser.send_transaction_via_browser(deployer.tx).await?;
+        // Deploy the actual contract.
+        let deploy_result: Result<_> = async {
+            if let Some(browser) = browser_signer {
+                // Browser wallet signs and sends the transaction
+                let tx_hash = browser.send_transaction_via_browser(deployer.tx).await?;
 
-            // Wait for the transaction to be confirmed, then fetch the receipt.
-            provider
-                .watch_pending_transaction(alloy_provider::PendingTransactionConfig::new(tx_hash))
-                .await?
-                .await?;
+                // Wait for the transaction to be confirmed, then fetch the receipt.
+                provider
+                    .watch_pending_transaction(alloy_provider::PendingTransactionConfig::new(
+                        tx_hash,
+                    ))
+                    .await?
+                    .await?;
 
-            let receipt = provider
-                .get_transaction_receipt(tx_hash)
-                .await?
-                .ok_or_else(|| eyre::eyre!("could not get transaction receipt for {tx_hash}"))?;
+                let receipt =
+                    provider.get_transaction_receipt(tx_hash).await?.ok_or_else(|| {
+                        eyre::eyre!("could not get transaction receipt for {tx_hash}")
+                    })?;
 
-            if !receipt.status() {
-                eyre::bail!("deployment transaction failed (receipt status 0): {tx_hash}");
+                if !receipt.status() {
+                    eyre::bail!("deployment transaction failed (receipt status 0): {tx_hash}");
+                }
+
+                let address = receipt
+                    .contract_address()
+                    .ok_or_else(|| eyre::eyre!("contract was not deployed"))?;
+
+                Ok((address, receipt))
+            } else if let Some((signer, ak)) = tempo_keychain {
+                // Tempo keychain mode: sign with access key provisioning and send raw
+                let raw_tx = deployer
+                    .tx
+                    .sign_with_access_key(
+                        &provider,
+                        &signer,
+                        ak.wallet_address,
+                        ak.key_address,
+                        ak.key_authorization.as_ref(),
+                    )
+                    .await?;
+
+                let receipt = provider
+                    .send_raw_transaction(&raw_tx)
+                    .await?
+                    .with_required_confirmations(1)
+                    .with_timeout(Some(Duration::from_secs(timeout)))
+                    .get_receipt()
+                    .await?;
+
+                let address = receipt
+                    .contract_address()
+                    .ok_or_else(|| eyre::eyre!("contract was not deployed"))?;
+
+                Ok((address, receipt))
+            } else {
+                Ok(deployer.send_with_receipt().await?)
             }
+        }
+        .await;
 
-            let address = receipt
-                .contract_address()
-                .ok_or_else(|| eyre::eyre!("contract was not deployed"))?;
-
-            (address, receipt)
-        } else if let Some((signer, ak)) = tempo_keychain {
-            // Tempo keychain mode: sign with access key provisioning and send raw
-            let raw_tx = deployer
-                .tx
-                .sign_with_access_key(
-                    &provider,
-                    &signer,
-                    ak.wallet_address,
-                    ak.key_address,
-                    ak.key_authorization.as_ref(),
-                )
-                .await?;
-
-            let receipt = provider
-                .send_raw_transaction(&raw_tx)
-                .await?
-                .with_required_confirmations(1)
-                .with_timeout(Some(Duration::from_secs(timeout)))
-                .get_receipt()
-                .await?;
-
-            let address = receipt
-                .contract_address()
-                .ok_or_else(|| eyre::eyre!("contract was not deployed"))?;
-
-            (address, receipt)
-        } else {
-            deployer.send_with_receipt().await?
+        let (deployed_contract, receipt) = match deploy_result {
+            Ok(v) => v,
+            Err(e) if foundry_cli::is_machine() => {
+                foundry_cli::machine::bail_machine_diagnostic(
+                    foundry_cli::diagnostic::chain::BROADCAST_FAILED,
+                    foundry_cli::exit_code::ExitCode::GenericError,
+                    format!("{e:#}"),
+                );
+            }
+            Err(e) => return Err(e),
         };
 
         let address = deployed_contract;
         let tx_hash = receipt.transaction_hash();
-        if shell::is_json() {
+        if foundry_cli::is_machine() {
+            print_json(&JsonEnvelope::success(CreateData {
+                contract: self.contract.name.clone(),
+                broadcast: true,
+                deployer: deployer_address.to_string(),
+                deployed_to: Some(address.to_string()),
+                tx_hash: Some(tx_hash.to_string()),
+            }))?;
+            return Ok(());
+        } else if shell::is_json() {
             let output = json!({
                 "deployer": deployer_address.to_string(),
                 "deployedTo": address.to_string(),

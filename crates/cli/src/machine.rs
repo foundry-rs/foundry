@@ -150,7 +150,7 @@ pub fn bail_machine_diagnostic(
 /// the report's cause chain; the [`ExitCode`] returned by
 /// [`ExitCode::from`] uses the same signals.
 pub fn report_machine_error(report: &eyre::Report) {
-    let message = format!("{report}");
+    let message = format!("{report:#}");
     let envelope =
         JsonEnvelope::error(JsonMessage::error(diagnostic_code_for_report(report), message));
     let _ = print_json(&envelope);
