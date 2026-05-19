@@ -18,13 +18,11 @@ use tautology::TYPE_BASED_TAUTOLOGY;
 mod tx_origin;
 use tx_origin::TX_ORIGIN;
 
-<<<<<<< mablr/uninitialized-state_lint
-mod uninitialized_state_variables;
-use uninitialized_state_variables::UNINITIALIZED_STATE_VARIABLES;
-=======
 mod uninitialized_local;
 use uninitialized_local::UNINITIALIZED_LOCAL;
->>>>>>> master
+
+mod uninitialized_state_variables;
+use uninitialized_state_variables::UNINITIALIZED_STATE_VARIABLES;
 
 mod unsafe_typecast;
 use unsafe_typecast::UNSAFE_TYPECAST;
@@ -36,10 +34,7 @@ register_lints!(
     (IncorrectStrictEquality, late, (INCORRECT_STRICT_EQUALITY)),
     (TypeBasedTautology, late, (TYPE_BASED_TAUTOLOGY)),
     (TxOrigin, early, (TX_ORIGIN)),
-<<<<<<< mablr/uninitialized-state_lint
-    (UninitializedStateVariables, late, (UNINITIALIZED_STATE_VARIABLES)),
-=======
     (UninitializedLocal, late, (UNINITIALIZED_LOCAL)),
->>>>>>> master
+    (UninitializedStateVariables, late, (UNINITIALIZED_STATE_VARIABLES)),
     (UnsafeTypecast, late, (UNSAFE_TYPECAST))
 );

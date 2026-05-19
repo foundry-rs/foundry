@@ -20,11 +20,8 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
   - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
-<<<<<<< mablr/uninitialized-state_lint
-  - `uninitialized-state`: State variable is read in functions but never written, so it always returns its zero-value default.
-=======
   - `uninitialized-local`: Local variable is read before being explicitly initialized.
->>>>>>> master
+  - `uninitialized-state`: State variable is read in functions but never written, so it always returns its zero-value default.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
 - **Low Severity:**
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
