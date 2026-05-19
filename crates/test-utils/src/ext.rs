@@ -176,6 +176,13 @@ impl ExtTester {
             test_cmd.env("FOUNDRY_FORK_BLOCK_NUMBER", fork_block.to_string());
         }
         test_cmd.env("FOUNDRY_INVARIANT_DEPTH", "15");
+        // Restore pre-#12587/#14482 short-circuit behavior for the ext_integration
+        // suite. External repos (e.g. mds1/convex-shutdown-simulation, hexonaut/guni-lev)
+        // pin specific commits and don't carry `assert_all = false` in their
+        // foundry.toml, so the new continuous-campaign default makes the
+        // invariant runs ~30-100× slower in CI (convex 10s → ~660s, gunilev
+        // 3s → ~320s). Force the legacy behavior here to keep the suite fast.
+        test_cmd.env("FOUNDRY_INVARIANT_ASSERT_ALL", "false");
         test_cmd.env("FOUNDRY_ALLOW_INTERNAL_EXPECT_REVERT", "true");
 
         test_cmd.assert_success();
