@@ -1799,6 +1799,7 @@ fn symbolic_step_counterexample(
         sender: Some(step.sender),
         addr: Some(step.address),
         calldata: step.calldata.clone(),
+        value: None,
         contract_name: step.contract_name.clone(),
         func_name: Some(step.function_name.clone()),
         signature: Some(step.signature.clone()),
