@@ -30,4 +30,3 @@ jobs:
           labels-to-add-when-unstale: "stop-stale"
           exempt-all-milestones: true
           exempt-all-assignees: true
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
