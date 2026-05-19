@@ -16,7 +16,10 @@ use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use clap::CommandFactory;
 use clap_complete::generate;
 use eyre::{Result, WrapErr};
-use foundry_cli::utils::{self, LoadConfig};
+use foundry_cli::{
+    json::{JsonEnvelope, print_json},
+    utils::{self, LoadConfig},
+};
 use foundry_common::{
     abi::{get_error, get_event},
     fmt::{format_tokens, format_uint_exp, serialize_value_as_json},
@@ -32,8 +35,34 @@ use foundry_common::{
 use foundry_evm_networks::NetworkVariant;
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
+use serde::Serialize;
 use std::time::Instant;
 use tempo_alloy::TempoNetwork;
+
+/// `cast abi-encode --machine` payload.
+#[derive(Clone, Debug, Serialize)]
+struct AbiEncodeData {
+    encoded: String,
+}
+
+/// `cast abi-decode --machine` payload.
+#[derive(Clone, Debug, Serialize)]
+struct AbiDecodeData {
+    decoded: Vec<String>,
+}
+
+/// `cast keccak --machine` payload.
+#[derive(Clone, Debug, Serialize)]
+struct KeccakData {
+    hash: String,
+}
+
+/// `cast 4byte --machine` payload.
+#[derive(Clone, Debug, Serialize)]
+struct FourByteData {
+    selector: String,
+    signatures: Vec<String>,
+}
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
@@ -196,13 +225,23 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         // ABI encoding & decoding
         CastSubcommand::DecodeAbi { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            print_tokens(&tokens);
+            if foundry_cli::is_machine() {
+                let decoded = format_tokens(&tokens).collect();
+                print_json(&JsonEnvelope::success(AbiDecodeData { decoded }))?;
+            } else {
+                print_tokens(&tokens);
+            }
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
-            if packed {
-                sh_println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?)?
+            let encoded = if packed {
+                SimpleCast::abi_encode_packed(&sig, &args)?
             } else {
-                sh_println!("{}", SimpleCast::abi_encode(&sig, &args)?)?
+                SimpleCast::abi_encode(&sig, &args)?
+            };
+            if foundry_cli::is_machine() {
+                print_json(&JsonEnvelope::success(AbiEncodeData { encoded }))?;
+            } else {
+                sh_println!("{encoded}")?
             }
         }
         CastSubcommand::AbiEncodeEvent { sig, args } => {
@@ -603,13 +642,27 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 
         // 4Byte
         CastSubcommand::FourByte { selector } => {
+            // `--machine` requires argv so clap classifies parse errors.
+            if foundry_cli::is_machine() && selector.is_none() {
+                foundry_cli::machine::bail_machine_usage(
+                    "`cast 4byte` under `--machine` requires the selector as a positional argument",
+                );
+            }
             let selector = stdin::unwrap_line(selector)?;
             let sigs = decode_function_selector(selector).await?;
-            if sigs.is_empty() {
-                eyre::bail!("No matching function signatures found for selector `{selector}`");
-            }
-            for sig in sigs {
-                sh_println!("{sig}")?
+            if foundry_cli::is_machine() {
+                let signatures = sigs.iter().map(ToString::to_string).collect();
+                print_json(&JsonEnvelope::success(FourByteData {
+                    selector: selector.to_string(),
+                    signatures,
+                }))?;
+            } else {
+                if sigs.is_empty() {
+                    eyre::bail!("No matching function signatures found for selector `{selector}`");
+                }
+                for sig in sigs {
+                    sh_println!("{sig}")?
+                }
             }
         }
 
@@ -711,17 +764,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Some(data) => data.into_bytes(),
                 None => stdin::read_bytes(false)?,
             };
-            match String::from_utf8(bytes) {
-                Ok(s) => {
-                    let s = SimpleCast::keccak(&s)?;
-                    sh_println!("{s}")?
-                }
-                Err(e) => {
-                    let hash = keccak256(e.as_bytes());
-                    let s = hex::encode(hash);
-                    sh_println!("0x{s}")?
-                }
+            let hash = match String::from_utf8(bytes) {
+                Ok(s) => SimpleCast::keccak(&s)?,
+                Err(e) => format!("0x{}", hex::encode(keccak256(e.as_bytes()))),
             };
+            if foundry_cli::is_machine() {
+                print_json(&JsonEnvelope::success(KeccakData { hash }))?;
+            } else {
+                sh_println!("{hash}")?
+            }
         }
         CastSubcommand::HashMessage { message } => {
             let message = stdin::unwrap(message, false)?;
@@ -950,24 +1001,27 @@ mod tests {
         assert!(errs.is_empty(), "dangling cast schema refs: {errs:?}");
     }
 
-    /// Every adopted command must pin its exact `command_id`, output mode,
-    /// and schema refs. A drift in any of those is an agent-contract break.
+    /// Pins `command_id`, output mode, schema refs, `side_effects`, and
+    /// `reads_stdin` for every adopted command.
     #[test]
     fn registered_commands_pin_stable_ids() {
-        let pinned = std::thread::Builder::new()
+        use foundry_cli::introspect::SideEffects;
+        type Pinned =
+            (OutputMode, Option<String>, Option<String>, Option<String>, SideEffects, bool);
+        let pins: Vec<(&str, Pinned)> = std::thread::Builder::new()
             .stack_size(16 * 1024 * 1024)
             .spawn(|| {
                 let cmd = <CastArgs as clap::CommandFactory>::command();
                 let doc = build_document(&cmd, &REGISTRY);
-                fn find(
-                    c: &foundry_cli::introspect::CommandInfo,
-                    id: &str,
-                ) -> Option<(OutputMode, Option<String>, Option<String>)> {
+                fn find(c: &foundry_cli::introspect::CommandInfo, id: &str) -> Option<Pinned> {
                     if c.command_id == id {
                         return Some((
                             c.capabilities.output_mode,
                             c.capabilities.result_schema_ref.clone(),
                             c.capabilities.event_schema_ref.clone(),
+                            c.capabilities.session_schema_ref.clone(),
+                            c.capabilities.side_effects,
+                            c.capabilities.reads_stdin,
                         ));
                     }
                     for sub in &c.subcommands {
@@ -977,21 +1031,72 @@ mod tests {
                     }
                     None
                 }
-                doc.commands
-                    .iter()
-                    .find_map(|c| find(c, "cast.call"))
-                    .expect("cast.call missing from cast introspect")
+                ["cast.call", "cast.abi-encode", "cast.abi-decode", "cast.keccak", "cast.4byte"]
+                    .into_iter()
+                    .map(|id| {
+                        let pinned = doc
+                            .commands
+                            .iter()
+                            .find_map(|c| find(c, id))
+                            .unwrap_or_else(|| panic!("{id} missing from cast introspect"));
+                        (id, pinned)
+                    })
+                    .collect()
             })
             .expect("spawn worker thread")
             .join()
             .expect("worker thread join");
-        let (mode, result_ref, event_ref) = pinned;
-        assert_eq!(mode, OutputMode::Envelope, "cast.call output_mode drift");
-        assert_eq!(
-            result_ref.as_deref(),
-            Some("foundry:cast.call@v1"),
-            "cast.call result_schema_ref drift"
-        );
-        assert_eq!(event_ref, None, "cast.call must not declare event_schema_ref");
+
+        struct Expected {
+            id: &'static str,
+            schema: &'static str,
+            side_effects: SideEffects,
+            reads_stdin: bool,
+        }
+        let expected = [
+            Expected {
+                id: "cast.call",
+                schema: "foundry:cast.call@v1",
+                side_effects: SideEffects::Network,
+                reads_stdin: false,
+            },
+            Expected {
+                id: "cast.abi-encode",
+                schema: "foundry:cast.abi-encode@v1",
+                side_effects: SideEffects::None,
+                reads_stdin: false,
+            },
+            Expected {
+                id: "cast.abi-decode",
+                schema: "foundry:cast.abi-decode@v1",
+                side_effects: SideEffects::None,
+                reads_stdin: false,
+            },
+            Expected {
+                id: "cast.keccak",
+                schema: "foundry:cast.keccak@v1",
+                side_effects: SideEffects::None,
+                reads_stdin: true,
+            },
+            Expected {
+                id: "cast.4byte",
+                schema: "foundry:cast.4byte@v1",
+                side_effects: SideEffects::Network,
+                reads_stdin: false,
+            },
+        ];
+        for (
+            (id, (mode, result_ref, event_ref, session_ref, side, stdin)),
+            Expected { id: eid, schema, side_effects, reads_stdin },
+        ) in pins.iter().zip(&expected)
+        {
+            assert_eq!(id, eid, "pin order drift");
+            assert_eq!(*mode, OutputMode::Envelope, "{id} output_mode drift");
+            assert_eq!(result_ref.as_deref(), Some(*schema), "{id} result_schema_ref drift");
+            assert_eq!(event_ref.as_deref(), None, "{id} must not declare event_schema_ref");
+            assert_eq!(session_ref.as_deref(), None, "{id} must not declare session_schema_ref");
+            assert_eq!(side, side_effects, "{id} side_effects drift");
+            assert_eq!(stdin, reads_stdin, "{id} reads_stdin drift");
+        }
     }
 }

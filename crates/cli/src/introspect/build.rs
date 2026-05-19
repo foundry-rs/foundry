@@ -45,12 +45,14 @@ pub fn collect_command_ids(doc: &IntrospectDocument) -> Vec<String> {
 ///   `long_running = true`.
 ///
 /// Schema refs, when present, must be non-empty and match
-/// `^foundry:[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*(\.event|\.session)?@v\d+$`.
+/// `^foundry:[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)*(\.event|\.session)?@v\d+$`.
 pub fn capability_violations(doc: &IntrospectDocument) -> Vec<String> {
     static SCHEMA_REF_RE: OnceLock<regex::Regex> = OnceLock::new();
     let schema_re = SCHEMA_REF_RE.get_or_init(|| {
-        regex::Regex::new(r"^foundry:[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*(\.event|\.session)?@v\d+$")
-            .expect("schema-ref regex compiles")
+        regex::Regex::new(
+            r"^foundry:[a-z0-9][a-z0-9_-]*(\.[a-z0-9][a-z0-9_-]*)*(\.event|\.session)?@v\d+$",
+        )
+        .expect("schema-ref regex compiles")
     });
 
     fn check_ref(

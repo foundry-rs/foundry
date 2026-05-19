@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:cast.keccak@v1",
+  "title": "cast keccak result payload",
+  "description": "Shape of the `data` field in the `cast keccak --machine` terminal envelope.",
+  "type": "object",
+  "required": ["hash"],
+  "additionalProperties": false,
+  "properties": {
+    "hash": {
+      "type": "string",
+      "description": "0x-prefixed Keccak-256 hash of the input bytes.",
+      "pattern": "^0x[0-9a-f]{64}$"
+    }
+  }
+}

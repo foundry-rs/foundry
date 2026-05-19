@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:cast.abi-encode@v1",
+  "title": "cast abi-encode result payload",
+  "description": "Shape of the `data` field in the `cast abi-encode --machine` terminal envelope.",
+  "type": "object",
+  "required": ["encoded"],
+  "additionalProperties": false,
+  "properties": {
+    "encoded": {
+      "type": "string",
+      "description": "0x-prefixed hex of the ABI-encoded arguments. Excludes the function selector. Reflects the `--packed` flag when set.",
+      "pattern": "^0x(?:[0-9a-fA-F]{2})*$"
+    }
+  }
+}

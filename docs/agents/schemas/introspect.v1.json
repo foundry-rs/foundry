@@ -98,17 +98,17 @@
         "result_schema_ref": {
           "type": "string",
           "description": "Per-command success-payload schema id. Must NOT carry an `.event` or `.session` suffix.",
-          "pattern": "^foundry:[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*@v\\d+$"
+          "pattern": "^foundry:[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)*@v\\d+$"
         },
         "event_schema_ref": {
           "type": "string",
           "description": "Per-record stream schema id. Must carry an `.event` suffix.",
-          "pattern": "^foundry:[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.event@v\\d+$"
+          "pattern": "^foundry:[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)*\\.event@v\\d+$"
         },
         "session_schema_ref": {
           "type": "string",
           "description": "Per-record session schema id. Must carry a `.session` suffix.",
-          "pattern": "^foundry:[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*\\.session@v\\d+$"
+          "pattern": "^foundry:[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)*\\.session@v\\d+$"
         },
         "reads_stdin": { "type": "boolean" },
         "supports_output_path": { "type": "boolean" },

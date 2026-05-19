@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:cast.abi-decode@v1",
+  "title": "cast abi-decode result payload",
+  "description": "Shape of the `data` field in the `cast abi-decode --machine` terminal envelope.",
+  "type": "object",
+  "required": ["decoded"],
+  "additionalProperties": false,
+  "properties": {
+    "decoded": {
+      "type": "array",
+      "description": "One formatted string per decoded token, in declaration order, matching the human-mode line-per-token print.",
+      "items": { "type": "string" }
+    }
+  }
+}

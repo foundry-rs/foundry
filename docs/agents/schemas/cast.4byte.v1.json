@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:cast.4byte@v1",
+  "title": "cast 4byte result payload",
+  "description": "Shape of the `data` field in the `cast 4byte --machine` terminal envelope.",
+  "type": "object",
+  "required": ["selector", "signatures"],
+  "additionalProperties": false,
+  "properties": {
+    "selector": {
+      "type": "string",
+      "description": "0x-prefixed 4-byte function selector that was looked up.",
+      "pattern": "^0x[0-9a-fA-F]{8}$"
+    },
+    "signatures": {
+      "type": "array",
+      "description": "Function signatures registered for `selector` in the openchain.xyz database. Empty when the database has no matches.",
+      "items": { "type": "string" }
+    }
+  }
+}
