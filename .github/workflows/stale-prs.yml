@@ -44,16 +44,6 @@ jobs:
             "$close_marker" \
             "Closing this pull request because it had no activity for ${CLOSE_AFTER_DAYS} days after being marked stale. Please reopen it or open a new pull request if it is still relevant."
 
-          gh label create "$STALE_LABEL" \
-            --color BFDADC \
-            --description "Pull requests pending stale closure" \
-            --force
-
-          gh label create "$STOP_STALE_LABEL" \
-            --color 0E8A16 \
-            --description "Prevent stale automation from closing this pull request" \
-            --force
-
           stale_cutoff_ts="$(date -u -d "${STALE_AFTER_DAYS} days ago" +%s)"
           close_after_seconds="$((CLOSE_AFTER_DAYS * 24 * 60 * 60))"
 
