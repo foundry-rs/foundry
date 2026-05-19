@@ -1422,54 +1422,36 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
             let curr_depth = ecx.journal().depth();
             if curr_depth <= expected_revert.depth {
+                // Decide whether this `call_end` should consume the pending `expectRevert`.
+                // With `internal_expect_revert` enabled, a same-depth revert can satisfy it, but
+                // we must not consume it for external calls that succeed (e.g. calls to
+                // non-contract addresses that return `Stop` before Solidity's own revert).
+                let internal = self.config.internal_expect_revert;
+                let went_deeper = expected_revert.max_depth > expected_revert.depth;
                 let needs_processing = match expected_revert.kind {
-                    ExpectedRevertKind::Default => {
-                        // For non-cheatcode calls, we need to decide if this call_end should
-                        // consume the expectRevert.
-                        //
-                        // When internal_expect_revert is enabled, the expectation can be
-                        // satisfied by a revert at the same depth (internal revert). However,
-                        // we should NOT consume the expectation for external calls that succeed
-                        // (e.g., calls to non-contract addresses that return Stop).
-                        //
-                        // Only process if:
-                        // 1. It's not a cheatcode call, AND
-                        // 2. Either the call failed, OR, when internal expect reverts are
-                        //    disabled, we made an external call (max_depth > depth), OR we're at
-                        //    the root call (depth 0)
-                        //
-                        // This fixes the bug where calling a non-contract address would consume
-                        // the expectRevert even though the call succeeded, preventing the actual
-                        // Solidity-generated revert (from extcodesize/returndata check) from
-                        // satisfying the expectation.
+                    ExpectedRevertKind::Default => (|| {
+                        // Cheatcode reverts propagate up; let the outer frame catch them.
                         if cheatcode_call {
-                            false
-                        } else if call_failed {
-                            // Call failed - should process
-                            true
-                        } else if !self.config.internal_expect_revert
-                            && expected_revert.max_depth > expected_revert.depth
-                        {
-                            // Call succeeded but we went to a deeper depth (external call was made)
-                            // This is the traditional expectRevert case
-                            true
-                        } else if curr_depth == 0 {
-                            // Root call (test function) ended - must process any pending
-                            // expectation to catch "dangling"
-                            // expectReverts
-                            true
-                        } else if !self.config.internal_expect_revert {
-                            // Call succeeded, no deeper call was made, internal_expect_revert is
-                            // disabled - this is an error (call should have reverted)
-                            true
-                        } else {
-                            // Call succeeded, no deeper call was made, internal_expect_revert is
-                            // enabled - don't consume the expectation yet, wait for a revert
-                            false
+                            return false;
                         }
-                    }
-                    // `pending_processing` == true means that we're in the `call_end` hook for
-                    // `vm.expectCheatcodeRevert` and shouldn't expect revert here
+                        // Any failure satisfies the expectation.
+                        if call_failed {
+                            return true;
+                        }
+                        // Traditional expectRevert: succeeded external call went deeper.
+                        if !internal && went_deeper {
+                            return true;
+                        }
+                        // Test function returned: catch dangling expectations.
+                        if curr_depth == 0 {
+                            return true;
+                        }
+                        // Same-depth success with internal mode off is an error; with it on,
+                        // keep waiting for the actual revert.
+                        !internal
+                    })(),
+                    // `pending_processing == true` means we're in the `call_end` hook for
+                    // `vm.expectCheatcodeRevert` and shouldn't expect a revert here.
                     ExpectedRevertKind::Cheatcode { pending_processing } => {
                         cheatcode_call && !pending_processing
                     }
