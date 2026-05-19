@@ -11,7 +11,7 @@ use alloy_primitives::{Address, hex};
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
-use foundry_config::RpcEndpointUrl;
+use foundry_config::{Config, RpcEndpointUrl};
 use foundry_evm::{
     core::evm::{EthEvmNetwork, FoundryEvmNetwork},
     decode::decode_console_logs,
@@ -298,6 +298,11 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
         }
         .wrap_err("failed to load session")?;
 
+        ensure_loaded_session_network_matches(
+            &self.session.source.config.foundry_config,
+            &new_session.source.config.foundry_config,
+            id,
+        )?;
         new_session.source.build()?;
         self.session = new_session;
         sh_println!("Loaded Chisel session! (ID = {})", self.session.id.as_ref().unwrap())
@@ -507,6 +512,26 @@ impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
     }
 }
 
+fn config_network_name(config: &Config) -> &'static str {
+    config.networks.active_network_name().unwrap_or("ethereum")
+}
+
+fn ensure_loaded_session_network_matches(
+    current: &Config,
+    loaded: &Config,
+    id: &str,
+) -> Result<()> {
+    let current_network = config_network_name(current);
+    let loaded_network = config_network_name(loaded);
+    if current_network != loaded_network {
+        eyre::bail!(
+            "Chisel session `{id}` was saved for network `{loaded_network}`, but the current \
+             network is `{current_network}`. Rerun with `--network {loaded_network}` to load it.",
+        );
+    }
+    Ok(())
+}
+
 /// Preprocesses addresses to ensure they are correctly checksummed and returns whether the input
 /// only contained trivia (comments, whitespace).
 fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
@@ -536,6 +561,45 @@ fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn config_with_network(network: Option<&str>) -> Config {
+        let mut config = Config::default();
+        if let Some(network) = network {
+            config.networks = serde_json::from_value(serde_json::json!({
+                "network": network,
+                "celo": false,
+                "bypass_prevrandao": false,
+            }))
+            .unwrap();
+        }
+        config
+    }
+
+    #[test]
+    fn config_network_name_defaults_to_ethereum() {
+        assert_eq!(config_network_name(&Config::default()), "ethereum");
+    }
+
+    #[test]
+    fn ensure_loaded_session_network_matches_rejects_different_network() {
+        let current = config_with_network(None);
+        let loaded = config_with_network(Some("tempo"));
+
+        let err = ensure_loaded_session_network_matches(&current, &loaded, "42").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Chisel session `42` was saved for network `tempo`, but the current network is \
+             `ethereum`. Rerun with `--network tempo` to load it."
+        );
+    }
+
+    #[test]
+    fn ensure_loaded_session_network_matches_accepts_same_network() {
+        let current = config_with_network(Some("tempo"));
+        let loaded = config_with_network(Some("tempo"));
+
+        ensure_loaded_session_network_matches(&current, &loaded, "42").unwrap();
+    }
 
     #[test]
     fn test_trivia() {
