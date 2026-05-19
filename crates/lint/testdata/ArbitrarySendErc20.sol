@@ -233,6 +233,16 @@ contract ArbitrarySendErc20 {
         IERC20(rawToken).transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
+    // Sink runs before the equality short-circuits — the guard cannot retroactively
+    // sanitize `from`.
+    function badRequireGuardOrder(address from, address to, uint256 a) public {
+        require(token.transferFrom(from, to, a) && from == msg.sender); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function badAssertGuardOrder(address from, address to, uint256 a) public {
+        assert(token.transferFrom(from, to, a) && from == msg.sender); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
     // Modifier guard placed *after* `_;` cannot be hoisted.
     modifier lateCheck(address f) {
         _;
@@ -373,6 +383,11 @@ contract ArbitrarySendErc20 {
     function okConjunction(address from, address to, uint256 a) public {
         require(from == msg.sender && to != address(0), "auth");
         token.transferFrom(from, to, a);
+    }
+
+    // Short-circuit: the equality holds by the time the sink runs.
+    function okRequireShortCircuit(address from, address to, uint256 a) public {
+        require(from == msg.sender && token.transferFrom(from, to, a));
     }
 
     function okIfRevert(address from, address to, uint256 a) public {
@@ -558,5 +573,29 @@ contract SoladyCallSites {
 
     function okSoladySelf(address to, uint256 a) public {
         SafeTransferLib.safeTransferFrom(token, address(this), to, a);
+    }
+}
+
+// `using ... for address`: 3-arg `safeTransferFrom` member call on an `address`.
+contract SoladyUsingForAddress {
+    using SafeTransferLib for address;
+
+    address token;
+
+    function badSoladyMember(address from, address to, uint256 a) public {
+        token.safeTransferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function okSoladyMemberSender(address to, uint256 a) public {
+        token.safeTransferFrom(msg.sender, to, a);
+    }
+
+    function okSoladyMemberSelf(address to, uint256 a) public {
+        token.safeTransferFrom(address(this), to, a);
+    }
+
+    function okSoladyMemberGuarded(address from, address to, uint256 a) public {
+        require(from == msg.sender, "auth");
+        token.safeTransferFrom(from, to, a);
     }
 }

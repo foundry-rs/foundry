@@ -328,11 +328,32 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
+        // Short-circuit `&&` / `||`: `lhs`'s facts (or its negation for `||`) are
+        // scoped to `rhs`'s evaluation only.
+        if let ExprKind::Binary(lhs, op, rhs) = &expr.kind
+            && matches!(op.kind, ast::BinOpKind::And | ast::BinOpKind::Or)
+        {
+            let _ = self.visit_expr(lhs);
+            let negate = matches!(op.kind, ast::BinOpKind::Or);
+            let before = self.safe_vars.clone();
+            self.add_facts(lhs, negate);
+            let added: Vec<_> = self.safe_vars.difference(&before).copied().collect();
+            let result = self.visit_expr(rhs);
+            for v in added {
+                self.safe_vars.remove(&v);
+            }
+            return result;
+        }
+
         match &expr.kind {
             ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
+                // Walk the predicate before recording its facts so sinks inside the
+                // predicate see the pre-guard state.
+                let result = self.walk_expr(expr);
                 if let Some(cond) = args.exprs().next() {
                     self.add_facts(cond, false);
                 }
+                return result;
             }
             ExprKind::Call(..) => {
                 // EIP-3156: trust the receiver from this point on.
@@ -393,15 +414,23 @@ fn match_sink<'hir>(
     let name = ident.name.as_str();
 
     if args.len() == 3 && (name == "transferFrom" || name == "safeTransferFrom") {
-        let cid = receiver_contract_id(hir, recv)?;
-        contract_has_function(
-            hir,
-            cid,
-            "transferFrom",
-            &["address", "address", "uint256"],
-            &["bool"],
-        )
-        .then(|| (&args[0], underlying_var(recv)))
+        // Contract-typed receiver: must actually declare ERC20's `transferFrom`.
+        if let Some(cid) = receiver_contract_id(hir, recv)
+            && contract_has_function(
+                hir,
+                cid,
+                "transferFrom",
+                &["address", "address", "uint256"],
+                &["bool"],
+            )
+        {
+            return Some((&args[0], underlying_var(recv)));
+        }
+        // `addr.safeTransferFrom(...)` via `using ... for address`.
+        if name == "safeTransferFrom" && expr_is_address(hir, recv) {
+            return Some((&args[0], underlying_var(recv)));
+        }
+        None
     } else if args.len() == 4 && name == "safeTransferFrom" {
         let cid = receiver_contract_id(hir, recv)?;
         (hir.contract(cid).kind == ContractKind::Library
@@ -568,6 +597,21 @@ fn library_has_safe_transfer_from(hir: &hir::Hir<'_>, cid: hir::ContractId) -> b
 
 fn is_address(hir: &hir::Hir<'_>, id: hir::VariableId) -> bool {
     matches!(hir.variable(id).ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
+}
+
+/// True when `expr`'s static type is `address` / `address payable`. Covers bare idents,
+/// `address(...)` / `payable(...)` casts, and parenthesised wraps.
+fn expr_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(reses) => reses.iter().any(|r| {
+            matches!(
+                r, Res::Item(ItemId::Variable(vid)) if is_address(hir, *vid)
+            )
+        }),
+        ExprKind::Call(callee, _, _) if is_address_cast(callee) => true,
+        ExprKind::Payable(_) => true,
+        _ => false,
+    }
 }
 
 fn is_elementary(hir: &hir::Hir<'_>, id: hir::VariableId, abi: &str) -> bool {
