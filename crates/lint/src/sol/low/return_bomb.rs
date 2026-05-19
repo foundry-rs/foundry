@@ -329,6 +329,10 @@ fn member_is_builtin_address(base: &hir::Expr<'_>, member: Symbol) -> bool {
 
 /// Returns whether an expression can match the expected type, if known.
 fn expr_matches_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>, ty: &hir::Type<'_>) -> Option<bool> {
+    if let Some(matches) = bool_expr_matches_type(expr, ty) {
+        return Some(matches);
+    }
+
     if let Some(literal) = integer_literal(expr)
         && let Some(matches) = integer_literal_matches_type(literal, ty)
     {
@@ -342,6 +346,33 @@ fn expr_matches_type(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>, ty: &hir::Type<'_
     }
 
     expr_type(hir, expr).map(|expr_ty| types_match(hir, expr_ty, ty))
+}
+
+/// Returns whether a known boolean expression can match the expected type.
+fn bool_expr_matches_type(expr: &hir::Expr<'_>, ty: &hir::Type<'_>) -> Option<bool> {
+    expr_is_bool(expr).then(|| is_bool_type(ty))
+}
+
+fn expr_is_bool(expr: &hir::Expr<'_>) -> bool {
+    match &expr.peel_parens().kind {
+        ExprKind::Binary(_, op, _) => matches!(
+            op.kind,
+            hir::BinOpKind::Lt
+                | hir::BinOpKind::Le
+                | hir::BinOpKind::Gt
+                | hir::BinOpKind::Ge
+                | hir::BinOpKind::Eq
+                | hir::BinOpKind::Ne
+                | hir::BinOpKind::Or
+                | hir::BinOpKind::And
+        ),
+        ExprKind::Unary(op, _) => op.kind == hir::UnOpKind::Not,
+        _ => false,
+    }
+}
+
+const fn is_bool_type(ty: &hir::Type<'_>) -> bool {
+    matches!(ty.kind, TypeKind::Elementary(ElementaryType::Bool))
 }
 /// Returns the type of simple expressions needed by this lint.
 fn expr_type<'hir>(

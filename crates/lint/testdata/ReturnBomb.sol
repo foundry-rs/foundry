@@ -327,6 +327,15 @@ contract ReturnBomb {
         require(result.length >= 0);
     }
 
+    function overloadedBooleanExpressionStaticReturn(
+        IReturnBombAmbiguousOverloadedTarget target,
+        uint256 value,
+        uint256 gasLimit
+    ) public {
+        uint256 result = target.fetch{gas: gasLimit}(value > 0);
+        require(result >= 0);
+    }
+
     function overloadedLiteralRangeDynamicReturn(
         IReturnBombLiteralRangeTarget target,
         uint256 gasLimit
