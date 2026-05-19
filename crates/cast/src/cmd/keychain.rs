@@ -1131,7 +1131,7 @@ enum ChainTimestamp {
 }
 
 impl ChainTimestamp {
-    fn timestamp(&self) -> Option<u64> {
+    const fn timestamp(&self) -> Option<u64> {
         match self {
             Self::Known(timestamp) => Some(*timestamp),
             Self::Unknown { .. } => None,
