@@ -1139,6 +1139,49 @@ Ran 3 test suites [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
     );
 });
 
+forgetest_init!(contract_level_invariant_corpus_dir, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 2;
+        config.invariant.assert_all = true;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "ContractCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ContractCorpusHandler {
+    function touch(uint256) external {}
+}
+
+contract ContractCorpusTest is Test {
+    ContractCorpusHandler handler;
+
+    function setUp() public {
+        handler = new ContractCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_a() public pure {}
+
+    function invariant_b() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/ContractCorpusTest.t.sol:ContractCorpusTest
+...
+"#]]);
+
+    let contract_dir = prj.root().join("invariant_corpus").join("ContractCorpusTest");
+    assert!(contract_dir.exists());
+    assert!(!contract_dir.join("invariant_a").exists());
+    assert!(!contract_dir.join("invariant_b").exists());
+});
+
 // Tests that check_interval=0 only asserts on the last call of each run.
 forgetest_init!(check_interval_zero_only_checks_last_call, |prj, cmd| {
     prj.update_config(|config| {

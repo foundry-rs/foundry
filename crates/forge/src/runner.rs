@@ -460,11 +460,17 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             });
         }
 
+        let invariant_suite_anchor =
+            functions.iter().copied().find(|func| func.is_invariant_test());
+
         let test_results = functions
             .par_iter()
             .filter_map(|&func| {
                 // Early exit if we're running with fail-fast and a test already failed.
                 if early_exit.should_stop() {
+                    return None;
+                }
+                if func.is_invariant_test() && invariant_suite_anchor != Some(func) {
                     return None;
                 }
 
@@ -811,11 +817,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .inspector_mut()
             .collect_sancov_trace_cmp(invariant_config.corpus.collect_sancov_trace_cmp());
         let mut config = invariant_config.clone();
-        let (failure_dir, failure_file) = test_paths(
+        let failure_dir = invariant_suite_paths(
             &mut config.corpus,
             invariant_config.failure_persist_dir.clone().unwrap(),
             self.cr.name,
-            &func.name,
         );
 
         let mut evm = InvariantExecutor::new(
@@ -863,11 +868,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // A secondary's persisted failure is only honored when its embedded settings still
         // match the current run; stale caches fall back to a fresh campaign.
         let secondary_has_compatible_persisted = |invariant_fn: &Function| {
-            persisted_call_sequence(
-                canonicalized(failure_dir.join(invariant_fn.name.clone())).as_path(),
-                &current_settings,
-            )
-            .is_some()
+            persisted_invariant_failure(&failure_dir, invariant_fn, &current_settings).is_some()
         };
         // Warn when secondaries are dropped because they already have persisted failures from a
         // previous campaign. Symmetric with the primary's persisted-replay warning so users
@@ -935,8 +936,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         };
 
         // Try to replay recorded failure if any.
+        let primary_failure_file = invariant_failure_file(&failure_dir, func);
+        let persisted_primary = persisted_invariant_failure(&failure_dir, func, &current_settings);
         if let Some(InvariantPersistedFailure { mut call_sequence, assertion_failure, .. }) =
-            persisted_call_sequence(failure_file.as_path(), &current_settings)
+            persisted_primary
         {
             let (txes, replay) = replay_persisted_call_sequence(
                 &replay_ctx,
@@ -947,10 +950,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if let Ok((success, replayed_entirely, replay_reason)) = replay
                 && !success
             {
-                let warn = format!(
-                    "Replayed invariant failure from {:?} file. \nRun `forge clean` or remove file to ignore failure and to continue invariant test campaign.",
-                    failure_file.as_path()
-                );
+                let warn =
+                    "Replayed invariant failure from persisted file. \nRun `forge clean` or remove file to ignore failure and to continue invariant test campaign."
+                        .to_string();
 
                 if let Some(ref progress) = progress {
                     progress.set_prefix(format!("{}\n{warn}\n", func.name));
@@ -984,7 +986,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         // Persist error in invariant failure dir.
                         record_invariant_failure(
                             failure_dir.as_path(),
-                            failure_file.as_path(),
+                            primary_failure_file.as_path(),
                             &call_sequence,
                             &current_settings,
                             assertion_failure,
@@ -1128,7 +1130,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             Ok(call_sequence) if !call_sequence.is_empty() => {
                                 record_invariant_failure(
                                     failure_dir.as_path(),
-                                    failure_file.as_path(),
+                                    primary_failure_file.as_path(),
                                     &call_sequence,
                                     &current_settings,
                                     case_data.assertion_failure,
@@ -1151,7 +1153,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     name: invariant_contract.anchor().name.clone(),
                     reason: error.revert_reason().unwrap_or_default(),
                     counterexample: anchor_counterexample,
-                    persisted_path: failure_file,
+                    persisted_path: primary_failure_file.clone(),
                     is_anchor: true,
                 });
             }
@@ -1176,7 +1178,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 // them, but the dir check is a belt-and-braces safety net). Use the same
                 // settings-aware compatibility check as the filter so a stale persisted cache
                 // doesn't suppress a freshly-broken secondary.
-                let persisted_failure = canonicalized(failure_dir.join(invariant.name.clone()));
+                let persisted_failure = invariant_failure_file(&failure_dir, invariant);
                 if !secondary_has_compatible_persisted(invariant)
                     && let Some(error) = invariant_result.errors.get(&invariant.name)
                     && let InvariantFuzzError::BrokenInvariant(case_data)
@@ -1587,6 +1589,32 @@ fn persisted_call_sequence(
     )
 }
 
+fn invariant_failure_file(failure_dir: &Path, invariant: &Function) -> PathBuf {
+    canonicalized(failure_dir.join("invariants").join(&invariant.name))
+}
+
+fn legacy_invariant_failure_file(failure_dir: &Path, invariant: &Function) -> PathBuf {
+    canonicalized(failure_dir.join(&invariant.name))
+}
+
+fn persisted_invariant_failure(
+    failure_dir: &Path,
+    invariant: &Function,
+    current_settings: &InvariantSettings,
+) -> Option<InvariantPersistedFailure> {
+    persisted_call_sequence(invariant_failure_file(failure_dir, invariant).as_path(), current_settings)
+        .or_else(|| {
+            let legacy_path = legacy_invariant_failure_file(failure_dir, invariant);
+            let persisted = persisted_call_sequence(legacy_path.as_path(), current_settings)?;
+            let _ = sh_warn!(
+                "Using legacy invariant failure cache at {}; new failures will be persisted under {}/invariants.",
+                legacy_path.display(),
+                failure_dir.display(),
+            );
+            Some(persisted)
+        })
+}
+
 /// Converts a persisted counterexample to `BasicTxDetails`, setting `show_solidity` in place.
 fn base_counterexamples_to_txes(
     ctx: &ReplayContext<'_>,
@@ -1652,6 +1680,20 @@ fn test_paths(
     (failures_dir, failure_file)
 }
 
+/// Helper function to set invariant corpus dir and compose contract-suite failure paths.
+fn invariant_suite_paths(
+    corpus_config: &mut FuzzCorpusConfig,
+    persist_dir: PathBuf,
+    contract_name: &str,
+) -> PathBuf {
+    let contract = contract_name.split(':').next_back().unwrap();
+    if let Some(corpus_dir) = &corpus_config.corpus_dir {
+        corpus_config.corpus_dir = Some(canonicalized(corpus_dir.join(contract)));
+    }
+
+    canonicalized(persist_dir.join("failures").join(contract))
+}
+
 /// Helper function to persist invariant failure.
 fn record_invariant_failure(
     failure_dir: &Path,
@@ -1662,6 +1704,12 @@ fn record_invariant_failure(
 ) {
     if let Err(err) = foundry_common::fs::create_dir_all(failure_dir) {
         error!(%err, "Failed to create invariant failure dir");
+        return;
+    }
+    if let Some(parent) = failure_file.parent()
+        && let Err(err) = foundry_common::fs::create_dir_all(parent)
+    {
+        error!(%err, "Failed to create invariant failure file parent dir");
         return;
     }
 
