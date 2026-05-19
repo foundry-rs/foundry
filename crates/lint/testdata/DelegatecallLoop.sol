@@ -21,7 +21,15 @@ contract ParentOrdinaryDelegatecall {
     }
 }
 
-contract DelegatecallLoop is ParentOrdinaryDelegatecall {
+contract ParentDelegatecallHelper {
+    function superDelegate(bytes calldata payload) internal {
+        address target = address(this);
+        (bool ok,) = target.delegatecall(payload); //~WARN: payable functions should not use `delegatecall` inside a loop
+        require(ok);
+    }
+}
+
+contract DelegatecallLoop is ParentOrdinaryDelegatecall, ParentDelegatecallHelper {
     function payableForLoop(bytes[] calldata payloads) external payable {
         address target = address(this);
         for (uint256 i = 0; i < payloads.length; ++i) {
@@ -135,6 +143,12 @@ contract DelegatecallLoop is ParentOrdinaryDelegatecall {
         require(ok);
     }
 
+    function payableLoopWithSuperInternalDelegatecall(bytes[] calldata payloads) external payable {
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            super.superDelegate(payloads[i]);
+        }
+    }
+
     function payableLoopWithCallAndStaticcall(bytes[] calldata payloads) external payable {
         address target = address(this);
         for (uint256 i = 0; i < payloads.length; ++i) {
@@ -190,6 +204,15 @@ contract DelegatecallLoop is ParentOrdinaryDelegatecall {
     function payableLoopCallsSuperDelegatecall(bytes[] calldata payloads) external payable {
         for (uint256 i = 0; i < payloads.length; ++i) {
             require(super.delegatecall(payloads[i]));
+        }
+    }
+
+    function payableLoopCallsConditionalDelegatecall(bytes[] calldata payloads, bool flag) external payable {
+        address targetA = address(this);
+        address targetB = address(0xBEEF);
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            (bool ok,) = (flag ? targetA : targetB).delegatecall(payloads[i]); //~WARN: payable functions should not use `delegatecall` inside a loop
+            require(ok);
         }
     }
 
