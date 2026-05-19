@@ -811,9 +811,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-signer-aws"
-version = "2.0.4"
+version = "2.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1258987fbc82716b5153ec7bb95a8a295e7640871b8f03d8ec7c4000dc80c215"
+checksum = "fcd9d417913728f780c569b7d6286c51ad77437ff455587a9c1dc2b9a87cdb5e"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -830,9 +830,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-signer-gcp"
-version = "2.0.4"
+version = "2.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ffc2a49bca5b73c6964711b57452f6c36a6bcb7f845ab7e9ad05b5a828d0161"
+checksum = "3bdfd6d63ce90e92e1c364eedea75213b4e8e616f18dec773ea793c523653299"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -848,9 +848,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-signer-ledger"
-version = "2.0.4"
+version = "2.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94e11ddaddfb98c1ddce737dc440225565b0ae0987ac9ad5e59a85db5904878c"
+checksum = "c29a14f2fb7aef1c413b84107148d7f2ac97396eddc1f7fc2abf5a3db8c10ffc"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
@@ -888,9 +888,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-signer-trezor"
-version = "2.0.4"
+version = "2.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44eb341d0013784da6a39e5bbdc11b95d6744993b12a1c3fd55df795a850dd42"
+checksum = "42d749eb0bb9190b511d5abcf3e15ec5806dc12910247e10d8a456e14e08b143"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -905,9 +905,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-signer-turnkey"
-version = "2.0.4"
+version = "2.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82ff16b4166fb90bbe79bd1e49244824fb3cadc6b8cd11e9c8a002c1f8c07492"
+checksum = "fd5f9cfc2cf47881dd77dfda5eb0659e27e35d6e8e633a9c80ddde63fdb5fe4d"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -5580,7 +5580,7 @@ dependencies = [
 [[package]]
 name = "foundry-wallets"
 version = "0.1.0"
-source = "git+https://github.com/foundry-rs/foundry-core?branch=mablr%2Fsign-authorization-keychain#895a6e58f7c7effd127f059f6378046c32d7c8d9"
+source = "git+https://github.com/foundry-rs/foundry-core?branch=mablr%2Fsign-authorization-keychain#f7051a6b9971a1625360d1471ef97c4604142077"
 dependencies = [
  "alloy-consensus",
  "alloy-dyn-abi",
