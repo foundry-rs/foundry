@@ -19,7 +19,7 @@ pub fn is_address_type(hir: &hir::Hir<'_>, vid: VariableId) -> bool {
 
 /// True if `callee` resolves to the builtin `require` or `assert`.
 pub fn is_require_or_assert(callee: &Expr<'_>) -> bool {
-    matches!(&callee.peel_parens().kind, ExprKind::Ident(reses)
+    matches!(&callee.kind, ExprKind::Ident(reses)
         if reses.iter().any(|r| matches!(r,
             Res::Builtin(b) if b.name() == sym::require || b.name() == sym::assert)))
 }
