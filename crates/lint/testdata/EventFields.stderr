@@ -1,4 +1,4 @@
-note[event-fields]: event has unindexed fields that should be indexed: from (address), to (address)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: from (address), to (address)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │ event TopLevelTransfer(address from, address to, uint256 value);
@@ -6,7 +6,7 @@ LL │ event TopLevelTransfer(address from, address to, uint256 value);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: from (address)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: from (address)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │     event InterfaceTransfer(address from, uint256 value);
@@ -14,7 +14,7 @@ LL │     event InterfaceTransfer(address from, uint256 value);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: id (uint256)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: id (uint256)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │     event LibCreated(uint256 id, uint256 amount);
@@ -22,7 +22,7 @@ LL │     event LibCreated(uint256 id, uint256 amount);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: from (address), to (address)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: from (address), to (address)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │     event Transfer(address from, address to, uint256 value);
@@ -30,7 +30,7 @@ LL │     event Transfer(address from, address to, uint256 value);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: to (address), tokenId (uint256)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: to (address), tokenId (uint256)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │     event Mint(address to, uint256 tokenId);
@@ -38,7 +38,7 @@ LL │     event Mint(address to, uint256 tokenId);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: orderId (bytes32)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: orderId (bytes32)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │     event Order(bytes32 orderId, uint256 amount);
@@ -46,7 +46,7 @@ LL │     event Order(bytes32 orderId, uint256 amount);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: id (uint256)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: id (uint256)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │     event CreatedAlias(uint id);
@@ -54,7 +54,7 @@ LL │     event CreatedAlias(uint id);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: ID (uint256)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: ID (uint256)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │     event ScreamingId(uint256 ID);
@@ -62,7 +62,7 @@ LL │     event ScreamingId(uint256 ID);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: tokenID (uint256)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: tokenID (uint256)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │     event CamelCapsId(uint256 tokenID);
@@ -70,7 +70,7 @@ LL │     event CamelCapsId(uint256 tokenID);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: token_id (bytes32)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: token_id (bytes32)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │     event SnakeId(bytes32 token_id);
@@ -78,7 +78,7 @@ LL │     event SnakeId(bytes32 token_id);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: receiver (address payable)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: receiver (address payable)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │     event PayableAddr(address payable receiver);
@@ -86,7 +86,7 @@ LL │     event PayableAddr(address payable receiver);
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: a (address), b (address), c (address), d (address)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: a (address), b (address), c (address), d (address)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │     event AnonFour(address a, address b, address c, address d) anonymous;
@@ -94,7 +94,7 @@ LL │     event AnonFour(address a, address b, address c, address d) anonymous;
    │
    ╰ help: https://getfoundry.sh/forge/linting/event-fields
 
-note[event-fields]: event has unindexed fields that should be indexed: parameter #1 (address)
+note[event-fields]: event has unindexed fields that may benefit from being indexed: parameter #1 (address)
    ╭▸ ROOT/testdata/EventFields.sol:LL:CC
    │
 LL │     event Unnamed(address, uint256);

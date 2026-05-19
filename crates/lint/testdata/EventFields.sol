@@ -4,45 +4,45 @@
 pragma solidity ^0.8.18;
 
 // Top-level event with unindexed address.
-event TopLevelTransfer(address from, address to, uint256 value); //~NOTE: event has unindexed fields that should be indexed: from (address), to (address)
+event TopLevelTransfer(address from, address to, uint256 value); //~NOTE: event has unindexed fields that may benefit from being indexed: from (address), to (address)
 
 // Top-level event already fully OK.
 event TopLevelOk(address indexed from, address indexed to, uint256 value);
 
 interface IEvents {
     // Interface event with unindexed address.
-    event InterfaceTransfer(address from, uint256 value); //~NOTE: event has unindexed fields that should be indexed: from (address)
+    event InterfaceTransfer(address from, uint256 value); //~NOTE: event has unindexed fields that may benefit from being indexed: from (address)
 }
 
 library LibEvents {
     // Library event with unindexed id.
-    event LibCreated(uint256 id, uint256 amount); //~NOTE: event has unindexed fields that should be indexed: id (uint256)
+    event LibCreated(uint256 id, uint256 amount); //~NOTE: event has unindexed fields that may benefit from being indexed: id (uint256)
 }
 
 contract EventFieldsTest {
     // --- triggering cases -------------------------------------------------
 
-    event Transfer(address from, address to, uint256 value); //~NOTE: event has unindexed fields that should be indexed: from (address), to (address)
+    event Transfer(address from, address to, uint256 value); //~NOTE: event has unindexed fields that may benefit from being indexed: from (address), to (address)
 
-    event Mint(address to, uint256 tokenId); //~NOTE: event has unindexed fields that should be indexed: to (address), tokenId (uint256)
+    event Mint(address to, uint256 tokenId); //~NOTE: event has unindexed fields that may benefit from being indexed: to (address), tokenId (uint256)
 
-    event Order(bytes32 orderId, uint256 amount); //~NOTE: event has unindexed fields that should be indexed: orderId (bytes32)
+    event Order(bytes32 orderId, uint256 amount); //~NOTE: event has unindexed fields that may benefit from being indexed: orderId (bytes32)
 
-    event CreatedAlias(uint id); //~NOTE: event has unindexed fields that should be indexed: id (uint256)
+    event CreatedAlias(uint id); //~NOTE: event has unindexed fields that may benefit from being indexed: id (uint256)
 
-    event ScreamingId(uint256 ID); //~NOTE: event has unindexed fields that should be indexed: ID (uint256)
+    event ScreamingId(uint256 ID); //~NOTE: event has unindexed fields that may benefit from being indexed: ID (uint256)
 
-    event CamelCapsId(uint256 tokenID); //~NOTE: event has unindexed fields that should be indexed: tokenID (uint256)
+    event CamelCapsId(uint256 tokenID); //~NOTE: event has unindexed fields that may benefit from being indexed: tokenID (uint256)
 
-    event SnakeId(bytes32 token_id); //~NOTE: event has unindexed fields that should be indexed: token_id (bytes32)
+    event SnakeId(bytes32 token_id); //~NOTE: event has unindexed fields that may benefit from being indexed: token_id (bytes32)
 
-    event PayableAddr(address payable receiver); //~NOTE: event has unindexed fields that should be indexed: receiver (address payable)
+    event PayableAddr(address payable receiver); //~NOTE: event has unindexed fields that may benefit from being indexed: receiver (address payable)
 
     // Anonymous events allow up to 4 indexed.
-    event AnonFour(address a, address b, address c, address d) anonymous; //~NOTE: event has unindexed fields that should be indexed: a (address), b (address), c (address), d (address)
+    event AnonFour(address a, address b, address c, address d) anonymous; //~NOTE: event has unindexed fields that may benefit from being indexed: a (address), b (address), c (address), d (address)
 
     // Unnamed param is reported using its positional index.
-    event Unnamed(address, uint256); //~NOTE: event has unindexed fields that should be indexed: parameter #1 (address)
+    event Unnamed(address, uint256); //~NOTE: event has unindexed fields that may benefit from being indexed: parameter #1 (address)
 
     // --- non-triggering cases --------------------------------------------
 

@@ -47,7 +47,7 @@ fn check_event<'ast>(ctx: &LintContext, event: &'ast ItemEvent<'ast>) {
 
     // Build a single message naming the offending fields.
     let names = offenders.iter().map(|(i, p)| describe_param(*i, p)).collect::<Vec<_>>().join(", ");
-    let msg = format!("event has unindexed fields that should be indexed: {names}");
+    let msg = format!("event has unindexed fields that may benefit from being indexed: {names}");
     ctx.emit_with_msg(&EVENT_FIELDS, event.name.span, msg);
 }
 
