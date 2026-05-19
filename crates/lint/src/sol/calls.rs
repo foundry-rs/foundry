@@ -1,6 +1,7 @@
 use solar::{
     ast::{Expr, ExprKind},
     interface::kw,
+    sema::hir,
 };
 
 /// Checks if an expression is a low-level call.
@@ -22,4 +23,22 @@ pub(crate) const fn is_low_level_call(expr: &Expr<'_>) -> bool {
         }
     }
     false
+}
+
+/// Checks if a HIR expression is any call with an explicit gas option.
+pub(crate) fn is_call_with_gas_limit(expr: &hir::Expr<'_>) -> bool {
+    let Some((_, opts)) = call_with_options(expr) else {
+        return false;
+    };
+
+    opts.iter().any(|opt| opt.name.name == kw::Gas)
+}
+
+fn call_with_options<'hir>(
+    expr: &'hir hir::Expr<'hir>,
+) -> Option<(&'hir hir::Expr<'hir>, &'hir [hir::NamedArg<'hir>])> {
+    let hir::ExprKind::Call(callee, _, Some(opts)) = &expr.peel_parens().kind else {
+        return None;
+    };
+    Some((callee, opts))
 }
