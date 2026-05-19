@@ -143,6 +143,19 @@ pub fn bail_machine_diagnostic(
     std::process::exit(exit_code.to_i32());
 }
 
+/// Same as [`bail_machine_diagnostic`] but attaches a structured `details`
+/// object to the emitted error message.
+pub fn bail_machine_diagnostic_with_details(
+    code: &'static str,
+    exit_code: ExitCode,
+    message: impl Into<String>,
+    details: serde_json::Value,
+) -> ! {
+    let envelope = JsonEnvelope::error(JsonMessage::error(code, message).with_details(details));
+    let _ = print_json(&envelope);
+    std::process::exit(exit_code.to_i32());
+}
+
 /// Emit a structured error envelope on stdout for an `eyre::Report`.
 ///
 /// Used by binary entry points to wrap an uncaught command failure as a

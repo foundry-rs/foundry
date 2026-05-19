@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "foundry:cast.send@v1",
+  "title": "cast send result payload",
+  "description": "Shape of the `data` field in the `cast send --machine` terminal envelope.",
+  "type": "object",
+  "required": [
+    "broadcast",
+    "tx_hash",
+    "from",
+    "to",
+    "contract_address",
+    "status",
+    "block_number",
+    "gas_used",
+    "effective_gas_price"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "broadcast": {
+      "type": "boolean",
+      "description": "Always true for `cast send` under `--machine`; the command never dry-runs."
+    },
+    "tx_hash": {
+      "type": "string",
+      "description": "0x-prefixed transaction hash.",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    },
+    "from": {
+      "type": "string",
+      "description": "0x-prefixed sender address.",
+      "pattern": "^0x[0-9a-fA-F]{40}$"
+    },
+    "to": {
+      "type": ["string", "null"],
+      "description": "0x-prefixed recipient address. Null when the transaction has no recipient (for example contract creation).",
+      "pattern": "^0x[0-9a-fA-F]{40}$"
+    },
+    "contract_address": {
+      "type": ["string", "null"],
+      "description": "0x-prefixed contract address for create transactions. Null otherwise or when no receipt was observed.",
+      "pattern": "^0x[0-9a-fA-F]{40}$"
+    },
+    "status": {
+      "enum": [true, null],
+      "description": "Receipt success bit. `true` when mined successfully, `null` when no receipt was observed (`--async`). Reverted receipts are reclassified into a `chain.broadcast_failed` error envelope; `false` is reserved."
+    },
+    "block_number": {
+      "type": ["string", "null"],
+      "description": "Decimal-encoded block number of the receipt. Null when no receipt was observed."
+    },
+    "gas_used": {
+      "type": ["string", "null"],
+      "description": "Decimal-encoded gas used reported by the receipt. Null when no receipt was observed."
+    },
+    "effective_gas_price": {
+      "type": ["string", "null"],
+      "description": "Decimal-encoded effective gas price reported by the receipt. Null when no receipt was observed."
+    }
+  }
+}

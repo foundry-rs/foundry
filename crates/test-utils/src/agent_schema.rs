@@ -25,6 +25,7 @@ const SCHEMA_FILES: &[(&str, &str)] = &[
     ("foundry:cast.abi-decode@v1", "cast.abi-decode.v1.json"),
     ("foundry:cast.keccak@v1", "cast.keccak.v1.json"),
     ("foundry:cast.4byte@v1", "cast.4byte.v1.json"),
+    ("foundry:cast.send@v1", "cast.send.v1.json"),
     ("foundry:forge.build@v1", "forge.build.v1.json"),
     ("foundry:forge.create@v1", "forge.create.v1.json"),
     ("foundry:forge.test@v1", "forge.test.v1.json"),

@@ -1031,17 +1031,24 @@ mod tests {
                     }
                     None
                 }
-                ["cast.call", "cast.abi-encode", "cast.abi-decode", "cast.keccak", "cast.4byte"]
-                    .into_iter()
-                    .map(|id| {
-                        let pinned = doc
-                            .commands
-                            .iter()
-                            .find_map(|c| find(c, id))
-                            .unwrap_or_else(|| panic!("{id} missing from cast introspect"));
-                        (id, pinned)
-                    })
-                    .collect()
+                [
+                    "cast.call",
+                    "cast.abi-encode",
+                    "cast.abi-decode",
+                    "cast.keccak",
+                    "cast.4byte",
+                    "cast.send",
+                ]
+                .into_iter()
+                .map(|id| {
+                    let pinned = doc
+                        .commands
+                        .iter()
+                        .find_map(|c| find(c, id))
+                        .unwrap_or_else(|| panic!("{id} missing from cast introspect"));
+                    (id, pinned)
+                })
+                .collect()
             })
             .expect("spawn worker thread")
             .join()
@@ -1082,6 +1089,12 @@ mod tests {
                 id: "cast.4byte",
                 schema: "foundry:cast.4byte@v1",
                 side_effects: SideEffects::Network,
+                reads_stdin: false,
+            },
+            Expected {
+                id: "cast.send",
+                schema: "foundry:cast.send@v1",
+                side_effects: SideEffects::ChainWrite,
                 reads_stdin: false,
             },
         ];

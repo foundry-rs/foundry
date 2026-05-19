@@ -3524,6 +3524,343 @@ forgetest_async!(cast_call_machine_mode_rejects_unsupported_flags, |_prj, cmd| {
     assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
 });
 
+// `cast --machine send` against an EOA emits a single envelope on stdout
+// with the receipt-derived fields populated.
+forgetest_async!(cast_send_machine_mode_emits_envelope, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
+
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"]["broadcast"], true);
+    assert_eq!(envelope["data"]["status"], true);
+    assert_eq!(envelope["data"]["contract_address"], serde_json::Value::Null);
+    let tx_hash = envelope["data"]["tx_hash"].as_str().expect("tx_hash is a string");
+    let from = envelope["data"]["from"].as_str().expect("from is a string");
+    let to = envelope["data"]["to"].as_str().expect("to is a string");
+    assert!(tx_hash.starts_with("0x") && tx_hash.len() == 66, "{tx_hash}");
+    assert!(from.starts_with("0x") && from.len() == 42, "{from}");
+    assert!(to.starts_with("0x") && to.len() == 42, "{to}");
+    foundry_test_utils::agent_schema::validate_envelope_data(&envelope, "foundry:cast.send@v1");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// `cast --machine send --async` emits the envelope as soon as the hash is
+// known, leaving every receipt field null.
+forgetest_async!(cast_send_machine_mode_async_emits_envelope, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--async",
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
+
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"]["broadcast"], true);
+    assert_eq!(envelope["data"]["status"], serde_json::Value::Null);
+    assert_eq!(envelope["data"]["block_number"], serde_json::Value::Null);
+    assert_eq!(envelope["data"]["gas_used"], serde_json::Value::Null);
+    assert_eq!(envelope["data"]["effective_gas_price"], serde_json::Value::Null);
+    let tx_hash = envelope["data"]["tx_hash"].as_str().expect("tx_hash is a string");
+    assert!(tx_hash.starts_with("0x") && tx_hash.len() == 66, "{tx_hash}");
+    foundry_test_utils::agent_schema::validate_envelope_data(&envelope, "foundry:cast.send@v1");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// `cast --machine send --create` emits an envelope with `to: null` and the
+// deployed contract address from the receipt.
+forgetest_async!(cast_send_machine_mode_create_emits_envelope, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    // Minimal runtime-returning constructor that simply returns 0-length code.
+    let bytecode = "0x6000600055";
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "send",
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &endpoint,
+            "--create",
+            bytecode,
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
+
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"]["broadcast"], true);
+    assert_eq!(envelope["data"]["status"], true);
+    assert_eq!(envelope["data"]["to"], serde_json::Value::Null);
+    let contract_address =
+        envelope["data"]["contract_address"].as_str().expect("contract_address is a string");
+    assert!(
+        contract_address.starts_with("0x") && contract_address.len() == 42,
+        "{contract_address}"
+    );
+    foundry_test_utils::agent_schema::validate_envelope_data(&envelope, "foundry:cast.send@v1");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// `cast --machine send` against a reverting constructor emits a typed
+// `chain.broadcast_failed` envelope with the receipt fields kept in
+// `errors[0].details`.
+forgetest_async!(flaky_cast_send_machine_mode_broadcast_failed_emits_envelope, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    // Constructor that immediately reverts: PUSH1 0x00 PUSH1 0x00 REVERT.
+    let bytecode = "0x60006000fd";
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "send",
+            "--gas-limit",
+            "1000000",
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &endpoint,
+            "--create",
+            bytecode,
+        ])
+        .assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(1));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
+
+    assert_eq!(envelope["success"], false);
+    assert!(envelope["data"].is_null(), "data must be null: {envelope}");
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
+    assert_eq!(envelope["errors"][0]["code"], "chain.broadcast_failed");
+
+    // Reverted-receipt path: receipt fields must be preserved in `details`.
+    let details = &envelope["errors"][0]["details"];
+    assert_eq!(details["broadcast"], true, "details.broadcast must be true: {envelope}");
+    assert_eq!(
+        details["receipt_observed"], true,
+        "details.receipt_observed must be true (revert path): {envelope}"
+    );
+    let tx_hash = details["tx_hash"].as_str().expect("details.tx_hash is a string");
+    assert!(tx_hash.starts_with("0x") && tx_hash.len() == 66, "{tx_hash}");
+    assert!(details["gas_used"].is_string(), "details.gas_used missing: {envelope}");
+    assert!(details["block_number"].is_string(), "details.block_number missing: {envelope}");
+    assert!(
+        details["effective_gas_price"].is_string(),
+        "details.effective_gas_price missing: {envelope}"
+    );
+
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// `cast --machine send --sync` exercises the `send_transaction_sync` path
+// and emits an envelope with the receipt-derived fields.
+forgetest_async!(cast_send_machine_mode_sync_emits_envelope, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--sync",
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
+
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"]["broadcast"], true);
+    assert_eq!(envelope["data"]["status"], true);
+    let tx_hash = envelope["data"]["tx_hash"].as_str().expect("tx_hash is a string");
+    assert!(tx_hash.starts_with("0x") && tx_hash.len() == 66, "{tx_hash}");
+    foundry_test_utils::agent_schema::validate_envelope_data(&envelope, "foundry:cast.send@v1");
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// `cast --machine send --browser` is rejected with a typed `cli.usage.invalid`
+// envelope and exit code 2, before any browser session is opened.
+forgetest_async!(cast_send_machine_mode_rejects_browser, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--browser",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
+
+    assert_eq!(envelope["success"], false);
+    assert!(envelope["data"].is_null(), "data must be null on failure: {envelope}");
+    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("--browser"), "missing --browser mention: {envelope}");
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// `cast --machine send` with an unfunded key surfaces the underlying RPC
+// "insufficient funds" cause through the typed envelope message.
+forgetest_async!(flaky_cast_send_machine_mode_insufficient_funds_envelope, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    // Random unfunded key.
+    let pk = "0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318";
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--private-key",
+            pk,
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(1));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
+
+    assert_eq!(envelope["success"], false);
+    assert!(envelope["data"].is_null(), "data must be null: {envelope}");
+    assert_eq!(envelope["errors"][0]["code"], "chain.broadcast_failed");
+    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("").to_ascii_lowercase();
+    assert!(msg.contains("insufficient funds"), "missing cause-chain detail: {envelope}");
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
+// `cast --machine send --tempo.print-sponsor-hash` is rejected with a typed
+// `cli.usage.invalid` envelope and exit code 2.
+forgetest_async!(cast_send_machine_mode_rejects_unsupported_flags, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--tempo.print-sponsor-hash",
+            "--private-key",
+            &pk,
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
+
+    assert_eq!(envelope["success"], false);
+    assert!(envelope["data"].is_null(), "data must be null on failure: {envelope}");
+    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("--tempo.print-sponsor-hash"), "{envelope}");
+    foundry_test_utils::agent_schema::validate("foundry:envelope@v1", &envelope);
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "stderr must be empty under --machine, got: {stderr}");
+});
+
 // https://github.com/foundry-rs/foundry/issues/10848
 forgetest_async!(cast_call_disable_labels, |prj, cmd| {
     let (_, handle) = anvil::spawn(NodeConfig::test()).await;

@@ -22,6 +22,9 @@ pub const KECCAK_RESULT_SCHEMA: &str = "foundry:cast.keccak@v1";
 /// Schema id for the `cast 4byte` envelope payload.
 pub const FOUR_BYTE_RESULT_SCHEMA: &str = "foundry:cast.4byte@v1";
 
+/// Schema id for the `cast send` envelope payload.
+pub const SEND_RESULT_SCHEMA: &str = "foundry:cast.send@v1";
+
 static ENTRIES: &[RegistryEntry] = &[
     RegistryEntry {
         path: &["call"],
@@ -86,6 +89,19 @@ static ENTRIES: &[RegistryEntry] = &[
                 side_effects: SideEffects::Network,
                 // `--machine` requires argv; stdin is human-only.
                 reads_stdin: false,
+                ..CapabilityMeta::NONE
+            },
+            exit_codes: &[],
+        },
+    },
+    RegistryEntry {
+        path: &["send"],
+        meta: CommandMeta {
+            command_id: Some("cast.send"),
+            capabilities: CapabilityMeta {
+                output_mode: OutputMode::Envelope,
+                result_schema_ref: Some(SEND_RESULT_SCHEMA),
+                side_effects: SideEffects::ChainWrite,
                 ..CapabilityMeta::NONE
             },
             exit_codes: &[],
