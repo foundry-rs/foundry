@@ -90,9 +90,22 @@ contract BytesSymbolicTest is Test {
 }
 ```
 
-Dynamic leaves are traversed in deterministic ABI pre-order. Each entry in
-`symbolic.array_lengths` applies to the next dynamic leaf. Missing entries use
-`symbolic.default_dynamic_length`; extra entries are rejected as config errors.
+Dynamic leaves are traversed in deterministic ABI pre-order. Lengths resolve in
+this order:
+
+1. `symbolic.dynamic_lengths`, keyed by ABI argument name or generated symbolic
+   name such as `calldata_0`.
+2. `symbolic.default_array_lengths` for arrays, or
+   `symbolic.default_bytes_lengths` for `bytes` and `string`.
+3. The legacy positional `symbolic.array_lengths`, applied to the next dynamic
+   leaf that was not matched by a named or type-specific default.
+4. `symbolic.default_dynamic_length`.
+
+Length-set config fields accept Halmos-style arrays and expand into separate
+symbolic calldata shapes. For nested dynamic values, Foundry explores the cross
+product implied by the selected outer lengths. Eager calldata expansion is capped
+by the effective symbolic path width (`symbolic.width` / `symbolic.max_paths`).
+Extra positional `array_lengths` entries are rejected as config errors.
 
 Supported ABI shapes include:
 
@@ -142,6 +155,9 @@ max_solver_queries = 10000
 default_dynamic_length = 2
 max_dynamic_length = 256
 array_lengths = []
+dynamic_lengths = {}
+default_array_lengths = []
+default_bytes_lengths = []
 max_calldata_bytes = 4096
 invariant_depth = 10
 symbolic_call_targets = false
@@ -154,8 +170,10 @@ The same values can be set inline with NatSpec:
 ```solidity
 /// forge-config: default.symbolic.timeout = 120
 /// forge-config: default.symbolic.array_lengths = [2, 4]
+/// forge-config: default.symbolic.dynamic_lengths = { data = [3] }
+/// forge-config: default.symbolic.default_bytes_lengths = [8]
 /// forge-config: default.symbolic.invariant_depth = 6
-function check_with_bounds(bytes memory a, uint256[] memory b) external {
+function check_with_bounds(bytes memory data, uint256[] memory b) external {
     // ...
 }
 ```

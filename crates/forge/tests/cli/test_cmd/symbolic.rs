@@ -1,6 +1,8 @@
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, util::OutputExt};
+use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 use std::process::Command;
+
+use super::symbolic_helpers::assert_symbolic;
 
 fn z3_available() -> bool {
     Command::new("z3").arg("--version").output().is_ok_and(|output| output.status.success())
@@ -1767,6 +1769,72 @@ contract SymbolicNestedStruct {
         .stdout_lossy();
 
     assert!(stdout.contains("[PASS] checkStruct((uint256[],bytes))"), "{stdout}");
+});
+
+forgetest_init!(symbolic_allows_shorter_variants_with_positional_inner_lengths, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_allows_shorter_variants_with_positional_inner_lengths because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicMixedLengthSets.t.sol",
+        r#"
+contract SymbolicMixedLengthSets {
+    /// forge-config: default.symbolic.default_array_lengths = [1, 2]
+    /// forge-config: default.symbolic.array_lengths = [4, 4]
+    function checkBatch(bytes[] memory items) public pure {
+        assert(items.length == 1 || items.length == 2);
+        for (uint256 i; i < items.length; i++) {
+            assert(items[i].length == 4);
+        }
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkBatch"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMixedLengthSets.t.sol:SymbolicMixedLengthSets
+[PASS] checkBatch(bytes[]) ([METRICS])
+...
+"#]]);
+});
+
+forgetest_init!(symbolic_reports_calldata_variant_width_exhaustion, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_reports_calldata_variant_width_exhaustion because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicVariantLimit.t.sol",
+        r#"
+contract SymbolicVariantLimit {
+    /// forge-config: default.symbolic.width = 2
+    /// forge-config: default.symbolic.default_array_lengths = [1, 2]
+    /// forge-config: default.symbolic.default_bytes_lengths = [1, 2]
+    function checkVariants(bytes[] memory items) public pure {
+        items;
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkVariants"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicVariantLimit.t.sol:SymbolicVariantLimit
+[FAIL: incomplete symbolic execution (Stuck): symbolic calldata variant limit exceeded (2)] checkVariants(bytes[]) ([METRICS])
+...
+"#]]);
 });
 
 forgetest_init!(symbolic_rejects_malformed_halmos_array_lengths, |prj, cmd| {

@@ -16,6 +16,7 @@ pub(crate) struct PathState {
     pub(crate) next_symbol: usize,
     pub(crate) recorded_logs: Option<Vec<SymbolicLog>>,
     pub(crate) access_record: Option<AccessRecord>,
+    pub(crate) root_calldata: Option<SymbolicCalldata>,
     pub(crate) loop_jumps: BTreeMap<usize, u32>,
     pub(crate) expected_revert: Option<ExpectedRevert>,
     pub(crate) assume_no_revert_next_call: Option<AssumeNoRevert>,
@@ -39,6 +40,7 @@ impl PathState {
         ffi_enabled: bool,
     ) -> Self {
         let constraints = calldata.constraints.clone();
+        let call_data = calldata.call_data();
         Self {
             depth: 0,
             call_depth: 0,
@@ -54,7 +56,7 @@ impl PathState {
                 caller,
                 SymWord::Concrete(callvalue),
                 false,
-                calldata.call_data(),
+                call_data,
             ),
             world: SymbolicWorld::default(),
             prank: SymbolicPrank::default(),
@@ -62,6 +64,7 @@ impl PathState {
             next_symbol: 0,
             recorded_logs: None,
             access_record: None,
+            root_calldata: Some(calldata),
             loop_jumps: BTreeMap::new(),
             expected_revert: None,
             assume_no_revert_next_call: None,
@@ -101,6 +104,7 @@ impl PathState {
             next_symbol: 0,
             recorded_logs: None,
             access_record: None,
+            root_calldata: None,
             loop_jumps: BTreeMap::new(),
             expected_revert: None,
             assume_no_revert_next_call: None,

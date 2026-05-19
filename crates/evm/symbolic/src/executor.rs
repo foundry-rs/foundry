@@ -100,17 +100,19 @@ impl SymbolicExecutor {
             account.code.ok_or(SymbolicError::MissingCode(input.target))?.original_bytes().to_vec();
         let code = SymCode::concrete(code);
         let jumpdests = analyze_jumpdests(&code);
-        let calldata = SymbolicCalldata::new(input.function, &self.config)?;
-        let mut root = PathState::new(
-            input.target,
-            input.sender,
-            input.value,
-            calldata.clone(),
-            input.ffi_enabled,
-        );
-        root.apply_executor_env(input.executor);
-        root.world.set_storage_layout(self.config.storage_layout);
-        let mut worklist = VecDeque::from([root]);
+        let mut worklist = VecDeque::new();
+        for calldata in SymbolicCalldata::variants(input.function, &self.config)? {
+            let mut root = PathState::new(
+                input.target,
+                input.sender,
+                input.value,
+                calldata,
+                input.ffi_enabled,
+            );
+            root.apply_executor_env(input.executor);
+            root.world.set_storage_layout(self.config.storage_layout);
+            worklist.push_back(root);
+        }
         let mut completed_paths = 0usize;
         let mut reverted_paths = 0usize;
         let mut normal_paths = 0usize;
@@ -139,7 +141,9 @@ impl SymbolicExecutor {
                 let Some(op) = code.opcode(state.pc)? else {
                     if !state.expectations_satisfied() {
                         let (args, calldata_bytes) = self.materialize_stateless_counterexample(
-                            &calldata,
+                            state.root_calldata.as_ref().ok_or_else(|| {
+                                SymbolicError::Unsupported("missing root symbolic calldata")
+                            })?,
                             input.function,
                             &state,
                         )?;
@@ -167,7 +171,9 @@ impl SymbolicExecutor {
                         if !state.expectations_satisfied() {
                             let (args, calldata_bytes) = self
                                 .materialize_stateless_counterexample(
-                                    &calldata,
+                                    state.root_calldata.as_ref().ok_or_else(|| {
+                                        SymbolicError::Unsupported("missing root symbolic calldata")
+                                    })?,
                                     input.function,
                                     &state,
                                 )?;
@@ -190,7 +196,9 @@ impl SymbolicExecutor {
                     StepOutcome::Forked => break,
                     StepOutcome::Failure => {
                         let (args, calldata_bytes) = self.materialize_stateless_counterexample(
-                            &calldata,
+                            state.root_calldata.as_ref().ok_or_else(|| {
+                                SymbolicError::Unsupported("missing root symbolic calldata")
+                            })?,
                             input.function,
                             &state,
                         )?;
@@ -272,44 +280,36 @@ impl SymbolicExecutor {
                 for (target_idx, target) in input.targets.iter().enumerate() {
                     for (sender_idx, sender) in senders.iter().copied().enumerate() {
                         let prefix = format!("sequence_{depth}_{target_idx}_{sender_idx}");
-                        let calldata = SymbolicCalldata::new_with_prefix(
+                        let calldatas = SymbolicCalldata::variants_with_prefix(
                             &target.function,
                             &self.config,
                             prefix,
                         )?;
-                        let step = SequenceStepTemplate {
-                            sender,
-                            address: target.address,
-                            contract_name: target.contract_name.clone(),
-                            function: target.function.clone(),
-                            calldata,
-                        };
-                        let outcomes = self.execute_sequence_call(
-                            input.executor,
-                            sequence.state.clone(),
-                            target.address,
-                            sender,
-                            &target.function,
-                            step.calldata.call_data(),
-                            step.calldata.constraints.clone(),
-                            &mut completed_paths,
-                        )?;
+                        for calldata in calldatas {
+                            let step = SequenceStepTemplate {
+                                sender,
+                                address: target.address,
+                                contract_name: target.contract_name.clone(),
+                                function: target.function.clone(),
+                                calldata,
+                            };
+                            let outcomes = self.execute_sequence_call(
+                                input.executor,
+                                sequence.state.clone(),
+                                target.address,
+                                sender,
+                                &target.function,
+                                step.calldata.call_data(),
+                                step.calldata.constraints.clone(),
+                                &mut completed_paths,
+                            )?;
 
-                        for outcome in outcomes {
-                            let mut steps = sequence.steps.clone();
-                            steps.push(step.clone());
+                            for outcome in outcomes {
+                                let mut steps = sequence.steps.clone();
+                                steps.push(step.clone());
 
-                            match outcome.status {
-                                TopLevelCallStatus::Failure => {
-                                    let sequence =
-                                        self.materialize_sequence(&steps, &outcome.state)?;
-                                    return Ok(SymbolicInvariantRunResult::Counterexample {
-                                        sequence,
-                                        stats: self.stats_with_paths(completed_paths),
-                                    });
-                                }
-                                TopLevelCallStatus::Revert => {
-                                    if input.fail_on_revert {
+                                match outcome.status {
+                                    TopLevelCallStatus::Failure => {
                                         let sequence =
                                             self.materialize_sequence(&steps, &outcome.state)?;
                                         return Ok(SymbolicInvariantRunResult::Counterexample {
@@ -317,22 +317,10 @@ impl SymbolicExecutor {
                                             stats: self.stats_with_paths(completed_paths),
                                         });
                                     }
-                                }
-                                TopLevelCallStatus::Success => {
-                                    for invariant_outcome in self.execute_invariant_check(
-                                        input.executor,
-                                        outcome.state.clone(),
-                                        input.invariant_address,
-                                        input.sender,
-                                        input.invariant,
-                                        input.after_invariant,
-                                        &mut completed_paths,
-                                    )? {
-                                        if invariant_outcome.failed {
-                                            let sequence = self.materialize_sequence(
-                                                &steps,
-                                                &invariant_outcome.state,
-                                            )?;
+                                    TopLevelCallStatus::Revert => {
+                                        if input.fail_on_revert {
+                                            let sequence =
+                                                self.materialize_sequence(&steps, &outcome.state)?;
                                             return Ok(
                                                 SymbolicInvariantRunResult::Counterexample {
                                                     sequence,
@@ -340,20 +328,47 @@ impl SymbolicExecutor {
                                                 },
                                             );
                                         }
-                                        next_frontier.push(SequencePath {
-                                            state: invariant_outcome.state,
-                                            steps: steps.clone(),
-                                        });
+                                    }
+                                    TopLevelCallStatus::Success => {
+                                        for invariant_outcome in self.execute_invariant_check(
+                                            input.executor,
+                                            outcome.state.clone(),
+                                            input.invariant_address,
+                                            input.sender,
+                                            input.invariant,
+                                            input.after_invariant,
+                                            &mut completed_paths,
+                                        )? {
+                                            if invariant_outcome.failed {
+                                                let sequence = self.materialize_sequence(
+                                                    &steps,
+                                                    &invariant_outcome.state,
+                                                )?;
+                                                return Ok(
+                                                    SymbolicInvariantRunResult::Counterexample {
+                                                        sequence,
+                                                        stats: self
+                                                            .stats_with_paths(completed_paths),
+                                                    },
+                                                );
+                                            }
+                                            next_frontier.push(SequencePath {
+                                                state: invariant_outcome.state,
+                                                steps: steps.clone(),
+                                            });
+                                        }
                                     }
                                 }
-                            }
 
-                            if completed_paths >= path_limit {
-                                return Ok(SymbolicInvariantRunResult::Incomplete {
-                                    kind: SymbolicStopReason::Stuck,
-                                    reason: format!("symbolic path limit exceeded ({path_limit})"),
-                                    stats: self.stats_with_paths(completed_paths),
-                                });
+                                if completed_paths >= path_limit {
+                                    return Ok(SymbolicInvariantRunResult::Incomplete {
+                                        kind: SymbolicStopReason::Stuck,
+                                        reason: format!(
+                                            "symbolic path limit exceeded ({path_limit})"
+                                        ),
+                                        stats: self.stats_with_paths(completed_paths),
+                                    });
+                                }
                             }
                         }
                     }

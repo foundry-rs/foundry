@@ -1628,6 +1628,60 @@ fn extra_dynamic_lengths_are_rejected() {
 }
 
 #[test]
+/// Regression coverage for `positional_dynamic_lengths_allow_shorter_expanded_variants`.
+fn positional_dynamic_lengths_allow_shorter_expanded_variants() {
+    let function = Function::parse("check(bytes[])").unwrap();
+    let config = SymbolicConfig {
+        default_array_lengths: vec![1, 2],
+        array_lengths: vec![4, 4],
+        ..Default::default()
+    };
+
+    let variants = SymbolicCalldata::variants(&function, &config).unwrap();
+
+    assert_eq!(variants.len(), 2);
+    let element_counts = variants
+        .iter()
+        .map(|calldata| match &calldata.inputs[0].value {
+            SymbolicAbiValue::Array { elements } => elements.len(),
+            value => panic!("expected array input, got {value:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(element_counts, vec![1, 2]);
+}
+
+#[test]
+/// Regression coverage for `extra_dynamic_lengths_are_rejected_after_expansion`.
+fn extra_dynamic_lengths_are_rejected_after_expansion() {
+    let function = Function::parse("check(bytes[])").unwrap();
+    let config = SymbolicConfig {
+        default_array_lengths: vec![1, 2],
+        array_lengths: vec![4, 4, 4],
+        ..Default::default()
+    };
+
+    let err = SymbolicCalldata::variants(&function, &config).unwrap_err();
+
+    assert!(err.to_string().contains("ABI used at most 2 positional dynamic leaves"));
+}
+
+#[test]
+/// Regression coverage for `calldata_variant_expansion_respects_path_width`.
+fn calldata_variant_expansion_respects_path_width() {
+    let function = Function::parse("check(bytes[])").unwrap();
+    let config = SymbolicConfig {
+        width: Some(2),
+        default_array_lengths: vec![1, 2],
+        default_bytes_lengths: vec![1, 2],
+        ..Default::default()
+    };
+
+    let err = SymbolicCalldata::variants(&function, &config).unwrap_err();
+
+    assert!(matches!(err, SymbolicError::CalldataVariantLimit(2)));
+}
+
+#[test]
 /// Regression coverage for `symbolic_signextend_uses_sign_bit_ite`.
 fn symbolic_signextend_uses_sign_bit_ite() {
     assert_eq!(

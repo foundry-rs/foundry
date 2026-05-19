@@ -62,7 +62,7 @@ use tracing::Span;
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
 pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
 
-fn is_symbolic_entrypoint(func: &Function) -> bool {
+pub(crate) fn is_symbolic_entrypoint(func: &Function) -> bool {
     func.name.starts_with("check") || func.name.starts_with("prove")
 }
 
