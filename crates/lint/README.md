@@ -55,6 +55,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
   - `could-be-constant`: Recommends declaring never-written state variables with a compile-time-constant initializer as `constant`.
   - `custom-errors`: Recommends using custom errors instead of strings and plain reverts for potential gas savings.
+  - `external-function`: `public` functions never called internally should be declared `external` to avoid copying reference-type arguments into memory.
   - `unused-state-variables`: State variables that are never used should be removed.
   - `var-read-using-this`: Reads of state variables (or other `view`/`pure` functions) via `this` cause an unnecessary `STATICCALL`; access them directly.
 - **Code Size:**
