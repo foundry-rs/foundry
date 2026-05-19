@@ -38,6 +38,13 @@ library LocalLib {
     }
 }
 
+library ReceiverLib {
+    function remember(IReceiver self, uint256 value) internal pure returns (uint256) {
+        self;
+        return value;
+    }
+}
+
 struct Target {
     IReceiver receiver;
 }
@@ -57,6 +64,7 @@ contract Receiver {
 
 contract CallsLoop {
     using LocalLib for LocalLib.Box;
+    using ReceiverLib for IReceiver;
 
     address payable[] public recipients;
     IReceiver[] public receivers;
@@ -141,6 +149,12 @@ contract CallsLoop {
         }
     }
 
+    function callsThroughPublicHelper() external {
+        for (uint256 i; i < receivers.length; ++i) {
+            publicNotify(i);
+        }
+    }
+
     function selfExternalCall() external {
         for (uint256 i; i < receivers.length; ++i) {
             this.externalOnly(i);
@@ -168,6 +182,12 @@ contract CallsLoop {
         }
     }
 
+    function internalLibraryExtensionOnInterfaceIsIgnored() external {
+        for (uint256 i; i < receivers.length; ++i) {
+            receiver.remember(i);
+        }
+    }
+
     function localInternalCallsAreIgnored() external {
         for (uint256 i; i < boxes.length; ++i) {
             _local(i);
@@ -186,6 +206,10 @@ contract CallsLoop {
 
     function _pureNotify(IReceiver target_, uint256 value) internal pure {
         target_.purePing(value);
+    }
+
+    function publicNotify(uint256 value) public {
+        receiver.ping(value);
     }
 
     function _local(uint256 value) internal {

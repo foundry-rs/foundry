@@ -6,9 +6,13 @@ use crate::{
 use solar::{
     ast::{ElementaryType, Visibility},
     interface::{kw, sym},
-    sema::hir::{
-        self, Block, ContractId, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Res, Stmt,
-        StmtKind, TypeKind,
+    sema::{
+        Gcx, Ty,
+        hir::{
+            self, Block, ContractId, Expr, ExprKind, Function, FunctionId, Hir, ItemId, Res, Stmt,
+            StmtKind, TypeKind,
+        },
+        ty::TyKind,
     },
 };
 use std::collections::HashSet;
@@ -16,15 +20,16 @@ use std::collections::HashSet;
 declare_forge_lint!(CALLS_LOOP, Severity::Low, "calls-loop", "external call inside a loop");
 
 impl<'hir> LateLintPass<'hir> for CallsLoop {
-    fn check_function(
+    fn check_function_with_gcx(
         &mut self,
         ctx: &LintContext,
+        gcx: Gcx<'hir>,
         hir: &'hir Hir<'hir>,
         func: &'hir Function<'hir>,
     ) {
         let Some(body) = func.body else { return };
 
-        let mut analyzer = Analyzer::new(ctx, hir);
+        let mut analyzer = Analyzer::new(ctx, gcx, hir);
         analyzer.analyze_callable(func, body, 0);
     }
 }
@@ -33,6 +38,7 @@ type Placeholder<'hir> = Option<(&'hir [hir::Modifier<'hir>], usize, Block<'hir>
 
 struct Analyzer<'ctx, 's, 'c, 'hir> {
     ctx: &'ctx LintContext<'s, 'c>,
+    gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
     call_stack: Vec<FunctionId>,
     analyzed_loop_calls: HashSet<FunctionId>,
@@ -40,9 +46,10 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
 }
 
 impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
-    fn new(ctx: &'ctx LintContext<'s, 'c>, hir: &'hir Hir<'hir>) -> Self {
+    fn new(ctx: &'ctx LintContext<'s, 'c>, gcx: Gcx<'hir>, hir: &'hir Hir<'hir>) -> Self {
         Self {
             ctx,
+            gcx,
             hir,
             call_stack: Vec::new(),
             analyzed_loop_calls: HashSet::new(),
@@ -161,7 +168,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 }
 
                 if loop_depth > 0 {
-                    if is_external_call(self.hir, callee) {
+                    if is_external_call(self.gcx, self.hir, callee, args.len()) {
                         self.emit(expr);
                     }
                     for func_id in resolved_internal_function_ids(self.hir, callee) {
@@ -239,7 +246,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 }
 
-fn is_external_call(hir: &Hir<'_>, callee: &Expr<'_>) -> bool {
+fn is_external_call<'gcx>(
+    gcx: Gcx<'gcx>,
+    hir: &Hir<'gcx>,
+    callee: &Expr<'gcx>,
+    explicit_arg_count: usize,
+) -> bool {
     let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
 
     if matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
@@ -252,7 +264,49 @@ fn is_external_call(hir: &Hir<'_>, callee: &Expr<'_>) -> bool {
         return true;
     }
 
-    is_this(base) || is_contract_like(hir, base)
+    if is_this(base) {
+        return true;
+    }
+
+    if resolves_to_internal_library_extension(gcx, hir, base, *member, explicit_arg_count) {
+        return false;
+    }
+
+    matches!(semantic_member_ty(gcx, hir, base, member.name).map(|ty| ty.kind), Some(TyKind::FnPtr(func)) if func.visibility >= Visibility::Public)
+}
+
+fn resolves_to_internal_library_extension<'gcx>(
+    gcx: Gcx<'gcx>,
+    hir: &Hir<'gcx>,
+    base: &Expr<'gcx>,
+    member: solar::interface::Ident,
+    explicit_arg_count: usize,
+) -> bool {
+    member_function_ids(gcx, hir, base, member.name).into_iter().any(|func_id| {
+        let func = hir.function(func_id);
+        func.parameters.len() == explicit_arg_count + 1
+            && matches!(func.visibility, Visibility::Internal | Visibility::Private)
+            && func.contract.is_some_and(|contract_id| hir.contract(contract_id).kind.is_library())
+    })
+}
+
+fn member_function_ids<'gcx>(
+    gcx: Gcx<'gcx>,
+    hir: &Hir<'gcx>,
+    base: &Expr<'gcx>,
+    member_name: solar::interface::Symbol,
+) -> Vec<FunctionId> {
+    let Some(base_ty) = semantic_expr_ty(gcx, hir, base) else { return Vec::new() };
+
+    gcx.members_of(base_ty, base_item_source(hir, base), base_contract(hir, base))
+        .iter()
+        .filter(|member| member.name == member_name)
+        .filter_map(|member| match (member.res, member.ty.kind) {
+            (Some(Res::Item(ItemId::Function(func_id))), _) => Some(func_id),
+            (_, TyKind::FnPtr(func)) => func.function_id,
+            _ => None,
+        })
+        .collect()
 }
 
 fn resolved_internal_function_ids<'hir>(
@@ -273,7 +327,11 @@ fn resolved_internal_function_ids<'hir>(
 }
 
 const fn is_internal_callable(func: &Function<'_>) -> bool {
-    func.kind.is_function() && matches!(func.visibility, Visibility::Internal | Visibility::Private)
+    func.kind.is_function()
+        && matches!(
+            func.visibility,
+            Visibility::Public | Visibility::Internal | Visibility::Private
+        )
 }
 
 fn is_this(expr: &Expr<'_>) -> bool {
@@ -284,14 +342,6 @@ fn is_this(expr: &Expr<'_>) -> bool {
                 matches!(res, Res::Builtin(builtin) if builtin.name() == sym::this)
             })
     )
-}
-
-fn is_contract_like(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Call(callee, _, _) if contract_type_expr_id(callee).is_some() => true,
-        ExprKind::New(hir::Type { kind: TypeKind::Custom(ItemId::Contract(_)), .. }) => true,
-        _ => expr_type(hir, expr).is_some_and(type_is_contract_like),
-    }
 }
 
 fn is_address_like(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
@@ -318,10 +368,6 @@ fn is_address_type_expr(expr: &Expr<'_>) -> bool {
         &expr.peel_parens().kind,
         ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ElementaryType::Address(_)), .. })
     )
-}
-
-const fn type_is_contract_like(ty: &hir::Type<'_>) -> bool {
-    matches!(ty.kind, TypeKind::Custom(ItemId::Contract(_)))
 }
 
 const fn type_contract_id(ty: &hir::Type<'_>) -> Option<ContractId> {
@@ -427,4 +473,86 @@ fn member_type<'hir>(
         }
         _ => None,
     })
+}
+
+fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<Ty<'gcx>> {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(reses) => {
+            let res = unique(reses.iter().filter(|res| !matches!(res, Res::Err(_))).copied())
+                .or_else(|| {
+                    unique(reses.iter().filter_map(|res| {
+                        res.as_variable().map(|var_id| Res::Item(ItemId::Variable(var_id)))
+                    }))
+                })?;
+            Some(gcx.type_of_res(res))
+        }
+        ExprKind::Index(base, _) => semantic_index_ty(gcx, hir, base),
+        ExprKind::Member(base, member) => semantic_member_ty(gcx, hir, base, member.name),
+        ExprKind::Call(callee, _, _) => {
+            let callee_ty = semantic_expr_ty(gcx, hir, callee)?;
+            match callee_ty.kind {
+                TyKind::FnPtr(func) => semantic_fn_call_return_ty(gcx, func.returns),
+                TyKind::Type(to) => Some(to),
+                _ => None,
+            }
+        }
+        ExprKind::New(ty) | ExprKind::Type(ty) | ExprKind::TypeCall(ty) => {
+            Some(gcx.mk_ty(TyKind::Type(gcx.type_of_hir_ty(ty))))
+        }
+        ExprKind::Payable(_) => Some(gcx.types.address_payable),
+        _ => None,
+    }
+}
+
+fn semantic_index_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, base: &Expr<'gcx>) -> Option<Ty<'gcx>> {
+    let base_ty = semantic_expr_ty(gcx, hir, base)?;
+    match base_ty.peel_refs().kind {
+        TyKind::Mapping(_, value) => Some(value),
+        _ => base_ty.base_type(gcx),
+    }
+}
+
+fn semantic_member_ty<'gcx>(
+    gcx: Gcx<'gcx>,
+    hir: &Hir<'gcx>,
+    base: &Expr<'gcx>,
+    member_name: solar::interface::Symbol,
+) -> Option<Ty<'gcx>> {
+    let base_ty = semantic_expr_ty(gcx, hir, base)?;
+    unique(
+        gcx.members_of(base_ty, base_item_source(hir, base), base_contract(hir, base))
+            .iter()
+            .filter(|member| member.name == member_name)
+            .map(|member| member.ty),
+    )
+}
+
+fn semantic_fn_call_return_ty<'gcx>(gcx: Gcx<'gcx>, returns: &'gcx [Ty<'gcx>]) -> Option<Ty<'gcx>> {
+    Some(match returns {
+        [] => gcx.types.unit,
+        [ret] => *ret,
+        _ => gcx.mk_ty_tuple(returns),
+    })
+}
+
+fn base_item_source(hir: &Hir<'_>, expr: &Expr<'_>) -> solar::sema::hir::SourceId {
+    referenced_item(expr)
+        .map(|id| hir.item(id).source())
+        .unwrap_or_else(|| hir.sources_enumerated().next().expect("HIR has a source").0)
+}
+
+fn base_contract(hir: &Hir<'_>, expr: &Expr<'_>) -> Option<ContractId> {
+    referenced_item(expr).and_then(|id| hir.item(id).contract())
+}
+
+fn referenced_item(expr: &Expr<'_>) -> Option<ItemId> {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident([Res::Item(id), ..]) => Some(*id),
+        _ => None,
+    }
+}
+
+fn unique<T>(mut iter: impl Iterator<Item = T>) -> Option<T> {
+    let first = iter.next()?;
+    iter.next().is_none().then_some(first)
 }
