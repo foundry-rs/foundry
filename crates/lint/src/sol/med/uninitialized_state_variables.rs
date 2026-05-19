@@ -5,7 +5,7 @@ use crate::{
 };
 use solar::{
     ast::ContractKind,
-    interface::{data_structures::Never, sym},
+    interface::data_structures::Never,
     sema::{
         Hir,
         hir::{
@@ -222,13 +222,11 @@ fn collect_expr_writes_checked<'hir>(
             collect_expr_writes_checked(hir, rhs, candidates, writes)?;
         }
         ExprKind::Call(callee, args, named_args) => {
-            // arr.push(...) / arr.pop() mutate a dynamic array stored in a
-            // candidate state variable; treat the receiver as a write target.
-            if let ExprKind::Member(base, member) = &callee.kind {
-                let name = member.name;
-                if name == sym::push || name.as_str() == "pop" {
-                    collect_lvalue_writes(base, candidates, writes);
-                }
+            if let ExprKind::Member(base, _) = &callee.kind {
+                // Covers push/pop and library dispatch (`using Lib for T` with `T storage self`);
+                // can't resolve callee without Gcx. Treat the receiver as a write target to avoid
+                // false positives.
+                collect_lvalue_writes(base, candidates, writes);
             }
 
             // Direct calls to internal functions that take a `storage` parameter

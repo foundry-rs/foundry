@@ -242,3 +242,28 @@ contract StorageRefCall {
         return slot.val;
     }
 }
+
+// ── Library dispatch: data.set(v) writes `data` via `using Lib for Data` ────
+
+library DataLib {
+    struct Data { uint256 val; }
+    function set(Data storage self, uint256 v) internal {
+        self.val = v;
+    }
+    function get(Data storage self) internal view returns (uint256) {
+        return self.val;
+    }
+}
+
+contract LibraryDispatch {
+    using DataLib for DataLib.Data;
+    DataLib.Data public slot;
+
+    function set(uint256 v) external {
+        slot.set(v);
+    }
+
+    function get() public view returns (uint256) {
+        return slot.get();
+    }
+}
