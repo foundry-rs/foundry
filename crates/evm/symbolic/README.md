@@ -101,10 +101,10 @@ this order:
    leaf that was not matched by a named or type-specific default.
 4. `symbolic.default_dynamic_length`.
 
-Length-set config fields accept Halmos-style arrays for compatibility. The
-executor currently builds one deterministic calldata shape per symbolic run, so
-it uses the first length in each set. Extra positional `array_lengths` entries
-are rejected as config errors.
+Length-set config fields accept Halmos-style arrays and expand into separate
+symbolic calldata shapes. For nested dynamic values, Foundry explores the cross
+product implied by the selected outer lengths. Extra positional `array_lengths`
+entries are rejected as config errors.
 
 Supported ABI shapes include:
 
