@@ -48,6 +48,9 @@ use redundant_base_constructor_call::REDUNDANT_BASE_CONSTRUCTOR_CALL;
 mod missing_inheritance;
 use missing_inheritance::MISSING_INHERITANCE;
 
+mod event_fields;
+use event_fields::EVENT_FIELDS;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -66,4 +69,5 @@ register_lints!(
     (LowLevelCalls, early, (LOW_LEVEL_CALLS)),
     (RedundantBaseConstructorCall, late, (REDUNDANT_BASE_CONSTRUCTOR_CALL)),
     (MissingInheritance, project, (MISSING_INHERITANCE)),
+    (EventFields, early, (EVENT_FIELDS)),
 );
