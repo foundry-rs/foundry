@@ -288,8 +288,7 @@ contract ExpectRevertWithReverterTest is Test {
         aContract.callAndRevertInCContract();
     }
 
-    // The reverter for a CREATE that reverts is the would-be deployed address
-    // (innermost-wins, mirroring CALL semantics).
+    // The reverter for a CREATE that reverts is the would-be deployed address.
     function testExpectRevertsWithReverterInConstructor() public {
         address expected;
 
@@ -330,7 +329,7 @@ contract ExpectRevertWithReverterTest is Test {
     }
 
     // <https://github.com/foundry-rs/foundry/issues/14613>
-    // Nested CREATE chain: innermost reverter wins, matching CALL semantics.
+    // Nested CREATE chain: innermost failed deployment wins.
     function testExpectRevertsWithReverterNestedCreate() public {
         address outer = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
         // Contracts start at nonce 1; the inner DContract is outer's first creation.

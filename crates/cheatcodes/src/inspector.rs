@@ -1906,6 +1906,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // released after each successful iteration (see below) so each iteration
             // independently records its own innermost CREATE.
             //
+            // This intentionally differs from `call_end` for `count > 1`, where
+            // legacy nested CALL handling reports the outermost call per iteration.
+            //
             // `outcome.address` is `None` for pre-frame rejection (depth/balance/nonce);
             // in that case the surrounding `call_end` records the caller as the reverter.
             if outcome.result.is_revert()

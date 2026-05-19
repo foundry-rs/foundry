@@ -5747,7 +5747,7 @@
     {
       "func": {
         "id": "expectRevert_3",
-        "description": "Expects an error with any revert data on next call to reverter address.\nThe `reverter` argument is matched against the address of the innermost\nframe that produced the revert:\n  - For a CALL: the address that was called.\n  - For a CREATE / CREATE2: the would-be deployed address of the failed\n    deployment (computed from the deployer + nonce, or salt + initcode).\nIn a nested chain the deepest reverting frame wins, regardless of whether\nthe chain is composed of CALLs, CREATEs, or a mix. With `count > 1` the\nsame rule applies independently to each iteration.",
+        "description": "Expects an error with any revert data on next call to reverter address.\nThe `reverter` argument is matched against the address associated with\nthe frame that produced the revert:\n  - For a CALL: the address that was called.\n  - For a CREATE / CREATE2: the would-be deployed address of the failed\n    deployment (computed from the deployer + nonce, or salt + initcode).\nFor a single expected revert, the innermost reverting frame wins in\nnested CALL, CREATE, or mixed chains. With `count > 1`, nested\nCREATE / CREATE2 chains apply the same rule independently to each\niteration; nested CALL chains keep their existing\noutermost-call-per-iteration behavior.",
         "declaration": "function expectRevert(address reverter) external;",
         "visibility": "external",
         "mutability": "",

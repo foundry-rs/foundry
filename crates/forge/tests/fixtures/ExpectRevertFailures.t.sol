@@ -269,8 +269,8 @@ contract ExpectRevertWithReverterFailureTest is DSTest {
 
     // <https://github.com/foundry-rs/foundry/issues/14613>
     // Regression: documents innermost-wins semantics for nested CREATEs — the
-    // matched reverter is the *innermost* would-be-deployed address, mirroring
-    // CALL semantics. Supplying the outer address must fail.
+    // matched reverter is the *innermost* would-be-deployed address. Supplying
+    // the outer address must fail.
     function testShouldFailExpectRevertNestedCreateOuterAddress() public {
         // Outer = NestedDContractCreator at this contract's next nonce. Under
         // innermost-wins, the matched reverter is the inner DContract, not the

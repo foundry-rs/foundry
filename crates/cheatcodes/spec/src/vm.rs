@@ -1166,15 +1166,17 @@ interface Vm {
 
     /// Expects an error with any revert data on next call to reverter address.
     ///
-    /// The `reverter` argument is matched against the address of the innermost
-    /// frame that produced the revert:
+    /// The `reverter` argument is matched against the address associated with
+    /// the frame that produced the revert:
     ///   - For a CALL: the address that was called.
     ///   - For a CREATE / CREATE2: the would-be deployed address of the failed
     ///     deployment (computed from the deployer + nonce, or salt + initcode).
     ///
-    /// In a nested chain the deepest reverting frame wins, regardless of whether
-    /// the chain is composed of CALLs, CREATEs, or a mix. With `count > 1` the
-    /// same rule applies independently to each iteration.
+    /// For a single expected revert, the innermost reverting frame wins in
+    /// nested CALL, CREATE, or mixed chains. With `count > 1`, nested
+    /// CREATE / CREATE2 chains apply the same rule independently to each
+    /// iteration; nested CALL chains keep their existing
+    /// outermost-call-per-iteration behavior.
     #[cheatcode(group = Testing, safety = Unsafe)]
     function expectRevert(address reverter) external;
 
