@@ -321,10 +321,12 @@ impl SymbolicExecutor {
                                         if input.fail_on_revert {
                                             let sequence =
                                                 self.materialize_sequence(&steps, &outcome.state)?;
-                                            return Ok(SymbolicInvariantRunResult::Counterexample {
-                                                sequence,
-                                                stats: self.stats_with_paths(completed_paths),
-                                            });
+                                            return Ok(
+                                                SymbolicInvariantRunResult::Counterexample {
+                                                    sequence,
+                                                    stats: self.stats_with_paths(completed_paths),
+                                                },
+                                            );
                                         }
                                     }
                                     TopLevelCallStatus::Success => {
@@ -342,10 +344,13 @@ impl SymbolicExecutor {
                                                     &steps,
                                                     &invariant_outcome.state,
                                                 )?;
-                                                return Ok(SymbolicInvariantRunResult::Counterexample {
-                                                    sequence,
-                                                    stats: self.stats_with_paths(completed_paths),
-                                                });
+                                                return Ok(
+                                                    SymbolicInvariantRunResult::Counterexample {
+                                                        sequence,
+                                                        stats: self
+                                                            .stats_with_paths(completed_paths),
+                                                    },
+                                                );
                                             }
                                             next_frontier.push(SequencePath {
                                                 state: invariant_outcome.state,
