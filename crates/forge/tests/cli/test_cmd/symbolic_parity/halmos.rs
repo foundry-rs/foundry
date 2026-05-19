@@ -3,23 +3,23 @@ use crate::skip_unless_z3;
 use foundry_test_utils::{forgetest_init, str};
 
 // ---------------------------------------------------------------------------
-// MakerDAO MiniVat — sanity-check that a correct invariant PROVES.
+// MakerDAO MiniVat — linear smoke version.
 // ---------------------------------------------------------------------------
-// Bounded version of https://github.com/a16z/halmos/blob/main/examples/invariants/src/MiniVat.sol
-// Here the invariant `debt == sum(urns)` truly holds; symbolic execution must
-// prove (not falsify) it within the invariant_depth budget.
-forgetest_init!(minivat_invariant_holds, |prj, cmd| {
-    skip_unless_z3!("minivat_invariant_holds");
+// Stand-in for https://github.com/a16z/halmos/blob/main/examples/invariants/src/MiniVat.sol
+// that drops `rate`/`Art` and reduces the invariant to `urn == debt`. Every
+// mutation moves them by the same scalar so the engine has nothing to do
+// beyond confirming two identical `+=`/`-=` produce equal state. Kept to
+// exercise the symbolic invariant harness on a trivially preserved property;
+// the canonical Fundamental Equation of DAI variant lives below.
+forgetest_init!(minivat_linear_smoke_parity, |prj, cmd| {
+    skip_unless_z3!("minivat_linear_smoke_parity");
 
     prj.add_test(
-        "MiniVatHolds.t.sol",
+        "MiniVatLinear.t.sol",
         r#"
 import "forge-std/Test.sol";
 
 contract MiniVat {
-    // Single-account simplification of the MakerDAO Vat for CI-bounded symbolic
-    // proof. The invariant `urn == debt` should hold trivially because every
-    // mutation moves them by the same amount, with no path to divergence.
     uint256 public urn;
     uint256 public debt;
 
@@ -39,7 +39,7 @@ contract MiniVat {
     }
 }
 
-contract MiniVatHolds is Test {
+contract MiniVatLinear is Test {
     MiniVat vat;
 
     function setUp() public {
@@ -60,8 +60,79 @@ contract MiniVatHolds is Test {
         .success()
         .stdout_eq(str![[r#"
 ...
-Ran 1 test for test/MiniVatHolds.t.sol:MiniVatHolds
+Ran 1 test for test/MiniVatLinear.t.sol:MiniVatLinear
 [PASS] invariant_debtEqualsUrn() ([METRICS])
 ...
 "#]]);
 });
+
+// ---------------------------------------------------------------------------
+// MakerDAO MiniVat — Fundamental Equation of DAI (faithful upstream invariant).
+// ---------------------------------------------------------------------------
+// Faithful port of https://github.com/a16z/halmos/blob/main/examples/invariants/test/MiniVat.t.sol
+// proving `debt == Art * rate` across arbitrary interleavings of `init` /
+// `frob` / `fold`. This is a nonlinear multi-variable algebraic identity:
+// `frob(dart)` adds `dart * rate` to debt, `fold(delta)` mutates `rate` and
+// adds `Art * delta` to debt.
+//
+// Currently `#[ignore]`: the symbolic engine returns `solver returned unknown`
+// (Z3 timeout on `bv-mul` between two free symbolic uint256 values) — same
+// nonlinear arithmetic gap as `erc4626_inflation_attack`. Re-enable when
+// nonlinear invariant proofs are supported.
+forgetest_init!(
+    #[ignore = "engine gap: nonlinear bv-mul (Art * rate, symbolic*symbolic) returns solver unknown"]
+    minivat_fundamental_equation_parity,
+    |prj, cmd| {
+        skip_unless_z3!("minivat_fundamental_equation_parity");
+
+        prj.add_test(
+            "MiniVatFundamental.t.sol",
+            r#"
+import "forge-std/Test.sol";
+
+contract MiniVat {
+    uint256 public Art;
+    uint256 public rate;
+    uint256 public debt;
+
+    function init() public {
+        require(rate == 0, "rate not zero");
+        rate = 10**27;
+    }
+
+    function frob(uint128 dart) public {
+        unchecked {
+            Art += dart;
+            debt += uint256(dart) * rate;
+        }
+    }
+
+    function fold(uint128 delta) public {
+        unchecked {
+            rate += delta;
+            debt += Art * uint256(delta);
+        }
+    }
+}
+
+contract MiniVatFundamental is Test {
+    MiniVat vat;
+
+    function setUp() public {
+        vat = new MiniVat();
+        targetContract(address(vat));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.symbolic.width = 2048
+    function invariant_dai() public view {
+        assertEq(vat.debt(), vat.Art() * vat.rate(), "Fundamental Equation of DAI");
+    }
+}
+"#,
+        );
+
+        assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "invariant_dai"]))
+            .failure();
+    }
+);

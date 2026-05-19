@@ -75,9 +75,11 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 // ---------------------------------------------------------------------------
 // ERC20 approve overwrite race — classic non-atomic approve footgun.
 // ---------------------------------------------------------------------------
-// If a spender's `transferFrom` is interleaved between an `approve(N1)` and a
-// later `approve(N2)`, the spender can pull `N1 + N2`. We assert the property
-// `transferred <= max(N1, N2)` and let the engine find the interleaving.
+// The canonical front-run sequence is encoded literally in the test body:
+// owner `approve(N1)` → spender `transferFrom(N1)` → owner `approve(N2)` →
+// spender `transferFrom(N2)`. The engine does NOT discover the interleaving
+// itself; it solves for symbolic `N1`, `N2` over this fixed call sequence and
+// witnesses the property violation `balanceOf(spender) > max(N1, N2)`.
 forgetest_init!(erc20_approve_race, |prj, cmd| {
     skip_unless_z3!("erc20_approve_race");
 
