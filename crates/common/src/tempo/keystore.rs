@@ -6,7 +6,9 @@
 use alloy_primitives::{Address, hex};
 use alloy_rlp::Decodable;
 use serde::{Deserialize, Serialize};
-use std::{env, fs, io::Write, path::PathBuf};
+use std::{env, path::PathBuf};
+
+use super::registry::{read_toml_file, write_toml_file_atomic};
 
 /// Environment variable for an ephemeral Tempo private key.
 pub const TEMPO_PRIVATE_KEY_ENV: &str = "TEMPO_PRIVATE_KEY";
@@ -127,26 +129,7 @@ pub fn tempo_keys_path() -> Option<PathBuf> {
 /// Errors are logged as warnings.
 pub fn read_tempo_keys_file() -> Option<KeysFile> {
     let keys_path = tempo_keys_path()?;
-    if !keys_path.exists() {
-        tracing::trace!(?keys_path, "tempo keys file not found");
-        return None;
-    }
-
-    let contents = match fs::read_to_string(&keys_path) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::warn!(?keys_path, %e, "failed to read tempo keys file");
-            return None;
-        }
-    };
-
-    match toml::from_str(&contents) {
-        Ok(f) => Some(f),
-        Err(e) => {
-            tracing::warn!(?keys_path, %e, "failed to parse tempo keys file");
-            None
-        }
-    }
+    read_toml_file(&keys_path, "tempo keys")
 }
 
 /// Decodes a hex-encoded, RLP-encoded key authorization.
@@ -168,25 +151,16 @@ pub fn decode_key_authorization<T: Decodable>(hex_str: &str) -> eyre::Result<T> 
 /// temp file + rename so a crash mid-write cannot corrupt the file.
 pub(crate) fn upsert_key_entry(entry: KeyEntry) -> eyre::Result<()> {
     let path = tempo_keys_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
-    let dir = path.parent().ok_or_else(|| eyre::eyre!("invalid keys path: {}", path.display()))?;
-    fs::create_dir_all(dir)?;
-
     let mut file = read_tempo_keys_file().unwrap_or_default();
     file.keys
         .retain(|k| !(k.wallet_address == entry.wallet_address && k.chain_id == entry.chain_id));
     file.keys.push(entry);
 
-    let body = toml::to_string_pretty(&file)?;
-    let contents = format!(
-        "# Tempo wallet keys — managed by Foundry / Tempo CLI.\n# Do not edit manually.\n\n{body}"
-    );
-
-    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
-    tmp.write_all(contents.as_bytes())?;
-    tmp.flush()?;
-    tmp.persist(&path).map_err(|e| eyre::eyre!("failed to persist keys.toml: {e}"))?;
-
-    Ok(())
+    write_toml_file_atomic(
+        &path,
+        &file,
+        "# Tempo wallet keys — managed by Foundry / Tempo CLI.\n# Do not edit manually.",
+    )
 }
 
 #[cfg(test)]

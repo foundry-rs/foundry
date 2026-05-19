@@ -11,10 +11,13 @@ use foundry_wallets::{RawWalletOpts, WalletOpts, WalletSigner};
 use std::sync::Arc;
 
 mod keystore;
+mod registry;
+mod session;
 
 pub(crate) use auth::is_known_tempo_endpoint;
 pub use auth::{AccessKeyOutcome, EnsureAccessKeyConfig, ensure_access_key};
 pub use keystore::*;
+pub use session::*;
 
 #[cfg(test)]
 pub(crate) use keystore::test_env_mutex;
