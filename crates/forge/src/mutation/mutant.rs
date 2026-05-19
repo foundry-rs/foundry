@@ -91,6 +91,8 @@ where
         "Shl" => Ok(BinOpKind::Shl),
         "Shr" => Ok(BinOpKind::Shr),
         "Sar" => Ok(BinOpKind::Sar),
+        "Pow" => Ok(BinOpKind::Pow),
+        "Rem" => Ok(BinOpKind::Rem),
         other => Err(serde::de::Error::custom(format!("Unknown BinOpKind: {other}"))),
     }
 }

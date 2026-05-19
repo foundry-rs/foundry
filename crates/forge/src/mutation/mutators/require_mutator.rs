@@ -63,15 +63,15 @@ impl Mutator for RequireMutator {
         let source = context.source.unwrap_or("");
         let condition_text = extract_span_text(source, condition_expr.span);
 
-        // Build the rest of the call (message argument if present)
+        // Build the rest of the call (message and other arguments after the condition,
+        // if any) using span-based extraction so that commas inside the condition
+        // expression (e.g. `require(foo(a, b))`) do not break splitting.
         let rest_args = if args_exprs.len() > 1 {
-            let first_comma = original.find(',').unwrap_or(original.len());
-            let close_paren = original.rfind(')').unwrap_or(original.len());
-            if first_comma < close_paren {
-                original[first_comma..close_paren].to_string()
-            } else {
-                String::new()
-            }
+            // Extract from the character right after the condition expression up to
+            // the last argument's end.
+            let start = condition_expr.span.hi().0 as usize;
+            let end = args_exprs.last().map(|e| e.span.hi().0 as usize).unwrap_or(start);
+            source.get(start..end).map(|s| s.to_string()).unwrap_or_default()
         } else {
             String::new()
         };

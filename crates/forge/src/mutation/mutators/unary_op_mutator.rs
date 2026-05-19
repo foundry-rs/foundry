@@ -37,10 +37,10 @@ impl Mutator for UnaryOpMutator {
                 _ => String::new(),
             },
             ExprKind::Ident(inner) => inner.to_string(),
-            ExprKind::Member(expr, ident) => {
-                match expr.kind {
+            ExprKind::Member(base, member) => {
+                match base.kind {
                     ExprKind::Ident(inner) => {
-                        format!("{}{}", ident.as_str(), inner.to_string())
+                        format!("{}.{}", inner.as_str(), member.as_str())
                     } // @todo not supporting something like a.b[0]++
                     _ => String::new(),
                 }

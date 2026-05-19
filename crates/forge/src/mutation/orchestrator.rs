@@ -94,8 +94,12 @@ pub async fn run_mutation_testing(
             sh_println!("Running mutation tests for {}", path.display())?;
         }
 
-        // Create handler for this file
+        // Create handler for this file, optionally restricting to a subset of
+        // contracts by name when --mutate-contract is provided.
         let mut handler = MutationHandler::new(path.clone(), config.clone());
+        if let Some(filter) = &mutation_config.mutate_contract_pattern {
+            handler = handler.with_contract_filter(filter.clone());
+        }
         handler.read_source_contract()?;
 
         // Get build ID for caching
@@ -121,9 +125,6 @@ pub async fn run_mutation_testing(
             continue;
         }
 
-        // Load survived spans for adaptive mutation testing
-        handler.retrieve_survived_spans(&build_id);
-
         // Generate or load cached mutants
         let mut mutants = if let Some(ms) = handler.retrieve_cached_mutants(&build_id) {
             ms
@@ -138,6 +139,11 @@ pub async fn run_mutation_testing(
             }
             continue;
         }
+
+        // Load survived spans for adaptive mutation testing. Only loaded after
+        // we successfully obtained mutants for this build, so a stale survived
+        // cache from a different mutant set is not applied.
+        handler.retrieve_survived_spans(&build_id);
 
         // Sort mutations by span for optimal adaptive testing
         mutants.sort_by(|a, b| {

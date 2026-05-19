@@ -232,6 +232,9 @@ pub struct MutationHandler {
     config: Arc<foundry_config::Config>,
     report: MutationsSummary,
     survived_spans: SurvivedSpans,
+    /// Optional regex used to restrict mutation to specific contracts within
+    /// the file (matches against contract name).
+    contract_filter: Option<regex::Regex>,
 }
 
 impl MutationHandler {
@@ -243,7 +246,14 @@ impl MutationHandler {
             config,
             report: MutationsSummary::new(),
             survived_spans: SurvivedSpans::new(),
+            contract_filter: None,
         }
+    }
+
+    /// Restrict mutation to contracts whose name matches `filter`.
+    pub fn with_contract_filter(mut self, filter: regex::Regex) -> Self {
+        self.contract_filter = Some(filter);
+        self
     }
 
     pub fn read_source_contract(&mut self) -> Result<(), std::io::Error> {
@@ -280,7 +290,9 @@ impl MutationHandler {
 
     /// Returns the cache file path for the given build hash and extension.
     /// The filename encodes a hash of the full contract path to prevent collisions
-    /// between files with the same stem in different directories.
+    /// between files with the same stem in different directories, and a hash of
+    /// the active mutation config so changes to enabled operators invalidate
+    /// previously cached mutants/results.
     fn cache_file_path(&self, hash: &str, ext: &str) -> PathBuf {
         use std::{
             collections::hash_map::DefaultHasher,
@@ -289,12 +301,22 @@ impl MutationHandler {
         let mut hasher = DefaultHasher::new();
         self.contract_to_mutate.hash(&mut hasher);
         let path_hash = hasher.finish();
+
+        // Hash the effective set of enabled mutation operators so cache entries
+        // are invalidated when the user changes `include_operators` /
+        // `exclude_operators` in their config.
+        let mut cfg_hasher = DefaultHasher::new();
+        for op in self.config.mutation.enabled_operators() {
+            op.to_string().hash(&mut cfg_hasher);
+        }
+        let cfg_hash = cfg_hasher.finish();
+
         let stem =
             self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
         self.config
             .root
             .join(&self.config.mutation_dir)
-            .join(format!("{hash}_{stem}_{path_hash:x}.{ext}"))
+            .join(format!("{hash}_{stem}_{path_hash:x}_{cfg_hash:x}.{ext}"))
     }
 
     /// Persists cached mutants using build hash for cache invalidation.
@@ -331,6 +353,7 @@ impl MutationHandler {
         let sess = Session::builder().with_silent_emitter(None).build();
 
         let survived_spans_clone = self.survived_spans.clone();
+        let contract_filter = self.contract_filter.clone();
 
         let result = sess.enter(|| -> solar::interface::Result<Vec<Mutant>> {
             let arena = solar::ast::Arena::new();
@@ -345,6 +368,11 @@ impl MutationHandler {
             let mut mutant_visitor = MutantVisitor::with_operators(path.clone(), &operators)
                 .with_span_filter(move |span| survived_spans_clone.should_skip(span))
                 .with_source(&target_content);
+
+            if let Some(filter) = contract_filter {
+                mutant_visitor =
+                    mutant_visitor.with_contract_filter(move |name| filter.is_match(name));
+            }
             let _ = mutant_visitor.visit_source_unit(&ast);
 
             if mutant_visitor.skipped_count > 0 && !silent {

@@ -226,10 +226,15 @@ pub struct TestArgs {
     pub mutate: Option<Vec<PathBuf>>,
 
     /// Specify which files to mutate with glob pattern matching.
-    #[arg(long, value_name = "PATTERN", requires = "mutate")]
+    ///
+    /// Mutually exclusive with passing explicit paths to `--mutate`; either
+    /// supply paths to `--mutate` or use this glob filter, not both.
+    #[arg(long, value_name = "PATTERN", requires = "mutate", conflicts_with = "mutate_contract")]
     pub mutate_path: Option<GlobMatcher>,
 
-    /// Only run tests in contracts matching the specified regex pattern.
+    /// Only mutate contracts whose name matches the specified regex pattern.
+    ///
+    /// Mutually exclusive with `--mutate-path`.
     #[arg(long, value_name = "REGEX", requires = "mutate")]
     pub mutate_contract: Option<regex::Regex>,
 
@@ -536,6 +541,15 @@ impl TestArgs {
             // Check outcome here, stop if any test failed
             if outcome.failed() > 0 {
                 eyre::bail!("Cannot run mutation testing with failed tests");
+            }
+
+            // Explicit paths on --mutate cannot be combined with the --mutate-path
+            // glob filter: clap can't express this directly because --mutate takes
+            // an optional list of paths.
+            if !mutate.is_empty() && self.mutate_path.is_some() {
+                eyre::bail!(
+                    "`--mutate-path <PATTERN>` cannot be combined with explicit paths passed to `--mutate`; pass either paths or a glob pattern, not both"
+                );
             }
 
             let json_output = shell::is_json();
