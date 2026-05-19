@@ -2,6 +2,11 @@ use eyre::Result;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{fs, io::Write, path::Path};
 
+/// Shared TOML registry helpers for Tempo local state.
+///
+/// We keep the read/parse and atomic write logic here so `keys.toml`,
+/// `sessions.toml`, and any future Tempo registry files all use the same
+/// persistence semantics instead of duplicating the same boilerplate.
 pub(crate) fn read_toml_file<T: DeserializeOwned>(path: &Path, label: &str) -> Option<T> {
     if !path.exists() {
         tracing::trace!(?path, "{label} file not found");
@@ -25,6 +30,10 @@ pub(crate) fn read_toml_file<T: DeserializeOwned>(path: &Path, label: &str) -> O
     }
 }
 
+/// Write a Tempo registry file atomically via temp file + rename.
+///
+/// This keeps every registry on the same durability path and avoids repeating
+/// the same create-dir / serialize / flush / persist sequence in each caller.
 pub(crate) fn write_toml_file_atomic<T: Serialize>(
     path: &Path,
     value: &T,
