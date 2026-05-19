@@ -48,6 +48,7 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
             placeholder: None,
             modifier_stack: Vec::new(),
             call_stack: Vec::new(),
+            dispatch_contract: func.contract,
             current_contract: func.contract,
         };
         checker.visit_modifier_chain(func.modifiers, 0, body, func.contract);
@@ -69,6 +70,7 @@ struct DelegatecallLoopChecker<'a, 's, 'hir> {
     placeholder: Option<ModifierContinuation<'hir>>,
     modifier_stack: Vec<FunctionId>,
     call_stack: Vec<FunctionId>,
+    dispatch_contract: Option<ContractId>,
     current_contract: Option<ContractId>,
 }
 
@@ -270,11 +272,19 @@ impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
     }
 
     fn super_function_ids(&self, member_name: solar::interface::Symbol) -> Vec<FunctionId> {
-        let Some(contract_id) = self.current_contract else {
+        let (Some(dispatch_contract), Some(current_contract)) =
+            (self.dispatch_contract, self.current_contract)
+        else {
             return Vec::new();
         };
 
-        for &base_id in self.hir.contract(contract_id).linearized_bases.iter().skip(1) {
+        let linearized_bases = self.hir.contract(dispatch_contract).linearized_bases;
+        let Some(current_index) = linearized_bases.iter().position(|&id| id == current_contract)
+        else {
+            return Vec::new();
+        };
+
+        for &base_id in linearized_bases.iter().skip(current_index + 1) {
             let funcs = self.contract_function_ids(base_id, member_name);
             if !funcs.is_empty() {
                 return funcs;
@@ -444,11 +454,7 @@ fn expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<T
                 .collect::<Option<Vec<_>>>()?;
             Some(gcx.mk_ty_tuple(gcx.mk_tys(&tys)))
         }
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            if !expr_ty(gcx, hir, cond)?.convert_implicit_to(gcx.types.bool, gcx) {
-                return None;
-            }
-
+        ExprKind::Ternary(_, true_expr, false_expr) => {
             let true_ty = expr_ty(gcx, hir, true_expr)?;
             let false_ty = expr_ty(gcx, hir, false_expr)?;
             common_ty(gcx, true_ty, false_ty)

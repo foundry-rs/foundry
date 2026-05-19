@@ -29,7 +29,34 @@ contract ParentDelegatecallHelper {
     }
 }
 
-contract DelegatecallLoop is ParentOrdinaryDelegatecall, ParentDelegatecallHelper {
+contract LinearizedSuperBase {
+    function next(bytes calldata) internal virtual {}
+}
+
+contract LinearizedSuperDelegate is LinearizedSuperBase {
+    function next(bytes calldata payload) internal virtual override {
+        address target = address(this);
+        (bool ok,) = target.delegatecall(payload); //~WARN: payable functions should not use `delegatecall` inside a loop
+        require(ok);
+    }
+}
+
+contract LinearizedSuperCaller is LinearizedSuperBase {
+    function callNext(bytes calldata payload) internal {
+        super.next(payload);
+    }
+}
+
+contract DelegatecallLoop is
+    ParentOrdinaryDelegatecall,
+    ParentDelegatecallHelper,
+    LinearizedSuperDelegate,
+    LinearizedSuperCaller
+{
+    function next(bytes calldata payload) internal override(LinearizedSuperBase, LinearizedSuperDelegate) {
+        super.next(payload);
+    }
+
     function payableForLoop(bytes[] calldata payloads) external payable {
         address target = address(this);
         for (uint256 i = 0; i < payloads.length; ++i) {
@@ -149,6 +176,12 @@ contract DelegatecallLoop is ParentOrdinaryDelegatecall, ParentDelegatecallHelpe
         }
     }
 
+    function payableLoopWithLinearizedSuperDelegatecall(bytes[] calldata payloads) external payable {
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            callNext(payloads[i]);
+        }
+    }
+
     function payableLoopWithCallAndStaticcall(bytes[] calldata payloads) external payable {
         address target = address(this);
         for (uint256 i = 0; i < payloads.length; ++i) {
@@ -212,6 +245,15 @@ contract DelegatecallLoop is ParentOrdinaryDelegatecall, ParentDelegatecallHelpe
         address targetB = address(0xBEEF);
         for (uint256 i = 0; i < payloads.length; ++i) {
             (bool ok,) = (flag ? targetA : targetB).delegatecall(payloads[i]); //~WARN: payable functions should not use `delegatecall` inside a loop
+            require(ok);
+        }
+    }
+
+    function payableLoopCallsConditionalDelegatecallWithBinaryCondition(bytes[] calldata payloads) external payable {
+        address targetA = address(this);
+        address targetB = address(0xBEEF);
+        for (uint256 i = 0; i < payloads.length; ++i) {
+            (bool ok,) = (payloads[i].length != 0 ? targetA : targetB).delegatecall(payloads[i]); //~WARN: payable functions should not use `delegatecall` inside a loop
             require(ok);
         }
     }
