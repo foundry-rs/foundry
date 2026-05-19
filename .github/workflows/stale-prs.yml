@@ -10,7 +10,7 @@ on:
 permissions: {}
 
 jobs:
-  close-prs:
+  stale-prs:
     if: github.repository == 'foundry-rs/foundry'
     runs-on: ubuntu-latest
     permissions:
