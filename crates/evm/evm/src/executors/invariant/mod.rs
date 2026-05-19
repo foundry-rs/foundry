@@ -617,28 +617,21 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     // execution.
                     // See <https://github.com/foundry-rs/foundry/issues/9764>.
                     let mut state_changeset = std::mem::take(&mut call_result.state_changeset);
-                    if let Some(fuzzer) = current_run.executor.inspector_mut().fuzzer.as_mut() {
-                        if !call_result.reverted {
-                            collect_data(
-                                &invariant_test,
-                                &mut state_changeset,
-                                current_run.inputs.last().expect("checked above"),
-                                &call_result,
-                                self.config.depth,
-                                fuzzer.mapping_slots.as_ref(),
-                            );
-                        }
-                    } else {
-                        if !call_result.reverted {
-                            collect_data(
-                                &invariant_test,
-                                &mut state_changeset,
-                                current_run.inputs.last().expect("checked above"),
-                                &call_result,
-                                self.config.depth,
-                                None,
-                            );
-                        }
+                    if !call_result.reverted {
+                        let mapping_slots = current_run
+                            .executor
+                            .inspector()
+                            .fuzzer
+                            .as_ref()
+                            .and_then(|fuzzer| fuzzer.mapping_slots.as_ref());
+                        collect_data(
+                            &invariant_test,
+                            &mut state_changeset,
+                            current_run.inputs.last().expect("checked above"),
+                            &call_result,
+                            self.config.depth,
+                            mapping_slots,
+                        );
                     }
 
                     // Collect created contracts and add to fuzz targets only if targeted contracts

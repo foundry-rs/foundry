@@ -85,7 +85,7 @@ impl EvmFuzzState {
     }
 
     pub fn fork(&self) -> Self {
-        Self { inner: Arc::new((*self.inner).clone()), deployed_libs: self.deployed_libs.clone() }
+        Self { inner: Arc::clone(&self.inner), deployed_libs: self.deployed_libs.clone() }
     }
 
     pub fn collect_values(&mut self, values: impl IntoIterator<Item = B256>) {
