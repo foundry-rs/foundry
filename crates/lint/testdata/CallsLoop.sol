@@ -1,3 +1,5 @@
+//@compile-flags: --only-lint calls-loop
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.15;
 
