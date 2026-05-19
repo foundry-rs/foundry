@@ -67,7 +67,7 @@ Ran 1 test for test/MiniVatLinear.t.sol:MiniVatLinear
 });
 
 // ---------------------------------------------------------------------------
-// MakerDAO MiniVat — Fundamental Equation of DAI (faithful upstream invariant).
+// MakerDAO MiniVat — Fundamental Equation of DAI.
 // ---------------------------------------------------------------------------
 // Faithful port of https://github.com/a16z/halmos/blob/main/examples/invariants/test/MiniVat.t.sol
 // proving `debt == Art * rate` across arbitrary interleavings of `init` /
