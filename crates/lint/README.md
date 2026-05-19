@@ -27,6 +27,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
   - `delegatecall-loop`: Payable functions should not use `delegatecall` inside a loop.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
+  - `return-bomb`: External calls with a gas limit should not consume unbounded return data.
 - **Informational / Style Guide:**
   - `boolean-equal`: Boolean comparisons to constants should be simplified.
   - `too-many-digits`: Numeric literals with 5+ consecutive zeros are error-prone.
