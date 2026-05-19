@@ -1,6 +1,8 @@
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, util::OutputExt};
+use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 use std::process::Command;
+
+use super::symbolic_helpers::assert_symbolic;
 
 fn z3_available() -> bool {
     Command::new("z3").arg("--version").output().is_ok_and(|output| output.status.success())
@@ -1793,13 +1795,14 @@ contract SymbolicMixedLengthSets {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkBatch"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert!(stdout.contains("[PASS] checkBatch(bytes[])"), "{stdout}");
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkBatch"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMixedLengthSets.t.sol:SymbolicMixedLengthSets
+[PASS] checkBatch(bytes[]) ([METRICS])
+...
+"#]]);
 });
 
 forgetest_init!(symbolic_reports_calldata_variant_width_exhaustion, |prj, cmd| {
@@ -1824,15 +1827,14 @@ contract SymbolicVariantLimit {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkVariants"])
-        .assert_failure()
-        .get_output()
-        .stdout_lossy();
-
-    assert!(stdout.contains("checkVariants(bytes[])"), "{stdout}");
-    assert!(stdout.contains("symbolic calldata variant limit exceeded (2)"), "{stdout}");
-    assert!(stdout.contains("incomplete symbolic execution (Stuck)"), "{stdout}");
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkVariants"]))
+        .failure()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicVariantLimit.t.sol:SymbolicVariantLimit
+[FAIL: incomplete symbolic execution (Stuck): symbolic calldata variant limit exceeded (2)] checkVariants(bytes[]) ([METRICS])
+...
+"#]]);
 });
 
 forgetest_init!(symbolic_rejects_malformed_halmos_array_lengths, |prj, cmd| {
