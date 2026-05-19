@@ -125,7 +125,60 @@ contract CacheArrayLength {
         }
     }
 
+    function storageArrayPostExpressionMutation() external {
+        for (uint256 i = 0; i < items.length; items.pop()) {}
+    }
+
+    function storageArrayHelperMutation() external {
+        for (uint256 i = 0; i < items.length; ++i) {
+            mutateItems(i);
+        }
+    }
+
+    function loopVariantNestedArrayLength(uint256[][] memory values)
+        public
+        pure
+        returns (uint256 sum)
+    {
+        for (uint256 i = 0; i < values[i].length; ++i) {
+            sum += i;
+        }
+    }
+
+    function sideEffectingReturnArrayLength() external returns (uint256 sum) {
+        for (uint256 i = 0; i < mutatingValues().length; ++i) {
+            sum += i;
+        }
+    }
+
+    function pureReturnArrayLengthWithLoopVariantArg(uint256[][] memory values)
+        public
+        pure
+        returns (uint256 sum)
+    {
+        for (uint256 i = 0; i < pickValues(values, i).length; ++i) {
+            sum += i;
+        }
+    }
+
     function generatedValues() internal pure returns (uint256[] memory values) {
         values = new uint256[](3);
+    }
+
+    function mutateItems(uint256 value) internal {
+        items.push(value);
+    }
+
+    function mutatingValues() internal returns (uint256[] memory values) {
+        items.push(1);
+        values = new uint256[](3);
+    }
+
+    function pickValues(uint256[][] memory values, uint256 index)
+        internal
+        pure
+        returns (uint256[] memory)
+    {
+        return values[index];
     }
 }
