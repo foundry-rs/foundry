@@ -252,7 +252,7 @@ pub enum KeychainSubcommand {
         #[arg(long)]
         expiry: Option<u64>,
 
-        /// Spending limit in "TOKEN:AMOUNT[:PERIOD]" format. Repeatable.
+        /// Spending limit in `TOKEN:AMOUNT[:PERIOD]` format. Repeatable.
         #[arg(long = "limit", value_parser = parse_limit)]
         limits: Vec<TokenLimit>,
 
