@@ -51,26 +51,15 @@ impl MutationReporter {
 
         let _ = sh_println!("\n{}\n", self.table);
 
-        // Legend explaining each status
+        // Legend: short, factual definitions of each status.
         let _ = sh_println!("{}", Paint::dim("Legend:"));
+        let _ = sh_println!("  {} - tests did not catch the mutation", Paint::red("Survived"));
+        let _ = sh_println!("  {} - tests caught the mutation", Paint::green("Killed"));
+        let _ = sh_println!("  {} - mutation produced a compilation error", Paint::dim("Invalid"));
+        let _ =
+            sh_println!("  {} - redundant mutation on the same expression", Paint::yellow("Skipped"));
         let _ = sh_println!(
-            "  {} - Mutant survived: tests did not catch this mutation (potential gap)",
-            Paint::red("Survived")
-        );
-        let _ = sh_println!(
-            "  {} - Mutant killed: tests caught this mutation (good coverage)",
-            Paint::green("Killed")
-        );
-        let _ = sh_println!(
-            "  {} - Mutant invalid: mutation caused compilation error",
-            Paint::dim("Invalid")
-        );
-        let _ = sh_println!(
-            "  {} - Mutant skipped: redundant mutation on same expression",
-            Paint::yellow("Skipped")
-        );
-        let _ = sh_println!(
-            "  {} - Mutant timed out: compile/test exceeded the configured timeout\n",
+            "  {} - compile/test exceeded the configured timeout\n",
             Paint::magenta("Timed out")
         );
 
@@ -100,64 +89,36 @@ impl MutationReporter {
             duration_str
         );
 
-        // Survived mutants section - the most important for developers
+        // Survived mutants section - the most important for developers.
         if !summary.get_survived().is_empty() {
             let _ = sh_println!("\n{}", "─".repeat(60));
-            let _ = sh_println!("{}", Paint::red("⚠ SURVIVED MUTANTS (test suite gaps)").bold());
+            let _ = sh_println!("{}", Paint::red("Survived mutants").bold());
             let _ = sh_println!("{}", "─".repeat(60));
-            let _ = sh_println!(
-                "{}",
-                Paint::dim(
-                    "These mutations were NOT caught by your tests.\n\
-                     Each represents a potential bug that your tests would miss.\n"
-                )
-            );
 
             for (i, mutant) in summary.get_survived().iter().enumerate() {
                 self.print_survived_mutant(i + 1, mutant);
             }
-
-            // Security implications
-            let _ = sh_println!("\n{}", Paint::yellow("Security Implications:").bold());
-            let _ = sh_println!(
-                "  • Surviving mutations indicate untested code paths\n\
-                 • Attackers could exploit logic bugs in these areas\n\
-                 • Consider adding targeted tests for each surviving mutation"
-            );
-
-            // Suggestions
-            let _ =
-                sh_println!("\n{}", Paint::cyan("Suggestions to improve test coverage:").bold());
-            self.print_suggestions(summary.get_survived());
         }
 
-        // Killed mutants (collapsed by default, just count)
+        // Killed mutants (collapsed: just count).
         if !summary.get_dead().is_empty() {
             let _ = sh_println!("\n{}", "─".repeat(60));
-            let _ = sh_println!(
-                "{} {} mutants killed (tests caught these mutations)",
-                Paint::green("✓").bold(),
-                summary.total_dead()
-            );
+            let _ = sh_println!("{} mutants {}", summary.total_dead(), Paint::green("killed"));
         }
 
-        // Invalid mutants (if any)
+        // Invalid mutants (collapsed: just count).
         if !summary.get_invalid().is_empty() {
             let _ = sh_println!("\n{}", "─".repeat(60));
-            let _ = sh_println!(
-                "{} {} invalid mutants (compilation failures - expected for some mutations)",
-                Paint::dim("ℹ"),
-                summary.total_invalid()
-            );
+            let _ = sh_println!("{} mutants {}", summary.total_invalid(), Paint::dim("invalid"));
         }
 
-        // Timed-out mutants (if any)
+        // Timed-out mutants (collapsed: just count).
         if !summary.get_timed_out().is_empty() {
             let _ = sh_println!("\n{}", "─".repeat(60));
             let _ = sh_println!(
-                "{} {} mutants timed out (consider increasing --mutation-timeout)",
-                Paint::magenta("⏱").bold(),
-                summary.total_timed_out()
+                "{} mutants {}",
+                summary.total_timed_out(),
+                Paint::magenta("timed out")
             );
         }
 
@@ -202,78 +163,4 @@ impl MutationReporter {
         let _ = sh_println!("       {} {}", Paint::green("+"), Paint::green(&mutated));
     }
 
-    fn print_suggestions(&self, survived: &[Mutant]) {
-        // Group mutations by type and provide specific suggestions
-        let mut has_arithmetic = false;
-        let mut has_comparison = false;
-        let mut has_increment = false;
-
-        for mutant in survived {
-            let mutation_str = mutant.mutation.to_string();
-            if mutation_str.contains('+')
-                || mutation_str.contains('-')
-                || mutation_str.contains('*')
-                || mutation_str.contains('/')
-            {
-                has_arithmetic = true;
-            }
-            if mutation_str.contains('<')
-                || mutation_str.contains('>')
-                || mutation_str.contains("==")
-                || mutation_str.contains("!=")
-            {
-                has_comparison = true;
-            }
-            if mutation_str.contains("++") || mutation_str.contains("--") {
-                has_increment = true;
-            }
-        }
-
-        let _ = sh_println!("");
-
-        if has_arithmetic {
-            let _ = sh_println!(
-                "  {} Test arithmetic edge cases:\n\
-                 {}     - Zero values, max values (type(uint256).max)\n\
-                 {}     - Overflow/underflow scenarios\n\
-                 {}     - Sign changes for signed integers",
-                Paint::cyan("→"),
-                "",
-                "",
-                ""
-            );
-        }
-
-        if has_comparison {
-            let _ = sh_println!(
-                "  {} Test boundary conditions:\n\
-                 {}     - Values at exact boundaries (==, >, >=, <, <=)\n\
-                 {}     - Off-by-one scenarios",
-                Paint::cyan("→"),
-                "",
-                ""
-            );
-        }
-
-        if has_increment {
-            let _ = sh_println!(
-                "  {} Test state transitions:\n\
-                 {}     - Verify counter/index values after operations\n\
-                 {}     - Check pre/post increment behavior",
-                Paint::cyan("→"),
-                "",
-                ""
-            );
-        }
-
-        if !has_arithmetic && !has_comparison && !has_increment {
-            let _ = sh_println!(
-                "  {} Add assertions that verify the exact behavior being mutated\n\
-                 {}  {} Consider property-based testing (fuzz tests) for better coverage",
-                Paint::cyan("→"),
-                "",
-                Paint::cyan("→"),
-            );
-        }
-    }
 }

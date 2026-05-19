@@ -11,6 +11,7 @@ use std::{
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use parking_lot::Mutex;
+use yansi::Paint;
 
 use crate::mutation::mutant::{Mutant, MutationResult};
 
@@ -156,7 +157,7 @@ impl MutationProgressState {
             truncate_str(&mutant.original, 40),
             truncate_str(&mutant.mutation.to_string(), 40),
         );
-        pb.set_message(format!("[{:>5}] {display}", "0.0s"));
+        pb.set_message(display);
 
         self.active_mutants
             .insert(Self::mutant_key(mutant), ActiveMutant { pb, started_at: Instant::now() });
@@ -180,10 +181,13 @@ impl MutationProgressState {
 
         // Only emit per-result completion lines for things the user cares
         // about (kills, survivors, timeouts). Invalid and skipped are noisy.
-        let (icon, label) = match result {
-            MutationResult::Dead => ("✗", result.label()),
-            MutationResult::Alive => ("⚠", result.label()),
-            MutationResult::TimedOut => ("⏱", result.label()),
+        // Pad the raw label *before* applying color so ANSI escapes don't
+        // throw off alignment.
+        let raw_label = format!("{:9}", result.label());
+        let label = match result {
+            MutationResult::Dead => Paint::green(&raw_label).bold().to_string(),
+            MutationResult::Alive => Paint::red(&raw_label).bold().to_string(),
+            MutationResult::TimedOut => Paint::yellow(&raw_label).bold().to_string(),
             MutationResult::Invalid | MutationResult::Skipped => {
                 self.refresh_message();
                 return;
@@ -191,11 +195,10 @@ impl MutationProgressState {
         };
 
         let line = format!(
-            "  {icon} line {ln}: `{orig}` → `{mut_}`  {label}  {elapsed:.1?}",
+            "  {label} line {ln}: `{orig}` → `{mut_}` ({elapsed:.1?})",
             ln = mutant.line_number,
             orig = truncate_str(&mutant.original, 40),
             mut_ = truncate_str(&mutant.mutation.to_string(), 40),
-            label = label,
             elapsed = elapsed,
         );
         self.multi.suspend(|| {
@@ -288,7 +291,7 @@ impl MutationProgress {
 
     /// Clear progress display
     pub fn clear(&self) {
-        self.inner.lock().clear();
+        MutationProgressState::clear(&mut self.inner.lock());
     }
 
     /// Finish with message

@@ -74,18 +74,18 @@ MUTATION TESTING RESULTS
 ╰──────────┴───────────┴────────────╯
 
 Legend:
-  Survived - Mutant survived: tests did not catch this mutation (potential gap)
-  Killed - Mutant killed: tests caught this mutation (good coverage)
-  Invalid - Mutant invalid: mutation caused compilation error
-  Skipped - Mutant skipped: redundant mutation on same expression
-  Timed out - Mutant timed out: compile/test exceeded the configured timeout
+  Survived - tests did not catch the mutation
+  Killed - tests caught the mutation
+  Invalid - mutation produced a compilation error
+  Skipped - redundant mutation on the same expression
+  Timed out - compile/test exceeded the configured timeout
 
 Mutation Score: 80.0% (4/5 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
-⚠ SURVIVED MUTANTS (test suite gaps)
+Survived mutants
 ────────────────────────────────────────────────────────────
-These mutations were NOT caught by your tests.
+
 ...
      number++;
      Mutation:
@@ -93,10 +93,10 @@ These mutations were NOT caught by your tests.
        + ++number
 ...
 ────────────────────────────────────────────────────────────
-✓ 4 mutants killed (tests caught these mutations)
+4 mutants killed
 
 ────────────────────────────────────────────────────────────
-ℹ 2 invalid mutants (compilation failures - expected for some mutations)
+2 mutants invalid
 
 ════════════════════════════════════════════════════════════
 
@@ -231,18 +231,18 @@ MUTATION TESTING RESULTS
 ╰──────────┴───────────┴────────────╯
 
 Legend:
-  Survived - Mutant survived: tests did not catch this mutation (potential gap)
-  Killed - Mutant killed: tests caught this mutation (good coverage)
-  Invalid - Mutant invalid: mutation caused compilation error
-  Skipped - Mutant skipped: redundant mutation on same expression
-  Timed out - Mutant timed out: compile/test exceeded the configured timeout
+  Survived - tests did not catch the mutation
+  Killed - tests caught the mutation
+  Invalid - mutation produced a compilation error
+  Skipped - redundant mutation on the same expression
+  Timed out - compile/test exceeded the configured timeout
 
 Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
 
 ────────────────────────────────────────────────────────────
-⚠ SURVIVED MUTANTS (test suite gaps)
+Survived mutants
 ────────────────────────────────────────────────────────────
-These mutations were NOT caught by your tests.
+
 ...
      return a + b;
      Mutation:
@@ -253,10 +253,10 @@ These mutations were NOT caught by your tests.
        - a + b
 ...
 ────────────────────────────────────────────────────────────
-✓ 8 mutants killed (tests caught these mutations)
+8 mutants killed
 
 ────────────────────────────────────────────────────────────
-ℹ 1 invalid mutants (compilation failures - expected for some mutations)
+1 mutants invalid
 
 ════════════════════════════════════════════════════════════
 

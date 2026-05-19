@@ -356,6 +356,22 @@ fn test_single_mutant_isolated(
         })
         .collect();
 
+    // Propagate the per-mutant timeout into the inner fuzz/invariant harness
+    // so the hot test loop itself bails out at the deadline. Without this the
+    // outer `recv_timeout` would only stop *waiting* — the leaked worker
+    // thread would keep running expensive fuzz/invariant runs and starve the
+    // pool. We never raise an existing user-configured value.
+    if let Some(mutation_timeout) = config.mutation.timeout {
+        temp_config.fuzz.timeout = Some(match temp_config.fuzz.timeout {
+            Some(existing) => existing.min(mutation_timeout),
+            None => mutation_timeout,
+        });
+        temp_config.invariant.timeout = Some(match temp_config.invariant.timeout {
+            Some(existing) => existing.min(mutation_timeout),
+            None => mutation_timeout,
+        });
+    }
+
     let temp_config = Arc::new(temp_config);
 
     // Compile and test, optionally bounded by a wall-clock timeout (mirrors
