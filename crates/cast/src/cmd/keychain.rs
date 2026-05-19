@@ -1091,6 +1091,16 @@ impl DoctorCandidate {
     const fn explicit(root_account: Address, key_address: Address) -> Self {
         Self { root_account, key_address, chain_id: None, entry: None, explicit: true }
     }
+
+    fn has_inline_key(&self) -> bool {
+        self.entry.as_ref().is_some_and(|entry| entry.has_inline_key())
+    }
+
+    fn is_passkey_with_inline_key(&self) -> bool {
+        self.entry
+            .as_ref()
+            .is_some_and(|entry| entry.wallet_type == WalletType::Passkey && entry.has_inline_key())
+    }
 }
 
 #[derive(Debug)]
@@ -1114,14 +1124,43 @@ struct SponsorshipDiagnosis {
     fee_payer: Option<Address>,
 }
 
+#[derive(Debug, Clone)]
+enum ChainTimestamp {
+    Known(u64),
+    Unknown { detail: String, hint: &'static str },
+}
+
+impl ChainTimestamp {
+    fn timestamp(&self) -> Option<u64> {
+        match self {
+            Self::Known(timestamp) => Some(*timestamp),
+            Self::Unknown { .. } => None,
+        }
+    }
+
+    fn unavailable_step(
+        &self,
+        name: &'static str,
+        label: &'static str,
+        detail: impl Into<String>,
+    ) -> DoctorStep {
+        match self {
+            Self::Known(_) => unreachable!("chain timestamp is available"),
+            Self::Unknown { detail: reason, hint } => {
+                DoctorStep::warn(name, label, format!("{}: {reason}", detail.into()), *hint)
+            }
+        }
+    }
+}
+
 /// Outcome of TIP-1011 allowed-call matching.
-enum AllowedCallMatch<'a> {
+enum AllowedCallMatch {
     /// The call is allowed.
     Allowed(String),
     /// The call is denied.
     Denied(String),
     /// The selector is allowed but recipients are restricted; user did not pass `--recipient`.
-    RecipientRestricted(&'a [Address]),
+    RecipientRestricted(Vec<Address>),
 }
 
 /// `cast keychain doctor` — diagnose access-key signing failures.
@@ -1202,6 +1241,7 @@ async fn run_doctor(
             return finalize_doctor(steps, context);
         }
     };
+    let chain_timestamp = fetch_chain_timestamp(&provider).await;
 
     // Step 3: chain-id match + final entry selection.
     let subject = match select_subject_for_chain(candidates, rpc_chain_id, root_account) {
@@ -1254,7 +1294,8 @@ async fn run_doctor(
             ));
             KeyRegistrationState::OnChain(info)
         }
-        Ok(_) => match validate_pending_key_authorization(&subject, rpc_chain_id) {
+        Ok(_) => match validate_pending_key_authorization(&subject, rpc_chain_id, &chain_timestamp)
+        {
             Ok(valid) => {
                 steps.push(DoctorStep::pass("key_registration", "Key registration", valid.detail));
                 KeyRegistrationState::PendingAuthorization(Box::new(valid.signed))
@@ -1275,11 +1316,6 @@ async fn run_doctor(
         }
     };
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
     match registration {
         KeyRegistrationState::OnChain(info) => {
             // Step 6: revoked?
@@ -1295,26 +1331,11 @@ async fn run_doctor(
             steps.push(DoctorStep::pass("revocation", "Revocation", "active"));
 
             // Step 7: expiry.
-            if info.expiry == u64::MAX {
-                steps.push(DoctorStep::pass("expiry", "Expiry", "never expires"));
-            } else if info.expiry <= now {
-                steps.push(DoctorStep::fail(
-                    "expiry",
-                    "Expiry",
-                    format!("expired {}", format_relative_timestamp(info.expiry)),
-                    "authorize a new key with a later expiry",
-                ));
+            let expiry = check_key_expiry(info.expiry, &chain_timestamp);
+            let expiry_failed = expiry.status == DoctorStatus::Fail;
+            steps.push(expiry);
+            if expiry_failed {
                 return finalize_doctor(steps, context);
-            } else {
-                steps.push(DoctorStep::pass(
-                    "expiry",
-                    "Expiry",
-                    format!(
-                        "{} ({})",
-                        format_relative_timestamp(info.expiry),
-                        format_timestamp_iso(info.expiry)
-                    ),
-                ));
             }
 
             // Step 8: hardfork detection (used for limits and allowed-calls checks).
@@ -1336,7 +1357,7 @@ async fn run_doctor(
                 "not on-chain yet; key_authorization will provision a fresh key",
             ));
 
-            let expiry = check_authorization_expiry(&signed, now);
+            let expiry = check_authorization_expiry(&signed, &chain_timestamp);
             let expiry_failed = expiry.status == DoctorStatus::Fail;
             steps.push(expiry);
             if expiry_failed {
@@ -1352,7 +1373,7 @@ async fn run_doctor(
 
     // Transaction-option diagnostics that affect access-key sends.
     let resolved_expires_at = tempo.resolve_expires();
-    steps.push(check_expiring_nonce(&provider, &tempo, resolved_expires_at).await);
+    steps.push(check_expiring_nonce(&tempo, resolved_expires_at, &chain_timestamp));
 
     let sponsorship = check_sponsorship(&tempo, subject.root_account).await;
     let sponsor_failed = sponsorship.step.status == DoctorStatus::Fail;
@@ -1360,10 +1381,11 @@ async fn run_doctor(
     steps.push(sponsorship.step);
 
     if sponsor_failed && tempo.has_sponsor_submission() {
-        steps.push(DoctorStep::pass(
+        steps.push(DoctorStep::warn(
             "fee_token_balance",
             "Fee-token balance",
             "skipped; sponsorship config is invalid",
+            "fix the sponsorship configuration before checking the fee payer balance",
         ));
     } else {
         let balance_account = fee_payer.unwrap_or(subject.root_account);
@@ -1410,7 +1432,7 @@ fn collect_local_candidates(
         ));
     };
 
-    let mut matches: Vec<tempo::KeyEntry> = keys_file
+    let matches: Vec<tempo::KeyEntry> = keys_file
         .keys
         .into_iter()
         .filter(|entry| match (key_address, root_account) {
@@ -1455,9 +1477,6 @@ fn collect_local_candidates(
         ));
     }
 
-    // Prefer the same default selection as `key_metadata_from_entry` callers (entries with
-    // local limit metadata first), but keep all chain-matching candidates for step 3.
-    matches.sort_by_key(|entry| usize::MAX - entry.limits.len());
     let count = matches.len();
     let mut candidates: Vec<DoctorCandidate> =
         matches.into_iter().map(DoctorCandidate::from_entry).collect();
@@ -1506,20 +1525,12 @@ fn select_subject_for_chain(
 
     let has_explicit = chain_matched.iter().any(|entry| entry.explicit);
 
-    // Prefer inline key material. With an explicit root/key pair, keep a same-chain local entry
-    // for authorization metadata even when it lacks inline key material; local signing will be a
-    // warning because `--tempo.access-key` can still make the send path viable.
+    // Mirror MPP's primary-key discovery order after applying doctor-specific filters:
+    // passkey with inline key > first inline key > first matching entry.
     let preferred_idx = chain_matched
         .iter()
-        .position(|entry| entry.entry.as_ref().is_some_and(|entry| entry.has_inline_key()))
-        .or_else(|| {
-            has_explicit
-                .then(|| chain_matched.iter().position(|entry| entry.entry.is_some()))
-                .flatten()
-        })
-        .or_else(|| {
-            has_explicit.then(|| chain_matched.iter().position(|entry| entry.explicit)).flatten()
-        })
+        .position(DoctorCandidate::is_passkey_with_inline_key)
+        .or_else(|| chain_matched.iter().position(DoctorCandidate::has_inline_key))
         .unwrap_or(0);
     let entry = chain_matched.into_iter().nth(preferred_idx).expect("non-empty");
 
@@ -1570,6 +1581,7 @@ fn check_local_signing_readiness(subject: &DoctorSubject) -> DoctorStep {
 fn validate_pending_key_authorization(
     subject: &DoctorSubject,
     rpc_chain_id: u64,
+    chain_timestamp: &ChainTimestamp,
 ) -> Result<ValidKeyAuthorization, DoctorStep> {
     let Some(entry) = subject.entry.as_ref() else {
         return Err(DoctorStep::fail(
@@ -1642,14 +1654,17 @@ fn validate_pending_key_authorization(
         ));
     }
 
-    let now = unix_timestamp_now();
     if let Some(expiry) = auth.expiry
-        && expiry.get() <= now
+        && let Some(chain_timestamp) = chain_timestamp.timestamp()
+        && expiry.get() <= chain_timestamp
     {
         return Err(DoctorStep::fail(
             "key_registration",
             "Key registration",
-            format!("local key_authorization expired {}", format_relative_timestamp(expiry.get())),
+            format!(
+                "local key_authorization expired {}",
+                format_relative_timestamp_from(expiry.get(), chain_timestamp)
+            ),
             "refresh the access key to get a later key_authorization expiry",
         ));
     }
@@ -1680,11 +1695,11 @@ fn validate_pending_key_authorization(
     let expiry = auth
         .expiry
         .map(|expiry| {
-            format!(
-                "{} ({})",
-                format_relative_timestamp(expiry.get()),
-                format_timestamp_iso(expiry.get())
-            )
+            let relative = chain_timestamp
+                .timestamp()
+                .map(|timestamp| format_relative_timestamp_from(expiry.get(), timestamp))
+                .unwrap_or_else(|| format_relative_timestamp(expiry.get()));
+            format!("{} ({})", relative, format_timestamp_iso(expiry.get()))
         })
         .unwrap_or_else(|| "never expires".to_string());
     let detail = format!(
@@ -1696,17 +1711,77 @@ fn validate_pending_key_authorization(
     Ok(ValidKeyAuthorization { signed, detail })
 }
 
-fn check_authorization_expiry(signed: &SignedKeyAuthorization, now: u64) -> DoctorStep {
+async fn fetch_chain_timestamp<P>(provider: &P) -> ChainTimestamp
+where
+    P: Provider<TempoNetwork>,
+{
+    match provider.get_block(BlockId::latest()).await {
+        Ok(Some(block)) => ChainTimestamp::Known(block.header.timestamp()),
+        Ok(None) => ChainTimestamp::Unknown {
+            detail: "latest block not found; chain timestamp unavailable".to_string(),
+            hint: "verify the RPC can serve latest block data",
+        },
+        Err(err) => ChainTimestamp::Unknown {
+            detail: format!("latest block query failed: {err}"),
+            hint: "validity windows and expiries could not be checked against chain time",
+        },
+    }
+}
+
+fn check_key_expiry(expiry: u64, chain_timestamp: &ChainTimestamp) -> DoctorStep {
+    if expiry == u64::MAX {
+        return DoctorStep::pass("expiry", "Expiry", "never expires");
+    }
+
+    let Some(chain_timestamp) = chain_timestamp.timestamp() else {
+        return chain_timestamp.unavailable_step("expiry", "Expiry", "key expiry not checked");
+    };
+
+    if expiry <= chain_timestamp {
+        DoctorStep::fail(
+            "expiry",
+            "Expiry",
+            format!("expired {}", format_relative_timestamp_from(expiry, chain_timestamp)),
+            "authorize a new key with a later expiry",
+        )
+    } else {
+        DoctorStep::pass(
+            "expiry",
+            "Expiry",
+            format!(
+                "{} ({})",
+                format_relative_timestamp_from(expiry, chain_timestamp),
+                format_timestamp_iso(expiry)
+            ),
+        )
+    }
+}
+
+fn check_authorization_expiry(
+    signed: &SignedKeyAuthorization,
+    chain_timestamp: &ChainTimestamp,
+) -> DoctorStep {
     let Some(expiry) = signed.authorization.expiry else {
         return DoctorStep::pass("expiry", "Expiry", "key_authorization never expires");
     };
 
+    let Some(chain_timestamp) = chain_timestamp.timestamp() else {
+        return chain_timestamp.unavailable_step(
+            "expiry",
+            "Expiry",
+            "key_authorization expiry not checked",
+        );
+    };
+
     let expiry = expiry.get();
-    if expiry <= now {
+    if expiry <= chain_timestamp {
         DoctorStep::fail(
             "expiry",
             "Expiry",
-            format!("key_authorization expired {}", format_relative_timestamp(expiry)),
+            format!(
+                "key_authorization expired {}",
+                format_relative_timestamp_from(expiry, chain_timestamp)
+            ),
             "refresh the access key to get a later key_authorization expiry",
         )
     } else {
@@ -1715,7 +1790,7 @@ fn check_authorization_expiry(signed: &SignedKeyAuthorization, now: u64) -> Doct
             "Expiry",
             format!(
                 "key_authorization {} ({})",
-                format_relative_timestamp(expiry),
+                format_relative_timestamp_from(expiry, chain_timestamp),
                 format_timestamp_iso(expiry)
             ),
         )
@@ -1756,7 +1831,12 @@ where
     P: Provider<TempoNetwork>,
 {
     let Some(is_t3) = is_t3 else {
-        return DoctorStep::pass("spending_limits", "Spending limits", "skipped; hardfork unknown");
+        return DoctorStep::warn(
+            "spending_limits",
+            "Spending limits",
+            "skipped; hardfork unknown",
+            "retry against an RPC that reports Tempo hardfork activation",
+        );
     };
 
     if !info.enforceLimits {
@@ -1857,10 +1937,11 @@ fn check_authorization_spending_limits(
     let auth = &signed.authorization;
 
     if is_t3.is_none() && auth.has_periodic_limits() {
-        return DoctorStep::pass(
+        return DoctorStep::warn(
             "spending_limits",
             "Spending limits",
             "skipped; hardfork unknown and key_authorization uses periodic limits",
+            "retry against an RPC that reports Tempo hardfork activation",
         );
     }
 
@@ -1887,7 +1968,23 @@ fn check_authorization_spending_limits(
         ),
         Some(limits) => {
             let detail = format_authorization_limits(limits, fee_token);
-            DoctorStep::pass("spending_limits", "Spending limits", detail)
+            if !limits.iter().any(|limit| limit.token == fee_token) {
+                DoctorStep::warn(
+                    "spending_limits",
+                    "Spending limits",
+                    detail,
+                    "refresh the access key with a limit for the selected fee token",
+                )
+            } else if limits.iter().any(|limit| limit.token == fee_token && limit.limit.is_zero()) {
+                DoctorStep::warn(
+                    "spending_limits",
+                    "Spending limits",
+                    detail,
+                    "raise the fee-token limit before sending with this authorization",
+                )
+            } else {
+                DoctorStep::pass("spending_limits", "Spending limits", detail)
+            }
         }
     }
 }
@@ -1905,7 +2002,12 @@ where
     P: Provider<TempoNetwork>,
 {
     let Some(is_t3) = is_t3 else {
-        return DoctorStep::pass("allowed_calls", "Allowed calls", "skipped; hardfork unknown");
+        return DoctorStep::warn(
+            "allowed_calls",
+            "Allowed calls",
+            "skipped; hardfork unknown",
+            "retry against an RPC that reports Tempo hardfork activation",
+        );
     };
 
     if !is_t3 {
@@ -2011,7 +2113,7 @@ fn diagnose_allowed_scopes(
                 "selector {} on {} allowed only for {}; pass --recipient to verify exact match",
                 format_selector(&selector),
                 address_label_with_address(to),
-                format_recipients(recipients)
+                format_recipients(&recipients)
             ),
         ),
     }
@@ -2027,7 +2129,12 @@ fn check_authorization_allowed_calls(
     let auth = &signed.authorization;
 
     let Some(is_t3) = is_t3 else {
-        return DoctorStep::pass("allowed_calls", "Allowed calls", "skipped; hardfork unknown");
+        return DoctorStep::warn(
+            "allowed_calls",
+            "Allowed calls",
+            "skipped; hardfork unknown",
+            "retry against an RPC that reports Tempo hardfork activation",
+        );
     };
 
     if !is_t3 {
@@ -2051,32 +2158,39 @@ fn check_authorization_allowed_calls(
 }
 
 /// Pure TIP-1011 matching logic. Extracted so it can be unit-tested.
-fn match_allowed_call<'a>(
-    scopes: &'a [CallScope],
+fn match_allowed_call(
+    scopes: &[CallScope],
     to: Address,
     selector: [u8; 4],
     recipient: Option<Address>,
-) -> AllowedCallMatch<'a> {
-    let Some(scope) = scopes.iter().find(|s| s.target == to) else {
+) -> AllowedCallMatch {
+    let matching_scopes: Vec<_> = scopes.iter().filter(|scope| scope.target == to).collect();
+    if matching_scopes.is_empty() {
         return AllowedCallMatch::Denied(format!("target {to} not in any allowed scope"));
-    };
+    }
 
-    if scope.selectorRules.is_empty() {
+    if matching_scopes.iter().any(|scope| scope.selectorRules.is_empty()) {
         return AllowedCallMatch::Allowed(format!(
             "any selector on {} permitted",
             address_label_with_address(to)
         ));
     }
 
-    let Some(rule) = scope.selectorRules.iter().find(|r| r.selector.0 == selector) else {
+    let matching_rules: Vec<_> = matching_scopes
+        .iter()
+        .flat_map(|scope| scope.selectorRules.iter())
+        .filter(|rule| rule.selector.0 == selector)
+        .collect();
+
+    if matching_rules.is_empty() {
         return AllowedCallMatch::Denied(format!(
             "selector {} on {} not in allowed list",
             format_selector(&selector),
             address_label_with_address(to)
         ));
-    };
+    }
 
-    if rule.recipients.is_empty() {
+    if matching_rules.iter().any(|rule| rule.recipients.is_empty()) {
         return AllowedCallMatch::Allowed(format!(
             "{} on {} permitted (any recipient)",
             format_selector(&selector),
@@ -2085,18 +2199,29 @@ fn match_allowed_call<'a>(
     }
 
     match recipient {
-        Some(r) if rule.recipients.contains(&r) => AllowedCallMatch::Allowed(format!(
-            "{} on {} to recipient {} permitted",
-            format_selector(&selector),
-            address_label_with_address(to),
-            r
-        )),
+        Some(r) if matching_rules.iter().any(|rule| rule.recipients.contains(&r)) => {
+            AllowedCallMatch::Allowed(format!(
+                "{} on {} to recipient {} permitted",
+                format_selector(&selector),
+                address_label_with_address(to),
+                r
+            ))
+        }
         Some(r) => AllowedCallMatch::Denied(format!(
             "recipient {r} not in allowed list for {} on {}",
             format_selector(&selector),
             address_label_with_address(to)
         )),
-        None => AllowedCallMatch::RecipientRestricted(&rule.recipients),
+        None => {
+            let mut recipients = Vec::new();
+            for recipient in matching_rules.iter().flat_map(|rule| rule.recipients.iter().copied())
+            {
+                if !recipients.contains(&recipient) {
+                    recipients.push(recipient);
+                }
+            }
+            AllowedCallMatch::RecipientRestricted(recipients)
+        }
     }
 }
 
@@ -2132,50 +2257,35 @@ where
 }
 
 /// Step 12 helper: validate TIP-1009 expiring-nonce options, if supplied.
-async fn check_expiring_nonce<P>(
-    provider: &P,
+fn check_expiring_nonce(
     tempo: &TempoOpts,
     resolved_expires_at: Option<u64>,
-) -> DoctorStep
-where
-    P: Provider<TempoNetwork>,
-{
+    chain_timestamp: &ChainTimestamp,
+) -> DoctorStep {
     if !tempo.expiring_nonce && tempo.valid_before.is_none() && tempo.valid_after.is_none() {
         return DoctorStep::pass("expiring_nonce", "Expiring nonce", "not requested");
     }
 
-    let latest = match provider.get_block(BlockId::latest()).await {
-        Ok(Some(block)) => block,
-        Ok(None) => {
-            return DoctorStep::warn(
-                "expiring_nonce",
-                "Expiring nonce",
-                "latest block not found; validity window not checked",
-                "verify the RPC can serve latest block data",
-            );
-        }
-        Err(err) => {
-            return DoctorStep::warn(
-                "expiring_nonce",
-                "Expiring nonce",
-                format!("latest block query failed: {err}"),
-                "validity window could not be checked against chain time",
-            );
-        }
-    };
-
-    let chain_timestamp = latest.header.timestamp();
-    let valid_before = tempo.valid_before;
-    let valid_after = tempo.valid_after;
-
-    if (valid_before.is_some() || valid_after.is_some()) && !tempo.expiring_nonce {
-        return DoctorStep::warn(
+    let Some(chain_timestamp) = chain_timestamp.timestamp() else {
+        return chain_timestamp.unavailable_step(
             "expiring_nonce",
             "Expiring nonce",
-            "validity window set without --tempo.expiring-nonce",
-            "use --tempo.expiring-nonce or --tempo.expires so nonce_key is set to the expiring lane",
+            "validity window not checked",
         );
-    }
+    };
+
+    check_expiring_nonce_window(tempo, resolved_expires_at, chain_timestamp)
+}
+
+fn check_expiring_nonce_window(
+    tempo: &TempoOpts,
+    resolved_expires_at: Option<u64>,
+    chain_timestamp: u64,
+) -> DoctorStep {
+    let valid_before = tempo.valid_before;
+    let valid_after = tempo.valid_after;
+    let missing_expiring_nonce =
+        (valid_before.is_some() || valid_after.is_some()) && !tempo.expiring_nonce;
 
     if let (Some(after), Some(before)) = (valid_after, valid_before)
         && after >= before
@@ -2252,6 +2362,15 @@ where
             "Expiring nonce",
             format!("transaction is not valid until {}", format_timestamp_iso(after)),
             "wait until valid-after or choose an earlier lower bound",
+        );
+    }
+
+    if missing_expiring_nonce {
+        return DoctorStep::warn(
+            "expiring_nonce",
+            "Expiring nonce",
+            "validity window set without --tempo.expiring-nonce",
+            "use --tempo.expiring-nonce or --tempo.expires so nonce_key is set to the expiring lane",
         );
     }
 
@@ -3126,11 +3245,10 @@ fn format_timestamp_iso(timestamp: u64) -> String {
 }
 
 fn format_relative_timestamp(timestamp: u64) -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
+    format_relative_timestamp_from(timestamp, unix_timestamp_now())
+}
 
+fn format_relative_timestamp_from(timestamp: u64, now: u64) -> String {
     if timestamp == now {
         "now".to_string()
     } else if timestamp > now {
@@ -3248,6 +3366,7 @@ mod tests {
     use super::*;
     use alloy_json_rpc::ErrorPayload;
     use std::str::FromStr;
+    use tempo_primitives::transaction::{KeyAuthorization, PrimitiveSignature};
 
     #[test]
     fn test_parse_selector_bytes_named() {
@@ -3507,6 +3626,18 @@ mod tests {
         Address::from([byte; 20])
     }
 
+    fn signed_authorization_with_limits(
+        limits: Option<Vec<AuthTokenLimit>>,
+    ) -> SignedKeyAuthorization {
+        let mut authorization =
+            KeyAuthorization::unrestricted(31337, AuthSignatureType::Secp256k1, target_addr(0x42));
+        authorization.limits = limits;
+        SignedKeyAuthorization {
+            authorization,
+            signature: PrimitiveSignature::from_bytes(&[0u8; 65]).unwrap(),
+        }
+    }
+
     #[test]
     fn test_match_allowed_call_target_wildcard_any_selector() {
         let scopes = vec![CallScope { target: target_addr(0xAA), selectorRules: vec![] }];
@@ -3548,7 +3679,7 @@ mod tests {
         let result =
             match_allowed_call(&scopes, target_addr(0xAA), ITIP20::transferCall::SELECTOR, None);
         match result {
-            AllowedCallMatch::RecipientRestricted(rs) => assert_eq!(rs, recipients.as_slice()),
+            AllowedCallMatch::RecipientRestricted(rs) => assert_eq!(rs, recipients),
             other => panic!(
                 "expected RecipientRestricted, got {:?}",
                 match other {
@@ -3601,6 +3732,57 @@ mod tests {
         let result =
             match_allowed_call(&scopes, target_addr(0xAA), ITIP20::approveCall::SELECTOR, None);
         assert!(matches!(result, AllowedCallMatch::Denied(_)));
+    }
+
+    #[test]
+    fn test_match_allowed_call_checks_duplicate_target_scopes() {
+        let scopes = vec![
+            CallScope {
+                target: target_addr(0xAA),
+                selectorRules: vec![rule(ITIP20::approveCall::SELECTOR, vec![])],
+            },
+            CallScope {
+                target: target_addr(0xAA),
+                selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, vec![])],
+            },
+        ];
+
+        let result =
+            match_allowed_call(&scopes, target_addr(0xAA), ITIP20::transferCall::SELECTOR, None);
+        assert!(matches!(result, AllowedCallMatch::Allowed(_)));
+    }
+
+    #[test]
+    fn test_match_allowed_call_aggregates_duplicate_target_recipients() {
+        let first = target_addr(0xBB);
+        let second = target_addr(0xCC);
+        let scopes = vec![
+            CallScope {
+                target: target_addr(0xAA),
+                selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, vec![first])],
+            },
+            CallScope {
+                target: target_addr(0xAA),
+                selectorRules: vec![rule(ITIP20::transferCall::SELECTOR, vec![second])],
+            },
+        ];
+
+        let result = match_allowed_call(
+            &scopes,
+            target_addr(0xAA),
+            ITIP20::transferCall::SELECTOR,
+            Some(second),
+        );
+        assert!(matches!(result, AllowedCallMatch::Allowed(_)));
+
+        let result =
+            match_allowed_call(&scopes, target_addr(0xAA), ITIP20::transferCall::SELECTOR, None);
+        match result {
+            AllowedCallMatch::RecipientRestricted(recipients) => {
+                assert_eq!(recipients, vec![first, second]);
+            }
+            _ => panic!("expected recipient restriction"),
+        }
     }
 
     #[test]
@@ -3722,6 +3904,38 @@ mod tests {
     }
 
     #[test]
+    fn test_select_subject_mirrors_mpp_passkey_inline_priority() {
+        let root = target_addr(0x11);
+        let local_key = target_addr(0x22);
+        let passkey_key = target_addr(0x33);
+        let local = tempo::KeyEntry {
+            wallet_address: root,
+            chain_id: 31337,
+            key_address: Some(local_key),
+            key: Some("0xlocal".to_string()),
+            wallet_type: WalletType::Local,
+            ..Default::default()
+        };
+        let passkey = tempo::KeyEntry {
+            wallet_address: root,
+            chain_id: 31337,
+            key_address: Some(passkey_key),
+            key: Some("0xpasskey".to_string()),
+            wallet_type: WalletType::Passkey,
+            ..Default::default()
+        };
+
+        let subject = select_subject_for_chain(
+            vec![DoctorCandidate::from_entry(local), DoctorCandidate::from_entry(passkey)],
+            31337,
+            Some(root),
+        )
+        .unwrap();
+
+        assert_eq!(subject.key_address, passkey_key);
+    }
+
+    #[test]
     fn test_select_subject_keeps_explicit_stale_entry_for_authorization_metadata() {
         let root = target_addr(0x11);
         let key = target_addr(0x22);
@@ -3788,6 +4002,106 @@ mod tests {
 
         let signing = check_local_signing_readiness(&subject);
         assert_eq!(signing.status, DoctorStatus::Pass);
+    }
+
+    #[test]
+    fn test_check_authorization_spending_limits_warns_when_fee_token_missing() {
+        let fee_token = target_addr(0xAA);
+        let signed = signed_authorization_with_limits(Some(vec![AuthTokenLimit {
+            token: target_addr(0xBB),
+            limit: U256::from(1),
+            period: 0,
+        }]));
+
+        let step = check_authorization_spending_limits(&signed, fee_token, Some(true));
+        assert_eq!(step.status, DoctorStatus::Warn);
+        assert!(step.detail.contains("not listed"));
+    }
+
+    #[test]
+    fn test_check_authorization_spending_limits_warns_when_fee_token_zero() {
+        let fee_token = target_addr(0xAA);
+        let signed = signed_authorization_with_limits(Some(vec![AuthTokenLimit {
+            token: fee_token,
+            limit: U256::ZERO,
+            period: 0,
+        }]));
+
+        let step = check_authorization_spending_limits(&signed, fee_token, Some(true));
+        assert_eq!(step.status, DoctorStatus::Warn);
+    }
+
+    #[test]
+    fn test_check_authorization_spending_limits_warns_when_periodic_hardfork_unknown() {
+        let fee_token = target_addr(0xAA);
+        let signed = signed_authorization_with_limits(Some(vec![AuthTokenLimit {
+            token: fee_token,
+            limit: U256::from(1),
+            period: 60,
+        }]));
+
+        let step = check_authorization_spending_limits(&signed, fee_token, None);
+        assert_eq!(step.status, DoctorStatus::Warn);
+    }
+
+    #[test]
+    fn test_check_authorization_allowed_calls_warns_when_hardfork_unknown() {
+        let signed = signed_authorization_with_limits(None);
+        let step = check_authorization_allowed_calls(&signed, None, None, None, None);
+        assert_eq!(step.status, DoctorStatus::Warn);
+    }
+
+    #[test]
+    fn test_check_key_expiry_uses_chain_timestamp() {
+        let step = check_key_expiry(100, &ChainTimestamp::Known(100));
+        assert_eq!(step.status, DoctorStatus::Fail);
+
+        let step = check_key_expiry(101, &ChainTimestamp::Known(100));
+        assert_eq!(step.status, DoctorStatus::Pass);
+    }
+
+    #[test]
+    fn test_check_key_expiry_warns_when_chain_timestamp_unknown() {
+        let step = check_key_expiry(
+            100,
+            &ChainTimestamp::Unknown {
+                detail: "latest block not found".to_string(),
+                hint: "test hint",
+            },
+        );
+
+        assert_eq!(step.status, DoctorStatus::Warn);
+    }
+
+    #[test]
+    fn test_check_expiring_nonce_window_validates_without_expiring_nonce_flag() {
+        let tempo =
+            TempoOpts { valid_after: Some(20), valid_before: Some(20), ..Default::default() };
+        let step = check_expiring_nonce_window(&tempo, None, 10);
+        assert_eq!(step.status, DoctorStatus::Fail);
+
+        let tempo = TempoOpts { valid_before: Some(10), ..Default::default() };
+        let step = check_expiring_nonce_window(&tempo, None, 10);
+        assert_eq!(step.status, DoctorStatus::Fail);
+    }
+
+    #[test]
+    fn test_check_expiring_nonce_window_thresholds() {
+        let tempo =
+            TempoOpts { expiring_nonce: true, valid_before: Some(103), ..Default::default() };
+        assert_eq!(check_expiring_nonce_window(&tempo, None, 100).status, DoctorStatus::Fail);
+
+        let tempo =
+            TempoOpts { expiring_nonce: true, valid_before: Some(104), ..Default::default() };
+        assert_eq!(check_expiring_nonce_window(&tempo, None, 100).status, DoctorStatus::Warn);
+
+        let tempo =
+            TempoOpts { expiring_nonce: true, valid_before: Some(105), ..Default::default() };
+        assert_eq!(check_expiring_nonce_window(&tempo, None, 100).status, DoctorStatus::Warn);
+
+        let tempo =
+            TempoOpts { expiring_nonce: true, valid_before: Some(131), ..Default::default() };
+        assert_eq!(check_expiring_nonce_window(&tempo, None, 100).status, DoctorStatus::Warn);
     }
 
     #[test]
