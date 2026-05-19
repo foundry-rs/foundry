@@ -53,7 +53,9 @@ use std::{
 mod macros;
 
 pub mod utils;
-pub use foundry_evm_hardforks::{FoundryHardfork, FromEvmVersion, evm_spec_id};
+pub use foundry_evm_hardforks::{
+    ExecutionSpec, FoundryHardfork, FromEvmVersion, evm_spec_id, evm_spec_id_from_str,
+};
 pub use utils::*;
 
 mod endpoints;
@@ -316,6 +318,8 @@ pub struct Config {
     pub etherscan: EtherscanConfigs,
     /// List of solidity error codes to always silence in the compiler output.
     pub ignored_error_codes: Vec<SolidityErrorCode>,
+    /// List of (path prefix, solidity error codes) to silence in the compiler output.
+    pub ignored_error_codes_from: Vec<(PathBuf, Vec<SolidityErrorCode>)>,
     /// List of file paths to ignore.
     #[serde(rename = "ignored_warnings_from")]
     pub ignored_file_paths: Vec<PathBuf>,
@@ -845,12 +849,15 @@ impl Config {
         // Check if the selected profile exists.
         if config.profiles.contains(&selected_profile) {
             config.profile = selected_profile;
-        } else if strict_profile {
-            return Err(ExtractConfigError::new(Error::from(format!(
-                "selected profile `{selected_profile}` does not exist"
-            ))));
         } else {
-            // Fall back to default profile for nested lib configs.
+            // Fall back to the default profile. In strict mode (top-level loads), emit a warning
+            // so users are informed when an unknown profile (e.g. via `FOUNDRY_PROFILE`) is
+            // selected; the silent fallback is reserved for nested lib configs.
+            if strict_profile {
+                config
+                    .warnings
+                    .push(Warning::UnknownProfile { profile: selected_profile.to_string() });
+            }
             config.profile = Self::DEFAULT_PROFILE;
         }
 
@@ -1235,6 +1242,10 @@ impl Config {
     pub fn create_project(&self, cached: bool, no_artifacts: bool) -> Result<Project, SolcError> {
         let settings = self.compiler_settings()?;
         let paths = self.project_paths();
+
+        // Strip "./" prefix for consistent path matching
+        let parse_path = |path: &PathBuf| path.strip_prefix("./").unwrap_or(path).to_path_buf();
+
         let mut builder = Project::builder()
             .artifacts(self.configured_artifacts_handler())
             .additional_settings(self.additional_settings(&settings))
@@ -1242,15 +1253,10 @@ impl Config {
             .settings(settings)
             .paths(paths)
             .ignore_error_codes(self.ignored_error_codes.iter().copied().map(Into::into))
-            .ignore_paths(
-                self.ignored_file_paths
-                    .iter()
-                    .map(|path| {
-                        // Strip "./" prefix for consistent path matching
-                        path.strip_prefix("./").unwrap_or(path).to_path_buf()
-                    })
-                    .collect::<Vec<_>>(),
-            )
+            .ignore_error_codes_from(self.ignored_error_codes_from.iter().map(|(path, codes)| {
+                (parse_path(path), codes.iter().copied().map(Into::into).collect())
+            }))
+            .ignore_paths(self.ignored_file_paths.iter().map(parse_path).collect())
             .set_compiler_severity_filter(if self.deny.warnings() {
                 Severity::Warning
             } else {
@@ -1841,9 +1847,14 @@ impl Config {
     /// Returns the configured [VyperSettings] that includes:
     /// - evm version
     pub fn vyper_settings(&self) -> Result<VyperSettings, SolcError> {
+        // Let `opt_level` override `optimize` so child profiles can switch away from an
+        // inherited optimization mode without sending both mutually exclusive settings to Vyper.
+        let optimize = if self.vyper.opt_level.is_some() { None } else { self.vyper.optimize };
+
         Ok(VyperSettings {
             evm_version: Some(self.evm_version),
-            optimize: self.vyper.optimize,
+            optimize,
+            opt_level: self.vyper.opt_level,
             bytecode_metadata: None,
             // TODO: We don't yet have a way to deserialize other outputs correctly, so request only
             // those for now. It should be enough to run tests and deploy contracts.
@@ -1854,6 +1865,10 @@ impl Config {
             ]),
             search_paths: None,
             experimental_codegen: self.vyper.experimental_codegen,
+            debug: self.vyper.debug,
+            enable_decimals: self.vyper.enable_decimals,
+            venom_experimental: self.vyper.venom_experimental,
+            venom: self.vyper.venom.clone(),
         })
     }
 
@@ -2716,6 +2731,7 @@ impl Default for Config {
                 SolidityErrorCode::TransferDeprecated,
                 SolidityErrorCode::NatspecMemorySafeAssemblyDeprecated,
             ],
+            ignored_error_codes_from: vec![],
             ignored_file_paths: vec![],
             deny: DenyLevel::Never,
             deny_warnings: false,
@@ -2859,19 +2875,35 @@ impl BasicConfig {
     ///
     /// This serializes to a table with the name of the profile
     pub fn to_string_pretty(&self) -> Result<String, toml::ser::Error> {
-        let mut value = toml::Value::try_from(self)?;
+        let mut profile_body = toml::Value::try_from(self)?;
         if let Some(ref network) = self.network
-            && let toml::Value::Table(ref mut table) = value
+            && let toml::Value::Table(ref mut table) = profile_body
         {
-            table.insert(network.clone(), toml::Value::Boolean(true));
+            table.insert("network".to_string(), toml::Value::String(network.clone()));
         }
-        let s = toml::to_string_pretty(&value)?;
+
+        let mut profile_section = toml::value::Table::new();
+        profile_section.insert(self.profile.to_string(), profile_body);
+
+        let mut document = toml::value::Table::new();
+        document.insert("profile".to_string(), toml::Value::Table(profile_section));
+
+        if self.network.as_deref() == Some("tempo") {
+            let mut endpoints = toml::value::Table::new();
+            endpoints.insert(
+                "tempo".to_string(),
+                toml::Value::String("https://rpc.tempo.xyz/".to_string()),
+            );
+            endpoints.insert(
+                "moderato".to_string(),
+                toml::Value::String("https://rpc.moderato.tempo.xyz/".to_string()),
+            );
+            document.insert("rpc_endpoints".to_string(), toml::Value::Table(endpoints));
+        }
+
+        let body = toml::to_string_pretty(&toml::Value::Table(document))?;
         Ok(format!(
-            "\
-[profile.{}]
-{s}
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n",
-            self.profile
+            "{body}\n# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options\n"
         ))
     }
 }
@@ -2920,7 +2952,8 @@ mod tests {
     use endpoints::{RpcAuth, RpcEndpointConfig};
     use figment::error::Kind::InvalidType;
     use foundry_compilers::artifacts::{
-        ModelCheckerEngine, YulDetails, vyper::VyperOptimizationMode,
+        ModelCheckerEngine, YulDetails,
+        vyper::{VyperOptimizationLevel, VyperOptimizationMode, VyperVenomSettings},
     };
     use foundry_evm_hardforks::TempoHardfork;
     use similar_asserts::assert_eq;
@@ -5400,9 +5433,26 @@ mod tests {
                 "foundry.toml",
                 r#"
                 [vyper]
-                optimize = "codesize"
+                optimize = "O1"
                 path = "/path/to/vyper"
                 experimental_codegen = true
+                venom_experimental = false
+                debug = true
+                enable_decimals = true
+
+                [vyper.venom]
+                disable_inlining = true
+                disable_cse = true
+                disable_sccp = false
+                disable_load_elimination = true
+                disable_dead_store_elimination = false
+                disable_algebraic_optimization = true
+                disable_branch_optimization = false
+                disable_assert_elimination = true
+                disable_mem2var = false
+                disable_simplify_cfg = true
+                disable_remove_unused_variables = false
+                inline_threshold = 15
             "#,
             )?;
 
@@ -5410,14 +5460,84 @@ mod tests {
             assert_eq!(
                 config.vyper,
                 VyperConfig {
-                    optimize: Some(VyperOptimizationMode::Codesize),
+                    optimize: Some(VyperOptimizationMode::O1),
+                    opt_level: None,
                     path: Some("/path/to/vyper".into()),
                     experimental_codegen: Some(true),
+                    venom_experimental: Some(false),
+                    debug: Some(true),
+                    enable_decimals: Some(true),
+                    venom: Some(VyperVenomSettings {
+                        disable_inlining: Some(true),
+                        disable_cse: Some(true),
+                        disable_sccp: Some(false),
+                        disable_load_elimination: Some(true),
+                        disable_dead_store_elimination: Some(false),
+                        disable_algebraic_optimization: Some(true),
+                        disable_branch_optimization: Some(false),
+                        disable_assert_elimination: Some(true),
+                        disable_mem2var: Some(false),
+                        disable_simplify_cfg: Some(true),
+                        disable_remove_unused_variables: Some(false),
+                        inline_threshold: Some(15),
+                    }),
                 }
             );
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_vyper_settings_include_extended_config() {
+        let config = Config {
+            vyper: VyperConfig {
+                opt_level: Some(VyperOptimizationLevel::O3),
+                experimental_codegen: Some(true),
+                venom_experimental: Some(false),
+                debug: Some(true),
+                enable_decimals: Some(true),
+                venom: Some(VyperVenomSettings {
+                    disable_cse: Some(true),
+                    inline_threshold: Some(15),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Config::default().normalized_optimizer_settings()
+        };
+
+        let settings = config.vyper_settings().unwrap();
+        assert_eq!(settings.optimize, None);
+        assert_eq!(settings.opt_level, Some(VyperOptimizationLevel::O3));
+        assert_eq!(settings.experimental_codegen, Some(true));
+        assert_eq!(settings.venom_experimental, Some(false));
+        assert_eq!(settings.debug, Some(true));
+        assert_eq!(settings.enable_decimals, Some(true));
+        assert_eq!(
+            settings.venom,
+            Some(VyperVenomSettings {
+                disable_cse: Some(true),
+                inline_threshold: Some(15),
+                ..Default::default()
+            })
+        );
+    }
+
+    #[test]
+    fn vyper_opt_level_overrides_optimize() {
+        let config = Config {
+            vyper: VyperConfig {
+                optimize: Some(VyperOptimizationMode::Gas),
+                opt_level: Some(VyperOptimizationLevel::O3),
+                ..Default::default()
+            },
+            ..Config::default().normalized_optimizer_settings()
+        };
+
+        let settings = config.vyper_settings().unwrap();
+        assert_eq!(settings.optimize, None);
+        assert_eq!(settings.opt_level, Some(VyperOptimizationLevel::O3));
     }
 
     #[test]
@@ -6677,6 +6797,55 @@ mod tests {
     }
 
     #[test]
+    fn no_unknown_key_warning_for_network_field() {
+        // Regression test: `network` is a flattened `Option` field of `NetworkConfigs`. It must
+        // not trigger an unknown-key warning, regardless of whether it is set.
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                network = "tempo"
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings.iter().any(
+                    |w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "network")
+                ),
+                "did not expect UnknownKey warning for `network`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn no_unknown_key_warning_for_legacy_tempo_alias() {
+        // Regression test: the legacy `tempo = true` alias must keep working without warnings.
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                tempo = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings
+                    .iter()
+                    .any(|w| matches!(w, crate::Warning::UnknownKey { key, .. } if key == "tempo")),
+                "did not expect UnknownKey warning for `tempo`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     fn fails_on_ambiguous_version_in_compilation_restrictions() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
@@ -7022,9 +7191,9 @@ mod tests {
         });
     }
 
-    // Test for issue #12844: FOUNDRY_PROFILE=nonexistent should fail
+    // Test for issue #12844: FOUNDRY_PROFILE=nonexistent should warn and fall back to default.
     #[test]
-    fn fails_on_unknown_profile() {
+    fn warns_on_unknown_profile() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(
                 "foundry.toml",
@@ -7035,11 +7204,15 @@ mod tests {
             )?;
 
             jail.set_env("FOUNDRY_PROFILE", "nonexistent");
-            let err = Config::load().expect_err("expected unknown profile to fail");
-            let err_msg = err.to_string();
+            let cfg = Config::load().expect("expected unknown profile to fall back to default");
+            assert_eq!(cfg.profile, Config::DEFAULT_PROFILE);
             assert!(
-                err_msg.contains("selected profile `nonexistent` does not exist"),
-                "Expected error about nonexistent profile, got: {err_msg}"
+                cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::UnknownProfile { profile } if profile == "nonexistent"
+                )),
+                "Expected UnknownProfile warning, got: {:?}",
+                cfg.warnings
             );
 
             Ok(())
@@ -7057,9 +7230,16 @@ mod tests {
                 src = "src"
 
                 [vyper]
-                optimize = "gas"
+                optimize = "O1"
                 path = "/usr/bin/vyper"
                 experimental_codegen = true
+                venom_experimental = false
+                debug = true
+                enable_decimals = true
+
+                [vyper.venom]
+                disable_cse = true
+                inline_threshold = 15
                 "#,
             )?;
 
@@ -7096,9 +7276,12 @@ mod tests {
                 src = "src"
 
                 [profile.default.vyper]
-                optimize = "codesize"
+                opt_level = "s"
                 path = "/opt/vyper/bin/vyper"
                 experimental_codegen = false
+                debug = true
+                enable_decimals = true
+                venom = { disable_sccp = true, disable_mem2var = false }
                 "#,
             )?;
 
@@ -7134,13 +7317,13 @@ mod tests {
                 r#"
                 [profile.default]
                 src = "src"
-                vyper = { optimize = "gas" }
+                vyper = { optimize = "gas", debug = true }
 
                 [profile.default-venom]
-                vyper = { experimental_codegen = true }
+                vyper = { opt_level = "O2", experimental_codegen = true, venom = { disable_cse = true } }
 
                 [profile.ci-venom]
-                vyper = { experimental_codegen = true }
+                vyper = { venom_experimental = true, enable_decimals = true }
                 "#,
             )?;
 

@@ -7,3 +7,4 @@ pub mod keys;
 pub mod persist;
 pub mod session;
 pub mod transport;
+pub mod ws;

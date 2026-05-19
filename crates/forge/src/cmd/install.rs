@@ -3,7 +3,7 @@ use clap::{Parser, ValueHint};
 use eyre::{Context, Result};
 use foundry_cli::{
     opts::Dependency,
-    utils::{CommandUtils, Git, LoadConfig},
+    utils::{Git, LoadConfig},
 };
 use foundry_common::fs;
 use foundry_config::{Config, impl_figment_convert_basic};
@@ -52,6 +52,13 @@ pub struct InstallArgs {
     /// or the current working directory.
     #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
+
+    /// Do not create a commit after installing.
+    ///
+    /// This is a noop flag kept for backwards compatibility, as `forge install` no longer commits
+    /// by default. Use `--commit` to opt into creating a commit.
+    #[arg(long, hide = true)]
+    pub no_commit: bool,
 
     #[command(flatten)]
     opts: DependencyInstallOpts,
@@ -142,6 +149,14 @@ impl DependencyInstallOpts {
 
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
+
+                    // checkout submodules at the revs recorded in `foundry.lock`
+                    if let Some(out_of_sync) = &out_of_sync_deps {
+                        for (rel_path, dep_id) in out_of_sync {
+                            git.checkout_at(dep_id.checkout_id(), &git.root.join(rel_path))?;
+                        }
+                    }
+
                     lockfile.write()?;
                 }
                 Err(err) => {
@@ -189,10 +204,7 @@ impl DependencyInstallOpts {
                         && dep_id.as_ref().is_some_and(|id| id.is_branch())
                     {
                         // always work with relative paths when directly modifying submodules
-                        git.cmd()
-                            .args(["submodule", "set-branch", "-b", tag_or_branch])
-                            .arg(rel_path)
-                            .exec()?;
+                        git.set_submodule_branch(rel_path, tag_or_branch)?;
 
                         let rev = git.get_rev(tag_or_branch, &path)?;
 
@@ -574,7 +586,7 @@ impl Installer<'_> {
 
     fn match_branch(self, tag: &str, path: &Path) -> Result<Option<String>> {
         // fetch remote branches and check for tag
-        let output = self.git.root(path).cmd().args(["branch", "-r"]).get_stdout_lossy()?;
+        let output = self.git.root(path).remote_branches()?;
 
         let mut candidates = output
             .lines()

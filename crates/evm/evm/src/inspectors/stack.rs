@@ -1,6 +1,7 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer, Fuzzer, LineCoverageCollector,
-    LogCollector, RevertDiagnostic, ScriptExecutionInspector, TempoLabels, TracingInspector,
+    Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer, EdgeCovInspector, Fuzzer,
+    LineCoverageCollector, LogCollector, RevertDiagnostic, ScriptExecutionInspector, TempoLabels,
+    TracingInspector,
 };
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256,
@@ -38,7 +39,6 @@ use revm::{
     primitives::KECCAK_EMPTY,
     state::{Account, AccountStatus},
 };
-use revm_inspectors::edge_cov::EdgeCovInspector;
 use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -1291,6 +1291,15 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             && !self.in_inner_context
             && ecx.journal().depth() == 1
         {
+            // In isolation mode, transact_inner returns None for the address on revert; pre-compute
+            // the would-be deployed address so create_end can enforce expected_revert reverter
+            // checks.
+            let precomputed_address = ecx
+                .journal()
+                .evm_state()
+                .get(&create.caller())
+                .map(|acc| create.caller().create(acc.info.nonce));
+
             let (result, address) = self.transact_inner(
                 ecx,
                 TxKind::Create,
@@ -1299,6 +1308,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                 create.gas_limit(),
                 create.value(),
             );
+            let address =
+                address.or_else(|| if result.is_revert() { precomputed_address } else { None });
             return Some(CreateOutcome { result, address });
         }
 

@@ -13,7 +13,6 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-foundry-block-explorers.workspace = true
 foundry-cli-markdown.workspace = true
 foundry-common.workspace = true
 foundry-config.workspace = true
@@ -53,6 +52,7 @@ rayon.workspace = true
 regex = { workspace = true, default-features = false }
 serde_json.workspace = true
 serde.workspace = true
+toml.workspace = true
 strsim = "0.11"
 strum = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["macros"] }
@@ -71,7 +71,13 @@ tempfile.workspace = true
 tikv-jemallocator = { workspace = true, optional = true }
 
 [features]
+default = ["optimism"]
 tracy = ["dep:tracing-tracy"]
 tracy-allocator = ["tracy"]
 jemalloc = ["dep:tikv-jemallocator"]
 mimalloc = ["dep:mimalloc"]
+optimism = [
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+    "foundry-evm/optimism",
+]

@@ -1,4 +1,4 @@
-use foundry_test_utils::rpc;
+use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 
 // Test evm version switch during tests / scripts.
 // <https://github.com/foundry-rs/foundry/issues/9840>
@@ -177,4 +177,38 @@ Traces:
 ...
 
 "#]]);
+});
+
+forgetest_init!(test_set_evm_version_tempo_hardfork, |prj, cmd| {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
+
+    prj.add_test(
+        "TempoEvmVersion.t.sol",
+        r#"
+pragma solidity >=0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+
+interface EvmVm {
+    function getEvmVersion() external pure returns (string memory evm);
+    function setEvmVersion(string calldata evm) external;
+}
+
+contract TempoEvmVersionTest is Test {
+    EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function test_set_tempo_evm_version() public {
+        evm.setEvmVersion("T3");
+        assertEq(evm.getEvmVersion(), "t3");
+
+        evm.setEvmVersion("tempo:T2");
+        assertEq(evm.getEvmVersion(), "t2");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoEvmVersionTest"]).assert_success();
 });

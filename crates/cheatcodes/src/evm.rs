@@ -22,7 +22,6 @@ use foundry_common::{
         SlotInfo,
     },
 };
-use foundry_compilers::artifacts::EvmVersion;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction,
     backend::{DatabaseError, DatabaseExt, RevertStateSnapshotAction},
@@ -51,7 +50,7 @@ use std::{
 
 mod record_debug_step;
 use foundry_common::fmt::format_token_raw;
-use foundry_config::evm_spec_id;
+use foundry_config::{ExecutionSpec, evm_spec_id_from_str};
 use record_debug_step::{convert_call_trace_ctx_to_debug_step, flatten_call_trace};
 use serde::Serialize;
 
@@ -1246,6 +1245,10 @@ impl Cheatcode for startDebugTraceRecordingCall {
             return Err(Error::from("no tracer initiated, consider adding -vvv flag"));
         };
 
+        if ccx.state.record_debug_steps_info.is_some() {
+            bail!("debug trace recording was already started");
+        }
+
         let mut info = RecordDebugStepInfo {
             // will be updated later
             start_node_idx: 0,
@@ -1308,10 +1311,8 @@ impl Cheatcode for stopAndReturnDebugTraceRecordingCall {
 impl Cheatcode for setEvmVersionCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { evm } = self;
-        let spec_id = evm_spec_id(
-            EvmVersion::from_str(evm)
-                .map_err(|_| Error::from(format!("invalid evm version {evm}")))?,
-        );
+        let spec_id = evm_spec_id_from_str(evm)
+            .ok_or_else(|| Error::from(format!("invalid evm version {evm}")))?;
         ccx.state.execution_evm_version = Some(spec_id);
         Ok(Default::default())
     }
@@ -1319,8 +1320,8 @@ impl Cheatcode for setEvmVersionCall {
 
 impl Cheatcode for getEvmVersionCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
-        let spec = (*ccx.ecx.cfg().spec()).into();
-        Ok(spec.to_string().to_lowercase().abi_encode())
+        let spec = *ccx.ecx.cfg().spec();
+        Ok(spec.evm_version_name().to_lowercase().abi_encode())
     }
 }
 

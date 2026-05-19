@@ -295,6 +295,20 @@ impl ResolvedEtherscanConfig {
         self,
     ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
     {
+        self.into_client_with_no_proxy(false)
+    }
+
+    /// Same as [`Self::into_client`] but optionally disables automatic proxy detection.
+    ///
+    /// When `no_proxy` is `true`, calls [`foundry_block_explorers::ClientBuilder::no_proxy`],
+    /// which prevents system proxy lookups that can crash in sandboxed environments (e.g.,
+    /// Cursor IDE, macOS App Sandbox).
+    /// See: <https://github.com/foundry-rs/foundry/issues/12733>
+    pub fn into_client_with_no_proxy(
+        self,
+        no_proxy: bool,
+    ) -> Result<foundry_block_explorers::Client, foundry_block_explorers::errors::EtherscanError>
+    {
         let Self { api_url, browser_url, key: api_key, chain } = self;
 
         let chain = chain.unwrap_or_default();
@@ -307,9 +321,15 @@ impl ResolvedEtherscanConfig {
             }
         }
 
+        // Disable automatic proxy detection. In sandboxed environments (e.g., Cursor IDE,
+        // macOS App Sandbox), reqwest's system proxy lookup via SCDynamicStore can crash
+        // when the API returns NULL. See: https://github.com/foundry-rs/foundry/issues/12733
         let mut client_builder = foundry_block_explorers::Client::builder()
             .with_api_key(api_key)
             .with_cache(cache, Duration::from_secs(24 * 60 * 60));
+        if no_proxy {
+            client_builder = client_builder.no_proxy();
+        }
         if let Some(ref browser_url) = browser_url {
             client_builder = client_builder.with_url(browser_url)?;
         }
