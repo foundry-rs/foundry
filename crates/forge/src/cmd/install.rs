@@ -53,6 +53,13 @@ pub struct InstallArgs {
     #[arg(long, value_hint = ValueHint::DirPath, value_name = "PATH")]
     pub root: Option<PathBuf>,
 
+    /// Do not create a commit after installing.
+    ///
+    /// This is a noop flag kept for backwards compatibility, as `forge install` no longer commits
+    /// by default. Use `--commit` to opt into creating a commit.
+    #[arg(long, hide = true)]
+    pub no_commit: bool,
+
     #[command(flatten)]
     opts: DependencyInstallOpts,
 }
@@ -142,6 +149,14 @@ impl DependencyInstallOpts {
 
                     // recursively fetch all submodules (without fetching latest)
                     git.submodule_update(false, false, false, true, Some(&libs))?;
+
+                    // checkout submodules at the revs recorded in `foundry.lock`
+                    if let Some(out_of_sync) = &out_of_sync_deps {
+                        for (rel_path, dep_id) in out_of_sync {
+                            git.checkout_at(dep_id.checkout_id(), &git.root.join(rel_path))?;
+                        }
+                    }
+
                     lockfile.write()?;
                 }
                 Err(err) => {

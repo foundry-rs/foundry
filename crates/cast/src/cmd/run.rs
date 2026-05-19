@@ -29,10 +29,12 @@ use foundry_config::{
         value::{Dict, Map},
     },
 };
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::{
         FoundryBlock as _,
-        evm::{EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, TempoEvmNetwork, TxEnvFor},
+        evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork, TxEnvFor},
     },
     executors::{EvmError, Executor, TracingExecutor},
     hardforks::FoundryHardfork,
@@ -123,12 +125,15 @@ impl RunArgs {
         evm_opts.infer_network_from_fork().await;
 
         if evm_opts.networks.is_tempo() {
-            self.run_with_evm::<TempoEvmNetwork>().await
-        } else if evm_opts.networks.is_optimism() {
-            self.run_with_evm::<OpEvmNetwork>().await
-        } else {
-            self.run_with_evm::<EthEvmNetwork>().await
+            return self.run_with_evm::<TempoEvmNetwork>().await;
         }
+
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
+            return self.run_with_evm::<OpEvmNetwork>().await;
+        }
+
+        self.run_with_evm::<EthEvmNetwork>().await
     }
 
     async fn run_with_evm<FEN: FoundryEvmNetwork>(self) -> Result<()> {
