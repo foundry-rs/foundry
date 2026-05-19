@@ -61,6 +61,7 @@ use revm::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
+        return_ok,
     },
 };
 use serde_json::Value;
@@ -1407,7 +1408,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if let Some(expected_revert) = &mut self.expected_revert {
             // Record current reverter address and call scheme before processing the expect revert
             // if call reverted.
-            if outcome.result.is_revert() {
+            let call_failed = !matches!(outcome.result.result, return_ok!());
+            if call_failed {
                 // Record current reverter address if expect revert is set with expected reverter
                 // address and no actual reverter was set yet or if we're expecting more than one
                 // revert.
@@ -1432,7 +1434,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         //
                         // Only process if:
                         // 1. It's not a cheatcode call, AND
-                        // 2. Either the call reverted, OR, when internal expect reverts are
+                        // 2. Either the call failed, OR, when internal expect reverts are
                         //    disabled, we made an external call (max_depth > depth), OR we're at
                         //    the root call (depth 0)
                         //
@@ -1442,8 +1444,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         // satisfying the expectation.
                         if cheatcode_call {
                             false
-                        } else if outcome.result.is_revert() {
-                            // Call reverted - should process
+                        } else if call_failed {
+                            // Call failed - should process
                             true
                         } else if !self.config.internal_expect_revert
                             && expected_revert.max_depth > expected_revert.depth
