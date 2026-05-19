@@ -265,6 +265,22 @@ pub enum MutationResult {
     Alive,
     Invalid,
     Skipped,
+    /// The mutant's compile-and-test run exceeded the configured timeout.
+    /// Treated as unresolved: not counted toward survived or killed.
+    TimedOut,
+}
+
+impl MutationResult {
+    /// Short uppercase label used in progress / reporter output.
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Dead => "KILLED",
+            Self::Alive => "SURVIVED",
+            Self::Invalid => "INVALID",
+            Self::Skipped => "SKIPPED",
+            Self::TimedOut => "TIMED OUT",
+        }
+    }
 }
 
 /// A given mutation

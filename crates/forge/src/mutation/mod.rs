@@ -37,6 +37,9 @@ pub struct MutationsSummary {
     survived: Vec<Mutant>,
     invalid: Vec<Mutant>,
     skipped: Vec<Mutant>,
+    /// Mutants whose compile-and-test work exceeded the configured timeout.
+    /// Tracked separately so they are not counted toward survived/killed.
+    timed_out: Vec<Mutant>,
 }
 
 impl Default for MutationsSummary {
@@ -47,7 +50,13 @@ impl Default for MutationsSummary {
 
 impl MutationsSummary {
     pub const fn new() -> Self {
-        Self { dead: Vec::new(), survived: Vec::new(), invalid: Vec::new(), skipped: Vec::new() }
+        Self {
+            dead: Vec::new(),
+            survived: Vec::new(),
+            invalid: Vec::new(),
+            skipped: Vec::new(),
+            timed_out: Vec::new(),
+        }
     }
 
     pub fn update_invalid_mutant(&mut self, mutant: Mutant) {
@@ -66,8 +75,16 @@ impl MutationsSummary {
         self.skipped.push(mutant);
     }
 
+    pub fn add_timed_out_mutant(&mut self, mutant: Mutant) {
+        self.timed_out.push(mutant);
+    }
+
     pub const fn total_mutants(&self) -> usize {
-        self.dead.len() + self.survived.len() + self.invalid.len() + self.skipped.len()
+        self.dead.len()
+            + self.survived.len()
+            + self.invalid.len()
+            + self.skipped.len()
+            + self.timed_out.len()
     }
 
     pub const fn total_dead(&self) -> usize {
@@ -86,6 +103,10 @@ impl MutationsSummary {
         self.skipped.len()
     }
 
+    pub const fn total_timed_out(&self) -> usize {
+        self.timed_out.len()
+    }
+
     pub const fn get_dead(&self) -> &Vec<Mutant> {
         &self.dead
     }
@@ -98,12 +119,17 @@ impl MutationsSummary {
         &self.invalid
     }
 
+    pub const fn get_timed_out(&self) -> &Vec<Mutant> {
+        &self.timed_out
+    }
+
     /// Merge another MutationsSummary into this one
     pub fn merge(&mut self, other: &Self) {
         self.dead.extend(other.dead.clone());
         self.survived.extend(other.survived.clone());
         self.invalid.extend(other.invalid.clone());
         self.skipped.extend(other.skipped.clone());
+        self.timed_out.extend(other.timed_out.clone());
     }
 
     /// Calculate mutation score (percentage of dead mutants out of valid mutants)
@@ -130,6 +156,7 @@ impl MutationsSummary {
                 survived: self.total_survived(),
                 invalid: self.total_invalid(),
                 skipped: self.total_skipped(),
+                timed_out: self.total_timed_out(),
                 mutation_score: self.mutation_score(),
                 duration_secs,
             },
@@ -153,6 +180,7 @@ pub struct MutationSummaryJson {
     pub survived: usize,
     pub invalid: usize,
     pub skipped: usize,
+    pub timed_out: usize,
     pub mutation_score: f64,
     pub duration_secs: f64,
 }
@@ -281,6 +309,10 @@ impl MutationHandler {
         self.report.add_skipped_mutant(mutant);
     }
 
+    pub fn add_timed_out_mutant(&mut self, mutant: Mutant) {
+        self.report.add_timed_out_mutant(mutant);
+    }
+
     /// Get a reference to the current report
     pub const fn get_report(&self) -> &MutationsSummary {
         &self.report
@@ -304,11 +336,14 @@ impl MutationHandler {
 
         // Hash the effective set of enabled mutation operators so cache entries
         // are invalidated when the user changes `include_operators` /
-        // `exclude_operators` in their config.
+        // `exclude_operators` in their config. Also fold in the timeout so a
+        // changed budget invalidates previously cached results that may have
+        // been collected under a different (possibly larger) limit.
         let mut cfg_hasher = DefaultHasher::new();
         for op in self.config.mutation.enabled_operators() {
             op.to_string().hash(&mut cfg_hasher);
         }
+        self.config.mutation.timeout.hash(&mut cfg_hasher);
         let cfg_hash = cfg_hasher.finish();
 
         let stem =

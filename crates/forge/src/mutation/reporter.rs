@@ -41,6 +41,9 @@ impl MutationReporter {
         self.add_row("Killed", summary.total_dead(), total, Color::Green);
         self.add_row("Invalid", summary.total_invalid(), total, Color::DarkGrey);
         self.add_row("Skipped", summary.total_skipped(), total, Color::Yellow);
+        if summary.total_timed_out() > 0 {
+            self.add_row("Timed out", summary.total_timed_out(), total, Color::Magenta);
+        }
 
         let _ = sh_println!("\n{}", "═".repeat(60));
         let _ = sh_println!("{}", Paint::bold("MUTATION TESTING RESULTS"));
@@ -63,8 +66,12 @@ impl MutationReporter {
             Paint::dim("Invalid")
         );
         let _ = sh_println!(
-            "  {} - Mutant skipped: redundant mutation on same expression\n",
+            "  {} - Mutant skipped: redundant mutation on same expression",
             Paint::yellow("Skipped")
+        );
+        let _ = sh_println!(
+            "  {} - Mutant timed out: compile/test exceeded the configured timeout\n",
+            Paint::magenta("Timed out")
         );
 
         // Mutation score with color
@@ -141,6 +148,16 @@ impl MutationReporter {
                 "{} {} invalid mutants (compilation failures - expected for some mutations)",
                 Paint::dim("ℹ"),
                 summary.total_invalid()
+            );
+        }
+
+        // Timed-out mutants (if any)
+        if !summary.get_timed_out().is_empty() {
+            let _ = sh_println!("\n{}", "─".repeat(60));
+            let _ = sh_println!(
+                "{} {} mutants timed out (consider increasing --mutation-timeout)",
+                Paint::magenta("⏱").bold(),
+                summary.total_timed_out()
             );
         }
 

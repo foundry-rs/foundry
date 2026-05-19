@@ -11,7 +11,9 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
+        mpsc,
     },
+    time::Duration,
 };
 
 use eyre::Result;
@@ -356,19 +358,30 @@ fn test_single_mutant_isolated(
 
     let temp_config = Arc::new(temp_config);
 
-    // Compile and test
-    let result = match compile_and_test(&temp_config, evm_opts) {
-        Ok(killed) => {
-            if killed {
-                MutationResult::Dead
-            } else {
-                // Mark span as survived for adaptive skipping
-                shared_state.mark_span_survived(mutant.span);
-                MutationResult::Alive
-            }
-        }
-        Err(_) => MutationResult::Invalid,
+    // Compile and test, optionally bounded by a wall-clock timeout (mirrors
+    // `invariant.timeout` for invariant campaigns).
+    //
+    // Enforcement is best-effort: when the timeout fires we free the worker
+    // slot immediately and treat the mutant as `TimedOut`. The background
+    // compile/test thread may continue briefly until it unwinds; this is
+    // acceptable for mutation testing because the EVM's gas limit caps test
+    // wall-clock and compile overruns are rare.
+    let timeout = config.mutation.timeout.map(|s| Duration::from_secs(s as u64));
+
+    let result = match timeout {
+        Some(budget) => run_compile_and_test_with_timeout(&temp_config, evm_opts, budget),
+        None => match compile_and_test(&temp_config, evm_opts) {
+            Ok(true) => MutationResult::Dead,
+            Ok(false) => MutationResult::Alive,
+            Err(_) => MutationResult::Invalid,
+        },
     };
+
+    // Track adaptive survived spans only for genuinely Alive mutants; TimedOut
+    // is unresolved and must not mask other mutations on the same span.
+    if matches!(result, MutationResult::Alive) {
+        shared_state.mark_span_survived(mutant.span);
+    }
 
     // Update progress
     if let Some(ref progress) = shared_state.progress {
@@ -377,6 +390,39 @@ fn test_single_mutant_isolated(
 
     // TempDir automatically cleans up on drop
     MutantTestResult { mutant, result }
+}
+
+/// Run `compile_and_test` on a worker thread and wait at most `budget` for it
+/// to complete. Returns `TimedOut` on overrun and `Invalid` on infrastructure
+/// errors / panics.
+fn run_compile_and_test_with_timeout(
+    config: &Arc<Config>,
+    evm_opts: &EvmOpts,
+    budget: Duration,
+) -> MutationResult {
+    let (tx, rx) = mpsc::channel::<Result<bool>>();
+    let cfg = Arc::clone(config);
+    let opts = evm_opts.clone();
+
+    let spawn_result = std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .name("mutation-worker".to_string())
+        .spawn(move || {
+            let res = panic::catch_unwind(AssertUnwindSafe(|| compile_and_test(&cfg, &opts)))
+                .unwrap_or_else(|_| Err(eyre::eyre!("worker panicked")));
+            let _ = tx.send(res);
+        });
+
+    if spawn_result.is_err() {
+        return MutationResult::Invalid;
+    }
+
+    match rx.recv_timeout(budget) {
+        Ok(Ok(true)) => MutationResult::Dead,
+        Ok(Ok(false)) => MutationResult::Alive,
+        Ok(Err(_)) => MutationResult::Invalid,
+        Err(_) => MutationResult::TimedOut,
+    }
 }
 
 /// Apply a mutation to a source file.

@@ -119,6 +119,7 @@ pub async fn run_mutation_testing(
                     MutationResult::Alive => handler.add_survived_mutant(mutant),
                     MutationResult::Invalid => handler.add_invalid_mutant(mutant),
                     MutationResult::Skipped => handler.add_skipped_mutant(mutant),
+                    MutationResult::TimedOut => handler.add_timed_out_mutant(mutant),
                 }
             }
             mutation_summary.merge(handler.get_report());
@@ -152,7 +153,11 @@ pub async fn run_mutation_testing(
 
         // Create progress display if enabled (not in JSON mode)
         let progress = if mutation_config.show_progress && !json_output {
-            let p = MutationProgress::new(mutants.len(), num_workers);
+            let p = MutationProgress::with_timeout(
+                mutants.len(),
+                num_workers,
+                config.mutation.timeout,
+            );
             // Show relative path from project root
             let display_path =
                 path.strip_prefix(&config.root).unwrap_or(&path).display().to_string();
@@ -189,6 +194,7 @@ pub async fn run_mutation_testing(
                 }
                 MutationResult::Invalid => handler.add_invalid_mutant(result.mutant),
                 MutationResult::Skipped => handler.add_skipped_mutant(result.mutant),
+                MutationResult::TimedOut => handler.add_timed_out_mutant(result.mutant),
             }
         }
 

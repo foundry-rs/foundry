@@ -48,6 +48,17 @@ pub struct MutationConfig {
     pub include_operators: Vec<MutatorType>,
     /// Exclude additional operators beyond the defaults.
     pub exclude_operators: Vec<MutatorType>,
+    /// Per-mutant wall-clock timeout, in seconds.
+    ///
+    /// When set, each mutant's compile-and-test work is bounded by this
+    /// duration; mutants that exceed it are recorded as `TimedOut`. This is
+    /// the analog of `invariant.timeout` for mutation campaigns.
+    ///
+    /// Note: enforcement is best-effort. Background work for a timed-out
+    /// mutant may continue briefly until the underlying compile / test loop
+    /// reaches a checkpoint, but the worker slot is freed immediately so
+    /// other mutants can proceed.
+    pub timeout: Option<u32>,
 }
 
 impl MutationConfig {

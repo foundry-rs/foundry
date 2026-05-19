@@ -242,6 +242,13 @@ pub struct TestArgs {
     /// Defaults to the number of CPU cores.
     #[arg(long, value_name = "JOBS", requires = "mutate")]
     pub mutation_jobs: Option<usize>,
+
+    /// Per-mutant wall-clock timeout in seconds. Mutants that exceed it are
+    /// recorded as "timed out" and the worker proceeds to the next mutant.
+    ///
+    /// Analogous to `--invariant-timeout` for invariant campaigns.
+    #[arg(long, value_name = "TIMEOUT", requires = "mutate")]
+    pub mutation_timeout: Option<u32>,
 }
 
 impl TestArgs {
@@ -1211,6 +1218,13 @@ impl Provider for TestArgs {
 
         if self.show_progress {
             dict.insert("show_progress".to_string(), true.into());
+        }
+
+        // Mutation-testing CLI overrides
+        if let Some(timeout) = self.mutation_timeout {
+            let mut mutation_dict = Dict::default();
+            mutation_dict.insert("timeout".to_string(), timeout.into());
+            dict.insert("mutation".to_string(), mutation_dict.into());
         }
 
         Ok(Map::from([(Config::selected_profile(), dict)]))

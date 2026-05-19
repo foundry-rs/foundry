@@ -78,6 +78,7 @@ Legend:
   Killed - Mutant killed: tests caught this mutation (good coverage)
   Invalid - Mutant invalid: mutation caused compilation error
   Skipped - Mutant skipped: redundant mutation on same expression
+  Timed out - Mutant timed out: compile/test exceeded the configured timeout
 
 Mutation Score: 80.0% (4/5 mutants killed); [ELAPSED]
 
@@ -85,7 +86,6 @@ Mutation Score: 80.0% (4/5 mutants killed); [ELAPSED]
 ⚠ SURVIVED MUTANTS (test suite gaps)
 ────────────────────────────────────────────────────────────
 These mutations were NOT caught by your tests.
-Each represents a potential bug that your tests would miss.
 ...
      number++;
      Mutation:
@@ -104,8 +104,7 @@ Each represents a potential bug that your tests would miss.
 
     // Run mutation testing with --json - verify the output contains valid mutation JSON
     cmd.forge_fuse().args(["test", "--mutate", "src/Counter.sol", "--mutation-jobs", "1", "--json"]).assert_success().stdout_eq(str![[r#"
-...
-{"summary":{"total":7,"killed":4,"survived":1,"invalid":2,"skipped":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
+{"summary":{"total":7,"killed":4,"survived":1,"invalid":2,"skipped":0,"timed_out":0,"mutation_score":80.0,"duration_secs":[..]},"survived_mutants":{"src/Counter.sol":[{"line":13,"column":9,"original":"number++","mutant":"++number"}]}}
 
 "#]]);
 });
@@ -236,6 +235,7 @@ Legend:
   Killed - Mutant killed: tests caught this mutation (good coverage)
   Invalid - Mutant invalid: mutation caused compilation error
   Skipped - Mutant skipped: redundant mutation on same expression
+  Timed out - Mutant timed out: compile/test exceeded the configured timeout
 
 Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
 
@@ -243,7 +243,6 @@ Mutation Score: 80.0% (8/10 mutants killed); [ELAPSED]
 ⚠ SURVIVED MUTANTS (test suite gaps)
 ────────────────────────────────────────────────────────────
 These mutations were NOT caught by your tests.
-Each represents a potential bug that your tests would miss.
 ...
      return a + b;
      Mutation:
