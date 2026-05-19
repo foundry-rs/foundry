@@ -174,11 +174,8 @@ fn resolve_member_overloads<'hir>(
         .filter_map(|item| {
             let fid = item.as_function()?;
             let f = hir.function(fid);
-            if f.name.is_some_and(|n| n.name == method.name) && f.parameters.len() == arg_count {
-                Some(fid)
-            } else {
-                None
-            }
+            (f.name.is_some_and(|n| n.name == method.name) && f.parameters.len() == arg_count)
+                .then_some(fid)
         })
         .collect()
 }
