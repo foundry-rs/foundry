@@ -646,7 +646,7 @@ mod tests {
             path: RelativeRemappingPathBuf { parent: None, path: tmp.path().to_path_buf() },
         };
 
-        let mut config = SessionSourceConfig {
+        let mut config: SessionSourceConfig = SessionSourceConfig {
             foundry_config: Config {
                 solc: Some(SolcReq::Version(Version::new(0, 8, 29))),
                 remappings: vec![remapping],
