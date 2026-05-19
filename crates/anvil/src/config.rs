@@ -638,7 +638,7 @@ impl NodeConfig {
     pub fn set_chain_id(&mut self, chain_id: Option<impl Into<u64>>) {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
-        self.networks.with_chain_id(chain_id);
+        self.networks = self.networks.with_chain_id(chain_id);
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(Some(chain_id));
         });
@@ -1773,5 +1773,14 @@ mod tests {
         assert!(!config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(Some(10)));
         assert!(config.is_state_history_supported());
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn set_chain_id_updates_network_config() {
+        let mut config = NodeConfig::test();
+        config.set_chain_id(Some(10u64));
+
+        assert!(config.networks.is_optimism());
     }
 }

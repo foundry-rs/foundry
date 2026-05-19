@@ -37,12 +37,14 @@ use thiserror::Error;
 #[macro_use]
 pub mod macros;
 
+mod calls;
 pub mod codesize;
 pub mod gas;
 pub mod high;
 pub mod info;
 pub mod low;
 pub mod med;
+pub mod naming;
 
 static ALL_REGISTERED_LINTS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut lints = Vec::new();
@@ -225,6 +227,7 @@ impl<'a> SolidityLinter<'a> {
 
         let emitter = ProjectLintEmitter::new(
             gcx.sess,
+            gcx,
             self.with_description,
             self.with_json_emitter,
             self.lint_specific,
