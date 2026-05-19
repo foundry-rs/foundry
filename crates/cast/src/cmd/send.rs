@@ -619,7 +619,7 @@ where
     if sync {
         let receipt_result: Result<N::ReceiptResponse> =
             provider.send_transaction_sync(tx).await.map_err(Into::into);
-        return finish_machine_send::<N>(receipt_result.map(|r| (r, from, to)), None, from, to);
+        return finish_machine_send::<N>(receipt_result, None, from, to);
     }
     let pending_tx = match provider.send_transaction(tx).await {
         Ok(p) => p,
@@ -635,7 +635,7 @@ where
         .get_receipt()
         .await
         .map_err(Into::into);
-    finish_machine_send::<N>(receipt_result.map(|r| (r, from, to)), Some(tx_hash), from, to)
+    finish_machine_send::<N>(receipt_result, Some(tx_hash), from, to)
 }
 
 /// `--machine` send path for already-broadcast transactions (browser flow).
@@ -661,7 +661,7 @@ where
             .get_receipt()
             .await
             .map_err(Into::into);
-    finish_machine_send::<N>(receipt_result.map(|r| (r, from, to)), Some(tx_hash), from, to)
+    finish_machine_send::<N>(receipt_result, Some(tx_hash), from, to)
 }
 
 /// `--machine` send path for Tempo access-key signing.
@@ -709,20 +709,20 @@ where
         .get_receipt()
         .await
         .map_err(Into::into);
-    finish_machine_send::<N>(receipt_result.map(|r| (r, from, to)), Some(tx_hash), from, to)
+    finish_machine_send::<N>(receipt_result, Some(tx_hash), from, to)
 }
 
 /// Emit a success envelope, or reclassify a reverted receipt as
 /// `chain.broadcast_failed` with the receipt fields kept in `details`.
 fn finish_machine_send<N: Network>(
-    receipt: Result<(N::ReceiptResponse, Address, Option<Address>)>,
+    receipt: Result<N::ReceiptResponse>,
     known_tx_hash: Option<B256>,
     from: Address,
     to: Option<Address>,
 ) -> Result<()> {
     match receipt {
-        Ok((receipt, rfrom, rto)) => {
-            let data = SendData::from_receipt::<N>(&receipt, rfrom, rto);
+        Ok(receipt) => {
+            let data = SendData::from_receipt::<N>(&receipt, from, to);
             if data.status == Some(false) {
                 // Reverted: keep receipt fields so agents can debug.
                 let details = serde_json::json!({
