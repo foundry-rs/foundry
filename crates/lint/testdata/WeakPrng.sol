@@ -84,6 +84,14 @@ contract WeakPrng is WeakPrngBase(block.timestamp % 10) { //~WARN: weak randomne
         return block.timestamp % 1 days;
     }
 
+    function timestampNumericTimeBucket() external view returns (uint256) {
+        return block.timestamp % 86400;
+    }
+
+    function timestampExpressionTimeBucket() external view returns (uint256) {
+        return block.timestamp % (24 * 60 * 60);
+    }
+
     function nestedTimestampTimeBucket() external view returns (uint256) {
         return (block.timestamp % 1 days) % 10;
     }

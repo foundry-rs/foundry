@@ -42,3 +42,11 @@ uint256 winner = uint256(keccak256(abi.encodePacked(revealedSeed, msg.sender))) 
 
 This lint is intentionally local and conservative. It does not attempt interprocedural taint
 tracking, so values copied into a variable before use may require manual review.
+
+The lint ignores obvious time-bucketing expressions such as `block.timestamp % 1 days`,
+`block.timestamp % 86400`, and `block.timestamp % (24 * 60 * 60)`. Variable moduli such as
+`block.timestamp % period` are still reported because the lint cannot infer whether the variable is
+a duration or a randomness upper bound.
+
+Only Solidity expressions are inspected. Inline assembly/Yul entropy sources such as `timestamp()`
+or `number()` are out of scope.

@@ -4,7 +4,10 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{BinOp, BinOpKind, Expr, ExprKind, IndexKind, SourceUnit, SubDenomination, visit::Visit},
+    ast::{
+        BinOp, BinOpKind, Expr, ExprKind, IndexKind, LitKind, SourceUnit, SubDenomination,
+        visit::Visit,
+    },
     interface::SpannedOption,
 };
 use std::ops::ControlFlow;
@@ -64,8 +67,8 @@ fn is_randomness_modulo(lhs: &Expr<'_>, rhs: &Expr<'_>) -> bool {
 }
 
 fn is_timestamp_time_bucket(lhs: &Expr<'_>, rhs: &Expr<'_>) -> bool {
-    (is_block_timestamp(lhs.peel_parens()) && is_time_subdenomination(rhs))
-        || (is_time_subdenomination(lhs) && is_block_timestamp(rhs.peel_parens()))
+    (is_block_timestamp(lhs.peel_parens()) && is_time_bucket_modulus(rhs))
+        || (is_time_bucket_modulus(lhs) && is_block_timestamp(rhs.peel_parens()))
 }
 
 fn is_timestamp_time_bucket_expr(expr: &Expr<'_>) -> bool {
@@ -76,8 +79,37 @@ fn is_timestamp_time_bucket_expr(expr: &Expr<'_>) -> bool {
     )
 }
 
+fn is_time_bucket_modulus(expr: &Expr<'_>) -> bool {
+    is_time_subdenomination(expr)
+        || const_eval_u64(expr).is_some_and(|value| value >= 60 && value % 60 == 0)
+}
+
 fn is_time_subdenomination(expr: &Expr<'_>) -> bool {
     matches!(&expr.peel_parens().kind, ExprKind::Lit(_, Some(SubDenomination::Time(_))))
+}
+
+fn const_eval_u64(expr: &Expr<'_>) -> Option<u64> {
+    match &expr.peel_parens().kind {
+        ExprKind::Lit(lit, _) => {
+            if let LitKind::Number(value) = lit.kind {
+                u64::try_from(value).ok()
+            } else {
+                None
+            }
+        }
+        ExprKind::Binary(lhs, BinOp { kind, .. }, rhs) => {
+            let lhs = const_eval_u64(lhs)?;
+            let rhs = const_eval_u64(rhs)?;
+            match kind {
+                BinOpKind::Add => lhs.checked_add(rhs),
+                BinOpKind::Sub => lhs.checked_sub(rhs),
+                BinOpKind::Mul => lhs.checked_mul(rhs),
+                BinOpKind::Div => lhs.checked_div(rhs),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 fn contains_predictable_source(expr: &Expr<'_>) -> bool {
