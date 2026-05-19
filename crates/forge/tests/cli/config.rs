@@ -1359,7 +1359,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
   },
   "mutation": {
     "include_operators": [],
-    "exclude_operators": []
+    "exclude_operators": [],
+    "timeout": null
   },
   "ffi": false,
   "live_logs": false,

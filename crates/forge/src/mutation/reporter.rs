@@ -56,8 +56,10 @@ impl MutationReporter {
         let _ = sh_println!("  {} - tests did not catch the mutation", Paint::red("Survived"));
         let _ = sh_println!("  {} - tests caught the mutation", Paint::green("Killed"));
         let _ = sh_println!("  {} - mutation produced a compilation error", Paint::dim("Invalid"));
-        let _ =
-            sh_println!("  {} - redundant mutation on the same expression", Paint::yellow("Skipped"));
+        let _ = sh_println!(
+            "  {} - redundant mutation on the same expression",
+            Paint::yellow("Skipped")
+        );
         let _ = sh_println!(
             "  {} - compile/test exceeded the configured timeout\n",
             Paint::magenta("Timed out")
@@ -162,5 +164,4 @@ impl MutationReporter {
         let _ = sh_println!("       {} {}", Paint::red("-"), Paint::red(original.trim()));
         let _ = sh_println!("       {} {}", Paint::green("+"), Paint::green(&mutated));
     }
-
 }

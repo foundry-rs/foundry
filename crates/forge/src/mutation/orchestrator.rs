@@ -153,11 +153,8 @@ pub async fn run_mutation_testing(
 
         // Create progress display if enabled (not in JSON mode)
         let progress = if mutation_config.show_progress && !json_output {
-            let p = MutationProgress::with_timeout(
-                mutants.len(),
-                num_workers,
-                config.mutation.timeout,
-            );
+            let p =
+                MutationProgress::with_timeout(mutants.len(), num_workers, config.mutation.timeout);
             // Show relative path from project root
             let display_path =
                 path.strip_prefix(&config.root).unwrap_or(&path).display().to_string();

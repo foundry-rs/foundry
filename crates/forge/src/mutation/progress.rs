@@ -145,9 +145,7 @@ impl MutationProgressState {
     pub fn add_mutant_progress(&mut self, mutant: &Mutant) {
         let pb = self.multi.add(ProgressBar::new_spinner());
         pb.set_style(
-            ProgressStyle::with_template("  {spinner} {wide_msg}")
-                .unwrap()
-                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
+            ProgressStyle::with_template("  {spinner} {wide_msg}").unwrap().tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
         );
         pb.enable_steady_tick(Duration::from_millis(100));
 

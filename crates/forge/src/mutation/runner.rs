@@ -20,10 +20,11 @@ use eyre::Result;
 use foundry_common::{EmptyTestFilter, compile::ProjectCompiler, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::Config;
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
 use foundry_evm::{
     core::evm::{
-        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, OpEvmNetwork, SpecFor, TempoEvmNetwork,
-        TxEnvFor,
+        BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
     opts::EvmOpts,
 };
@@ -485,9 +486,11 @@ fn apply_mutation(mutant: &Mutant, original_source: &str, dest_path: &Path) -> R
 fn compile_and_test(config: &Arc<Config>, evm_opts: &EvmOpts) -> Result<bool> {
     if evm_opts.networks.is_tempo() {
         compile_and_test_inner::<TempoEvmNetwork>(config, evm_opts)
-    } else if evm_opts.networks.is_optimism() {
-        compile_and_test_inner::<OpEvmNetwork>(config, evm_opts)
     } else {
+        #[cfg(feature = "optimism")]
+        if evm_opts.networks.is_optimism() {
+            return compile_and_test_inner::<OpEvmNetwork>(config, evm_opts);
+        }
         compile_and_test_inner::<EthEvmNetwork>(config, evm_opts)
     }
 }
