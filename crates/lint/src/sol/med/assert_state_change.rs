@@ -95,25 +95,29 @@ fn find_state_change<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Sp
                 }
             }
 
-            // Resolvable contract member calls: check mutates_state() via HIR
-            if let Some(fid) = resolve_member_function(hir, callee) {
-                if hir.function(fid).mutates_state() {
-                    return Some(expr.span);
-                }
+            // Resolvable contract member calls: check mutates_state() via HIR.
+            // We collect all overloads with the same name and arity, then only flag
+            // when every candidate mutates state to avoid FP from view overloads.
+            let candidates = resolve_member_overloads(hir, callee, args.len());
+            if !candidates.is_empty()
+                && candidates.iter().all(|&fid| hir.function(fid).mutates_state())
+            {
+                return Some(expr.span);
             }
 
-            // Bare-identifier internal function calls: check mutates_state()
+            // Bare-identifier internal function calls: same all-must-mutate policy.
             let reses = match &callee.peel_parens().kind {
                 ExprKind::Ident(r) => *r,
                 _ => &[],
             };
-            if reses.iter().any(|res| {
-                if let Res::Item(ItemId::Function(fid)) = res {
-                    hir.function(*fid).mutates_state()
-                } else {
-                    false
-                }
-            }) {
+            let fn_reses: Vec<FunctionId> = reses
+                .iter()
+                .filter_map(|res| {
+                    if let Res::Item(ItemId::Function(fid)) = res { Some(*fid) } else { None }
+                })
+                .collect();
+            if !fn_reses.is_empty() && fn_reses.iter().all(|&fid| hir.function(fid).mutates_state())
+            {
                 return Some(expr.span);
             }
 
@@ -156,15 +160,27 @@ fn find_state_change<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Sp
     }
 }
 
-/// Resolves a member-call callee expression to a HIR `FunctionId` if the base is a
-/// typed contract variable or interface cast, enabling `mutates_state()` checks.
-fn resolve_member_function<'hir>(hir: &Hir<'hir>, callee: &'hir Expr<'hir>) -> Option<FunctionId> {
-    let ExprKind::Member(base, method) = &callee.peel_parens().kind else { return None };
-    let cid = contract_id_of(hir, base)?;
-    hir.contract_item_ids(cid).find_map(|item| {
-        let fid = item.as_function()?;
-        hir.function(fid).name.is_some_and(|n| n.name == method.name).then_some(fid)
-    })
+/// Returns all overloads of the called member function that match the call's argument count.
+/// Matching by arity narrows overload candidates so the caller can apply an all-must-mutate
+/// policy and avoid flagging call sites that resolve to a view overload.
+fn resolve_member_overloads<'hir>(
+    hir: &Hir<'hir>,
+    callee: &'hir Expr<'hir>,
+    arg_count: usize,
+) -> Vec<FunctionId> {
+    let ExprKind::Member(base, method) = &callee.peel_parens().kind else { return vec![] };
+    let Some(cid) = contract_id_of(hir, base) else { return vec![] };
+    hir.contract_item_ids(cid)
+        .filter_map(|item| {
+            let fid = item.as_function()?;
+            let f = hir.function(fid);
+            if f.name.is_some_and(|n| n.name == method.name) && f.parameters.len() == arg_count {
+                Some(fid)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// Extracts the contract ID from an expression that is a contract variable or interface cast.

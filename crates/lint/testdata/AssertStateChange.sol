@@ -85,6 +85,10 @@ contract AssertStateChange {
 interface IToken {
     function transfer(address to, uint256 amount) external returns (bool);
     function balanceOf(address account) external view returns (uint256);
+    // Overloaded: one mutating (2 args), one view (1 arg) — different arities so arity
+    // narrowing can correctly distinguish them.
+    function update(address target, uint256 amount) external returns (bool);
+    function update(uint256 n) external view returns (bool);
 }
 
 contract AssertStateChangeExternal {
@@ -104,5 +108,17 @@ contract AssertStateChangeExternal {
     // Good: view function on an interface does not mutate state
     function goodInterfaceView(uint256 expected) external view {
         assert(token.balanceOf(address(this)) >= expected);
+    }
+
+    // Good: calling the 1-arg view overload `update(uint256)` — arity differs from
+    // the 2-arg mutating overload, so no false positive.
+    function goodOverloadView(uint256 n) external view {
+        assert(token.update(n));
+    }
+
+    // Bad: calling the 2-arg mutating overload `update(address,uint256)` — only
+    // overload with this arity, so correctly flagged.
+    function badOverloadMutating(address target, uint256 amt) external {
+        assert(token.update(target, amt)); //~WARN: assert() argument contains a state-modifying expression
     }
 }
