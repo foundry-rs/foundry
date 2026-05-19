@@ -77,4 +77,9 @@ contract UnusedReturn {
     function good6(address t) external {
         oracleOverloaded.getPrice(t);
     }
+
+    // SHOULD FAIL: named-arg call, arity should still be 1
+    function bad4(address t) external {
+        oracle.getPrice({token: t}); //~WARN: Return value of an external call is not used
+    }
 }
