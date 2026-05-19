@@ -7,6 +7,11 @@ interface IERC20 {
     function transfer(address, uint256) external returns (bool);
 }
 
+interface IOneArgTransfer {
+    function transfer(uint256 amount) external;
+    function send(uint256 amount) external;
+}
+
 // SHOULD FAIL:
 
 contract LockedReceive { //~WARN: contract can receive ETH but has no mechanism to send it out
@@ -45,6 +50,17 @@ contract LockedTokenOnly { //~WARN: contract can receive ETH but has no mechanis
     }
 }
 
+contract LockedOneArgTokenTransfer { //~WARN: contract can receive ETH but has no mechanism to send it out
+    IOneArgTransfer token;
+
+    function deposit() external payable {}
+
+    function pay(uint256 amount) external {
+        token.transfer(amount);
+        token.send(amount);
+    }
+}
+
 contract Helper {
     function pay(address payable to, uint256 amount) external {
         to.transfer(amount);
@@ -73,6 +89,37 @@ contract LockedUnreachablePrivate { //~WARN: contract can receive ETH but has no
 
     function _drain(address payable to) private {
         selfdestruct(to);
+    }
+}
+
+// Overload resolution: the dead 0-arg `_do()` overload must not be followed.
+abstract contract OverloadBase {
+    function _do() internal {
+        payable(msg.sender).transfer(1 ether);
+    }
+    function _do(uint256) internal {}
+}
+
+contract LockedSuperOverload is OverloadBase { //~WARN: contract can receive ETH but has no mechanism to send it out
+    function deposit() external payable {}
+
+    function f() external {
+        super._do(1);
+    }
+}
+
+library OverloadLib {
+    function pay() internal {
+        payable(msg.sender).transfer(1 ether);
+    }
+    function pay(uint256) internal {}
+}
+
+contract LockedLibraryOverload { //~WARN: contract can receive ETH but has no mechanism to send it out
+    function deposit() external payable {}
+
+    function f() external {
+        OverloadLib.pay(1);
     }
 }
 
@@ -230,6 +277,16 @@ contract OkPayableModifierReverts {
     }
 
     function deposit() external payable disabled {}
+}
+
+// Modifier always reverts after `_`.
+contract OkPayableModifierRevertsAfter {
+    modifier disabledAfter() {
+        _;
+        revert("disabled");
+    }
+
+    function deposit() external payable disabledAfter {}
 }
 
 // `super.<m>(...)` member-call dispatch.

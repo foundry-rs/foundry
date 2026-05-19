@@ -4,11 +4,14 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{ContractKind, LitKind, StateMutability, Visibility},
-    interface::{kw, sym},
+    ast::{ContractKind, ElementaryType, LitKind, StateMutability, Visibility},
+    interface::{Symbol, kw, sym},
     sema::{
         builtins::Builtin,
-        hir::{self, ExprKind, FunctionId, FunctionKind, ItemId, Res, StmtKind, Visit as _},
+        hir::{
+            self, CallArgs, CallArgsKind, ExprKind, FunctionId, FunctionKind, ItemId, Res,
+            StmtKind, TypeKind, VariableId, Visit as _,
+        },
     },
 };
 use std::{collections::HashSet, ops::ControlFlow};
@@ -105,23 +108,25 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
 
 /// Returns `true` if invoking `func` always reverts, either via its body or an attached modifier.
 fn function_always_reverts(hir: &hir::Hir<'_>, func: &hir::Function<'_>) -> bool {
-    if func.modifiers.iter().any(|m| {
-        m.id.as_function().is_some_and(|mid| modifier_reverts_before_placeholder(hir.function(mid)))
-    }) {
+    if func
+        .modifiers
+        .iter()
+        .any(|m| m.id.as_function().is_some_and(|mid| modifier_always_reverts(hir.function(mid))))
+    {
         return true;
     }
     func.body.is_some_and(|body| stmts_always_revert(body.stmts))
 }
 
-/// Returns `true` if the modifier body always reverts before reaching the `_` placeholder.
-fn modifier_reverts_before_placeholder(modifier: &hir::Function<'_>) -> bool {
+/// Returns `true` if the modifier always reverts: before the first `_`, or after the last one.
+fn modifier_always_reverts(modifier: &hir::Function<'_>) -> bool {
     let Some(body) = modifier.body else { return false };
-    let before_placeholder = body
-        .stmts
-        .iter()
-        .position(|s| matches!(s.kind, StmtKind::Placeholder))
-        .map_or(body.stmts, |i| &body.stmts[..i]);
-    stmts_always_revert(before_placeholder)
+    let Some(first) = body.stmts.iter().position(|s| matches!(s.kind, StmtKind::Placeholder))
+    else {
+        return stmts_always_revert(body.stmts);
+    };
+    let last = body.stmts.iter().rposition(|s| matches!(s.kind, StmtKind::Placeholder)).unwrap();
+    stmts_always_revert(&body.stmts[..first]) || stmts_always_revert(&body.stmts[last + 1..])
 }
 
 fn stmts_always_revert(stmts: &[hir::Stmt<'_>]) -> bool {
@@ -183,35 +188,67 @@ struct SendChecker<'a, 'hir> {
 }
 
 impl<'hir> SendChecker<'_, 'hir> {
-    /// Queues functions matching `member` in the contract(s) referred to by `receiver`.
-    fn queue_member_callee(&mut self, receiver: &hir::Expr<'_>, member: solar::interface::Ident) {
+    /// Queues the overload of `member` actually invoked on `receiver`.
+    fn queue_member_callee(
+        &mut self,
+        receiver: &hir::Expr<'_>,
+        member: solar::interface::Ident,
+        args: &CallArgs<'_>,
+    ) {
         let ExprKind::Ident(reses) = &receiver.peel_parens().kind else { return };
         for res in *reses {
             match res {
                 Res::Builtin(Builtin::Super) => {
-                    for &cid in self.bases.iter().skip(1) {
-                        self.queue_named(cid, member.name);
-                    }
+                    self.queue_resolved(&self.bases[1..], member.name, args);
                 }
                 Res::Builtin(Builtin::This) => {
-                    for &cid in self.bases {
-                        self.queue_named(cid, member.name);
-                    }
+                    self.queue_resolved(self.bases, member.name, args);
                 }
-                Res::Item(ItemId::Contract(cid)) => self.queue_named(*cid, member.name),
+                Res::Item(ItemId::Contract(cid)) => {
+                    self.queue_resolved(std::slice::from_ref(cid), member.name, args);
+                }
                 _ => {}
             }
         }
     }
 
-    fn queue_named(&mut self, cid: hir::ContractId, name: solar::interface::Symbol) {
-        for fid in self.hir.contract(cid).all_functions() {
-            if !self.visited.contains(&fid)
-                && self.hir.function(fid).name.is_some_and(|n| n.name == name)
-            {
-                self.worklist.push(fid);
+    /// Queues arity-matching overloads of `name` from the most-derived contract that defines any.
+    fn queue_resolved(
+        &mut self,
+        contracts: &[hir::ContractId],
+        name: solar::interface::Symbol,
+        args: &CallArgs<'_>,
+    ) {
+        for &cid in contracts {
+            let mut found = false;
+            for fid in self.hir.contract(cid).all_functions() {
+                let func = self.hir.function(fid);
+                if func.name.is_some_and(|n| n.name == name)
+                    && args_match(self.hir, args, func.parameters)
+                {
+                    found = true;
+                    if !self.visited.contains(&fid) {
+                        self.worklist.push(fid);
+                    }
+                }
+            }
+            if found {
+                return;
             }
         }
+    }
+}
+
+/// Returns `true` if `args` can target `params` by arity, and named-arg names map to params.
+fn args_match(hir: &hir::Hir<'_>, args: &CallArgs<'_>, params: &[VariableId]) -> bool {
+    if args.len() != params.len() {
+        return false;
+    }
+    match &args.kind {
+        CallArgsKind::Unnamed(_) => true,
+        CallArgsKind::Named(named) => named.iter().all(|arg| {
+            params.iter().any(|&p| hir.variable(p).name.is_some_and(|n| n.name == arg.name.name))
+        }),
     }
 }
 
@@ -235,24 +272,25 @@ impl<'hir> hir::Visit<'hir> for SendChecker<'_, 'hir> {
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        if expr_sends_ether(expr) {
+        if expr_sends_ether(self.hir, expr) {
             return ControlFlow::Break(());
         }
 
         // Queue calls whose callee resolves statically to a `FunctionId`.
-        if let ExprKind::Call(callee, ..) = &expr.kind {
+        if let ExprKind::Call(callee, args, _) = &expr.kind {
             match &callee.peel_parens().kind {
                 ExprKind::Ident(reses) => {
                     for res in *reses {
                         if let Res::Item(ItemId::Function(fid)) = res
                             && !self.visited.contains(fid)
+                            && args_match(self.hir, args, self.hir.function(*fid).parameters)
                         {
                             self.worklist.push(*fid);
                         }
                     }
                 }
                 ExprKind::Member(receiver, member) => {
-                    self.queue_member_callee(receiver, *member);
+                    self.queue_member_callee(receiver, *member, args);
                 }
                 _ => {}
             }
@@ -266,7 +304,7 @@ impl<'hir> hir::Visit<'hir> for SendChecker<'_, 'hir> {
 /// call option, `.transfer`/`.send` with a non-zero amount, low-level `.delegatecall`/`.callcode`
 /// (drainable via `selfdestruct`), or the `selfdestruct` builtin. Only literal `0` is treated as
 /// a zero amount; any other expression is assumed non-zero.
-fn expr_sends_ether(expr: &hir::Expr<'_>) -> bool {
+fn expr_sends_ether(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     let ExprKind::Call(callee, args, named_args) = &expr.kind else {
         return false;
     };
@@ -280,7 +318,11 @@ fn expr_sends_ether(expr: &hir::Expr<'_>) -> bool {
 
     let callee = callee.peel_parens();
     match &callee.kind {
-        ExprKind::Member(_, member) => {
+        ExprKind::Member(receiver, member) => {
+            // Only address-typed receivers can move ETH via these members.
+            if !receiver_is_address(hir, receiver) {
+                return false;
+            }
             // Single-arg `.transfer`/`.send` to disambiguate from ERC20's 2-arg `transfer`.
             if matches!(member.name, sym::transfer | sym::send) && args.len() == 1 {
                 let amt = args.exprs().next().expect("len == 1");
@@ -301,6 +343,45 @@ fn expr_sends_ether(expr: &hir::Expr<'_>) -> bool {
     }
 
     false
+}
+
+/// Returns `true` if `expr` is statically known to be an `address`/`address payable` value.
+/// Unknown types return `false` so userland members named like `.transfer` aren't taken for exits.
+fn receiver_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+    match &expr.peel_parens().kind {
+        ExprKind::Payable(_) => true,
+        ExprKind::Lit(lit) => matches!(lit.kind, LitKind::Address(_)),
+        // `address(x)` cast.
+        ExprKind::Call(callee, ..) => matches!(
+            &callee.peel_parens().kind,
+            ExprKind::Type(hir::Type {
+                kind: TypeKind::Elementary(ElementaryType::Address(_)),
+                ..
+            })
+        ),
+        ExprKind::Member(base, member) => is_address_builtin_member(base, member.name),
+        ExprKind::Ident(reses) => reses.iter().any(|res| match res {
+            Res::Item(ItemId::Variable(id)) => is_address_type(&hir.variable(*id).ty),
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
+/// `msg.sender`, `tx.origin`, `block.coinbase`.
+fn is_address_builtin_member(base: &hir::Expr<'_>, member: Symbol) -> bool {
+    let ExprKind::Ident(reses) = &base.peel_parens().kind else { return false };
+    reses.iter().any(|res| {
+        let Res::Builtin(builtin) = res else { return false };
+        matches!(
+            (builtin.name(), member),
+            (sym::msg, sym::sender) | (sym::tx, kw::Origin) | (sym::block, kw::Coinbase)
+        )
+    })
+}
+
+const fn is_address_type(ty: &hir::Type<'_>) -> bool {
+    matches!(ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
 }
 
 /// Returns `true` if the expression is the integer literal `0`.

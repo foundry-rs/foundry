@@ -49,6 +49,14 @@ LL │ contract LockedTokenOnly {
 warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
    ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
    │
+LL │ contract LockedOneArgTokenTransfer {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
 LL │ contract LockedNotInherited {
    │          ━━━━━━━━━━━━━━━━━━
    │
@@ -75,6 +83,22 @@ warning[locked-ether]: contract can receive ETH but has no mechanism to send it 
    │
 LL │ contract LockedUnreachablePrivate {
    │          ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedSuperOverload is OverloadBase {
+   │          ━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedLibraryOverload {
+   │          ━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/locked-ether
 
