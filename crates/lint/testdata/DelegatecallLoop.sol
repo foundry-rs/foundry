@@ -1,4 +1,4 @@
-//@compile-flags: --severity low
+//@compile-flags: --only-lint delegatecall-loop
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
