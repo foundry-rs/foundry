@@ -551,6 +551,64 @@ contract ArbitrarySendErc20 {
         fake.onFlashLoan(data);
         token.transferFrom(address(fake), to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
+
+    // Pull-back token differs from the one passed to the hook.
+    function badFlashLoanWrongToken(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        other.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // Pull-back recipient isn't the lender.
+    function badFlashLoanWrongRecipient(
+        IERC3156FlashBorrower receiver,
+        address attacker,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        token.transferFrom(address(receiver), attacker, amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // Pull-back amount isn't `amount + fee`.
+    function badFlashLoanWrongAmount(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        uint256 other,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        token.transferFrom(address(receiver), address(this), other); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // Second pull-back after the obligation has been consumed.
+    function badFlashLoanDoublePull(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        token.transferFrom(address(receiver), address(this), amount + fee);
+        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // `fee + amount` (commuted) still matches.
+    function okFlashLoanCommutativeAmount(
+        IERC3156FlashBorrower receiver,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public {
+        receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
+        token.transferFrom(address(receiver), address(this), fee + amount);
+    }
 }
 
 // Solady-style: first param is `address`, not a contract type.

@@ -62,6 +62,15 @@ struct PermitRecord {
     owner: hir::VariableId,
 }
 
+/// Outstanding EIP-3156 repayment licensed by a prior `onFlashLoan` call.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct PendingRepayment {
+    receiver: hir::VariableId,
+    token: hir::VariableId,
+    amount: hir::VariableId,
+    fee: hir::VariableId,
+}
+
 struct Analyzer<'hir> {
     hir: &'hir hir::Hir<'hir>,
     /// Variables proven safe (equal to `msg.sender` or `address(this)`) on this path.
@@ -70,6 +79,9 @@ struct Analyzer<'hir> {
     safe_vars: HashSet<hir::VariableId>,
     /// Permits seen earlier on this path. Path-sensitive and killed on token/owner reassignment.
     permits: HashSet<PermitRecord>,
+    /// Pending flash-loan repayments. Path-sensitive; killed on reassignment of any
+    /// referenced var; consumed once by a matching sink.
+    repayments: HashSet<PendingRepayment>,
     hits: Vec<Span>,
 }
 
@@ -78,7 +90,13 @@ const HELPER_DEPTH: u8 = 3;
 
 impl<'hir> Analyzer<'hir> {
     fn new(hir: &'hir hir::Hir<'hir>) -> Self {
-        Self { hir, safe_vars: HashSet::new(), permits: HashSet::new(), hits: Vec::new() }
+        Self {
+            hir,
+            safe_vars: HashSet::new(),
+            permits: HashSet::new(),
+            repayments: HashSet::new(),
+            hits: Vec::new(),
+        }
     }
 
     fn is_safe(&self, expr: &hir::Expr<'_>) -> bool {
@@ -149,6 +167,46 @@ impl<'hir> Analyzer<'hir> {
         self.permits.contains(&PermitRecord { token, owner })
     }
 
+    /// Drops pending repayments referencing `target`.
+    fn kill_repayments_for(&mut self, target: hir::VariableId) {
+        self.repayments.retain(|r| {
+            r.receiver != target && r.token != target && r.amount != target && r.fee != target
+        });
+    }
+
+    /// Matches `from`/`token` plus a sink call with `to == address(this)` and amount
+    /// `amount + fee` against a pending repayment, consuming it on hit.
+    fn consume_repayment(
+        &mut self,
+        call_expr: &hir::Expr<'_>,
+        from: &hir::Expr<'_>,
+        token: Option<hir::VariableId>,
+    ) -> bool {
+        let Some(from_v) = underlying_var(from) else { return false };
+        let Some(token_v) = token else { return false };
+        let ExprKind::Call(_, args, _) = &call_expr.kind else { return false };
+        let hir::CallArgsKind::Unnamed(args) = args.kind else { return false };
+        let (to_arg, amount_arg) = match args.len() {
+            3 => (&args[1], &args[2]),
+            4 => (&args[2], &args[3]),
+            _ => return false,
+        };
+        if !is_address_self(to_arg) {
+            return false;
+        }
+        let matched = self.repayments.iter().copied().find(|r| {
+            r.receiver == from_v
+                && r.token == token_v
+                && is_amount_plus_fee(amount_arg, r.amount, r.fee)
+        });
+        if let Some(rep) = matched {
+            self.repayments.remove(&rep);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Records vars proven equal to a safe origin. Handles `==`/`!=`, `&&`/`||` (via De Morgan)
     /// and `!`. Disjunctions are skipped — they don't establish a must-fact.
     fn add_facts(&mut self, pred: &hir::Expr<'_>, negate: bool) {
@@ -208,6 +266,7 @@ impl<'hir> Analyzer<'hir> {
     fn assign_one(&mut self, lhs: &hir::Expr<'_>, rhs: Option<&hir::Expr<'_>>) {
         let Some(target) = underlying_var(lhs) else { return };
         self.kill_permits_for(target);
+        self.kill_repayments_for(target);
         if self.hir.variable(target).kind.is_state() {
             return;
         }
@@ -223,11 +282,13 @@ impl<'hir> Analyzer<'hir> {
     fn visit_isolated(&mut self, stmts: &'hir [hir::Stmt<'hir>]) {
         let baseline_safe = self.safe_vars.clone();
         let baseline_permits = self.permits.clone();
+        let baseline_repayments = self.repayments.clone();
         for s in stmts {
             let _ = self.visit_stmt(s);
         }
         self.safe_vars.retain(|v| baseline_safe.contains(v));
         self.permits.retain(|p| baseline_permits.contains(p));
+        self.repayments.retain(|r| baseline_repayments.contains(r));
     }
 }
 
@@ -247,47 +308,59 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
 
                 let baseline_safe = self.safe_vars.clone();
                 let baseline_permits = self.permits.clone();
+                let baseline_repayments = self.repayments.clone();
                 self.add_facts(cond, false);
                 let _ = self.visit_stmt(then);
                 let then_exits = branch_always_exits(then);
                 let after_then_safe = std::mem::replace(&mut self.safe_vars, baseline_safe);
                 let after_then_permits = std::mem::replace(&mut self.permits, baseline_permits);
+                let after_then_repayments =
+                    std::mem::replace(&mut self.repayments, baseline_repayments);
 
                 // Both the explicit `else` body and the implicit fall-through inherit `!cond`.
-                let (after_else_safe, after_else_permits, else_exits) = match else_ {
-                    Some(e) => {
-                        self.add_facts(cond, true);
-                        let _ = self.visit_stmt(e);
-                        (
-                            std::mem::take(&mut self.safe_vars),
-                            std::mem::take(&mut self.permits),
-                            branch_always_exits(e),
-                        )
-                    }
-                    None => {
-                        self.add_facts(cond, true);
-                        (
-                            std::mem::take(&mut self.safe_vars),
-                            std::mem::take(&mut self.permits),
-                            false,
-                        )
-                    }
-                };
+                let (after_else_safe, after_else_permits, after_else_repayments, else_exits) =
+                    match else_ {
+                        Some(e) => {
+                            self.add_facts(cond, true);
+                            let _ = self.visit_stmt(e);
+                            (
+                                std::mem::take(&mut self.safe_vars),
+                                std::mem::take(&mut self.permits),
+                                std::mem::take(&mut self.repayments),
+                                branch_always_exits(e),
+                            )
+                        }
+                        None => {
+                            self.add_facts(cond, true);
+                            (
+                                std::mem::take(&mut self.safe_vars),
+                                std::mem::take(&mut self.permits),
+                                std::mem::take(&mut self.repayments),
+                                false,
+                            )
+                        }
+                    };
 
-                let (sv, pm) = match (then_exits, else_exits) {
+                let (sv, pm, rp) = match (then_exits, else_exits) {
                     (true, true) => (
                         after_then_safe.union(&after_else_safe).copied().collect(),
                         after_then_permits.union(&after_else_permits).copied().collect(),
+                        after_then_repayments.union(&after_else_repayments).copied().collect(),
                     ),
-                    (true, false) => (after_else_safe, after_else_permits),
-                    (false, true) => (after_then_safe, after_then_permits),
+                    (true, false) => (after_else_safe, after_else_permits, after_else_repayments),
+                    (false, true) => (after_then_safe, after_then_permits, after_then_repayments),
                     (false, false) => (
                         after_then_safe.intersection(&after_else_safe).copied().collect(),
                         after_then_permits.intersection(&after_else_permits).copied().collect(),
+                        after_then_repayments
+                            .intersection(&after_else_repayments)
+                            .copied()
+                            .collect(),
                     ),
                 };
                 self.safe_vars = sv;
                 self.permits = pm;
+                self.repayments = rp;
                 return ControlFlow::Continue(());
             }
 
@@ -356,14 +429,15 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                 return result;
             }
             ExprKind::Call(..) => {
-                // EIP-3156: trust the receiver from this point on.
-                if let Some(vid) = match_flash_loan_call(self.hir, expr) {
-                    self.safe_vars.insert(vid);
+                // EIP-3156: a matching repayment sink consumes the recorded obligation.
+                if let Some(rep) = match_flash_loan_call(self.hir, expr) {
+                    self.repayments.insert(rep);
                 } else if let Some(p) = match_permit_call(expr) {
                     self.permits.insert(p);
                 } else if let Some((from, token)) = match_sink(self.hir, expr)
                     && !self.is_safe(from)
                     && !self.permit_covers(token, from)
+                    && !self.consume_repayment(expr, from, token)
                 {
                     self.hits.push(expr.span);
                 }
@@ -375,10 +449,15 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
     }
 }
 
-/// EIP-3156 `onFlashLoan(address,address,uint256,uint256,bytes) returns (bytes32)`. Returns
-/// the receiver's variable id only when its static contract type declares the exact sig.
-fn match_flash_loan_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir::VariableId> {
-    let ExprKind::Call(callee, _, _) = &expr.kind else { return None };
+/// EIP-3156 `onFlashLoan(address,address,uint256,uint256,bytes) returns (bytes32)`. Only
+/// returns a record when the receiver type declares the exact sig and every tracked arg
+/// resolves to a `VariableId`; literal args yield `None`.
+fn match_flash_loan_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<PendingRepayment> {
+    let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
+    let hir::CallArgsKind::Unnamed(args) = args.kind else { return None };
+    if args.len() != 5 {
+        return None;
+    }
     let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
     if ident.name.as_str() != "onFlashLoan" {
         return None;
@@ -393,7 +472,23 @@ fn match_flash_loan_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<hir
     ) {
         return None;
     }
-    underlying_var(recv)
+    Some(PendingRepayment {
+        receiver: underlying_var(recv)?,
+        token: underlying_var(&args[1])?,
+        amount: underlying_var(&args[2])?,
+        fee: underlying_var(&args[3])?,
+    })
+}
+
+/// True when `expr` is `amount + fee` or `fee + amount`, parens-tolerant.
+fn is_amount_plus_fee(expr: &hir::Expr<'_>, amount: hir::VariableId, fee: hir::VariableId) -> bool {
+    let ExprKind::Binary(lhs, op, rhs) = &expr.peel_parens().kind else { return false };
+    if !matches!(op.kind, ast::BinOpKind::Add) {
+        return false;
+    }
+    let a = underlying_var(lhs);
+    let b = underlying_var(rhs);
+    (a == Some(amount) && b == Some(fee)) || (a == Some(fee) && b == Some(amount))
 }
 
 /// Matches an ERC20-like transfer sink. Returns `(from_arg, token_var)` where `token_var` is
