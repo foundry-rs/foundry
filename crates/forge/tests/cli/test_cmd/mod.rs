@@ -19,7 +19,10 @@ mod repros;
 mod spec;
 mod symbolic;
 mod symbolic_conformance;
+mod symbolic_engine_capabilities;
+mod symbolic_helpers;
 mod symbolic_limits;
+mod symbolic_parity;
 mod table;
 mod trace;
 
