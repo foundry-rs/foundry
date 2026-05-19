@@ -2379,7 +2379,7 @@ casttest!(flaky_storage_with_invalid_solc_version_2, |_prj, cmd| {
     ])
     .assert_failure()
     .stderr_eq(str![[r#"
-Error: Encountered invalid solc version in contracts/Create2Deployer.sol: No solc version exists that matches the version requirement: ^0.8.9
+Error: Encountered invalid compiler version in contracts/Create2Deployer.sol: No compiler version exists that matches the version requirement: ^0.8.9
 
 "#]]);
 });

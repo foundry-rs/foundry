@@ -105,7 +105,7 @@ use foundry_evm::{
     },
     utils::{
         block_env_from_header, get_blob_base_fee_update_fraction,
-        get_blob_base_fee_update_fraction_by_spec_id,
+        get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_spec_id,
     },
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -119,7 +119,7 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
 #[cfg(feature = "optimism")]
-use op_revm::{OpSpecId, OpTransaction, transaction::deposit::DepositTransactionParts};
+use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 
 /// Side-channel container for OP-specific deposit info produced by
 /// [`Backend::build_call_env`] and consumed by the OP transact path.
@@ -602,17 +602,7 @@ impl<N: Network> Backend<N> {
 
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
-        let spec_id = self.spec_id();
-
-        if spec_id >= SpecId::OSAKA {
-            return BlobParams::osaka();
-        }
-
-        if spec_id >= SpecId::PRAGUE {
-            return BlobParams::prague();
-        }
-
-        BlobParams::cancun()
+        get_blob_params_by_spec_id(self.spec_id())
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)
@@ -1359,7 +1349,7 @@ impl<N: Network> Backend<N> {
         #[cfg(feature = "optimism")]
         if self.is_optimism() {
             let op_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
+                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork.into()),
                 evm_env.block_env.clone(),
             );
             let mut evm =
@@ -1552,13 +1542,17 @@ impl<N: Network> Backend<N> {
                     // manager needs a non-zero hash; the actual value doesn't matter
                     // because the state is discarded after estimation.
                     let estimation_hash = keccak256(base.data.as_ref());
+                    // T1B+ uses `TempoTxEnv::unique_tx_identifier` (sender-scoped) as
+                    // the expiring-nonce replay hash; pre-T1B uses `tx_hash`.
+                    // Set both so the synthetic env works across hardforks.
+                    tempo_tx.unique_tx_identifier = Some(estimation_hash);
                     tempo_tx.tempo_tx_env = Some(Box::new(TempoBatchCallEnv {
                         nonce_key,
                         valid_before,
                         valid_after,
                         aa_calls: vec![Call { to: base.kind, value: base.value, input: base.data }],
                         tx_hash: estimation_hash,
-                        expiring_nonce_hash: Some(estimation_hash),
+                        expiring_nonce_idx: Some(0),
                         ..Default::default()
                     }));
                 }

@@ -12,15 +12,20 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `unchecked-call`: Low-level calls should check the success return value.
   - `erc20-unchecked-transfer`: ERC20 `transfer` and `transferFrom` calls should check the return value.
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
+  - `reentrancy-unlimited-gas`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.
 - **Medium Severity:**
   - `boolean-cst`: Flags misuse of boolean constants.
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
   - `incorrect-erc721-interface`: Flags ERC721 interfaces and implementations with non-compliant function signatures.
+  - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
+  - `uninitialized-local`: Local variable is read before being explicitly initialized.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
+  - `unused-return`: Return value of an external call is not used.
 - **Low Severity:**
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
+  - `delegatecall-loop`: Payable functions should not use `delegatecall` inside a loop.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
 - **Informational / Style Guide:**
   - `boolean-equal`: Boolean comparisons to constants should be simplified.
@@ -38,10 +43,16 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `interface-file-naming`: Interface file names should be prefixed with `I`.
   - `interface-naming`: Interface names should be prefixed with `I`.
   - `pragma-inconsistent`: Flags projects whose source files declare different Solidity pragma version requirements.
+  - `redundant-base-constructor-call`: Flags explicit empty base-constructor arguments (e.g. `is A()`) when the base requires no arguments.
   - `missing-inheritance`: Flags contracts that implement every external function of an interface without explicitly inheriting from it.
+  - `low-level-calls`: Direct use of low-level calls should be avoided.
+  - `event-fields`: `address` and id-like (`uint256`/`bytes32` named `id`/`*Id`) event parameters should be `indexed` for efficient log filtering.
 - **Gas Optimizations:**
   - `asm-keccak256`: Recommends using inline assembly for `keccak256` for potential gas savings.
+  - `cache-array-length`: Recommends caching dynamic array or `bytes` lengths used in `for` loop conditions.
+  - `costly-loop`: Flags storage variable writes inside loops; accumulate into a local variable and write once after the loop instead.
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
+  - `could-be-constant`: Recommends declaring never-written state variables with a compile-time-constant initializer as `constant`.
   - `custom-errors`: Recommends using custom errors instead of strings and plain reverts for potential gas savings.
   - `unused-state-variables`: State variables that are never used should be removed.
   - `var-read-using-this`: Reads of state variables (or other `view`/`pure` functions) via `this` cause an unnecessary `STATICCALL`; access them directly.
