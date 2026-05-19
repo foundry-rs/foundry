@@ -226,11 +226,9 @@ pub enum KeychainSubcommand {
         name = "sign-authorization",
         visible_alias = "sign-auth",
         group = clap::ArgGroup::new("spending_policy")
-            .required(true)
             .multiple(true)
             .args(["limits", "deny_all_spending"]),
         group = clap::ArgGroup::new("call_policy")
-            .required(true)
             .multiple(true)
             .args(["scope", "scopes_json", "deny_all_calls"]),
     )]
@@ -409,14 +407,21 @@ const fn wallet_type_name(t: &WalletType) -> &'static str {
 
 /// Parse a `--limit TOKEN:AMOUNT` flag value.
 fn parse_limit(s: &str) -> Result<TokenLimit, String> {
-    let (token_str, amount_str) = s
-        .split_once(':')
-        .ok_or_else(|| format!("invalid limit format: {s} (expected TOKEN:AMOUNT)"))?;
+    let mut parts = s.splitn(3, ':');
+    let token_str = parts.next().unwrap();
+    let amount_str = parts
+        .next()
+        .ok_or_else(|| format!("invalid limit format: {s} (expected TOKEN:AMOUNT[:PERIOD])"))?;
+    let period_str = parts.next();
     let token: Address =
         token_str.parse().map_err(|e| format!("invalid token address '{token_str}': {e}"))?;
     let amount: U256 =
         amount_str.parse().map_err(|e| format!("invalid amount '{amount_str}': {e}"))?;
-    Ok(TokenLimit { token, amount, period: 0 })
+    let period = match period_str {
+        Some(p) => parse_period(p)?,
+        None => 0,
+    };
+    Ok(TokenLimit { token, amount, period })
 }
 
 /// Parse a `--scope TARGET[:SELECTORS[@RECIPIENTS]]` flag value.
