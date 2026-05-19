@@ -1,4 +1,7 @@
-use solar::{interface::data_structures::Never, sema::hir};
+use solar::{
+    interface::data_structures::Never,
+    sema::{Gcx, hir},
+};
 use std::ops::ControlFlow;
 
 use super::LintContext;
@@ -62,6 +65,15 @@ pub trait LateLintPass<'hir>: Send + Sync {
         _func: &'hir hir::Function<'hir>,
     ) {
     }
+    fn check_function_with_gcx(
+        &mut self,
+        ctx: &LintContext,
+        _gcx: Gcx<'hir>,
+        hir: &'hir hir::Hir<'hir>,
+        func: &'hir hir::Function<'hir>,
+    ) {
+        self.check_function(ctx, hir, func);
+    }
     fn check_modifier(
         &mut self,
         _ctx: &LintContext,
@@ -110,6 +122,7 @@ pub trait LateLintPass<'hir>: Send + Sync {
 pub struct LateLintVisitor<'a, 's, 'hir> {
     ctx: &'a LintContext<'s, 'a>,
     passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
+    gcx: Gcx<'hir>,
     hir: &'hir hir::Hir<'hir>,
 }
 
@@ -120,9 +133,10 @@ where
     pub fn new(
         ctx: &'a LintContext<'s, 'a>,
         passes: &'a mut [Box<dyn LateLintPass<'hir> + 's>],
+        gcx: Gcx<'hir>,
         hir: &'hir hir::Hir<'hir>,
     ) -> Self {
-        Self { ctx, passes, hir }
+        Self { ctx, passes, gcx, hir }
     }
 }
 
@@ -183,7 +197,7 @@ where
 
     fn visit_function(&mut self, func: &'hir hir::Function<'hir>) -> ControlFlow<Self::BreakValue> {
         for pass in self.passes.iter_mut() {
-            pass.check_function(self.ctx, self.hir, func);
+            pass.check_function_with_gcx(self.ctx, self.gcx, self.hir, func);
         }
         self.walk_function(func)
     }
@@ -389,7 +403,7 @@ mod tests {
                 );
                 let mut passes: Vec<Box<dyn LateLintPass<'_>>> =
                     vec![Box::new(RecordingPass { counts: counts.clone() })];
-                let mut visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
+                let mut visitor = LateLintVisitor::new(&ctx, &mut passes, gcx, &gcx.hir);
                 let _ = hir::Visit::visit_nested_source(&mut visitor, source_id);
                 Ok(())
             })
