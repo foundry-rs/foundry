@@ -47,6 +47,7 @@ impl SymbolicCalldata {
         prefix: impl AsRef<str>,
     ) -> Result<Vec<Self>, SymbolicError> {
         let prefix = prefix.as_ref();
+        let variant_limit = calldata_variant_limit(config);
         let mut variants = vec![(SymbolicAbiBuilder::new(config), Vec::new())];
         for (idx, input) in function.inputs.iter().enumerate() {
             let ty = input.selector_type();
@@ -61,16 +62,20 @@ impl SymbolicCalldata {
                 )? {
                     let mut inputs = inputs.clone();
                     inputs.push(input);
-                    next_variants.push((builder, inputs));
+                    push_variant(&mut next_variants, (builder, inputs), variant_limit)?;
                 }
             }
             variants = next_variants;
         }
 
+        validate_positional_dynamic_lengths(
+            config,
+            variants.iter().map(|(builder, _)| builder.positional_dynamic_index).max().unwrap_or(0),
+        )?;
+
         variants
             .into_iter()
             .map(|(builder, inputs)| {
-                builder.finish()?;
                 let mut bytes = function
                     .selector()
                     .iter()
@@ -155,18 +160,6 @@ impl<'a> SymbolicAbiBuilder<'a> {
     /// Constructs a new instance.
     pub(super) const fn new(config: &'a SymbolicConfig) -> Self {
         Self { config, constraints: Vec::new(), positional_dynamic_index: 0 }
-    }
-
-    /// Validates the `finish` symbolic ABI helper.
-    pub(super) fn finish(&self) -> Result<(), SymbolicError> {
-        if self.positional_dynamic_index != self.config.array_lengths.len() {
-            return Err(SymbolicError::UnsupportedAbi(format!(
-                "symbolic.array_lengths has {} entries but ABI used {} positional dynamic leaves",
-                self.config.array_lengths.len(),
-                self.positional_dynamic_index
-            )));
-        }
-        Ok(())
     }
 
     /// Implements the `value` symbolic ABI helper.
@@ -277,41 +270,42 @@ impl<'a> SymbolicAbiBuilder<'a> {
                 let mut builder = self;
                 let lengths =
                     builder.next_dynamic_length_options(&name, &aliases, DynamicKind::Bytes)?;
-                lengths
-                    .into_iter()
-                    .map(|len| {
-                        let mut builder = builder.clone();
-                        let value = SymbolicAbiValue::Bytes {
-                            len: SymWord::Concrete(U256::from(len)),
-                            bytes: (0..len as usize)
-                                .map(|idx| builder.fresh_byte(format!("{name}_{idx}"), false))
-                                .collect(),
-                        };
-                        (builder, value)
-                    })
-                    .collect()
+                let limit = calldata_variant_limit(builder.config);
+                let mut variants = Vec::new();
+                for len in lengths {
+                    let mut builder = builder.clone();
+                    let value = SymbolicAbiValue::Bytes {
+                        len: SymWord::Concrete(U256::from(len)),
+                        bytes: (0..len as usize)
+                            .map(|idx| builder.fresh_byte(format!("{name}_{idx}"), false))
+                            .collect(),
+                    };
+                    push_variant(&mut variants, (builder, value), limit)?;
+                }
+                variants
             }
             DynSolType::String => {
                 let mut builder = self;
                 let lengths =
                     builder.next_dynamic_length_options(&name, &aliases, DynamicKind::String)?;
-                lengths
-                    .into_iter()
-                    .map(|len| {
-                        let mut builder = builder.clone();
-                        let value = SymbolicAbiValue::String {
-                            bytes: (0..len as usize)
-                                .map(|idx| builder.fresh_byte(format!("{name}_{idx}"), true))
-                                .collect(),
-                        };
-                        (builder, value)
-                    })
-                    .collect()
+                let limit = calldata_variant_limit(builder.config);
+                let mut variants = Vec::new();
+                for len in lengths {
+                    let mut builder = builder.clone();
+                    let value = SymbolicAbiValue::String {
+                        bytes: (0..len as usize)
+                            .map(|idx| builder.fresh_byte(format!("{name}_{idx}"), true))
+                            .collect(),
+                    };
+                    push_variant(&mut variants, (builder, value), limit)?;
+                }
+                variants
             }
             DynSolType::Array(inner) => {
                 let mut builder = self;
                 let lengths =
                     builder.next_dynamic_length_options(&name, &aliases, DynamicKind::Array)?;
+                let limit = calldata_variant_limit(builder.config);
                 let mut variants = Vec::new();
                 for len in lengths {
                     for (builder, elements) in builder.clone().array_elements_variants(
@@ -320,7 +314,11 @@ impl<'a> SymbolicAbiBuilder<'a> {
                         inner,
                         len as usize,
                     )? {
-                        variants.push((builder, SymbolicAbiValue::Array { elements }));
+                        push_variant(
+                            &mut variants,
+                            (builder, SymbolicAbiValue::Array { elements }),
+                            limit,
+                        )?;
                     }
                 }
                 variants
@@ -361,6 +359,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
         inner: &DynSolType,
         len: usize,
     ) -> Result<Vec<(Self, Vec<SymbolicAbiValue>)>, SymbolicError> {
+        let limit = calldata_variant_limit(self.config);
         let mut variants = vec![(self, Vec::with_capacity(len))];
         for idx in 0..len {
             let mut next_variants = Vec::new();
@@ -372,7 +371,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
                 )? {
                     let mut elements = elements.clone();
                     elements.push(value);
-                    next_variants.push((builder, elements));
+                    push_variant(&mut next_variants, (builder, elements), limit)?;
                 }
             }
             variants = next_variants;
@@ -387,6 +386,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
         aliases: &[String],
         types: &[DynSolType],
     ) -> Result<Vec<(Self, Vec<SymbolicAbiValue>)>, SymbolicError> {
+        let limit = calldata_variant_limit(self.config);
         let mut variants = vec![(self, Vec::with_capacity(types.len()))];
         for (idx, ty) in types.iter().enumerate() {
             let mut next_variants = Vec::new();
@@ -398,7 +398,7 @@ impl<'a> SymbolicAbiBuilder<'a> {
                 )? {
                     let mut elements = elements.clone();
                     elements.push(value);
-                    next_variants.push((builder, elements));
+                    push_variant(&mut next_variants, (builder, elements), limit)?;
                 }
             }
             variants = next_variants;
@@ -509,6 +509,35 @@ impl<'a> SymbolicAbiBuilder<'a> {
             ));
         }
     }
+}
+
+/// Validates that positional ABI length config can be consumed by at least one expanded variant.
+fn validate_positional_dynamic_lengths(
+    config: &SymbolicConfig,
+    max_positional_dynamic_index: usize,
+) -> Result<(), SymbolicError> {
+    if config.array_lengths.len() > max_positional_dynamic_index {
+        return Err(SymbolicError::UnsupportedAbi(format!(
+            "symbolic.array_lengths has {} entries but ABI used at most {} positional dynamic leaves",
+            config.array_lengths.len(),
+            max_positional_dynamic_index
+        )));
+    }
+    Ok(())
+}
+
+/// Returns the maximum number of calldata variants allowed during ABI expansion.
+fn calldata_variant_limit(config: &SymbolicConfig) -> usize {
+    config.path_width().max(1) as usize
+}
+
+/// Adds one expansion variant while enforcing the configured symbolic path-width budget.
+fn push_variant<T>(variants: &mut Vec<T>, variant: T, limit: usize) -> Result<(), SymbolicError> {
+    if variants.len() >= limit {
+        return Err(SymbolicError::CalldataVariantLimit(limit));
+    }
+    variants.push(variant);
+    Ok(())
 }
 
 #[derive(Clone, Copy)]

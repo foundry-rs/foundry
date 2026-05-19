@@ -338,7 +338,8 @@ impl TestArgs {
             .artifact_ids()
             .filter_map(|(id, artifact)| artifact.abi.as_ref().map(|abi| (id, abi)))
             .filter(|(id, abi)| {
-                id.source.starts_with(&config.src) || matches_artifact(test_filter, id, abi)
+                id.source.starts_with(&config.src)
+                    || matches_artifact(test_filter, id, abi, config.symbolic.enabled)
             })
             .map(|(id, _)| id.source)
             .collect())

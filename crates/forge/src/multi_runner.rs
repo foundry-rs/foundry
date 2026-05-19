@@ -93,16 +93,11 @@ impl<FEN: FoundryEvmNetwork> DerefMut for MultiContractRunner<FEN> {
 
 impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
     fn matches_test_function(&self, filter: &dyn TestFilter, func: &Function) -> bool {
-        if self.config.symbolic.enabled && is_symbolic_entrypoint(func) {
-            filter.matches_test(&func.signature())
-        } else {
-            filter.matches_test_function(func)
-        }
+        matches_test_function(filter, func, self.config.symbolic.enabled)
     }
 
     fn matches_artifact(&self, filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
-        (filter.matches_path(&id.source) && filter.matches_contract(&id.name))
-            && abi.functions().any(|func| self.matches_test_function(filter, func))
+        matches_artifact(filter, id, abi, self.config.symbolic.enabled)
     }
 
     /// Returns an iterator over all contracts that match the filter.
@@ -654,16 +649,48 @@ impl MultiContractRunnerBuilder {
     }
 }
 
-pub fn matches_artifact(filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
-    matches_contract(filter, &id.source, &id.name, abi.functions())
+pub fn matches_artifact(
+    filter: &dyn TestFilter,
+    id: &ArtifactId,
+    abi: &JsonAbi,
+    symbolic_enabled: bool,
+) -> bool {
+    matches_contract(filter, &id.source, &id.name, abi.functions(), symbolic_enabled)
 }
 
 pub(crate) fn matches_contract(
     filter: &dyn TestFilter,
     path: &Path,
     contract_name: &str,
-    functions: impl IntoIterator<Item = impl std::borrow::Borrow<Function>>,
+    functions: impl IntoIterator<Item = impl Borrow<Function>>,
+    symbolic_enabled: bool,
 ) -> bool {
     (filter.matches_path(path) && filter.matches_contract(contract_name))
-        && functions.into_iter().any(|func| filter.matches_test_function(func.borrow()))
+        && functions
+            .into_iter()
+            .any(|func| matches_test_function(filter, func.borrow(), symbolic_enabled))
+}
+
+fn matches_test_function(filter: &dyn TestFilter, func: &Function, symbolic_enabled: bool) -> bool {
+    if symbolic_enabled && is_symbolic_entrypoint(func) {
+        filter.matches_test(&func.signature())
+    } else {
+        filter.matches_test_function(func)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_common::EmptyTestFilter;
+
+    #[test]
+    fn matches_contract_includes_symbolic_entrypoints_when_enabled() {
+        let filter = EmptyTestFilter::default();
+        let path = Path::new("test/Symbolic.t.sol");
+        let func = Function::parse("checkFilteredCompile(uint256)").unwrap();
+
+        assert!(matches_contract(&filter, path, "Symbolic", [func.clone()], true));
+        assert!(!matches_contract(&filter, path, "Symbolic", [func], false));
+    }
 }

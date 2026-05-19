@@ -103,8 +103,9 @@ this order:
 
 Length-set config fields accept Halmos-style arrays and expand into separate
 symbolic calldata shapes. For nested dynamic values, Foundry explores the cross
-product implied by the selected outer lengths. Extra positional `array_lengths`
-entries are rejected as config errors.
+product implied by the selected outer lengths. Eager calldata expansion is capped
+by the effective symbolic path width (`symbolic.width` / `symbolic.max_paths`).
+Extra positional `array_lengths` entries are rejected as config errors.
 
 Supported ABI shapes include:
 

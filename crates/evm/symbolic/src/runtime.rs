@@ -56,6 +56,9 @@ pub enum SymbolicError {
     /// The function ABI contains a type that is not supported by the V1 symbolic calldata model.
     #[error("unsupported ABI type for symbolic execution: {0}")]
     UnsupportedAbi(String),
+    /// Symbolic calldata variant expansion exceeded the configured path-width budget.
+    #[error("symbolic calldata variant limit exceeded ({0})")]
+    CalldataVariantLimit(usize),
     /// Symbolic execution reached a feature that is not implemented yet.
     #[error("unsupported symbolic execution feature: {0}")]
     Unsupported(&'static str),
@@ -92,9 +95,10 @@ impl SymbolicError {
     /// Implements the `stop_reason` symbolic runtime helper.
     pub(super) const fn stop_reason(&self) -> SymbolicStopReason {
         match self {
-            Self::Unsupported(_) | Self::UnsupportedOpcode(_) | Self::SolverQueryLimit(_) => {
-                SymbolicStopReason::Stuck
-            }
+            Self::Unsupported(_)
+            | Self::CalldataVariantLimit(_)
+            | Self::UnsupportedOpcode(_)
+            | Self::SolverQueryLimit(_) => SymbolicStopReason::Stuck,
             Self::SolverUnknown => SymbolicStopReason::Timeout,
             Self::Solver(_)
             | Self::MissingAccount(_)

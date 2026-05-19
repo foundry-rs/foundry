@@ -1769,6 +1769,72 @@ contract SymbolicNestedStruct {
     assert!(stdout.contains("[PASS] checkStruct((uint256[],bytes))"), "{stdout}");
 });
 
+forgetest_init!(symbolic_allows_shorter_variants_with_positional_inner_lengths, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_allows_shorter_variants_with_positional_inner_lengths because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicMixedLengthSets.t.sol",
+        r#"
+contract SymbolicMixedLengthSets {
+    /// forge-config: default.symbolic.default_array_lengths = [1, 2]
+    /// forge-config: default.symbolic.array_lengths = [4, 4]
+    function checkBatch(bytes[] memory items) public pure {
+        assert(items.length == 1 || items.length == 2);
+        for (uint256 i; i < items.length; i++) {
+            assert(items[i].length == 4);
+        }
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkBatch"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("[PASS] checkBatch(bytes[])"), "{stdout}");
+});
+
+forgetest_init!(symbolic_reports_calldata_variant_width_exhaustion, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_reports_calldata_variant_width_exhaustion because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicVariantLimit.t.sol",
+        r#"
+contract SymbolicVariantLimit {
+    /// forge-config: default.symbolic.width = 2
+    /// forge-config: default.symbolic.default_array_lengths = [1, 2]
+    /// forge-config: default.symbolic.default_bytes_lengths = [1, 2]
+    function checkVariants(bytes[] memory items) public pure {
+        items;
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkVariants"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("checkVariants(bytes[])"), "{stdout}");
+    assert!(stdout.contains("symbolic calldata variant limit exceeded (2)"), "{stdout}");
+    assert!(stdout.contains("incomplete symbolic execution (Stuck)"), "{stdout}");
+});
+
 forgetest_init!(symbolic_rejects_malformed_halmos_array_lengths, |prj, cmd| {
     prj.add_test(
         "SymbolicMalformedHalmos.t.sol",
