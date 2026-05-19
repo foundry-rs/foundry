@@ -1421,15 +1421,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             }
 
             let curr_depth = ecx.journal().depth();
-            let selector = call.input.bytes(ecx);
-            let selector = selector.get(..SELECTOR_LEN);
-            let process_cheatcode_revert = cheatcode_call
-                && call_failed
-                && selector.is_some_and(|selector| {
-                    selector == Vm::createSelectFork_0Call::SELECTOR
-                        || selector == Vm::createSelectFork_1Call::SELECTOR
-                        || selector == Vm::createSelectFork_2Call::SELECTOR
-                });
             if curr_depth <= expected_revert.depth {
                 let needs_processing = match expected_revert.kind {
                     ExpectedRevertKind::Default => {
@@ -1451,9 +1442,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         // the expectRevert even though the call succeeded, preventing the actual
                         // Solidity-generated revert (from extcodesize/returndata check) from
                         // satisfying the expectation.
-                        if process_cheatcode_revert {
-                            true
-                        } else if cheatcode_call {
+                        if cheatcode_call {
                             false
                         } else if call_failed {
                             // Call failed - should process
