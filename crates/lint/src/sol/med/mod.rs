@@ -27,6 +27,9 @@ use uninitialized_state_variables::UNINITIALIZED_STATE_VARIABLES;
 mod unsafe_typecast;
 use unsafe_typecast::UNSAFE_TYPECAST;
 
+mod unused_return;
+use unused_return::UNUSED_RETURN;
+
 register_lints!(
     (DivideBeforeMultiply, early, (DIVIDE_BEFORE_MULTIPLY)),
     (IncorrectERC20Interface, late, (INCORRECT_ERC20_INTERFACE)),
@@ -36,5 +39,6 @@ register_lints!(
     (TxOrigin, early, (TX_ORIGIN)),
     (UninitializedLocal, late, (UNINITIALIZED_LOCAL)),
     (UninitializedStateVariables, late, (UNINITIALIZED_STATE_VARIABLES)),
-    (UnsafeTypecast, late, (UNSAFE_TYPECAST))
+    (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
+    (UnusedReturn, late, (UNUSED_RETURN))
 );

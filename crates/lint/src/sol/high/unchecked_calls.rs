@@ -62,7 +62,7 @@ fn is_erc20_transfer_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     // Ensure the expression is a call to a contract member function.
     let hir::ExprKind::Call(
         hir::Expr { kind: hir::ExprKind::Member(contract_expr, func_ident), .. },
-        hir::CallArgs { kind: hir::CallArgsKind::Unnamed(args), .. },
+        call_args,
         ..,
     ) = &expr.kind
     else {
@@ -70,9 +70,10 @@ fn is_erc20_transfer_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     };
 
     // Determine the expected ERC20 signature from the call
+    let arity = call_args.len();
     let (expected_params, expected_returns): (&[&str], &[&str]) = match func_ident.as_str() {
-        "transferFrom" if args.len() == 3 => (&["address", "address", "uint256"], &["bool"]),
-        "transfer" if args.len() == 2 => (&["address", "uint256"], &["bool"]),
+        "transferFrom" if arity == 3 => (&["address", "address", "uint256"], &["bool"]),
+        "transfer" if arity == 2 => (&["address", "uint256"], &["bool"]),
         _ => return false,
     };
 
