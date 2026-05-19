@@ -7313,6 +7313,46 @@ mod tests {
         });
     }
 
+    #[test]
+    fn no_false_warnings_for_nested_symbolic_config_keys() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [profile.default]
+                src = "src"
+
+                [profile.default.symbolic]
+                loop = 4
+                depth = 100
+                width = 8
+                dynamic_lengths = { payload = [1], values = [2, 3] }
+                default_array_lengths = [0, 2]
+                default_bytes_lengths = [1, 3]
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            let symbolic_warnings: Vec<_> = cfg
+                .warnings
+                .iter()
+                .filter(|w| {
+                    matches!(
+                        w,
+                        crate::Warning::UnknownSectionKey { section, .. } if section == "symbolic"
+                    )
+                })
+                .collect();
+
+            assert!(
+                symbolic_warnings.is_empty(),
+                "Valid symbolic keys should not trigger warnings, got: {symbolic_warnings:?}"
+            );
+
+            Ok(())
+        });
+    }
+
     // Test for issue #13316: inline vyper config format should not trigger false warnings
     // This matches the exact format used in https://github.com/pcaversaccio/snekmate
     #[test]
