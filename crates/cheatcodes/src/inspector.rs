@@ -1431,24 +1431,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
                         // (e.g., calls to non-contract addresses that return Stop).
                         //
                         // Only process if:
-                        // 1. It's not a cheatcode call (unless internal_expect_revert is enabled
-                        //    and the cheatcode reverted), AND
-                        // 2. Either the call reverted, OR we made an external call (max_depth >
-                        //    depth), OR we're at the root call (depth 0)
+                        // 1. It's not a cheatcode call, AND
+                        // 2. Either the call reverted, OR, when internal expect reverts are
+                        //    disabled, we made an external call (max_depth > depth), OR we're at
+                        //    the root call (depth 0)
                         //
                         // This fixes the bug where calling a non-contract address would consume
                         // the expectRevert even though the call succeeded, preventing the actual
                         // Solidity-generated revert (from extcodesize/returndata check) from
                         // satisfying the expectation.
                         if cheatcode_call {
-                            // For cheatcode calls, only process if internal_expect_revert is
-                            // enabled AND the cheatcode reverted. This allows catching cheatcode
-                            // reverts with expectRevert when the flag is set.
-                            self.config.internal_expect_revert && outcome.result.is_revert()
+                            false
                         } else if outcome.result.is_revert() {
                             // Call reverted - should process
                             true
-                        } else if expected_revert.max_depth > expected_revert.depth {
+                        } else if !self.config.internal_expect_revert
+                            && expected_revert.max_depth > expected_revert.depth
+                        {
                             // Call succeeded but we went to a deeper depth (external call was made)
                             // This is the traditional expectRevert case
                             true
