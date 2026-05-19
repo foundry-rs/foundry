@@ -9,7 +9,7 @@ on:
 
 concurrency:
   group: stale-prs
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   stale-prs:
