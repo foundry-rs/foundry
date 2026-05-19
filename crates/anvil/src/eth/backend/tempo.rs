@@ -20,7 +20,6 @@ use tempo_precompiles::{
     account_keychain::{
         AccountKeychain,
         IAccountKeychain::{KeyRestrictions, SignatureType},
-        authorizeKeyCall,
     },
     error::TempoPrecompileError,
     storage::{PrecompileStorageProvider, StorageCtx},
@@ -204,6 +203,10 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
     fn checkpoint_commit(&mut self, _checkpoint: JournalCheckpoint) {}
 
     fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {}
+
+    fn amsterdam_eip8037_enabled(&self) -> bool {
+        false
+    }
 }
 
 /// Initialize Tempo precompiles and fee tokens for Anvil.
@@ -251,17 +254,16 @@ pub fn initialize_tempo_precompiles(
             keychain.set_tx_origin(account)?;
             keychain.authorize_key(
                 account, // msg_sender (root account authorizes its own key)
-                authorizeKeyCall {
-                    keyId: account, // key ID = account address for secp256k1
-                    signatureType: SignatureType::Secp256k1,
-                    config: KeyRestrictions {
-                        expiry: u64::MAX,     // never expires
-                        enforceLimits: false, // no spending limits
-                        limits: vec![],
-                        allowAnyCalls: true,
-                        allowedCalls: vec![],
-                    },
+                account, // key ID = account address for secp256k1
+                SignatureType::Secp256k1,
+                KeyRestrictions {
+                    expiry: u64::MAX,     // never expires
+                    enforceLimits: false, // no spending limits
+                    limits: vec![],
+                    allowAnyCalls: true,
+                    allowedCalls: vec![],
                 },
+                None,
             )?;
         }
 
