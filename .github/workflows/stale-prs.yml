@@ -1,0 +1,157 @@
+name: stale-prs
+
+permissions: {}
+
+on:
+  schedule:
+    - cron: "15 4 * * *" # Run daily at 4:15 AM UTC.
+  workflow_dispatch:
+
+concurrency:
+  group: stale-prs
+  cancel-in-progress: true
+
+jobs:
+  stale-prs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      STALE_AFTER_DAYS: "14"
+      CLOSE_AFTER_DAYS: "7"
+      STALE_LABEL: stale
+      STOP_STALE_LABEL: stop-stale
+    steps:
+      - name: Mark and close stale PRs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          stale_marker="<!-- foundry-stale-pr -->"
+          close_marker="<!-- foundry-stale-pr-close -->"
+          activity_grace_seconds=600
+
+          printf -v stale_body '%s\n%s\n\n%s' \
+            "$stale_marker" \
+            "This pull request has been open for more than ${STALE_AFTER_DAYS} days, so it has been marked as stale." \
+            "It will be closed in ${CLOSE_AFTER_DAYS} days if there is no further activity. Further activity will add the \`${STOP_STALE_LABEL}\` label and keep it open."
+
+          printf -v close_body '%s\n%s' \
+            "$close_marker" \
+            "Closing this pull request because it had no activity for ${CLOSE_AFTER_DAYS} days after being marked stale. Please reopen it or open a new pull request if it is still relevant."
+
+          gh label create "$STALE_LABEL" \
+            --color BFDADC \
+            --description "Pull requests pending stale closure" \
+            --force
+
+          gh label create "$STOP_STALE_LABEL" \
+            --color 0E8A16 \
+            --description "Prevent stale automation from closing this pull request" \
+            --force
+
+          stale_cutoff_ts="$(date -u -d "${STALE_AFTER_DAYS} days ago" +%s)"
+          close_after_seconds="$((CLOSE_AFTER_DAYS * 24 * 60 * 60))"
+
+          has_label() {
+            local pr_json="$1"
+            local label="$2"
+
+            jq -e --arg label "$label" 'any(.labels[].name; . == $label)' <<< "$pr_json" > /dev/null
+          }
+
+          latest_stale_comment_at() {
+            local number="$1"
+
+            gh api --paginate "repos/${GH_REPO}/issues/${number}/comments?per_page=100" \
+              --jq '.[] | select(.body | contains("'"${stale_marker}"'")) | .created_at' \
+              | tail -n 1
+          }
+
+          mark_stale() {
+            local number="$1"
+            local url="$2"
+            local created_at="$3"
+
+            echo "Marking PR #${number} as stale, created at ${created_at}: ${url}"
+            gh issue edit "$number" --add-label "$STALE_LABEL"
+            gh issue comment "$number" --body "$stale_body"
+          }
+
+          close_stale() {
+            local number="$1"
+            local url="$2"
+
+            echo "Closing stale PR #${number}: ${url}"
+            gh issue comment "$number" --body "$close_body"
+            gh api -X PATCH "repos/${GH_REPO}/issues/${number}" -f state=closed
+          }
+
+          stop_stale() {
+            local number="$1"
+            local url="$2"
+
+            echo "PR #${number} had activity after stale warning, adding ${STOP_STALE_LABEL}: ${url}"
+            gh issue edit "$number" --remove-label "$STALE_LABEL" --add-label "$STOP_STALE_LABEL"
+          }
+
+          found=false
+
+          while read -r encoded_pr; do
+            found=true
+            pr_json="$(base64 --decode <<< "$encoded_pr")"
+            number="$(jq -r '.number' <<< "$pr_json")"
+            url="$(jq -r '.html_url' <<< "$pr_json")"
+            created_at="$(jq -r '.created_at' <<< "$pr_json")"
+            updated_at="$(jq -r '.updated_at' <<< "$pr_json")"
+            created_ts="$(date -u -d "$created_at" +%s)"
+
+            if has_label "$pr_json" "$STOP_STALE_LABEL"; then
+              if has_label "$pr_json" "$STALE_LABEL"; then
+                echo "Removing ${STALE_LABEL} from PR #${number}; ${STOP_STALE_LABEL} is present: ${url}"
+                gh issue edit "$number" --remove-label "$STALE_LABEL"
+              fi
+
+              echo "Skipping PR #${number}; it already has ${STOP_STALE_LABEL}: ${url}"
+              continue
+            fi
+
+            if ! has_label "$pr_json" "$STALE_LABEL"; then
+              if (( created_ts <= stale_cutoff_ts )); then
+                mark_stale "$number" "$url" "$created_at"
+              else
+                echo "Skipping PR #${number}; it is not older than ${STALE_AFTER_DAYS} days: ${url}"
+              fi
+
+              continue
+            fi
+
+            marked_at="$(latest_stale_comment_at "$number")"
+            if [[ -z "$marked_at" ]]; then
+              mark_stale "$number" "$url" "$created_at"
+              continue
+            fi
+
+            marked_ts="$(date -u -d "$marked_at" +%s)"
+            updated_ts="$(date -u -d "$updated_at" +%s)"
+
+            if (( updated_ts > marked_ts + activity_grace_seconds )); then
+              stop_stale "$number" "$url"
+              continue
+            fi
+
+            if (( $(date -u +%s) >= marked_ts + close_after_seconds )); then
+              close_stale "$number" "$url"
+              continue
+            fi
+
+            echo "PR #${number} is stale but still within the ${CLOSE_AFTER_DAYS}-day close window: ${url}"
+          done < <(gh api --paginate "repos/${GH_REPO}/pulls?state=open&sort=created&direction=asc&per_page=100" --jq '.[] | @base64')
+
+          if [[ "$found" == false ]]; then
+            echo "No open pull requests found."
+          fi
