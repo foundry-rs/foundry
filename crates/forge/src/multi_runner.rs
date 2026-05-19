@@ -1,8 +1,10 @@
 //! Forge test runner for multiple contracts.
 
 use crate::{
-    ContractRunner, TestFilter, progress::TestsProgress, result::SuiteResult,
-    runner::LIBRARY_DEPLOYER,
+    ContractRunner, TestFilter,
+    progress::TestsProgress,
+    result::SuiteResult,
+    runner::{LIBRARY_DEPLOYER, is_symbolic_entrypoint},
 };
 use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Bytes, U256};
@@ -90,12 +92,25 @@ impl<FEN: FoundryEvmNetwork> DerefMut for MultiContractRunner<FEN> {
 }
 
 impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
+    fn matches_test_function(&self, filter: &dyn TestFilter, func: &Function) -> bool {
+        if self.config.symbolic.enabled && is_symbolic_entrypoint(func) {
+            filter.matches_test(&func.signature())
+        } else {
+            filter.matches_test_function(func)
+        }
+    }
+
+    fn matches_artifact(&self, filter: &dyn TestFilter, id: &ArtifactId, abi: &JsonAbi) -> bool {
+        (filter.matches_path(&id.source) && filter.matches_contract(&id.name))
+            && abi.functions().any(|func| self.matches_test_function(filter, func))
+    }
+
     /// Returns an iterator over all contracts that match the filter.
     pub fn matching_contracts<'a: 'b, 'b>(
         &'a self,
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = (&'a ArtifactId, &'a TestContract)> + 'b {
-        self.contracts.iter().filter(|&(id, c)| matches_artifact(filter, id, &c.abi))
+        self.contracts.iter().filter(|&(id, c)| self.matches_artifact(filter, id, &c.abi))
     }
 
     /// Returns an iterator over all test functions that match the filter.
@@ -105,7 +120,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
     ) -> impl Iterator<Item = &'a Function> + 'b {
         self.matching_contracts(filter)
             .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| filter.matches_test_function(func))
+            .filter(|func| self.matches_test_function(filter, func))
     }
 
     /// Returns an iterator over all test functions in contracts that match the filter.
@@ -117,7 +132,9 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
             .iter()
             .filter(|(id, _)| filter.matches_path(&id.source) && filter.matches_contract(&id.name))
             .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| func.is_any_test())
+            .filter(|func| {
+                func.is_any_test() || (self.config.symbolic.enabled && is_symbolic_entrypoint(func))
+            })
     }
 
     /// Returns all matching tests grouped by contract grouped by file (file -> (contract -> tests))
@@ -129,7 +146,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                 let tests = c
                     .abi
                     .functions()
-                    .filter(|func| filter.matches_test_function(func))
+                    .filter(|func| self.matches_test_function(filter, func))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
@@ -551,7 +568,10 @@ impl MultiContractRunnerBuilder {
 
             // if it's a test, link it and add to deployable contracts
             if abi.constructor.as_ref().map(|c| c.inputs.is_empty()).unwrap_or(true)
-                && abi.functions().any(|func| func.name.is_any_test())
+                && abi.functions().any(|func| {
+                    func.is_any_test()
+                        || (self.config.symbolic.enabled && is_symbolic_entrypoint(func))
+                })
             {
                 linker.ensure_linked(contract, id)?;
 
