@@ -663,6 +663,21 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.is_success(address, call_result.reverted, state_changeset, should_fail)
     }
 
+    /// Like [`Self::is_raw_call_mut_success`] but uses [`Self::is_success_handler_gate`] under
+    /// the hood. Intended for invariant view-call success checks during a campaign where the
+    /// committed `GLOBAL_FAIL_SLOT` may be stale poison from a previously-recorded handler bug.
+    pub fn is_raw_call_mut_success_handler_gate(
+        &self,
+        address: Address,
+        call_result: &mut RawCallResult<FEN>,
+    ) -> bool {
+        if call_result.has_state_snapshot_failure {
+            return false;
+        }
+        let state_changeset = std::mem::take(&mut call_result.state_changeset);
+        self.is_success_handler_gate(address, call_result.reverted, Cow::Owned(state_changeset))
+    }
+
     /// Returns `true` if a test can be considered successful.
     ///
     /// If the call succeeded, we also have to check the global and local failure flags.
@@ -691,8 +706,22 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         state_changeset: Cow<'_, StateChangeset>,
         should_fail: bool,
     ) -> bool {
-        let success = self.is_success_raw(address, reverted, state_changeset);
+        let success = self.is_success_raw(address, reverted, state_changeset, false);
         should_fail ^ success
+    }
+
+    /// Like [`Self::is_success`] but ignores the *committed* `GLOBAL_FAIL_SLOT` and only treats
+    /// the slot as failed when this call's in-flight changeset writes it. Used by the invariant
+    /// runner's per-call handler-success gate, where a `1` already in committed storage is just
+    /// stale poison from a previously-recorded handler bug (separately tracked) and must not
+    /// suppress later `assert_invariants` / `afterInvariant` evaluations.
+    pub fn is_success_handler_gate(
+        &self,
+        address: Address,
+        reverted: bool,
+        state_changeset: Cow<'_, StateChangeset>,
+    ) -> bool {
+        self.is_success_raw(address, reverted, state_changeset, true)
     }
 
     #[instrument(name = "is_success", level = "debug", skip_all)]
@@ -701,6 +730,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         address: Address,
         reverted: bool,
         state_changeset: Cow<'_, StateChangeset>,
+        pending_global_failure_only: bool,
     ) -> bool {
         // The call reverted.
         if reverted {
@@ -712,8 +742,16 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             return false;
         }
 
-        // Check the global failure slot.
-        if self.has_global_failure(&state_changeset) {
+        // Check the global failure slot. Callers that already track recorded handler bugs
+        // out-of-band can pass `pending_global_failure_only = true` to ignore the committed
+        // slot (which would otherwise stay `1` for the rest of the run after a non-reverting
+        // `vm.assert*` under `assertions_revert = false`).
+        let global_failed = if pending_global_failure_only {
+            Self::has_pending_global_failure(&state_changeset)
+        } else {
+            self.has_global_failure(&state_changeset)
+        };
+        if global_failed {
             return false;
         }
 
@@ -778,22 +816,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.backend()
             .storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
             .is_ok_and(|failed_slot| !failed_slot.is_zero())
-    }
-
-    /// Clears the global assertion failure flag from both the committed backend state and, when
-    /// provided, the in-flight state changeset for the current call.
-    pub fn clear_global_failure(
-        &mut self,
-        state_changeset: Option<&mut StateChangeset>,
-    ) -> BackendResult<()> {
-        if let Some(state_changeset) = state_changeset
-            && let Some(acc) = state_changeset.get_mut(&CHEATCODE_ADDRESS)
-            && let Some(failed_slot) = acc.storage.get_mut(&GLOBAL_FAIL_SLOT)
-        {
-            failed_slot.present_value = U256::ZERO;
-        }
-
-        self.set_storage_slot(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::ZERO)
     }
 
     /// Creates the environment to use when executing a transaction in a test context

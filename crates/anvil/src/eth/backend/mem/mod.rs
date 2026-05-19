@@ -1542,13 +1542,17 @@ impl<N: Network> Backend<N> {
                     // manager needs a non-zero hash; the actual value doesn't matter
                     // because the state is discarded after estimation.
                     let estimation_hash = keccak256(base.data.as_ref());
+                    // T1B+ uses `TempoTxEnv::unique_tx_identifier` (sender-scoped) as
+                    // the expiring-nonce replay hash; pre-T1B uses `tx_hash`.
+                    // Set both so the synthetic env works across hardforks.
+                    tempo_tx.unique_tx_identifier = Some(estimation_hash);
                     tempo_tx.tempo_tx_env = Some(Box::new(TempoBatchCallEnv {
                         nonce_key,
                         valid_before,
                         valid_after,
                         aa_calls: vec![Call { to: base.kind, value: base.value, input: base.data }],
                         tx_hash: estimation_hash,
-                        expiring_nonce_hash: Some(estimation_hash),
+                        expiring_nonce_idx: Some(0),
                         ..Default::default()
                     }));
                 }
