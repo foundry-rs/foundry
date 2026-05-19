@@ -1,11 +1,13 @@
 use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
 
+mod cache_array_length;
 mod costly_loop;
 mod custom_errors;
 mod immutable;
 mod keccak;
 mod unused_state_variables;
 mod var_read_using_this;
+use cache_array_length::CACHE_ARRAY_LENGTH;
 use costly_loop::COSTLY_LOOP;
 use custom_errors::CUSTOM_ERRORS;
 use immutable::{COULD_BE_CONSTANT, COULD_BE_IMMUTABLE};
@@ -15,6 +17,7 @@ use var_read_using_this::VAR_READ_USING_THIS;
 
 register_lints!(
     (AsmKeccak256, late, (ASM_KECCAK256)),
+    (CacheArrayLength, late, (CACHE_ARRAY_LENGTH)),
     (CostlyLoop, late, (COSTLY_LOOP)),
     (CustomErrors, early, (CUSTOM_ERRORS)),
     (UnchangedStateVariables, late, (COULD_BE_IMMUTABLE, COULD_BE_CONSTANT)),
