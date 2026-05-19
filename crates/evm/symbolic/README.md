@@ -148,6 +148,12 @@ The primary configuration path is native Foundry config.
 ```toml
 [profile.default.symbolic]
 solver = "z3"
+# Optional exact command. When set, this overrides `solver`.
+# solver_command = "z3 -in -smt2"
+# Optional solver names or commands to race in parallel. Ignored when
+# `solver_command` is set. Entries with spaces/quotes/backslashes are parsed as
+# argv strings, not shell snippets.
+# solver_portfolio = ["z3", "cvc5", "bitwuzla"]
 timeout = 30
 max_depth = 10000
 max_paths = 1024
@@ -182,6 +188,11 @@ Common CLI and environment overrides:
 
 ```sh
 forge test --symbolic
+forge test --symbolic --symbolic-solver yices
+forge test --symbolic --symbolic-solver cvc5
+forge test --symbolic --symbolic-solver bitwuzla
+forge test --symbolic --symbolic-solver-command "z3 -in -smt2"
+forge test --symbolic --symbolic-solver-portfolio z3,cvc5,bitwuzla
 forge test --symbolic --symbolic-timeout 120
 forge test --symbolic --symbolic-array-lengths 2,4
 forge test --symbolic --symbolic-invariant-depth 6
@@ -190,8 +201,30 @@ forge test --symbolic --symbolic-dump-smt
 
 FOUNDRY_SYMBOLIC=true forge test
 FOUNDRY_SYMBOLIC_SOLVER=z3 forge test --symbolic
+FOUNDRY_SYMBOLIC_SOLVER_COMMAND="z3 -in -smt2" forge test --symbolic
+FOUNDRY_SYMBOLIC_SOLVER_PORTFOLIO="z3,cvc5,bitwuzla" forge test --symbolic
 FOUNDRY_SYMBOLIC_TIMEOUT=120 forge test --symbolic
 ```
+
+Known solver names are `z3`, `yices`, `cvc5`, `cvc5-int`, `bitwuzla`, and
+`bitwuzla-abs`. Unknown `symbolic.solver` values are treated as z3-compatible
+executables and are invoked with `-in -smt2` to preserve the old
+`symbolic.solver = "/path/to/z3"` behavior. Use `symbolic.solver_command` for
+non-z3-compatible command lines or wrapper tools.
+
+`symbolic.solver_portfolio` runs multiple solvers in parallel for each SMT query
+and uses the first `sat` or `unsat` response. `unknown` results only win if no
+configured solver returns a decisive response. A nonempty `symbolic.solver_command`
+overrides both `symbolic.solver_portfolio` and `symbolic.solver`; otherwise a
+nonempty portfolio overrides `symbolic.solver`. Portfolio entries without
+whitespace, quotes, or backslashes are resolved like `symbolic.solver` values.
+Entries with whitespace, quotes, or backslashes are split into argv parts like
+`symbolic.solver_command`; they are not executed through a shell.
+
+Security note: `symbolic.solver_command` and `symbolic.solver_portfolio` execute
+local programs when symbolic tests run. This also applies when these values come
+from inline `forge-config:` or translated legacy `@custom:halmos` annotations.
+Review solver settings before running symbolic tests from untrusted projects.
 
 Halmos-style annotations are accepted as compatibility input and translated into
 the same internal config:
@@ -213,6 +246,8 @@ Supported compatibility flags are:
 - `--solver-timeout`
 - `--solver-timeout-branching`
 - `--solver-timeout-assertion`
+- `--solver`
+- `--solver-command`
 
 Native `forge-config:` values win when both native and compatibility annotations
 set the same symbolic option.

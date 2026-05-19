@@ -145,10 +145,10 @@ impl NatSpec {
 }
 
 fn translate_halmos_config(args: &str, values: &mut Vec<String>) -> Result<(), String> {
-    let tokens = args.split_whitespace().collect::<Vec<_>>();
+    let tokens = split_halmos_args(args)?;
     let mut idx = 0;
     while idx < tokens.len() {
-        let token = tokens[idx];
+        let token = tokens[idx].as_str();
         if token == "--array-lengths" {
             idx += 1;
             let Some(value) = tokens.get(idx) else {
@@ -193,6 +193,22 @@ fn translate_halmos_config(args: &str, values: &mut Vec<String>) -> Result<(), S
             push_halmos_u32(values, "timeout", value, "--solver-timeout-branching")?;
         } else if let Some(value) = token.strip_prefix("--solver-timeout-assertion=") {
             push_halmos_u32(values, "timeout", value, "--solver-timeout-assertion")?;
+        } else if token == "--solver" {
+            idx += 1;
+            let Some(value) = tokens.get(idx) else {
+                return Err("missing value for --solver".to_string());
+            };
+            push_halmos_string(values, "solver", value);
+        } else if let Some(value) = token.strip_prefix("--solver=") {
+            push_halmos_string(values, "solver", value);
+        } else if token == "--solver-command" {
+            idx += 1;
+            let Some(value) = tokens.get(idx) else {
+                return Err("missing value for --solver-command".to_string());
+            };
+            push_halmos_string(values, "solver_command", value);
+        } else if let Some(value) = token.strip_prefix("--solver-command=") {
+            push_halmos_string(values, "solver_command", value);
         } else if token.starts_with("--")
             && tokens.get(idx + 1).is_some_and(|next| !next.starts_with("--"))
         {
@@ -201,6 +217,54 @@ fn translate_halmos_config(args: &str, values: &mut Vec<String>) -> Result<(), S
         idx += 1;
     }
     Ok(())
+}
+
+fn split_halmos_args(args: &str) -> Result<Vec<String>, String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+
+    for ch in args.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+        if matches!(ch, '"' | '\'') {
+            quote = Some(ch);
+        } else if ch.is_whitespace() {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+
+    if let Some(quote_ch) = quote {
+        return Err(format!("unterminated {quote_ch} quote in @custom:halmos config"));
+    }
+    if escaped {
+        current.push('\\');
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    Ok(tokens)
 }
 
 fn halmos_numeric_symbolic_field(flag: &str) -> Option<&'static str> {
@@ -258,6 +322,14 @@ fn push_halmos_u32(
 ) -> Result<(), String> {
     values.push(format!("default.symbolic.{field} = {}", parse_halmos_u32(value, flag)?));
     Ok(())
+}
+
+fn push_halmos_string(values: &mut Vec<String>, field: &str, value: &str) {
+    values.push(format!("default.symbolic.{field} = {}", toml_string(value)));
+}
+
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn parse_halmos_u32(value: &str, flag: &str) -> Result<u32, String> {
@@ -921,6 +993,25 @@ contract FuzzInlineConf is DSTest {
                 "default.symbolic.width = 32",
                 "default.symbolic.depth = 128",
                 "default.symbolic.timeout = 5",
+            ]
+        );
+    }
+
+    #[test]
+    fn translates_legacy_halmos_solver_selection() {
+        let natspec = NatSpec {
+            contract: "dir/TestContract.t.sol:SymbolicContract".to_string(),
+            function: Some("check_solver".to_string()),
+            line: "10:1".to_string(),
+            docs: "@custom:halmos --solver cvc5 --solver-command \"bitwuzla --produce-models\""
+                .to_string(),
+        };
+
+        assert_eq!(
+            natspec.halmos_config_values().unwrap(),
+            vec![
+                "default.symbolic.solver = \"cvc5\"",
+                "default.symbolic.solver_command = \"bitwuzla --produce-models\"",
             ]
         );
     }

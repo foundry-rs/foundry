@@ -21,6 +21,12 @@ pub struct SymbolicConfig {
     pub enabled: bool,
     /// Solver executable to invoke.
     pub solver: String,
+    /// Exact solver command to invoke. When set, this overrides `solver`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solver_command: Option<String>,
+    /// Solver names or exact commands to race in parallel. Ignored when `solver_command` is set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub solver_portfolio: Vec<String>,
     /// Optional timeout in seconds for solver-backed symbolic execution.
     pub timeout: Option<u32>,
     /// Halmos-compatible loop bound accepted by config and annotations.
@@ -70,6 +76,8 @@ impl Default for SymbolicConfig {
         Self {
             enabled: false,
             solver: "z3".to_string(),
+            solver_command: None,
+            solver_portfolio: Vec::new(),
             timeout: Some(30),
             loop_bound: None,
             depth: None,

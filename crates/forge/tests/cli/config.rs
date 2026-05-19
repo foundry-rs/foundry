@@ -326,6 +326,8 @@ forgetest!(can_extract_config_values, |prj, cmd| {
         symbolic: SymbolicConfig {
             enabled: true,
             solver: "custom-z3".to_string(),
+            solver_command: None,
+            solver_portfolio: Vec::new(),
             timeout: Some(7),
             loop_bound: Some(64),
             depth: Some(222),

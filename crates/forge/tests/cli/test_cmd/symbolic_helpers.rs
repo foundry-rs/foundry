@@ -15,12 +15,12 @@ macro_rules! skip_unless_z3 {
     };
 }
 
-/// Run a symbolic test with redactions that mask Z3-dependent / wall-clock
+/// Run a symbolic test with redactions that mask solver-dependent / wall-clock
 /// noise so the snapshot is stable across solver versions and runs.
 ///
 /// - `[METRICS]` — `paths: N, queries: M` line suffix (engine internal metrics change with solver
 ///   heuristic / engine path-pruning changes).
-/// - `[SENDER]` — `sender=0x...` symbolic invariant senders, which Z3 picks freely from an
+/// - `[SENDER]` — `sender=0x...` symbolic invariant senders, which the solver picks freely from an
 ///   unconstrained address pool.
 pub fn assert_symbolic(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[
