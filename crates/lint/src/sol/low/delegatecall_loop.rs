@@ -160,10 +160,10 @@ impl<'hir> Visit<'hir> for DelegatecallLoopChecker<'_, '_, 'hir> {
         }
 
         // Internal helper calls inherit the current loop context and `msg.value`.
-        if let ExprKind::Call(callee, args, _) = &expr.kind {
-            if let Some(func_id) = self.resolved_internal_function_id(callee, args) {
-                self.visit_internal_call(func_id);
-            }
+        if let ExprKind::Call(callee, args, _) = &expr.kind
+            && let Some(func_id) = self.resolved_internal_function_id(callee, args)
+        {
+            self.visit_internal_call(func_id);
         }
 
         ControlFlow::Continue(())
@@ -251,9 +251,9 @@ impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
                 _ => None,
             })
             .flat_map(|contract_id| {
-                self.hir.contract(contract_id).functions().filter_map(move |func_id| {
+                self.hir.contract(contract_id).functions().filter(move |&func_id| {
                     let func = self.hir.function(func_id);
-                    func.name.is_some_and(|name| name.name == member_name).then_some(func_id)
+                    func.name.is_some_and(|name| name.name == member_name)
                 })
             })
             .collect()
