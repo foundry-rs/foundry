@@ -460,8 +460,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             });
         }
 
-        let invariant_suite_anchor =
-            functions.iter().copied().find(|func| func.is_invariant_test());
+        let merge_invariant_suite = self.config.invariant.assert_all;
+        let invariant_suite_anchor = merge_invariant_suite
+            .then(|| functions.iter().copied().find(|func| func.is_invariant_test()))
+            .flatten();
 
         let test_results = functions
             .par_iter()
@@ -470,7 +472,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 if early_exit.should_stop() {
                     return None;
                 }
-                if func.is_invariant_test() && invariant_suite_anchor != Some(func) {
+                if merge_invariant_suite
+                    && func.is_invariant_test()
+                    && invariant_suite_anchor != Some(func)
+                {
                     return None;
                 }
 
