@@ -44,7 +44,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     cmp::min,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
@@ -908,8 +908,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         };
         // A secondary's persisted failure is only honored when its embedded settings still
         // match the current run; stale caches fall back to a fresh campaign.
-        let secondary_has_compatible_persisted = |invariant_fn: &Function| {
-            persisted_invariant_failure(&failure_dir, invariant_fn, &current_settings).is_some()
+        let persisted_invariants = if !is_optimization && invariant_config.assert_all {
+            invariants
+                .iter()
+                .filter(|(invariant_fn, _)| *invariant_fn != func)
+                .filter_map(|(invariant_fn, _)| {
+                    persisted_invariant_failure(&failure_dir, invariant_fn, &current_settings)
+                        .is_some()
+                        .then_some(invariant_fn.name.as_str())
+                })
+                .collect::<BTreeSet<_>>()
+        } else {
+            BTreeSet::new()
         };
         // Warn when secondaries are dropped because they already have persisted failures from a
         // previous campaign. Symmetric with the primary's persisted-replay warning so users
@@ -919,7 +929,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             let persisted_skipped: Vec<&str> = invariants
                 .iter()
                 .filter(|(invariant_fn, _)| {
-                    *invariant_fn != func && secondary_has_compatible_persisted(invariant_fn)
+                    *invariant_fn != func
+                        && persisted_invariants.contains(invariant_fn.name.as_str())
                 })
                 .map(|(invariant_fn, _)| invariant_fn.name.as_str())
                 .collect();
@@ -944,7 +955,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 *invariant_fn == func
                     || (!is_optimization
                         && invariant_config.assert_all
-                        && !secondary_has_compatible_persisted(invariant_fn))
+                        && !persisted_invariants.contains(invariant_fn.name.as_str()))
             })
             .collect();
         let anchor_idx = invariant_fns
@@ -1220,7 +1231,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 // settings-aware compatibility check as the filter so a stale persisted cache
                 // doesn't suppress a freshly-broken secondary.
                 let persisted_failure = invariant_failure_file(&failure_dir, invariant);
-                if !secondary_has_compatible_persisted(invariant)
+                if !persisted_invariants.contains(invariant.name.as_str())
                     && let Some(error) = invariant_result.errors.get(&invariant.name)
                     && let InvariantFuzzError::BrokenInvariant(case_data)
                     | InvariantFuzzError::Revert(case_data) = error
@@ -1311,13 +1322,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             && invariant_contract.invariant_fns.len() > 1)
             .then_some(invariant_contract.invariant_fns.len());
         let invariant_predicate_results = if invariant_contract.invariant_fns.len() > 1 {
+            let failures_by_name = invariant_failures
+                .iter()
+                .map(|failure| (failure.name(), failure))
+                .collect::<BTreeMap<_, _>>();
             invariant_contract
                 .invariant_fns
                 .iter()
                 .map(|(invariant, _)| {
-                    if let Some(failure) =
-                        invariant_failures.iter().find(|failure| failure.name() == invariant.name)
-                    {
+                    if let Some(failure) = failures_by_name.get(invariant.name.as_str()) {
                         InvariantPredicateResult {
                             name: invariant.name.clone(),
                             status: TestStatus::Failure,

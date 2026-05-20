@@ -4,7 +4,7 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::{MultiNetworkConfig, matches_artifact},
-    result::{SuiteResult, TestOutcome, TestResult, TestStatus},
+    result::{SuiteResult, TestKindReport, TestOutcome, TestResult, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
@@ -1234,6 +1234,7 @@ fn add_junit_test_cases(
     test_result: &TestResult,
     verbosity: u8,
 ) {
+    let output = JunitOutput::new(test_result, verbosity);
     let expanded_invariant = test_result.kind.is_invariant()
         && (!test_result.invariant_predicate_results.is_empty()
             || !test_result.invariant_handler_failures.is_empty());
@@ -1245,7 +1246,7 @@ fn add_junit_test_cases(
             test_result.status,
             test_result.reason.as_deref(),
             test_result,
-            junit_system_out(test_result, test_name, verbosity),
+            output.system_out(test_result, test_name),
         );
         return;
     }
@@ -1262,7 +1263,7 @@ fn add_junit_test_cases(
             status,
             reason,
             test_result,
-            junit_case_system_out(status, reason, test_name, test_result, verbosity),
+            output.case_system_out(status, reason, test_name),
         );
     } else {
         for predicate in &test_result.invariant_predicate_results {
@@ -1273,13 +1274,7 @@ fn add_junit_test_cases(
                 predicate.status,
                 predicate.reason.as_deref(),
                 test_result,
-                junit_case_system_out(
-                    predicate.status,
-                    predicate.reason.as_deref(),
-                    &name,
-                    test_result,
-                    verbosity,
-                ),
+                output.case_system_out(predicate.status, predicate.reason.as_deref(), &name),
             );
         }
     }
@@ -1292,13 +1287,7 @@ fn add_junit_test_cases(
             TestStatus::Failure,
             Some(failure.reason()),
             test_result,
-            junit_case_system_out(
-                TestStatus::Failure,
-                Some(failure.reason()),
-                &name,
-                test_result,
-                verbosity,
-            ),
+            output.case_system_out(TestStatus::Failure, Some(failure.reason()), &name),
         );
     }
 }
@@ -1326,48 +1315,59 @@ fn add_junit_test_case(
     test_suite.add_test_case(test_case);
 }
 
-fn junit_system_out(test_result: &TestResult, test_name: &str, verbosity: u8) -> String {
-    let mut sys_out = String::new();
-    let result_report = test_result.kind.report();
-    write!(sys_out, "{test_result} {test_name} {result_report}").unwrap();
-    append_junit_logs(&mut sys_out, test_result, verbosity);
-    sys_out
+struct JunitOutput {
+    result_report: TestKindReport,
+    logs: Option<Vec<String>>,
 }
 
-fn junit_case_system_out(
-    status: TestStatus,
-    message: Option<&str>,
-    test_name: &str,
-    test_result: &TestResult,
-    verbosity: u8,
-) -> String {
-    let mut sys_out = String::new();
-    match status {
-        TestStatus::Success => write!(sys_out, "[PASS]").unwrap(),
-        TestStatus::Failure => {
-            let message = message.unwrap_or_default();
-            write!(sys_out, "[FAIL: {message}]").unwrap();
-        }
-        TestStatus::Skipped => {
-            if let Some(message) = message {
-                write!(sys_out, "[SKIP: {message}]").unwrap();
-            } else {
-                write!(sys_out, "[SKIP]").unwrap();
-            }
+impl JunitOutput {
+    fn new(test_result: &TestResult, verbosity: u8) -> Self {
+        Self {
+            result_report: test_result.kind.report(),
+            logs: (verbosity >= 2 && !test_result.logs.is_empty())
+                .then(|| decode_console_logs(&test_result.logs)),
         }
     }
-    let result_report = test_result.kind.report();
-    write!(sys_out, " {test_name} {result_report}").unwrap();
-    append_junit_logs(&mut sys_out, test_result, verbosity);
-    sys_out
-}
 
-fn append_junit_logs(sys_out: &mut String, test_result: &TestResult, verbosity: u8) {
-    if verbosity >= 2 && !test_result.logs.is_empty() {
-        write!(sys_out, "\\nLogs:\\n").unwrap();
-        let console_logs = decode_console_logs(&test_result.logs);
-        for log in console_logs {
-            write!(sys_out, "  {log}\\n").unwrap();
+    fn system_out(&self, test_result: &TestResult, test_name: &str) -> String {
+        let mut sys_out = String::new();
+        write!(sys_out, "{test_result} {test_name} {}", self.result_report).unwrap();
+        self.append_logs(&mut sys_out);
+        sys_out
+    }
+
+    fn case_system_out(
+        &self,
+        status: TestStatus,
+        message: Option<&str>,
+        test_name: &str,
+    ) -> String {
+        let mut sys_out = String::new();
+        match status {
+            TestStatus::Success => write!(sys_out, "[PASS]").unwrap(),
+            TestStatus::Failure => {
+                let message = message.unwrap_or_default();
+                write!(sys_out, "[FAIL: {message}]").unwrap();
+            }
+            TestStatus::Skipped => {
+                if let Some(message) = message {
+                    write!(sys_out, "[SKIP: {message}]").unwrap();
+                } else {
+                    write!(sys_out, "[SKIP]").unwrap();
+                }
+            }
+        }
+        write!(sys_out, " {test_name} {}", self.result_report).unwrap();
+        self.append_logs(&mut sys_out);
+        sys_out
+    }
+
+    fn append_logs(&self, sys_out: &mut String) {
+        if let Some(logs) = &self.logs {
+            write!(sys_out, "\\nLogs:\\n").unwrap();
+            for log in logs {
+                write!(sys_out, "  {log}\\n").unwrap();
+            }
         }
     }
 }
