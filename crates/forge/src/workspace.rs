@@ -32,6 +32,38 @@ pub fn relative_to_root(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root).map(|p| p.to_path_buf()).unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Verify that `candidate` resolves (after following symlinks) to a path that lives
+/// inside `allowed_root`. Protects against `src`/`test`/`lib`/etc. being symlinks
+/// that escape the project root.
+///
+/// `label` and `orig` are only used for error messages.
+fn ensure_within_root(
+    allowed_root: &Path,
+    candidate: &Path,
+    label: &str,
+    orig: &Path,
+) -> Result<()> {
+    // If the path doesn't exist yet, lexical containment is the best we can do.
+    if !candidate.exists() {
+        return Ok(());
+    }
+    let canon_root = allowed_root.canonicalize().map_err(|e| {
+        eyre::eyre!("failed to canonicalize project root {}: {e}", allowed_root.display())
+    })?;
+    let canon_candidate = candidate.canonicalize().map_err(|e| {
+        eyre::eyre!("failed to canonicalize {label} path {}: {e}", candidate.display())
+    })?;
+    if !canon_candidate.starts_with(&canon_root) {
+        eyre::bail!(
+            "{label} path {} escapes project root {} (resolved to {})",
+            orig.display(),
+            allowed_root.display(),
+            canon_candidate.display()
+        );
+    }
+    Ok(())
+}
+
 /// Copy essential project files to a temp workspace.
 ///
 /// Copies src and test directories, symlinks library directories (read-only),
@@ -39,9 +71,11 @@ pub fn relative_to_root(root: &Path, path: &Path) -> PathBuf {
 pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
     let src_rel = relative_to_root(&config.root, &config.src);
     ensure_safe_relative_path(&src_rel, "src", &config.src)?;
+    ensure_within_root(&config.root, &config.src, "src", &config.src)?;
 
     let test_rel = relative_to_root(&config.root, &config.test);
     ensure_safe_relative_path(&test_rel, "test", &config.test)?;
+    ensure_within_root(&config.root, &config.test, "test", &config.test)?;
 
     copy_dir_recursive(&config.src, &temp_dir.join(&src_rel))?;
 
@@ -53,6 +87,7 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
         if lib_path.exists() {
             let lib_rel = relative_to_root(&config.root, lib_path);
             ensure_safe_relative_path(&lib_rel, "lib", lib_path)?;
+            ensure_within_root(&config.root, lib_path, "lib", lib_path)?;
             let target = temp_dir.join(&lib_rel);
 
             if !target.exists() {
@@ -71,6 +106,8 @@ pub fn copy_project(config: &Config, temp_dir: &Path) -> Result<()> {
     for dep_dir in ["node_modules", "dependencies"] {
         let dep_path = config.root.join(dep_dir);
         if dep_path.exists() && dep_path.is_dir() {
+            // Reject if the project-root entry is a symlink that escapes the root.
+            ensure_within_root(&config.root, &dep_path, dep_dir, &dep_path)?;
             let target = temp_dir.join(dep_dir);
             if !target.exists() && symlink_dir(&dep_path, &target).is_err() {
                 copy_dir_recursive(&dep_path, &target)?;
@@ -121,8 +158,22 @@ fn symlink_nested_libs(lib_src: &Path, lib_dst: &Path, depth: usize) -> Result<(
         };
 
     for nested_lib_dir in nested_lib_dirs {
+        // A dependency's foundry.toml is untrusted input. Reject any nested lib
+        // path that is absolute or contains `..`, then verify the resolved path
+        // doesn't escape the dependency root via symlink.
+        if !is_safe_relative_path(&nested_lib_dir) {
+            continue;
+        }
         let nested_lib = lib_src.join(&nested_lib_dir);
-        if !nested_lib.exists() || !nested_lib.is_dir() {
+        if !nested_lib.exists() {
+            continue;
+        }
+        // Use symlink_metadata so we don't follow a symlinked nested lib root.
+        let Ok(meta) = fs::symlink_metadata(&nested_lib) else { continue };
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            continue;
+        }
+        if ensure_within_root(lib_src, &nested_lib, "nested lib", &nested_lib).is_err() {
             continue;
         }
         process_nested_lib_dir(&nested_lib, lib_dst, &nested_lib_dir, depth)?;
@@ -147,11 +198,15 @@ fn process_nested_lib_dir(
     };
 
     for entry in entries.flatten() {
-        let entry_path = entry.path();
-        if !entry_path.is_dir() {
+        // Use file_type() (does not follow symlinks) so a symlinked entry in a
+        // dependency's lib dir cannot be silently followed and re-symlinked
+        // outside the workspace.
+        let Ok(file_type) = entry.file_type() else { continue };
+        if file_type.is_symlink() || !file_type.is_dir() {
             continue;
         }
 
+        let entry_path = entry.path();
         let entry_name = entry.file_name();
         let nested_dst = lib_dst.join(lib_rel).join(&entry_name);
 
@@ -395,5 +450,82 @@ mod tests {
 
         let rel = relative_to_root(&root, &path);
         assert_eq!(rel, path);
+    }
+
+    #[test]
+    fn test_ensure_within_root_rejects_symlink_escape() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), "shhh").unwrap();
+
+        // src is a symlink that points outside the project root.
+        let src = root.join("src");
+        symlink_dir(&outside, &src).unwrap();
+
+        let err = ensure_within_root(&root, &src, "src", &src).unwrap_err();
+        assert!(err.to_string().contains("escapes project root"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_ensure_within_root_accepts_in_root_symlink() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("project");
+        let real_src = root.join("real_src");
+        fs::create_dir_all(&real_src).unwrap();
+
+        // src -> real_src is fine: stays inside the project root.
+        let src_link = root.join("src");
+        symlink_dir(&real_src, &src_link).unwrap();
+
+        ensure_within_root(&root, &src_link, "src", &src_link).unwrap();
+    }
+
+    #[test]
+    fn test_symlink_nested_libs_rejects_traversal_in_dependency_config() {
+        let temp = TempDir::new().unwrap();
+
+        // Pretend lib_src is a malicious dependency whose foundry.toml says
+        // libs = ["../../escape"]. We can't easily write foundry.toml here, so
+        // exercise the lexical guard directly via is_safe_relative_path: any
+        // path containing `..` must be rejected before being joined with
+        // `lib_src`.
+        let malicious: PathBuf = PathBuf::from("../../escape");
+        assert!(!is_safe_relative_path(&malicious));
+
+        // Sanity check: a benign relative path is still accepted.
+        let benign: PathBuf = PathBuf::from("lib");
+        assert!(is_safe_relative_path(&benign));
+
+        // And the function returns Ok when there is nothing to do.
+        let lib_src = temp.path().join("lib_src");
+        let lib_dst = temp.path().join("lib_dst");
+        fs::create_dir_all(&lib_src).unwrap();
+        fs::create_dir_all(&lib_dst).unwrap();
+        symlink_nested_libs(&lib_src, &lib_dst, 0).unwrap();
+    }
+
+    #[test]
+    fn test_process_nested_lib_dir_skips_symlinks() {
+        let temp = TempDir::new().unwrap();
+        let outside = temp.path().join("outside");
+        fs::create_dir_all(outside.join("secret_pkg/src")).unwrap();
+        fs::write(outside.join("secret_pkg/src/Secret.sol"), "secret").unwrap();
+
+        let lib_src = temp.path().join("lib_src");
+        let nested = lib_src.join("lib");
+        fs::create_dir_all(&nested).unwrap();
+        // A dep that is a symlink pointing outside the lib root.
+        symlink_dir(&outside.join("secret_pkg"), &nested.join("evil")).unwrap();
+
+        let lib_dst = temp.path().join("lib_dst");
+        fs::create_dir_all(&lib_dst).unwrap();
+
+        process_nested_lib_dir(&nested, &lib_dst, Path::new("lib"), 0).unwrap();
+
+        // The symlinked entry must not have been followed into the destination.
+        assert!(!lib_dst.join("lib/evil").exists(), "symlinked dep was followed");
     }
 }

@@ -559,6 +559,50 @@ impl TestArgs {
                 );
             }
 
+            // The mutation runner builds a single-pass `MultiContractRunner`
+            // (`runner.rs::compile_and_test_inner`) and does not honor inline
+            // per-test network annotations. If the project declares network
+            // overrides, running mutation testing would silently execute those
+            // tests on the wrong network and produce false survivors / kills.
+            // Bail with a clear error rather than do the wrong thing silently.
+            if !override_networks.is_empty() {
+                eyre::bail!(
+                    "Mutation testing does not yet support inline per-test network overrides \
+                     (found {} annotated network(s)). Re-run without `--mutate` or remove the \
+                     per-test network annotations.",
+                    override_networks.len()
+                );
+            }
+
+            // The mutation runner symlinks dependency directories (`lib`,
+            // `node_modules`, `dependencies`) into each per-mutant TempDir for
+            // performance — see `workspace::copy_project`. That isolation
+            // breaks down if tests can write to those shared trees, either via
+            // `vm.writeFile` (broad `fs_permissions`) or arbitrary `ffi` calls.
+            // Detect both up front so users aren't surprised by races or
+            // corruption of their real dependency tree.
+            use foundry_config::fs_permissions::FsAccessPermission;
+            let has_broad_write = config_for_mutation.fs_permissions.permissions.iter().any(|p| {
+                matches!(p.access, FsAccessPermission::Write | FsAccessPermission::ReadWrite)
+            });
+            if config_for_mutation.ffi {
+                eyre::bail!(
+                    "Mutation testing is unsafe with `ffi = true`: per-mutant workspaces share \
+                     symlinked dependency directories, and arbitrary FFI commands run by tests \
+                     can race or corrupt the real `lib`/`node_modules`/`dependencies` trees. \
+                     Disable ffi in your foundry.toml to run mutation tests."
+                );
+            }
+            if has_broad_write {
+                eyre::bail!(
+                    "Mutation testing is unsafe with write-capable `fs_permissions`: per-mutant \
+                     workspaces share symlinked dependency directories, and `vm.writeFile` \
+                     calls can race against or corrupt the real `lib`/`node_modules`/\
+                     `dependencies` trees. Restrict `fs_permissions` to read-only (or scope it \
+                     away from dependency paths) to run mutation tests."
+                );
+            }
+
             let json_output = shell::is_json();
 
             let mutation_config = MutationRunConfig {

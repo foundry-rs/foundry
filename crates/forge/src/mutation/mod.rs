@@ -339,11 +339,24 @@ impl MutationHandler {
         // `exclude_operators` in their config. Also fold in the timeout so a
         // changed budget invalidates previously cached results that may have
         // been collected under a different (possibly larger) limit.
+        //
+        // We also fold in the active `--mutate-contract` regex pattern, because
+        // running with vs. without that filter produces a different set of
+        // mutants for the same file. Without this, a cached results vector
+        // collected under one filter could be silently reused under another
+        // (or absent) filter and report the wrong survival status.
         let mut cfg_hasher = DefaultHasher::new();
         for op in self.config.mutation.enabled_operators() {
             op.to_string().hash(&mut cfg_hasher);
         }
         self.config.mutation.timeout.hash(&mut cfg_hasher);
+        match self.contract_filter.as_ref() {
+            Some(re) => {
+                "filter:".hash(&mut cfg_hasher);
+                re.as_str().hash(&mut cfg_hasher);
+            }
+            None => "nofilter".hash(&mut cfg_hasher),
+        }
         let cfg_hash = cfg_hasher.finish();
 
         let stem =

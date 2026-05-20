@@ -13,6 +13,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
+    thread::JoinHandle,
     time::Duration,
 };
 
@@ -63,6 +64,11 @@ pub struct SharedMutationState {
     pub progress: Option<MutationProgress>,
     /// Whether to suppress all output (for JSON mode)
     pub silent: bool,
+    /// Worker threads spawned for timed-out mutants. We keep these handles
+    /// alive (and the `TempDir` they own) so that:
+    ///   1. The `TempDir` is *not* dropped while the worker is still touching it.
+    ///   2. We can join the threads at the end of the run and surface leaks.
+    pub pending_workers: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl SharedMutationState {
@@ -74,6 +80,7 @@ impl SharedMutationState {
             cancelled: AtomicBool::new(false),
             progress: None,
             silent: false,
+            pending_workers: Mutex::new(Vec::new()),
         }
     }
 
@@ -85,6 +92,7 @@ impl SharedMutationState {
             cancelled: AtomicBool::new(false),
             progress: None,
             silent: true,
+            pending_workers: Mutex::new(Vec::new()),
         }
     }
 
@@ -96,6 +104,7 @@ impl SharedMutationState {
             cancelled: AtomicBool::new(false),
             progress: Some(progress),
             silent: false,
+            pending_workers: Mutex::new(Vec::new()),
         }
     }
 
@@ -253,6 +262,30 @@ pub fn run_mutations_parallel_with_progress(
         .map(|m| m.into_inner().unwrap_or_default())
         .unwrap_or_default();
 
+    // Drain and join any worker threads that were left running by a
+    // wall-clock `TimedOut`. Each worker owns its own `TempDir`, so joining
+    // here is what actually deletes the per-mutant workspace from disk. This
+    // is the difference between a clean shutdown and stale `forge_mutation_*`
+    // directories piling up under `$TMPDIR`.
+    //
+    // We intentionally block: by this point all rayon work is done, the
+    // wall-clock budget has already been spent, and the only thing left to do
+    // is reclaim cleanup. The inner `fuzz.timeout` / `invariant.timeout`
+    // values we propagated earlier bound how long any individual worker can
+    // actually run.
+    let pending = shared_state
+        .pending_workers
+        .lock()
+        .map(|mut g| std::mem::take(&mut *g))
+        .unwrap_or_default();
+    let pending_count = pending.len();
+    if pending_count > 0 && !shared_state.silent && shared_state.progress.is_none() {
+        let _ = sh_println!("Waiting for {pending_count} timed-out worker(s) to finish cleanup...");
+    }
+    for handle in pending {
+        let _ = handle.join();
+    }
+
     // Clear progress and handle cancellation
     if let Some(ref progress) = shared_state.progress {
         progress.clear();
@@ -375,23 +408,34 @@ fn test_single_mutant_isolated(
 
     let temp_config = Arc::new(temp_config);
 
-    // Compile and test, optionally bounded by a wall-clock timeout (mirrors
-    // `invariant.timeout` for invariant campaigns).
+    // Compile and test, optionally bounded by a wall-clock timeout.
     //
-    // Enforcement is best-effort: when the timeout fires we free the worker
-    // slot immediately and treat the mutant as `TimedOut`. The background
-    // compile/test thread may continue briefly until it unwinds; this is
-    // acceptable for mutation testing because the EVM's gas limit caps test
-    // wall-clock and compile overruns are rare.
+    // Lifetime contract: `temp_dir` (the `TempDir`) must live *at least* as
+    // long as the worker thread that reads from `temp_path`. Dropping the
+    // `TempDir` early would delete the workspace while a worker still touches
+    // it, which is a real correctness bug (random compile/test failures and
+    // dangling fs handles on Windows).
+    //
+    // To satisfy that contract we move `temp_dir` ownership into the worker
+    // thread. If the wall-clock budget fires the outer call returns
+    // `TimedOut`, but the `TempDir` only drops when the worker thread itself
+    // exits. The `JoinHandle` is stored in `shared_state.pending_workers` and
+    // joined at the end of the parallel run.
     let timeout = config.mutation.timeout.map(|s| Duration::from_secs(s as u64));
 
     let result = match timeout {
-        Some(budget) => run_compile_and_test_with_timeout(&temp_config, evm_opts, budget),
-        None => match compile_and_test(&temp_config, evm_opts) {
-            Ok(true) => MutationResult::Dead,
-            Ok(false) => MutationResult::Alive,
-            Err(_) => MutationResult::Invalid,
-        },
+        Some(budget) => {
+            run_compile_and_test_with_timeout(temp_config, evm_opts, budget, temp_dir, shared_state)
+        }
+        None => {
+            let res = match compile_and_test(&temp_config, evm_opts) {
+                Ok(true) => MutationResult::Dead,
+                Ok(false) => MutationResult::Alive,
+                Err(_) => MutationResult::Invalid,
+            };
+            drop(temp_dir); // explicit: workspace is only safe to remove now
+            res
+        }
     };
 
     // Track adaptive survived spans only for genuinely Alive mutants; TimedOut
@@ -405,21 +449,30 @@ fn test_single_mutant_isolated(
         progress.complete_mutant(&mutant, &result);
     }
 
-    // TempDir automatically cleans up on drop
     MutantTestResult { mutant, result }
 }
 
 /// Run `compile_and_test` on a worker thread and wait at most `budget` for it
 /// to complete. Returns `TimedOut` on overrun and `Invalid` on infrastructure
 /// errors / panics.
+///
+/// The worker takes ownership of `temp_dir` so the underlying workspace
+/// directory is only dropped when the worker thread actually exits. On
+/// timeout the `JoinHandle` is parked in `shared_state.pending_workers`
+/// and joined at the end of the parallel run.
 fn run_compile_and_test_with_timeout(
-    config: &Arc<Config>,
+    config: Arc<Config>,
     evm_opts: &EvmOpts,
     budget: Duration,
+    temp_dir: TempDir,
+    shared_state: &Arc<SharedMutationState>,
 ) -> MutationResult {
     let (tx, rx) = mpsc::channel::<Result<bool>>();
-    let cfg = Arc::clone(config);
     let opts = evm_opts.clone();
+    // Move `temp_dir` into the worker so its `Drop` only runs after the worker
+    // thread exits. Do NOT capture by reference — the worker may outlive this
+    // function on timeout.
+    let cfg = Arc::clone(&config);
 
     let spawn_result = std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
@@ -428,17 +481,41 @@ fn run_compile_and_test_with_timeout(
             let res = panic::catch_unwind(AssertUnwindSafe(|| compile_and_test(&cfg, &opts)))
                 .unwrap_or_else(|_| Err(eyre::eyre!("worker panicked")));
             let _ = tx.send(res);
+            // Keep `temp_dir` alive until *after* the worker is done with the
+            // workspace. Dropping here (vs at function entry on timeout)
+            // guarantees no use-after-free of the filesystem.
+            drop(temp_dir);
         });
 
-    if spawn_result.is_err() {
-        return MutationResult::Invalid;
-    }
+    let handle = match spawn_result {
+        Ok(h) => h,
+        Err(_) => return MutationResult::Invalid,
+    };
 
     match rx.recv_timeout(budget) {
-        Ok(Ok(true)) => MutationResult::Dead,
-        Ok(Ok(false)) => MutationResult::Alive,
-        Ok(Err(_)) => MutationResult::Invalid,
-        Err(_) => MutationResult::TimedOut,
+        Ok(Ok(true)) => {
+            // Worker finished and sent a result; join briefly so the TempDir
+            // is actually cleaned up before we return.
+            let _ = handle.join();
+            MutationResult::Dead
+        }
+        Ok(Ok(false)) => {
+            let _ = handle.join();
+            MutationResult::Alive
+        }
+        Ok(Err(_)) => {
+            let _ = handle.join();
+            MutationResult::Invalid
+        }
+        Err(_) => {
+            // Timeout fired. The worker is still running and still owns the
+            // TempDir; park the handle so we can join (and reclaim cleanup)
+            // at the end of the parallel run instead of leaking it.
+            if let Ok(mut pending) = shared_state.pending_workers.lock() {
+                pending.push(handle);
+            }
+            MutationResult::TimedOut
+        }
     }
 }
 

@@ -195,19 +195,31 @@ pub async fn run_mutation_testing(
             }
         }
 
-        // Persist results for caching
+        // Detect cancellation early so we can decide whether the result set is
+        // complete before persisting it. Without this guard a Ctrl+C mid-run
+        // would write a *partial* results vector to the cache and the next run
+        // would treat that subset as the full answer for this file.
+        let file_cancelled = progress.as_ref().is_some_and(|p| p.is_cancelled());
+        let complete_run = !file_cancelled && results_vec.len() == mutants.len();
+
+        // Persist results for caching only when the run for this file is
+        // complete. Partial caches are silent correctness bugs:
+        //   - cancelled runs would be reloaded as authoritative
+        //   - non-cancelled-but-short result vectors indicate a bug, not a hit
+        // The mutants list itself is fine to persist (it's deterministic from
+        // the AST + operator set) and so are survived spans (best-effort hint).
         if !mutants.is_empty() && !build_id.is_empty() {
             let _ = handler.persist_cached_mutants(&build_id, &mutants);
-            let _ = handler.persist_cached_results(&build_id, &results_vec);
+            if complete_run {
+                let _ = handler.persist_cached_results(&build_id, &results_vec);
+            }
             let _ = handler.persist_survived_spans(&build_id);
         }
 
         mutation_summary.merge(handler.get_report());
 
         // If cancelled, break out of the loop
-        if let Some(ref p) = progress
-            && p.is_cancelled()
-        {
+        if file_cancelled {
             cancelled = true;
             break;
         }
