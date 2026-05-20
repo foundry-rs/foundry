@@ -1,4 +1,4 @@
-use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
+use super::{install, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
@@ -64,7 +64,7 @@ use yansi::Paint;
 mod filter;
 mod summary;
 use crate::{result::TestKind, traces::render_trace_arena_inner};
-pub use filter::FilterArgs;
+pub use filter::{FilterArgs, ProjectPathsAwareFilter};
 use quick_junit::{NonSuccessKind, Report, TestCase, TestCaseStatus, TestSuite};
 use summary::{TestSummaryReport, format_invariant_metrics_table};
 
@@ -353,6 +353,39 @@ impl TestArgs {
             bail!("`fuzz.run` must be greater than 0");
         }
 
+        // Mutation testing has bespoke orchestration (per-mutant temp
+        // workspaces, baseline + N mutants, aggregated mutation report). It is
+        // not compatible with the single-run debug / flame / list / junit
+        // modes — running them together would either mix incompatible output
+        // formats, or run the secondary mode against the baseline tests and
+        // then silently continue into mutation testing. Reject up front with a
+        // clear error rather than do the wrong thing.
+        if self.mutate.is_some() {
+            let mut conflicts = Vec::new();
+            if self.list {
+                conflicts.push("--list");
+            }
+            if self.debug {
+                conflicts.push("--debug");
+            }
+            if self.flamegraph {
+                conflicts.push("--flamegraph");
+            }
+            if self.flamechart {
+                conflicts.push("--flamechart");
+            }
+            if self.junit {
+                conflicts.push("--junit");
+            }
+            if !conflicts.is_empty() {
+                bail!(
+                    "`--mutate` cannot be combined with: {}. Re-run without those flags to use \
+                     mutation testing.",
+                    conflicts.join(", ")
+                );
+            }
+        }
+
         // Explicitly enable isolation for gas reports for more correct gas accounting.
         if self.gas_report {
             evm_opts.isolate = true;
@@ -582,9 +615,6 @@ impl TestArgs {
             // Detect both up front so users aren't surprised by races or
             // corruption of their real dependency tree.
             use foundry_config::fs_permissions::FsAccessPermission;
-            let has_broad_write = config_for_mutation.fs_permissions.permissions.iter().any(|p| {
-                matches!(p.access, FsAccessPermission::Write | FsAccessPermission::ReadWrite)
-            });
             if config_for_mutation.ffi {
                 eyre::bail!(
                     "Mutation testing is unsafe with `ffi = true`: per-mutant workspaces share \
@@ -593,13 +623,58 @@ impl TestArgs {
                      Disable ffi in your foundry.toml to run mutation tests."
                 );
             }
-            if has_broad_write {
+
+            // Only refuse write-capable `fs_permissions` whose path can actually
+            // reach one of the symlinked dependency trees. Scoped writes (e.g.
+            // `./out`, `./snapshots`) are safe because they target paths that
+            // never resolve into the shared `lib`/`node_modules`/`dependencies`
+            // trees.
+            let root = &config_for_mutation.root;
+            let mut shared_dep_dirs: Vec<PathBuf> = config_for_mutation.libs.clone();
+            shared_dep_dirs.push(root.join("node_modules"));
+            shared_dep_dirs.push(root.join("dependencies"));
+            let shared_dep_dirs: Vec<PathBuf> =
+                shared_dep_dirs.into_iter().map(|p| dunce::canonicalize(&p).unwrap_or(p)).collect();
+
+            let touches_shared_dep = |perm_path: &Path| -> bool {
+                let resolved = if perm_path.is_absolute() {
+                    perm_path.to_path_buf()
+                } else {
+                    root.join(perm_path)
+                };
+                let canon = dunce::canonicalize(&resolved).unwrap_or(resolved);
+                shared_dep_dirs.iter().any(|dep| {
+                    // Either the permission path is inside a shared dep dir
+                    // (write directly into deps), or it is an ancestor of one
+                    // (broad permission like `./` covers them transitively).
+                    canon.starts_with(dep) || dep.starts_with(&canon)
+                })
+            };
+
+            let unsafe_write_paths: Vec<&Path> = config_for_mutation
+                .fs_permissions
+                .permissions
+                .iter()
+                .filter(|p| {
+                    matches!(p.access, FsAccessPermission::Write | FsAccessPermission::ReadWrite)
+                })
+                .filter(|p| touches_shared_dep(&p.path))
+                .map(|p| p.path.as_path())
+                .collect();
+
+            if !unsafe_write_paths.is_empty() {
+                let paths = unsafe_write_paths
+                    .iter()
+                    .map(|p| format!("  - {}", p.display()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 eyre::bail!(
-                    "Mutation testing is unsafe with write-capable `fs_permissions`: per-mutant \
-                     workspaces share symlinked dependency directories, and `vm.writeFile` \
-                     calls can race against or corrupt the real `lib`/`node_modules`/\
-                     `dependencies` trees. Restrict `fs_permissions` to read-only (or scope it \
-                     away from dependency paths) to run mutation tests."
+                    "Mutation testing is unsafe with write-capable `fs_permissions` that can \
+                     reach the symlinked dependency trees (`lib`/`node_modules`/`dependencies`); \
+                     per-mutant workspaces share those trees, so `vm.writeFile` calls would race \
+                     against or corrupt your real dependencies. Restrict the following \
+                     `fs_permissions` entries to read-only or scope them away from dependency \
+                     paths:\n{paths}"
                 );
             }
 
@@ -612,6 +687,13 @@ impl TestArgs {
                 num_workers: self.mutation_jobs.unwrap_or(0),
                 show_progress: self.show_progress,
                 json_output,
+                // Carry the same filter args (--match-test, --match-contract,
+                // --match-path, ...) and isolation flag the baseline run used,
+                // so every mutant exercises the exact same test set under the
+                // same execution model. Without this, mutant runs silently
+                // diverge from baseline and produce false kills/survivors.
+                filter_args: self.filter.clone(),
+                isolate: evm_opts_for_mutation.isolate,
             };
 
             let result = run_mutation_testing(

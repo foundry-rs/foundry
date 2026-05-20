@@ -18,7 +18,7 @@ use std::{
 };
 
 use eyre::Result;
-use foundry_common::{EmptyTestFilter, compile::ProjectCompiler, sh_eprintln, sh_println};
+use foundry_common::{compile::ProjectCompiler, sh_eprintln, sh_println};
 use foundry_compilers::compilers::multi::MultiCompiler;
 use foundry_config::Config;
 #[cfg(feature = "optimism")]
@@ -34,6 +34,7 @@ use tempfile::TempDir;
 
 use crate::{
     MultiContractRunnerBuilder,
+    cmd::test::FilterArgs,
     mutation::{
         SurvivedSpans,
         mutant::{Mutant, MutationResult},
@@ -147,6 +148,8 @@ pub fn run_mutations_parallel_with_progress(
     num_workers: usize,
     progress: Option<MutationProgress>,
     silent: bool,
+    filter_args: FilterArgs,
+    isolate: bool,
 ) -> Result<Vec<MutantTestResult>> {
     let total = mutants.len();
     if total == 0 {
@@ -220,6 +223,8 @@ pub fn run_mutations_parallel_with_progress(
     let completed_results: Arc<Mutex<Vec<MutantTestResult>>> =
         Arc::new(Mutex::new(Vec::with_capacity(total)));
 
+    let filter_args = Arc::new(filter_args);
+
     pool.install(|| {
         mutants.into_par_iter().for_each(|mutant| {
             // Skip if cancelled
@@ -237,6 +242,8 @@ pub fn run_mutations_parallel_with_progress(
                     &config,
                     &evm_opts,
                     &shared_state,
+                    &filter_args,
+                    isolate,
                 )
             }));
 
@@ -305,6 +312,7 @@ pub fn run_mutations_parallel_with_progress(
 }
 
 /// Test a single mutant in an isolated temporary workspace.
+#[allow(clippy::too_many_arguments)]
 fn test_single_mutant_isolated(
     mutant: Mutant,
     source_relative: &PathBuf,
@@ -312,6 +320,8 @@ fn test_single_mutant_isolated(
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
     shared_state: &Arc<SharedMutationState>,
+    filter_args: &Arc<FilterArgs>,
+    isolate: bool,
 ) -> MutantTestResult {
     // Check if we should skip this mutant based on adaptive span tracking
     if shared_state.should_skip_span(mutant.span) {
@@ -424,11 +434,17 @@ fn test_single_mutant_isolated(
     let timeout = config.mutation.timeout.map(|s| Duration::from_secs(s as u64));
 
     let result = match timeout {
-        Some(budget) => {
-            run_compile_and_test_with_timeout(temp_config, evm_opts, budget, temp_dir, shared_state)
-        }
+        Some(budget) => run_compile_and_test_with_timeout(
+            temp_config,
+            evm_opts,
+            budget,
+            temp_dir,
+            shared_state,
+            filter_args.clone(),
+            isolate,
+        ),
         None => {
-            let res = match compile_and_test(&temp_config, evm_opts) {
+            let res = match compile_and_test(&temp_config, evm_opts, filter_args, isolate) {
                 Ok(true) => MutationResult::Dead,
                 Ok(false) => MutationResult::Alive,
                 Err(_) => MutationResult::Invalid,
@@ -460,12 +476,15 @@ fn test_single_mutant_isolated(
 /// directory is only dropped when the worker thread actually exits. On
 /// timeout the `JoinHandle` is parked in `shared_state.pending_workers`
 /// and joined at the end of the parallel run.
+#[allow(clippy::too_many_arguments)]
 fn run_compile_and_test_with_timeout(
     config: Arc<Config>,
     evm_opts: &EvmOpts,
     budget: Duration,
     temp_dir: TempDir,
     shared_state: &Arc<SharedMutationState>,
+    filter_args: Arc<FilterArgs>,
+    isolate: bool,
 ) -> MutationResult {
     let (tx, rx) = mpsc::channel::<Result<bool>>();
     let opts = evm_opts.clone();
@@ -473,13 +492,16 @@ fn run_compile_and_test_with_timeout(
     // thread exits. Do NOT capture by reference — the worker may outlive this
     // function on timeout.
     let cfg = Arc::clone(&config);
+    let filter_for_worker = Arc::clone(&filter_args);
 
     let spawn_result = std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .name("mutation-worker".to_string())
         .spawn(move || {
-            let res = panic::catch_unwind(AssertUnwindSafe(|| compile_and_test(&cfg, &opts)))
-                .unwrap_or_else(|_| Err(eyre::eyre!("worker panicked")));
+            let res = panic::catch_unwind(AssertUnwindSafe(|| {
+                compile_and_test(&cfg, &opts, &filter_for_worker, isolate)
+            }))
+            .unwrap_or_else(|_| Err(eyre::eyre!("worker panicked")));
             let _ = tx.send(res);
             // Keep `temp_dir` alive until *after* the worker is done with the
             // workspace. Dropping here (vs at function entry on timeout)
@@ -560,27 +582,40 @@ fn apply_mutation(mutant: &Mutant, original_source: &str, dest_path: &Path) -> R
 /// Compile the project and run tests, returning true if any test failed (mutant killed).
 ///
 /// Dispatches to the correct network type based on `evm_opts.networks`.
-fn compile_and_test(config: &Arc<Config>, evm_opts: &EvmOpts) -> Result<bool> {
+fn compile_and_test(
+    config: &Arc<Config>,
+    evm_opts: &EvmOpts,
+    filter_args: &FilterArgs,
+    isolate: bool,
+) -> Result<bool> {
     if evm_opts.networks.is_tempo() {
-        compile_and_test_inner::<TempoEvmNetwork>(config, evm_opts)
+        compile_and_test_inner::<TempoEvmNetwork>(config, evm_opts, filter_args, isolate)
     } else {
         #[cfg(feature = "optimism")]
         if evm_opts.networks.is_optimism() {
-            return compile_and_test_inner::<OpEvmNetwork>(config, evm_opts);
+            return compile_and_test_inner::<OpEvmNetwork>(config, evm_opts, filter_args, isolate);
         }
-        compile_and_test_inner::<EthEvmNetwork>(config, evm_opts)
+        compile_and_test_inner::<EthEvmNetwork>(config, evm_opts, filter_args, isolate)
     }
 }
 
 fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
     config: &Arc<Config>,
     evm_opts: &EvmOpts,
+    filter_args: &FilterArgs,
+    isolate: bool,
 ) -> Result<bool> {
     // Compile
     let compiler =
         ProjectCompiler::new().dynamic_test_linking(config.dynamic_test_linking).quiet(true);
 
     let compile_output = compiler.compile(&config.project()?)?;
+
+    // Rebuild the per-mutant test filter so `--match-test`, `--match-contract`,
+    // `--match-path`, ... are honored against the temp workspace's paths
+    // (not the original project root). Without this the mutant runs would
+    // ignore user filters and execute a different test set than the baseline.
+    let filter = filter_args.clone().merge_with_config(config);
 
     // Run tests - need a multi-threaded Tokio runtime since test() uses rayon internally
     // with par_iter, and rayon workers need tokio handle access
@@ -595,16 +630,20 @@ fn compile_and_test_inner<FEN: FoundryEvmNetwork>(
         let (evm_env, tx_env, fork_block) =
             evm_opts.env::<SpecFor<FEN>, BlockEnvFor<FEN>, TxEnvFor<FEN>>().await?;
 
-        // Build test runner with fail-fast enabled
+        // Build test runner mirroring the canonical `forge test` runner: same
+        // isolation flag, same fail-fast semantics for mutation, and same
+        // filter so kept/skipped tests stay consistent across baseline and
+        // mutant runs.
         let mut runner = MultiContractRunnerBuilder::new(config.clone())
             .set_debug(false)
             .initial_balance(evm_opts.initial_balance)
             .sender(evm_opts.sender)
             .with_fork(evm_opts.get_fork(config, evm_env.cfg_env.chain_id, fork_block))
+            .enable_isolation(isolate)
             .fail_fast(true)
             .build::<FEN, MultiCompiler>(&compile_output, evm_env, tx_env, evm_opts.clone())?;
 
-        runner.test_collect(&EmptyTestFilter::default())
+        runner.test_collect(&filter)
     })?;
 
     // Check if any test failed (mutant killed)

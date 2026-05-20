@@ -20,9 +20,12 @@ use foundry_compilers::{
 use foundry_config::{Config, filter::GlobMatcher};
 use foundry_evm::opts::EvmOpts;
 
-use crate::mutation::{
-    MutationHandler, MutationProgress, MutationReporter, MutationsSummary, mutant::MutationResult,
-    runner::run_mutations_parallel_with_progress,
+use crate::{
+    cmd::test::FilterArgs,
+    mutation::{
+        MutationHandler, MutationProgress, MutationReporter, MutationsSummary,
+        mutant::MutationResult, runner::run_mutations_parallel_with_progress,
+    },
 };
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize)]
@@ -57,6 +60,13 @@ pub struct MutationRunConfig {
     pub show_progress: bool,
     /// Whether to output JSON (suppress all other output).
     pub json_output: bool,
+    /// Test filter (`--match-test`, `--match-contract`, `--match-path`, ...)
+    /// applied identically to baseline and every mutant run so they exercise
+    /// the same test set.
+    pub filter_args: FilterArgs,
+    /// EVM isolation flag — mirrors the canonical `forge test` runner so
+    /// baseline and mutant runs use the same execution model.
+    pub isolate: bool,
 }
 
 impl MutationRunConfig {
@@ -203,6 +213,8 @@ pub async fn run_mutation_testing(
             num_workers,
             progress.clone(),
             json_output,
+            mutation_config.filter_args.clone(),
+            mutation_config.isolate,
         )?;
 
         // Collect results for caching
