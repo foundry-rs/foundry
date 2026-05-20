@@ -325,6 +325,38 @@ contract OkSuperFromBase is BaseSuperCallSite {
     receive() external payable {}
 }
 
+// Same-arity overloads differing only by parameter type. Dispatch must pick the
+// `uint256` variant; following the `address payable` overload would let its
+// unrelated exit silence the lint.
+abstract contract OverloadByType {
+    function _send(uint256) internal {}
+    function _send(address payable to) internal {
+        to.transfer(1 wei);
+    }
+}
+
+contract LockedSameArityOverload is OverloadByType { //~WARN: contract can receive ETH but has no mechanism to send it out
+    receive() external payable {}
+
+    function withdraw(uint256 amount) external {
+        _send(amount);
+    }
+}
+
+// Same-arity overloads disambiguated by named-arg parameter set.
+contract OkNamedArgOverload {
+    function deposit() external payable {}
+
+    function _send(uint256, address payable) internal {}
+    function _send(address payable to, uint256 amount) internal {
+        to.transfer(amount);
+    }
+
+    function withdraw(address payable to, uint256 amount) external {
+        _send({to: to, amount: amount});
+    }
+}
+
 // `Lib.<fn>(...)` member-call dispatch.
 library SendLib {
     function pay(address payable to, uint256 amount) internal {

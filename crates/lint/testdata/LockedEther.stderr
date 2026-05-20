@@ -102,3 +102,11 @@ LL │ contract LockedLibraryOverload {
    │
    ╰ help: https://getfoundry.sh/forge/linting/locked-ether
 
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedSameArityOverload is OverloadByType {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+

@@ -254,16 +254,89 @@ impl<'hir> SendChecker<'_, 'hir> {
     }
 }
 
-/// Returns `true` if `args` can target `params` by arity, and named-arg names map to params.
-fn args_match(hir: &hir::Hir<'_>, args: &CallArgs<'_>, params: &[VariableId]) -> bool {
+/// Returns `true` if `args` can target `params` by arity and (when inferable) by type at each
+/// position. Arguments whose type cannot be inferred do not reject a candidate.
+fn args_match<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    args: &CallArgs<'hir>,
+    params: &[VariableId],
+) -> bool {
     if args.len() != params.len() {
         return false;
     }
+    let compatible = |arg: &hir::Expr<'hir>, param: VariableId| -> bool {
+        match expr_type(hir, arg) {
+            Some(at) => types_compatible(&at, &hir.variable(param).ty.kind),
+            None => true,
+        }
+    };
     match &args.kind {
-        CallArgsKind::Unnamed(_) => true,
+        CallArgsKind::Unnamed(exprs) => {
+            exprs.iter().zip(params.iter()).all(|(a, &p)| compatible(a, p))
+        }
         CallArgsKind::Named(named) => named.iter().all(|arg| {
-            params.iter().any(|&p| hir.variable(p).name.is_some_and(|n| n.name == arg.name.name))
+            let Some(&param) = params
+                .iter()
+                .find(|&&p| hir.variable(p).name.is_some_and(|n| n.name == arg.name.name))
+            else {
+                return false;
+            };
+            compatible(&arg.value, param)
         }),
+    }
+}
+
+/// Best-effort static type of an expression. Returns `None` when the type cannot be inferred
+/// from the expression's shape alone; callers treat that as "do not narrow on this position".
+fn expr_type<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &hir::Expr<'hir>,
+) -> Option<hir::TypeKind<'hir>> {
+    match &expr.peel_parens().kind {
+        ExprKind::Payable(_) => Some(TypeKind::Elementary(ElementaryType::Address(true))),
+        ExprKind::Lit(lit) => match &lit.kind {
+            LitKind::Address(_) => Some(TypeKind::Elementary(ElementaryType::Address(false))),
+            LitKind::Bool(_) => Some(TypeKind::Elementary(ElementaryType::Bool)),
+            // Numeric / string / hex literals are implicitly convertible to many widths; leave
+            // unknown so they don't reject candidates.
+            _ => None,
+        },
+        // Elementary cast `T(x)`.
+        ExprKind::Call(callee, ..) => match &callee.peel_parens().kind {
+            ExprKind::Type(ty) => Some(ty.kind.clone()),
+            _ => None,
+        },
+        ExprKind::New(ty) => Some(ty.kind.clone()),
+        ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
+            Res::Item(ItemId::Variable(id)) => Some(hir.variable(*id).ty.kind.clone()),
+            Res::Item(ItemId::Contract(id)) => Some(TypeKind::Custom(ItemId::Contract(*id))),
+            _ => None,
+        }),
+        ExprKind::Member(base, member) => is_address_builtin_member(base, member.name)
+            .then_some(TypeKind::Elementary(ElementaryType::Address(false))),
+        _ => None,
+    }
+}
+
+/// Conservative type-compatibility check: only obvious matches and standard widenings count.
+/// Anything else returns `false`.
+fn types_compatible(arg: &hir::TypeKind<'_>, param: &hir::TypeKind<'_>) -> bool {
+    match (arg, param) {
+        // `address payable` fits an `address` slot; `address` does not fit `address payable`.
+        (
+            TypeKind::Elementary(ElementaryType::Address(a_pay)),
+            TypeKind::Elementary(ElementaryType::Address(p_pay)),
+        ) => !p_pay || *a_pay,
+        // Contract values implicitly convert to `address` / `address payable`.
+        (
+            TypeKind::Custom(ItemId::Contract(_)),
+            TypeKind::Elementary(ElementaryType::Address(_)),
+        ) => true,
+        (TypeKind::Elementary(a), TypeKind::Elementary(b)) => a == b,
+        (TypeKind::Custom(a), TypeKind::Custom(b)) => a == b,
+        // Don't reject when either side errored out in semantic analysis.
+        (TypeKind::Err(_), _) | (_, TypeKind::Err(_)) => true,
+        _ => false,
     }
 }
 
