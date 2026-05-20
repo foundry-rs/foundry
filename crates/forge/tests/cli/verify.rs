@@ -4,12 +4,14 @@
 use crate::utils::{self, EnvExternalities};
 use alloy_primitives::hex;
 use anvil::{NodeConfig, spawn};
+use axum::Router;
 use foundry_common::retry::Retry;
 use foundry_test_utils::{
     forgetest, forgetest_async, str,
     util::{OutputExt, TestCommand, TestProject},
 };
 use std::time::Duration;
+use tokio::net::TcpListener;
 
 /// Adds a `Unique` contract to the source directory of the project that can be imported as
 /// `import {Unique} from "./unique.sol";`
@@ -365,14 +367,14 @@ Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" 
 
 // Tests that `forge create --verify` fails before deploying when the verifier
 // rejects the API key (credential preflight check).
-//
-// Uses `--verifier custom` pointing at a non-listening port so the HTTP credential
-// probe fails immediately (connection refused) without requiring a live endpoint.
 forgetest_async!(create_fails_early_on_bad_verifier_credentials, |prj, cmd| {
     prj.initialize_default_contracts();
     let (_api, handle) = spawn(NodeConfig::test()).await;
     let wallet = handle.dev_wallets().next().unwrap();
     let pk = hex::encode(wallet.credential().to_bytes());
+
+    let (verifier_url, _server) =
+        spawn_mock_verifier(r#"{"status":"0","message":"NOTOK","result":"Invalid API Key"}"#).await;
 
     let output = cmd
         .forge_fuse()
@@ -387,7 +389,7 @@ forgetest_async!(create_fails_early_on_bad_verifier_credentials, |prj, cmd| {
             "--verifier",
             "custom",
             "--verifier-url",
-            "http://127.0.0.1:59999",
+            verifier_url.as_str(),
             "--verifier-api-key",
             "FAKE_KEY_1234",
         ])
@@ -409,9 +411,6 @@ forgetest_async!(create_fails_early_on_bad_verifier_credentials, |prj, cmd| {
 
 // Tests that `forge script --broadcast --verify` fails before broadcasting when
 // the verifier rejects the API key (credential preflight check).
-//
-// Uses `--verifier custom` pointing at a non-listening port so the HTTP credential
-// probe fails immediately (connection refused) without requiring a live endpoint.
 forgetest_async!(script_fails_early_on_bad_verifier_credentials, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.add_script(
@@ -433,6 +432,9 @@ contract Deploy is Script {
     let wallet = handle.dev_wallets().next().unwrap();
     let pk = hex::encode(wallet.credential().to_bytes());
 
+    let (verifier_url, _server) =
+        spawn_mock_verifier(r#"{"status":"0","message":"NOTOK","result":"Invalid API Key"}"#).await;
+
     let output = cmd
         .forge_fuse()
         .args([
@@ -447,7 +449,7 @@ contract Deploy is Script {
             "--verifier",
             "custom",
             "--verifier-url",
-            "http://127.0.0.1:59999",
+            verifier_url.as_str(),
             "--verifier-api-key",
             "FAKE_KEY_1234",
         ])
@@ -461,4 +463,142 @@ contract Deploy is Script {
     );
     // The command exiting non-zero with the preflight error message is sufficient evidence
     // that no transactions were sent before the failure.
+});
+
+/// Spawns a local HTTP server that always responds with the given JSON body, returning its URL.
+async fn spawn_mock_verifier(body: &'static str) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = Router::new().fallback(move || async move { body });
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (format!("http://{addr}"), handle)
+}
+
+// Tests that the preflight check passes (does not block deploy) when the verifier responds
+// with ContractCodeNotVerified (the normal "valid key, unknown address" response).
+forgetest_async!(create_preflight_passes_on_contract_not_verified, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    // Server returns a well-formed "source code not verified" Etherscan response.
+    let (verifier_url, _server) = spawn_mock_verifier(
+        r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#,
+    )
+    .await;
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "src/Counter.sol:Counter",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--verify",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            verifier_url.as_str(),
+            "--verifier-api-key",
+            "VALID_KEY",
+        ])
+        .execute();
+
+    // Preflight must pass — the command may fail for other reasons (e.g. post-deploy
+    // verification), but it must NOT fail with the preflight error.
+    let stderr = output.stderr_lossy();
+    assert!(
+        !stderr.contains("Verification preflight check failed"),
+        "preflight should not block on ContractCodeNotVerified, got: {stderr}"
+    );
+});
+
+// Tests that the preflight check fails (blocks deploy) when the verifier explicitly
+// rejects the API key with an InvalidApiKey response.
+forgetest_async!(create_preflight_fails_on_invalid_api_key, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    // Server returns a well-formed "invalid API key" Etherscan response.
+    let (verifier_url, _server) =
+        spawn_mock_verifier(r#"{"status":"0","message":"NOTOK","result":"Invalid API Key"}"#).await;
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "src/Counter.sol:Counter",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--verify",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            verifier_url.as_str(),
+            "--verifier-api-key",
+            "BAD_KEY",
+        ])
+        .execute();
+
+    assert!(!output.status.success(), "expected command to fail");
+    let stderr = output.stderr_lossy();
+    assert!(
+        stderr.contains("Verification preflight check failed"),
+        "expected preflight error in stderr, got: {stderr}"
+    );
+    let stdout = output.stdout_lossy();
+    assert!(
+        !stdout.contains("Contract Address"),
+        "contract was deployed but preflight check should have prevented it"
+    );
+});
+
+// Tests that the preflight check does NOT block deployment when the verifier responds
+// with a rate-limit error (transient, not an auth failure).
+forgetest_async!(create_preflight_warns_on_rate_limit, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    // Server returns a well-formed "rate limit exceeded" Etherscan response.
+    let (verifier_url, _server) = spawn_mock_verifier(
+        r#"{"status":"0","message":"NOTOK","result":"Max rate limit reached"}"#,
+    )
+    .await;
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            "src/Counter.sol:Counter",
+            "--rpc-url",
+            handle.http_endpoint().as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--verify",
+            "--verifier",
+            "custom",
+            "--verifier-url",
+            verifier_url.as_str(),
+            "--verifier-api-key",
+            "VALID_KEY",
+        ])
+        .execute();
+
+    // Rate limit must not block the deploy.
+    let stderr = output.stderr_lossy();
+    assert!(
+        !stderr.contains("Verification preflight check failed"),
+        "preflight should not block on rate limit, got: {stderr}"
+    );
 });

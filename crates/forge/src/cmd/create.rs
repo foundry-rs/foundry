@@ -366,9 +366,8 @@ impl CreateArgs {
 
         verify.verification_provider()?.preflight_verify_check(verify.clone(), context).await?;
 
-        let api_key =
-            verify.etherscan.key.as_deref().or(verify.verifier.verifier_api_key.as_deref());
-        let chain = verify.etherscan.chain.unwrap_or_default();
+        let api_key = verify.verifier.resolve_api_key(verify.etherscan.key.as_deref());
+        let chain = verify.etherscan.chain.expect("chain ID not resolved");
         verify
             .verifier
             .check_credentials(api_key, chain, &config)

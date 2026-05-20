@@ -65,6 +65,12 @@ impl VerifierArgs {
         self.verifier.is_some()
     }
 
+    /// Resolves the API key with consistent precedence: explicit `--verifier-api-key` first,
+    /// then the etherscan config key.
+    pub fn resolve_api_key<'a>(&'a self, etherscan_key: Option<&'a str>) -> Option<&'a str> {
+        self.verifier_api_key.as_deref().or(etherscan_key)
+    }
+
     /// Makes a lightweight network call to validate that credentials are accepted by the verifier.
     pub async fn check_credentials(
         &self,
@@ -85,13 +91,33 @@ impl VerifierArgs {
                     self,
                     config,
                 )?;
-                match client.contract_abi(Address::ZERO).await {
-                    Ok(_)
-                    | Err(
-                        EtherscanError::ContractCodeNotVerified(_)
-                        | EtherscanError::ContractNotFound(_),
+                match tokio::time::timeout(
+                    Duration::from_secs(10),
+                    client.contract_abi(Address::ZERO),
+                )
+                .await
+                {
+                    Err(_) => {
+                        sh_warn!("verifier credential check timed out, proceeding anyway")?;
+                    }
+                    Ok(
+                        Ok(_)
+                        | Err(
+                            EtherscanError::ContractCodeNotVerified(_)
+                            | EtherscanError::ContractNotFound(_),
+                        ),
                     ) => {}
-                    Err(e) => eyre::bail!("verifier credential check failed: {e}"),
+                    Ok(Err(
+                        EtherscanError::InvalidApiKey
+                        | EtherscanError::InvalidApiVersion
+                        | EtherscanError::BlockedByCloudflare
+                        | EtherscanError::CloudFlareSecurityChallenge,
+                    )) => {
+                        eyre::bail!("verifier credential check failed: invalid API key or blocked")
+                    }
+                    Ok(Err(e)) => {
+                        sh_warn!("verifier credential check failed: {e}, proceeding anyway")?;
+                    }
                 }
             }
             VerificationProviderType::Sourcify => {
