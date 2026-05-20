@@ -34,7 +34,10 @@
 //! - This all happens periodically, there is no clear order in which workers export or import
 //!   entries since it doesn't matter as long as the corpus eventually syncs across all workers
 
-use crate::executors::{Executor, RawCallResult, invariant::execute_tx};
+use crate::{
+    executors::{Executor, RawCallResult, invariant::execute_tx},
+    inspectors::CmpOperands,
+};
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
 use alloy_primitives::{Bytes, I256};
@@ -45,7 +48,9 @@ use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_fuzz::{
     BasicTxDetails,
     invariant::FuzzRunIdentifiedContracts,
-    strategies::{EvmFuzzState, generate_msg_value, mutate_param_value},
+    strategies::{
+        EvmFuzzState, FuzzStateReader, InvariantFuzzState, generate_msg_value, mutate_param_value,
+    },
 };
 use proptest::{
     prelude::{Just, Rng, Strategy},
@@ -92,6 +97,9 @@ enum MutationType {
     Suffix,
     /// ABI mutate random args of selected call in sequence.
     Abi,
+    /// Replace input bytes using comparison operands observed for a corpus entry
+    /// (input-to-state, LibAFL-style).
+    Cmp,
 }
 
 /// Persisted optimization state: the best value found and the sequence that produced it.
@@ -113,6 +121,10 @@ struct CorpusEntry {
     // Corpus call sequence.
     #[serde(skip_serializing)]
     tx_seq: Vec<BasicTxDetails>,
+    // Per-call EVM comparison operands observed while executing this corpus entry.
+    // Parallel to `tx_seq`. Empty inner vec means "no cmp data for this call".
+    #[serde(skip_serializing)]
+    cmp_seq: Vec<Vec<CmpOperands>>,
     // Whether this corpus is favored, i.e. producing new finds more often than
     // `FAVORABILITY_THRESHOLD`.
     is_favored: bool,
@@ -124,26 +136,21 @@ struct CorpusEntry {
 impl CorpusEntry {
     /// Creates a corpus entry with a new UUID.
     pub fn new(tx_seq: Vec<BasicTxDetails>) -> Self {
-        Self::new_with(tx_seq, Uuid::new_v4())
+        Self::new_with_cmp(tx_seq, Vec::new(), Uuid::new_v4())
     }
 
-    /// Creates a corpus entry with a path.
-    /// The UUID is parsed from the file name, otherwise a new UUID is generated.
-    pub fn new_existing(tx_seq: Vec<BasicTxDetails>, path: PathBuf) -> Result<Self> {
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-            eyre::bail!("invalid corpus file path: {path:?}");
-        };
-        let uuid = parse_corpus_filename(name)?.0;
-        Ok(Self::new_with(tx_seq, uuid))
-    }
-
-    /// Creates a corpus entry with the given UUID.
-    pub fn new_with(tx_seq: Vec<BasicTxDetails>, uuid: Uuid) -> Self {
+    /// Creates a corpus entry with the given UUID and per-call cmp operand log.
+    pub fn new_with_cmp(
+        tx_seq: Vec<BasicTxDetails>,
+        cmp_seq: Vec<Vec<CmpOperands>>,
+        uuid: Uuid,
+    ) -> Self {
         Self {
             uuid,
             total_mutations: 0,
             new_finds_produced: 0,
             tx_seq,
+            cmp_seq,
             is_favored: false,
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -304,6 +311,7 @@ impl WorkerCorpus {
             Just(MutationType::Prefix),
             Just(MutationType::Suffix),
             Just(MutationType::Abi),
+            Just(MutationType::Cmp),
         ]
         .boxed();
 
@@ -370,9 +378,11 @@ impl WorkerCorpus {
                 }
                 // Warm up history map from loaded sequences.
                 let mut executor = executor.clone();
+                let mut cmp_seq = Vec::with_capacity(tx_seq.len());
                 for tx in &tx_seq {
                     if Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                         let mut call_result = execute_tx(&mut executor, tx)?;
+                        cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
                         let (new_coverage, is_edge) = call_result
                             .merge_all_coverage(&mut history_map, &mut sancov_history_map);
                         if new_coverage {
@@ -384,6 +394,7 @@ impl WorkerCorpus {
                             executor.commit(&mut call_result);
                         }
                     } else {
+                        cmp_seq.push(Vec::new());
                         failed_replays += 1;
 
                         // If the only input for fuzzed function cannot be replied, then move to
@@ -404,7 +415,7 @@ impl WorkerCorpus {
                 );
 
                 // Populate in memory corpus with the sequence from corpus file.
-                in_memory_corpus.push(CorpusEntry::new_with(tx_seq, entry.uuid));
+                in_memory_corpus.push(CorpusEntry::new_with_cmp(tx_seq, cmp_seq, entry.uuid));
             }
         }
 
@@ -435,6 +446,7 @@ impl WorkerCorpus {
     pub fn process_inputs(
         &mut self,
         inputs: &[BasicTxDetails],
+        cmp_seq: &[Vec<CmpOperands>],
         new_coverage: bool,
         optimization: Option<(I256, Vec<BasicTxDetails>)>,
     ) {
@@ -496,7 +508,8 @@ impl WorkerCorpus {
         } else {
             inputs.to_vec()
         };
-        let corpus = CorpusEntry::new(corpus_inputs);
+        let corpus_cmp_seq = cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
+        let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
 
         // Persist to disk.
         let write_result = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip);
@@ -574,7 +587,7 @@ impl WorkerCorpus {
     pub fn new_inputs(
         &mut self,
         test_runner: &mut TestRunner,
-        fuzz_state: &EvmFuzzState,
+        fuzz_state: &InvariantFuzzState,
         targeted_contracts: &FuzzRunIdentifiedContracts,
     ) -> Result<Vec<BasicTxDetails>> {
         let mut new_seq = vec![];
@@ -667,7 +680,7 @@ impl WorkerCorpus {
                     }
                 }
                 MutationType::Abi => {
-                    let targets = targeted_contracts.targets.lock();
+                    let targets = targeted_contracts.targets();
                     let corpus = if rng.random::<bool>() { primary } else { secondary };
                     trace!(target: "corpus", "ABI mutate args of {}", corpus.uuid);
 
@@ -681,6 +694,51 @@ impl WorkerCorpus {
                         // TODO: add call_value to call details and mutate it as well as sender some
                         // of the time.
                         if !function.inputs.is_empty() {
+                            self.abi_mutate(tx, function, test_runner, fuzz_state)?;
+                        }
+                    }
+                }
+                MutationType::Cmp => {
+                    let targets = targeted_contracts.targets();
+                    let corpus = if rng.random::<bool>() { primary } else { secondary };
+                    trace!(target: "corpus", "cmp mutate args of {}", corpus.uuid);
+
+                    self.current_mutated = Some(corpus.uuid);
+
+                    new_seq = corpus.tx_seq.clone();
+                    let candidates = corpus
+                        .cmp_seq
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(idx, cmp_values)| (!cmp_values.is_empty()).then_some(idx))
+                        .collect::<Vec<_>>();
+
+                    let mut mutated = false;
+                    let fallback_idx = rng.random_range(0..new_seq.len());
+                    if !candidates.is_empty() {
+                        let start = rng.random_range(0..candidates.len());
+                        for offset in 0..candidates.len() {
+                            let idx = candidates[(start + offset) % candidates.len()];
+                            let tx = new_seq.get_mut(idx).unwrap();
+                            if let (_, Some(function)) = targets.fuzzed_artifacts(tx) {
+                                mutated = Self::cmp_mutate(
+                                    tx,
+                                    function,
+                                    corpus.cmp_seq[idx].as_slice(),
+                                    test_runner,
+                                )?;
+                                if mutated {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if !mutated {
+                        let tx = new_seq.get_mut(fallback_idx).unwrap();
+                        if let (_, Some(function)) = targets.fuzzed_artifacts(tx)
+                            && !function.inputs.is_empty()
+                        {
                             self.abi_mutate(tx, function, test_runner, fuzz_state)?;
                         }
                     }
@@ -720,7 +778,12 @@ impl WorkerCorpus {
                 [test_runner.rng().random_range(0..self.in_memory_corpus.len())];
             self.current_mutated = Some(corpus.uuid);
             let mut tx = corpus.tx_seq.first().unwrap().clone();
-            self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+            let cmp_values = corpus.cmp_seq.first().map_or(&[][..], Vec::as_slice);
+            if !Self::cmp_mutate(&mut tx, function, cmp_values, test_runner)?
+                && !function.inputs.is_empty()
+            {
+                self.abi_mutate(&mut tx, function, test_runner, fuzz_state)?;
+            }
             tx
         };
 
@@ -800,7 +863,7 @@ impl WorkerCorpus {
         tx: &mut BasicTxDetails,
         function: &Function,
         test_runner: &mut TestRunner,
-        fuzz_state: &EvmFuzzState,
+        fuzz_state: &impl FuzzStateReader,
     ) -> Result<()> {
         // Mutate value with 15% probability for payable functions.
         if function.state_mutability == alloy_json_abi::StateMutability::Payable
@@ -842,6 +905,97 @@ impl WorkerCorpus {
         tx.call_details.calldata =
             function.abi_encode_input(&prev_inputs).map_err(|e| eyre!(e.to_string()))?.into();
         Ok(())
+    }
+
+    /// Mutates calldata by replacing bytes matching one side of an observed EVM comparison with
+    /// the other side, following LibAFL's input-to-state replacement strategy.
+    fn cmp_mutate(
+        tx: &mut BasicTxDetails,
+        function: &Function,
+        cmp_values: &[CmpOperands],
+        test_runner: &mut TestRunner,
+    ) -> Result<bool> {
+        if cmp_values.is_empty() || tx.call_details.calldata.len() <= 4 {
+            return Ok(false);
+        }
+
+        let start = test_runner.rng().random_range(0..cmp_values.len());
+        for offset in 0..cmp_values.len() {
+            let cmp = &cmp_values[(start + offset) % cmp_values.len()];
+            if let Some(mutated) =
+                Self::cmp_mutated_calldata(tx.call_details.calldata.as_ref(), cmp, test_runner)
+                && function.abi_decode_input(&mutated[4..]).is_ok()
+            {
+                tx.call_details.calldata = mutated.into();
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn cmp_mutated_calldata(
+        calldata: &[u8],
+        cmp: &CmpOperands,
+        test_runner: &mut TestRunner,
+    ) -> Option<Vec<u8>> {
+        const WIDTHS: [usize; 6] = [32, 16, 8, 4, 2, 1];
+
+        let lhs_full = cmp.op1.to_be_bytes::<32>();
+        let rhs_full = cmp.op2.to_be_bytes::<32>();
+        let width_start = test_runner.rng().random_range(0..WIDTHS.len());
+        for offset in 0..WIDTHS.len() {
+            let width = WIDTHS[(width_start + offset) % WIDTHS.len()];
+            let lhs = &lhs_full[32 - width..];
+            let rhs = &rhs_full[32 - width..];
+            if lhs == rhs {
+                continue;
+            }
+
+            let lhs_first = test_runner.rng().random::<bool>();
+            let first = if lhs_first { (lhs, rhs) } else { (rhs, lhs) };
+            let second = if lhs_first { (rhs, lhs) } else { (lhs, rhs) };
+
+            if let Some(mutated) =
+                Self::replace_cmp_operand(calldata, first.0, first.1, test_runner).or_else(|| {
+                    Self::replace_cmp_operand(calldata, second.0, second.1, test_runner)
+                })
+            {
+                return Some(mutated);
+            }
+        }
+
+        None
+    }
+
+    fn replace_cmp_operand(
+        calldata: &[u8],
+        pattern: &[u8],
+        replacement: &[u8],
+        test_runner: &mut TestRunner,
+    ) -> Option<Vec<u8>> {
+        const SELECTOR_LEN: usize = 4;
+
+        if pattern.is_empty()
+            || pattern.len() != replacement.len()
+            || calldata.len() < SELECTOR_LEN + pattern.len()
+            || (pattern.len() < 32 && pattern.iter().all(|&b| b == 0))
+        {
+            return None;
+        }
+
+        let search_len = calldata.len() - SELECTOR_LEN - pattern.len() + 1;
+        let start = test_runner.rng().random_range(0..search_len);
+        for offset in 0..search_len {
+            let idx = SELECTOR_LEN + ((start + offset) % search_len);
+            if &calldata[idx..idx + pattern.len()] == pattern {
+                let mut mutated = calldata.to_vec();
+                mutated[idx..idx + replacement.len()].copy_from_slice(replacement);
+                return Some(mutated);
+            }
+        }
+
+        None
     }
 
     // Sync Methods.
@@ -895,12 +1049,15 @@ impl WorkerCorpus {
         let mut executor = executor.clone();
         for (entry, tx_seq) in self.load_sync_corpus()? {
             let mut new_coverage_on_sync = false;
+            let mut cmp_seq = Vec::with_capacity(tx_seq.len());
             for tx in &tx_seq {
                 if !Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
+                    cmp_seq.push(Vec::new());
                     continue;
                 }
 
                 let mut call_result = execute_tx(&mut executor, tx)?;
+                cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
 
                 // Check if this provides new coverage.
                 let (new_coverage, is_edge) = call_result
@@ -939,7 +1096,7 @@ impl WorkerCorpus {
                     "moved synced corpus to corpus dir",
                 );
 
-                let corpus_entry = CorpusEntry::new_existing(tx_seq.clone(), entry.path.clone())?;
+                let corpus_entry = CorpusEntry::new_with_cmp(tx_seq.clone(), cmp_seq, entry.uuid);
                 self.in_memory_corpus.push(corpus_entry);
             } else {
                 // Remove the file as it did not generate new coverage.
@@ -1129,7 +1286,7 @@ impl WorkerCorpus {
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
     ) -> bool {
-        fuzzed_contracts.is_some_and(|contracts| contracts.targets.lock().can_replay(tx))
+        fuzzed_contracts.is_some_and(|contracts| contracts.targets().can_replay(tx))
             || fuzzed_function.is_some_and(|function| {
                 tx.call_details
                     .calldata
@@ -1215,7 +1372,8 @@ fn parse_corpus_filename(name: &str) -> Result<(Uuid, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Address;
+    use alloy_dyn_abi::DynSolValue;
+    use alloy_primitives::{Address, U256};
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -1235,6 +1393,41 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("foundry-corpus-tests-{}", Uuid::new_v4()));
         let _ = fs::create_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn cmp_mutate_replaces_matching_calldata_operand() {
+        let function = Function::parse("testCmp(uint256)").unwrap();
+        let original = U256::from(7u64);
+        let replacement = U256::from(42u64);
+        let calldata: Bytes =
+            function.abi_encode_input(&[DynSolValue::Uint(original, 256)]).unwrap().into();
+        let mut tx = BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: foundry_evm_fuzz::CallDetails {
+                target: Address::ZERO,
+                calldata,
+                value: None,
+            },
+        };
+        let cmp = CmpOperands {
+            op1: original,
+            op2: replacement,
+            pc: 0,
+            address: Address::ZERO,
+            opcode: 0,
+        };
+        let config =
+            proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
+        let mut runner = TestRunner::new(config);
+
+        let mutated = WorkerCorpus::cmp_mutate(&mut tx, &function, &[cmp], &mut runner).unwrap();
+
+        assert!(mutated);
+        let decoded = function.abi_decode_input(&tx.call_details.calldata[4..]).unwrap();
+        assert_eq!(decoded[0].as_uint().unwrap().0, replacement);
     }
 
     fn new_manager_with_single_corpus() -> (WorkerCorpus, Uuid) {
@@ -1291,7 +1484,7 @@ mod tests {
 
         // Mark this as the currently mutated corpus and process a run with new coverage.
         manager.current_mutated = Some(uuid);
-        manager.process_inputs(&[basic_tx()], true, None);
+        manager.process_inputs(&[basic_tx()], &[], true, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
         assert!(corpus.is_favored, "expected favored to be true when ratio > threshold");
@@ -1313,7 +1506,7 @@ mod tests {
 
         // Next run does NOT produce coverage → only total_mutations increments, ratio drops.
         manager.current_mutated = Some(uuid);
-        manager.process_inputs(&[basic_tx()], false, None);
+        manager.process_inputs(&[basic_tx()], &[], false, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
         assert!(!corpus.is_favored, "expected favored to be false when ratio < threshold");
@@ -1333,7 +1526,7 @@ mod tests {
         corpus.is_favored = false;
 
         manager.current_mutated = Some(uuid);
-        manager.process_inputs(&[basic_tx()], true, None);
+        manager.process_inputs(&[basic_tx()], &[], true, None);
 
         let corpus = manager.in_memory_corpus.iter().find(|c| c.uuid == uuid).unwrap();
         assert!(
