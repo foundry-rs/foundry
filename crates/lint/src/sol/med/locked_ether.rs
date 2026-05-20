@@ -69,12 +69,15 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
                 continue;
             }
             let func = hir.function(fid);
+            // Contract that defines the function being visited; used to resolve `super`.
+            let call_site = func.contract;
 
             for modifier in func.modifiers {
                 for arg in modifier.args.exprs() {
                     let mut checker = SendChecker {
                         hir,
                         bases: contract.linearized_bases,
+                        call_site,
                         worklist: &mut worklist,
                         visited: &visited,
                     };
@@ -91,6 +94,7 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
                 let mut checker = SendChecker {
                     hir,
                     bases: contract.linearized_bases,
+                    call_site,
                     worklist: &mut worklist,
                     visited: &visited,
                 };
@@ -182,7 +186,11 @@ const fn is_externally_reachable(func: &hir::Function<'_>) -> bool {
 /// internally-resolved callees for transitive exploration by the outer worklist loop.
 struct SendChecker<'a, 'hir> {
     hir: &'hir hir::Hir<'hir>,
+    /// Linearization of the contract being linted; used to resolve `this`.
     bases: &'a [hir::ContractId],
+    /// Contract that defines the function whose body is being visited; used to resolve
+    /// `super`. `None` for free functions.
+    call_site: Option<hir::ContractId>,
     worklist: &'a mut Vec<FunctionId>,
     visited: &'a HashSet<FunctionId>,
 }
@@ -199,7 +207,14 @@ impl<'hir> SendChecker<'_, 'hir> {
         for res in *reses {
             match res {
                 Res::Builtin(Builtin::Super) => {
-                    self.queue_resolved(&self.bases[1..], member.name, args);
+                    // Resolve `super` against the call-site contract's own linearization,
+                    // skipping the call-site contract itself.
+                    if let Some(cid) = self.call_site {
+                        let cs = self.hir.contract(cid);
+                        if !cs.linearization_failed() && cs.linearized_bases.len() > 1 {
+                            self.queue_resolved(&cs.linearized_bases[1..], member.name, args);
+                        }
+                    }
                 }
                 Res::Builtin(Builtin::This) => {
                     self.queue_resolved(self.bases, member.name, args);

@@ -304,6 +304,27 @@ contract OkSuperCall is SuperWithdrawBase {
     }
 }
 
+// `super.<m>(...)` whose call site lives in a base contract: resolution must use the
+// call-site contract's own linearization, otherwise it walks past the real exit in
+// `LeafSuperExit` and hits `BaseSuperCallSite`'s empty override instead.
+abstract contract LeafSuperExit {
+    function _exit(address payable to) internal virtual {
+        to.transfer(address(this).balance);
+    }
+}
+
+abstract contract BaseSuperCallSite is LeafSuperExit {
+    function _exit(address payable) internal virtual override {}
+
+    function withdraw(address payable to) external {
+        super._exit(to);
+    }
+}
+
+contract OkSuperFromBase is BaseSuperCallSite {
+    receive() external payable {}
+}
+
 // `Lib.<fn>(...)` member-call dispatch.
 library SendLib {
     function pay(address payable to, uint256 amount) internal {
