@@ -18,7 +18,7 @@ use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, BlockResponse, TransactionResponse};
-use alloy_primitives::{BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
+use alloy_primitives::{Address, BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
@@ -37,7 +37,7 @@ use foundry_config::Config;
 use foundry_evm::{
     backend::{BlockchainDb, BlockchainDbMeta, SharedBackend},
     constants::DEFAULT_CREATE2_DEPLOYER,
-    hardfork::{FoundryHardfork, OpHardfork},
+    hardfork::FoundryHardfork,
     utils::{
         apply_chain_and_block_specific_env_changes, block_env_from_header,
         get_blob_base_fee_update_fraction,
@@ -209,6 +209,8 @@ pub struct NodeConfig {
     /// The path where persisted states are cached (used with `max_persisted_states`).
     /// This does not affect the fork RPC cache location.
     pub cache_path: Option<PathBuf>,
+    /// Accounts to fund with specific balances on startup (address -> balance in wei).
+    pub funded_accounts: HashMap<Address, U256>,
 }
 
 impl NodeConfig {
@@ -515,6 +517,7 @@ impl Default for NodeConfig {
             networks: Default::default(),
             silent: false,
             cache_path: None,
+            funded_accounts: HashMap::default(),
         }
     }
 }
@@ -579,8 +582,9 @@ impl NodeConfig {
         if let Some(hardfork) = self.hardfork {
             return hardfork;
         }
+        #[cfg(feature = "optimism")]
         if self.networks.is_optimism() {
-            return OpHardfork::default().into();
+            return foundry_evm::hardforks::OpHardfork::default().into();
         }
         if self.networks.is_tempo() {
             return TempoHardfork::default().into();
@@ -636,7 +640,7 @@ impl NodeConfig {
     pub fn set_chain_id(&mut self, chain_id: Option<impl Into<u64>>) {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
-        self.networks.with_chain_id(chain_id);
+        self.networks = self.networks.with_chain_id(chain_id);
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(Some(chain_id));
         });
@@ -1081,6 +1085,7 @@ impl NodeConfig {
     }
 
     /// Enable Optimism network features.
+    #[cfg(feature = "optimism")]
     #[must_use]
     pub fn with_optimism(mut self) -> Self {
         self.networks = NetworkConfigs::with_optimism();
@@ -1106,6 +1111,13 @@ impl NodeConfig {
     #[must_use]
     pub fn with_cache_path(mut self, cache_path: Option<PathBuf>) -> Self {
         self.cache_path = cache_path;
+        self
+    }
+
+    /// Sets accounts to fund with custom balances on startup.
+    #[must_use]
+    pub fn with_funded_accounts(mut self, accounts: HashMap<Address, U256>) -> Self {
+        self.funded_accounts = accounts;
         self
     }
 
@@ -1233,6 +1245,15 @@ impl NodeConfig {
                 .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
                 .await
                 .wrap_err("failed to create default create2 deployer")?;
+        }
+
+        if !self.funded_accounts.is_empty() {
+            for (address, balance) in &self.funded_accounts {
+                backend
+                    .set_balance(*address, *balance)
+                    .await
+                    .wrap_err_with(|| format!("failed to fund account {address}"))?;
+            }
         }
 
         Ok(backend)
@@ -1754,5 +1775,14 @@ mod tests {
         assert!(!config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(Some(10)));
         assert!(config.is_state_history_supported());
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn set_chain_id_updates_network_config() {
+        let mut config = NodeConfig::test();
+        config.set_chain_id(Some(10u64));
+
+        assert!(config.networks.is_optimism());
     }
 }

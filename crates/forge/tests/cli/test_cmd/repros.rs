@@ -783,6 +783,66 @@ ParserError: Source "Missing.sol" not found: File not found. Searched the follow
 "#]]);
 });
 
+// https://github.com/foundry-rs/foundry/issues/10463
+forgetest_init!(issue_10463, |prj, cmd| {
+    prj.add_test(
+        "Issue10463.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract Issue10463Test is Test {
+    event Foo();
+
+    error CustomError(uint256 code);
+
+    function revertingBefore(bool shouldRevert) external {
+        if (shouldRevert) revert();
+        emit Foo();
+    }
+
+    function revertingWithReason() external pure {
+        revert("revert reason");
+    }
+
+    function revertingWithCustomError() external pure {
+        revert CustomError(42);
+    }
+
+    function testExpectEmitPreservesRevertWhenCallRevertsBeforeLog() public {
+        vm.expectEmit();
+        emit Foo();
+
+        this.revertingBefore(true);
+    }
+
+    function testExpectEmitPreservesRevertReason() public {
+        vm.expectEmit();
+        emit Foo();
+
+        this.revertingWithReason();
+    }
+
+    function testExpectEmitPreservesCustomError() public {
+        vm.expectEmit();
+        emit Foo();
+
+        this.revertingWithCustomError();
+    }
+}
+"#,
+    );
+
+    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+...
+Ran 3 tests for test/Issue10463.t.sol:Issue10463Test
+[FAIL: CustomError(42)] testExpectEmitPreservesCustomError() ([GAS])
+[FAIL: revert reason] testExpectEmitPreservesRevertReason() ([GAS])
+[FAIL: EvmError: Revert] testExpectEmitPreservesRevertWhenCallRevertsBeforeLog() ([GAS])
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
+...
+"#]]);
+});
+
 // https://github.com/foundry-rs/foundry/issues/12803
 // Test gas underflow prevention on Cancun (no EIP-7702 gas floor)
 forgetest_init!(issue_12803_cancun, |prj, cmd| {

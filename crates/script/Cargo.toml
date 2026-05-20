@@ -62,3 +62,17 @@ tempo-primitives.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+anvil.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-evm/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-common/optimism",
+    "foundry-cheatcodes/optimism",
+    "foundry-cli/optimism",
+    "forge-script-sequence/optimism",
+    "forge-verify/optimism",
+]

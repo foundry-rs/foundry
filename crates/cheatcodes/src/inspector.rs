@@ -61,6 +61,7 @@ use revm::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
+        return_ok,
     },
 };
 use serde_json::Value;
@@ -856,42 +857,6 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             }
         }
 
-        // Handle mocked calls
-        if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
-            let ctx = MockCallDataContext {
-                calldata: call.input.bytes(ecx),
-                value: call.transfer_value(),
-            };
-
-            if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
-                Some(queue) => Some(queue),
-                None => mocks
-                    .iter_mut()
-                    .find(|(mock, _)| {
-                        call.input.bytes(ecx).get(..mock.calldata.len()) == Some(&mock.calldata[..])
-                            && mock.value.is_none_or(|value| Some(value) == call.transfer_value())
-                    })
-                    .map(|(_, v)| v),
-            } && let Some(return_data) = if return_data_queue.len() == 1 {
-                // If the mocked calls stack has a single element in it, don't empty it
-                return_data_queue.front().map(|x| x.to_owned())
-            } else {
-                // Else, we pop the front element
-                return_data_queue.pop_front()
-            } {
-                return Some(CallOutcome {
-                    result: InterpreterResult {
-                        result: return_data.ret_type,
-                        output: return_data.data,
-                        gas,
-                    },
-                    memory_offset: call.return_memory_offset.clone(),
-                    was_precompile_called: true,
-                    precompile_call_logs: vec![],
-                });
-            }
-        }
-
         // Apply our prank
         if let Some(prank) = &self.get_prank(curr_depth) {
             // Apply delegate call, `call.caller`` will not equal `prank.prank_caller`
@@ -929,6 +894,72 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 if prank_applied && let Some(applied_prank) = prank.first_time_applied() {
                     self.pranks.insert(curr_depth, applied_prank);
                 }
+            }
+        }
+
+        // Handle mocked calls
+        if let Some(mocks) = self.mocked_calls.get_mut(&call.bytecode_address) {
+            let ctx = MockCallDataContext {
+                calldata: call.input.bytes(ecx),
+                value: call.transfer_value(),
+            };
+
+            if let Some(return_data_queue) = match mocks.get_mut(&ctx) {
+                Some(queue) => Some(queue),
+                None => mocks
+                    .iter_mut()
+                    .find(|(mock, _)| {
+                        call.input.bytes(ecx).get(..mock.calldata.len()) == Some(&mock.calldata[..])
+                            && mock.value.is_none_or(|value| Some(value) == call.transfer_value())
+                    })
+                    .map(|(_, v)| v),
+            } && let Some(return_data) = return_data_queue.front().map(|x| x.to_owned())
+            {
+                if let Some(value) = call.transfer_value() {
+                    let checkpoint = ecx.journal_mut().checkpoint();
+                    match ecx.journal_mut().transfer_loaded(
+                        call.transfer_from(),
+                        call.transfer_to(),
+                        value,
+                    ) {
+                        None => {
+                            if return_data.ret_type.is_ok() {
+                                ecx.journal_mut().checkpoint_commit();
+                            } else {
+                                ecx.journal_mut().checkpoint_revert(checkpoint);
+                            }
+                        }
+                        Some(err) => {
+                            ecx.journal_mut().checkpoint_revert(checkpoint);
+                            return Some(CallOutcome {
+                                result: InterpreterResult {
+                                    result: err.into(),
+                                    output: Bytes::new(),
+                                    gas,
+                                },
+                                memory_offset: call.return_memory_offset.clone(),
+                                was_precompile_called: false,
+                                precompile_call_logs: vec![],
+                            });
+                        }
+                    }
+                }
+
+                // If the mocked calls stack has a single element in it, don't empty it
+                if return_data_queue.len() > 1 {
+                    return_data_queue.pop_front();
+                }
+
+                return Some(CallOutcome {
+                    result: InterpreterResult {
+                        result: return_data.ret_type,
+                        output: return_data.data,
+                        gas,
+                    },
+                    memory_offset: call.return_memory_offset.clone(),
+                    was_precompile_called: true,
+                    precompile_call_logs: vec![],
+                });
             }
         }
 
@@ -1377,7 +1408,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if let Some(expected_revert) = &mut self.expected_revert {
             // Record current reverter address and call scheme before processing the expect revert
             // if call reverted.
-            if outcome.result.is_revert() {
+            let call_failed = !matches!(outcome.result.result, return_ok!());
+            if call_failed {
                 // Record current reverter address if expect revert is set with expected reverter
                 // address and no actual reverter was set yet or if we're expecting more than one
                 // revert.
@@ -1390,10 +1422,36 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
             let curr_depth = ecx.journal().depth();
             if curr_depth <= expected_revert.depth {
+                // Decide whether this `call_end` should consume the pending `expectRevert`.
+                // With `internal_expect_revert` enabled, a same-depth revert can satisfy it, but
+                // we must not consume it for external calls that succeed (e.g. calls to
+                // non-contract addresses that return `Stop` before Solidity's own revert).
+                let internal = self.config.internal_expect_revert;
+                let went_deeper = expected_revert.max_depth > expected_revert.depth;
                 let needs_processing = match expected_revert.kind {
-                    ExpectedRevertKind::Default => !cheatcode_call,
-                    // `pending_processing` == true means that we're in the `call_end` hook for
-                    // `vm.expectCheatcodeRevert` and shouldn't expect revert here
+                    ExpectedRevertKind::Default => (|| {
+                        // Cheatcode reverts propagate up; let the outer frame catch them.
+                        if cheatcode_call {
+                            return false;
+                        }
+                        // Any failure satisfies the expectation.
+                        if call_failed {
+                            return true;
+                        }
+                        // Traditional expectRevert: succeeded external call went deeper.
+                        if !internal && went_deeper {
+                            return true;
+                        }
+                        // Test function returned: catch dangling expectations.
+                        if curr_depth == 0 {
+                            return true;
+                        }
+                        // Same-depth success with internal mode off is an error; with it on,
+                        // keep waiting for the actual revert.
+                        !internal
+                    })(),
+                    // `pending_processing == true` means we're in the `call_end` hook for
+                    // `vm.expectCheatcodeRevert` and shouldn't expect a revert here.
                     ExpectedRevertKind::Cheatcode { pending_processing } => {
                         cheatcode_call && !pending_processing
                     }
@@ -1497,6 +1555,21 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             }
         }
 
+        // this will ensure we don't have false positives when trying to diagnose reverts in fork
+        // mode
+        let diag = self.fork_revert_diagnostic.take();
+
+        // If the call already reverted, preserve that primary failure and skip post-call
+        // expect* validation so it cannot overwrite the original revert.
+        if outcome.result.is_revert() {
+            // if there's a revert and a previous call was diagnosed as fork related revert then we
+            // can return a better error here
+            if let Some(err) = diag {
+                outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
+            }
+            return;
+        }
+
         // At the end of the call,
         // we need to check if we've found all the emits.
         // We know we've found all the expected emits in the right order
@@ -1572,19 +1645,6 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             // Clear the queue, as we expect the user to declare more events for the next call
             // if they wanna match further events.
             self.expected_emits.clear()
-        }
-
-        // this will ensure we don't have false positives when trying to diagnose reverts in fork
-        // mode
-        let diag = self.fork_revert_diagnostic.take();
-
-        // if there's a revert and a previous call was diagnosed as fork related revert then we can
-        // return a better error here
-        if outcome.result.is_revert()
-            && let Some(err) = diag
-        {
-            outcome.result.output = Error::encode(err.to_error_msg(&self.labels));
-            return;
         }
 
         // try to diagnose reverts in multi-fork mode where a call is made to an address that does
@@ -1866,36 +1926,58 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             }
         }
 
-        // Handle expected reverts
-        if let Some(expected_revert) = &self.expected_revert
-            && curr_depth <= expected_revert.depth
-            && matches!(expected_revert.kind, ExpectedRevertKind::Default)
-        {
-            let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-            return match revert_handlers::handle_expect_revert(
-                false,
-                true,
-                self.config.internal_expect_revert,
-                &expected_revert,
-                outcome.result.result,
-                outcome.result.output.clone(),
-                &self.config.available_artifacts,
-            ) {
-                Ok((address, retdata)) => {
-                    expected_revert.actual_count += 1;
-                    if expected_revert.actual_count < expected_revert.count {
-                        self.expected_revert = Some(expected_revert.clone());
-                    }
+        // Handle expected reverts.
+        if let Some(expected_revert) = &mut self.expected_revert {
+            // Record the would-be deployed address as the reverter, picking the innermost
+            // reverting CREATE: this hook runs at every depth, the deepest frame fires
+            // first, and the `is_none()` lock pins it. For `count > 1` the lock is
+            // released after each successful iteration (see below) so each iteration
+            // independently records its own innermost CREATE.
+            //
+            // This intentionally differs from `call_end` for `count > 1`, where
+            // legacy nested CALL handling reports the outermost call per iteration.
+            //
+            // `outcome.address` is `None` for pre-frame rejection (depth/balance/nonce);
+            // in that case the surrounding `call_end` records the caller as the reverter.
+            if outcome.result.is_revert()
+                && expected_revert.reverter.is_some()
+                && expected_revert.reverted_by.is_none()
+                && let Some(addr) = outcome.address
+            {
+                expected_revert.reverted_by = Some(addr);
+            }
 
-                    outcome.result.result = InstructionResult::Return;
-                    outcome.result.output = retdata;
-                    outcome.address = address;
-                }
-                Err(err) => {
-                    outcome.result.result = InstructionResult::Revert;
-                    outcome.result.output = err.abi_encode().into();
-                }
-            };
+            if curr_depth <= expected_revert.depth
+                && matches!(expected_revert.kind, ExpectedRevertKind::Default)
+            {
+                let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                return match revert_handlers::handle_expect_revert(
+                    false,
+                    true,
+                    self.config.internal_expect_revert,
+                    &expected_revert,
+                    outcome.result.result,
+                    outcome.result.output.clone(),
+                    &self.config.available_artifacts,
+                ) {
+                    Ok((address, retdata)) => {
+                        expected_revert.actual_count += 1;
+                        if expected_revert.actual_count < expected_revert.count {
+                            // Reset so the next iteration's innermost CREATE wins again.
+                            expected_revert.reverted_by = None;
+                            self.expected_revert = Some(expected_revert.clone());
+                        }
+
+                        outcome.result.result = InstructionResult::Return;
+                        outcome.result.output = retdata;
+                        outcome.address = address;
+                    }
+                    Err(err) => {
+                        outcome.result.result = InstructionResult::Revert;
+                        outcome.result.output = err.abi_encode().into();
+                    }
+                };
+            }
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
