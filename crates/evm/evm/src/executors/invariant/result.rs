@@ -232,7 +232,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     // skip every subsequent `assert_invariants` evaluation under `assertions_revert = false`).
     // Handler bugs are tracked separately in `failures.broken_handlers`.
     let handlers_succeeded = || {
-        invariant_test.targeted_contracts.targets.lock().keys().all(|address| {
+        invariant_test.targeted_contracts.targets().keys().all(|address| {
             invariant_run.executor.is_success_handler_gate(
                 *address,
                 false,

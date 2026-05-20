@@ -212,3 +212,36 @@ contract TempoEvmVersionTest is Test {
 
     cmd.args(["test", "--network", "tempo", "--mc", "TempoEvmVersionTest"]).assert_success();
 });
+
+forgetest_init!(test_network_tempo_defaults_to_latest_hardfork, |prj, cmd| {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
+
+    let expected =
+        foundry_evm::hardforks::latest_active_tempo_hardfork().to_string().to_lowercase();
+    prj.add_test(
+        "TempoDefaultEvmVersion.t.sol",
+        &format!(
+            r#"
+pragma solidity >=0.8.20;
+
+import {{Test}} from "forge-std/Test.sol";
+
+interface EvmVm {{
+    function getEvmVersion() external pure returns (string memory evm);
+}}
+
+contract TempoDefaultEvmVersionTest is Test {{
+    EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function test_network_tempo_defaults_to_latest_hardfork() public {{
+        assertEq(evm.getEvmVersion(), "{expected}");
+    }}
+}}
+   "#
+        ),
+    );
+
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoDefaultEvmVersionTest"]).assert_success();
+});
