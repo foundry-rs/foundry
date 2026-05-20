@@ -62,12 +62,13 @@ impl fmt::Display for ShowmapDomain {
 /// Per-replay options.
 #[derive(Clone, Debug)]
 pub struct ShowmapOpts {
-    /// Output root directory; per-trial files are written under
-    /// `<out_dir>/<approach>/`.
+    /// Output root directory; emitted files live under `<out_dir>/<approach>/`.
     pub out_dir: PathBuf,
     /// Approach name; used as a subdirectory under `out_dir`.
     pub approach: String,
-    /// Trial name; used as the filename stem.
+    /// Per-test stem (e.g. `<contract>__<test>`); identifies which test produced the file.
+    pub program: String,
+    /// Rerun identifier appended to the filename so multiple trials accumulate side-by-side.
     pub trial: String,
     /// Whether to emit one file per corpus entry or one aggregated file.
     pub per_input: bool,
@@ -183,7 +184,9 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         }
 
         if opts.per_input {
-            let stem = format!("{}__{}-{}", opts.trial, entry.uuid, entry.timestamp);
+            // <program>__<trial>__<uuid>-<ts>.txt
+            let stem =
+                format!("{}__{}__{}-{}", opts.program, opts.trial, entry.uuid, entry.timestamp);
             stats.showmap_files += write_showmap_file(
                 &approach_dir.join(format!("{stem}.txt")),
                 &evm_entry,
@@ -199,8 +202,9 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     }
 
     if !opts.per_input {
+        // <program>__<trial>.txt
         stats.showmap_files += write_showmap_file(
-            &approach_dir.join(format!("{}.txt", opts.trial)),
+            &approach_dir.join(format!("{}__{}.txt", opts.program, opts.trial)),
             &evm_agg,
             &san_agg,
         )?;

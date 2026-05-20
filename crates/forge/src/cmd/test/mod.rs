@@ -263,6 +263,11 @@ pub struct TestArgs {
     )]
     pub showmap_approach: String,
 
+    /// Trial identifier embedded in each showmap filename. Defaults to a unique
+    /// `trial-<unix_seconds>` so reruns don't overwrite previous trials.
+    #[arg(long, help_heading = "Showmap replay", requires = "showmap_out")]
+    pub showmap_trial: Option<String>,
+
     /// Override the corpus directory to replay (defaults to the per-test
     /// `corpus_dir` resolved from config).
     #[arg(
@@ -295,9 +300,18 @@ impl TestArgs {
 
     /// Builds a `ShowmapConfig` from the showmap CLI flags, if `--showmap-out` is set.
     fn showmap_config(&self) -> Option<ShowmapConfig> {
+        // Default trial id is unique per invocation so reruns accumulate instead of overwriting.
+        let trial = self.showmap_trial.clone().unwrap_or_else(|| {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            format!("trial-{ts}")
+        });
         Some(ShowmapConfig {
             out_dir: self.showmap_out.clone()?,
             approach: self.showmap_approach.clone(),
+            trial,
             per_input: self.showmap_per_input,
             domain: self.showmap_domain.into(),
             corpus_dir: self.showmap_corpus_dir.clone(),

@@ -1567,14 +1567,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor.inspector_mut().collect_line_coverage(domain.includes_evm());
         executor.inspector_mut().collect_sancov_edges(domain.includes_sancov());
 
-        // Strip the source path prefix from the contract name to mirror what
-        // `test_paths` does when resolving the per-test corpus dir, and to
-        // ensure the trial name is a single-segment filename stem.
+        // Strip the source path prefix to keep the program stem a single-segment filename.
         let contract = self.cr.name.split(':').next_back().unwrap_or(self.cr.name);
         let opts = ShowmapOpts {
             out_dir: showmap.out_dir.clone(),
             approach: showmap.approach.clone(),
-            trial: format!("{contract}__{}", func.name),
+            program: format!("{contract}__{}", func.name),
+            trial: showmap.trial.clone(),
             per_input: showmap.per_input,
             domain,
         };

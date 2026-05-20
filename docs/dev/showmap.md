@@ -33,6 +33,7 @@ every selected fuzz/invariant test:
 |------|-------------|
 | `--showmap-out <DIR>` | Output root. Required to enable showmap mode. |
 | `--showmap-approach <NAME>` | Subdirectory under `--showmap-out` (default: `replay`). |
+| `--showmap-trial <NAME>` | Trial id appended to each filename (default: `trial-<unix_seconds>`, unique per invocation so reruns don't overwrite). |
 | `--showmap-domain <evm\|sancov\|both>` | Bitmap(s) to dump (default: `evm`). |
 | `--showmap-per-input` | Emit one file per corpus entry instead of one aggregated per test. |
 | `--showmap-corpus-dir <PATH>` | Override the corpus dir to replay. |
@@ -40,8 +41,8 @@ every selected fuzz/invariant test:
 ## Output format
 
 ```
-<showmap-out>/<approach>/<contract>__<test>.txt              # aggregated
-<showmap-out>/<approach>/<contract>__<test>__<uuid>-<ts>.txt # --showmap-per-input
+<showmap-out>/<approach>/<contract>__<test>__<trial>.txt              # aggregated
+<showmap-out>/<approach>/<contract>__<test>__<trial>__<uuid>-<ts>.txt # --showmap-per-input
 ```
 
 Each line: `<id>:<count>` where `count` is the saturating-summed raw hitcount.
@@ -60,8 +61,10 @@ The underscore separator (rather than `:`) between fields keeps the
 To produce a campaign directory comparing approaches:
 
 ```bash
-# Per-approach dirs are created automatically.
-forge test --showmap-out coverage_data --showmap-approach foundry
+# Per-approach dirs are created automatically. Each invocation appends a new
+# trial file; use --showmap-trial to set a stable id (e.g. across reruns).
+forge test --showmap-out coverage_data --showmap-approach foundry --showmap-trial run_1
+forge test --showmap-out coverage_data --showmap-approach foundry --showmap-trial run_2
 # Other tools (echidna, medusa, …) write to the same `coverage_data/<name>/` layout.
 
 # Optional: a "seeds-only" baseline produced by replaying just an initial corpus.

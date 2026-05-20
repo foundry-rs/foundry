@@ -308,6 +308,8 @@ pub struct ShowmapConfig {
     pub out_dir: PathBuf,
     /// Approach name; used as a subdirectory under `out_dir`.
     pub approach: String,
+    /// Trial identifier embedded in each emitted filename to keep reruns separate.
+    pub trial: String,
     /// One file per corpus entry instead of one aggregated file per test.
     pub per_input: bool,
     /// Which bitmap(s) to dump.

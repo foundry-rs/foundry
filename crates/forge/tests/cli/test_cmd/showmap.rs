@@ -40,7 +40,7 @@ contract ShowmapCounterTest is Test {
     // Phase 1: build a corpus.
     cmd.args(["test", "--mc", "ShowmapCounterTest"]).assert_success();
 
-    // Phase 2: replay it through showmap.
+    // Phase 2: replay it through showmap with an explicit trial id.
     cmd.forge_fuse()
         .args([
             "test",
@@ -50,13 +50,15 @@ contract ShowmapCounterTest is Test {
             "showmap_out",
             "--showmap-approach",
             "replay",
+            "--showmap-trial",
+            "t1",
         ])
         .assert_success();
 
-    // Verify files were produced under <out>/<approach>/<contract>__<test>.txt.
+    // Verify files were produced under <out>/<approach>/<contract>__<test>__<trial>.txt.
     let approach_dir = prj.root().join("showmap_out").join("replay");
-    let invariant_file = approach_dir.join("ShowmapCounterTest__invariant_counter_called.txt");
-    let fuzz_file = approach_dir.join("ShowmapCounterTest__testFuzz_SetNumber.txt");
+    let invariant_file = approach_dir.join("ShowmapCounterTest__invariant_counter_called__t1.txt");
+    let fuzz_file = approach_dir.join("ShowmapCounterTest__testFuzz_SetNumber__t1.txt");
     assert!(invariant_file.exists(), "missing {}", invariant_file.display());
     assert!(fuzz_file.exists(), "missing {}", fuzz_file.display());
 
@@ -152,4 +154,56 @@ contract ShowmapCounterTest is Test {
         })
         .collect();
     assert!(!entries.is_empty(), "expected per-entry files in {}", approach_dir.display());
+});
+
+// Reruns with distinct `--showmap-trial` values must accumulate side-by-side
+// instead of overwriting each other.
+forgetest_init!(showmap_replay_distinct_trials_accumulate, |prj, cmd| {
+    prj.initialize_default_contracts();
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 5;
+        config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
+    });
+    prj.add_test(
+        "ShowmapCounter.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract ShowmapCounterTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+    }
+
+    function invariant_counter_called() public view {}
+}
+   "#,
+    );
+
+    // Build a corpus first.
+    cmd.args(["test", "--mc", "ShowmapCounterTest"]).assert_success();
+
+    // Two reruns with distinct trial ids must produce two distinct files.
+    for trial in ["t1", "t2"] {
+        cmd.forge_fuse()
+            .args([
+                "test",
+                "--mc",
+                "ShowmapCounterTest",
+                "--showmap-out",
+                "showmap_out",
+                "--showmap-trial",
+                trial,
+            ])
+            .assert_success();
+    }
+
+    let approach_dir = prj.root().join("showmap_out").join("replay");
+    let t1 = approach_dir.join("ShowmapCounterTest__invariant_counter_called__t1.txt");
+    let t2 = approach_dir.join("ShowmapCounterTest__invariant_counter_called__t2.txt");
+    assert!(t1.exists(), "missing trial 1 file {}", t1.display());
+    assert!(t2.exists(), "missing trial 2 file {}", t2.display());
 });
