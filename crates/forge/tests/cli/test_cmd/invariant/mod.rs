@@ -1160,6 +1160,56 @@ Ran 1 test for test/ContractCorpusTest.t.sol:ContractCorpusTest
     assert!(!contract_dir.join("invariant_b").exists());
 });
 
+forgetest_init!(optimization_invariants_use_function_level_corpus_dir, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.corpus.corpus_dir = Some("opt_corpus".into());
+    });
+    prj.add_test(
+        "OptimizationCorpusTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract OptimizationCorpusHandler {
+    int256 public x;
+
+    function bump() external {
+        x++;
+    }
+}
+
+contract OptimizationCorpusTest is Test {
+    OptimizationCorpusHandler handler;
+
+    function setUp() public {
+        handler = new OptimizationCorpusHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_optimize_a() public view returns (int256) {
+        return handler.x();
+    }
+
+    function invariant_optimize_b() public view returns (int256) {
+        return handler.x() * 10;
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/OptimizationCorpusTest.t.sol:OptimizationCorpusTest
+...
+"#]]);
+
+    let contract_dir = prj.root().join("opt_corpus").join("OptimizationCorpusTest");
+    assert!(contract_dir.join("invariant_optimize_a").join("optimization_best.json").exists());
+    assert!(contract_dir.join("invariant_optimize_b").join("optimization_best.json").exists());
+    assert!(!contract_dir.join("optimization_best.json").exists());
+});
+
 forgetest_init!(json_reports_invariant_predicate_results, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
@@ -1253,26 +1303,58 @@ contract JunitInvariantReportTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--junit", "--mt", "invariant_a"]).assert_failure().stdout_eq(str![[r#"
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="Test run" tests="3" failures="1" errors="0" timestamp="[..]" time="[..]">
-    <testsuite name="test/JunitInvariantReport.t.sol:JunitInvariantReportTest" tests="3" disabled="0" errors="0" failures="1" time="[..]">
-        <testcase name="invariant_a()" time="[..]">
-            <system-out>[PASS] invariant_a() (runs: 1, calls: 2, reverts: 2)</system-out>
-        </testcase>
-        <testcase name="invariant_b()" time="[..]">
-            <system-out>[PASS] invariant_b() (runs: 1, calls: 2, reverts: 2)</system-out>
-        </testcase>
-        <testcase name="handler src/JunitAssertHandler.sol:JunitAssertHandler::alwaysAssert" time="[..]">
-            <failure message="panic: assertion failed (0x01)"/>
-            <system-out>[FAIL: panic: assertion failed (0x01)] handler src/JunitAssertHandler.sol:JunitAssertHandler::alwaysAssert (runs: 1, calls: 2, reverts: 2)</system-out>
-        </testcase>
-        <system-out>Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]</system-out>
-    </testsuite>
-</testsuites>
+    let output = cmd.args(["test", "--junit", "--mt", "invariant_a"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains(r#"<testcase name="invariant_a()"#), "{stdout}");
+    assert!(stdout.contains(r#"<testcase name="invariant_b()"#), "{stdout}");
+    assert!(stdout.contains(r#"<testcase name="handler src/JunitAssertHandler.sol:JunitAssertHandler::alwaysAssert""#), "{stdout}");
+    assert!(stdout.contains("[FAIL: panic: assertion failed (0x01)] handler src/JunitAssertHandler.sol:JunitAssertHandler::alwaysAssert"), "{stdout}");
+    assert!(stdout.contains("[Sequence] (original: 1, shrunk: 1)"), "{stdout}");
+    assert!(stdout.contains("calldata=alwaysAssert() args=[]"), "{stdout}");
+    assert!(stdout.contains("Suite result: FAILED. 0 passed; 1 failed; 0 skipped;"), "{stdout}");
+});
 
+forgetest_init!(junit_reports_invariant_predicate_counterexamples, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 3;
+        config.invariant.assert_all = true;
+    });
+    prj.add_test(
+        "JunitInvariantCounterexample.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
 
-"#]]);
+contract JunitCounterHandler {
+    uint256 public counter;
+
+    function inc() external {
+        counter++;
+    }
+}
+
+contract JunitInvariantCounterexampleTest is Test {
+    JunitCounterHandler handler;
+
+    function setUp() public {
+        handler = new JunitCounterHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_breaks() public view {
+        require(handler.counter() < 1, "broken");
+    }
+
+    function invariant_safe() public pure {}
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--junit", "--mt", "invariant_breaks"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains(r#"<testcase name="invariant_breaks()"#), "{stdout}");
+    assert!(stdout.contains("[FAIL: broken] invariant_breaks()"), "{stdout}");
+    assert!(stdout.contains("[Sequence] (original:"), "{stdout}");
 });
 
 // Tests that check_interval=0 only asserts on the last call of each run.

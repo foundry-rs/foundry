@@ -45,6 +45,7 @@ use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
+    fuzz::CounterExample,
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
@@ -1257,16 +1258,22 @@ fn add_junit_test_cases(
             .first()
             .map(|failure| (TestStatus::Failure, Some(failure.reason())))
             .unwrap_or((TestStatus::Success, None));
+        let counterexample =
+            test_result.invariant_failures.first().and_then(|failure| failure.counterexample());
         add_junit_test_case(
             test_suite,
             test_name,
             status,
             reason,
             test_result,
-            output.case_system_out(status, reason, test_name),
+            output.case_system_out(status, reason, test_name, counterexample),
         );
     } else {
         for predicate in &test_result.invariant_predicate_results {
+            let failure = test_result
+                .invariant_failures
+                .iter()
+                .find(|failure| failure.name() == predicate.name.as_str());
             let name = format!("{}()", predicate.name);
             add_junit_test_case(
                 test_suite,
@@ -1274,7 +1281,12 @@ fn add_junit_test_cases(
                 predicate.status,
                 predicate.reason.as_deref(),
                 test_result,
-                output.case_system_out(predicate.status, predicate.reason.as_deref(), &name),
+                output.case_system_out(
+                    predicate.status,
+                    predicate.reason.as_deref(),
+                    &name,
+                    failure.and_then(|failure| failure.counterexample()),
+                ),
             );
         }
     }
@@ -1287,7 +1299,12 @@ fn add_junit_test_cases(
             TestStatus::Failure,
             Some(failure.reason()),
             test_result,
-            output.case_system_out(TestStatus::Failure, Some(failure.reason()), &name),
+            output.case_system_out(
+                TestStatus::Failure,
+                Some(failure.reason()),
+                &name,
+                failure.counterexample(),
+            ),
         );
     }
 }
@@ -1341,6 +1358,7 @@ impl JunitOutput {
         status: TestStatus,
         message: Option<&str>,
         test_name: &str,
+        counterexample: Option<&CounterExample>,
     ) -> String {
         let mut sys_out = String::new();
         match status {
@@ -1358,6 +1376,13 @@ impl JunitOutput {
             }
         }
         write!(sys_out, " {test_name} {}", self.result_report).unwrap();
+        if let Some(CounterExample::Sequence(original, sequence)) = counterexample {
+            writeln!(sys_out, "\n\t[Sequence] (original: {original}, shrunk: {})", sequence.len())
+                .unwrap();
+            for ex in sequence {
+                writeln!(sys_out, "{ex}").unwrap();
+            }
+        }
         self.append_logs(&mut sys_out);
         sys_out
     }

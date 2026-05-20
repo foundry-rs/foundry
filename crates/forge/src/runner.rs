@@ -265,6 +265,21 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.config.invariant.assert_all
     }
 
+    fn invariant_suite_configs_match(&self, funcs: &[&Function]) -> bool {
+        let Some((anchor, rest)) = funcs.split_first() else {
+            return true;
+        };
+        let anchor_config = match self.inline_config(Some(anchor)) {
+            Ok(config) => config.invariant,
+            Err(_) => return false,
+        };
+        rest.iter().all(|func| {
+            self.inline_config(Some(func))
+                .map(|config| config.invariant == anchor_config)
+                .unwrap_or(false)
+        })
+    }
+
     /// Collect fixtures from test contract.
     ///
     /// Fixtures can be defined:
@@ -487,7 +502,8 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let merge_invariant_suite = self.config.invariant.assert_all
             && !matched_boolean_invariant_fns.is_empty()
             && boolean_invariant_fns.len() > 1
-            && boolean_invariant_fns.iter().all(|func| self.invariant_assert_all_enabled(func));
+            && boolean_invariant_fns.iter().all(|func| self.invariant_assert_all_enabled(func))
+            && self.invariant_suite_configs_match(&boolean_invariant_fns);
         let invariant_suite_anchor =
             merge_invariant_suite.then(|| matched_boolean_invariant_fns.first().copied()).flatten();
 
@@ -844,6 +860,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let runner = self.invariant_runner();
         let invariant_config = self.config.invariant.clone();
         let invariant_config = &invariant_config;
+        let is_optimization = is_optimization_invariant(func);
 
         let mut executor = self.clone_executor();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
@@ -862,6 +879,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &mut config.corpus,
             invariant_config.failure_persist_dir.clone().unwrap(),
             self.cr.name,
+            func.name.as_str(),
+            is_optimization,
         );
 
         let mut evm = InvariantExecutor::new(
@@ -874,7 +893,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // Filter out additional invariants to test if we already have a persisted failure.
         // Optimization mode only tracks the primary invariant's return value, so secondary
         // boolean invariants are excluded to avoid silently skipping them.
-        let is_optimization = is_optimization_invariant(func);
         // When the primary is an optimization invariant and the user has assert_all on, warn
         // them once that secondary boolean invariants in the same contract are being skipped
         // — assert_all has no effect under optimization mode, so silently dropping them would
@@ -1765,11 +1783,17 @@ fn invariant_suite_paths(
     corpus_config: &mut FuzzCorpusConfig,
     persist_dir: PathBuf,
     contract_name: &str,
+    invariant_name: &str,
+    is_optimization: bool,
 ) -> PathBuf {
     let failure_dir = invariant_failure_dir(persist_dir, contract_name);
     let contract = invariant_contract_name(contract_name);
     if let Some(corpus_dir) = &corpus_config.corpus_dir {
-        corpus_config.corpus_dir = Some(canonicalized(corpus_dir.join(contract)));
+        let mut corpus_dir = corpus_dir.join(contract);
+        if is_optimization {
+            corpus_dir = corpus_dir.join(invariant_name);
+        }
+        corpus_config.corpus_dir = Some(canonicalized(corpus_dir));
     }
 
     failure_dir
