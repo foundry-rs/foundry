@@ -223,6 +223,15 @@ fn contract_id_of<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Contr
             Expr { kind: ExprKind::Ident([Res::Item(ItemId::Contract(cid))]), .. },
             ..,
         ) => Some(*cid),
+        // `tokens[i].foo()` or `byUser[user].foo()`, element of an array/mapping of contract type
+        ExprKind::Index(_, _) => {
+            let element_ty = receiver_type(hir, expr)?;
+            if let TypeKind::Custom(ItemId::Contract(cid)) = element_ty.kind {
+                Some(cid)
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -343,7 +352,10 @@ fn is_dynamic_array_or_bytes(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
             hir.variable(*id).ty.kind,
             TypeKind::Array(_) | TypeKind::Elementary(ElementaryType::Bytes)
         ),
-        ExprKind::Index(base, _) => is_dynamic_array_or_bytes(hir, base),
+        ExprKind::Index(_, _) => matches!(
+            receiver_type(hir, expr).map(|t| &t.kind),
+            Some(TypeKind::Array(_) | TypeKind::Elementary(ElementaryType::Bytes))
+        ),
         _ => false,
     }
 }

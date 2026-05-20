@@ -249,6 +249,55 @@ contract AssertStateChangeStorageAlias {
     }
 }
 
+// ---- indexed-into contract/interface receivers (issue: false negatives) ----
+// contract_id_of must resolve tokens[i] and byUser[user] by element/value type,
+// not just plain Ident receivers.
+interface IMutator {
+    function mutate() external returns (bool);
+    function peek() external view returns (bool);
+}
+
+contract AssertStateChangeIndexedContractCall {
+    IMutator[] public tokens;
+    mapping(address => IMutator) public byUser;
+
+    // Bad: mutating call through an array-indexed contract variable.
+    function badIndexedContractCall(uint256 i) external {
+        assert(tokens[i].mutate()); //~WARN: assert() argument contains a state-modifying expression
+    }
+
+    // Bad: mutating call through a mapping-indexed contract variable.
+    function badMappingContractCall(address user) external {
+        assert(byUser[user].mutate()); //~WARN: assert() argument contains a state-modifying expression
+    }
+
+    // Good: view call through an array-indexed contract variable must NOT warn.
+    function goodIndexedViewCall(uint256 i) external view {
+        assert(tokens[i].peek());
+    }
+
+    // Good: view call through a mapping-indexed contract variable must NOT warn.
+    function goodMappingViewCall(address user) external view {
+        assert(byUser[user].peek());
+    }
+}
+
+// ---- indexed interface array must not trigger builtin push/pop heuristic (issue: false positive) ----
+// is_dynamic_array_or_bytes(queues[i]) must return false because queues[i] is IQueue, not a builtin array.
+contract AssertStateChangeIndexedInterfaceArray {
+    IQueue[] public queues;
+
+    // Good: view interface method on an element of an interface array must NOT be flagged.
+    function goodIndexedInterfacePop(uint256 idx) external view {
+        assert(queues[idx].pop());
+    }
+
+    // Good: same for push — the element type is IQueue, not a builtin array.
+    function goodIndexedInterfacePush(uint256 idx, uint256 x) external view {
+        assert(queues[idx].push(x));
+    }
+}
+
 // ---- library-fallback receiver-type guard ----
 library OtherStorageLib {
     function bump(bytes storage b) internal returns (bool) {
