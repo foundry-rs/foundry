@@ -352,7 +352,7 @@ struct SolverRunSummary {
 }
 
 impl SolverRunSummary {
-    fn new(display: String, elapsed: Duration, outcome: &'static str) -> Self {
+    const fn new(display: String, elapsed: Duration, outcome: &'static str) -> Self {
         Self { display, elapsed, outcome, detail: None, winner: false }
     }
 
@@ -447,7 +447,7 @@ fn run_solver_commands(
                         SolverRunSummary::new(display.clone(), elapsed, "unexpected")
                             .with_detail(first_line.clone()),
                     );
-                    errors.push(format!("{display}: unexpected solver response `{}`", first_line));
+                    errors.push(format!("{display}: unexpected solver response `{first_line}`"));
                 }
                 SolverProcessOutcome::Unknown => {
                     summaries.push(SolverRunSummary::new(display, elapsed, "timeout-or-unknown"));
@@ -471,10 +471,10 @@ fn run_solver_commands(
                 let SolverProcessResult { display, elapsed, outcome } = result;
                 summaries.push(summary_for_cancelled_solver_result(display, elapsed, outcome));
             }
-        } else if saw_unsat {
-            if let Some(summary) = summaries.iter_mut().find(|summary| summary.outcome == "unsat") {
-                summary.winner = true;
-            }
+        } else if saw_unsat
+            && let Some(summary) = summaries.iter_mut().find(|summary| summary.outcome == "unsat")
+        {
+            summary.winner = true;
         }
 
         if dump_diagnostics {
