@@ -318,6 +318,7 @@ pub(crate) fn split_solver_command(command: &str) -> Result<Vec<String>, String>
     Ok(parts)
 }
 
+/// Returns why `command` is not currently executable as an SMT solver.
 fn solver_command_availability_error(command: &SolverCommand) -> Option<String> {
     let output = match Command::new(&command.program).arg("--version").output() {
         Ok(output) => output,
@@ -352,15 +353,18 @@ struct SolverRunSummary {
 }
 
 impl SolverRunSummary {
+    /// Builds a portfolio run summary with no detail or winner marker.
     const fn new(display: String, elapsed: Duration, outcome: &'static str) -> Self {
         Self { display, elapsed, outcome, detail: None, winner: false }
     }
 
+    /// Attaches an additional diagnostic detail string to this summary.
     fn with_detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
         self
     }
 
+    /// Marks this solver run as the portfolio result winner.
     const fn winner(mut self) -> Self {
         self.winner = true;
         self
@@ -495,6 +499,7 @@ fn run_solver_commands(
     })
 }
 
+/// Summarizes a solver result received after a portfolio winner was chosen.
 fn summary_for_cancelled_solver_result(
     display: String,
     elapsed: Duration,
@@ -524,6 +529,7 @@ fn summary_for_cancelled_solver_result(
     }
 }
 
+/// Writes solver portfolio outcome diagnostics to stderr.
 fn dump_solver_portfolio_summaries(summaries: &[SolverRunSummary]) {
     let mut stderr = std::io::stderr().lock();
     let _ = writeln!(stderr, "--- symbolic solver portfolio outcomes ---");

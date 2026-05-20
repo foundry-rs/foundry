@@ -564,6 +564,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         }
     }
 
+    /// Returns unique availability warnings for symbolic solver portfolios used by this suite.
     fn symbolic_solver_portfolio_availability_warnings(
         &self,
         functions: &[&Function],
