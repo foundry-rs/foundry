@@ -3,6 +3,12 @@ use super::*;
 forgetest!(invariant_after_invariant, |prj, cmd| {
     prj.insert_vm();
     prj.insert_ds_test();
+    // This test exercises `afterInvariant` semantics in isolation; disable `assert_all` so the
+    // campaign aborts on the first broken invariant per function (legacy behavior) instead of
+    // fanning out across all invariants in the suite.
+    prj.update_config(|config| {
+        config.invariant.assert_all = false;
+    });
 
     prj.add_test(
         "InvariantAfterInvariant.t.sol",
@@ -820,7 +826,7 @@ Ran 1 test for test/InvariantInnerContract.t.sol:InvariantInnerContract
 	[Sequence] (original: 2, shrunk: 2)
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Jesus][..] calldata=create_fren() args=[]
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Judas][..] calldata=betray() args=[]
- invariantHideJesus() (runs: 0, calls: 0, reverts: 1)
+ invariantHideJesus() (runs: 256, calls: 258, reverts: 125)
 ...
 "#]]);
     }
@@ -1515,7 +1521,8 @@ contract InvariantFailOnAssertPanic is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnAssertPanic.t.sol:InvariantFailOnAssertPanic
-[FAIL: panic: assertion failed (0x01)]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)][..]
 ...
  invariant_fail_on_assert_panic() ([RUNS])
 ...
@@ -1559,7 +1566,8 @@ contract InvariantIgnoreAssertWhenFlagOff is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantIgnoreAssertWhenFlagOff.t.sol:InvariantIgnoreAssertWhenFlagOff
-[FAIL: panic: assertion failed (0x01)]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)][..]
 ...
  invariant_assert_discarded() ([RUNS])
 ...
@@ -1687,14 +1695,16 @@ contract ReplayFailOnAssertTest is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantReplayFailOnAssert.t.sol:ReplayFailOnAssertTest
-[FAIL: panic: assertion failed (0x01)]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)][..]
 ...
 "#]]);
 
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantReplayFailOnAssert.t.sol:ReplayFailOnAssertTest
-[FAIL: panic: assertion failed (0x01)]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)][..]
 ...
 "#]]);
 });
@@ -1737,7 +1747,8 @@ contract InvariantFailOnVmAssertRevert is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnVmAssertRevert.t.sol:InvariantFailOnVmAssertRevert
-[FAIL: assertion failed: 1 != 2]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: assertion failed: 1 != 2][..]
 ...
  invariant_fail_on_vm_assert_revert() ([RUNS])
 ...
@@ -1782,7 +1793,8 @@ contract InvariantIgnoreVmAssertWhenFlagOff is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantIgnoreVmAssertWhenFlagOff.t.sol:InvariantIgnoreVmAssertWhenFlagOff
-[FAIL: assertion failed: 1 != 2]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: assertion failed: 1 != 2][..]
 ...
  invariant_vm_assert_discarded() ([RUNS])
 ...
@@ -1828,7 +1840,8 @@ contract InvariantFailOnVmAssertGlobalFlag is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnVmAssertGlobalFlag.t.sol:InvariantFailOnVmAssertGlobalFlag
-[FAIL: assertion failed]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: assertion failed][..]
 ...
  invariant_fail_on_vm_assert_global_flag() ([RUNS])
 ...
@@ -1874,7 +1887,8 @@ contract InvariantIgnoreVmAssertGlobalFlagWhenFlagOff is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantIgnoreVmAssertGlobalFlagWhenFlagOff.t.sol:InvariantIgnoreVmAssertGlobalFlagWhenFlagOff
-[FAIL: assertion failed]
+Suite handlers: 1 assertion bug(s) found
+[FAIL: assertion failed][..]
 ...
  invariant_vm_assert_global_flag_discarded() ([RUNS])
 ...
@@ -1926,15 +1940,15 @@ contract InvariantShrinkWithAssert is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
-[FAIL: wrong counter assert]
+[FAIL: wrong counter [..]][..]
 	[Sequence] (original: 2, shrunk: 2)
 ...
- invariant_with_assert() ([..])
+ invariant_with_[..]() ([..])
 ...
-[FAIL: wrong counter require]
+[FAIL: wrong counter [..]][..]
 	[Sequence] (original: 2, shrunk: 2)
 ...
- invariant_with_require() ([..])
+ invariant_with_[..]() ([..])
 ...
 "#]]);
 });
@@ -2063,8 +2077,11 @@ Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantR
 });
 
 forgetest_init!(invariant_test1, |prj, cmd| {
+    // Disable `assert_all` so each invariant in the suite reports independently without secondary
+    // failures being attached to the other (the two invariants here share the same condition).
     prj.update_config(|config| {
         config.invariant.depth = 10;
+        config.invariant.assert_all = false;
     });
 
     prj.add_test(
@@ -2147,11 +2164,14 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_warp_and_roll, |prj, cmd| {
+    // Disable `assert_all` so `--mt invariant_warp` only exercises invariant_warp, isolating the
+    // warp/roll behavior under test from invariant_roll fan-out.
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
         config.invariant.max_time_delay = Some(604800);
         config.invariant.max_block_delay = Some(60480);
         config.invariant.shrink_run_limit = 0;
+        config.invariant.assert_all = false;
     });
 
     prj.add_test(
@@ -2659,7 +2679,7 @@ contract InvariantWarp is Test {
 		vm.roll(block.number + 52068);
 		vm.prank([..]);
 		Roll(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
- invariant_roll() (runs: 0, calls: 0, reverts: 2)
+ invariant_roll() (runs: 256, calls: 258, reverts: 216)
 ...
 
 "#]]);
@@ -2672,9 +2692,90 @@ contract InvariantWarp is Test {
 		vm.warp(block.timestamp + 656868);
 		vm.prank(0x00000000000000000000000000000000000012d1);
 		Warp(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
- invariant_warp() (runs: 0, calls: 0, reverts: 2)
+ invariant_warp() (runs: 256, calls: 258, reverts: 222)
 ...
 
 "#
     ]]);
+});
+
+// Test that invariant fuzzer generates random msg.value for payable functions.
+// Based on the example from https://github.com/foundry-rs/foundry/pull/8644
+forgetest_init!(invariant_msg_value, |prj, cmd| {
+    prj.update_config(|config| {
+        config.fuzz.seed = Some(U256::from(42u32));
+        config.invariant.runs = 200;
+        config.invariant.depth = 20;
+    });
+
+    prj.add_test(
+        "InvariantMsgValue.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract ValueTarget {
+    bool public valueReceived;
+
+    // Payable function that tracks if any value was received
+    function deposit() external payable {
+        if (msg.value > 0) {
+            valueReceived = true;
+        }
+    }
+}
+
+contract InvariantMsgValue is Test {
+    ValueTarget target;
+    address sender1;
+    address sender2;
+
+    function setUp() public {
+        target = new ValueTarget();
+        // Create and fund specific senders
+        sender1 = makeAddr("sender1");
+        sender2 = makeAddr("sender2");
+        vm.deal(sender1, 1000 ether);
+        vm.deal(sender2, 1000 ether);
+        // Target only these funded senders
+        targetSender(sender1);
+        targetSender(sender2);
+        // Target only the ValueTarget contract
+        targetContract(address(target));
+    }
+
+    function invariant_value_never_received() public view {
+        require(!target.valueReceived(), "Value was received");
+    }
+}
+"#,
+    );
+
+    // The test should fail because the fuzzer generates msg.value > 0 for payable functions
+    // First check regular output format shows value=X
+    cmd.args(["test", "--mt", "invariant_value_never_received"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: Value was received]
+	[Sequence] (original: [..], shrunk: 1)
+		sender=[..] addr=[test/InvariantMsgValue.t.sol:ValueTarget][..] value=[..] calldata=deposit() args=[]
+...
+"#]]);
+
+    // Now check solidity output format shows proper {value: X} syntax
+    cmd.forge_fuse().arg("clean").assert_success();
+    prj.update_config(|config| {
+        config.invariant.show_solidity = true;
+    });
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_value_never_received"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: Value was received]
+	[Sequence] (original: [..], shrunk: 1)
+		vm.prank([..]);
+		ValueTarget([..]).deposit{value: [..]}();
+...
+"#]]);
 });
