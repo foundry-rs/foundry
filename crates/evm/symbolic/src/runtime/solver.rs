@@ -201,7 +201,13 @@ impl SmtLibSubprocessSolver {
             let _ = writeln!(stderr, "--- symbolic SMT query {} ---\n{smt}", self.queries);
         }
 
-        run_solver_commands(commands, &smt, self.timeout, model.then_some(constraints))
+        run_solver_commands(
+            commands,
+            &smt,
+            self.timeout,
+            model.then_some(constraints),
+            self.dump_smt,
+        )
     }
 }
 
@@ -224,6 +230,37 @@ pub(crate) fn solver_commands_for_config(
     }
 
     Ok(vec![named_solver_command(&config.solver)?])
+}
+
+/// Returns a warning when a configured portfolio will run with unavailable solver entries.
+pub(crate) fn solver_portfolio_availability_warning(config: &SymbolicConfig) -> Option<String> {
+    if config.solver_command.as_deref().is_some_and(|command| !command.trim().is_empty())
+        || config.solver_portfolio.iter().all(|entry| entry.trim().is_empty())
+    {
+        return None;
+    }
+
+    let commands = solver_commands_for_config(config).ok()?;
+    let unavailable = commands
+        .iter()
+        .filter_map(|command| {
+            solver_command_availability_error(command)
+                .map(|err| format!("`{}` ({err})", command.display))
+        })
+        .collect::<Vec<_>>();
+    if unavailable.is_empty() {
+        return None;
+    }
+
+    let suffix = if unavailable.len() == commands.len() {
+        "No configured portfolio entries are currently available."
+    } else {
+        "Available portfolio entries will still be used."
+    };
+    Some(format!(
+        "Symbolic solver portfolio is degraded; unavailable entries: {}. {suffix}",
+        unavailable.join("; ")
+    ))
 }
 
 /// Returns the default command for a known solver name.
@@ -281,6 +318,16 @@ pub(crate) fn split_solver_command(command: &str) -> Result<Vec<String>, String>
     Ok(parts)
 }
 
+/// Returns why `command` is not currently executable as an SMT solver.
+fn solver_command_availability_error(command: &SolverCommand) -> Option<String> {
+    let output = match Command::new(&command.program).arg("--version").output() {
+        Ok(output) => output,
+        Err(err) => return Some(format!("failed to execute `{}`: {err}", command.program)),
+    };
+    (!output.status.success())
+        .then(|| format!("`{}` is not a usable SMT solver executable", command.program))
+}
+
 #[derive(Debug)]
 enum SolverProcessOutcome {
     Output(String),
@@ -289,12 +336,48 @@ enum SolverProcessOutcome {
     Error(String),
 }
 
+#[derive(Debug)]
+struct SolverProcessResult {
+    display: String,
+    elapsed: Duration,
+    outcome: SolverProcessOutcome,
+}
+
+#[derive(Debug)]
+struct SolverRunSummary {
+    display: String,
+    elapsed: Duration,
+    outcome: &'static str,
+    detail: Option<String>,
+    winner: bool,
+}
+
+impl SolverRunSummary {
+    /// Builds a portfolio run summary with no detail or winner marker.
+    const fn new(display: String, elapsed: Duration, outcome: &'static str) -> Self {
+        Self { display, elapsed, outcome, detail: None, winner: false }
+    }
+
+    /// Attaches an additional diagnostic detail string to this summary.
+    fn with_detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = Some(detail.into());
+        self
+    }
+
+    /// Marks this solver run as the portfolio result winner.
+    const fn winner(mut self) -> Self {
+        self.winner = true;
+        self
+    }
+}
+
 /// Runs one or more solver commands and returns the first decisive SMT-LIB response.
 fn run_solver_commands(
     commands: &[SolverCommand],
     smt: &str,
     timeout: Option<u32>,
     model_constraints: Option<&[BoolExpr]>,
+    dump_diagnostics: bool,
 ) -> Result<String, SymbolicError> {
     if commands.is_empty() {
         return Err(SymbolicError::Solver("symbolic solver portfolio is empty".to_string()));
@@ -317,8 +400,13 @@ fn run_solver_commands(
             let tx = tx.clone();
             let cancel = Arc::clone(&cancel);
             scope.spawn(move || {
+                let start = Instant::now();
                 let outcome = run_solver_process(&command, smt, timeout, &cancel);
-                let _ = tx.send((command.display, outcome));
+                let _ = tx.send(SolverProcessResult {
+                    display: command.display,
+                    elapsed: start.elapsed(),
+                    outcome,
+                });
             });
         }
         drop(tx);
@@ -328,40 +416,73 @@ fn run_solver_commands(
         let mut saw_invalid_sat_model = false;
         let mut errors = Vec::new();
         let mut decisive = None;
-        while let Ok((display, outcome)) = rx.recv() {
+        let mut summaries = Vec::new();
+        while let Ok(result) = rx.recv() {
+            let SolverProcessResult { display, elapsed, outcome } = result;
             match outcome {
                 SolverProcessOutcome::Output(output) if solver_output_is_sat(&output) => {
                     if let Some(constraints) = model_constraints
                         && let Err(err) = validate_solver_model_output(&output, constraints)
                     {
+                        summaries.push(
+                            SolverRunSummary::new(display.clone(), elapsed, "sat-invalid")
+                                .with_detail(err.to_string()),
+                        );
                         saw_invalid_sat_model = true;
                         errors.push(format!("{display}: {err}"));
                         continue;
                     }
+                    summaries.push(SolverRunSummary::new(display, elapsed, "sat-valid").winner());
                     decisive = Some(output);
                     cancel.store(true, Ordering::SeqCst);
                     break;
                 }
                 SolverProcessOutcome::Output(output) if solver_output_is_unsat(&output) => {
+                    summaries.push(SolverRunSummary::new(display, elapsed, "unsat"));
                     saw_unsat = true;
                 }
                 SolverProcessOutcome::Output(output) if solver_output_is_unknown(&output) => {
+                    summaries.push(SolverRunSummary::new(display, elapsed, "unknown"));
                     saw_unknown = true;
                 }
                 SolverProcessOutcome::Output(output) => {
-                    errors.push(format!(
-                        "{display}: unexpected solver response `{}`",
-                        first_solver_line(&output)
-                    ));
+                    let first_line = first_solver_line(&output).to_string();
+                    summaries.push(
+                        SolverRunSummary::new(display.clone(), elapsed, "unexpected")
+                            .with_detail(first_line.clone()),
+                    );
+                    errors.push(format!("{display}: unexpected solver response `{first_line}`"));
                 }
-                SolverProcessOutcome::Unknown => saw_unknown = true,
-                SolverProcessOutcome::Cancelled => {}
-                SolverProcessOutcome::Error(err) => errors.push(format!("{display}: {err}")),
+                SolverProcessOutcome::Unknown => {
+                    summaries.push(SolverRunSummary::new(display, elapsed, "timeout-or-unknown"));
+                    saw_unknown = true;
+                }
+                SolverProcessOutcome::Cancelled => {
+                    summaries.push(SolverRunSummary::new(display, elapsed, "cancelled"));
+                }
+                SolverProcessOutcome::Error(err) => {
+                    summaries.push(
+                        SolverRunSummary::new(display.clone(), elapsed, "error")
+                            .with_detail(err.clone()),
+                    );
+                    errors.push(format!("{display}: {err}"));
+                }
             }
         }
 
         if decisive.is_some() {
-            while rx.recv().is_ok() {}
+            while let Ok(result) = rx.recv() {
+                let SolverProcessResult { display, elapsed, outcome } = result;
+                summaries.push(summary_for_cancelled_solver_result(display, elapsed, outcome));
+            }
+        } else if saw_unsat
+            && let Some(summary) = summaries.iter_mut().find(|summary| summary.outcome == "unsat")
+        {
+            summary.winner = true;
+        }
+
+        if dump_diagnostics {
+            dump_solver_portfolio_summaries(&summaries);
         }
 
         if let Some(output) = decisive {
@@ -376,6 +497,54 @@ fn run_solver_commands(
             Err(SymbolicError::Solver(errors.join("; ")))
         }
     })
+}
+
+/// Summarizes a solver result received after a portfolio winner was chosen.
+fn summary_for_cancelled_solver_result(
+    display: String,
+    elapsed: Duration,
+    outcome: SolverProcessOutcome,
+) -> SolverRunSummary {
+    match outcome {
+        SolverProcessOutcome::Output(output) if solver_output_is_sat(&output) => {
+            SolverRunSummary::new(display, elapsed, "sat-after-winner")
+        }
+        SolverProcessOutcome::Output(output) if solver_output_is_unsat(&output) => {
+            SolverRunSummary::new(display, elapsed, "unsat-after-winner")
+        }
+        SolverProcessOutcome::Output(output) if solver_output_is_unknown(&output) => {
+            SolverRunSummary::new(display, elapsed, "unknown-after-winner")
+        }
+        SolverProcessOutcome::Output(output) => {
+            SolverRunSummary::new(display, elapsed, "unexpected")
+                .with_detail(first_solver_line(&output).to_string())
+        }
+        SolverProcessOutcome::Unknown => {
+            SolverRunSummary::new(display, elapsed, "timeout-or-unknown")
+        }
+        SolverProcessOutcome::Cancelled => SolverRunSummary::new(display, elapsed, "cancelled"),
+        SolverProcessOutcome::Error(err) => {
+            SolverRunSummary::new(display, elapsed, "error").with_detail(err)
+        }
+    }
+}
+
+/// Writes solver portfolio outcome diagnostics to stderr.
+fn dump_solver_portfolio_summaries(summaries: &[SolverRunSummary]) {
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(stderr, "--- symbolic solver portfolio outcomes ---");
+    for summary in summaries {
+        let marker = if summary.winner { " winner" } else { "" };
+        let _ = write!(
+            stderr,
+            "{}: {} in {:.3?}{}",
+            summary.display, summary.outcome, summary.elapsed, marker
+        );
+        if let Some(detail) = summary.detail.as_deref().filter(|detail| !detail.is_empty()) {
+            let _ = write!(stderr, " ({detail})");
+        }
+        let _ = writeln!(stderr);
+    }
 }
 
 /// Runs one solver process to completion, timeout, or cooperative cancellation.

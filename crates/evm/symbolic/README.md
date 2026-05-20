@@ -225,7 +225,10 @@ whitespace, quotes, or backslashes are split into argv parts like
 For latency-sensitive local runs, start with a small portfolio such as
 `["yices", "z3"]`. Broader portfolios can help on solver-diverse workloads but
 use more CPU and can be slower when one fast solver already handles most
-queries.
+queries. `--symbolic-dump-smt` also prints per-query portfolio outcomes so solver
+mixes can be compared without changing execution semantics.
+Forge warns when a configured portfolio is degraded because one or more solver
+entries are not available, but it still uses the entries that can be invoked.
 
 Security note: `symbolic.solver_command`, custom `symbolic.solver` values, and
 custom or command-like `symbolic.solver_portfolio` entries execute local programs
