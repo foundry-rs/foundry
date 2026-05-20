@@ -145,28 +145,56 @@ contract BlobhashesTxTypeResetTest is Test {
     }
 }
 
-/// Pre-existing tx blob hashes must survive a `snapshotState` / `revertToState`
-/// round-trip when no `vm.blobhashes` override was active at snapshot time.
-contract BlobhashesPreExistingRevertToStateTest is Test {
-    function test_preExistingBlobhashes_preserved_after_revertToState() public {
+/// Exercises the `None` arm of `sync_tx_after_env_override_restore`: snapshot
+/// taken while `env_overrides.blob_hashes` is `None` (no active override),
+/// then a `vm.blobhashes` override is applied, then a revert clears it back.
+/// This is the path `pre_override_blob_hashes` was introduced to handle.
+contract BlobhashesNoneArmRevertToStateTest is Test {
+    function test_noneArm_blobhashes_cleared_after_revertToState() public {
+        // No vm.blobhashes call, override is None at snapshot time, so
+        // inner_snapshot_state captures pre_override_blob_hashes = [].
+        uint256 id = vm.snapshotState();
+
+        bytes32[] memory newHashes = new bytes32[](2);
+        newHashes[0] = bytes32(uint256(0x3333));
+        newHashes[1] = bytes32(uint256(0x4444));
+        vm.blobhashes(newHashes);
+        assertEq(vm.getBlobhashes().length, 2, "override visible before revert");
+
+        vm.revertToState(id);
+
+        bytes32[] memory after_ = vm.getBlobhashes();
+        assertEq(after_.length, 0, "None arm: hashes cleared after revert to pre-override snapshot");
+    }
+
+    function test_noneArm_blobhashes_cleared_after_revertToStateAndDelete() public {
+        uint256 id = vm.snapshotState();
+
+        bytes32[] memory newHashes = new bytes32[](1);
+        newHashes[0] = bytes32(uint256(0xEF01));
+        vm.blobhashes(newHashes);
+        assertEq(vm.getBlobhashes().length, 1, "override visible before revert");
+
+        vm.revertToStateAndDelete(id);
+
+        bytes32[] memory after_ = vm.getBlobhashes();
+        assertEq(after_.length, 0, "None arm: hashes cleared after revertAndDelete to pre-override snapshot");
+    }
+}
+
+/// Exercises the `Some(h)` arm of `sync_tx_after_env_override_restore`:
+/// snapshot taken while `env_overrides.blob_hashes` is already `Some(original)`
+/// (an active override), then a different override is applied, then a revert
+/// restores the first override value.
+contract BlobhashesOverrideActiveAtSnapshotTest is Test {
+    function test_activeOverride_preserved_after_revertToState() public {
         bytes32[] memory original = new bytes32[](2);
         original[0] = bytes32(uint256(0x1111));
         original[1] = bytes32(uint256(0x2222));
 
-        // Simulate pre-existing blob hashes on the tx (set via cheatcode as a
-        // stand-in for an EIP-4844 transaction in fork mode).
         vm.blobhashes(original);
-
-        // Clear the override so the tx has the hashes natively.
-        // Re-read them to confirm baseline.
-        bytes32[] memory pre = vm.getBlobhashes();
-        assertEq(pre.length, 2, "baseline: should have 2 hashes before snapshot");
-
-        // Snapshot while the override is active (mirrors the fork-mode case
-        // where hashes are on the tx directly and no override exists).
         uint256 id = vm.snapshotState();
 
-        // Apply a different override.
         bytes32[] memory newHashes = new bytes32[](1);
         newHashes[0] = bytes32(uint256(0x3333));
         vm.blobhashes(newHashes);
@@ -179,7 +207,7 @@ contract BlobhashesPreExistingRevertToStateTest is Test {
         assertEq(after_[1], original[1], "hash[1] must match original");
     }
 
-    function test_preExistingBlobhashes_preserved_after_revertToStateAndDelete() public {
+    function test_activeOverride_preserved_after_revertToStateAndDelete() public {
         bytes32[] memory original = new bytes32[](1);
         original[0] = bytes32(uint256(0xABCD));
 
