@@ -3,7 +3,10 @@
 //! Provides [`FoundryHardfork`], a unified enum over Ethereum, Optimism, and Tempo hardforks
 //! with `FromStr`/`Serialize`/`Deserialize` support for CLI and config usage.
 
-use std::str::FromStr;
+use std::{
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
@@ -392,9 +395,9 @@ pub fn evm_spec_id<SPEC: FromEvmVersion>(evm_version: EvmVersion) -> SPEC {
 /// Returns the latest Tempo hardfork that has an activation on a known Tempo network.
 pub fn latest_active_tempo_hardfork() -> TempoHardfork {
     // Tempo currently publishes activation timestamps through chain-aware hardfork resolution.
-    // Use `u64::MAX` to select the latest scheduled fork while ignoring placeholder variants.
-    TempoHardfork::from_chain_and_timestamp(4217, u64::MAX)
-        .or_else(|| TempoHardfork::from_chain_and_timestamp(42431, u64::MAX))
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    TempoHardfork::from_chain_and_timestamp(4217, now)
+        .or_else(|| TempoHardfork::from_chain_and_timestamp(42431, now))
         .unwrap_or_default()
 }
 
