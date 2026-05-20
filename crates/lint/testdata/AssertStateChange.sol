@@ -200,6 +200,55 @@ contract AssertStateChangeUsingFor {
     }
 }
 
+// ---- same-arity overloads: any-mutates policy ----
+// Both overloads have arity 1 but different param types. Since Solar does not resolve
+// which overload was selected, we flag whenever any candidate mutates state.
+interface IOverloaded {
+    function check(uint256 n) external returns (bool);   // mutating
+    function check(address a) external view returns (bool); // view
+}
+
+contract AssertStateChangeSameArityOverload {
+    IOverloaded public o;
+
+    // Bad: `check(uint256)` mutates state; any-mutates policy must flag this.
+    function badSameArityMutating(uint256 n) external {
+        assert(o.check(n)); //~WARN: assert() argument contains a state-modifying expression
+    }
+
+    // Bad: `check(address)` is view but `check(uint256)` mutates; still flagged.
+    function badSameArityView(address a) external {
+        assert(o.check(a)); //~WARN: assert() argument contains a state-modifying expression
+    }
+}
+
+// ---- storage pointer aliases ----
+// A local variable declared `storage` is an alias into contract storage; assignments
+// through it must be treated as state mutations.
+contract AssertStateChangeStorageAlias {
+    uint256[] public items;
+    mapping(address => uint256) public balances;
+
+    // Good: read-only access through a storage-pointer local should not warn.
+    function goodStorageArrayAliasReadOnly() external view returns (uint256) {
+        uint256[] storage xs = items;
+        assert((xs.length) > 0);
+        return xs.length;
+    }
+
+    // Bad: assignment through a storage-pointer local to an array element.
+    function badStorageArrayAliasAssign() external {
+        uint256[] storage xs = items;
+        assert((xs[0] = 1) > 0); //~WARN: assert() argument contains a state-modifying expression
+    }
+
+    // Bad: assignment through a storage-pointer local to a mapping slot.
+    function badStorageMappingAlias(address user, uint256 amt) external {
+        mapping(address => uint256) storage m = balances;
+        assert((m[user] = amt) > 0); //~WARN: assert() argument contains a state-modifying expression
+    }
+}
+
 // ---- library-fallback receiver-type guard ----
 library OtherStorageLib {
     function bump(bytes storage b) internal returns (bool) {

@@ -107,11 +107,12 @@ fn find_state_change<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Sp
             }
 
             // Resolvable contract member calls: check mutates_state() via HIR.
-            // We collect all overloads with the same name and arity, then only flag
-            // when every candidate mutates state to avoid FP from view overloads.
+            // We collect all overloads with the same name and arity, then flag when
+            // any candidate mutates state. Using `any` avoids FNs where a mutating
+            // overload coexists with a view overload of the same arity.
             let candidates = resolve_member_overloads(hir, callee, args.len());
             if !candidates.is_empty()
-                && candidates.iter().all(|&fid| hir.function(fid).mutates_state())
+                && candidates.iter().any(|&fid| hir.function(fid).mutates_state())
             {
                 return Some(expr.span);
             }
@@ -124,13 +125,14 @@ fn find_state_change<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Sp
                 let lib_candidates =
                     resolve_library_extension(hir, method.name, args.len(), recv_ty);
                 if !lib_candidates.is_empty()
-                    && lib_candidates.iter().all(|&fid| hir.function(fid).mutates_state())
+                    && lib_candidates.iter().any(|&fid| hir.function(fid).mutates_state())
                 {
                     return Some(expr.span);
                 }
             }
 
-            // Bare-identifier internal function calls: same all-must-mutate policy.
+            // Bare-identifier internal function calls: same any-mutates policy as member calls,
+            // since Solar does not resolve which specific overload was selected.
             let reses = match &callee.peel_parens().kind {
                 ExprKind::Ident(r) => *r,
                 _ => &[],
@@ -141,7 +143,7 @@ fn find_state_change<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Sp
                     if let Res::Item(ItemId::Function(fid)) = res { Some(*fid) } else { None }
                 })
                 .collect();
-            if !fn_reses.is_empty() && fn_reses.iter().all(|&fid| hir.function(fid).mutates_state())
+            if !fn_reses.is_empty() && fn_reses.iter().any(|&fid| hir.function(fid).mutates_state())
             {
                 return Some(expr.span);
             }
@@ -186,8 +188,8 @@ fn find_state_change<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Sp
 }
 
 /// Returns all overloads of the called member function that match the call's argument count.
-/// Matching by arity narrows overload candidates so the caller can apply an all-must-mutate
-/// policy and avoid flagging call sites that resolve to a view overload.
+/// Matching by arity narrows overload candidates; the caller flags the call if any candidate
+/// mutates state, since Solar does not resolve which specific overload was selected.
 fn resolve_member_overloads<'hir>(
     hir: &Hir<'hir>,
     callee: &'hir Expr<'hir>,
@@ -384,10 +386,12 @@ fn is_address_like<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> bool {
 
 /// Returns `true` if the lvalue expression ultimately targets a storage variable.
 /// Peels through index, slice, member, and payable wrappers to find the root identifier.
+/// Locals declared `storage` are aliases into contract storage and count as state mutations.
 fn lvalue_is_state_var(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
-            hir.variable(*id).is_state_variable()
+            let v = hir.variable(*id);
+            v.is_state_variable() || v.data_location == Some(DataLocation::Storage)
         }
         ExprKind::Index(base, _)
         | ExprKind::Slice(base, _, _)

@@ -78,3 +78,35 @@ LL │         assert(items.bump());
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
+warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+   ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
+   │
+LL │         assert(o.check(n));
+   │                ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
+
+warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+   ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
+   │
+LL │         assert(o.check(a));
+   │                ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
+
+warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+   ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
+   │
+LL │         assert((xs[0] = 1) > 0);
+   │                 ━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
+
+warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+   ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
+   │
+LL │         assert((m[user] = amt) > 0);
+   │                 ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
+
