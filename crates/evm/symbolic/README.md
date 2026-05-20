@@ -231,7 +231,31 @@ For latency-sensitive local runs, start with a small portfolio such as
 can still use more CPU and be slower when one fast solver already handles most
 queries. `--symbolic-dump-smt` prints each solver's configured order and launch
 delay with the per-query portfolio outcomes so solver mixes can be compared
-without changing execution semantics.
+without changing execution semantics. It also prints an aggregate portfolio
+summary at the end of the run, for example:
+
+```text
+--- symbolic solver portfolio summary ---
+queries: 48
+solver runs: 64
+rescue solver runs: 0
+not-started solver runs: 32
+non-primary wins: 0
+rescue wins: 0
+cancelled after winner: 0
+invalid models: 0
+solver errors: 0
+winner counts:
+  yices-smt2 --bvconst-in-decimal: 48
+launch counts:
+  yices-smt2 --bvconst-in-decimal: 48
+  z3 -in -smt2: 16
+outcome counts:
+  not-started: 32
+  sat-valid: 32
+  unsat: 32
+```
+
 Forge warns when a configured portfolio is degraded because one or more solver
 entries are not available, but it still uses the entries that can be invoked.
 

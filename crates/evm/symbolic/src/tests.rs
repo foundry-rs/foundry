@@ -2093,6 +2093,46 @@ fn portfolio_delayed_solver_can_rescue_stalled_leader() {
 }
 
 #[test]
+/// Regression coverage for `PortfolioDiagnostics::record`.
+fn portfolio_diagnostics_counts_staged_outcomes() {
+    let summaries = vec![
+        SolverRunSummary::new("primary".to_string(), Duration::from_millis(3), "sat-valid")
+            .with_schedule(0, Duration::ZERO, Some(Duration::ZERO))
+            .winner(),
+        SolverRunSummary::new("secondary".to_string(), Duration::ZERO, "not-started")
+            .with_schedule(1, Duration::from_millis(100), None),
+        SolverRunSummary::new("rescue".to_string(), Duration::from_millis(5), "cancelled")
+            .with_schedule(2, Duration::from_millis(500), Some(Duration::from_millis(500))),
+        SolverRunSummary::new("bad".to_string(), Duration::from_millis(1), "sat-invalid")
+            .with_schedule(3, Duration::from_millis(1000), Some(Duration::from_millis(1000))),
+        SolverRunSummary::new("missing".to_string(), Duration::from_millis(1), "error")
+            .with_schedule(4, Duration::from_millis(1500), Some(Duration::from_millis(1500))),
+    ];
+    let mut diagnostics = PortfolioDiagnostics::default();
+
+    diagnostics.record(&summaries);
+
+    assert_eq!(diagnostics.queries, 1);
+    assert_eq!(diagnostics.solver_runs, 4);
+    assert_eq!(diagnostics.rescue_runs, 3);
+    assert_eq!(diagnostics.not_started, 1);
+    assert_eq!(diagnostics.cancelled_after_winner, 1);
+    assert_eq!(diagnostics.invalid_models, 1);
+    assert_eq!(diagnostics.solver_errors, 1);
+    assert_eq!(diagnostics.non_primary_wins, 0);
+    assert_eq!(diagnostics.rescue_wins, 0);
+    assert_eq!(diagnostics.winner_counts.get("primary"), Some(&1));
+    assert_eq!(diagnostics.launch_counts.get("primary"), Some(&1));
+    assert_eq!(diagnostics.launch_counts.get("secondary"), None);
+    assert_eq!(diagnostics.launch_counts.get("rescue"), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get("sat-valid"), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get("not-started"), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get("cancelled"), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get("sat-invalid"), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get("error"), Some(&1));
+}
+
+#[test]
 /// Regression coverage for `assertion_revert_classifies_assert_panic_only`.
 fn assertion_revert_classifies_assert_panic_only() {
     let mut assert_payload = PANIC_SELECTOR.to_vec();

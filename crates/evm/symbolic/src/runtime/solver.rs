@@ -65,17 +65,25 @@ pub(crate) struct SmtLibSubprocessSolver {
     pub(crate) max_queries: usize,
     pub(crate) queries: usize,
     pub(crate) dump_smt: bool,
+    portfolio_diagnostics: PortfolioDiagnostics,
 }
 
 impl SmtLibSubprocessSolver {
     /// Constructs a new instance.
-    pub(crate) const fn new(
+    pub(crate) fn new(
         commands: Result<Vec<SolverCommand>, String>,
         timeout: Option<u32>,
         max_queries: usize,
         dump_smt: bool,
     ) -> Self {
-        Self { commands, timeout, max_queries, queries: 0, dump_smt }
+        Self {
+            commands,
+            timeout,
+            max_queries,
+            queries: 0,
+            dump_smt,
+            portfolio_diagnostics: PortfolioDiagnostics::default(),
+        }
     }
 
     /// Constructs a subprocess solver from Foundry symbolic config.
@@ -171,7 +179,7 @@ impl SmtLibSubprocessSolver {
 
     /// Implements the `query` solver helper.
     pub(crate) fn query(
-        &self,
+        &mut self,
         constraints: &[BoolExpr],
         model: bool,
     ) -> Result<String, SymbolicError> {
@@ -180,13 +188,15 @@ impl SmtLibSubprocessSolver {
             constraint.collect_vars(&mut vars);
         }
 
-        let commands = self.commands()?;
         let mut smt = String::new();
         smt.push_str("(set-logic QF_BV)\n");
-        if commands.iter().all(|command| command.smt_timeout)
-            && let Some(timeout) = self.timeout.filter(|timeout| *timeout > 0)
         {
-            let _ = writeln!(smt, "(set-option :timeout {})", timeout.saturating_mul(1000));
+            let commands = self.commands()?;
+            if commands.iter().all(|command| command.smt_timeout)
+                && let Some(timeout) = self.timeout.filter(|timeout| *timeout > 0)
+            {
+                let _ = writeln!(smt, "(set-option :timeout {})", timeout.saturating_mul(1000));
+            }
         }
         for var in vars {
             let _ = writeln!(smt, "(declare-fun {var} () (_ BitVec 256))");
@@ -203,13 +213,20 @@ impl SmtLibSubprocessSolver {
             let _ = writeln!(stderr, "--- symbolic SMT query {} ---\n{smt}", self.queries);
         }
 
-        run_solver_commands(
-            commands,
-            &smt,
-            self.timeout,
-            model.then_some(constraints),
-            self.dump_smt,
-        )
+        let result = {
+            let commands = self.commands()?;
+            run_solver_commands(
+                commands,
+                &smt,
+                self.timeout,
+                model.then_some(constraints),
+                self.dump_smt,
+            )
+        };
+        if self.dump_smt {
+            self.portfolio_diagnostics.record(&result.summaries);
+        }
+        result.output
     }
 }
 
@@ -356,7 +373,13 @@ struct ScheduledSolver {
 }
 
 #[derive(Debug)]
-struct SolverRunSummary {
+struct SolverCommandRun {
+    output: Result<String, SymbolicError>,
+    summaries: Vec<SolverRunSummary>,
+}
+
+#[derive(Debug)]
+pub(crate) struct SolverRunSummary {
     index: Option<usize>,
     display: String,
     scheduled_after: Option<Duration>,
@@ -369,7 +392,7 @@ struct SolverRunSummary {
 
 impl SolverRunSummary {
     /// Builds a portfolio run summary with no detail or winner marker.
-    const fn new(display: String, elapsed: Duration, outcome: &'static str) -> Self {
+    pub(crate) const fn new(display: String, elapsed: Duration, outcome: &'static str) -> Self {
         Self {
             index: None,
             display,
@@ -383,7 +406,7 @@ impl SolverRunSummary {
     }
 
     /// Attaches the configured portfolio order and launch delay to this summary.
-    const fn with_schedule(
+    pub(crate) const fn with_schedule(
         mut self,
         index: usize,
         scheduled_after: Duration,
@@ -402,9 +425,110 @@ impl SolverRunSummary {
     }
 
     /// Marks this solver run as the portfolio result winner.
-    const fn winner(mut self) -> Self {
+    pub(crate) const fn winner(mut self) -> Self {
         self.winner = true;
         self
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct PortfolioDiagnostics {
+    pub(crate) queries: usize,
+    pub(crate) solver_runs: usize,
+    pub(crate) rescue_runs: usize,
+    pub(crate) non_primary_wins: usize,
+    pub(crate) rescue_wins: usize,
+    pub(crate) not_started: usize,
+    pub(crate) cancelled_after_winner: usize,
+    pub(crate) invalid_models: usize,
+    pub(crate) solver_errors: usize,
+    pub(crate) winner_counts: BTreeMap<String, usize>,
+    pub(crate) launch_counts: BTreeMap<String, usize>,
+    pub(crate) outcome_counts: BTreeMap<&'static str, usize>,
+}
+
+impl PortfolioDiagnostics {
+    /// Records one portfolio query's per-solver summaries.
+    pub(crate) fn record(&mut self, summaries: &[SolverRunSummary]) {
+        if summaries.len() <= 1 {
+            return;
+        }
+
+        self.queries += 1;
+        for summary in summaries {
+            *self.outcome_counts.entry(summary.outcome).or_default() += 1;
+            if summary.started_after.is_some() {
+                self.solver_runs += 1;
+                *self.launch_counts.entry(summary.display.clone()).or_default() += 1;
+                if summary.index.is_some_and(|index| index >= 2) {
+                    self.rescue_runs += 1;
+                }
+            }
+
+            match summary.outcome {
+                "not-started" => self.not_started += 1,
+                "cancelled"
+                | "sat-after-winner"
+                | "unsat-after-winner"
+                | "unknown-after-winner" => self.cancelled_after_winner += 1,
+                "sat-invalid" => self.invalid_models += 1,
+                "error" => self.solver_errors += 1,
+                _ => {}
+            }
+
+            if summary.winner {
+                *self.winner_counts.entry(summary.display.clone()).or_default() += 1;
+                if summary.index.is_some_and(|index| index > 0) {
+                    self.non_primary_wins += 1;
+                }
+                if summary.index.is_some_and(|index| index >= 2) {
+                    self.rescue_wins += 1;
+                }
+            }
+        }
+    }
+
+    /// Writes the aggregate portfolio summary to stderr.
+    fn dump(&self) {
+        if self.queries == 0 {
+            return;
+        }
+
+        let mut stderr = std::io::stderr().lock();
+        let _ = writeln!(stderr, "--- symbolic solver portfolio summary ---");
+        let _ = writeln!(stderr, "queries: {}", self.queries);
+        let _ = writeln!(stderr, "solver runs: {}", self.solver_runs);
+        let _ = writeln!(stderr, "rescue solver runs: {}", self.rescue_runs);
+        let _ = writeln!(stderr, "not-started solver runs: {}", self.not_started);
+        let _ = writeln!(stderr, "non-primary wins: {}", self.non_primary_wins);
+        let _ = writeln!(stderr, "rescue wins: {}", self.rescue_wins);
+        let _ = writeln!(stderr, "cancelled after winner: {}", self.cancelled_after_winner);
+        let _ = writeln!(stderr, "invalid models: {}", self.invalid_models);
+        let _ = writeln!(stderr, "solver errors: {}", self.solver_errors);
+        if !self.winner_counts.is_empty() {
+            let _ = writeln!(stderr, "winner counts:");
+            for (solver, count) in &self.winner_counts {
+                let _ = writeln!(stderr, "  {solver}: {count}");
+            }
+        }
+        if !self.launch_counts.is_empty() {
+            let _ = writeln!(stderr, "launch counts:");
+            for (solver, count) in &self.launch_counts {
+                let _ = writeln!(stderr, "  {solver}: {count}");
+            }
+        }
+        let _ = writeln!(stderr, "outcome counts:");
+        for (outcome, count) in &self.outcome_counts {
+            let _ = writeln!(stderr, "  {outcome}: {count}");
+        }
+    }
+}
+
+impl Drop for SmtLibSubprocessSolver {
+    fn drop(&mut self) {
+        if self.dump_smt {
+            self.portfolio_diagnostics.dump();
+        }
     }
 }
 
@@ -415,12 +539,15 @@ fn run_solver_commands(
     timeout: Option<u32>,
     model_constraints: Option<&[BoolExpr]>,
     dump_diagnostics: bool,
-) -> Result<String, SymbolicError> {
+) -> SolverCommandRun {
     if commands.is_empty() {
-        return Err(SymbolicError::Solver("symbolic solver portfolio is empty".to_string()));
+        return SolverCommandRun {
+            output: Err(SymbolicError::Solver("symbolic solver portfolio is empty".to_string())),
+            summaries: Vec::new(),
+        };
     }
     if commands.len() == 1 {
-        return match run_solver_process(&commands[0], smt, timeout, &AtomicBool::new(false)) {
+        let output = match run_solver_process(&commands[0], smt, timeout, &AtomicBool::new(false)) {
             SolverProcessOutcome::Output(output) => Ok(output),
             SolverProcessOutcome::Unknown => Err(SymbolicError::SolverUnknown),
             SolverProcessOutcome::Cancelled => {
@@ -428,6 +555,7 @@ fn run_solver_commands(
             }
             SolverProcessOutcome::Error(err) => Err(SymbolicError::Solver(err)),
         };
+        return SolverCommandRun { output, summaries: Vec::new() };
     }
 
     let cancel = Arc::new(AtomicBool::new(false));
@@ -596,7 +724,7 @@ fn run_solver_commands(
             dump_solver_portfolio_summaries(&summaries);
         }
 
-        if let Some(output) = decisive {
+        let output = if let Some(output) = decisive {
             Ok(output)
         } else if saw_invalid_sat_model {
             Err(SymbolicError::Solver(errors.join("; ")))
@@ -606,7 +734,9 @@ fn run_solver_commands(
             Err(SymbolicError::SolverUnknown)
         } else {
             Err(SymbolicError::Solver(errors.join("; ")))
-        }
+        };
+
+        SolverCommandRun { output, summaries }
     })
 }
 
