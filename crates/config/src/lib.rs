@@ -219,6 +219,8 @@ pub struct Config {
     pub cache_path: PathBuf,
     /// Whether to dynamically link tests.
     pub dynamic_test_linking: bool,
+    /// Whether to allow linked libraries.
+    pub allow_linked_libraries: bool,
     /// Where the gas snapshots are stored.
     pub snapshots: PathBuf,
     /// Whether to check for differences against previously stored gas snapshots.
@@ -2651,6 +2653,7 @@ impl Default for Config {
             libs: vec!["lib".into()],
             cache: true,
             dynamic_test_linking: false,
+            allow_linked_libraries: true,
             cache_path: "cache".into(),
             broadcast: "broadcast".into(),
             snapshots: "snapshots".into(),
