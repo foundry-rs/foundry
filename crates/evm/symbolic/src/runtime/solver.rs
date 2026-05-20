@@ -2,6 +2,8 @@ use super::*;
 
 const INITIAL_SOLVER_POLL_BACKOFF: Duration = Duration::from_micros(200);
 const MAX_SOLVER_POLL_BACKOFF: Duration = Duration::from_millis(50);
+const SECOND_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(100);
+const RESCUE_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(500);
 
 /// Minimal solver backend interface used by the symbolic executor.
 ///
@@ -338,14 +340,27 @@ enum SolverProcessOutcome {
 
 #[derive(Debug)]
 struct SolverProcessResult {
+    index: usize,
     display: String,
+    scheduled_after: Duration,
+    started_after: Duration,
     elapsed: Duration,
     outcome: SolverProcessOutcome,
 }
 
 #[derive(Debug)]
+struct ScheduledSolver {
+    index: usize,
+    command: SolverCommand,
+    launch_after: Duration,
+}
+
+#[derive(Debug)]
 struct SolverRunSummary {
+    index: Option<usize>,
     display: String,
+    scheduled_after: Option<Duration>,
+    started_after: Option<Duration>,
     elapsed: Duration,
     outcome: &'static str,
     detail: Option<String>,
@@ -355,7 +370,29 @@ struct SolverRunSummary {
 impl SolverRunSummary {
     /// Builds a portfolio run summary with no detail or winner marker.
     const fn new(display: String, elapsed: Duration, outcome: &'static str) -> Self {
-        Self { display, elapsed, outcome, detail: None, winner: false }
+        Self {
+            index: None,
+            display,
+            scheduled_after: None,
+            started_after: None,
+            elapsed,
+            outcome,
+            detail: None,
+            winner: false,
+        }
+    }
+
+    /// Attaches the configured portfolio order and launch delay to this summary.
+    const fn with_schedule(
+        mut self,
+        index: usize,
+        scheduled_after: Duration,
+        started_after: Option<Duration>,
+    ) -> Self {
+        self.index = Some(index);
+        self.scheduled_after = Some(scheduled_after);
+        self.started_after = started_after;
+        self
     }
 
     /// Attaches an additional diagnostic detail string to this summary.
@@ -396,20 +433,9 @@ fn run_solver_commands(
     let cancel = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel();
     thread::scope(|scope| {
-        for command in commands.iter().cloned() {
-            let tx = tx.clone();
-            let cancel = Arc::clone(&cancel);
-            scope.spawn(move || {
-                let start = Instant::now();
-                let outcome = run_solver_process(&command, smt, timeout, &cancel);
-                let _ = tx.send(SolverProcessResult {
-                    display: command.display,
-                    elapsed: start.elapsed(),
-                    outcome,
-                });
-            });
-        }
-        drop(tx);
+        let started_at = Instant::now();
+        let mut pending = scheduled_portfolio(commands);
+        let mut running = 0usize;
 
         let mut saw_unknown = false;
         let mut saw_unsat = false;
@@ -417,8 +443,69 @@ fn run_solver_commands(
         let mut errors = Vec::new();
         let mut decisive = None;
         let mut summaries = Vec::new();
-        while let Ok(result) = rx.recv() {
-            let SolverProcessResult { display, elapsed, outcome } = result;
+
+        while running > 0 || !pending.is_empty() {
+            if decisive.is_none() {
+                let now = started_at.elapsed();
+                let mut launched = false;
+                while pending
+                    .front()
+                    .is_some_and(|solver| solver.launch_after <= now || (running == 0 && !launched))
+                {
+                    let solver = pending.pop_front().expect("pending solver exists");
+                    let tx = tx.clone();
+                    let cancel = Arc::clone(&cancel);
+                    let started_after = started_at.elapsed();
+                    running += 1;
+                    launched = true;
+                    scope.spawn(move || {
+                        let start = Instant::now();
+                        let outcome = run_solver_process(&solver.command, smt, timeout, &cancel);
+                        let _ = tx.send(SolverProcessResult {
+                            index: solver.index,
+                            display: solver.command.display,
+                            scheduled_after: solver.launch_after,
+                            started_after,
+                            elapsed: start.elapsed(),
+                            outcome,
+                        });
+                    });
+                }
+            }
+
+            if running == 0 {
+                continue;
+            }
+
+            let result = if decisive.is_none() {
+                next_portfolio_launch_wait(started_at, &pending)
+                    .map_or_else(|| rx.recv().ok(), |wait| rx.recv_timeout(wait).ok())
+            } else {
+                rx.recv().ok()
+            };
+            let Some(result) = result else {
+                continue;
+            };
+            running = running.saturating_sub(1);
+            let SolverProcessResult {
+                index,
+                display,
+                scheduled_after,
+                started_after,
+                elapsed,
+                outcome,
+            } = result;
+            if decisive.is_some() {
+                summaries.push(summary_for_cancelled_solver_result(
+                    index,
+                    display,
+                    scheduled_after,
+                    started_after,
+                    elapsed,
+                    outcome,
+                ));
+                continue;
+            }
             match outcome {
                 SolverProcessOutcome::Output(output) if solver_output_is_sat(&output) => {
                     if let Some(constraints) = model_constraints
@@ -426,43 +513,71 @@ fn run_solver_commands(
                     {
                         summaries.push(
                             SolverRunSummary::new(display.clone(), elapsed, "sat-invalid")
+                                .with_schedule(index, scheduled_after, Some(started_after))
                                 .with_detail(err.to_string()),
                         );
                         saw_invalid_sat_model = true;
                         errors.push(format!("{display}: {err}"));
                         continue;
                     }
-                    summaries.push(SolverRunSummary::new(display, elapsed, "sat-valid").winner());
+                    summaries.push(
+                        SolverRunSummary::new(display, elapsed, "sat-valid")
+                            .with_schedule(index, scheduled_after, Some(started_after))
+                            .winner(),
+                    );
                     decisive = Some(output);
                     cancel.store(true, Ordering::SeqCst);
-                    break;
+                    while let Some(solver) = pending.pop_front() {
+                        summaries.push(summary_for_unstarted_solver(solver));
+                    }
                 }
                 SolverProcessOutcome::Output(output) if solver_output_is_unsat(&output) => {
-                    summaries.push(SolverRunSummary::new(display, elapsed, "unsat"));
+                    summaries.push(SolverRunSummary::new(display, elapsed, "unsat").with_schedule(
+                        index,
+                        scheduled_after,
+                        Some(started_after),
+                    ));
                     saw_unsat = true;
                 }
                 SolverProcessOutcome::Output(output) if solver_output_is_unknown(&output) => {
-                    summaries.push(SolverRunSummary::new(display, elapsed, "unknown"));
+                    summaries.push(
+                        SolverRunSummary::new(display, elapsed, "unknown").with_schedule(
+                            index,
+                            scheduled_after,
+                            Some(started_after),
+                        ),
+                    );
                     saw_unknown = true;
                 }
                 SolverProcessOutcome::Output(output) => {
                     let first_line = first_solver_line(&output).to_string();
                     summaries.push(
                         SolverRunSummary::new(display.clone(), elapsed, "unexpected")
+                            .with_schedule(index, scheduled_after, Some(started_after))
                             .with_detail(first_line.clone()),
                     );
                     errors.push(format!("{display}: unexpected solver response `{first_line}`"));
                 }
                 SolverProcessOutcome::Unknown => {
-                    summaries.push(SolverRunSummary::new(display, elapsed, "timeout-or-unknown"));
+                    summaries.push(
+                        SolverRunSummary::new(display, elapsed, "timeout-or-unknown")
+                            .with_schedule(index, scheduled_after, Some(started_after)),
+                    );
                     saw_unknown = true;
                 }
                 SolverProcessOutcome::Cancelled => {
-                    summaries.push(SolverRunSummary::new(display, elapsed, "cancelled"));
+                    summaries.push(
+                        SolverRunSummary::new(display, elapsed, "cancelled").with_schedule(
+                            index,
+                            scheduled_after,
+                            Some(started_after),
+                        ),
+                    );
                 }
                 SolverProcessOutcome::Error(err) => {
                     summaries.push(
                         SolverRunSummary::new(display.clone(), elapsed, "error")
+                            .with_schedule(index, scheduled_after, Some(started_after))
                             .with_detail(err.clone()),
                     );
                     errors.push(format!("{display}: {err}"));
@@ -470,12 +585,8 @@ fn run_solver_commands(
             }
         }
 
-        if decisive.is_some() {
-            while let Ok(result) = rx.recv() {
-                let SolverProcessResult { display, elapsed, outcome } = result;
-                summaries.push(summary_for_cancelled_solver_result(display, elapsed, outcome));
-            }
-        } else if saw_unsat
+        if decisive.is_none()
+            && saw_unsat
             && let Some(summary) = summaries.iter_mut().find(|summary| summary.outcome == "unsat")
         {
             summary.winner = true;
@@ -499,13 +610,58 @@ fn run_solver_commands(
     })
 }
 
+/// Returns the staged launch plan for a configured portfolio.
+fn scheduled_portfolio(commands: &[SolverCommand]) -> VecDeque<ScheduledSolver> {
+    commands
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(index, command)| ScheduledSolver {
+            index,
+            command,
+            launch_after: portfolio_launch_delay(index),
+        })
+        .collect()
+}
+
+/// Returns when the solver at `index` should be started, relative to query start.
+const fn portfolio_launch_delay(index: usize) -> Duration {
+    match index {
+        0 => Duration::ZERO,
+        1 => SECOND_PORTFOLIO_SOLVER_DELAY,
+        index => RESCUE_PORTFOLIO_SOLVER_DELAY.saturating_mul(index.saturating_sub(1) as u32),
+    }
+}
+
+/// Returns how long the supervisor can wait before the next pending solver is due.
+fn next_portfolio_launch_wait(
+    started_at: Instant,
+    pending: &VecDeque<ScheduledSolver>,
+) -> Option<Duration> {
+    pending.front().map(|solver| {
+        solver.launch_after.checked_sub(started_at.elapsed()).unwrap_or(Duration::ZERO)
+    })
+}
+
+/// Summarizes a solver that was never launched because the portfolio already won.
+fn summary_for_unstarted_solver(solver: ScheduledSolver) -> SolverRunSummary {
+    SolverRunSummary::new(solver.command.display, Duration::ZERO, "not-started").with_schedule(
+        solver.index,
+        solver.launch_after,
+        None,
+    )
+}
+
 /// Summarizes a solver result received after a portfolio winner was chosen.
 fn summary_for_cancelled_solver_result(
+    index: usize,
     display: String,
+    scheduled_after: Duration,
+    started_after: Duration,
     elapsed: Duration,
     outcome: SolverProcessOutcome,
 ) -> SolverRunSummary {
-    match outcome {
+    let summary = match outcome {
         SolverProcessOutcome::Output(output) if solver_output_is_sat(&output) => {
             SolverRunSummary::new(display, elapsed, "sat-after-winner")
         }
@@ -526,7 +682,8 @@ fn summary_for_cancelled_solver_result(
         SolverProcessOutcome::Error(err) => {
             SolverRunSummary::new(display, elapsed, "error").with_detail(err)
         }
-    }
+    };
+    summary.with_schedule(index, scheduled_after, Some(started_after))
 }
 
 /// Writes solver portfolio outcome diagnostics to stderr.
@@ -535,10 +692,21 @@ fn dump_solver_portfolio_summaries(summaries: &[SolverRunSummary]) {
     let _ = writeln!(stderr, "--- symbolic solver portfolio outcomes ---");
     for summary in summaries {
         let marker = if summary.winner { " winner" } else { "" };
+        let schedule = summary.index.zip(summary.scheduled_after).map(|(index, delay)| {
+            let started = summary
+                .started_after
+                .map(|started| format!(" started +{started:.3?}"))
+                .unwrap_or_default();
+            format!("#{} scheduled +{delay:.3?}{started} ", index + 1)
+        });
         let _ = write!(
             stderr,
-            "{}: {} in {:.3?}{}",
-            summary.display, summary.outcome, summary.elapsed, marker
+            "{}{}: {} in {:.3?}{}",
+            schedule.as_deref().unwrap_or_default(),
+            summary.display,
+            summary.outcome,
+            summary.elapsed,
+            marker
         );
         if let Some(detail) = summary.detail.as_deref().filter(|detail| !detail.is_empty()) {
             let _ = write!(stderr, " ({detail})");

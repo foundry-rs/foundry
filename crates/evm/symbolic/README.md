@@ -212,11 +212,15 @@ executables and are invoked with `-in -smt2` to preserve the old
 `symbolic.solver = "/path/to/z3"` behavior. Use `symbolic.solver_command` for
 non-z3-compatible command lines or wrapper tools.
 
-`symbolic.solver_portfolio` runs multiple solvers in parallel for each SMT query.
-The first `sat` response wins after its model is validated for model-producing
-queries. `unsat` responses are used only if no configured solver returns `sat`,
-and `unknown` results only win if no configured solver returns a decisive
-response. A nonempty `symbolic.solver_command` overrides both
+`symbolic.solver_portfolio` runs solvers in configured order with staged starts:
+the first entry starts immediately, the second starts shortly after if the query
+is still unresolved, and later entries are treated as rescue solvers. If a solver
+finishes without a decisive result and no other solver is running, the next
+pending entry starts immediately. The first `sat` response wins after its model
+is validated for model-producing queries. `unsat` responses are used only after
+all configured solvers that were needed to rule out `sat` have finished, and
+`unknown` results only win if no configured solver returns a decisive response.
+A nonempty `symbolic.solver_command` overrides both
 `symbolic.solver_portfolio` and `symbolic.solver`; otherwise a nonempty
 portfolio overrides `symbolic.solver`. Portfolio entries without whitespace,
 quotes, or backslashes are resolved like `symbolic.solver` values. Entries with
@@ -224,9 +228,10 @@ whitespace, quotes, or backslashes are split into argv parts like
 `symbolic.solver_command`; they are not executed through a shell.
 For latency-sensitive local runs, start with a small portfolio such as
 `["yices", "z3"]`. Broader portfolios can help on solver-diverse workloads but
-use more CPU and can be slower when one fast solver already handles most
-queries. `--symbolic-dump-smt` also prints per-query portfolio outcomes so solver
-mixes can be compared without changing execution semantics.
+can still use more CPU and be slower when one fast solver already handles most
+queries. `--symbolic-dump-smt` prints each solver's configured order and launch
+delay with the per-query portfolio outcomes so solver mixes can be compared
+without changing execution semantics.
 Forge warns when a configured portfolio is degraded because one or more solver
 entries are not available, but it still uses the entries that can be invoked.
 
