@@ -255,6 +255,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         Ok(config)
     }
 
+    /// Returns true if `assert_all` is enabled for the given invariant function.
     fn invariant_assert_all_enabled(&self, func: &Function) -> bool {
         if self.inline_config.contains_function(self.name, &func.name) {
             return self
@@ -265,6 +266,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         self.config.invariant.assert_all
     }
 
+    /// Returns true if all invariant functions share the same effective inline invariant config.
     fn invariant_suite_configs_match(&self, funcs: &[&Function]) -> bool {
         let Some((anchor, rest)) = funcs.split_first() else {
             return true;
@@ -487,13 +489,17 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             });
         }
 
+        // Start from the invariants matched by the current test filter.
         let matched_invariant_fns =
             functions.iter().copied().filter(|func| func.is_invariant_test()).collect::<Vec<_>>();
+        // Keep only boolean invariants; optimization invariants stay isolated per function.
         let matched_boolean_invariant_fns = matched_invariant_fns
             .iter()
             .copied()
             .filter(|func| !is_optimization_invariant(func))
             .collect::<Vec<_>>();
+        // Contract-local boolean invariants are eligible for a shared campaign only when all
+        // of them enable `assert_all` and share the same effective inline invariant config.
         let boolean_invariant_fns = invariant_fns
             .iter()
             .copied()
@@ -504,6 +510,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             && boolean_invariant_fns.len() > 1
             && boolean_invariant_fns.iter().all(|func| self.invariant_assert_all_enabled(func))
             && self.invariant_suite_configs_match(&boolean_invariant_fns);
+        // Use the first matched boolean invariant as the campaign anchor when the suite merges.
         let invariant_suite_anchor =
             merge_invariant_suite.then(|| matched_boolean_invariant_fns.first().copied()).flatten();
 
@@ -514,10 +521,13 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 if early_exit.should_stop() {
                     return None;
                 }
+                // Invariant tests run either as a shared boolean suite or as a single
+                // optimization campaign; other test kinds keep their original invariant set.
                 let invariants = if func.is_invariant_test() {
                     if is_optimization_invariant(func) {
                         vec![func]
                     } else {
+                        // Only the suite anchor runs the merged boolean campaign.
                         if merge_invariant_suite && invariant_suite_anchor != Some(func) {
                             return None;
                         }
@@ -527,6 +537,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                     invariant_fns.clone()
                 };
 
+                // Skip invariant anchors that have no predicates to execute.
                 if func.is_invariant_test() && invariants.is_empty() {
                     return None;
                 }
@@ -1687,14 +1698,17 @@ fn persisted_call_sequence(
     )
 }
 
+/// Returns the current invariant failure cache path.
 fn invariant_failure_file(failure_dir: &Path, invariant: &Function) -> PathBuf {
     canonicalized(failure_dir.join("invariants").join(&invariant.name))
 }
 
+/// Returns the legacy invariant failure cache path.
 fn legacy_invariant_failure_file(failure_dir: &Path, invariant: &Function) -> PathBuf {
     canonicalized(failure_dir.join(&invariant.name))
 }
 
+/// Loads a persisted invariant failure from the new cache path, falling back to the legacy path.
 fn persisted_invariant_failure(
     failure_dir: &Path,
     invariant: &Function,
@@ -1778,7 +1792,7 @@ fn test_paths(
     (failures_dir, failure_file)
 }
 
-/// Helper function to set invariant corpus dir and compose contract-suite failure paths.
+/// Sets the invariant corpus directory and returns the contract-level failure directory.
 fn invariant_suite_paths(
     corpus_config: &mut FuzzCorpusConfig,
     persist_dir: PathBuf,
@@ -1799,10 +1813,12 @@ fn invariant_suite_paths(
     failure_dir
 }
 
+/// Returns the contract-level invariant failure directory.
 fn invariant_failure_dir(persist_dir: PathBuf, contract_name: &str) -> PathBuf {
     canonicalized(persist_dir.join("failures").join(invariant_contract_name(contract_name)))
 }
 
+/// Returns the invariant test contract name without the file path prefix.
 fn invariant_contract_name(contract_name: &str) -> &str {
     contract_name.split(':').next_back().unwrap()
 }

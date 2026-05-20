@@ -1229,6 +1229,10 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
     junit_report
 }
 
+/// Adds JUnit test cases for a test result.
+///
+/// Invariant campaigns are expanded into per-predicate and per-handler cases so CI can report
+/// contract-level execution without losing failure attribution.
 fn add_junit_test_cases(
     test_suite: &mut TestSuite,
     test_name: &str,
@@ -1309,6 +1313,7 @@ fn add_junit_test_cases(
     }
 }
 
+/// Adds a single JUnit test case to the suite.
 fn add_junit_test_case(
     test_suite: &mut TestSuite,
     test_name: &str,
@@ -1332,12 +1337,14 @@ fn add_junit_test_case(
     test_suite.add_test_case(test_case);
 }
 
+/// Helper for assembling JUnit output strings.
 struct JunitOutput {
     result_report: TestKindReport,
     logs: Option<Vec<String>>,
 }
 
 impl JunitOutput {
+    /// Creates a JUnit output helper for a test result.
     fn new(test_result: &TestResult, verbosity: u8) -> Self {
         Self {
             result_report: test_result.kind.report(),
@@ -1346,6 +1353,7 @@ impl JunitOutput {
         }
     }
 
+    /// Renders the suite-level `system-out` payload.
     fn system_out(&self, test_result: &TestResult, test_name: &str) -> String {
         let mut sys_out = String::new();
         write!(sys_out, "{test_result} {test_name} {}", self.result_report).unwrap();
@@ -1353,6 +1361,7 @@ impl JunitOutput {
         sys_out
     }
 
+    /// Renders the case-level `system-out` payload.
     fn case_system_out(
         &self,
         status: TestStatus,
@@ -1387,6 +1396,7 @@ impl JunitOutput {
         sys_out
     }
 
+    /// Appends captured console logs to the output payload.
     fn append_logs(&self, sys_out: &mut String) {
         if let Some(logs) = &self.logs {
             write!(sys_out, "\\nLogs:\\n").unwrap();

@@ -740,6 +740,7 @@ impl fmt::Display for TestResult {
 }
 
 impl TestResult {
+    /// Appends the suite-level invariant predicate summary for multi-predicate campaigns.
     fn write_invariant_predicate_results(&self, s: &mut String) {
         if self.invariant_predicate_results.len() <= 1 {
             return;
