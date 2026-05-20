@@ -57,9 +57,18 @@ mod runtime;
 
 pub use runtime::{SymbolicError, SymbolicRunInput};
 
+/// Symbolic solver names with built-in command-line mappings.
+pub const BUILTIN_SYMBOLIC_SOLVERS: &[&str] =
+    &["z3", "yices", "cvc5", "cvc5-int", "bitwuzla", "bitwuzla-abs"];
+
 const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
 const MAX_REMEMBER_KEYS: u32 = 64;
 const SYMBOLIC_VM_COMPAT_ADDRESS: Address = address!("0xF3993A62377BCd56AE39D773740A5390411E8BC9");
+
+/// Returns whether `solver` is one of Foundry's semantic symbolic solver names.
+pub fn symbolic_solver_is_builtin(solver: &str) -> bool {
+    BUILTIN_SYMBOLIC_SOLVERS.contains(&solver)
+}
 
 /// Returns the `selector_for` symbolic public API helper result.
 fn selector_for(signature: &str) -> [u8; 4] {

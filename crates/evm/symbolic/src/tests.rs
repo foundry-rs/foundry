@@ -1881,6 +1881,14 @@ fn query_limit_is_enforced_before_spawning_solver() {
 #[test]
 /// Regression coverage for `known_solver_names_resolve_to_smtlib_commands`.
 fn known_solver_names_resolve_to_smtlib_commands() {
+    for solver in BUILTIN_SYMBOLIC_SOLVERS {
+        assert!(symbolic_solver_is_builtin(solver));
+        named_solver_command(solver).unwrap();
+    }
+    assert!(!symbolic_solver_is_builtin("yices-2.7.0"));
+    assert!(!symbolic_solver_is_builtin("cvc5-1.3.4"));
+    assert!(!symbolic_solver_is_builtin("bitwuzla-0.9.0"));
+
     let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "yices".to_string(),
         ..Default::default()

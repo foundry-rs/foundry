@@ -37,7 +37,7 @@ use foundry_evm::{
 };
 use foundry_evm_symbolic::{
     SymbolicExecutor, SymbolicInvariantRunInput, SymbolicInvariantRunResult, SymbolicInvariantStep,
-    SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult,
+    SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult, symbolic_solver_is_builtin,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -61,9 +61,6 @@ use tracing::Span;
 ///
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
 pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
-
-const BUILTIN_SYMBOLIC_SOLVERS: &[&str] =
-    &["z3", "yices", "cvc5", "cvc5-int", "bitwuzla", "bitwuzla-abs"];
 
 pub(crate) fn is_symbolic_entrypoint(func: &Function) -> bool {
     func.name.starts_with("check") || func.name.starts_with("prove")
@@ -575,10 +572,10 @@ fn symbolic_solver_config_executes_custom_program(symbolic: &SymbolicConfig) -> 
             let entry = entry.trim();
             !entry.is_empty()
                 && (entry.chars().any(|ch| ch.is_whitespace() || matches!(ch, '"' | '\'' | '\\'))
-                    || !BUILTIN_SYMBOLIC_SOLVERS.contains(&entry))
+                    || !symbolic_solver_is_builtin(entry))
         });
     }
-    !BUILTIN_SYMBOLIC_SOLVERS.contains(&symbolic.solver.trim())
+    !symbolic_solver_is_builtin(symbolic.solver.trim())
 }
 
 /// Executes a single test function, returning a [`TestResult`].
