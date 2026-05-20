@@ -10,6 +10,10 @@ use std::path::PathBuf;
 pub struct FuzzConfig {
     /// The number of test cases that must execute for each property test
     pub runs: u32,
+    /// Optional 1-based fuzz run to execute.
+    pub run: Option<u32>,
+    /// Optional fuzz worker ID to pair with `run`.
+    pub worker: Option<u32>,
     /// Fails the fuzzed test if a revert occurs.
     pub fail_on_revert: bool,
     /// The maximum number of test case rejections allowed,
@@ -37,6 +41,8 @@ impl Default for FuzzConfig {
     fn default() -> Self {
         Self {
             runs: 256,
+            run: None,
+            worker: None,
             fail_on_revert: true,
             max_test_rejects: 65536,
             seed: None,
@@ -151,6 +157,15 @@ impl FuzzCorpusConfig {
     /// contributes dictionary entries, not edge coverage.
     pub const fn collect_evm_edge_coverage(&self) -> bool {
         !self.sancov_edges && (self.corpus_dir.is_some() || self.show_edge_coverage)
+    }
+
+    /// Whether EVM comparison operand capture is enabled.
+    ///
+    /// EVM comparison operands are only useful for coverage-guided fuzzing, so they are derived
+    /// from corpus mode. Disabled when sancov edge coverage is active because sancov replaces EVM
+    /// bytecode coverage as the guidance signal.
+    pub const fn collect_evm_cmp_log(&self) -> bool {
+        !self.sancov_edges && self.corpus_dir.is_some()
     }
 
     /// Whether sancov edge coverage collection is enabled.

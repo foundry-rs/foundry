@@ -27,7 +27,17 @@ const SETTINGS_OVERRIDES_KEYS: &[&str] =
 /// Allowed keys for VyperConfig.
 /// Required because VyperConfig uses `skip_serializing_if = "Option::is_none"` on all fields,
 /// causing the default serialization to produce an empty dict.
-const VYPER_KEYS: &[&str] = &["optimize", "path", "experimental_codegen"];
+const VYPER_KEYS: &[&str] = &[
+    "optimize",
+    "opt_level",
+    "optLevel",
+    "path",
+    "experimental_codegen",
+    "venom_experimental",
+    "debug",
+    "enable_decimals",
+    "venom",
+];
 
 /// Allowed keys for DocConfig.
 /// Required because DocConfig uses `skip_serializing_if = "Option::is_none"` on some fields
@@ -38,7 +48,10 @@ const DOC_KEYS: &[&str] = &["out", "title", "book", "homepage", "repository", "p
 const RESERVED_KEYS: &[&str] = &["extends"];
 
 /// Keys kept for backward compatibility that should not trigger unknown key warnings.
-const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version"];
+///
+/// `tempo` and `optimism` are legacy aliases for `network = "tempo"` / `network = "optimism"` —
+/// still accepted on input but no longer serialized in the default config.
+const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version", "tempo", "optimism"];
 
 /// Generate warnings for unknown sections and deprecated keys
 pub struct WarningsProvider<P> {

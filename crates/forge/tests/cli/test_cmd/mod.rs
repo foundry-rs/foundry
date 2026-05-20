@@ -40,7 +40,7 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
 /// Contracts excluded from the main `testdata` run because they depend on flaky external RPCs.
 /// These are run separately by the `flaky_testdata` test below.
 /// Format: pipe-separated regex alternation, e.g. `"Foo|Bar|Baz"`.
-const FLAKY_TESTDATA_CONTRACTS: &str = "Issue4640Test";
+const FLAKY_TESTDATA_CONTRACTS: &str = "Issue4640Test|Issue14212Test";
 
 // Run `forge test` on `/testdata`.
 forgetest!(testdata, |_prj, cmd| {
@@ -943,6 +943,11 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(should_exit_early_on_invariant_failure, |prj, cmd| {
+    // Early-exit semantics require `assert_all = false`; under the post-#12587 default the
+    // campaign runs the full budget and surfaces a different failure shape.
+    prj.update_config(|config| {
+        config.invariant.assert_all = false;
+    });
     prj.add_test(
         "CounterInvariant.t.sol",
         r#"

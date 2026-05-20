@@ -1,11 +1,10 @@
 use super::{UncheckedCall, UncheckedTransferERC20};
 use crate::{
     linter::{EarlyLintPass, LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, calls::is_low_level_call},
 };
 use solar::{
     ast::{Expr, ExprKind, ItemFunction, Stmt, StmtKind, visit::Visit},
-    interface::kw,
     sema::hir::{self},
 };
 use std::ops::ControlFlow;
@@ -63,7 +62,7 @@ fn is_erc20_transfer_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     // Ensure the expression is a call to a contract member function.
     let hir::ExprKind::Call(
         hir::Expr { kind: hir::ExprKind::Member(contract_expr, func_ident), .. },
-        hir::CallArgs { kind: hir::CallArgsKind::Unnamed(args), .. },
+        call_args,
         ..,
     ) = &expr.kind
     else {
@@ -71,9 +70,10 @@ fn is_erc20_transfer_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     };
 
     // Determine the expected ERC20 signature from the call
+    let arity = call_args.len();
     let (expected_params, expected_returns): (&[&str], &[&str]) = match func_ident.as_str() {
-        "transferFrom" if args.len() == 3 => (&["address", "address", "uint256"], &["bool"]),
-        "transfer" if args.len() == 2 => (&["address", "uint256"], &["bool"]),
+        "transferFrom" if arity == 3 => (&["address", "address", "uint256"], &["bool"]),
+        "transfer" if arity == 2 => (&["address", "uint256"], &["bool"]),
         _ => return false,
     };
 
@@ -159,31 +159,6 @@ impl<'ast> Visit<'ast> for UncheckedCallChecker<'_, '_> {
         }
         self.walk_stmt(stmt)
     }
-}
-
-/// Checks if an expression is a low-level call that should be checked.
-///
-/// Detects patterns like:
-/// - `target.call(...)`
-/// - `target.delegatecall(...)`
-/// - `target.staticcall(...)`
-/// - `target.call{value: x}(...)`
-const fn is_low_level_call(expr: &Expr<'_>) -> bool {
-    if let ExprKind::Call(call_expr, _args) = &expr.kind {
-        // Check the callee expression
-        let callee = match &call_expr.kind {
-            // Handle call options like {value: x}
-            ExprKind::CallOptions(inner_expr, _) => inner_expr,
-            // Direct call without options
-            _ => call_expr,
-        };
-
-        if let ExprKind::Member(_, member) = &callee.kind {
-            // Check for low-level call methods
-            return matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall);
-        }
-    }
-    false
 }
 
 /// Checks if a tuple assignment doesn't properly check the success value.
