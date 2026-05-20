@@ -1,4 +1,4 @@
-use super::{UintStrategy, state::EvmFuzzState};
+use super::{UintStrategy, state::FuzzStateReader};
 use crate::{
     invariant::SenderFilters,
     strategies::mutators::{
@@ -117,7 +117,7 @@ fn fuzz_param_inner(
 /// Works with ABI Encoder v2 tuples.
 pub fn fuzz_param_from_state(
     param: &DynSolType,
-    state: &EvmFuzzState,
+    state: &impl FuzzStateReader,
 ) -> BoxedStrategy<DynSolValue> {
     // Value strategy that uses the state.
     let value = || {
@@ -127,18 +127,19 @@ pub fn fuzz_param_from_state(
         // Use `Index` instead of `Selector` when selecting a value to avoid iterating over the
         // entire dictionary.
         any::<(bool, prop::sample::Index)>().prop_map(move |(bias, index)| {
-            let state = state.dictionary_read();
-            let values = if bias { state.samples(&param) } else { None }
-                .unwrap_or_else(|| state.values())
-                .as_slice();
-            values[index.index(values.len())]
+            state.with_dictionary(|dict| {
+                let values = if bias { dict.samples(&param) } else { None }
+                    .unwrap_or_else(|| dict.values())
+                    .as_slice();
+                values[index.index(values.len())]
+            })
         })
     };
 
     // Convert the value based on the parameter type
     match *param {
         DynSolType::Address => {
-            let deployed_libs = state.deployed_libs.clone();
+            let deployed_libs = state.deployed_libs().to_vec();
             value()
                 .prop_map(move |value| {
                     let mut fuzzed_addr = Address::from_word(value);
@@ -177,13 +178,16 @@ pub fn fuzz_param_from_state(
             let state = state.clone();
             (proptest::bool::weighted(0.3), any::<prop::sample::Index>())
                 .prop_flat_map(move |(use_ast, select_index)| {
-                    let dict = state.dictionary_read();
-
-                    // AST string literals available: 30% probability
-                    let ast_strings = dict.ast_strings();
-                    if use_ast && !ast_strings.is_empty() {
-                        let s = &ast_strings.as_slice()[select_index.index(ast_strings.len())];
-                        return Just(DynSolValue::String(s.clone())).boxed();
+                    if let Some(value) = state.with_dictionary(|dict| {
+                        // AST string literals available: 30% probability
+                        let ast_strings = dict.ast_strings();
+                        if use_ast && !ast_strings.is_empty() {
+                            let s = &ast_strings.as_slice()[select_index.index(ast_strings.len())];
+                            return Some(DynSolValue::String(s.clone()));
+                        }
+                        None
+                    }) {
+                        return Just(value).boxed();
                     }
 
                     // Fallback to random string generation
@@ -206,20 +210,23 @@ pub fn fuzz_param_from_state(
                 any::<prop::sample::Index>(),
             )
                 .prop_map(move |(word, use_ast_string, use_ast_bytes, select_index)| {
-                    let dict = state_clone.dictionary_read();
+                    if let Some(value) = state_clone.with_dictionary(|dict| {
+                        // Try string literals as bytes: 10% chance
+                        let ast_strings = dict.ast_strings();
+                        if use_ast_string && !ast_strings.is_empty() {
+                            let s = &ast_strings.as_slice()[select_index.index(ast_strings.len())];
+                            return Some(DynSolValue::Bytes(s.as_bytes().to_vec()));
+                        }
 
-                    // Try string literals as bytes: 10% chance
-                    let ast_strings = dict.ast_strings();
-                    if use_ast_string && !ast_strings.is_empty() {
-                        let s = &ast_strings.as_slice()[select_index.index(ast_strings.len())];
-                        return DynSolValue::Bytes(s.as_bytes().to_vec());
-                    }
-
-                    // Try hex literals: 20% chance
-                    let ast_bytes = dict.ast_bytes();
-                    if use_ast_bytes && !ast_bytes.is_empty() {
-                        let bytes = &ast_bytes.as_slice()[select_index.index(ast_bytes.len())];
-                        return DynSolValue::Bytes(bytes.to_vec());
+                        // Try hex literals: 20% chance
+                        let ast_bytes = dict.ast_bytes();
+                        if use_ast_bytes && !ast_bytes.is_empty() {
+                            let bytes = &ast_bytes.as_slice()[select_index.index(ast_bytes.len())];
+                            return Some(DynSolValue::Bytes(bytes.to_vec()));
+                        }
+                        None
+                    }) {
+                        return value;
                     }
 
                     // Fallback to the generated word from the dictionary: 70% chance
@@ -292,7 +299,7 @@ pub fn fuzz_param_from_state(
 fn select_random_address(
     current: Address,
     test_runner: &mut TestRunner,
-    state: &EvmFuzzState,
+    state: &impl FuzzStateReader,
     senders: Option<&SenderFilters>,
 ) -> Option<Address> {
     if let Some(senders) = senders {
@@ -304,32 +311,34 @@ fn select_random_address(
         }
 
         // Pick from dictionary state values, excluding addresses in the exclusion list
-        let dict = state.dictionary_read();
-        let values = dict.values();
-        if values.is_empty() {
-            return None;
-        }
-
-        // Try a few times to find a non-excluded address
-        for _ in 0..10 {
-            let index = test_runner.rng().random_range(0..values.len());
-            let addr = Address::from_word(values[index]);
-            if addr != current && !senders.excluded.contains(&addr) {
-                return Some(addr);
+        state.with_dictionary(|dict| {
+            let values = dict.values();
+            if values.is_empty() {
+                return None;
             }
-        }
-        None
+
+            // Try a few times to find a non-excluded address
+            for _ in 0..10 {
+                let index = test_runner.rng().random_range(0..values.len());
+                let addr = Address::from_word(values[index]);
+                if addr != current && !senders.excluded.contains(&addr) {
+                    return Some(addr);
+                }
+            }
+            None
+        })
     } else {
         // No sender filters, just pick from dictionary state values
-        let dict = state.dictionary_read();
-        let values = dict.values();
-        if values.is_empty() {
-            None
-        } else {
-            let index = test_runner.rng().random_range(0..values.len());
-            let addr = Address::from_word(values[index]);
-            (addr != current).then_some(addr)
-        }
+        state.with_dictionary(|dict| {
+            let values = dict.values();
+            if values.is_empty() {
+                None
+            } else {
+                let index = test_runner.rng().random_range(0..values.len());
+                let addr = Address::from_word(values[index]);
+                (addr != current).then_some(addr)
+            }
+        })
     }
 }
 
@@ -338,7 +347,7 @@ pub fn mutate_param_value(
     param: &DynSolType,
     value: DynSolValue,
     test_runner: &mut TestRunner,
-    state: &EvmFuzzState,
+    state: &impl FuzzStateReader,
 ) -> DynSolValue {
     mutate_param_value_inner(param, value, test_runner, state, None)
 }
@@ -351,7 +360,7 @@ pub fn mutate_param_value_with_senders(
     param: &DynSolType,
     value: DynSolValue,
     test_runner: &mut TestRunner,
-    state: &EvmFuzzState,
+    state: &impl FuzzStateReader,
     senders: &SenderFilters,
 ) -> DynSolValue {
     mutate_param_value_inner(param, value, test_runner, state, Some(senders))
@@ -361,7 +370,7 @@ fn mutate_param_value_inner(
     param: &DynSolType,
     value: DynSolValue,
     test_runner: &mut TestRunner,
-    state: &EvmFuzzState,
+    state: &impl FuzzStateReader,
     senders: Option<&SenderFilters>,
 ) -> DynSolValue {
     let new_value = |param: &DynSolType, test_runner: &mut TestRunner| {
@@ -488,7 +497,7 @@ fn mutate_random_tuple_value(
     tuple_values: &mut [DynSolValue],
     tuple_types: &[DynSolType],
     test_runner: &mut TestRunner,
-    state: &EvmFuzzState,
+    state: &impl FuzzStateReader,
     senders: Option<&SenderFilters>,
 ) {
     let id = test_runner.rng().random_range(0..tuple_values.len());
@@ -503,7 +512,7 @@ fn mutate_random_array_value(
     array_values: &mut [DynSolValue],
     element_type: &DynSolType,
     test_runner: &mut TestRunner,
-    state: &EvmFuzzState,
+    state: &impl FuzzStateReader,
     senders: Option<&SenderFilters>,
 ) {
     let elem = array_values.choose_mut(&mut test_runner.rng()).unwrap();
@@ -578,7 +587,7 @@ mod tests {
         literals.words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("hello"));
         literals.words.entry(DynSolType::FixedBytes(32)).or_default().insert(keccak256("world"));
 
-        let state = EvmFuzzState::test();
+        let mut state = EvmFuzzState::test();
         state.seed_literals(literals);
 
         let cfg = proptest::test_runner::Config { failure_persistence: None, ..Default::default() };
@@ -627,7 +636,7 @@ mod tests {
         use alloy_dyn_abi::{DynSolType, DynSolValue};
         use alloy_primitives::Address;
 
-        let state = EvmFuzzState::test();
+        let mut state = EvmFuzzState::test();
 
         // Add addresses to dictionary via state values.
         let addr1 = Address::repeat_byte(0x11);
@@ -680,7 +689,7 @@ mod tests {
         use crate::invariant::SenderFilters;
         use alloy_primitives::Address;
 
-        let state = EvmFuzzState::test();
+        let mut state = EvmFuzzState::test();
 
         // Add addresses to dictionary (these should NOT be selected when targeted is set).
         let dict_addr = Address::repeat_byte(0xdd);
@@ -732,7 +741,7 @@ mod tests {
         use crate::invariant::SenderFilters;
         use alloy_primitives::Address;
 
-        let state = EvmFuzzState::test();
+        let mut state = EvmFuzzState::test();
 
         // Add addresses to dictionary.
         let addr1 = Address::repeat_byte(0x11);
