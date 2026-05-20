@@ -393,6 +393,67 @@ contract LockedSelfdestructToSelf { //~WARN: contract can receive ETH but has no
     }
 }
 
+// Receivers reached through struct fields, mapping/array elements, function returns,
+// and ternaries are valid `address payable` values and must be recognized as exits.
+contract OkStructFieldReceiver {
+    struct Vault {
+        address payable owner;
+    }
+
+    Vault v;
+
+    function deposit() external payable {}
+
+    function withdraw(uint256 x) external {
+        v.owner.transfer(x);
+    }
+}
+
+contract OkMappingReceiver {
+    mapping(uint256 => address payable) recipients;
+
+    function deposit() external payable {}
+
+    function withdraw(uint256 i, uint256 x) external {
+        recipients[i].transfer(x);
+    }
+}
+
+contract OkArrayReceiver {
+    address payable[] recipients;
+
+    function deposit() external payable {}
+
+    function withdraw(uint256 i, uint256 x) external {
+        recipients[i].transfer(x);
+    }
+}
+
+contract OkReturnedAddressReceiver {
+    address payable treasury;
+
+    function deposit() external payable {}
+
+    function _getTreasury() internal view returns (address payable) {
+        return treasury;
+    }
+
+    function withdraw(uint256 x) external {
+        _getTreasury().transfer(x);
+    }
+}
+
+contract OkTernaryReceiver {
+    address payable a;
+    address payable b;
+
+    function deposit() external payable {}
+
+    function withdraw(bool which, uint256 x) external {
+        (which ? a : b).transfer(x);
+    }
+}
+
 // `Lib.<fn>(...)` member-call dispatch.
 library SendLib {
     function pay(address payable to, uint256 amount) internal {

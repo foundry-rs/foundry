@@ -301,9 +301,14 @@ fn expr_type<'hir>(
             // unknown so they don't reject candidates.
             _ => None,
         },
-        // Elementary cast `T(x)`.
         ExprKind::Call(callee, ..) => match &callee.peel_parens().kind {
+            // `T(x)` elementary cast.
             ExprKind::Type(ty) => Some(ty.kind.clone()),
+            // `f(...)` — single-return function call.
+            ExprKind::Ident(reses) => reses.iter().find_map(|res| match res {
+                Res::Item(ItemId::Function(fid)) => single_return_type(hir, *fid),
+                _ => None,
+            }),
             _ => None,
         },
         ExprKind::New(ty) => Some(ty.kind.clone()),
@@ -312,10 +317,49 @@ fn expr_type<'hir>(
             Res::Item(ItemId::Contract(id)) => Some(TypeKind::Custom(ItemId::Contract(*id))),
             _ => None,
         }),
-        ExprKind::Member(base, member) => is_address_builtin_member(base, member.name)
-            .then_some(TypeKind::Elementary(ElementaryType::Address(false))),
+        ExprKind::Member(base, member) => {
+            if is_address_builtin_member(base, member.name) {
+                return Some(TypeKind::Elementary(ElementaryType::Address(false)));
+            }
+            // Struct field access: `s.field`.
+            match expr_type(hir, base)? {
+                TypeKind::Custom(ItemId::Struct(sid)) => struct_field_type(hir, sid, member.name),
+                _ => None,
+            }
+        }
+        // `m[i]` for mappings and arrays.
+        ExprKind::Index(base, _) => match expr_type(hir, base)? {
+            TypeKind::Mapping(m) => Some(m.value.kind.clone()),
+            TypeKind::Array(a) => Some(a.element.kind.clone()),
+            _ => None,
+        },
+        // `c ? a : b` — branches must agree per Solidity, so either type suffices.
+        ExprKind::Ternary(_, then_e, else_e) => {
+            expr_type(hir, then_e).or_else(|| expr_type(hir, else_e))
+        }
         _ => None,
     }
+}
+
+/// Type of struct field `name` declared in `sid`.
+fn struct_field_type<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    sid: hir::StructId,
+    name: Symbol,
+) -> Option<hir::TypeKind<'hir>> {
+    hir.strukt(sid).fields.iter().find_map(|&fid| {
+        let var = hir.variable(fid);
+        (var.name?.name == name).then(|| var.ty.kind.clone())
+    })
+}
+
+/// Return type of `fid` when it has exactly one return value.
+fn single_return_type<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    fid: FunctionId,
+) -> Option<hir::TypeKind<'hir>> {
+    let func = hir.function(fid);
+    (func.returns.len() == 1).then(|| hir.variable(func.returns[0]).ty.kind.clone())
 }
 
 /// Conservative type-compatibility check: only obvious matches and standard widenings count.
@@ -461,27 +505,11 @@ fn is_self_address(expr: &hir::Expr<'_>) -> bool {
     }
 }
 
-/// Returns `true` if `expr` is statically known to be an `address`/`address payable` value.
-/// Unknown types return `false` so userland members named like `.transfer` aren't taken for exits.
+/// Returns `true` if `expr` is statically typed as `address`/`address payable`. Contract-typed
+/// receivers are intentionally rejected: `.transfer` / `.send` on them dispatch to a user-defined
+/// member, not the EVM opcode.
 fn receiver_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Payable(_) => true,
-        ExprKind::Lit(lit) => matches!(lit.kind, LitKind::Address(_)),
-        // `address(x)` cast.
-        ExprKind::Call(callee, ..) => matches!(
-            &callee.peel_parens().kind,
-            ExprKind::Type(hir::Type {
-                kind: TypeKind::Elementary(ElementaryType::Address(_)),
-                ..
-            })
-        ),
-        ExprKind::Member(base, member) => is_address_builtin_member(base, member.name),
-        ExprKind::Ident(reses) => reses.iter().any(|res| match res {
-            Res::Item(ItemId::Variable(id)) => is_address_type(&hir.variable(*id).ty),
-            _ => false,
-        }),
-        _ => false,
-    }
+    matches!(expr_type(hir, expr), Some(TypeKind::Elementary(ElementaryType::Address(_))))
 }
 
 /// `msg.sender`, `tx.origin`, `block.coinbase`.
@@ -494,10 +522,6 @@ fn is_address_builtin_member(base: &hir::Expr<'_>, member: Symbol) -> bool {
             (sym::msg, sym::sender) | (sym::tx, kw::Origin) | (sym::block, kw::Coinbase)
         )
     })
-}
-
-const fn is_address_type(ty: &hir::Type<'_>) -> bool {
-    matches!(ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
 }
 
 /// Returns `true` if the expression is the integer literal `0`.
