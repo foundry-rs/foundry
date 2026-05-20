@@ -159,6 +159,15 @@ impl FuzzCorpusConfig {
         !self.sancov_edges && (self.corpus_dir.is_some() || self.show_edge_coverage)
     }
 
+    /// Whether EVM comparison operand capture is enabled.
+    ///
+    /// EVM comparison operands are only useful for coverage-guided fuzzing, so they are derived
+    /// from corpus mode. Disabled when sancov edge coverage is active because sancov replaces EVM
+    /// bytecode coverage as the guidance signal.
+    pub const fn collect_evm_cmp_log(&self) -> bool {
+        !self.sancov_edges && self.corpus_dir.is_some()
+    }
+
     /// Whether sancov edge coverage collection is enabled.
     pub const fn collect_sancov_edges(&self) -> bool {
         self.sancov_edges

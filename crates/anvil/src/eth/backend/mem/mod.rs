@@ -4326,7 +4326,10 @@ fn get_pool_transactions_nonce(
 ) -> Option<u64> {
     if let Some(highest_nonce) = pool_transactions
         .iter()
-        .filter(|tx| *tx.pending_transaction.sender() == address)
+        .filter(|tx| {
+            *tx.pending_transaction.sender() == address
+                && !tx.pending_transaction.transaction.as_ref().has_nonzero_tempo_nonce_key()
+        })
         .map(|tx| tx.pending_transaction.nonce())
         .max()
     {

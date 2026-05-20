@@ -30,6 +30,9 @@ use unused_return::UNUSED_RETURN;
 mod locked_ether;
 use locked_ether::LOCKED_ETHER;
 
+mod weak_prng;
+use weak_prng::WEAK_PRNG;
+
 register_lints!(
     (DivideBeforeMultiply, early, (DIVIDE_BEFORE_MULTIPLY)),
     (IncorrectERC20Interface, late, (INCORRECT_ERC20_INTERFACE)),
@@ -40,5 +43,6 @@ register_lints!(
     (UninitializedLocal, late, (UNINITIALIZED_LOCAL)),
     (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
     (UnusedReturn, late, (UNUSED_RETURN)),
-    (LockedEther, late, (LOCKED_ETHER))
+    (LockedEther, late, (LOCKED_ETHER)),
+    (WeakPrng, early, (WEAK_PRNG))
 );
