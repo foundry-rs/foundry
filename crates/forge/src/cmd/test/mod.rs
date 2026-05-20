@@ -1256,21 +1256,29 @@ fn add_junit_test_cases(
         return;
     }
 
+    let mut add_expanded_case =
+        |name: &str,
+         status: TestStatus,
+         reason: Option<&str>,
+         counterexample: Option<&CounterExample>| {
+            add_junit_test_case(
+                test_suite,
+                name,
+                status,
+                reason,
+                test_result,
+                output.case_system_out(status, reason, name, counterexample),
+            );
+        };
+
     if test_result.invariant_predicate_results.is_empty() {
-        let (status, reason) = test_result
-            .invariant_failures
-            .first()
-            .map(|failure| (TestStatus::Failure, Some(failure.reason())))
-            .unwrap_or((TestStatus::Success, None));
-        let counterexample =
-            test_result.invariant_failures.first().and_then(|failure| failure.counterexample());
-        add_junit_test_case(
-            test_suite,
+        let failure = test_result.invariant_failures.first();
+        let status = if failure.is_some() { TestStatus::Failure } else { TestStatus::Success };
+        add_expanded_case(
             test_name,
             status,
-            reason,
-            test_result,
-            output.case_system_out(status, reason, test_name, counterexample),
+            failure.map(|failure| failure.reason()),
+            failure.and_then(|failure| failure.counterexample()),
         );
     } else {
         for predicate in &test_result.invariant_predicate_results {
@@ -1279,36 +1287,22 @@ fn add_junit_test_cases(
                 .iter()
                 .find(|failure| failure.name() == predicate.name.as_str());
             let name = format!("{}()", predicate.name);
-            add_junit_test_case(
-                test_suite,
+            add_expanded_case(
                 &name,
                 predicate.status,
                 predicate.reason.as_deref(),
-                test_result,
-                output.case_system_out(
-                    predicate.status,
-                    predicate.reason.as_deref(),
-                    &name,
-                    failure.and_then(|failure| failure.counterexample()),
-                ),
+                failure.and_then(|failure| failure.counterexample()),
             );
         }
     }
 
     for failure in &test_result.invariant_handler_failures {
         let name = format!("handler {}", failure.name());
-        add_junit_test_case(
-            test_suite,
+        add_expanded_case(
             &name,
             TestStatus::Failure,
             Some(failure.reason()),
-            test_result,
-            output.case_system_out(
-                TestStatus::Failure,
-                Some(failure.reason()),
-                &name,
-                failure.counterexample(),
-            ),
+            failure.counterexample(),
         );
     }
 }
