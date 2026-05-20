@@ -37,6 +37,7 @@ use thiserror::Error;
 #[macro_use]
 pub mod macros;
 
+pub mod analysis;
 mod calls;
 pub mod codesize;
 pub mod gas;
