@@ -74,6 +74,18 @@ contract WeakPrng is WeakPrngBase(block.timestamp % 10) { //~WARN: weak randomne
         return block.timestamp % 600; //~WARN: weak randomness derived from a predictable on-chain value
     }
 
+    function timestampMinutesSubdenomination() external view returns (uint256) {
+        return block.timestamp % 1 minutes; //~WARN: weak randomness derived from a predictable on-chain value
+    }
+
+    function timestampTenMinutesSubdenomination() external view returns (uint256) {
+        return block.timestamp % 10 minutes; //~WARN: weak randomness derived from a predictable on-chain value
+    }
+
+    function reversedTimestampBucket() external view returns (uint256) {
+        return 1 days % block.timestamp; //~WARN: weak randomness derived from a predictable on-chain value
+    }
+
     // SHOULD PASS:
 
     function timestampOnly() external view returns (uint256) {

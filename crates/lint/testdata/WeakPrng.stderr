@@ -126,3 +126,27 @@ LL │         return block.timestamp % 600;
    │
    ╰ help: https://getfoundry.sh/forge/linting/weak-prng
 
+warning[weak-prng]: weak randomness derived from a predictable on-chain value
+   ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
+   │
+LL │         return block.timestamp % 1 minutes;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/weak-prng
+
+warning[weak-prng]: weak randomness derived from a predictable on-chain value
+   ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
+   │
+LL │         return block.timestamp % 10 minutes;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/weak-prng
+
+warning[weak-prng]: weak randomness derived from a predictable on-chain value
+   ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
+   │
+LL │         return 1 days % block.timestamp;
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/weak-prng
+

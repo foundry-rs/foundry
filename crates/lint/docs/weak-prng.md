@@ -44,9 +44,12 @@ This lint is intentionally local and conservative. It does not attempt interproc
 tracking, so values copied into a variable before use may require manual review.
 
 The lint ignores obvious day-sized time-bucketing expressions such as `block.timestamp % 1 days`,
-`block.timestamp % 86400`, and `block.timestamp % (24 * 60 * 60)`. Short numeric moduli and
-variable moduli such as `block.timestamp % period` are still reported because the lint cannot infer
-whether they are durations or randomness upper bounds.
+`block.timestamp % 86400`, and `block.timestamp % (24 * 60 * 60)`. The exception only applies when
+`block.timestamp` is the left-hand side and the right-hand side evaluates to a constant that is at
+least one day and a whole-day multiple. Sub-day buckets such as `block.timestamp % 1 minutes` or
+`% 600`, reversed forms such as `1 days % block.timestamp`, and variable moduli such as
+`block.timestamp % period` are still reported because the lint cannot infer whether they are
+durations or randomness upper bounds.
 
 Only Solidity expressions are inspected. Inline assembly/Yul entropy sources such as `timestamp()`
 or `number()` are out of scope.

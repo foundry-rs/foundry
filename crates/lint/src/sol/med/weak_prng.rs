@@ -5,7 +5,7 @@ use crate::{
 };
 use solar::{
     ast::{
-        BinOp, BinOpKind, Expr, ExprKind, IndexKind, LitKind, SourceUnit, SubDenomination,
+        BinOp, BinOpKind, Expr, ExprKind, IndexKind, LitKind, SourceUnit,
         visit::Visit,
     },
     interface::SpannedOption,
@@ -66,8 +66,7 @@ fn is_randomness_modulo(lhs: &Expr<'_>, rhs: &Expr<'_>) -> bool {
 }
 
 fn is_timestamp_time_bucket(lhs: &Expr<'_>, rhs: &Expr<'_>) -> bool {
-    (is_block_timestamp(lhs.peel_parens()) && is_time_bucket_modulus(rhs))
-        || (is_time_bucket_modulus(lhs) && is_block_timestamp(rhs.peel_parens()))
+    is_block_timestamp(lhs.peel_parens()) && is_time_bucket_modulus(rhs)
 }
 
 fn is_timestamp_time_bucket_expr(expr: &Expr<'_>) -> bool {
@@ -81,20 +80,17 @@ fn is_timestamp_time_bucket_expr(expr: &Expr<'_>) -> bool {
 fn is_time_bucket_modulus(expr: &Expr<'_>) -> bool {
     const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 
-    is_time_subdenomination(expr)
-        || const_eval_u64(expr)
-            .is_some_and(|value| value >= SECONDS_PER_DAY && value % SECONDS_PER_DAY == 0)
-}
-
-fn is_time_subdenomination(expr: &Expr<'_>) -> bool {
-    matches!(&expr.peel_parens().kind, ExprKind::Lit(_, Some(SubDenomination::Time(_))))
+    const_eval_u64(expr)
+        .is_some_and(|value| value >= SECONDS_PER_DAY && value % SECONDS_PER_DAY == 0)
 }
 
 fn const_eval_u64(expr: &Expr<'_>) -> Option<u64> {
     match &expr.peel_parens().kind {
-        ExprKind::Lit(lit, _) => {
-            if let LitKind::Number(value) = lit.kind {
-                u64::try_from(value).ok()
+        ExprKind::Lit(lit, sub) => {
+            if let LitKind::Number(value) = &lit.kind {
+                let base = u64::try_from(value).ok()?;
+                let multiplier = sub.map(|s| s.value()).unwrap_or(1);
+                base.checked_mul(multiplier)
             } else {
                 None
             }
