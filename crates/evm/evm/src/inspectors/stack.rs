@@ -4,7 +4,7 @@ use super::{
     TempoLabels, TracingInspector,
 };
 use alloy_primitives::{
-    Address, B256, Bytes, Log, TxKind, U256,
+    Address, B256, Bytes, Log, TxKind, U256, keccak256,
     map::{AddressHashMap, AddressMap},
 };
 
@@ -396,6 +396,9 @@ pub struct InspectorStackInner {
     pub batch_create_counter: u64,
     /// Whether the one-shot `--batch` rewrite warning has already been emitted.
     pub batch_rewrite_warned: bool,
+    /// Per-inspector random seed mixed into `--batch` CREATE2 salts, ensuring re-runs
+    /// at identical on-chain state still produce distinct salts. Lazily initialized.
+    pub batch_rewrite_process_salt: Option<u64>,
 }
 
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
@@ -1109,10 +1112,13 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         );
                         self.inner.batch_rewrite_warned = true;
                     }
+                    let process_salt =
+                        *self.inner.batch_rewrite_process_salt.get_or_insert_with(rand::random);
+                    let chain_id = ecx.cfg().chain_id();
                     let counter = self.inner.batch_create_counter;
                     self.inner.batch_create_counter = counter.wrapping_add(1);
                     let nonce = ecx.journal_mut().load_account(inputs.caller()).ok()?.info.nonce;
-                    U256::from(nonce) << 64 | U256::from(counter)
+                    compute_batch_create_salt(process_salt, chain_id, nonce, counter)
                 }
                 _ => return None,
             };
@@ -1562,5 +1568,53 @@ impl<FEN: FoundryEvmNetwork> Deref for InspectorStack<FEN> {
 impl<FEN: FoundryEvmNetwork> DerefMut for InspectorStack<FEN> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
+    }
+}
+
+/// Derive the CREATE2 salt used by `--batch` CREATE rewrites.
+///
+/// Mixes a per-inspector random seed, the chain id, the caller nonce, and a per-batch counter
+/// so that two simulations launched at the same on-chain state produce distinct salts and
+/// do not collide at the Arachnid factory.
+fn compute_batch_create_salt(process_salt: u64, chain_id: u64, nonce: u64, counter: u64) -> U256 {
+    let mut buf = [0u8; 32];
+    buf[0..8].copy_from_slice(&process_salt.to_be_bytes());
+    buf[8..16].copy_from_slice(&chain_id.to_be_bytes());
+    buf[16..24].copy_from_slice(&nonce.to_be_bytes());
+    buf[24..32].copy_from_slice(&counter.to_be_bytes());
+    U256::from_be_bytes(keccak256(buf).0)
+}
+
+#[cfg(test)]
+mod batch_create_salt_tests {
+    use super::compute_batch_create_salt;
+
+    #[test]
+    fn distinct_salts_across_simulations_at_same_nonce() {
+        // Two "simulations" with different per-inspector seeds but identical on-chain state.
+        let a = compute_batch_create_salt(0xabcd_ef01_2345_6789, 1, 5, 0);
+        let b = compute_batch_create_salt(0x1122_3344_5566_7788, 1, 5, 0);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn counter_changes_salt() {
+        let a = compute_batch_create_salt(1, 1, 5, 0);
+        let b = compute_batch_create_salt(1, 1, 5, 1);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn chain_id_changes_salt() {
+        let a = compute_batch_create_salt(1, 1, 5, 0);
+        let b = compute_batch_create_salt(1, 2, 5, 0);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn deterministic_for_same_inputs() {
+        let a = compute_batch_create_salt(42, 1, 5, 7);
+        let b = compute_batch_create_salt(42, 1, 5, 7);
+        assert_eq!(a, b);
     }
 }
