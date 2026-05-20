@@ -267,13 +267,13 @@ impl<'hir> Analyzer<'hir> {
         let Some(target) = underlying_var(lhs) else { return };
         self.kill_permits_for(target);
         self.kill_repayments_for(target);
+        // Drop any prior safe-fact before the state-var bail-out.
+        self.safe_vars.remove(&target);
         if self.hir.variable(target).kind.is_state() {
             return;
         }
         if rhs.is_some_and(|r| self.is_safe(r)) {
             self.safe_vars.insert(target);
-        } else {
-            self.safe_vars.remove(&target);
         }
     }
 
@@ -589,8 +589,9 @@ fn collect_modifier_safety(
     for stmt in &body.stmts[..placeholder_idx] {
         let _ = a.visit_stmt(stmt);
     }
+    // Skip caller-args that can't carry a safe-fact (mutable storage).
     for (mp, caller) in arg_map {
-        if a.safe_vars.contains(&mp) {
+        if a.safe_vars.contains(&mp) && a.is_safe_target(caller) {
             out_safe.insert(caller);
         }
     }

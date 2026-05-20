@@ -418,6 +418,12 @@ contract ArbitrarySendErc20 {
         token.transferFrom(from, to, a);
     }
 
+    // Mutable storage modifier-arg reassigned before the sink.
+    function badModifierMutableState(address from, address to, uint256 a) public onlySelf(owner) {
+        owner = from;
+        token.transferFrom(owner, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
     // OpenZeppelin's `_msgSender()` resolves to `msg.sender`.
     function okMsgSenderHelper(address to, uint256 a) public {
         token.transferFrom(_msgSender(), to, a);
