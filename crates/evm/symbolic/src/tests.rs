@@ -2035,6 +2035,63 @@ fn portfolio_sat_beats_early_unsat() {
     assert!(solver.is_sat(&[]).unwrap());
 }
 
+#[cfg(unix)]
+#[test]
+/// Regression coverage for `run_solver_commands` staged portfolio launching.
+fn portfolio_winner_skips_delayed_solver() {
+    let marker = std::env::temp_dir().join(format!(
+        "foundry-symbolic-delayed-solver-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    let marker_arg = marker.display().to_string();
+    let commands = vec![
+        SolverCommand::new(vec!["/bin/echo".to_string(), "sat".to_string()], false).unwrap(),
+        SolverCommand::new(
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "printf started > \"$1\"; printf 'sat\n'".to_string(),
+                "sh".to_string(),
+                marker_arg,
+            ],
+            false,
+        )
+        .unwrap(),
+    ];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 1, false);
+
+    assert!(solver.is_sat(&[]).unwrap());
+    assert!(!marker.exists());
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for delayed solvers still rescuing unresolved queries.
+fn portfolio_delayed_solver_can_rescue_stalled_leader() {
+    let commands = vec![
+        SolverCommand::new(
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "sleep 0.3; printf 'unknown\n'".to_string(),
+            ],
+            false,
+        )
+        .unwrap(),
+        SolverCommand::new(
+            vec!["/bin/sh".to_string(), "-c".to_string(), "printf 'sat\n'".to_string()],
+            false,
+        )
+        .unwrap(),
+    ];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 1, false);
+    let started_at = Instant::now();
+
+    assert!(solver.is_sat(&[]).unwrap());
+    assert!(started_at.elapsed() >= Duration::from_millis(100));
+}
+
 #[test]
 /// Regression coverage for `assertion_revert_classifies_assert_panic_only`.
 fn assertion_revert_classifies_assert_panic_only() {
