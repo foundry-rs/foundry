@@ -413,11 +413,28 @@ impl<'hir> hir::Visit<'hir> for SendChecker<'_, 'hir> {
             match &callee.peel_parens().kind {
                 ExprKind::Ident(reses) => {
                     for res in *reses {
-                        if let Res::Item(ItemId::Function(fid)) = res
-                            && !self.visited.contains(fid)
-                            && args_match(self.hir, args, self.hir.function(*fid).parameters)
-                        {
-                            self.worklist.push(*fid);
+                        match res {
+                            Res::Item(ItemId::Function(fid))
+                                if !self.visited.contains(fid)
+                                    && args_match(
+                                        self.hir,
+                                        args,
+                                        self.hir.function(*fid).parameters,
+                                    ) =>
+                            {
+                                self.worklist.push(*fid);
+                            }
+                            // Function-typed state/local variable: the bound target isn't
+                            // statically known to us, so treat the call as opaque.
+                            Res::Item(ItemId::Variable(id))
+                                if matches!(
+                                    self.hir.variable(*id).ty.kind,
+                                    TypeKind::Function(_)
+                                ) =>
+                            {
+                                return ControlFlow::Break(());
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -468,6 +485,20 @@ fn expr_sends_ether(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
                 }
             }
             if matches!(member.name, kw::Delegatecall | kw::Callcode) {
+                return true;
+            }
+            // Unknown member on an address-typed receiver is only legal via a `using for`
+            // binding (Solar's HIR doesn't expose those); assume conservatively that the
+            // bound library function could move ETH.
+            if !matches!(
+                member.name,
+                sym::transfer
+                    | sym::send
+                    | kw::Call
+                    | kw::Delegatecall
+                    | kw::Callcode
+                    | kw::Staticcall
+            ) {
                 return true;
             }
         }

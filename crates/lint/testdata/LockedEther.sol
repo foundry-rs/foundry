@@ -454,6 +454,102 @@ contract OkTernaryReceiver {
     }
 }
 
+// `.send` and low-level `{value:}` on compound receivers reuse the same type-inference
+// path as `.transfer`; pin both shapes to lock them in.
+contract OkMappingSend {
+    mapping(uint256 => address payable) recipients;
+
+    function deposit() external payable {}
+
+    function withdraw(uint256 i, uint256 x) external {
+        bool ok = recipients[i].send(x);
+        require(ok);
+    }
+}
+
+contract OkCallWithValueThroughReturn {
+    address payable treasury;
+
+    function deposit() external payable {}
+
+    function _treasury() internal view returns (address payable) {
+        return treasury;
+    }
+
+    function withdraw(uint256 x) external {
+        (bool ok,) = _treasury().call{value: x}("");
+        require(ok);
+    }
+}
+
+// `super.<m>(...)` whose call site lives in a base that is part of a diamond. The
+// derived contract's linearization places `DiamondRightBranch` before
+// `DiamondLeftBranch`, so resolving `super` from the most-derived linearization would
+// hit `DiamondRightBranch`'s empty override; only the call-site contract's own
+// linearization reaches `DiamondRoot._exit`.
+abstract contract DiamondRoot {
+    function _exit(address payable to) internal virtual {
+        to.transfer(1 wei);
+    }
+}
+
+abstract contract DiamondLeftBranch is DiamondRoot {
+    function _exit(address payable to) internal virtual override {
+        super._exit(to);
+    }
+}
+
+abstract contract DiamondRightBranch is DiamondRoot {
+    function _exit(address payable to) internal virtual override {}
+}
+
+contract OkDiamondSuperFromBase is DiamondLeftBranch, DiamondRightBranch {
+    receive() external payable {}
+
+    function _exit(address payable to)
+        internal
+        override(DiamondLeftBranch, DiamondRightBranch)
+    {
+        DiamondLeftBranch._exit(to);
+    }
+
+    function withdraw(address payable to) external {
+        _exit(to);
+    }
+}
+
+// `using for` and function-pointer dispatch route through bindings Solar's HIR doesn't
+// expose; treat those calls as opaque so the lint doesn't flag valid withdraw paths.
+library SendViaLib {
+    function sweep(address payable to, uint256 amount) internal {
+        to.transfer(amount);
+    }
+}
+
+contract OkUsingFor {
+    using SendViaLib for address payable;
+
+    function deposit() external payable {}
+
+    function withdraw(address payable to, uint256 x) external {
+        to.sweep(x);
+    }
+}
+
+contract OkFunctionPointer {
+    function _doSend(address payable to, uint256 amount) internal {
+        to.transfer(amount);
+    }
+
+    function(address payable, uint256) internal sender = _doSend;
+
+    function deposit() external payable {}
+
+    function withdraw(address payable to, uint256 x) external {
+        sender(to, x);
+    }
+}
+
 // `Lib.<fn>(...)` member-call dispatch.
 library SendLib {
     function pay(address payable to, uint256 amount) internal {
