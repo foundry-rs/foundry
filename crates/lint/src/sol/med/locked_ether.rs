@@ -301,7 +301,7 @@ fn expr_type<'hir>(
             // unknown so they don't reject candidates.
             _ => None,
         },
-        ExprKind::Call(callee, ..) => match &callee.peel_parens().kind {
+        ExprKind::Call(callee, args, _) => match &callee.peel_parens().kind {
             // `T(x)` elementary cast.
             ExprKind::Type(ty) => Some(ty.kind.clone()),
             // `f(...)` — single-return function call.
@@ -309,6 +309,13 @@ fn expr_type<'hir>(
                 Res::Item(ItemId::Function(fid)) => single_return_type(hir, *fid),
                 _ => None,
             }),
+            // `obj.method(...)` — single-return method on a contract-typed receiver.
+            ExprKind::Member(base, member) => {
+                let TypeKind::Custom(ItemId::Contract(cid)) = expr_type(hir, base)? else {
+                    return None;
+                };
+                resolve_member_return_type(hir, cid, member.name, args)
+            }
             _ => None,
         },
         ExprKind::New(ty) => Some(ty.kind.clone()),
@@ -360,6 +367,34 @@ fn single_return_type<'hir>(
 ) -> Option<hir::TypeKind<'hir>> {
     let func = hir.function(fid);
     (func.returns.len() == 1).then(|| hir.variable(func.returns[0]).ty.kind.clone())
+}
+
+/// Single-return type of `name` defined on `cid` or any of its bases, restricted to
+/// overloads compatible with `args`. Walks the linearization most-derived first.
+fn resolve_member_return_type<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    cid: hir::ContractId,
+    name: Symbol,
+    args: &CallArgs<'hir>,
+) -> Option<hir::TypeKind<'hir>> {
+    let contract = hir.contract(cid);
+    let bases: &[hir::ContractId] = if contract.linearization_failed() {
+        std::slice::from_ref(&cid)
+    } else {
+        contract.linearized_bases
+    };
+    for &bid in bases {
+        for fid in hir.contract(bid).all_functions() {
+            let func = hir.function(fid);
+            if func.name.is_some_and(|n| n.name == name)
+                && args_match(hir, args, func.parameters)
+                && let Some(ty) = single_return_type(hir, fid)
+            {
+                return Some(ty);
+            }
+        }
+    }
+    None
 }
 
 /// Conservative type-compatibility check: only obvious matches and standard widenings count.

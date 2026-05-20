@@ -550,6 +550,23 @@ contract OkFunctionPointer {
     }
 }
 
+// Receiver produced by a method call on a contract-typed value: the inner call's return
+// type must propagate so `.transfer` on it is recognized as an exit.
+contract Registry {
+    address payable private _owner;
+    function getOwner() external view returns (address payable) { return _owner; }
+}
+
+contract OkMemberCallReturnReceiver {
+    Registry registry;
+
+    function deposit() external payable {}
+
+    function withdraw(uint256 x) external {
+        registry.getOwner().transfer(x);
+    }
+}
+
 // `Lib.<fn>(...)` member-call dispatch.
 library SendLib {
     function pay(address payable to, uint256 amount) internal {
