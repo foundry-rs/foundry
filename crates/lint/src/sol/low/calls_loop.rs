@@ -422,8 +422,7 @@ fn member_return_type<'hir>(
     for item in hir.contract_item_ids(contract_id) {
         let Some(func_id) = item.as_function() else { continue };
         let func = hir.function(func_id);
-        if !func.name.is_some_and(|name| name.name == member.name) || func.parameters.len() != arity
-        {
+        if func.name.is_none_or(|name| name.name != member.name) || func.parameters.len() != arity {
             continue;
         }
         let [ret_id] = func.returns else { return None };
