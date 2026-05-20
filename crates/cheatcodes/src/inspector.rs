@@ -61,6 +61,7 @@ use revm::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
         interpreter_types::{Jumps, LoopControl, MemoryTr},
+        return_ok,
     },
 };
 use serde_json::Value;
@@ -1407,7 +1408,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if let Some(expected_revert) = &mut self.expected_revert {
             // Record current reverter address and call scheme before processing the expect revert
             // if call reverted.
-            if outcome.result.is_revert() {
+            let call_failed = !matches!(outcome.result.result, return_ok!());
+            if call_failed {
                 // Record current reverter address if expect revert is set with expected reverter
                 // address and no actual reverter was set yet or if we're expecting more than one
                 // revert.
@@ -1420,10 +1422,36 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
 
             let curr_depth = ecx.journal().depth();
             if curr_depth <= expected_revert.depth {
+                // Decide whether this `call_end` should consume the pending `expectRevert`.
+                // With `internal_expect_revert` enabled, a same-depth revert can satisfy it, but
+                // we must not consume it for external calls that succeed (e.g. calls to
+                // non-contract addresses that return `Stop` before Solidity's own revert).
+                let internal = self.config.internal_expect_revert;
+                let went_deeper = expected_revert.max_depth > expected_revert.depth;
                 let needs_processing = match expected_revert.kind {
-                    ExpectedRevertKind::Default => !cheatcode_call,
-                    // `pending_processing` == true means that we're in the `call_end` hook for
-                    // `vm.expectCheatcodeRevert` and shouldn't expect revert here
+                    ExpectedRevertKind::Default => (|| {
+                        // Cheatcode reverts propagate up; let the outer frame catch them.
+                        if cheatcode_call {
+                            return false;
+                        }
+                        // Any failure satisfies the expectation.
+                        if call_failed {
+                            return true;
+                        }
+                        // Traditional expectRevert: succeeded external call went deeper.
+                        if !internal && went_deeper {
+                            return true;
+                        }
+                        // Test function returned: catch dangling expectations.
+                        if curr_depth == 0 {
+                            return true;
+                        }
+                        // Same-depth success with internal mode off is an error; with it on,
+                        // keep waiting for the actual revert.
+                        !internal
+                    })(),
+                    // `pending_processing == true` means we're in the `call_end` hook for
+                    // `vm.expectCheatcodeRevert` and shouldn't expect a revert here.
                     ExpectedRevertKind::Cheatcode { pending_processing } => {
                         cheatcode_call && !pending_processing
                     }
@@ -1898,49 +1926,58 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             }
         }
 
-        // Handle expected reverts
-        if let Some(expected_revert) = &mut self.expected_revert
-            && curr_depth <= expected_revert.depth
-            && matches!(expected_revert.kind, ExpectedRevertKind::Default)
-        {
-            // Mirror the logic in `call_end`: when an expected reverter address is set
-            // and we don't yet have one (or we're matching multiple reverts), record the
-            // would-be deployed address as the reverter. revm guarantees `outcome.address`
-            // is `Some(_)` whenever the constructor actually ran (including the revert
-            // case); it is only `None` for pre-frame rejection (depth/balance/nonce),
-            // for which a reverter address is meaningless.
+        // Handle expected reverts.
+        if let Some(expected_revert) = &mut self.expected_revert {
+            // Record the would-be deployed address as the reverter, picking the innermost
+            // reverting CREATE: this hook runs at every depth, the deepest frame fires
+            // first, and the `is_none()` lock pins it. For `count > 1` the lock is
+            // released after each successful iteration (see below) so each iteration
+            // independently records its own innermost CREATE.
+            //
+            // This intentionally differs from `call_end` for `count > 1`, where
+            // legacy nested CALL handling reports the outermost call per iteration.
+            //
+            // `outcome.address` is `None` for pre-frame rejection (depth/balance/nonce);
+            // in that case the surrounding `call_end` records the caller as the reverter.
             if outcome.result.is_revert()
                 && expected_revert.reverter.is_some()
-                && (expected_revert.reverted_by.is_none() || expected_revert.count > 1)
+                && expected_revert.reverted_by.is_none()
                 && let Some(addr) = outcome.address
             {
                 expected_revert.reverted_by = Some(addr);
             }
-            let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
-            return match revert_handlers::handle_expect_revert(
-                false,
-                true,
-                self.config.internal_expect_revert,
-                &expected_revert,
-                outcome.result.result,
-                outcome.result.output.clone(),
-                &self.config.available_artifacts,
-            ) {
-                Ok((address, retdata)) => {
-                    expected_revert.actual_count += 1;
-                    if expected_revert.actual_count < expected_revert.count {
-                        self.expected_revert = Some(expected_revert.clone());
-                    }
 
-                    outcome.result.result = InstructionResult::Return;
-                    outcome.result.output = retdata;
-                    outcome.address = address;
-                }
-                Err(err) => {
-                    outcome.result.result = InstructionResult::Revert;
-                    outcome.result.output = err.abi_encode().into();
-                }
-            };
+            if curr_depth <= expected_revert.depth
+                && matches!(expected_revert.kind, ExpectedRevertKind::Default)
+            {
+                let mut expected_revert = std::mem::take(&mut self.expected_revert).unwrap();
+                return match revert_handlers::handle_expect_revert(
+                    false,
+                    true,
+                    self.config.internal_expect_revert,
+                    &expected_revert,
+                    outcome.result.result,
+                    outcome.result.output.clone(),
+                    &self.config.available_artifacts,
+                ) {
+                    Ok((address, retdata)) => {
+                        expected_revert.actual_count += 1;
+                        if expected_revert.actual_count < expected_revert.count {
+                            // Reset so the next iteration's innermost CREATE wins again.
+                            expected_revert.reverted_by = None;
+                            self.expected_revert = Some(expected_revert.clone());
+                        }
+
+                        outcome.result.result = InstructionResult::Return;
+                        outcome.result.output = retdata;
+                        outcome.address = address;
+                    }
+                    Err(err) => {
+                        outcome.result.result = InstructionResult::Revert;
+                        outcome.result.output = err.abi_encode().into();
+                    }
+                };
+            }
         }
 
         // If `startStateDiffRecording` has been called, update the `reverted` status of the
