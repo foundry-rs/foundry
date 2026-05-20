@@ -417,7 +417,7 @@ revm-inspectors = { version = "0.39.0", features = ["serde"] }
 op-revm = { version = "19.0.0", default-features = false }
 
 ## cli
-anstream = "0.6"
+anstream = "1.0"
 anstyle = "1.0"
 dialoguer = { version = "0.12", default-features = false, features = [
     "password",
