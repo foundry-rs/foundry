@@ -9,7 +9,7 @@ use alloy_primitives::{
 };
 
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, NestedEvmClosure, Wallets};
-use foundry_common::compile::Analysis;
+use foundry_common::{compile::Analysis, sh_warn};
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
     backend::{DatabaseError, DatabaseExt, JournaledState},
@@ -394,6 +394,8 @@ pub struct InspectorStackInner {
     pub pending_create2_error: Option<CreateOutcome>,
     /// Counter for CREATE2 salt in `--batch` CREATE rewrites.
     pub batch_create_counter: u64,
+    /// Whether the one-shot `--batch` rewrite warning has already been emitted.
+    pub batch_rewrite_warned: bool,
 }
 
 /// Struct keeping mutable references to both parts of [InspectorStack] and implementing
@@ -1075,18 +1077,46 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
     ) -> Option<FrameResult> {
         if let FrameInput::Create(inputs) = frame_input
             && self.should_use_create2_factory(ecx.journal().depth(), inputs)
-            && let Some(salt) = match inputs.scheme() {
-                CreateScheme::Create2 { salt } => Some(salt),
+        {
+            // The Arachnid factory is not payable, so a rewritten CREATE that carries value
+            // would silently revert at the factory. Surface the limitation up front instead.
+            if matches!(inputs.scheme(), CreateScheme::Create) && !inputs.value().is_zero() {
+                self.inner.pending_create2_error = Some(CreateOutcome {
+                    result: InterpreterResult {
+                        result: InstructionResult::Revert,
+                        output: Bytes::from(
+                            "--batch cannot rewrite CREATE with non-zero value: \
+                             Arachnid factory is not payable"
+                                .as_bytes()
+                                .to_vec(),
+                        ),
+                        gas: Gas::new(inputs.gas_limit()),
+                    },
+                    address: None,
+                });
+                return None;
+            }
+
+            let salt = match inputs.scheme() {
+                CreateScheme::Create2 { salt } => salt,
                 // --batch: nonce makes re-runs unique, counter makes each deploy unique.
                 CreateScheme::Create => {
+                    if !self.inner.batch_rewrite_warned {
+                        let _ = sh_warn!(
+                            "--batch rewrites CREATE → CREATE2 via the Arachnid factory; \
+                             deployed addresses follow the CREATE2 formula and constructor \
+                             msg.sender is the factory, not the EOA."
+                        );
+                        self.inner.batch_rewrite_warned = true;
+                    }
                     let counter = self.inner.batch_create_counter;
                     self.inner.batch_create_counter = counter.wrapping_add(1);
                     let nonce = ecx.journal_mut().load_account(inputs.caller()).ok()?.info.nonce;
-                    Some(U256::from(nonce) << 64 | U256::from(counter))
+                    U256::from(nonce) << 64 | U256::from(counter)
                 }
-                _ => None,
-            }
-        {
+                _ => return None,
+            };
+
             let gas_limit = inputs.gas_limit();
             let create2_deployer = self.create2_deployer();
 

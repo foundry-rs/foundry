@@ -1025,6 +1025,13 @@ impl BundledState<TempoEvmNetwork> {
             sh_println!("\n\n==========================")?;
             sh_println!("\nBATCH EXECUTION COMPLETE & SUCCESSFUL.")?;
             sh_println!("All {} calls executed atomically in a single transaction.", calls.len())?;
+            let rewrites = calls
+                .iter()
+                .filter(|c| matches!(c.to, TxKind::Call(a) if a == create2_deployer))
+                .count();
+            if rewrites > 0 {
+                sh_println!("Rewrote {rewrites} CREATE(s) via {create2_deployer:#x}.")?;
+            }
         }
 
         Ok(BroadcastedState {
