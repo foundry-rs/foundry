@@ -1,5 +1,5 @@
 use crate::{
-    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData,
+    CallTrace, CallTraceArena, CallTraceNode, DecodedCallData, DecodedTraceStep,
     debug::DebugTraceIdentifier,
     identifier::{IdentifiedAddress, LocalTraceIdentifier, SignaturesIdentifier, TraceIdentifier},
 };
@@ -25,6 +25,8 @@ use foundry_evm_core::{
 };
 use itertools::Itertools;
 use revm_inspectors::tracing::types::{DecodedCallLog, DecodedCallTrace};
+use revm::{bytecode::opcode::{OpCode}};
+
 use std::{collections::BTreeMap, sync::OnceLock};
 use tempo_contracts::precompiles::{
     IAccountKeychain, IFeeManager, IStablecoinDEX, ITIP20Factory, ITIP403Registry, IValidatorConfig,
@@ -171,6 +173,9 @@ pub struct CallTraceDecoder {
 
     /// The chain ID, used to determine network-specific precompiles.
     pub chain_id: Option<u64>,
+
+    /// Detailed opcodes for analysis
+    pub opcodes: Option<Vec<OpCode>>
 }
 
 impl CallTraceDecoder {
@@ -266,6 +271,8 @@ impl CallTraceDecoder {
             disable_labels: false,
 
             chain_id: None,
+
+            opcodes: None,
         }
     }
 
@@ -454,6 +461,24 @@ impl CallTraceDecoder {
     /// [CallTraceDecoder::decode_event] for more details.
     pub async fn populate_traces(&self, traces: &mut Vec<CallTraceNode>) {
         for node in traces {
+
+            if let Some(codes) = &self.opcodes {
+                for step in node.trace.steps.iter_mut() {
+
+                    for opcode in codes {
+                        if step.op == *opcode {
+                            
+                            let res = match &step.storage_change {
+                                Some(change) => format!("[{}] {} {} <- ({})", &step.gas_cost.to_string(), opcode, change.key, change.value),
+                                None => format!("[{}] {}", &step.gas_cost.to_string(), opcode),
+                            };
+
+                            step.decoded = Some(Box::new(DecodedTraceStep::Line(res)));
+                        }
+                    }
+                }
+            }
+
             node.trace.decoded = Some(Box::new(self.decode_function(&node.trace).await));
             for log in &mut node.logs {
                 log.decoded = Some(Box::new(self.decode_event(&log.raw_log).await));
@@ -471,6 +496,7 @@ impl CallTraceDecoder {
     pub async fn decode_function(&self, trace: &CallTrace) -> DecodedCallTrace {
         let label =
             if self.disable_labels { None } else { self.labels.get(&trace.address).cloned() };
+
 
         if trace.kind.is_any_create() {
             return DecodedCallTrace { label, ..Default::default() };

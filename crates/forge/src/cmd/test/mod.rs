@@ -50,7 +50,7 @@ use foundry_evm::{
 };
 use rand::Rng;
 use regex::Regex;
-use revm::context::Transaction;
+use revm::{context::Transaction, bytecode::opcode::{OpCode}};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -194,6 +194,11 @@ pub struct TestArgs {
     /// If no failure recorded then regular test run is performed.
     #[arg(long)]
     pub rerun: bool,
+
+    /// Specify opcodes to analyze when verbosity level is 5.
+    /// Separate with each opcode with ,
+    #[arg(long)]
+    pub opcodes: Option<String>,
 
     /// Print test summary table.
     #[arg(long, help_heading = "Display options")]
@@ -848,11 +853,19 @@ impl TestArgs {
                     };
 
                     if should_include {
+                        if let Some(ref opcodes_str) = self.opcodes {
+                            decoder.opcodes = opcodes_str
+                                .split(",")
+                                .map(|opcode_name| OpCode::parse(opcode_name)) 
+                                .collect() // if any opcode name is invalid, decoder.opcodes becomes empty
+                            }
+
                         decode_trace_arena(arena, &decoder).await;
 
                         if let Some(trace_depth) = self.trace_depth {
                             prune_trace_depth(arena, trace_depth);
                         }
+                        
 
                         decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
                     }

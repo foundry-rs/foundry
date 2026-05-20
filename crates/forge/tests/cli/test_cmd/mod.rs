@@ -3031,6 +3031,49 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+// Tests that test traces display opcodes when verbosity level is 5
+forgetest_init!(should_show_opcodes, |prj, cmd| {
+    prj.initialize_default_contracts();
+    cmd.args(["test", "--mt", "test_Increment", "-vvvvv", "--opcodes", "SLOAD,MLOAD"]).assert_success().stdout_eq(str![[r#"
+...
+Ran 1 test for test/Counter.t.sol:CounterTest
+[PASS] test_Increment() ([GAS])
+Traces:
+  [137242] CounterTest::setUp()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    │   └─ ← [Return] 481 bytes of code
+    ├─ [2592] Counter::setNumber(0)
+    │   └─ ← [Stop]
+    └─ ← [Stop]
+
+  [28783] CounterTest::test_Increment()
+    ├─ [2100] SLOAD 31 <- (125813996375599159817140963330240011258305308995329)
+    ├─ [3] MLOAD
+    ├─ [3] MLOAD
+    ├─ [22418] Counter::increment()
+    │   ├─ [2100] SLOAD 0 <- (0)
+    │   ├─  storage changes:
+    │   │   @ 0: 0 → 1
+    │   └─ ← [Stop]
+    ├─ [100] SLOAD
+    ├─ [3] MLOAD
+    ├─ [3] MLOAD
+    ├─ [424] Counter::number() [staticcall]
+    │   ├─ [100] SLOAD
+    │   ├─ [3] MLOAD
+    │   ├─ [3] MLOAD
+    │   └─ ← [Return] 1
+    ├─ [3] MLOAD
+    ├─ [3] MLOAD
+    └─ ← [Stop]
+
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]);
+});
+
 // Tests that chained errors are properly displayed.
 // <https://github.com/foundry-rs/foundry/issues/9161>
 forgetest!(displays_chained_error, |prj, cmd| {
