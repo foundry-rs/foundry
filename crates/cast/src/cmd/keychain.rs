@@ -950,9 +950,7 @@ async fn run_check(wallet_address: Address, key_address: Address, rpc: RpcOpts) 
     }
 
     // Status line: active key.
-    {
-        sh_println!("Status:         {} active", "✓".green())?;
-    }
+    sh_println!("Status:         {} active", "✓".green())?;
 
     sh_println!("Signature Type: {}", signature_type_name(&info.signatureType))?;
     sh_println!("Key ID:         {}", info.keyId)?;
