@@ -230,10 +230,8 @@ pub(crate) fn solver_commands_for_config(
 pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, String> {
     let (parts, smt_timeout) = match solver {
         "z3" => (vec!["z3", "-in", "-smt2"], true),
-        "yices" | "yices-2.6.4" | "yices-2.6.5" => {
-            (vec!["yices-smt2", "--bvconst-in-decimal"], false)
-        }
-        "cvc5" | "cvc5-1.2.1" => (
+        "yices" => (vec!["yices-smt2", "--bvconst-in-decimal"], false),
+        "cvc5" => (
             vec![
                 "cvc5",
                 "--produce-models",
@@ -255,7 +253,7 @@ pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, String
             ],
             false,
         ),
-        "bitwuzla" | "bitwuzla-0.8.1" => (vec!["bitwuzla", "--produce-models"], false),
+        "bitwuzla" => (vec!["bitwuzla", "--produce-models"], false),
         "bitwuzla-abs" => (vec!["bitwuzla", "--produce-models", "--abstraction"], false),
         // Preserve existing behavior for custom z3-compatible executable names/paths.
         custom => (vec![custom, "-in", "-smt2"], true),
