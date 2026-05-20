@@ -46,6 +46,21 @@ Branch joins recognise `return`, custom-error `revert`, the `revert(...)`
 builtin, and `assert(false)` / `require(false, ...)` as always-exiting:
 facts proven on the surviving branch propagate past the `if`.
 
+## Limitations
+
+The permit suppression is a precision relaxation, not a proof. It matches
+the 7-argument `permit(...)` shape on a member call but does **not**:
+
+- verify the receiver type statically declares the EIP-2612 `permit`
+  signature (any same-named 7-arg method silences the lint),
+- correlate the receiver type between the permit and the sink (only the
+  underlying variable is compared),
+- model the permit's allowance / value against the sink's amount.
+
+False negatives are possible when a non-EIP-2612 contract exposes a
+matching `permit(...)` method. The canonical arbitrary-send pattern (no
+preceding permit) is unaffected.
+
 ## Why is this bad?
 
 If a user has approved the contract to spend their tokens (e.g. for a swap or
