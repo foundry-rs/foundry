@@ -472,6 +472,18 @@ impl InvariantFailure {
     }
 }
 
+/// Pass/fail status for an invariant predicate evaluated inside a contract-level campaign.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InvariantPredicateResult {
+    /// Invariant function name (e.g. `invariant_balance`).
+    pub name: String,
+    /// Predicate status within the logical campaign.
+    pub status: TestStatus,
+    /// Revert reason or assertion message when the predicate failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 /// The result of an executed test.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TestResult {
@@ -492,6 +504,12 @@ pub struct TestResult {
     /// `reason` and `counterexample` are not populated for invariant tests.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invariant_failures: Vec<InvariantFailure>,
+
+    /// Per-predicate outcomes for invariant campaigns. This preserves individual
+    /// `invariant_*` / `statefulFuzz*` pass/fail reporting when multiple predicates are checked
+    /// by one contract-level campaign.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub invariant_predicate_results: Vec<InvariantPredicateResult>,
 
     /// Directory where invariant failure counterexamples have been persisted (set when one or more
     /// secondary invariant failures were written, so users can locate persisted counterexamples).
@@ -561,8 +579,8 @@ impl fmt::Display for TestResult {
         match self.status {
             TestStatus::Success => {
                 // For optimization mode, show the best example sequence in green.
+                let mut s = String::from("[PASS]");
                 if let Some(CounterExample::Sequence(original, sequence)) = &self.counterexample {
-                    let mut s = String::from("[PASS]");
                     s.push_str(
                         format!(
                             "\n\t[Best sequence] (original: {original}, shrunk: {})\n",
@@ -573,10 +591,9 @@ impl fmt::Display for TestResult {
                     for ex in sequence {
                         writeln!(s, "{ex}").unwrap();
                     }
-                    s.green().wrap().fmt(f)
-                } else {
-                    "[PASS]".green().fmt(f)
                 }
+                self.write_invariant_predicate_results(&mut s);
+                s.green().wrap().fmt(f)
             }
             TestStatus::Skipped => {
                 let mut s = String::from("[SKIP");
@@ -715,7 +732,32 @@ impl fmt::Display for TestResult {
                         }
                     }
                 }
+                self.write_invariant_predicate_results(&mut s);
                 s.red().wrap().fmt(f)
+            }
+        }
+    }
+}
+
+impl TestResult {
+    fn write_invariant_predicate_results(&self, s: &mut String) {
+        if self.invariant_predicate_results.len() <= 1 {
+            return;
+        }
+
+        s.push_str("\nSuite predicates:\n");
+        for predicate in &self.invariant_predicate_results {
+            match predicate.status {
+                TestStatus::Success => {
+                    writeln!(s, "[PASS] {}", predicate.name).unwrap();
+                }
+                TestStatus::Failure => {
+                    let reason = predicate.reason.as_deref().unwrap_or_default();
+                    writeln!(s, "[FAIL: {reason}] {}", predicate.name).unwrap();
+                }
+                TestStatus::Skipped => {
+                    writeln!(s, "[SKIP] {}", predicate.name).unwrap();
+                }
             }
         }
     }
@@ -918,6 +960,7 @@ impl TestResult {
         gas_report_traces: Vec<Vec<CallTraceArena>>,
         success: bool,
         invariant_failures: Vec<InvariantFailure>,
+        invariant_predicate_results: Vec<InvariantPredicateResult>,
         invariant_failure_dir: Option<std::path::PathBuf>,
         assert_all_invariant_count: Option<usize>,
         invariant_handler_failures: Vec<InvariantFailure>,
@@ -943,6 +986,7 @@ impl TestResult {
             TestStatus::Failure
         };
         self.invariant_failures = invariant_failures;
+        self.invariant_predicate_results = invariant_predicate_results;
         self.invariant_failure_dir = invariant_failure_dir;
         self.assert_all_invariant_count = assert_all_invariant_count;
         self.invariant_handler_failures = invariant_handler_failures;

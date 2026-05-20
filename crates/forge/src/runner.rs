@@ -6,7 +6,9 @@ use crate::{
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
-    result::{InvariantFailure, SuiteResult, TestResult, TestSetup},
+    result::{
+        InvariantFailure, InvariantPredicateResult, SuiteResult, TestResult, TestSetup, TestStatus,
+    },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -253,6 +255,16 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         Ok(config)
     }
 
+    fn invariant_assert_all_enabled(&self, func: &Function) -> bool {
+        if self.inline_config.contains_function(self.name, &func.name) {
+            return self
+                .inline_config(Some(func))
+                .map(|config| config.invariant.assert_all)
+                .unwrap_or(false);
+        }
+        self.config.invariant.assert_all
+    }
+
     /// Collect fixtures from test contract.
     ///
     /// Fixtures can be defined:
@@ -460,10 +472,24 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             });
         }
 
-        let merge_invariant_suite = self.config.invariant.assert_all;
-        let invariant_suite_anchor = merge_invariant_suite
-            .then(|| functions.iter().copied().find(|func| func.is_invariant_test()))
-            .flatten();
+        let matched_invariant_fns =
+            functions.iter().copied().filter(|func| func.is_invariant_test()).collect::<Vec<_>>();
+        let matched_boolean_invariant_fns = matched_invariant_fns
+            .iter()
+            .copied()
+            .filter(|func| !is_optimization_invariant(func))
+            .collect::<Vec<_>>();
+        let boolean_invariant_fns = invariant_fns
+            .iter()
+            .copied()
+            .filter(|func| !is_optimization_invariant(func))
+            .collect::<Vec<_>>();
+        let merge_invariant_suite = self.config.invariant.assert_all
+            && !matched_boolean_invariant_fns.is_empty()
+            && boolean_invariant_fns.len() > 1
+            && boolean_invariant_fns.iter().all(|func| self.invariant_assert_all_enabled(func));
+        let invariant_suite_anchor =
+            merge_invariant_suite.then(|| matched_boolean_invariant_fns.first().copied()).flatten();
 
         let test_results = functions
             .par_iter()
@@ -472,10 +498,20 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 if early_exit.should_stop() {
                     return None;
                 }
-                if merge_invariant_suite
-                    && func.is_invariant_test()
-                    && invariant_suite_anchor != Some(func)
-                {
+                let invariants = if func.is_invariant_test() {
+                    if is_optimization_invariant(func) {
+                        vec![func]
+                    } else {
+                        if merge_invariant_suite && invariant_suite_anchor != Some(func) {
+                            return None;
+                        }
+                        boolean_invariant_fns.clone()
+                    }
+                } else {
+                    invariant_fns.clone()
+                };
+
+                if func.is_invariant_test() && invariants.is_empty() {
                     return None;
                 }
 
@@ -501,7 +537,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
                 let mut res = FunctionRunner::new(&self, &setup).run(
                     func,
-                    invariant_fns.clone(),
+                    invariants,
                     kind,
                     call_after_invariant,
                     identified_contracts.as_ref(),
@@ -1158,7 +1194,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     name: invariant_contract.anchor().name.clone(),
                     reason: error.revert_reason().unwrap_or_default(),
                     counterexample: anchor_counterexample,
-                    persisted_path: primary_failure_file.clone(),
+                    persisted_path: primary_failure_file,
                     is_anchor: true,
                 });
             }
@@ -1274,6 +1310,31 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let assert_all_invariant_count = (invariant_config.assert_all
             && invariant_contract.invariant_fns.len() > 1)
             .then_some(invariant_contract.invariant_fns.len());
+        let invariant_predicate_results = if invariant_contract.invariant_fns.len() > 1 {
+            invariant_contract
+                .invariant_fns
+                .iter()
+                .map(|(invariant, _)| {
+                    if let Some(failure) =
+                        invariant_failures.iter().find(|failure| failure.name() == invariant.name)
+                    {
+                        InvariantPredicateResult {
+                            name: invariant.name.clone(),
+                            status: TestStatus::Failure,
+                            reason: Some(failure.reason().to_string()),
+                        }
+                    } else {
+                        InvariantPredicateResult {
+                            name: invariant.name.clone(),
+                            status: TestStatus::Success,
+                            reason: None,
+                        }
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         // Convert handler-side assertion bugs into render-ready entries. The name is a
         // best-effort `Contract::function` from `identified_contracts`, falling back to
@@ -1350,6 +1411,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_result.gas_report_traces,
             success,
             invariant_failures,
+            invariant_predicate_results,
             invariant_failure_dir,
             assert_all_invariant_count,
             invariant_handler_failures,
@@ -1691,12 +1753,21 @@ fn invariant_suite_paths(
     persist_dir: PathBuf,
     contract_name: &str,
 ) -> PathBuf {
-    let contract = contract_name.split(':').next_back().unwrap();
+    let failure_dir = invariant_failure_dir(persist_dir, contract_name);
+    let contract = invariant_contract_name(contract_name);
     if let Some(corpus_dir) = &corpus_config.corpus_dir {
         corpus_config.corpus_dir = Some(canonicalized(corpus_dir.join(contract)));
     }
 
-    canonicalized(persist_dir.join("failures").join(contract))
+    failure_dir
+}
+
+fn invariant_failure_dir(persist_dir: PathBuf, contract_name: &str) -> PathBuf {
+    canonicalized(persist_dir.join("failures").join(invariant_contract_name(contract_name)))
+}
+
+fn invariant_contract_name(contract_name: &str) -> &str {
+    contract_name.split(':').next_back().unwrap()
 }
 
 /// Helper function to persist invariant failure.

@@ -65,12 +65,21 @@ contract InvariantStorageTest is Test {
 
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
-Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+Suite assert_all: 4/4 invariants broken
+...
+Suite predicates:
+[FAIL: changedAddr] invariantChangeAddress
+[FAIL: changedStr] invariantChangeString
+[FAIL: changedUint] invariantChangeUint
+[FAIL: pushUint] invariantPush
+ invariantChangeAddress() ([RUNS])
+...
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test suite [ELAPSED]: 0 tests passed, 4 failed, 0 skipped (4 total tests)
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
-Encountered 4 failing tests in test/name.sol:InvariantStorageTest
+Encountered 1 failing test in test/name.sol:InvariantStorageTest
 ...
 "#]]);
 });

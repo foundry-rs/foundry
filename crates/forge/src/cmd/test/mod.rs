@@ -4,7 +4,7 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::{MultiNetworkConfig, matches_artifact},
-    result::{SuiteResult, TestOutcome, TestStatus},
+    result::{SuiteResult, TestOutcome, TestResult, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
@@ -1220,36 +1220,156 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
         test_suite.set_time(suite_result.duration);
         test_suite.set_system_out(suite_result.summary());
         for (test_name, test_result) in &suite_result.test_results {
-            let mut test_status = match test_result.status {
-                TestStatus::Success => TestCaseStatus::success(),
-                TestStatus::Failure => TestCaseStatus::non_success(NonSuccessKind::Failure),
-                TestStatus::Skipped => TestCaseStatus::skipped(),
-            };
-            if let Some(reason) = &test_result.reason {
-                test_status.set_message(reason);
-            }
-
-            let mut test_case = TestCase::new(test_name, test_status);
-            test_case.set_time(test_result.duration);
-
-            let mut sys_out = String::new();
-            let result_report = test_result.kind.report();
-            write!(sys_out, "{test_result} {test_name} {result_report}").unwrap();
-            if verbosity >= 2 && !test_result.logs.is_empty() {
-                write!(sys_out, "\\nLogs:\\n").unwrap();
-                let console_logs = decode_console_logs(&test_result.logs);
-                for log in console_logs {
-                    write!(sys_out, "  {log}\\n").unwrap();
-                }
-            }
-
-            test_case.set_system_out(sys_out);
-            test_suite.add_test_case(test_case);
+            add_junit_test_cases(&mut test_suite, test_name, test_result, verbosity);
         }
         junit_report.add_test_suite(test_suite);
     }
     junit_report.set_time(total_duration);
     junit_report
+}
+
+fn add_junit_test_cases(
+    test_suite: &mut TestSuite,
+    test_name: &str,
+    test_result: &TestResult,
+    verbosity: u8,
+) {
+    let expanded_invariant = test_result.kind.is_invariant()
+        && (!test_result.invariant_predicate_results.is_empty()
+            || !test_result.invariant_handler_failures.is_empty());
+
+    if !expanded_invariant {
+        add_junit_test_case(
+            test_suite,
+            test_name,
+            test_result.status,
+            test_result.reason.as_deref(),
+            test_result,
+            junit_system_out(test_result, test_name, verbosity),
+        );
+        return;
+    }
+
+    if test_result.invariant_predicate_results.is_empty() {
+        let (status, reason) = test_result
+            .invariant_failures
+            .first()
+            .map(|failure| (TestStatus::Failure, Some(failure.reason())))
+            .unwrap_or((TestStatus::Success, None));
+        add_junit_test_case(
+            test_suite,
+            test_name,
+            status,
+            reason,
+            test_result,
+            junit_case_system_out(status, reason, test_name, test_result, verbosity),
+        );
+    } else {
+        for predicate in &test_result.invariant_predicate_results {
+            let name = format!("{}()", predicate.name);
+            add_junit_test_case(
+                test_suite,
+                &name,
+                predicate.status,
+                predicate.reason.as_deref(),
+                test_result,
+                junit_case_system_out(
+                    predicate.status,
+                    predicate.reason.as_deref(),
+                    &name,
+                    test_result,
+                    verbosity,
+                ),
+            );
+        }
+    }
+
+    for failure in &test_result.invariant_handler_failures {
+        let name = format!("handler {}", failure.name());
+        add_junit_test_case(
+            test_suite,
+            &name,
+            TestStatus::Failure,
+            Some(failure.reason()),
+            test_result,
+            junit_case_system_out(
+                TestStatus::Failure,
+                Some(failure.reason()),
+                &name,
+                test_result,
+                verbosity,
+            ),
+        );
+    }
+}
+
+fn add_junit_test_case(
+    test_suite: &mut TestSuite,
+    test_name: &str,
+    status: TestStatus,
+    message: Option<&str>,
+    test_result: &TestResult,
+    system_out: String,
+) {
+    let mut test_status = match status {
+        TestStatus::Success => TestCaseStatus::success(),
+        TestStatus::Failure => TestCaseStatus::non_success(NonSuccessKind::Failure),
+        TestStatus::Skipped => TestCaseStatus::skipped(),
+    };
+    if let Some(message) = message {
+        test_status.set_message(message);
+    }
+
+    let mut test_case = TestCase::new(test_name, test_status);
+    test_case.set_time(test_result.duration);
+    test_case.set_system_out(system_out);
+    test_suite.add_test_case(test_case);
+}
+
+fn junit_system_out(test_result: &TestResult, test_name: &str, verbosity: u8) -> String {
+    let mut sys_out = String::new();
+    let result_report = test_result.kind.report();
+    write!(sys_out, "{test_result} {test_name} {result_report}").unwrap();
+    append_junit_logs(&mut sys_out, test_result, verbosity);
+    sys_out
+}
+
+fn junit_case_system_out(
+    status: TestStatus,
+    message: Option<&str>,
+    test_name: &str,
+    test_result: &TestResult,
+    verbosity: u8,
+) -> String {
+    let mut sys_out = String::new();
+    match status {
+        TestStatus::Success => write!(sys_out, "[PASS]").unwrap(),
+        TestStatus::Failure => {
+            let message = message.unwrap_or_default();
+            write!(sys_out, "[FAIL: {message}]").unwrap();
+        }
+        TestStatus::Skipped => {
+            if let Some(message) = message {
+                write!(sys_out, "[SKIP: {message}]").unwrap();
+            } else {
+                write!(sys_out, "[SKIP]").unwrap();
+            }
+        }
+    }
+    let result_report = test_result.kind.report();
+    write!(sys_out, " {test_name} {result_report}").unwrap();
+    append_junit_logs(&mut sys_out, test_result, verbosity);
+    sys_out
+}
+
+fn append_junit_logs(sys_out: &mut String, test_result: &TestResult, verbosity: u8) {
+    if verbosity >= 2 && !test_result.logs.is_empty() {
+        write!(sys_out, "\\nLogs:\\n").unwrap();
+        let console_logs = decode_console_logs(&test_result.logs);
+        for log in console_logs {
+            write!(sys_out, "  {log}\\n").unwrap();
+        }
+    }
 }
 
 #[cfg(test)]

@@ -210,7 +210,11 @@ contract AnotherCounterHandler is Test {
 
     cmd.args(["test", "--mt", "invariant_"]).assert_success().stdout_eq(str![[r#"
 ...
-[PASS] invariant_counter() (runs: 10, calls: 5000, reverts: [..])
+[PASS]
+Suite predicates:
+[PASS] invariant_counter
+[PASS] invariant_counter2
+ invariant_counter() (runs: 10, calls: 5000, reverts: [..])
 
 ╭-----------------------+----------------+-------+---------+----------╮
 | Contract              | Selector       | Calls | Reverts | Discards |
@@ -224,23 +228,9 @@ contract AnotherCounterHandler is Test {
 | CounterHandler        | doSomething    | [..]  | [..]    | [..]     |
 ╰-----------------------+----------------+-------+---------+----------╯
 
-[PASS] invariant_counter2() (runs: 10, calls: 5000, reverts: [..])
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-╭-----------------------+----------------+-------+---------+----------╮
-| Contract              | Selector       | Calls | Reverts | Discards |
-+=====================================================================+
-| AnotherCounterHandler | doWork         | [..]  | [..]    | [..]     |
-|-----------------------+----------------+-------+---------+----------|
-| AnotherCounterHandler | doWorkThing    | [..]  | [..]    | [..]     |
-|-----------------------+----------------+-------+---------+----------|
-| CounterHandler        | doAnotherThing | [..]  | [..]    | [..]     |
-|-----------------------+----------------+-------+---------+----------|
-| CounterHandler        | doSomething    | [..]  | [..]    | [..]     |
-╰-----------------------+----------------+-------+---------+----------╯
-
-Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
@@ -571,10 +561,14 @@ contract OwnableTest is Test {
 }
    "#,
     );
-    cmd.assert_success().stderr_eq(str![[r#"
-...
-Warning: Failure from "[..]/invariant/failures/OwnableTest/invariant_never_owner" file was ignored because invariant test settings have changed: target selectors changed
-...
+    cmd.assert_with(&[(
+        "[FAILURE_PATH]",
+        r#""[^"]*/cache/invariant/failures/OwnableTest/invariants/invariant_never_owner""#,
+    )])
+    .success()
+    .stderr_eq(str![[r#"
+Warning: Failure from [FAILURE_PATH] file was ignored because invariant test settings have changed: target selectors changed
+
 "#]])
     .stdout_eq(str![[r#"
 ...
@@ -856,8 +850,14 @@ contract InvariantTargetTest is Test {
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
-Ran 4 tests for test/InvariantTargetTest.t.sol:InvariantTargetTest
-[PASS] invariant_considered_target() (runs: 10, calls: 1000, reverts: 0)
+Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetTest
+[PASS]
+Suite predicates:
+[PASS] invariant_considered_target
+[PASS] invariant_foo_called
+[PASS] invariant_setUp_considered_target
+[PASS] invariant_testSanity_considered_target
+ invariant_considered_target() (runs: 10, calls: 1000, reverts: 0)
 
 ╭---------------------+----------+-------+---------+----------╮
 | Contract            | Selector | Calls | Reverts | Discards |
@@ -865,33 +865,9 @@ Ran 4 tests for test/InvariantTargetTest.t.sol:InvariantTargetTest
 | InvariantTargetTest | foo      | 1000  | 0       | 0        |
 ╰---------------------+----------+-------+---------+----------╯
 
-[PASS] invariant_foo_called() (runs: 10, calls: 1000, reverts: 0)
+Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-╭---------------------+----------+-------+---------+----------╮
-| Contract            | Selector | Calls | Reverts | Discards |
-+=============================================================+
-| InvariantTargetTest | foo      | 1000  | 0       | 0        |
-╰---------------------+----------+-------+---------+----------╯
-
-[PASS] invariant_setUp_considered_target() (runs: 10, calls: 1000, reverts: 0)
-
-╭---------------------+----------+-------+---------+----------╮
-| Contract            | Selector | Calls | Reverts | Discards |
-+=============================================================+
-| InvariantTargetTest | foo      | 1000  | 0       | 0        |
-╰---------------------+----------+-------+---------+----------╯
-
-[PASS] invariant_testSanity_considered_target() (runs: 10, calls: 1000, reverts: 0)
-
-╭---------------------+----------+-------+---------+----------╮
-| Contract            | Selector | Calls | Reverts | Discards |
-+=============================================================+
-| InvariantTargetTest | foo      | 1000  | 0       | 0        |
-╰---------------------+----------+-------+---------+----------╯
-
-Suite result: ok. 4 passed; 0 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
 });
@@ -1117,15 +1093,17 @@ Ran 3 test suites [ELAPSED]: 6 tests passed, 0 failed, 0 skipped (6 total tests)
 
 "#]]);
 
+    assert!(prj.root().join("invariant_corpus").join("Counter1Test").exists());
+    assert!(prj.root().join("invariant_corpus").join("Counter2Test").exists());
     assert!(
-        prj.root()
+        !prj.root()
             .join("invariant_corpus")
             .join("Counter1Test")
             .join("invariant_counter_called")
             .exists()
     );
     assert!(
-        prj.root()
+        !prj.root()
             .join("invariant_corpus")
             .join("Counter2Test")
             .join("invariant_counter_called")
@@ -1180,6 +1158,121 @@ Ran 1 test for test/ContractCorpusTest.t.sol:ContractCorpusTest
     assert!(contract_dir.exists());
     assert!(!contract_dir.join("invariant_a").exists());
     assert!(!contract_dir.join("invariant_b").exists());
+});
+
+forgetest_init!(json_reports_invariant_predicate_results, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.assert_all = true;
+    });
+    prj.add_test(
+        "JsonInvariantReport.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract JsonInvariantHandler {
+    uint256 public counter;
+
+    function inc() external {
+        counter++;
+    }
+}
+
+contract JsonInvariantReportTest is Test {
+    JsonInvariantHandler handler;
+
+    function setUp() public {
+        handler = new JsonInvariantHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_break() public view {
+        require(handler.counter() < 1, "broken");
+    }
+
+    function invariant_safe() public pure {}
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--json"]).assert_failure();
+    let json: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let suite = json.as_object().unwrap().values().next().unwrap();
+    let tests = suite["test_results"].as_object().unwrap();
+    assert_eq!(tests.len(), 1);
+    let result = tests.values().next().unwrap();
+    let predicates = result["invariant_predicate_results"].as_array().unwrap();
+    assert_eq!(predicates.len(), 2);
+
+    let broken =
+        predicates.iter().find(|predicate| predicate["name"] == "invariant_break").unwrap();
+    assert_eq!(broken["status"], "Failure");
+    assert_eq!(broken["reason"], "broken");
+
+    let safe = predicates.iter().find(|predicate| predicate["name"] == "invariant_safe").unwrap();
+    assert_eq!(safe["status"], "Success");
+    assert!(safe.get("reason").is_none());
+});
+
+forgetest_init!(junit_reports_invariant_predicates_and_handler_failures, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.fail_on_revert = false;
+        config.invariant.assert_all = true;
+    });
+    prj.add_source(
+        "JunitAssertHandler.sol",
+        r#"
+contract JunitAssertHandler {
+    function alwaysAssert() external {
+        assert(false);
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "JunitInvariantReport.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {JunitAssertHandler} from "../src/JunitAssertHandler.sol";
+
+contract JunitInvariantReportTest is Test {
+    JunitAssertHandler handler;
+
+    function setUp() public {
+        handler = new JunitAssertHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_a() public pure {}
+
+    function invariant_b() public pure {}
+}
+   "#,
+    );
+
+    cmd.args(["test", "--junit", "--mt", "invariant_a"]).assert_failure().stdout_eq(str![[r#"
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="Test run" tests="3" failures="1" errors="0" timestamp="[..]" time="[..]">
+    <testsuite name="test/JunitInvariantReport.t.sol:JunitInvariantReportTest" tests="3" disabled="0" errors="0" failures="1" time="[..]">
+        <testcase name="invariant_a()" time="[..]">
+            <system-out>[PASS] invariant_a() (runs: 1, calls: 2, reverts: 2)</system-out>
+        </testcase>
+        <testcase name="invariant_b()" time="[..]">
+            <system-out>[PASS] invariant_b() (runs: 1, calls: 2, reverts: 2)</system-out>
+        </testcase>
+        <testcase name="handler src/JunitAssertHandler.sol:JunitAssertHandler::alwaysAssert" time="[..]">
+            <failure message="panic: assertion failed (0x01)"/>
+            <system-out>[FAIL: panic: assertion failed (0x01)] handler src/JunitAssertHandler.sol:JunitAssertHandler::alwaysAssert (runs: 1, calls: 2, reverts: 2)</system-out>
+        </testcase>
+        <system-out>Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]</system-out>
+    </testsuite>
+</testsuites>
+
+
+"#]]);
 });
 
 // Tests that check_interval=0 only asserts on the last call of each run.
@@ -1592,11 +1685,10 @@ Suite handlers: 1 assertion bug(s) found
 "#]]);
 });
 
-// Verifies the startup warning fired by `assert_all + optimization mode`: when the primary
-// invariant returns int256 (optimization target) the campaign loop can't also evaluate boolean
-// invariants, so they are silently dropped. Without the warning users wouldn't realize their
-// other `invariant_*` properties never ran.
-forgetest_init!(assert_all_optimization_mode_warning, |prj, cmd| {
+// Verifies an explicitly selected optimization invariant runs as its own campaign. Boolean
+// predicates in the same contract are not mixed into optimization mode; when unfiltered they run
+// as a separate boolean campaign (covered below).
+forgetest_init!(assert_all_selected_optimization_runs_separately, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 5;
@@ -1638,19 +1730,68 @@ contract OptTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_maximize"])
-        .assert_success()
-        .stderr_eq(str![[r#"
-...
-Warning: test/OptTest.t.sol:OptTest: assert_all is on but invariant_maximize is an optimization invariant; 2 boolean invariant(s) skipped: invariant_boolean_one, invariant_boolean_two. Move them to a separate contract to run them.
-...
-"#]])
-        .stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "invariant_maximize"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS]
 	[Best sequence] [..]
 ...
  invariant_maximize() (best: [..], runs: 1, calls: 5)
+...
+"#]]);
+});
+
+forgetest_init!(assert_all_optimization_does_not_suppress_boolean_invariants, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+        config.invariant.assert_all = true;
+    });
+    prj.add_test(
+        "MixedInvariantTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract MixedInvariantHandler {
+    uint256 public counter;
+
+    function inc() public {
+        counter++;
+    }
+}
+
+contract MixedInvariantTest is Test {
+    MixedInvariantHandler handler;
+
+    function setUp() public {
+        handler = new MixedInvariantHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_maximize() public view returns (int256) {
+        return int256(handler.counter());
+    }
+
+    function invariant_boolean() public view {
+        require(handler.counter() < 1, "boolean broken");
+    }
+}
+   "#,
+    );
+
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+...
+Ran 2 tests for test/MixedInvariantTest.t.sol:MixedInvariantTest
+...
+[FAIL: boolean broken]
+	[SEQUENCE]
+...
+ invariant_boolean() ([RUNS])
+...
+[PASS]
+...
+ invariant_maximize() (best: [..], runs: 1, calls: 2)
+...
+Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
 "#]]);
 });
@@ -1835,6 +1976,7 @@ contract SecondaryOnlyTest is Test {
 [FAIL: breakable broken] invariant_breakable
 ...
 Suite assert_all: 1/2 invariants broken
+...
  invariant_safe() (runs: 5, calls: 250, reverts: 0)
 ...
 "#]]);

@@ -1937,18 +1937,21 @@ contract InvariantShrinkWithAssert is Test {
 "#,
     );
 
-    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
-[FAIL: wrong counter [..]][..]
-	[Sequence] (original: 2, shrunk: 2)
+Ran 1 test for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
+[FAIL: wrong counter assert] invariant_with_assert
+	[SEQUENCE]
 ...
- invariant_with_[..]() ([..])
+[FAIL: wrong counter require] invariant_with_require
+	[SEQUENCE]
 ...
-[FAIL: wrong counter [..]][..]
-	[Sequence] (original: 2, shrunk: 2)
+Suite assert_all: 2/2 invariants broken
 ...
- invariant_with_[..]() ([..])
+Suite predicates:
+[FAIL: wrong counter assert] invariant_with_assert
+[FAIL: wrong counter require] invariant_with_require
+ invariant_with_assert() ([RUNS])
 ...
 "#]]);
 });
