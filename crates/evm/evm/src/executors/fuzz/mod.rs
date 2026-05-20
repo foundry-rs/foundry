@@ -440,10 +440,11 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         progress: Option<&ProgressBar>,
     ) -> Result<WorkerState<FEN>> {
         // Prepare
+        let fuzz_state = shared_state.state.fork();
         let dictionary_weight = self.config.dictionary.dictionary_weight.min(100);
         let strategy = proptest::prop_oneof![
             100 - dictionary_weight => fuzz_calldata(func.clone(), fuzz_fixtures),
-            dictionary_weight => fuzz_calldata_from_state(func.clone(), &shared_state.state),
+            dictionary_weight => fuzz_calldata_from_state(func.clone(), &fuzz_state),
         ]
         .prop_map(move |calldata| BasicTxDetails {
             warp: None,
@@ -485,7 +486,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
         if let Some(target_run) = self.config.run {
             for _ in 1..target_run {
-                if let Err(err) = corpus.new_input(&mut runner, &shared_state.state, func) {
+                if let Err(err) = corpus.new_input(&mut runner, &fuzz_state, func) {
                     worker.failure = Some(TestCaseError::fail(format!(
                         "failed to generate fuzzed input in worker {}: {err}",
                         worker.id
@@ -553,7 +554,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     cheats.set_seed(Self::fuzz_run_seed(seed, worker_id, fuzz_run));
                 }
 
-                let input = match corpus.new_input(&mut runner, &shared_state.state, func) {
+                let input = match corpus.new_input(&mut runner, &fuzz_state, func) {
                     Ok(input) => input,
                     Err(err) => {
                         worker.failure = Some(TestCaseError::fail(format!(
@@ -704,7 +705,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
 
         // Logs stats
         trace!("worker {worker_id} fuzz stats");
-        shared_state.state.log_stats();
+        fuzz_state.log_stats();
 
         Ok(worker)
     }
