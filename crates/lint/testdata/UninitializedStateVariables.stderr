@@ -17,6 +17,14 @@ LL │     address public owner;
 warning[uninitialized-state]: state variable is read but never written
    ╭▸ ROOT/testdata/UninitializedStateVariables.sol:LL:CC
    │
+LL │     uint256 public data;
+   │     ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+
+warning[uninitialized-state]: state variable is read but never written
+   ╭▸ ROOT/testdata/UninitializedStateVariables.sol:LL:CC
+   │
 LL │     uint256 public val;
    │     ━━━━━━━━━━━━━━━━━━━
    │
@@ -43,6 +51,30 @@ warning[uninitialized-state]: state variable is read but never written
    │
 LL │     uint256 public initVal;
    │     ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+
+warning[uninitialized-state]: state variable is read but never written
+   ╭▸ ROOT/testdata/UninitializedStateVariables.sol:LL:CC
+   │
+LL │     uint256 public x;
+   │     ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+
+warning[uninitialized-state]: state variable is read but never written
+   ╭▸ ROOT/testdata/UninitializedStateVariables.sol:LL:CC
+   │
+LL │     uint256 public x;
+   │     ━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
+
+warning[uninitialized-state]: state variable is read but never written
+   ╭▸ ROOT/testdata/UninitializedStateVariables.sol:LL:CC
+   │
+LL │     address public owner;
+   │     ━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/uninitialized-state
 

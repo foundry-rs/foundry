@@ -70,10 +70,13 @@ contract GoodPushPop {
     }
 }
 
-// ── Inheritance: write in derived, read in base ───────────────────────────────
+// ── Inheritance: concrete base analyzed independently from derived ────────────
+// Each concrete contract is checked on its own; Base can be deployed directly
+// and `data` is never written in its scope, so it is flagged. DerivedGood
+// writes `data` in its constructor, so no warning fires for DerivedGood.
 
 contract Base {
-    uint256 public data;
+    uint256 public data; //~WARN: state variable is read but never written
 
     function getData() public view returns (uint256) {
         return data;
@@ -266,4 +269,60 @@ contract LibraryDispatch {
     function get() public view returns (uint256) {
         return slot.get();
     }
+}
+
+// ── Concrete base with a concrete derived that writes the variable ────────────
+// Deploying the base directly leaves `x` uninitialized; the derived constructor
+// writing `x` only matters for that derived deployment.
+
+contract BaseDeployable {
+    uint256 public x; //~WARN: state variable is read but never written
+    function get() external view returns (uint256) { return x; }
+}
+
+contract DerivedFromBaseDeployable is BaseDeployable {
+    constructor() { x = 42; }
+}
+
+// ── Overloaded internal function: only flag when no storage overload matches ──
+// `f(x)` resolves to `f(uint256)`; the existence of a `f(S storage)` overload
+// must not suppress the warning on `x`.
+
+contract OverloadUnion {
+    struct S { uint256 v; }
+    uint256 public x; //~WARN: state variable is read but never written
+    S internal data;
+
+    function f(uint256) internal {}
+    function f(S storage) internal {}
+
+    function callIt() external { f(x); }
+    function read() external view returns (uint256) { return x; }
+}
+
+// ── Storage-ref internal call with named arguments ────────────────────────────
+// `_set({v: v, target: slot})` passes `slot` as the storage parameter even
+// though it appears second in source order; the lint must match by name.
+
+contract NamedArgStorage {
+    struct Data { uint256 val; }
+    Data public slot;
+
+    function _set(Data storage target, uint256 v) internal { target.val = v; }
+    function set(uint256 v) external { _set({v: v, target: slot}); }
+    function get() public view returns (uint256) { return slot.val; }
+}
+
+// ── payable() cast on a member-call receiver is not a write ──────────────────
+// `payable(owner).transfer(...)` reads `owner` to obtain an address; it does
+// not write to the state variable.
+
+contract PayableTransfer {
+    address public owner; //~WARN: state variable is read but never written
+
+    function withdraw() external {
+        payable(owner).transfer(address(this).balance);
+    }
+
+    function getOwner() public view returns (address) { return owner; }
 }

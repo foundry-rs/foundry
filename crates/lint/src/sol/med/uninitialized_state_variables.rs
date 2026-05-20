@@ -9,8 +9,8 @@ use solar::{
     sema::{
         Hir,
         hir::{
-            Block, ContractId, DataLocation, Expr, ExprKind, ItemId, Res, Stmt, StmtKind, TypeKind,
-            VariableId, Visit,
+            Block, CallArgsKind, ContractId, DataLocation, Expr, ExprKind, ItemId, Res, Stmt,
+            StmtKind, TypeKind, VariableId, Visit,
         },
     },
 };
@@ -33,13 +33,6 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
         let contract = hir.contract(contract_id);
 
         if matches!(contract.kind, ContractKind::Interface | ContractKind::AbstractContract) {
-            return;
-        }
-
-        // Only analyse the most-derived contract in each hierarchy so each
-        // state variable is reported exactly once and write/read information
-        // from every level of the inheritance chain is visible.
-        if hir.contracts().any(|c| c.linearized_bases.iter().skip(1).any(|&id| id == contract_id)) {
             return;
         }
 
@@ -232,15 +225,49 @@ fn collect_expr_writes_checked<'hir>(
             // Direct calls to internal functions that take a `storage` parameter
             // mutate the corresponding argument in place; treat it as a write.
             if let ExprKind::Ident(resolutions) = &callee.kind {
-                for res in *resolutions {
-                    if let Res::Item(ItemId::Function(func_id)) = res {
-                        let func = hir.function(*func_id);
-                        for (&param_id, arg_expr) in func.parameters.iter().zip(args.exprs()) {
-                            if matches!(
-                                hir.variable(param_id).data_location,
-                                Some(DataLocation::Storage)
-                            ) {
-                                collect_lvalue_writes(arg_expr, candidates, writes);
+                // Collect all resolved function candidates. When there are multiple
+                // overloads only mark an arg as written if ALL candidates agree that
+                // the parameter at that position is `storage`; marking on any-overload
+                // would produce false negatives when the non-storage overload is selected.
+                let funcs: Vec<_> = resolutions
+                    .iter()
+                    .filter_map(|res| {
+                        if let Res::Item(ItemId::Function(func_id)) = res {
+                            Some(hir.function(*func_id))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if !funcs.is_empty() {
+                    for (i, arg_expr) in args.exprs().enumerate() {
+                        let all_storage = funcs.iter().all(|func| {
+                            func.parameters.get(i).is_some_and(|&pid| {
+                                matches!(
+                                    hir.variable(pid).data_location,
+                                    Some(DataLocation::Storage)
+                                )
+                            })
+                        });
+                        if all_storage {
+                            collect_lvalue_writes(arg_expr, candidates, writes);
+                        }
+                    }
+                }
+
+                if let CallArgsKind::Named(named) = args.kind {
+                    for res in *resolutions {
+                        if let Res::Item(ItemId::Function(func_id)) = res {
+                            let func = hir.function(*func_id);
+                            for &param_id in func.parameters {
+                                let param = hir.variable(param_id);
+                                if matches!(param.data_location, Some(DataLocation::Storage))
+                                    && let Some(arg) = named
+                                        .iter()
+                                        .find(|a| param.name.is_some_and(|n| n == a.name))
+                                {
+                                    collect_lvalue_writes(&arg.value, candidates, writes);
+                                }
                             }
                         }
                     }
@@ -308,10 +335,9 @@ fn collect_lvalue_writes(
                 collect_lvalue_writes(expr, candidates, writes);
             }
         }
-        ExprKind::Index(base, _)
-        | ExprKind::Slice(base, _, _)
-        | ExprKind::Member(base, _)
-        | ExprKind::Payable(base) => collect_lvalue_writes(base, candidates, writes),
+        ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
+            collect_lvalue_writes(base, candidates, writes)
+        }
         _ => {}
     }
 }
