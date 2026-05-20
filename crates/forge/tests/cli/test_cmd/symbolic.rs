@@ -4213,19 +4213,14 @@ contract SymbolicErc20TransferFromStorage {
 "#,
     );
 
-    let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkTransferFromStorage"])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
-
-    assert!(
-        stdout.contains(
-            "[PASS] checkTransferFromStorage(address,address,address,uint96,uint96,uint96)"
-        ),
-        "{stdout}"
-    );
-    assert!(!stdout.contains("symbolic counterexample did not replay"), "{stdout}");
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkTransferFromStorage"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicErc20TransferFromStorage.t.sol:SymbolicErc20TransferFromStorage
+[PASS] checkTransferFromStorage(address,address,address,uint96,uint96,uint96) ([METRICS])
+...
+"#]]);
 });
 
 forgetest_init!(symbolic_svm_storage_helpers_are_supported, |prj, cmd| {
