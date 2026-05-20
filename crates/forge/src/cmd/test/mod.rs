@@ -583,6 +583,19 @@ impl TestArgs {
                 eyre::bail!("Cannot run mutation testing with failed tests");
             }
 
+            // A green baseline that ran *zero* tests is not a useful baseline:
+            // every compileable mutant would be reported as `Alive` (no test
+            // failed, so nothing killed it), which produces a wildly
+            // misleading mutation report. Hard-error so users get an actual
+            // signal that their filter / path / setup matched nothing.
+            if outcome.tests().next().is_none() {
+                eyre::bail!(
+                    "Mutation testing requires at least one matching baseline test; the current \
+                     filter/path selection matched zero tests. Loosen `--match-test` / \
+                     `--match-contract` / `--match-path` or check the project layout."
+                );
+            }
+
             // Explicit paths on --mutate cannot be combined with the --mutate-path
             // glob filter: clap can't express this directly because --mutate takes
             // an optional list of paths.
@@ -688,11 +701,16 @@ impl TestArgs {
                 show_progress: self.show_progress,
                 json_output,
                 // Carry the same filter args (--match-test, --match-contract,
-                // --match-path, ...) and isolation flag the baseline run used,
-                // so every mutant exercises the exact same test set under the
-                // same execution model. Without this, mutant runs silently
-                // diverge from baseline and produce false kills/survivors.
-                filter_args: self.filter.clone(),
+                // --match-path, positional path shorthand, --rerun, ...) and
+                // isolation flag the baseline actually used, so every mutant
+                // exercises the exact same test set under the same execution
+                // model. We pull from the materialized `filter`, not the raw
+                // CLI flags on `self`, because the baseline applies extras:
+                // the positional `forge test <path>` shorthand is folded into
+                // `path_pattern`, and `--rerun` injects last-run failures
+                // into `test_pattern`. Using `self.filter.clone()` would lose
+                // those and let mutant runs silently diverge from baseline.
+                filter_args: filter.args().clone(),
                 isolate: evm_opts_for_mutation.isolate,
             };
 

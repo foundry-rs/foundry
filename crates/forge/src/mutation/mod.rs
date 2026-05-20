@@ -1,8 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use crate::mutation::{
     mutant::{Mutant, MutationResult},
@@ -146,14 +142,33 @@ impl MutationsSummary {
         if valid_mutants == 0 { 0.0 } else { self.dead.len() as f64 / valid_mutants as f64 * 100.0 }
     }
 
-    /// Convert to JSON output format
+    /// Convert to JSON output format.
+    ///
+    /// Output is sorted deterministically: files in lexicographic order
+    /// (`BTreeMap` keys), and survived mutants within each file sorted by
+    /// `(span.lo, span.hi, mutation_text)`. Without this, parallel worker
+    /// completion order leaks into the JSON and breaks downstream diffing,
+    /// snapshot tests, and reproducibility.
     pub fn to_json_output(&self, duration_secs: f64) -> MutationJsonOutput {
-        let mut survived_mutants: HashMap<String, Vec<SurvivedMutantJson>> = HashMap::new();
+        use std::collections::BTreeMap;
+
+        let mut survived_mutants: BTreeMap<String, Vec<SurvivedMutantJson>> = BTreeMap::new();
 
         for mutant in &self.survived {
             let file_path = mutant.relative_path();
             let entry = survived_mutants.entry(file_path).or_default();
             entry.push(SurvivedMutantJson::from_mutant(mutant));
+        }
+
+        for entries in survived_mutants.values_mut() {
+            entries.sort_by(|a, b| {
+                (a.line, a.column, &a.original, &a.mutant).cmp(&(
+                    b.line,
+                    b.column,
+                    &b.original,
+                    &b.mutant,
+                ))
+            });
         }
 
         MutationJsonOutput {
@@ -172,11 +187,14 @@ impl MutationsSummary {
     }
 }
 
-/// JSON output for mutation testing results
+/// JSON output for mutation testing results.
+///
+/// Uses [`BTreeMap`] for `survived_mutants` so file ordering in the emitted
+/// JSON is deterministic.
 #[derive(Debug, Clone, Serialize)]
 pub struct MutationJsonOutput {
     pub summary: MutationSummaryJson,
-    pub survived_mutants: HashMap<String, Vec<SurvivedMutantJson>>,
+    pub survived_mutants: std::collections::BTreeMap<String, Vec<SurvivedMutantJson>>,
 }
 
 /// Summary section of JSON output
