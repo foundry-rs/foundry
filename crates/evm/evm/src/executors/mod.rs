@@ -1138,7 +1138,12 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
         (new_coverage, is_edge)
     }
 
-    fn merge_edge_count(curr: u8, hist: &mut u8, new_coverage: &mut bool, is_edge: &mut bool) {
+    const fn merge_edge_count(
+        curr: u8,
+        hist: &mut u8,
+        new_coverage: &mut bool,
+        is_edge: &mut bool,
+    ) {
         let Some(bucket) = Self::bin_count(curr) else {
             return;
         };
@@ -1156,7 +1161,7 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
 
     /// Convert a hitcount into an AFL-style bucket.
     /// <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
-    fn bin_count(count: u8) -> Option<u8> {
+    const fn bin_count(count: u8) -> Option<u8> {
         match count {
             0 => None,
             1 => Some(1),
@@ -1171,7 +1176,7 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
     }
 
     /// Update provided history map with sancov coverage info collected during this call.
-    /// Same AFL binning algo as [`Self::bin_count`].
+    /// Uses AFL-style hitcount binning.
     pub fn merge_sancov_coverage(&mut self, history_map: &mut Vec<u8>) -> (bool, bool) {
         let mut new_coverage = false;
         let mut is_edge = false;
@@ -1181,14 +1186,14 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
             }
             for (curr, hist) in std::iter::zip(x.iter_mut(), history_map.iter_mut()) {
                 if *curr > 0 {
-                    if let Some(bucket) = Self::bin_count(*curr) {
-                        if *hist < bucket {
-                            if *hist == 0 {
-                                is_edge = true;
-                            }
-                            *hist = bucket;
-                            new_coverage = true;
+                    if let Some(bucket) = Self::bin_count(*curr)
+                        && *hist < bucket
+                    {
+                        if *hist == 0 {
+                            is_edge = true;
                         }
+                        *hist = bucket;
+                        new_coverage = true;
                     }
                     *curr = 0;
                 }

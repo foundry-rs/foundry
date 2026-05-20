@@ -229,7 +229,7 @@ impl EdgeCovInspector {
     }
 
     /// Get an immutable reference to the hitcount.
-    pub fn get_hitcount(&self) -> &[u8] {
+    pub const fn get_hitcount(&self) -> &[u8] {
         self.hitcount.as_slice()
     }
 
