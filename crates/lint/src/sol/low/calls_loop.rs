@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{ElementaryType, Visibility},
+    ast::{DataLocation, ElementaryType, Visibility},
     interface::{kw, sym},
     sema::{
         Gcx, Ty,
@@ -422,8 +422,7 @@ fn member_return_type<'hir>(
     for item in hir.contract_item_ids(contract_id) {
         let Some(func_id) = item.as_function() else { continue };
         let func = hir.function(func_id);
-        if !func.name.is_some_and(|name| name.name == member.name) || func.parameters.len() != arity
-        {
+        if func.name.is_none_or(|name| name.name != member.name) || func.parameters.len() != arity {
             continue;
         }
         let [ret_id] = func.returns else { return None };
@@ -484,7 +483,13 @@ fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) ->
                         res.as_variable().map(|var_id| Res::Item(ItemId::Variable(var_id)))
                     }))
                 })?;
-            Some(gcx.type_of_res(res))
+            let ty = gcx.type_of_res(res);
+            Some(match res {
+                Res::Item(ItemId::Variable(var_id)) => {
+                    ty.with_loc_if_ref_opt(gcx, variable_data_location(hir, var_id))
+                }
+                _ => ty,
+            })
         }
         ExprKind::Index(base, _) => semantic_index_ty(gcx, hir, base),
         ExprKind::Member(base, member) => semantic_member_ty(gcx, hir, base, member.name),
@@ -506,10 +511,19 @@ fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) ->
 
 fn semantic_index_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, base: &Expr<'gcx>) -> Option<Ty<'gcx>> {
     let base_ty = semantic_expr_ty(gcx, hir, base)?;
+    let loc = indexed_base_data_location(base_ty);
     match base_ty.peel_refs().kind {
-        TyKind::Mapping(_, value) => Some(value),
+        TyKind::Mapping(_, value) => Some(value.with_loc_if_ref_opt(gcx, loc)),
         _ => base_ty.base_type(gcx),
     }
+}
+
+fn indexed_base_data_location(ty: Ty<'_>) -> Option<DataLocation> {
+    ty.loc().or_else(|| {
+        // Mappings can only live in storage, but Solar does not model `TyKind::Mapping`
+        // itself as a reference type.
+        matches!(ty.kind, TyKind::Mapping(..)).then_some(DataLocation::Storage)
+    })
 }
 
 fn semantic_member_ty<'gcx>(
@@ -550,6 +564,13 @@ fn referenced_item(expr: &Expr<'_>) -> Option<ItemId> {
         ExprKind::Ident([Res::Item(id), ..]) => Some(*id),
         _ => None,
     }
+}
+
+fn variable_data_location(hir: &Hir<'_>, var_id: hir::VariableId) -> Option<DataLocation> {
+    let var = hir.variable(var_id);
+    var.data_location.or_else(|| {
+        (var.function.is_none() && var.contract.is_some()).then_some(DataLocation::Storage)
+    })
 }
 
 fn unique<T>(mut iter: impl Iterator<Item = T>) -> Option<T> {

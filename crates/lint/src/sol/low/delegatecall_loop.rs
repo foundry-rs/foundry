@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{ElementaryType, LitKind, StateMutability, StrKind, TypeSize, Visibility},
+    ast::{DataLocation, ElementaryType, LitKind, StateMutability, StrKind, TypeSize, Visibility},
     interface::{Span, kw, sym},
     sema::{
         Gcx, Ty,
@@ -409,6 +409,10 @@ fn expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<T
                 {
                     None
                 }
+                Res::Item(ItemId::Variable(var_id)) => Some(
+                    gcx.type_of_res(res)
+                        .with_loc_if_ref_opt(gcx, variable_data_location(hir, var_id)),
+                ),
                 _ => Some(gcx.type_of_res(res)),
             }
         }
@@ -419,7 +423,7 @@ fn expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<T
             {
                 return None;
             }
-            lhs_ty.base_type(gcx)
+            index_ty(gcx, lhs_ty)
         }
         ExprKind::Lit(lit) => Some(match &lit.kind {
             LitKind::Str(StrKind::Hex, s, _) => {
@@ -493,6 +497,22 @@ fn explicit_cast_ty<'gcx>(gcx: Gcx<'gcx>, to: Ty<'gcx>, args: &CallArgs<'gcx>) -
     }
 }
 
+fn index_ty<'gcx>(gcx: Gcx<'gcx>, base_ty: Ty<'gcx>) -> Option<Ty<'gcx>> {
+    let loc = indexed_base_data_location(base_ty);
+    match base_ty.peel_refs().kind {
+        TyKind::Mapping(_, value) => Some(value.with_loc_if_ref_opt(gcx, loc)),
+        _ => base_ty.base_type(gcx),
+    }
+}
+
+fn indexed_base_data_location(ty: Ty<'_>) -> Option<DataLocation> {
+    ty.loc().or_else(|| {
+        // Mappings can only live in storage, but Solar does not model `TyKind::Mapping`
+        // itself as a reference type.
+        matches!(ty.kind, TyKind::Mapping(..)).then_some(DataLocation::Storage)
+    })
+}
+
 fn member_ty<'gcx>(
     gcx: Gcx<'gcx>,
     hir: &Hir<'gcx>,
@@ -531,6 +551,13 @@ fn referenced_item(expr: &Expr<'_>) -> Option<ItemId> {
         ExprKind::Ident([Res::Item(id), ..]) => Some(*id),
         _ => None,
     }
+}
+
+fn variable_data_location(hir: &Hir<'_>, var_id: VariableId) -> Option<DataLocation> {
+    let var = hir.variable(var_id);
+    var.data_location.or_else(|| {
+        (var.function.is_none() && var.contract.is_some()).then_some(DataLocation::Storage)
+    })
 }
 
 fn is_address_ty(ty: Ty<'_>) -> bool {

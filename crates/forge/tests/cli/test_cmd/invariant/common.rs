@@ -2690,7 +2690,7 @@ contract InvariantWarp is Test {
 [FAIL: max time]
 	[Sequence] (original: 3, shrunk: 1)
 		vm.warp(block.timestamp + 656868);
-		vm.prank(0x00000000000000000000000000000000000012d1);
+		vm.prank([..]);
 		Warp(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
  invariant_warp() (runs: 256, calls: 258, reverts: 222)
 ...
