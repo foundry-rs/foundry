@@ -106,13 +106,6 @@ impl TxParams {
     }
 }
 
-pub(crate) fn print_tempo_expires(expires_at: Option<u64>) -> Result<()> {
-    if let Some(ts) = expires_at {
-        sh_println!("Transaction expires at unix timestamp {ts}")?;
-    }
-    Ok(())
-}
-
 /// Different sender kinds used by [`CastTxBuilder`].
 pub enum SenderKind<'a> {
     /// An address without signer. Used for read-only calls and transactions sent through unlocked

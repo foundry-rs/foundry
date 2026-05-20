@@ -3,7 +3,8 @@ use crate::{
         erc20::build_provider_with_signer,
         send::{cast_send, cast_send_with_access_key},
     },
-    tx::{self, SendTxOpts, TxParams},
+    tempo,
+    tx::{SendTxOpts, TxParams},
 };
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_signer::Signer;
@@ -104,7 +105,7 @@ pub(super) async fn register(
         .registerVirtualMaster(salt)
         .into_transaction_request();
     let expires_at = tx_opts.tempo.resolve_expires();
-    tx::print_tempo_expires(expires_at)?;
+    tempo::print_expires(expires_at)?;
     tx_opts.apply::<TempoNetwork>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
 
     sh_println!("Submitting registerVirtualMaster({salt}) on Tempo...")?;

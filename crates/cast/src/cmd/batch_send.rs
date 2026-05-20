@@ -7,6 +7,7 @@
 use crate::{
     call_spec::CallSpec,
     cmd::send::{cast_send, cast_send_with_access_key},
+    tempo,
     tx::{self, CastTxBuilder, SendTxOpts},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
@@ -97,7 +98,7 @@ impl BatchSendArgs {
         }
 
         sh_println!("Building batch transaction with {} call(s)...", tempo_calls.len())?;
-        tx::print_tempo_expires(expires_at)?;
+        tempo::print_expires(expires_at)?;
 
         // Preserve key_id for modes that do not call build_with_access_key, such as unlocked.
         if let Some(ref access_key) = tempo_access_key {

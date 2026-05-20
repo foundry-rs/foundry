@@ -41,7 +41,7 @@ use foundry_cli::utils::{maybe_print_resolved_lane, resolve_lane};
 
 use crate::{
     cmd::send::cast_send,
-    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
+    tx::{CastTxBuilder, CastTxSender, SendTxOpts},
 };
 
 /// Tempo keychain management commands.
@@ -1180,7 +1180,7 @@ async fn send_keychain_tx(
         return Ok(());
     }
 
-    tx::print_tempo_expires(expires_at)?;
+    crate::tempo::print_expires(expires_at)?;
 
     if let Some(browser) = browser {
         let chain = builder.chain();
