@@ -30,6 +30,9 @@ use unsafe_typecast::UNSAFE_TYPECAST;
 mod unused_return;
 use unused_return::UNUSED_RETURN;
 
+mod weak_prng;
+use weak_prng::WEAK_PRNG;
+
 register_lints!(
     (DivideBeforeMultiply, early, (DIVIDE_BEFORE_MULTIPLY)),
     (IncorrectERC20Interface, late, (INCORRECT_ERC20_INTERFACE)),
@@ -40,5 +43,6 @@ register_lints!(
     (UninitializedLocal, late, (UNINITIALIZED_LOCAL)),
     (UninitializedStateVariables, late, (UNINITIALIZED_STATE_VARIABLES)),
     (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
-    (UnusedReturn, late, (UNUSED_RETURN))
+    (UnusedReturn, late, (UNUSED_RETURN)),
+    (WeakPrng, early, (WEAK_PRNG))
 );
