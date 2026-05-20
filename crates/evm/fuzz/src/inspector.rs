@@ -1,5 +1,6 @@
-use crate::{invariant::RandomCallGenerator, strategies::EvmFuzzState};
-use foundry_common::mapping_slots::step as mapping_step;
+use crate::invariant::RandomCallGenerator;
+use alloy_primitives::{B256, map::AddressMap};
+use foundry_common::mapping_slots::{MappingSlots, step as mapping_step};
 use foundry_evm_core::constants::CHEATCODE_ADDRESS;
 use revm::{
     Inspector,
@@ -14,8 +15,12 @@ pub struct Fuzzer {
     pub collect: bool,
     /// Given a strategy, it generates a random call.
     pub call_generator: Option<RandomCallGenerator>,
-    /// If `collect` is set, we store the collected values in this fuzz dictionary.
-    pub fuzz_state: EvmFuzzState,
+    /// If `collect` is set, we store collected values until the invariant worker drains them.
+    pub collected_values: Vec<B256>,
+    /// Maximum number of stack words staged before the invariant worker drains them.
+    pub max_collected_values: usize,
+    /// Mapping accesses observed during execution, used for storage slot sampling.
+    pub mapping_slots: Option<AddressMap<MappingSlots>>,
 }
 
 impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
@@ -24,7 +29,7 @@ impl<CTX: ContextTr> Inspector<CTX> for Fuzzer {
         // We only collect `stack` and `memory` data before and after calls.
         if self.collect {
             self.collect_data(interp);
-            if let Some(mapping_slots) = &mut self.fuzz_state.mapping_slots {
+            if let Some(mapping_slots) = &mut self.mapping_slots {
                 mapping_step(mapping_slots, interp);
             }
         }
@@ -61,7 +66,9 @@ impl Fuzzer {
     /// Collects `stack` and `memory` values into the fuzz dictionary.
     #[cold]
     fn collect_data(&mut self, interpreter: &Interpreter) {
-        self.fuzz_state.collect_values(interpreter.stack.data().iter().copied().map(Into::into));
+        let remaining = self.max_collected_values.saturating_sub(self.collected_values.len());
+        self.collected_values
+            .extend(interpreter.stack.data().iter().take(remaining).copied().map(B256::from));
 
         // TODO: disabled for now since it's flooding the dictionary
         // for index in 0..interpreter.shared_memory.len() / 32 {
@@ -72,6 +79,11 @@ impl Fuzzer {
         // }
 
         self.collect = false;
+    }
+
+    /// Drains values observed by the inspector since the last call.
+    pub fn drain_collected_values(&mut self) -> Vec<B256> {
+        std::mem::take(&mut self.collected_values)
     }
 
     /// Overrides an external call to simulate reentrancy attacks.
