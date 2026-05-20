@@ -27,7 +27,8 @@ use foundry_evm_fuzz::invariant::FuzzRunIdentifiedContracts;
 use std::{
     collections::BTreeMap,
     fmt,
-    fmt::Write,
+    fs::File,
+    io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
 
@@ -117,8 +118,10 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
 
     let mut stats =
         ShowmapStats { sancov_requested: opts.domain.includes_sancov(), ..Default::default() };
-    let mut evm_agg: BTreeMap<(B256, u32), u64> = BTreeMap::new();
-    let mut san_agg: Vec<u64> = Vec::new();
+    // Reused per call. In aggregate mode it accumulates across all entries; in per-input mode it
+    // is cleared after each entry's file is written.
+    let mut evm_buf: BTreeMap<(B256, u32), u64> = BTreeMap::new();
+    let mut san_buf: Vec<u64> = Vec::new();
 
     for entry in read_corpus_dir(&replay_dir) {
         let tx_seq = match entry.read_tx_seq() {
@@ -130,10 +133,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             }
         };
 
-        let mut evm_entry: BTreeMap<(B256, u32), u64> = BTreeMap::new();
-        let mut san_entry: Vec<u64> = Vec::new();
         let mut had_replayable = false;
-
         let mut executor = executor.clone();
         // Targets deployed during this entry, cleared after the entry.
         let mut created: Vec<Address> = Vec::new();
@@ -151,10 +151,10 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             //   across calls, so after consuming it we zero it out to avoid double-counting on the
             //   next iteration.
             if opts.domain.includes_evm() {
-                accumulate_evm(&mut evm_entry, call_result.line_coverage.as_ref());
+                accumulate_evm(&mut evm_buf, call_result.line_coverage.as_ref());
             }
             if opts.domain.includes_sancov() {
-                accumulate_sancov(&mut san_entry, call_result.sancov_coverage.as_deref());
+                accumulate_sancov(&mut san_buf, call_result.sancov_coverage.as_deref());
                 if let Some(buf) = call_result.sancov_coverage.as_mut() {
                     buf.fill(0);
                 }
@@ -179,7 +179,7 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             continue;
         }
         stats.corpus_entries += 1;
-        if !stats.sancov_observed && san_entry.iter().any(|&x| x != 0) {
+        if !stats.sancov_observed && san_buf.iter().any(|&x| x != 0) {
             stats.sancov_observed = true;
         }
 
@@ -187,17 +187,11 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
             // <program>__<trial>__<uuid>-<ts>.txt
             let stem =
                 format!("{}__{}__{}-{}", opts.program, opts.trial, entry.uuid, entry.timestamp);
-            stats.showmap_files += write_showmap_file(
-                &approach_dir.join(format!("{stem}.txt")),
-                &evm_entry,
-                &san_entry,
-            )?;
-        } else {
-            for (k, v) in &evm_entry {
-                let slot = evm_agg.entry(*k).or_default();
-                *slot = slot.saturating_add(*v);
-            }
-            saturating_merge_sancov(&mut san_agg, &san_entry);
+            stats.showmap_files +=
+                write_showmap_file(&approach_dir.join(format!("{stem}.txt")), &evm_buf, &san_buf)?;
+            // Reset for the next entry; preserves capacity so we don't reallocate.
+            evm_buf.clear();
+            san_buf.fill(0);
         }
     }
 
@@ -205,8 +199,8 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         // <program>__<trial>.txt
         stats.showmap_files += write_showmap_file(
             &approach_dir.join(format!("{}__{}.txt", opts.program, opts.trial)),
-            &evm_agg,
-            &san_agg,
+            &evm_buf,
+            &san_buf,
         )?;
     }
 
@@ -237,52 +231,45 @@ fn accumulate_sancov(dst: &mut Vec<u64>, src: Option<&[u8]>) {
     }
 }
 
-/// Saturating-merge two u64 sancov aggregated bitmaps.
-fn saturating_merge_sancov(dst: &mut Vec<u64>, src: &[u64]) {
-    if dst.len() < src.len() {
-        dst.resize(src.len(), 0);
-    }
-    for (d, &s) in dst.iter_mut().zip(src) {
-        if s != 0 {
-            *d = d.saturating_add(s);
-        }
-    }
-}
-
 /// Write a single showmap file. Returns 1 if a file was written, 0 if skipped
 /// (no nonzero entries).
 fn write_showmap_file(path: &Path, evm: &BTreeMap<(B256, u32), u64>, san: &[u64]) -> Result<usize> {
-    let mut buf = String::new();
-    write_evm(&mut buf, evm);
-    write_sancov(&mut buf, san);
-    if buf.is_empty() {
+    // Pre-check so we don't create empty files.
+    let has_evm = evm.values().any(|&c| c != 0);
+    let has_san = san.iter().any(|&c| c != 0);
+    if !has_evm && !has_san {
         return Ok(0);
     }
-    foundry_common::fs::write(path, buf)?;
+    let mut w = BufWriter::new(File::create(path)?);
+    write_evm(&mut w, evm)?;
+    write_sancov(&mut w, san)?;
+    w.flush()?;
     Ok(1)
 }
 
 /// Each EVM ID is `evm_<bytecode_hash[:16hex]>_<pc:04x>`. The 16-hex prefix
 /// (64 bits) of the keccak256 bytecode hash makes IDs deterministic across
 /// processes while keeping line lengths short.
-fn write_evm(out: &mut String, evm: &BTreeMap<(B256, u32), u64>) {
+fn write_evm<W: Write>(out: &mut W, evm: &BTreeMap<(B256, u32), u64>) -> std::io::Result<()> {
     for ((hash, pc), count) in evm {
         if *count == 0 {
             continue;
         }
         let h = hex::encode(&hash.as_slice()[..8]);
-        let _ = writeln!(out, "evm_{h}_{pc:04x}:{count}");
+        writeln!(out, "evm_{h}_{pc:04x}:{count}")?;
     }
+    Ok(())
 }
 
-fn write_sancov(out: &mut String, bitmap: &[u64]) {
+fn write_sancov<W: Write>(out: &mut W, bitmap: &[u64]) -> std::io::Result<()> {
     for (idx, &count) in bitmap.iter().enumerate() {
         if count != 0 {
             // Underscore (not `:`) between prefix and id keeps the showmap
             // `<id>:<count>` parser unambiguous.
-            let _ = writeln!(out, "sancov_0x{idx:04x}:{count}");
+            writeln!(out, "sancov_0x{idx:04x}:{count}")?;
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -305,21 +292,21 @@ mod tests {
 
     #[test]
     fn write_evm_emits_only_nonzero_deterministic_ids() {
-        let mut s = String::new();
+        let mut buf: Vec<u8> = Vec::new();
         let h = B256::with_last_byte(0xab);
         let mut evm = BTreeMap::new();
         evm.insert((h, 1u32), 0u64); // skipped (count=0)
         evm.insert((h, 0x2au32), 3u64);
-        write_evm(&mut s, &evm);
+        write_evm(&mut buf, &evm).unwrap();
         let h_hex = hex::encode(&h.as_slice()[..8]);
-        assert_eq!(s, format!("evm_{h_hex}_002a:3\n"));
+        assert_eq!(String::from_utf8(buf).unwrap(), format!("evm_{h_hex}_002a:3\n"));
     }
 
     #[test]
     fn write_sancov_emits_only_nonzero_hex_ids() {
-        let mut s = String::new();
-        write_sancov(&mut s, &[0, 3, 0, 1]);
-        assert_eq!(s, "sancov_0x0001:3\nsancov_0x0003:1\n");
+        let mut buf: Vec<u8> = Vec::new();
+        write_sancov(&mut buf, &[0, 3, 0, 1]).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "sancov_0x0001:3\nsancov_0x0003:1\n");
     }
 
     #[test]

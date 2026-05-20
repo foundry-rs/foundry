@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Directory name used by the master worker.
+// Note: invariant tests only run a single worker; revisit when they gain parallel workers.
 const MASTER_WORKER_DIR: &str = "worker0";
 /// Subdirectory storing corpus entries.
 const CORPUS_SUBDIR: &str = "corpus";
