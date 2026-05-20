@@ -327,54 +327,51 @@ fn rewrite_homepage_links(
     commit: Option<&str>,
 ) -> String {
     let mut out = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let mut i = 0;
-
-    while i < bytes.len() {
-        // Find `](` and start of an inline link target.
-        if i + 1 < bytes.len() && bytes[i] == b']' && bytes[i + 1] == b'(' {
-            out.push(']');
-            out.push('(');
-            i += 2;
-
-            // Scan the URL, counting parens so we don't split on `(` / `)` inside it.
-            let start = i;
-            let mut depth = 1usize;
-            while i < bytes.len() {
-                match bytes[i] {
-                    b'(' => {
-                        depth += 1;
-                        i += 1;
+    let mut rest = text;
+    while let Some(open) = rest.find("](") {
+        out.push_str(&rest[..open + 2]);
+        rest = &rest[open + 2..];
+        // Scan the URL, counting parens so we don't split on `(` / `)` inside it.
+        let bytes = rest.as_bytes();
+        let mut i = 0;
+        let mut depth = 1usize;
+        let mut closed = false;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'(' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        closed = true;
+                        break;
                     }
-                    b')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
-                        i += 1;
-                    }
-                    b'\\' => {
-                        i += 2; // skip escaped character
-                    }
-                    _ => {
-                        i += 1;
-                    }
+                    i += 1;
+                }
+                b'\\' => {
+                    i += 2; // skip escaped character
+                }
+                _ => {
+                    i += 1;
                 }
             }
-            let target = &text[start..i];
-            match try_rewrite_target(target, base_dir, root, src_to_url, repo, commit) {
-                Some(new) => out.push_str(&new),
-                None => out.push_str(target),
-            }
-            if i < bytes.len() && bytes[i] == b')' {
-                out.push(')');
-                i += 1;
-            }
+        }
+        let target = &rest[..i];
+        match try_rewrite_target(target, base_dir, root, src_to_url, repo, commit) {
+            Some(new) => out.push_str(&new),
+            None => out.push_str(target),
+        }
+        if closed {
+            out.push(')');
+            rest = &rest[i + 1..];
         } else {
-            out.push(bytes[i] as char);
-            i += 1;
+            rest = &rest[i..];
+            break;
         }
     }
+    out.push_str(rest);
     out
 }
 
