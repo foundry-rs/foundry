@@ -5,12 +5,12 @@ use crate::{
 };
 use solar::{
     ast::ContractKind,
-    interface::data_structures::Never,
+    interface::{data_structures::Never, sym},
     sema::{
         Hir,
         hir::{
-            Block, CallArgsKind, ContractId, DataLocation, Expr, ExprKind, ItemId, Res, Stmt,
-            StmtKind, TypeKind, VariableId, Visit,
+            Block, CallArgs, CallArgsKind, ContractId, DataLocation, Expr, ExprKind, Function,
+            ItemId, Res, Stmt, StmtKind, TypeKind, VariableId, Visit,
         },
     },
 };
@@ -74,14 +74,22 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
         // Bail out conservatively if any function body contains inline assembly
         // (lowered to StmtKind::Err by Solar), because we cannot soundly track
         // reads or writes through it.
-        for &cid in contract.linearized_bases {
+        let bases = contract.linearized_bases;
+
+        for &cid in bases {
             for func_id in hir.contract(cid).all_functions() {
                 let function = hir.function(func_id);
 
                 for modifier in function.modifiers {
                     for expr in modifier.args.exprs() {
-                        if collect_expr_writes_checked(hir, expr, &candidate_set, &mut written)
-                            .is_err()
+                        if collect_expr_writes_checked(
+                            hir,
+                            expr,
+                            &candidate_set,
+                            &mut written,
+                            bases,
+                        )
+                        .is_err()
                         {
                             return;
                         }
@@ -89,7 +97,7 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
                 }
 
                 if let Some(body) = function.body
-                    && collect_block_writes_checked(hir, body, &candidate_set, &mut written)
+                    && collect_block_writes_checked(hir, body, &candidate_set, &mut written, bases)
                         .is_err()
                 {
                     return;
@@ -98,7 +106,8 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
 
             for base_modifier in hir.contract(cid).bases_args {
                 for expr in base_modifier.args.exprs() {
-                    if collect_expr_writes_checked(hir, expr, &candidate_set, &mut written).is_err()
+                    if collect_expr_writes_checked(hir, expr, &candidate_set, &mut written, bases)
+                        .is_err()
                     {
                         return;
                     }
@@ -108,7 +117,8 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
             // Walk state-vars initializer expressions for side-effect writes to other state vars
             for var_id in hir.contract(cid).variables() {
                 if let Some(init) = hir.variable(var_id).initializer
-                    && collect_expr_writes_checked(hir, init, &candidate_set, &mut written).is_err()
+                    && collect_expr_writes_checked(hir, init, &candidate_set, &mut written, bases)
+                        .is_err()
                 {
                     return;
                 }
@@ -145,9 +155,10 @@ fn collect_block_writes_checked<'hir>(
     block: Block<'hir>,
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
+    bases: &'hir [ContractId],
 ) -> Result<(), ()> {
     for stmt in block.stmts {
-        collect_stmt_writes_checked(hir, stmt, candidates, writes)?;
+        collect_stmt_writes_checked(hir, stmt, candidates, writes, bases)?;
     }
     Ok(())
 }
@@ -157,36 +168,39 @@ fn collect_stmt_writes_checked<'hir>(
     stmt: &'hir Stmt<'hir>,
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
+    bases: &'hir [ContractId],
 ) -> Result<(), ()> {
     match &stmt.kind {
         // Assembly is lowered to StmtKind::Err; bail conservatively.
         StmtKind::Err(_) => return Err(()),
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-            collect_block_writes_checked(hir, *block, candidates, writes)?;
+            collect_block_writes_checked(hir, *block, candidates, writes, bases)?;
         }
         StmtKind::If(condition, then_stmt, else_stmt) => {
-            collect_expr_writes_checked(hir, condition, candidates, writes)?;
-            collect_stmt_writes_checked(hir, then_stmt, candidates, writes)?;
+            collect_expr_writes_checked(hir, condition, candidates, writes, bases)?;
+            collect_stmt_writes_checked(hir, then_stmt, candidates, writes, bases)?;
             if let Some(else_stmt) = else_stmt {
-                collect_stmt_writes_checked(hir, else_stmt, candidates, writes)?;
+                collect_stmt_writes_checked(hir, else_stmt, candidates, writes, bases)?;
             }
         }
         StmtKind::Try(stmt_try) => {
-            collect_expr_writes_checked(hir, &stmt_try.expr, candidates, writes)?;
+            collect_expr_writes_checked(hir, &stmt_try.expr, candidates, writes, bases)?;
             for clause in stmt_try.clauses {
-                collect_block_writes_checked(hir, clause.block, candidates, writes)?;
+                collect_block_writes_checked(hir, clause.block, candidates, writes, bases)?;
             }
         }
         StmtKind::DeclSingle(var_id) => {
             if let Some(initializer) = hir.variable(*var_id).initializer {
-                collect_expr_writes_checked(hir, initializer, candidates, writes)?;
+                collect_expr_writes_checked(hir, initializer, candidates, writes, bases)?;
             }
         }
         StmtKind::DeclMulti(_, expr)
         | StmtKind::Emit(expr)
         | StmtKind::Revert(expr)
         | StmtKind::Return(Some(expr))
-        | StmtKind::Expr(expr) => collect_expr_writes_checked(hir, expr, candidates, writes)?,
+        | StmtKind::Expr(expr) => {
+            collect_expr_writes_checked(hir, expr, candidates, writes, bases)?
+        }
         StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder => {}
     }
     Ok(())
@@ -197,31 +211,32 @@ fn collect_expr_writes_checked<'hir>(
     expr: &'hir Expr<'hir>,
     candidates: &HashSet<VariableId>,
     writes: &mut HashSet<VariableId>,
+    bases: &'hir [ContractId],
 ) -> Result<(), ()> {
     match &expr.kind {
         ExprKind::Assign(lhs, _, rhs) => {
             collect_lvalue_writes(lhs, candidates, writes);
-            collect_expr_writes_checked(hir, lhs, candidates, writes)?;
-            collect_expr_writes_checked(hir, rhs, candidates, writes)?;
+            collect_expr_writes_checked(hir, lhs, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, rhs, candidates, writes, bases)?;
         }
         ExprKind::Delete(inner) => {
             collect_lvalue_writes(inner, candidates, writes);
-            collect_expr_writes_checked(hir, inner, candidates, writes)?;
+            collect_expr_writes_checked(hir, inner, candidates, writes, bases)?;
         }
         ExprKind::Unary(op, inner) => {
             if op.kind.has_side_effects() {
                 collect_lvalue_writes(inner, candidates, writes);
             }
-            collect_expr_writes_checked(hir, inner, candidates, writes)?;
+            collect_expr_writes_checked(hir, inner, candidates, writes, bases)?;
         }
         ExprKind::Array(exprs) => {
             for expr in *exprs {
-                collect_expr_writes_checked(hir, expr, candidates, writes)?;
+                collect_expr_writes_checked(hir, expr, candidates, writes, bases)?;
             }
         }
         ExprKind::Binary(lhs, _, rhs) => {
-            collect_expr_writes_checked(hir, lhs, candidates, writes)?;
-            collect_expr_writes_checked(hir, rhs, candidates, writes)?;
+            collect_expr_writes_checked(hir, lhs, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, rhs, candidates, writes, bases)?;
         }
         ExprKind::Call(callee, args, named_args) => {
             if let ExprKind::Member(base, _) = &callee.kind {
@@ -233,96 +248,50 @@ fn collect_expr_writes_checked<'hir>(
 
             // Direct calls to internal functions that take a `storage` parameter
             // mutate the corresponding argument in place; treat it as a write.
-            if let ExprKind::Ident(resolutions) = &callee.kind {
-                // Collect all resolved function candidates. When there are multiple
-                // overloads only mark an arg as written if ALL candidates agree that
-                // the parameter at that position is `storage`; marking on any-overload
-                // would produce false negatives when the non-storage overload is selected.
-                let funcs: Vec<_> = resolutions
-                    .iter()
-                    .filter_map(|res| {
-                        if let Res::Item(ItemId::Function(func_id)) = res {
-                            Some(hir.function(*func_id))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if !funcs.is_empty() {
-                    if let CallArgsKind::Unnamed(_) = args.kind {
-                        for (i, arg_expr) in args.exprs().enumerate() {
-                            let all_storage = funcs.iter().all(|func| {
-                                func.parameters.get(i).is_some_and(|&pid| {
-                                    matches!(
-                                        hir.variable(pid).data_location,
-                                        Some(DataLocation::Storage)
-                                    )
-                                })
-                            });
-                            if all_storage {
-                                collect_lvalue_writes(arg_expr, candidates, writes);
-                            }
-                        }
-                    }
-
-                    if let CallArgsKind::Named(named) = args.kind {
-                        // Only mark an arg as written if ALL candidate overloads agree that
-                        // the parameter with that name is `storage`.
-                        for named_arg in named {
-                            let all_storage = funcs.iter().all(|func| {
-                                let param = func.parameters.iter().find(|&&pid| {
-                                    hir.variable(pid).name.is_some_and(|n| n == named_arg.name)
-                                });
-                                param.is_some_and(|&pid| {
-                                    matches!(
-                                        hir.variable(pid).data_location,
-                                        Some(DataLocation::Storage)
-                                    )
-                                })
-                            });
-                            if all_storage {
-                                collect_lvalue_writes(&named_arg.value, candidates, writes);
-                            }
-                        }
-                    }
-                }
+            //
+            // Handles bare identifier callees (`_set(slot, v)`) and qualified member
+            // callees (`BaseSetter._set(slot, v)`, `super._set(slot, v)`).
+            let funcs = collect_callee_funcs(hir, callee, bases);
+            if !funcs.is_empty() {
+                mark_storage_args(&funcs, hir, args, candidates, writes);
             }
-            collect_expr_writes_checked(hir, callee, candidates, writes)?;
+
+            collect_expr_writes_checked(hir, callee, candidates, writes, bases)?;
             for expr in args.exprs() {
-                collect_expr_writes_checked(hir, expr, candidates, writes)?;
+                collect_expr_writes_checked(hir, expr, candidates, writes, bases)?;
             }
             if let Some(named_args) = named_args {
                 for arg in *named_args {
-                    collect_expr_writes_checked(hir, &arg.value, candidates, writes)?;
+                    collect_expr_writes_checked(hir, &arg.value, candidates, writes, bases)?;
                 }
             }
         }
         ExprKind::Index(base, index) => {
-            collect_expr_writes_checked(hir, base, candidates, writes)?;
+            collect_expr_writes_checked(hir, base, candidates, writes, bases)?;
             if let Some(index) = index {
-                collect_expr_writes_checked(hir, index, candidates, writes)?;
+                collect_expr_writes_checked(hir, index, candidates, writes, bases)?;
             }
         }
         ExprKind::Slice(base, start, end) => {
-            collect_expr_writes_checked(hir, base, candidates, writes)?;
+            collect_expr_writes_checked(hir, base, candidates, writes, bases)?;
             if let Some(start) = start {
-                collect_expr_writes_checked(hir, start, candidates, writes)?;
+                collect_expr_writes_checked(hir, start, candidates, writes, bases)?;
             }
             if let Some(end) = end {
-                collect_expr_writes_checked(hir, end, candidates, writes)?;
+                collect_expr_writes_checked(hir, end, candidates, writes, bases)?;
             }
         }
         ExprKind::Member(base, _) | ExprKind::Payable(base) => {
-            collect_expr_writes_checked(hir, base, candidates, writes)?;
+            collect_expr_writes_checked(hir, base, candidates, writes, bases)?;
         }
         ExprKind::Ternary(condition, then_expr, else_expr) => {
-            collect_expr_writes_checked(hir, condition, candidates, writes)?;
-            collect_expr_writes_checked(hir, then_expr, candidates, writes)?;
-            collect_expr_writes_checked(hir, else_expr, candidates, writes)?;
+            collect_expr_writes_checked(hir, condition, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, then_expr, candidates, writes, bases)?;
+            collect_expr_writes_checked(hir, else_expr, candidates, writes, bases)?;
         }
         ExprKind::Tuple(exprs) => {
             for expr in exprs.iter().flatten() {
-                collect_expr_writes_checked(hir, expr, candidates, writes)?;
+                collect_expr_writes_checked(hir, expr, candidates, writes, bases)?;
             }
         }
         ExprKind::Ident(_)
@@ -333,6 +302,106 @@ fn collect_expr_writes_checked<'hir>(
         | ExprKind::Err(_) => {}
     }
     Ok(())
+}
+
+/// Collect the set of internal function candidates that a call expression may invoke.
+///
+/// Handles three callee shapes:
+/// - `f(...)` bare `Ident` with function resolutions
+/// - `Contract.f(...)` `Member` whose base resolves to a `ContractId`
+/// - `super.f(...)` `Member` whose base is the `super` builtin; searches all linearized bases
+fn collect_callee_funcs<'hir>(
+    hir: &'hir Hir<'hir>,
+    callee: &'hir Expr<'hir>,
+    bases: &[ContractId],
+) -> Vec<&'hir Function<'hir>> {
+    match &callee.kind {
+        ExprKind::Ident(resolutions) => resolutions
+            .iter()
+            .filter_map(|res| {
+                if let Res::Item(ItemId::Function(func_id)) = res {
+                    Some(hir.function(*func_id))
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        ExprKind::Member(base, method) => {
+            if let ExprKind::Ident(resolutions) = &base.peel_parens().kind {
+                let is_super = resolutions
+                    .iter()
+                    .any(|r| matches!(r, Res::Builtin(b) if b.name() == sym::super_));
+
+                let contract_ids: Vec<ContractId> = if is_super {
+                    // `super.f(...)`, search across the whole linearized inheritance chain
+                    bases.to_vec()
+                } else {
+                    resolutions
+                        .iter()
+                        .filter_map(|res| {
+                            if let Res::Item(ItemId::Contract(cid)) = res {
+                                Some(*cid)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
+
+                contract_ids
+                    .into_iter()
+                    .flat_map(|cid| hir.contract(cid).all_functions())
+                    .filter_map(|fid| {
+                        let f = hir.function(fid);
+                        f.name.is_some_and(|n| n == *method).then_some(f)
+                    })
+                    .collect()
+            } else {
+                vec![]
+            }
+        }
+        _ => vec![],
+    }
+}
+
+/// For each call argument, if ANY resolved overload has a `storage` parameter at that
+/// position, treat the argument as a write target.
+fn mark_storage_args<'hir>(
+    funcs: &[&Function<'hir>],
+    hir: &'hir Hir<'hir>,
+    args: &CallArgs<'hir>,
+    candidates: &HashSet<VariableId>,
+    writes: &mut HashSet<VariableId>,
+) {
+    if let CallArgsKind::Unnamed(_) = args.kind {
+        for (i, arg_expr) in args.exprs().enumerate() {
+            let any_storage = funcs.iter().any(|func| {
+                func.parameters.get(i).is_some_and(|&pid| {
+                    matches!(hir.variable(pid).data_location, Some(DataLocation::Storage))
+                })
+            });
+            if any_storage {
+                collect_lvalue_writes(arg_expr, candidates, writes);
+            }
+        }
+    }
+
+    if let CallArgsKind::Named(named) = args.kind {
+        for named_arg in named {
+            let any_storage = funcs.iter().any(|func| {
+                let param = func
+                    .parameters
+                    .iter()
+                    .find(|&&pid| hir.variable(pid).name.is_some_and(|n| n == named_arg.name));
+                param.is_some_and(|&pid| {
+                    matches!(hir.variable(pid).data_location, Some(DataLocation::Storage))
+                })
+            });
+            if any_storage {
+                collect_lvalue_writes(&named_arg.value, candidates, writes);
+            }
+        }
+    }
 }
 
 fn collect_lvalue_writes(

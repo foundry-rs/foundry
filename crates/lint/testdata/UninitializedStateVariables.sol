@@ -284,13 +284,14 @@ contract DerivedFromBaseDeployable is BaseDeployable {
     constructor() { x = 42; }
 }
 
-// ── Overloaded internal function: only flag when no storage overload matches ──
-// `f(x)` resolves to `f(uint256)`; the existence of a `f(S storage)` overload
-// must not suppress the warning on `x`.
+// ── Overloaded internal function ──────────────────────────────────────────────
+// When overloads exist and any of them takes `storage` at that position, the
+// argument is conservatively treated as written to avoid false positives.
+// The write is only suppressed when NO overload has a storage parameter.
 
 contract OverloadUnion {
     struct S { uint256 v; }
-    uint256 public x; //~WARN: state variable is read but never written
+    uint256 public x; // any-overload: f(S storage) has storage at pos 0 → x treated as written
     S internal data;
 
     function f(uint256) internal {}
@@ -298,6 +299,21 @@ contract OverloadUnion {
 
     function callIt() external { f(x); }
     function read() external view returns (uint256) { return x; }
+}
+
+// ── Overloaded internal function: storage overload is the correct match ───────
+// `set(slot)` where `slot` is `Data storage`; only `set(Data storage)` can
+// accept a struct argument. Previously flagged as uninitialized with `all_storage`.
+
+contract OverloadStorageWrite {
+    struct Data { uint256 val; }
+    Data public slot;
+
+    function set(Data storage target, uint256 v) internal { target.val = v; }
+    function set(uint256) internal {}
+
+    function write(uint256 v) external { set(slot, v); }
+    function get() public view returns (uint256) { return slot.val; }
 }
 
 // ── Storage-ref internal call with named arguments ────────────────────────────
@@ -354,4 +370,32 @@ contract PayableTransfer {
     }
 
     function getOwner() public view returns (address) { return owner; }
+}
+
+// ── Qualified inherited helper: Contract.f(slot) writes via storage ref ───────
+// `BaseSetter._set(slot, v)` is a member callee; the lint must look up `_set`
+// in `BaseSetter` and detect the `storage` parameter to avoid a false positive.
+
+contract BaseSetter {
+    struct Data { uint256 val; }
+    function _set(Data storage target, uint256 v) internal { target.val = v; }
+}
+
+contract QualifiedInheritedWrite is BaseSetter {
+    Data public slot;
+
+    function write(uint256 v) external { BaseSetter._set(slot, v); }
+    function get() public view returns (uint256) { return slot.val; }
+}
+
+// ── super.f(slot) writes via storage ref in parent ───────────────────────────
+// `super._set(slot, v)` uses the `super` builtin as a member base; the lint
+// must search the linearized inheritance chain for `_set` and detect the
+// `storage` parameter.
+
+contract SuperWrite is BaseSetter {
+    Data public slot;
+
+    function write(uint256 v) external { super._set(slot, v); }
+    function get() public view returns (uint256) { return slot.val; }
 }
