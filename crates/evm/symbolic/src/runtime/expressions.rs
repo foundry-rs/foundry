@@ -223,6 +223,12 @@ pub(crate) fn storage_select(
 pub(crate) fn storage_key_eq(read_key: SymWord, write_key: SymWord) -> BoolExpr {
     let read_key = read_key.into_expr();
     let write_key = write_key.into_expr();
+    if let (Some(read_root), Some(write_root)) =
+        (storage_mapping_root_slot(&read_key), storage_mapping_root_slot(&write_key))
+        && read_root != write_root
+    {
+        return BoolExpr::Const(false);
+    }
     match (storage_layout_key(&read_key), storage_layout_key(&write_key)) {
         (Some((read_base, read_offset)), Some((write_base, write_offset))) => BoolExpr::and(vec![
             BoolExpr::eq(read_base, write_base),
@@ -231,6 +237,25 @@ pub(crate) fn storage_key_eq(read_key: SymWord, write_key: SymWord) -> BoolExpr 
         (Some(_), None) if matches!(write_key, Expr::Const(_)) => BoolExpr::Const(false),
         (None, Some(_)) if matches!(read_key, Expr::Const(_)) => BoolExpr::Const(false),
         _ => BoolExpr::eq(read_key, write_key),
+    }
+}
+
+/// Returns the root Solidity storage slot for a mapping-style keccak key.
+pub(crate) fn storage_mapping_root_slot(key: &Expr) -> Option<U256> {
+    let Expr::Keccak { len, bytes, .. } = key else { return None };
+    if !matches!(len.as_ref(), Expr::Const(value) if *value == U256::from(64)) || bytes.len() < 64 {
+        return None;
+    }
+
+    let slot = word_from_bytes(bytes[32..64].iter().cloned().map(|expr| match expr {
+        Expr::Const(value) => SymWord::Concrete(value),
+        expr => SymWord::Expr(expr),
+    }))
+    .into_expr();
+    match slot {
+        Expr::Const(slot) => Some(slot),
+        Expr::Keccak { .. } => storage_mapping_root_slot(&slot),
+        _ => None,
     }
 }
 
@@ -638,9 +663,8 @@ pub(crate) fn eval_expr(
     Ok(match expr {
         Expr::Const(value) => *value,
         Expr::Var(var) => model.get(var).copied().unwrap_or_default(),
-        Expr::Keccak { name, .. } | Expr::Hash { name, .. } => {
-            model.get(name).copied().unwrap_or_default()
-        }
+        Expr::Keccak { len, bytes, .. } => eval_keccak_expr(len, bytes, model)?,
+        Expr::Hash { name, .. } => model.get(name).copied().unwrap_or_default(),
         Expr::Not(value) => !eval_expr(value, model)?,
         Expr::Op(op, left, right) => {
             let left = eval_expr(left, model)?;
@@ -655,6 +679,27 @@ pub(crate) fn eval_expr(
             }
         }
     })
+}
+
+/// Returns the concrete keccak value implied by a solver model.
+pub(crate) fn eval_keccak_expr(
+    len: &Expr,
+    bytes: &[Expr],
+    model: &BTreeMap<String, U256>,
+) -> Result<U256, SymbolicError> {
+    let len = eval_expr(len, model)?;
+    if len > U256::from(bytes.len()) {
+        return Err(SymbolicError::Solver(
+            "solver model uses an invalid keccak length".to_string(),
+        ));
+    }
+
+    let mut input = Vec::with_capacity(len.to::<usize>());
+    for byte in bytes.iter().take(len.to::<usize>()) {
+        input.push((eval_expr(byte, model)? & U256::from(0xff)).to::<u8>());
+    }
+
+    Ok(U256::from_be_bytes(keccak256(input).0))
 }
 
 /// Returns the `eval_expr_op` symbolic expression helper result.
