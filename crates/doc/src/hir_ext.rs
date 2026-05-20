@@ -16,12 +16,17 @@ use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
+use tracing::warn;
 
 // ── name-to-page map ──────────────────────────────────────────────────────────
 
 /// Maps a Solidity identifier (contract / struct / enum / error / event / UDVT)
-/// to its output MDX page path relative to `pages/`.
-pub type NameToPage = HashMap<String, PathBuf>;
+/// to all known output MDX page paths relative to `pages/`.
+///
+/// A `Vec` is used so that duplicate top-level names (e.g. same contract name in two
+/// different source files) can coexist. Resolution at lookup time picks the candidate
+/// whose directory is closest to the page being rendered, see [`resolve_page`].
+pub type NameToPage = HashMap<String, Vec<PathBuf>>;
 
 /// Build the `NameToPage` map from HIR by re-deriving each item's output path.
 ///
@@ -37,7 +42,46 @@ pub fn build_name_to_page(
 ) -> NameToPage {
     let mut map = NameToPage::new();
 
-    for item_id in gcx.hir.item_ids() {
+    // Collect and sort by (source_path, name) so that last-insert-wins is deterministic
+    // across platforms even when the HIR iteration order is unspecified.
+    let mut item_ids: Vec<_> = gcx.hir.item_ids().collect();
+    item_ids.sort_by_key(|id| {
+        let (name, source) = match id {
+            hir::ItemId::Contract(id) => {
+                let c = gcx.hir.contract(*id);
+                (c.name.as_str().to_string(), c.source)
+            }
+            hir::ItemId::Struct(id) => {
+                let s = gcx.hir.strukt(*id);
+                (s.name.as_str().to_string(), s.source)
+            }
+            hir::ItemId::Enum(id) => {
+                let e = gcx.hir.enumm(*id);
+                (e.name.as_str().to_string(), e.source)
+            }
+            hir::ItemId::Error(id) => {
+                let e = gcx.hir.error(*id);
+                (e.name.as_str().to_string(), e.source)
+            }
+            hir::ItemId::Event(id) => {
+                let e = gcx.hir.event(*id);
+                (e.name.as_str().to_string(), e.source)
+            }
+            hir::ItemId::Udvt(id) => {
+                let u = gcx.hir.udvt(*id);
+                (u.name.as_str().to_string(), u.source)
+            }
+            hir::ItemId::Function(_) | hir::ItemId::Variable(_) => {
+                return (String::new(), String::new());
+            }
+        };
+        let path = source_paths(gcx, source, root)
+            .map(|(_, rel)| rel.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        (path, name)
+    });
+
+    for item_id in item_ids {
         let (name, source, contract, prefix) = match item_id {
             hir::ItemId::Contract(id) => {
                 let c = gcx.hir.contract(id);
@@ -84,7 +128,15 @@ pub fn build_name_to_page(
             }
             let out_dir = rel.parent().unwrap_or(Path::new("")).to_owned();
             let page = out_dir.join(format!("{prefix}.{}.mdx", name.as_str()));
-            map.insert(name.as_str().to_string(), page);
+            let name_str = name.as_str().to_string();
+            let entry = map.entry(name_str.clone()).or_default();
+            if !entry.is_empty() {
+                warn!(
+                    "forge doc: duplicate top-level name `{name_str}`; \
+                     cross-reference `{{{name_str}}}` will resolve by proximity to the referencing page"
+                );
+            }
+            entry.push(page);
         }
     }
 
@@ -99,6 +151,26 @@ fn source_paths(gcx: Gcx<'_>, source_id: hir::SourceId, root: &Path) -> Option<(
     } else {
         None
     }
+}
+
+/// Pick the best candidate page for a given cross-reference lookup.
+///
+/// When only one candidate exists the choice is trivial. When multiple files define
+/// the same top-level name the page whose *directory* shares the longest common
+/// path prefix with `current_page` wins; ties fall back to the first entry (which
+/// is deterministic because `build_name_to_page` sorts before inserting).
+fn resolve_page<'a>(candidates: &'a [PathBuf], current_page: &Path) -> &'a PathBuf {
+    if candidates.len() == 1 {
+        return &candidates[0];
+    }
+    let current_dir = current_page.parent().unwrap_or(Path::new(""));
+    candidates
+        .iter()
+        .max_by_key(|page| {
+            let page_dir = page.parent().unwrap_or(Path::new(""));
+            current_dir.components().zip(page_dir.components()).take_while(|(a, b)| a == b).count()
+        })
+        .unwrap_or(&candidates[0])
 }
 
 // ── inheritance links ─────────────────────────────────────────────────────────
@@ -123,7 +195,8 @@ pub fn inheritance_links(
         .map(|&base_id| {
             let base = gcx.hir.contract(base_id);
             let name = base.name.as_str();
-            if let Some(page) = name_to_page.get(name) {
+            if let Some(candidates) = name_to_page.get(name) {
+                let page = resolve_page(candidates, current_page);
                 let link = page_link(page, current_page);
                 format!("[{name}]({link})")
             } else {
@@ -168,39 +241,71 @@ pub fn resolve_inheritdoc(
         .copied()
         .find(|&bid| gcx.hir.contract(bid).name.as_str() == base_name)?;
 
-    // Collect all name-matching candidates.
+    // Search the named base and then its own linearized chain so that `@inheritdoc Base`
+    // resolves even when `Base` itself inherits the member without redeclaring NatSpec.
+    // We prefer the first level that has both a name match AND non-empty documentation.
     let base_contract = gcx.hir.contract(base_id);
-    let mut name_matches: Vec<hir::FunctionId> = Vec::new();
-    for &item_id in base_contract.items {
-        if let hir::ItemId::Function(fid) = item_id {
-            let f = gcx.hir.function(fid);
-            let matches = match f.kind {
-                FunctionKind::Constructor => fn_name == "constructor",
-                FunctionKind::Fallback => fn_name == "fallback",
-                FunctionKind::Receive => fn_name == "receive",
-                _ => f.name.map(|n| n.as_str() == fn_name).unwrap_or(false),
-            };
-            if matches {
-                name_matches.push(fid);
+
+    let search_contracts: Vec<hir::ContractId> = std::iter::once(base_id)
+        .chain(base_contract.linearized_bases.iter().copied().filter(|&id| id != base_id))
+        .collect();
+
+    for search_id in &search_contracts {
+        let search_contract = gcx.hir.contract(*search_id);
+        let mut name_matches: Vec<hir::FunctionId> = Vec::new();
+        for &item_id in search_contract.items {
+            if let hir::ItemId::Function(fid) = item_id {
+                let f = gcx.hir.function(fid);
+                let matches = match f.kind {
+                    FunctionKind::Constructor => fn_name == "constructor",
+                    FunctionKind::Fallback => fn_name == "fallback",
+                    FunctionKind::Receive => fn_name == "receive",
+                    _ => f.name.map(|n| n.as_str() == fn_name).unwrap_or(false),
+                };
+                if matches {
+                    name_matches.push(fid);
+                }
             }
         }
-    }
+        if name_matches.is_empty() {
+            continue;
+        }
 
-    // Prefer an exact signature match when overloads exist.
-    if let Some(want) = param_types
-        && name_matches.len() > 1
-    {
+        // Prefer an exact signature match when overloads exist.
+        if let Some(want) = param_types
+            && name_matches.len() > 1
+        {
+            // Try to find a signature-exact match with docs; fall through to name matches below.
+            for &fid in &name_matches {
+                if let Some(got) = function_param_types(gcx, fid)
+                    && got.len() == want.len()
+                    && got.iter().zip(want).all(|(a, b)| a == b)
+                    && let Some(doc) = extract_inherited_doc(gcx, fid)
+                    && (!doc.notices.is_empty()
+                        || !doc.devs.is_empty()
+                        || !doc.params.is_empty()
+                        || !doc.returns.is_empty())
+                {
+                    return Some(doc);
+                }
+            }
+        }
+
+        // Return the first candidate that has actual documentation; if none have docs
+        // at this inheritance level continue walking up the chain.
         for &fid in &name_matches {
-            if let Some(got) = function_param_types(gcx, fid)
-                && got.len() == want.len()
-                && got.iter().zip(want).all(|(a, b)| a == b)
+            if let Some(doc) = extract_inherited_doc(gcx, fid)
+                && (!doc.notices.is_empty()
+                    || !doc.devs.is_empty()
+                    || !doc.params.is_empty()
+                    || !doc.returns.is_empty())
             {
-                return extract_inherited_doc(gcx, fid);
+                return Some(doc);
             }
         }
     }
 
-    name_matches.first().copied().and_then(|fid| extract_inherited_doc(gcx, fid))
+    None
 }
 
 /// Extract the parameter type strings (in source order) for a function.
@@ -280,8 +385,14 @@ fn collect_inherited_doc(docs: &DocComments<'_>) -> InheritedDoc {
         returns: Vec::new(),
     };
     let mut prev_doc_was_blank = false;
-    // true = last push was to notices, false = devs
-    let mut last_desc: Option<bool> = None;
+    #[derive(Clone, Copy)]
+    enum LastSection {
+        Notice,
+        Dev,
+        Param,
+        Return,
+    }
+    let mut last_section: Option<LastSection> = None;
 
     for doc in docs.iter() {
         if doc.natspec.is_empty() {
@@ -302,9 +413,11 @@ fn collect_inherited_doc(docs: &DocComments<'_>) -> InheritedDoc {
                 continue;
             }
             if is_continuation && !prev_doc_was_blank {
-                let last = match last_desc {
-                    Some(true) => result.notices.last_mut(),
-                    Some(false) => result.devs.last_mut(),
+                let last: Option<&mut String> = match last_section {
+                    Some(LastSection::Notice) => result.notices.last_mut(),
+                    Some(LastSection::Dev) => result.devs.last_mut(),
+                    Some(LastSection::Param) => result.params.last_mut().map(|(_, d)| d),
+                    Some(LastSection::Return) => result.returns.last_mut().map(|(_, d)| d),
                     None => None,
                 };
                 if let Some(last) = last {
@@ -317,17 +430,19 @@ fn collect_inherited_doc(docs: &DocComments<'_>) -> InheritedDoc {
             match item.kind {
                 NatSpecKind::Notice => {
                     result.notices.push(content);
-                    last_desc = Some(true);
+                    last_section = Some(LastSection::Notice);
                 }
                 NatSpecKind::Dev => {
                     result.devs.push(content);
-                    last_desc = Some(false);
+                    last_section = Some(LastSection::Dev);
                 }
                 NatSpecKind::Param { name } => {
-                    result.params.push((name.as_str().to_string(), content))
+                    result.params.push((name.as_str().to_string(), content));
+                    last_section = Some(LastSection::Param);
                 }
                 NatSpecKind::Return { name } => {
-                    result.returns.push((name.as_str().to_string(), content))
+                    result.returns.push((name.as_str().to_string(), content));
+                    last_section = Some(LastSection::Return);
                 }
                 _ => {}
             }
@@ -355,6 +470,14 @@ pub(crate) fn clean_block_doc_content(raw: &str) -> String {
 
 // ── inline link replacement ───────────────────────────────────────────────────
 
+/// Escape a string for use as a markdown link label.
+///
+/// Prevents MDX from treating user-controlled NatSpec label text as JSX or
+/// breaking the surrounding markdown link syntax.
+fn escape_link_label(s: &str) -> String {
+    s.replace('{', "&#123;").replace('<', "&lt;").replace('[', "\\[").replace(']', "\\]")
+}
+
 /// Replace `{Ident}` and `{xref-Ident}` with markdown links using `name_to_page`.
 ///
 /// Matches the legacy pattern: `{[xref-]Ident[-part]}[label]` where `label` defaults
@@ -367,7 +490,7 @@ pub fn replace_inline_links(text: &str, name_to_page: &NameToPage, current_page:
     while i < bytes.len() {
         if bytes[i] == b'{' {
             // Try to parse {[xref-]Ident[-part]}[optional label].
-            if let Some((end, ident, _part, label)) = parse_inline_link(&text[i..]) {
+            if let Some((end, ident, part, label)) = parse_inline_link(&text[i..]) {
                 // Strip the leading `xref-` prefix if present.
                 let lookup_name = ident.strip_prefix("xref-").unwrap_or(ident);
                 let lookup_name = if let Some(pos) = lookup_name.find('-') {
@@ -376,17 +499,38 @@ pub fn replace_inline_links(text: &str, name_to_page: &NameToPage, current_page:
                     lookup_name
                 };
 
-                if let Some(page) = name_to_page.get(lookup_name) {
-                    let link = page_link(page, current_page);
-                    let display = label.unwrap_or(lookup_name);
+                if let Some(candidates) = name_to_page.get(lookup_name) {
+                    let page = resolve_page(candidates, current_page);
+                    let mut link = page_link(page, current_page);
+                    // Append the member anchor when the pattern is `{Type-member}`.
+                    // Sanitize to ASCII alphanumerics and `_` only, Solidity identifiers
+                    // never contain other characters, so this drops any injection attempt.
+                    if let Some(member) = part {
+                        let safe_member: String = member
+                            .chars()
+                            .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                            .collect();
+                        if !safe_member.is_empty() {
+                            link.push('#');
+                            link.push_str(&safe_member);
+                        }
+                    }
+                    let default_display = if let Some(member) = part {
+                        // default display: "Type.member"
+                        format!("{lookup_name}.{member}")
+                    } else {
+                        lookup_name.to_string()
+                    };
+                    let display = escape_link_label(label.unwrap_or(&default_display));
                     out.push_str(&format!("[{display}]({link})"));
                     i += end;
                     continue;
                 }
 
                 // Unresolved {Ident}, emit as inline code to avoid MDX treating it as a
-                // JS expression.
-                out.push_str(&format!("`{lookup_name}`"));
+                // JS expression. Strip backticks to avoid breaking the fence.
+                let safe_name = lookup_name.replace('`', "'");
+                out.push_str(&format!("`{safe_name}`"));
                 i += end;
                 continue;
             }

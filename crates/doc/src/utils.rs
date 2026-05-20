@@ -76,5 +76,13 @@ pub fn read_deployments(
         deployment.network = Some(network);
         out.push(deployment);
     }
+    // Sort for deterministic output across platforms (fs::read_dir order is unspecified).
+    out.sort_by(|a, b| {
+        a.network.as_deref().unwrap_or("").cmp(b.network.as_deref().unwrap_or("")).then_with(|| {
+            let af = format!("{:#x}", a.address);
+            let bf = format!("{:#x}", b.address);
+            af.cmp(&bf)
+        })
+    });
     out
 }

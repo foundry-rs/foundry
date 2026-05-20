@@ -113,8 +113,10 @@ impl DocBuilder {
         let root = self.root.clone();
 
         let all_pages = compiler.enter_mut(|compiler| -> eyre::Result<Vec<PathBuf>> {
-            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering) {
-                let _ = compiler.lower_asts();
+            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering)
+                && compiler.lower_asts().is_err()
+            {
+                warn!("forge doc: HIR lowering produced errors; documentation may be incomplete");
             }
 
             let gcx = compiler.gcx();
@@ -245,9 +247,17 @@ impl DocBuilder {
             }
 
             // Prune stale `.mdx` pages left behind by previous runs (renames,
-            // deletions). The vocs scaffold's own `index.mdx` is preserved.
-            let kept: HashSet<PathBuf> = all_rel.iter().cloned().collect();
-            prune_stale_pages(&pages_dir, &kept)?;
+            // deletions). Only the generated `src/` subtree is pruned so that
+            // user-authored pages outside that directory are never touched.
+            // NOTE: any `.mdx` under `docs/src/pages/src/` not produced by this
+            // run will be deleted. Add custom pages under `docs/src/pages/` but
+            // outside the `src/` subdirectory to avoid this.
+            let src_dir = pages_dir.join("src");
+            let kept: HashSet<PathBuf> = all_rel
+                .iter()
+                .filter_map(|p| p.strip_prefix("src").ok().map(|s| s.to_path_buf()))
+                .collect();
+            prune_stale_pages(&src_dir, &kept)?;
 
             Ok(all_rel)
         })?;
@@ -278,9 +288,6 @@ impl DocBuilder {
 
 /// Recursively delete `.mdx` files under `pages_dir` whose path (relative to
 /// `pages_dir`) is not in `kept`. Empty directories left behind are removed.
-///
-/// The top-level `index.mdx` is always preserved (vocs writes it as the
-/// homepage scaffold).
 fn prune_stale_pages(pages_dir: &Path, kept: &HashSet<PathBuf>) -> eyre::Result<()> {
     if !pages_dir.exists() {
         return Ok(());
@@ -304,10 +311,8 @@ fn prune_dir(dir: &Path, pages_dir: &Path, kept: &HashSet<PathBuf>) -> eyre::Res
             }
         } else if file_type.is_file() {
             let rel = path.strip_prefix(pages_dir).unwrap_or(&path).to_path_buf();
-            let is_top_level_index = rel.parent().is_none_or(|p| p.as_os_str().is_empty())
-                && rel.file_name() == Some(std::ffi::OsStr::new("index.mdx"));
             let is_mdx = path.extension().and_then(|e| e.to_str()) == Some("mdx");
-            if !is_top_level_index && is_mdx && !kept.contains(&rel) {
+            if is_mdx && !kept.contains(&rel) {
                 debug!("pruning stale page {}", path.display());
                 let _ = fs::remove_file(&path);
             } else {

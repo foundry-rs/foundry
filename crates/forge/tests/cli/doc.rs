@@ -256,6 +256,263 @@ contract CounterMixedVariables {
     }
 );
 
+// Test that MDX-unsafe content coming through @inheritdoc is still escaped, and that
+// unnamed return values are rendered as `&lt;none&gt;`.
+forgetest_init!(inheritdoc_mdx_safety_and_unnamed_returns, |prj, cmd| {
+    prj.add_source(
+        "IUnsafe.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IUnsafe {
+    /// @notice Transfer <amount> tokens using {magic} spell
+    /// @param amount The value { in wei }
+    /// @return The new balance
+    function transfer(uint256 amount) external returns (uint256);
+}
+"#,
+    );
+
+    prj.add_source(
+        "Safe.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./IUnsafe.sol";
+
+contract Safe is IUnsafe {
+    /// @inheritdoc IUnsafe
+    function transfer(uint256 amount) external returns (uint256) {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Safe.mdx");
+    let content = std::fs::read_to_string(&doc_path).unwrap();
+
+    // Inherited notice: bare `<` must be escaped (MDX only requires `<`, not `>`).
+    assert!(
+        content.contains("&lt;amount>"),
+        "inherited `<amount>` should have `<` escaped to `&lt;`, found:\n{content}"
+    );
+    assert!(
+        !content.contains("Transfer <amount>"),
+        "raw `<` from inherited notice must not appear unescaped, found:\n{content}"
+    );
+    // Unresolved {magic} in inherited notice must become inline code.
+    assert!(
+        content.contains("`magic`"),
+        "unresolved {{magic}} should become inline code, found:\n{content}"
+    );
+    // Unnamed return → &lt;none&gt;.
+    assert!(
+        content.contains("&lt;none&gt;"),
+        "unnamed return should render as `&lt;none&gt;`, found:\n{content}"
+    );
+});
+
+// Test that inline-link labels containing MDX-sensitive characters are escaped.
+forgetest_init!(inline_link_label_safety, |prj, cmd| {
+    prj.add_source(
+        "Token.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Token {
+    function transfer(uint256 amount) external {}
+}
+"#,
+    );
+
+    prj.add_source(
+        "Vault.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./Token.sol";
+
+/// @dev See {Token}[Token <contract>] for details
+contract Vault {
+    function deposit() external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Vault.mdx");
+    let content = std::fs::read_to_string(&doc_path).unwrap();
+
+    // The label `Token <contract>` must have `<` escaped; it must NOT appear raw.
+    assert!(
+        !content.contains("Token <contract>"),
+        "raw `<` in link label must be escaped, found:\n{content}"
+    );
+    assert!(
+        content.contains("Token &lt;contract>"),
+        "link label `<` should be escaped to `&lt;`, found:\n{content}"
+    );
+});
+
+// Test that the removed `--serve` flag prints a helpful migration message instead of a raw
+// clap parse error.
+forgetest_init!(serve_flag_prints_migration_message, |prj, cmd| {
+    let output = cmd.args(["doc", "--serve"]).assert_failure();
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(
+        stderr.contains("npm run dev") || stderr.contains("--serve has been removed"),
+        "expected migration message in stderr, got:\n{stderr}"
+    );
+});
+
+// Test that MDX-unsafe characters in NatSpec are properly escaped in the generated output.
+forgetest_init!(mdx_safety_escaping, |prj, cmd| {
+    prj.add_source(
+        "Escaping.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+/// @notice Contains a bare < angle bracket and a bare { brace.
+/// @dev Reference to {UnresolvableRef} should become inline code.
+contract Escaping {
+    /// @notice Transfer tokens to recipient < address
+    /// @param amount The amount { in wei }
+    function transfer(uint256 amount) external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Escaping.mdx");
+    let content = std::fs::read_to_string(&doc_path).unwrap();
+
+    assert!(
+        content.contains("&lt;"),
+        "bare `<` should be escaped to `&lt;` in MDX output, found:\n{content}"
+    );
+    assert!(!content.contains(" < "), "bare `<` should not appear unescaped, found:\n{content}");
+    assert!(
+        content.contains("&#123;"),
+        "bare `{{` should be escaped to `&#123;` in MDX output, found:\n{content}"
+    );
+    assert!(
+        content.contains("`UnresolvableRef`"),
+        "unresolved {{Ident}} should become inline code, found:\n{content}"
+    );
+    assert!(
+        !content.contains("{UnresolvableRef}"),
+        "unresolved {{Ident}} must not appear raw in MDX output, found:\n{content}"
+    );
+});
+
+// Test that multiline @param and @return descriptions (continuation lines) are preserved.
+forgetest_init!(param_return_multiline_continuation, |prj, cmd| {
+    prj.add_source(
+        "Multiline.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IMultiline {
+    /// @notice Do something
+    /// @param value The first line of the description.
+    ///        Second line of the param description.
+    /// @return result The first line of return.
+    ///         Second line of return description.
+    function action(uint256 value) external returns (uint256 result);
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/interface.IMultiline.mdx");
+    let content = std::fs::read_to_string(&doc_path).unwrap();
+
+    assert!(
+        content.contains("The first line of the description."),
+        "param first line should appear, found:\n{content}"
+    );
+    assert!(
+        content.contains("Second line of the param description."),
+        "param second line should appear, found:\n{content}"
+    );
+    assert!(
+        content.contains("The first line of return."),
+        "return first line should appear, found:\n{content}"
+    );
+    assert!(
+        content.contains("Second line of return description."),
+        "return second line should appear, found:\n{content}"
+    );
+});
+
+// Test that @inheritdoc resolves docs from a deeply inherited chain
+// (Base inherits from an interface without redeclaring NatSpec).
+forgetest_init!(inheritdoc_resolves_deep_chain, |prj, cmd| {
+    prj.add_source(
+        "IBase.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IBase {
+    /// @notice Perform the action
+    /// @param value The input value
+    function action(uint256 value) external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "Base.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./IBase.sol";
+
+abstract contract Base is IBase {
+    // No NatSpec redeclaration, inherits from IBase
+    function action(uint256 value) external virtual {}
+}
+"#,
+    );
+
+    prj.add_source(
+        "Derived.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./Base.sol";
+
+contract Derived is Base {
+    /// @inheritdoc Base
+    function action(uint256 value) external override {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Derived.mdx");
+    let content = std::fs::read_to_string(&doc_path).unwrap();
+
+    assert!(
+        content.contains("Perform the action"),
+        "@inheritdoc Base should resolve through Base's chain to IBase, found:\n{content}"
+    );
+});
+
 // Test two rendering behaviors together:
 // 1. /** */ block comments are stripped of their ` * ` line decoration.
 // 2. `@dev` paragraphs are wrapped in `<i>...</i>` so multi-paragraph content and embedded lists
@@ -367,7 +624,7 @@ Recover the signer address from `v`, `r`, `s` components.
 
 <i>
 
-Overload of [ECDSA](/src/library.ECDSA) that receives the `v`,
+Overload of [ECDSA.tryRecover](/src/library.ECDSA#tryRecover) that receives the `v`,
 `r` and `s` signature fields separately.
 
 Documentation for signature generation:

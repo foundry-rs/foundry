@@ -654,6 +654,13 @@ fn collect_comments(
     // Track whether the previous DocComment was blank (empty natspec), which signals a
     // paragraph break even between continuation lines.
     let mut prev_doc_was_blank = false;
+    #[derive(Clone, Copy)]
+    enum LastSection {
+        Desc, // notice or dev (both go through descriptions)
+        Param,
+        Return,
+    }
+    let mut last_section: Option<LastSection> = None;
 
     for doc in docs.iter() {
         if doc.natspec.is_empty() {
@@ -683,13 +690,19 @@ fn collect_comments(
             // Apply inline {Ident} -> markdown link replacement.
             let content = hir_ext::replace_inline_links(trimmed, name_to_page, page_path);
 
-            if is_continuation && !prev_doc_was_blank && !data.descriptions.is_empty() {
-                // Append to the previous description paragraph (same tag, no blank between).
-                let last = data.descriptions.last_mut().unwrap();
-                last.content.push('\n');
-                last.content.push_str(&content);
-                prev_doc_was_blank = false;
-                continue;
+            if is_continuation && !prev_doc_was_blank {
+                let appended = match last_section {
+                    Some(LastSection::Desc) => data.descriptions.last_mut().map(|d| &mut d.content),
+                    Some(LastSection::Param) => data.params.last_mut().map(|(_, d)| d),
+                    Some(LastSection::Return) => data.returns.last_mut().map(|(_, d)| d),
+                    None => None,
+                };
+                if let Some(last) = appended {
+                    last.push('\n');
+                    last.push_str(&content);
+                    prev_doc_was_blank = false;
+                    continue;
+                }
             }
 
             prev_doc_was_blank = false;
@@ -700,16 +713,20 @@ fn collect_comments(
                 NatSpecKind::Notice => {
                     data.notices.push(content.clone());
                     data.descriptions.push(Description { kind: DescKind::Notice, content });
+                    last_section = Some(LastSection::Desc);
                 }
                 NatSpecKind::Dev => {
                     data.devs.push(content.clone());
                     data.descriptions.push(Description { kind: DescKind::Dev, content });
+                    last_section = Some(LastSection::Desc);
                 }
                 NatSpecKind::Param { name } => {
-                    data.params.push((name.as_str().to_string(), content))
+                    data.params.push((name.as_str().to_string(), content));
+                    last_section = Some(LastSection::Param);
                 }
                 NatSpecKind::Return { name } => {
-                    data.returns.push((name.as_str().to_string(), content))
+                    data.returns.push((name.as_str().to_string(), content));
+                    last_section = Some(LastSection::Return);
                 }
                 NatSpecKind::Inheritdoc { .. } => {} // resolved separately via HIR
                 NatSpecKind::Custom { name } => {
@@ -875,7 +892,7 @@ fn write_deployments_table(out: &mut String, deployments: &[Deployment]) {
     writeln!(out, "| Network | Address |").unwrap();
     writeln!(out, "| ------- | ------- |").unwrap();
     for d in deployments {
-        let network = d.network.as_deref().unwrap_or("-");
+        let network = escape_table_cell(d.network.as_deref().unwrap_or("-"));
         writeln!(out, "| {network} | `{:#x}` |", d.address).unwrap();
     }
     writeln!(out).unwrap();

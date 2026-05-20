@@ -40,10 +40,20 @@ pub struct DocArgs {
 
     #[command(flatten)]
     pub watch: WatchArgs,
+
+    /// Deprecated flag after the migration to Vocs. Previously, it was used to serve docs locally.
+    #[arg(long, hide = true)]
+    serve: bool,
 }
 
 impl DocArgs {
     pub async fn run(self) -> Result<()> {
+        if self.serve {
+            eyre::bail!(
+                "`--serve` has been removed. Generate the docs with `forge doc`, \
+                 then run `npm run dev` from the generated docs directory."
+            );
+        }
         let mut config = self.config()?;
 
         if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
