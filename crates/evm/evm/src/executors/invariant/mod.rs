@@ -1001,6 +1001,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &[],
             &mut failures,
         )?;
+        if let Some(fuzzer) = self.executor.inspector_mut().fuzzer.as_mut() {
+            fuzz_state.collect_values(fuzzer.drain_collected_values());
+        }
         // First broken invariant in declaration order (anchor first, then secondaries).
         // Iterates `invariant_fns` so the lookup is deterministic, unlike HashMap iteration.
         if let Some(error) =
