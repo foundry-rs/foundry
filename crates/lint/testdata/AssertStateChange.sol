@@ -147,6 +147,26 @@ contract AssertStateChangeExternal {
     }
 }
 
+// ---- push/pop on contract/interface state vars must not be flagged ----
+// These are interface method calls, not builtin array mutations. The name-only heuristic
+// must not fire; resolve_member_overloads handles them precisely via mutates_state().
+interface IQueue {
+    function pop() external view returns (bool);
+    function push(uint256 x) external view returns (bool);
+}
+
+contract AssertStateChangePushPop {
+    IQueue public q;
+
+    function goodInterfacePop() external view {
+        assert(q.pop());
+    }
+
+    function goodInterfacePush(uint256 x) external view {
+        assert(q.push(x));
+    }
+}
+
 // ---- using-for library extension calls ----
 // Solar does not yet embed Res on Member expressions for extension methods, so a dedicated
 // library-scan fallback is required (fix for false negatives on using-for mutations).
@@ -177,5 +197,23 @@ contract AssertStateChangeUsingFor {
     function goodLibraryView() external view returns (bool) {
         assert(items.peek() >= 0);
         return true;
+    }
+}
+
+// ---- library-fallback receiver-type guard ----
+library OtherStorageLib {
+    function bump(bytes storage b) internal returns (bool) {
+        b.push(0x00);
+        return true;
+    }
+}
+
+contract AssertStateChangeUnrelatedLib {
+    uint256[] public items;
+
+    // Good: `items.bump()` has no matching extension (OtherStorageLib.bump takes bytes, not
+    // uint256[]), and `uint256[]` has no member `bump()`. Must NOT be flagged.
+    function goodUnrelatedLib() external view returns (bool) {
+        return items.length == 0;
     }
 }
