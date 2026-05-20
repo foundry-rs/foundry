@@ -27,6 +27,12 @@ to avoid false positives from untracked storage writes.
 - *Storage aliases*: `Foo storage f = bar; f.x = 1;` is not detected as a write to `bar`.
 - *Storage-parameter calls*: calling an internal function that accepts a `storage` reference
   and mutates it is not detected as a write to the original variable.
+- *Member calls*: any member call whose receiver is a state variable (e.g.
+  `oracle.latestAnswer()`, `token.balanceOf(address)`) suppresses the warning for that
+  variable. Without full call-graph resolution the lint conservatively treats the receiver
+  as potentially mutated, to avoid false positives from `push`/`pop` and library-dispatch
+  patterns (`using Lib for T`). Read-only interface calls on uninitialized variables will
+  therefore not be flagged.
 
 ## Why is this bad?
 

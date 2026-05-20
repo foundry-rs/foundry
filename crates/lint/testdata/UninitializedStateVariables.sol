@@ -313,6 +313,35 @@ contract NamedArgStorage {
     function get() public view returns (uint256) { return slot.val; }
 }
 
+// ── Named args, out-of-order: positional loop must not misfire ───────────────
+// `_set({target: slot, v: x})` passes `x` as `v` (not storage) and `slot` as
+// `target` (storage).  Before the fix the positional enumerate loop would see
+// arg[1]=x against parameter[1]=target (storage) and falsely mark x as written.
+
+contract NamedArgMisfire {
+    struct Data { uint256 val; }
+    Data slot;
+    uint256 public x; //~WARN: state variable is read but never written
+
+    function _set(uint256 v, Data storage target) internal { target.val = v; }
+    function callIt() external { _set({target: slot, v: x}); }
+    function read() external view returns (uint256) { return x; }
+}
+
+// ── Initializer side effect: _init() writes `y` while initializing `x` ───────
+
+contract InitSideEffect {
+    uint256 public y; // written via _init(), must NOT warn
+    uint256 public x = _init();
+
+    function _init() internal returns (uint256) {
+        y = 1;
+        return 2;
+    }
+
+    function getY() external view returns (uint256) { return y; }
+}
+
 // ── payable() cast on a member-call receiver is not a write ──────────────────
 // `payable(owner).transfer(...)` reads `owner` to obtain an address; it does
 // not write to the state variable.

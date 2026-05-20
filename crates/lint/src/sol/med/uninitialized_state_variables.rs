@@ -104,6 +104,15 @@ impl<'hir> LateLintPass<'hir> for UninitializedStateVariables {
                     }
                 }
             }
+
+            // Walk state-vars initializer expressions for side-effect writes to other state vars
+            for var_id in hir.contract(cid).variables() {
+                if let Some(init) = hir.variable(var_id).initializer
+                    && collect_expr_writes_checked(hir, init, &candidate_set, &mut written).is_err()
+                {
+                    return;
+                }
+            }
         }
 
         let mut reader = ReadVarCollector { hir, read: HashSet::new() };
@@ -240,34 +249,39 @@ fn collect_expr_writes_checked<'hir>(
                     })
                     .collect();
                 if !funcs.is_empty() {
-                    for (i, arg_expr) in args.exprs().enumerate() {
-                        let all_storage = funcs.iter().all(|func| {
-                            func.parameters.get(i).is_some_and(|&pid| {
-                                matches!(
-                                    hir.variable(pid).data_location,
-                                    Some(DataLocation::Storage)
-                                )
-                            })
-                        });
-                        if all_storage {
-                            collect_lvalue_writes(arg_expr, candidates, writes);
+                    if let CallArgsKind::Unnamed(_) = args.kind {
+                        for (i, arg_expr) in args.exprs().enumerate() {
+                            let all_storage = funcs.iter().all(|func| {
+                                func.parameters.get(i).is_some_and(|&pid| {
+                                    matches!(
+                                        hir.variable(pid).data_location,
+                                        Some(DataLocation::Storage)
+                                    )
+                                })
+                            });
+                            if all_storage {
+                                collect_lvalue_writes(arg_expr, candidates, writes);
+                            }
                         }
                     }
-                }
 
-                if let CallArgsKind::Named(named) = args.kind {
-                    for res in *resolutions {
-                        if let Res::Item(ItemId::Function(func_id)) = res {
-                            let func = hir.function(*func_id);
-                            for &param_id in func.parameters {
-                                let param = hir.variable(param_id);
-                                if matches!(param.data_location, Some(DataLocation::Storage))
-                                    && let Some(arg) = named
-                                        .iter()
-                                        .find(|a| param.name.is_some_and(|n| n == a.name))
-                                {
-                                    collect_lvalue_writes(&arg.value, candidates, writes);
-                                }
+                    if let CallArgsKind::Named(named) = args.kind {
+                        // Only mark an arg as written if ALL candidate overloads agree that
+                        // the parameter with that name is `storage`.
+                        for named_arg in named {
+                            let all_storage = funcs.iter().all(|func| {
+                                let param = func.parameters.iter().find(|&&pid| {
+                                    hir.variable(pid).name.is_some_and(|n| n == named_arg.name)
+                                });
+                                param.is_some_and(|&pid| {
+                                    matches!(
+                                        hir.variable(pid).data_location,
+                                        Some(DataLocation::Storage)
+                                    )
+                                })
+                            });
+                            if all_storage {
+                                collect_lvalue_writes(&named_arg.value, candidates, writes);
                             }
                         }
                     }
