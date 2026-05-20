@@ -1408,6 +1408,24 @@ fn symbolic_keccak_tracks_symbolic_length() {
 }
 
 #[test]
+/// Regression coverage for `model_word_computes_symbolic_keccak_from_model`.
+fn model_word_computes_symbolic_keccak_from_model() {
+    let owner = Address::from([0x11; 20]);
+    let slot = U256::from(1);
+    let mut bytes = word_bytes(SymWord::Expr(Expr::Var("owner".to_string())));
+    bytes.extend(word_bytes(SymWord::Concrete(slot)));
+    let word = keccak_word(bytes);
+
+    let mut input = Vec::new();
+    input.extend(address_word(owner).to_be_bytes::<32>());
+    input.extend(slot.to_be_bytes::<32>());
+    let expected = U256::from_be_bytes(keccak256(input).0);
+    let model = BTreeMap::from([("owner".to_string(), address_word(owner))]);
+
+    assert_eq!(model_word(&word, &model).unwrap(), expected);
+}
+
+#[test]
 /// Regression coverage for `symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input`.
 fn symbolic_hash_precompiles_are_deterministic_for_same_symbolic_input() {
     let input = vec![
@@ -1602,6 +1620,37 @@ fn symbolic_storage_key_equality_rejects_concrete_plain_slot_alias() {
 }
 
 #[test]
+/// Regression coverage for `nested_mapping_key_does_not_alias_plain_mapping_key_under_model`.
+fn nested_mapping_key_does_not_alias_plain_mapping_key_under_model() {
+    let owner = SymWord::Expr(Expr::Var("owner".to_string()));
+    let spender = SymWord::Expr(Expr::Var("spender".to_string()));
+    let recipient = SymWord::Expr(Expr::Var("recipient".to_string()));
+
+    let mut balance_key_bytes = word_bytes(recipient);
+    balance_key_bytes.extend(word_bytes(SymWord::Concrete(U256::ZERO)));
+    let balance_key = keccak_word(balance_key_bytes);
+
+    let mut inner_key_bytes = word_bytes(owner);
+    inner_key_bytes.extend(word_bytes(SymWord::Concrete(U256::from(1))));
+    let inner_key = keccak_word(inner_key_bytes);
+
+    let mut allowance_key_bytes = word_bytes(spender);
+    allowance_key_bytes.extend(word_bytes(inner_key));
+    let allowance_key = keccak_word(allowance_key_bytes);
+
+    let same_address = precompile_address(0x60);
+    let model = BTreeMap::from([
+        ("owner".to_string(), address_word(Address::from([0x11; 20]))),
+        ("spender".to_string(), address_word(same_address)),
+        ("recipient".to_string(), address_word(same_address)),
+    ]);
+    let condition = storage_key_eq(balance_key, allowance_key);
+
+    assert_eq!(condition, BoolExpr::Const(false));
+    assert!(!eval_bool_expr(&condition, &model).unwrap());
+}
+
+#[test]
 /// Regression coverage for `symbolic_world_snapshot_restores_overlay_state`.
 fn symbolic_world_snapshot_restores_overlay_state() {
     let address = Address::from([0x11; 20]);
@@ -1706,8 +1755,8 @@ fn symbolic_signextend_uses_sign_bit_ite() {
 }
 
 #[test]
-/// Regression coverage for `parse_z3_hex_model_values`.
-fn parse_z3_hex_model_values() {
+/// Regression coverage for `parse_smt_hex_model_values`.
+fn parse_smt_hex_model_values() {
     let output = "\
 sat
 (
@@ -1719,6 +1768,51 @@ sat
     let model = parse_model(output).unwrap();
 
     assert_eq!(model.get("calldata_0"), Some(&U256::from(42)));
+}
+
+#[test]
+/// Regression coverage for `parse_smt_binary_model_values`.
+fn parse_smt_binary_model_values() {
+    let output = "\
+sat
+(
+  (define-fun calldata_0 () (_ BitVec 8)
+    #b00101010)
+)
+";
+
+    let model = parse_model(output).unwrap();
+
+    assert_eq!(model.get("calldata_0"), Some(&U256::from(42)));
+}
+
+#[test]
+/// Regression coverage for `parse_model_rejects_oversized_bitvector_literals`.
+fn parse_model_rejects_oversized_bitvector_literals() {
+    let output =
+        format!("sat\n((define-fun calldata_0 () (_ BitVec 257) #b{}))\n", "1".repeat(257));
+
+    let err = parse_model(&output).unwrap_err();
+
+    assert!(err.to_string().contains("exceeds 256 bits"));
+}
+
+#[test]
+/// Regression coverage for `validate_solver_model_output_rejects_unsatisfied_models`.
+fn validate_solver_model_output_rejects_unsatisfied_models() {
+    let output = "\
+sat
+(
+  (define-fun calldata_0 () (_ BitVec 8)
+    #x00)
+)
+";
+    let constraints =
+        vec![BoolExpr::eq(Expr::Var("calldata_0".to_string()), Expr::Const(U256::from(1)))];
+
+    let err = validate_solver_model_output(output, &constraints).unwrap_err();
+
+    assert!(err.to_string().contains("does not satisfy path constraints"));
 }
 
 #[test]
@@ -1771,12 +1865,143 @@ fn concrete_dynamic_array_return_uses_raw_abi_encoding() {
 #[test]
 /// Regression coverage for `query_limit_is_enforced_before_spawning_solver`.
 fn query_limit_is_enforced_before_spawning_solver() {
-    let mut solver = Z3SubprocessSolver::new("missing-z3".to_string(), None, 0, false);
+    let mut solver = SmtLibSubprocessSolver::new(
+        Ok(vec![SolverCommand::new(vec!["missing-z3".to_string()], false).unwrap()]),
+        None,
+        0,
+        false,
+    );
 
     let err = solver.is_sat(&[]).unwrap_err();
 
     assert!(matches!(err, SymbolicError::SolverQueryLimit(0)));
     assert_eq!(solver.stats().solver_queries, 0);
+}
+
+#[test]
+/// Regression coverage for `known_solver_names_resolve_to_smtlib_commands`.
+fn known_solver_names_resolve_to_smtlib_commands() {
+    let commands = solver_commands_for_config(&SymbolicConfig {
+        solver: "yices".to_string(),
+        ..Default::default()
+    })
+    .unwrap();
+    let command = &commands[0];
+
+    assert_eq!(command.program, "yices-smt2");
+    assert_eq!(command.args, vec!["--bvconst-in-decimal"]);
+    assert!(!command.smt_timeout);
+
+    let commands = solver_commands_for_config(&SymbolicConfig {
+        solver: "cvc5-int".to_string(),
+        ..Default::default()
+    })
+    .unwrap();
+    let command = &commands[0];
+
+    assert_eq!(command.program, "cvc5");
+    assert!(command.args.contains(&"--bv-print-consts-as-indexed-symbols".to_string()));
+    assert!(!command.smt_timeout);
+
+    let commands = solver_commands_for_config(&SymbolicConfig {
+        solver: "bitwuzla-abs".to_string(),
+        ..Default::default()
+    })
+    .unwrap();
+    let command = &commands[0];
+
+    assert_eq!(command.program, "bitwuzla");
+    assert_eq!(command.args, vec!["--produce-models", "--abstraction"]);
+    assert!(!command.smt_timeout);
+}
+
+#[test]
+/// Regression coverage for `solver_command_overrides_solver_name`.
+fn solver_command_overrides_solver_name() {
+    let commands = solver_commands_for_config(&SymbolicConfig {
+        solver: "z3".to_string(),
+        solver_command: Some("custom-solver --flag 'two words'".to_string()),
+        solver_portfolio: vec!["cvc5".to_string(), "bitwuzla".to_string()],
+        ..Default::default()
+    })
+    .unwrap();
+    let command = &commands[0];
+
+    assert_eq!(commands.len(), 1);
+    assert_eq!(command.program, "custom-solver");
+    assert_eq!(command.args, vec!["--flag", "two words"]);
+    assert!(!command.smt_timeout);
+}
+
+#[test]
+/// Regression coverage for `split_solver_command_preserves_empty_quoted_args`.
+fn split_solver_command_preserves_empty_quoted_args() {
+    let parts = split_solver_command(r#"custom-solver "" arg ''"#).unwrap();
+
+    assert_eq!(parts, vec!["custom-solver", "", "arg", ""]);
+}
+
+#[test]
+/// Regression coverage for `custom_solver_names_remain_z3_compatible`.
+fn custom_solver_names_remain_z3_compatible() {
+    let commands = solver_commands_for_config(&SymbolicConfig {
+        solver: "/opt/solvers/z3-nightly".to_string(),
+        ..Default::default()
+    })
+    .unwrap();
+    let command = &commands[0];
+
+    assert_eq!(command.program, "/opt/solvers/z3-nightly");
+    assert_eq!(command.args, vec!["-in", "-smt2"]);
+    assert!(command.smt_timeout);
+}
+
+#[test]
+/// Regression coverage for `solver_portfolio_resolves_parallel_commands`.
+fn solver_portfolio_resolves_parallel_commands() {
+    let commands = solver_commands_for_config(&SymbolicConfig {
+        solver: "z3".to_string(),
+        solver_portfolio: vec![
+            "z3".to_string(),
+            "cvc5".to_string(),
+            "custom-wrapper --stdin".to_string(),
+            "  ".to_string(),
+        ],
+        ..Default::default()
+    })
+    .unwrap();
+
+    assert_eq!(commands.len(), 3);
+    assert_eq!(commands[0].program, "z3");
+    assert_eq!(commands[0].args, vec!["-in", "-smt2"]);
+    assert!(commands[0].smt_timeout);
+    assert_eq!(commands[1].program, "cvc5");
+    assert!(commands[1].args.contains(&"--bv-print-consts-as-indexed-symbols".to_string()));
+    assert_eq!(commands[2].program, "custom-wrapper");
+    assert_eq!(commands[2].args, vec!["--stdin"]);
+    assert!(!commands[2].smt_timeout);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for `portfolio_sat_beats_early_unsat`.
+fn portfolio_sat_beats_early_unsat() {
+    let commands = vec![
+        SolverCommand::new(
+            vec!["/bin/sh".to_string(), "-c".to_string(), "printf 'unsat\n'".to_string()],
+            false,
+        )
+        .unwrap(),
+        SolverCommand::new(
+            vec!["/bin/sh".to_string(), "-c".to_string(), "sleep 0.1; printf 'sat\n'".to_string()],
+            false,
+        )
+        .unwrap(),
+    ];
+
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 1, false);
+
+    assert!(solver.is_sat(&[]).unwrap());
 }
 
 #[test]

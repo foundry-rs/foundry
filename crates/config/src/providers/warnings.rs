@@ -50,6 +50,8 @@ const DOC_KEYS: &[&str] = &["out", "title", "book", "homepage", "repository", "p
 const SYMBOLIC_KEYS: &[&str] = &[
     "enabled",
     "solver",
+    "solver_command",
+    "solver_portfolio",
     "timeout",
     "loop",
     "depth",

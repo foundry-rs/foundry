@@ -118,6 +118,67 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
     Ok(value)
 }
 
+/// Splits a shell-like argument string into argv parts without invoking a shell.
+///
+/// This supports whitespace separation, single and double quotes, and backslash escaping. It is
+/// intentionally smaller than a shell parser: expansions, redirection, pipelines, and command
+/// separators are treated as plain argument text by callers.
+pub fn split_quoted_args(args: &str, context: &str) -> Result<Vec<String>, String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut token_started = false;
+
+    for ch in args.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            token_started = true;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            token_started = true;
+            continue;
+        }
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            } else {
+                current.push(ch);
+            }
+            token_started = true;
+            continue;
+        }
+        if matches!(ch, '"' | '\'') {
+            quote = Some(ch);
+            token_started = true;
+        } else if ch.is_whitespace() {
+            if token_started {
+                parts.push(std::mem::take(&mut current));
+                token_started = false;
+            }
+        } else {
+            current.push(ch);
+            token_started = true;
+        }
+    }
+
+    if let Some(quote_ch) = quote {
+        return Err(format!("unterminated {quote_ch} quote in {context}"));
+    }
+    if escaped {
+        current.push('\\');
+        token_started = true;
+    }
+    if token_started {
+        parts.push(current);
+    }
+
+    Ok(parts)
+}
+
 /// Returns a list of _unique_ paths to all folders under `root` that contain a `foundry.toml` file
 ///
 /// This will also resolve symlinks

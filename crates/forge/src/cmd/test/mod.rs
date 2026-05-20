@@ -194,6 +194,19 @@ pub struct TestArgs {
     #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER", value_name = "PATH_OR_NAME")]
     pub symbolic_solver: Option<String>,
 
+    /// Exact solver command used for symbolic tests.
+    #[arg(long, env = "FOUNDRY_SYMBOLIC_SOLVER_COMMAND", value_name = "COMMAND")]
+    pub symbolic_solver_command: Option<String>,
+
+    /// Comma-separated SMT solver names or commands to race in parallel for symbolic tests.
+    #[arg(
+        long,
+        env = "FOUNDRY_SYMBOLIC_SOLVER_PORTFOLIO",
+        value_delimiter = ',',
+        value_name = "SOLVER_OR_COMMAND,..."
+    )]
+    pub symbolic_solver_portfolio: Option<Vec<String>>,
+
     /// Timeout for symbolic execution in seconds.
     #[arg(long, env = "FOUNDRY_SYMBOLIC_TIMEOUT", value_name = "SECONDS")]
     pub symbolic_timeout: Option<u32>,
@@ -1202,6 +1215,12 @@ impl Provider for TestArgs {
         }
         if let Some(solver) = self.symbolic_solver.clone() {
             symbolic_dict.insert("solver".to_string(), solver.into());
+        }
+        if let Some(solver_command) = self.symbolic_solver_command.clone() {
+            symbolic_dict.insert("solver_command".to_string(), solver_command.into());
+        }
+        if let Some(solver_portfolio) = self.symbolic_solver_portfolio.clone() {
+            symbolic_dict.insert("solver_portfolio".to_string(), solver_portfolio.into());
         }
         if let Some(timeout) = self.symbolic_timeout {
             symbolic_dict.insert("timeout".to_string(), timeout.into());

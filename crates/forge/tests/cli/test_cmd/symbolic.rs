@@ -4173,6 +4173,56 @@ contract SymbolicErc20Storage {
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
 });
 
+forgetest_init!(symbolic_erc20_transfer_from_storage_paths_do_not_alias, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_erc20_transfer_from_storage_paths_do_not_alias because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicErc20TransferFromStorage.t.sol",
+        r#"
+contract SymbolicErc20TransferFromStorage {
+    mapping(address => uint256) balanceOf;
+    mapping(address => mapping(address => uint256)) allowance;
+
+    function checkTransferFromStorage(
+        address owner,
+        address spender,
+        address recipient,
+        uint96 balance,
+        uint96 approval,
+        uint96 amount
+    ) public {
+        balanceOf[owner] = balance;
+        allowance[owner][spender] = approval;
+
+        uint256 beforeTotal = balanceOf[owner] + balanceOf[recipient];
+        if (owner != recipient && amount <= balanceOf[owner] && amount <= allowance[owner][spender]) {
+            allowance[owner][spender] -= amount;
+            balanceOf[owner] -= amount;
+            balanceOf[recipient] += amount;
+
+            assert(balanceOf[owner] + balanceOf[recipient] == beforeTotal);
+            assert(allowance[owner][spender] == uint256(approval) - amount);
+        }
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args(["test", "--symbolic", "--match-test", "checkTransferFromStorage"]))
+        .success()
+        .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicErc20TransferFromStorage.t.sol:SymbolicErc20TransferFromStorage
+[PASS] checkTransferFromStorage(address,address,address,uint96,uint96,uint96) ([METRICS])
+...
+"#]]);
+});
+
 forgetest_init!(symbolic_svm_storage_helpers_are_supported, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(

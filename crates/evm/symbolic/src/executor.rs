@@ -9,12 +9,7 @@ impl SymbolicExecutor {
     /// The executor owns an isolated solver backend and symbolic world overlay. Create
     /// a fresh executor when a caller needs independent solver query accounting.
     pub fn new(config: SymbolicConfig) -> Self {
-        let solver = Z3SubprocessSolver::new(
-            config.solver.clone(),
-            config.timeout,
-            config.max_solver_queries as usize,
-            config.dump_smt,
-        );
+        let solver = SmtLibSubprocessSolver::from_config(&config);
         Self { config, solver: Box::new(solver) }
     }
 

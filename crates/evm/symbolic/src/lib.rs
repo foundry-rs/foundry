@@ -14,7 +14,7 @@ use alloy_signer_local::{
     },
 };
 use base64::prelude::*;
-use foundry_config::{SymbolicConfig, SymbolicStorageLayout};
+use foundry_config::{SymbolicConfig, SymbolicStorageLayout, split_quoted_args};
 use foundry_evm::{
     constants::{CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS},
     core::{backend::DatabaseExt, evm::FoundryEvmNetwork},
@@ -30,11 +30,17 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     fmt::{self, Write as _},
-    io::Write,
+    io::{Read, Write},
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
@@ -190,7 +196,7 @@ pub struct SymbolicStats {
     pub solver_queries: usize,
 }
 
-/// Z3-backed symbolic executor.
+/// SMT-LIB-backed symbolic executor.
 ///
 /// This executor is intentionally separate from the concrete revm executor used by
 /// Foundry. It consumes bytecode and state from an existing [`Executor`], explores

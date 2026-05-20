@@ -7323,6 +7323,8 @@ mod tests {
                 src = "src"
 
                 [profile.default.symbolic]
+                solver_command = "z3 -in -smt2"
+                solver_portfolio = ["z3", "cvc5"]
                 loop = 4
                 depth = 100
                 width = 8

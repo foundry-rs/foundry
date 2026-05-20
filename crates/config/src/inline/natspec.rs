@@ -1,4 +1,5 @@
 use super::{INLINE_CONFIG_PREFIX, InlineConfigError, InlineConfigErrorKind};
+use crate::split_quoted_args;
 use figment::Profile;
 use foundry_compilers::{
     ProjectCompileOutput,
@@ -145,10 +146,10 @@ impl NatSpec {
 }
 
 fn translate_halmos_config(args: &str, values: &mut Vec<String>) -> Result<(), String> {
-    let tokens = args.split_whitespace().collect::<Vec<_>>();
+    let tokens = split_halmos_args(args)?;
     let mut idx = 0;
     while idx < tokens.len() {
-        let token = tokens[idx];
+        let token = tokens[idx].as_str();
         if token == "--array-lengths" {
             idx += 1;
             let Some(value) = tokens.get(idx) else {
@@ -193,6 +194,22 @@ fn translate_halmos_config(args: &str, values: &mut Vec<String>) -> Result<(), S
             push_halmos_u32(values, "timeout", value, "--solver-timeout-branching")?;
         } else if let Some(value) = token.strip_prefix("--solver-timeout-assertion=") {
             push_halmos_u32(values, "timeout", value, "--solver-timeout-assertion")?;
+        } else if token == "--solver" {
+            idx += 1;
+            let Some(value) = tokens.get(idx) else {
+                return Err("missing value for --solver".to_string());
+            };
+            push_halmos_string(values, "solver", value);
+        } else if let Some(value) = token.strip_prefix("--solver=") {
+            push_halmos_string(values, "solver", value);
+        } else if token == "--solver-command" {
+            idx += 1;
+            let Some(value) = tokens.get(idx) else {
+                return Err("missing value for --solver-command".to_string());
+            };
+            push_halmos_string(values, "solver_command", value);
+        } else if let Some(value) = token.strip_prefix("--solver-command=") {
+            push_halmos_string(values, "solver_command", value);
         } else if token.starts_with("--")
             && tokens.get(idx + 1).is_some_and(|next| !next.starts_with("--"))
         {
@@ -201,6 +218,10 @@ fn translate_halmos_config(args: &str, values: &mut Vec<String>) -> Result<(), S
         idx += 1;
     }
     Ok(())
+}
+
+fn split_halmos_args(args: &str) -> Result<Vec<String>, String> {
+    split_quoted_args(args, "@custom:halmos config")
 }
 
 fn halmos_numeric_symbolic_field(flag: &str) -> Option<&'static str> {
@@ -258,6 +279,14 @@ fn push_halmos_u32(
 ) -> Result<(), String> {
     values.push(format!("default.symbolic.{field} = {}", parse_halmos_u32(value, flag)?));
     Ok(())
+}
+
+fn push_halmos_string(values: &mut Vec<String>, field: &str, value: &str) {
+    values.push(format!("default.symbolic.{field} = {}", toml_string(value)));
+}
+
+fn toml_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 fn parse_halmos_u32(value: &str, flag: &str) -> Result<u32, String> {
@@ -921,6 +950,25 @@ contract FuzzInlineConf is DSTest {
                 "default.symbolic.width = 32",
                 "default.symbolic.depth = 128",
                 "default.symbolic.timeout = 5",
+            ]
+        );
+    }
+
+    #[test]
+    fn translates_legacy_halmos_solver_selection() {
+        let natspec = NatSpec {
+            contract: "dir/TestContract.t.sol:SymbolicContract".to_string(),
+            function: Some("check_solver".to_string()),
+            line: "10:1".to_string(),
+            docs: "@custom:halmos --solver cvc5 --solver-command \"bitwuzla --produce-models\""
+                .to_string(),
+        };
+
+        assert_eq!(
+            natspec.halmos_config_values().unwrap(),
+            vec![
+                "default.symbolic.solver = \"cvc5\"",
+                "default.symbolic.solver_command = \"bitwuzla --produce-models\"",
             ]
         );
     }

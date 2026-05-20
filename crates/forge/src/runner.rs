@@ -14,7 +14,7 @@ use alloy_primitives::{Address, Bytes, Selector, U256, address, map::HashMap};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::{Config, FuzzCorpusConfig, InvariantConfig};
+use foundry_config::{Config, FuzzCorpusConfig, InvariantConfig, SymbolicConfig};
 use foundry_evm::{
     constants::CALLER,
     core::evm::FoundryEvmNetwork,
@@ -61,6 +61,9 @@ use tracing::Span;
 ///
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
 pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
+
+const BUILTIN_SYMBOLIC_SOLVERS: &[&str] =
+    &["z3", "yices", "cvc5", "cvc5-int", "bitwuzla", "bitwuzla-abs"];
 
 pub(crate) fn is_symbolic_entrypoint(func: &Function) -> bool {
     func.name.starts_with("check") || func.name.starts_with("prove")
@@ -450,6 +453,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             self.contract.abi.functions().count(),
             find_timer.elapsed(),
         );
+        if let Some(warning) = self.symbolic_solver_command_warning(&functions) {
+            warnings.push(warning);
+        }
 
         let identified_contracts = has_invariants.then(|| {
             load_contracts(setup.traces.iter().map(|(_, t)| &t.arena), &self.mcr.known_contracts)
@@ -528,6 +534,51 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let duration = start.elapsed();
         SuiteResult::new(duration, test_results, warnings)
     }
+
+    fn symbolic_solver_command_warning(&self, functions: &[&Function]) -> Option<String> {
+        if !self.config.symbolic.enabled
+            || !functions.iter().copied().any(|func| {
+                (is_symbolic_entrypoint(func) || func.is_invariant_test())
+                    && self.effective_symbolic_config(func).is_some_and(|symbolic| {
+                        symbolic_solver_config_executes_custom_program(&symbolic)
+                    })
+            })
+        {
+            return None;
+        }
+
+        Some(
+            "Symbolic solver command configuration can execute arbitrary local programs. \
+             Review `symbolic.solver_command`, custom `symbolic.solver` values, \
+             command-like or custom `symbolic.solver_portfolio` entries, and inline \
+             `forge-config:` or `@custom:halmos` annotations before running symbolic tests from \
+             untrusted projects."
+                .to_string(),
+        )
+    }
+
+    fn effective_symbolic_config(&self, func: &Function) -> Option<SymbolicConfig> {
+        if self.inline_config.contains_function(self.name, &func.name) {
+            self.inline_config(Some(func)).ok().map(|config| config.symbolic)
+        } else {
+            Some(self.config.symbolic.clone())
+        }
+    }
+}
+
+fn symbolic_solver_config_executes_custom_program(symbolic: &SymbolicConfig) -> bool {
+    if symbolic.solver_command.as_deref().is_some_and(|command| !command.trim().is_empty()) {
+        return true;
+    }
+    if symbolic.solver_portfolio.iter().any(|entry| !entry.trim().is_empty()) {
+        return symbolic.solver_portfolio.iter().any(|entry| {
+            let entry = entry.trim();
+            !entry.is_empty()
+                && (entry.chars().any(|ch| ch.is_whitespace() || matches!(ch, '"' | '\'' | '\\'))
+                    || !BUILTIN_SYMBOLIC_SOLVERS.contains(&entry))
+        });
+    }
+    !BUILTIN_SYMBOLIC_SOLVERS.contains(&symbolic.solver.trim())
 }
 
 /// Executes a single test function, returning a [`TestResult`].
