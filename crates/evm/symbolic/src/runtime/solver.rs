@@ -1,5 +1,8 @@
 use super::*;
 
+const INITIAL_SOLVER_POLL_BACKOFF: Duration = Duration::from_micros(200);
+const MAX_SOLVER_POLL_BACKOFF: Duration = Duration::from_millis(50);
+
 /// Minimal solver backend interface used by the symbolic executor.
 ///
 /// Implementations are responsible for translating accumulated symbolic constraints
@@ -228,7 +231,7 @@ pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, String
     let (parts, smt_timeout) = match solver {
         "z3" => (vec!["z3", "-in", "-smt2"], true),
         "yices" | "yices-2.6.4" | "yices-2.6.5" => {
-            (vec!["yices-smt2", "--smt2-model-format", "--bvconst-in-decimal"], false)
+            (vec!["yices-smt2", "--bvconst-in-decimal"], false)
         }
         "cvc5" | "cvc5-1.2.1" => (
             vec![
@@ -403,8 +406,7 @@ fn run_solver_process(
     let deadline = timeout
         .filter(|seconds| *seconds > 0)
         .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
-    let mut backoff = Duration::from_micros(200);
-    const MAX_BACKOFF: Duration = Duration::from_millis(50);
+    let mut backoff = INITIAL_SOLVER_POLL_BACKOFF;
     let status = loop {
         if cancel.load(Ordering::SeqCst) {
             kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
@@ -418,7 +420,7 @@ fn run_solver_process(
             Ok(Some(status)) => break status,
             Ok(None) => {
                 thread::sleep(backoff);
-                backoff = (backoff * 2).min(MAX_BACKOFF);
+                backoff = (backoff * 2).min(MAX_SOLVER_POLL_BACKOFF);
             }
             Err(err) => {
                 kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);

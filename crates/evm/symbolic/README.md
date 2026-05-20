@@ -153,7 +153,7 @@ solver = "z3"
 # Optional solver names or commands to race in parallel. Ignored when
 # `solver_command` is set. Entries with spaces/quotes/backslashes are parsed as
 # argv strings, not shell snippets.
-# solver_portfolio = ["z3", "cvc5", "bitwuzla"]
+# solver_portfolio = ["yices", "z3"]
 timeout = 30
 max_depth = 10000
 max_paths = 1024
@@ -192,7 +192,7 @@ forge test --symbolic --symbolic-solver yices
 forge test --symbolic --symbolic-solver cvc5
 forge test --symbolic --symbolic-solver bitwuzla
 forge test --symbolic --symbolic-solver-command "z3 -in -smt2"
-forge test --symbolic --symbolic-solver-portfolio z3,cvc5,bitwuzla
+forge test --symbolic --symbolic-solver-portfolio yices,z3
 forge test --symbolic --symbolic-timeout 120
 forge test --symbolic --symbolic-array-lengths 2,4
 forge test --symbolic --symbolic-invariant-depth 6
@@ -202,7 +202,7 @@ forge test --symbolic --symbolic-dump-smt
 FOUNDRY_SYMBOLIC=true forge test
 FOUNDRY_SYMBOLIC_SOLVER=z3 forge test --symbolic
 FOUNDRY_SYMBOLIC_SOLVER_COMMAND="z3 -in -smt2" forge test --symbolic
-FOUNDRY_SYMBOLIC_SOLVER_PORTFOLIO="z3,cvc5,bitwuzla" forge test --symbolic
+FOUNDRY_SYMBOLIC_SOLVER_PORTFOLIO="yices,z3" forge test --symbolic
 FOUNDRY_SYMBOLIC_TIMEOUT=120 forge test --symbolic
 ```
 
@@ -220,6 +220,10 @@ nonempty portfolio overrides `symbolic.solver`. Portfolio entries without
 whitespace, quotes, or backslashes are resolved like `symbolic.solver` values.
 Entries with whitespace, quotes, or backslashes are split into argv parts like
 `symbolic.solver_command`; they are not executed through a shell.
+For latency-sensitive local runs, start with a small portfolio such as
+`["yices", "z3"]`. Broader portfolios can help on solver-diverse workloads but
+use more CPU and can be slower when one fast solver already handles most
+queries.
 
 Security note: `symbolic.solver_command` and `symbolic.solver_portfolio` execute
 local programs when symbolic tests run. This also applies when these values come

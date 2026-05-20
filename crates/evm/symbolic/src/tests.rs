@@ -1840,7 +1840,7 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     let command = &commands[0];
 
     assert_eq!(command.program, "yices-smt2");
-    assert_eq!(command.args, vec!["--smt2-model-format", "--bvconst-in-decimal"]);
+    assert_eq!(command.args, vec!["--bvconst-in-decimal"]);
     assert!(!command.smt_timeout);
 
     let commands = solver_commands_for_config(&SymbolicConfig {
