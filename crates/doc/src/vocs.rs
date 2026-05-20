@@ -453,7 +453,7 @@ const fn package_json() -> &'static str {
     "react": "^19",
     "react-dom": "^19",
     "vocs": "https://pkg.pr.new/wevm/vocs@next",
-    "waku": "^1.0.0-alpha.4"
+    "waku": "1.0.0-alpha.6"
   }
 }
 "#
