@@ -89,7 +89,7 @@ pub struct SessionRecord {
 
 impl SessionRecord {
     /// Returns `true` if the registry has no session entries.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.sessions.is_empty()
     }
 
