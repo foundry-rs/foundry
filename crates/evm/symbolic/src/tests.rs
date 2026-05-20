@@ -1844,6 +1844,13 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     assert!(!command.smt_timeout);
 
     let commands = solver_commands_for_config(&SymbolicConfig {
+        solver: "yices-2.7.0".to_string(),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(commands[0].program, "yices-smt2");
+
+    let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "cvc5-int".to_string(),
         ..Default::default()
     })
@@ -1855,6 +1862,13 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     assert!(!command.smt_timeout);
 
     let commands = solver_commands_for_config(&SymbolicConfig {
+        solver: "cvc5-1.3.4".to_string(),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(commands[0].program, "cvc5");
+
+    let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "bitwuzla-abs".to_string(),
         ..Default::default()
     })
@@ -1864,6 +1878,13 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     assert_eq!(command.program, "bitwuzla");
     assert_eq!(command.args, vec!["--produce-models", "--abstraction"]);
     assert!(!command.smt_timeout);
+
+    let commands = solver_commands_for_config(&SymbolicConfig {
+        solver: "bitwuzla-0.9.0".to_string(),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(commands[0].program, "bitwuzla");
 }
 
 #[test]
@@ -1931,6 +1952,28 @@ fn solver_portfolio_resolves_parallel_commands() {
     assert_eq!(commands[2].program, "custom-wrapper");
     assert_eq!(commands[2].args, vec!["--stdin"]);
     assert!(!commands[2].smt_timeout);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for `portfolio_sat_beats_early_unsat`.
+fn portfolio_sat_beats_early_unsat() {
+    let commands = vec![
+        SolverCommand::new(
+            vec!["/bin/sh".to_string(), "-c".to_string(), "printf 'unsat\n'".to_string()],
+            false,
+        )
+        .unwrap(),
+        SolverCommand::new(
+            vec!["/bin/sh".to_string(), "-c".to_string(), "sleep 0.1; printf 'sat\n'".to_string()],
+            false,
+        )
+        .unwrap(),
+    ];
+
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 1, false);
+
+    assert!(solver.is_sat(&[]).unwrap());
 }
 
 #[test]

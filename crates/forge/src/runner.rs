@@ -62,6 +62,22 @@ use tracing::Span;
 /// `address(uint160(uint256(keccak256("foundry library deployer"))))`
 pub const LIBRARY_DEPLOYER: Address = address!("0x1F95D37F27EA0dEA9C252FC09D5A6eaA97647353");
 
+const BUILTIN_SYMBOLIC_SOLVERS: &[&str] = &[
+    "z3",
+    "yices",
+    "yices-2.6.4",
+    "yices-2.6.5",
+    "yices-2.7.0",
+    "cvc5",
+    "cvc5-1.2.1",
+    "cvc5-1.3.4",
+    "cvc5-int",
+    "bitwuzla",
+    "bitwuzla-0.8.1",
+    "bitwuzla-0.9.0",
+    "bitwuzla-abs",
+];
+
 pub(crate) fn is_symbolic_entrypoint(func: &Function) -> bool {
     func.name.starts_with("check") || func.name.starts_with("prove")
 }
@@ -535,9 +551,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     fn symbolic_solver_command_warning(&self, functions: &[&Function]) -> Option<String> {
         if !self.config.symbolic.enabled
             || !functions.iter().copied().any(|func| {
-                is_symbolic_entrypoint(func)
+                (is_symbolic_entrypoint(func) || func.is_invariant_test())
                     && self.effective_symbolic_config(func).is_some_and(|symbolic| {
-                        symbolic_solver_config_executes_custom_command(&symbolic)
+                        symbolic_solver_config_executes_custom_program(&symbolic)
                     })
             })
         {
@@ -546,9 +562,10 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
         Some(
             "Symbolic solver command configuration can execute arbitrary local programs. \
-             Review `symbolic.solver_command`, command-like `symbolic.solver_portfolio` entries, \
-             and inline `forge-config:` or `@custom:halmos` annotations before running symbolic \
-             tests from untrusted projects."
+             Review `symbolic.solver_command`, custom `symbolic.solver` values, \
+             command-like or custom `symbolic.solver_portfolio` entries, and inline \
+             `forge-config:` or `@custom:halmos` annotations before running symbolic tests from \
+             untrusted projects."
                 .to_string(),
         )
     }
@@ -562,13 +579,19 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
     }
 }
 
-fn symbolic_solver_config_executes_custom_command(symbolic: &SymbolicConfig) -> bool {
-    symbolic.solver_command.as_deref().is_some_and(|command| !command.trim().is_empty())
-        || symbolic.solver_portfolio.iter().any(|entry| {
+fn symbolic_solver_config_executes_custom_program(symbolic: &SymbolicConfig) -> bool {
+    if symbolic.solver_command.as_deref().is_some_and(|command| !command.trim().is_empty()) {
+        return true;
+    }
+    if symbolic.solver_portfolio.iter().any(|entry| !entry.trim().is_empty()) {
+        return symbolic.solver_portfolio.iter().any(|entry| {
             let entry = entry.trim();
             !entry.is_empty()
-                && entry.chars().any(|ch| ch.is_whitespace() || matches!(ch, '"' | '\'' | '\\'))
-        })
+                && (entry.chars().any(|ch| ch.is_whitespace() || matches!(ch, '"' | '\'' | '\\'))
+                    || !BUILTIN_SYMBOLIC_SOLVERS.contains(&entry))
+        });
+    }
+    !BUILTIN_SYMBOLIC_SOLVERS.contains(&symbolic.solver.trim())
 }
 
 /// Executes a single test function, returning a [`TestResult`].

@@ -230,10 +230,10 @@ pub(crate) fn solver_commands_for_config(
 pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, String> {
     let (parts, smt_timeout) = match solver {
         "z3" => (vec!["z3", "-in", "-smt2"], true),
-        "yices" | "yices-2.6.4" | "yices-2.6.5" => {
+        "yices" | "yices-2.6.4" | "yices-2.6.5" | "yices-2.7.0" => {
             (vec!["yices-smt2", "--bvconst-in-decimal"], false)
         }
-        "cvc5" | "cvc5-1.2.1" => (
+        "cvc5" | "cvc5-1.2.1" | "cvc5-1.3.4" => (
             vec![
                 "cvc5",
                 "--produce-models",
@@ -255,7 +255,9 @@ pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, String
             ],
             false,
         ),
-        "bitwuzla" | "bitwuzla-0.8.1" => (vec!["bitwuzla", "--produce-models"], false),
+        "bitwuzla" | "bitwuzla-0.8.1" | "bitwuzla-0.9.0" => {
+            (vec!["bitwuzla", "--produce-models"], false)
+        }
         "bitwuzla-abs" => (vec!["bitwuzla", "--produce-models", "--abstraction"], false),
         // Preserve existing behavior for custom z3-compatible executable names/paths.
         custom => (vec![custom, "-in", "-smt2"], true),
@@ -326,21 +328,26 @@ fn run_solver_commands(
         drop(tx);
 
         let mut saw_unknown = false;
+        let mut saw_unsat = false;
+        let mut saw_invalid_sat_model = false;
         let mut errors = Vec::new();
         let mut decisive = None;
         while let Ok((display, outcome)) = rx.recv() {
             match outcome {
-                SolverProcessOutcome::Output(output) if solver_output_is_decisive(&output) => {
+                SolverProcessOutcome::Output(output) if solver_output_is_sat(&output) => {
                     if let Some(constraints) = model_constraints
-                        && solver_output_is_sat(&output)
                         && let Err(err) = validate_solver_model_output(&output, constraints)
                     {
+                        saw_invalid_sat_model = true;
                         errors.push(format!("{display}: {err}"));
                         continue;
                     }
                     decisive = Some(output);
                     cancel.store(true, Ordering::SeqCst);
                     break;
+                }
+                SolverProcessOutcome::Output(output) if solver_output_is_unsat(&output) => {
+                    saw_unsat = true;
                 }
                 SolverProcessOutcome::Output(output) if solver_output_is_unknown(&output) => {
                     saw_unknown = true;
@@ -363,6 +370,10 @@ fn run_solver_commands(
 
         if let Some(output) = decisive {
             Ok(output)
+        } else if saw_invalid_sat_model {
+            Err(SymbolicError::Solver(errors.join("; ")))
+        } else if saw_unsat {
+            Ok("unsat\n".to_string())
         } else if saw_unknown {
             Err(SymbolicError::SolverUnknown)
         } else {
@@ -496,12 +507,12 @@ fn solver_exit_error(
     message
 }
 
-fn solver_output_is_decisive(output: &str) -> bool {
-    matches!(first_solver_line(output), "sat" | "unsat")
-}
-
 fn solver_output_is_sat(output: &str) -> bool {
     first_solver_line(output) == "sat"
+}
+
+fn solver_output_is_unsat(output: &str) -> bool {
+    first_solver_line(output) == "unsat"
 }
 
 fn solver_output_is_unknown(output: &str) -> bool {

@@ -207,28 +207,33 @@ FOUNDRY_SYMBOLIC_TIMEOUT=120 forge test --symbolic
 ```
 
 Known solver names are `z3`, `yices`, `cvc5`, `cvc5-int`, `bitwuzla`, and
-`bitwuzla-abs`. Unknown `symbolic.solver` values are treated as z3-compatible
+`bitwuzla-abs`. Versioned aliases are provided for the solver versions this
+backend has been checked against, including `yices-2.7.0`, `cvc5-1.3.4`, and
+`bitwuzla-0.9.0`. Unknown `symbolic.solver` values are treated as z3-compatible
 executables and are invoked with `-in -smt2` to preserve the old
 `symbolic.solver = "/path/to/z3"` behavior. Use `symbolic.solver_command` for
 non-z3-compatible command lines or wrapper tools.
 
-`symbolic.solver_portfolio` runs multiple solvers in parallel for each SMT query
-and uses the first `sat` or `unsat` response. `unknown` results only win if no
-configured solver returns a decisive response. A nonempty `symbolic.solver_command`
-overrides both `symbolic.solver_portfolio` and `symbolic.solver`; otherwise a
-nonempty portfolio overrides `symbolic.solver`. Portfolio entries without
-whitespace, quotes, or backslashes are resolved like `symbolic.solver` values.
-Entries with whitespace, quotes, or backslashes are split into argv parts like
+`symbolic.solver_portfolio` runs multiple solvers in parallel for each SMT query.
+The first `sat` response wins after its model is validated for model-producing
+queries. `unsat` responses are used only if no configured solver returns `sat`,
+and `unknown` results only win if no configured solver returns a decisive
+response. A nonempty `symbolic.solver_command` overrides both
+`symbolic.solver_portfolio` and `symbolic.solver`; otherwise a nonempty
+portfolio overrides `symbolic.solver`. Portfolio entries without whitespace,
+quotes, or backslashes are resolved like `symbolic.solver` values. Entries with
+whitespace, quotes, or backslashes are split into argv parts like
 `symbolic.solver_command`; they are not executed through a shell.
 For latency-sensitive local runs, start with a small portfolio such as
 `["yices", "z3"]`. Broader portfolios can help on solver-diverse workloads but
 use more CPU and can be slower when one fast solver already handles most
 queries.
 
-Security note: `symbolic.solver_command` and `symbolic.solver_portfolio` execute
-local programs when symbolic tests run. This also applies when these values come
-from inline `forge-config:` or translated legacy `@custom:halmos` annotations.
-Review solver settings before running symbolic tests from untrusted projects.
+Security note: `symbolic.solver_command`, custom `symbolic.solver` values, and
+custom or command-like `symbolic.solver_portfolio` entries execute local programs
+when symbolic tests run. This also applies when these values come from inline
+`forge-config:` or translated legacy `@custom:halmos` annotations. Review solver
+settings before running symbolic tests from untrusted projects.
 Timeouts and portfolio cancellation terminate only the direct solver child
 process. Wrapper commands should forward termination to any subprocesses they
 spawn and close inherited stdout/stderr so descendant solvers do not outlive the
