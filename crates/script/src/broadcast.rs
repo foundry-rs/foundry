@@ -11,7 +11,7 @@ use alloy_network::{
     EthereumWallet, Network, NetworkTransactionBuilder, ReceiptResponse, TransactionBuilder,
 };
 use alloy_primitives::{
-    Address, TxHash, TxKind, U256,
+    Address, TxHash, TxKind, U256, keccak256,
     map::{AddressHashMap, AddressHashSet},
     utils::format_units,
 };
@@ -29,7 +29,10 @@ use foundry_common::{
     tempo::TempoSponsor,
 };
 use foundry_config::Config;
-use foundry_evm::core::evm::{FoundryEvmNetwork, TempoEvmNetwork};
+use foundry_evm::core::{
+    constants::DEFAULT_CREATE2_DEPLOYER_CODEHASH,
+    evm::{FoundryEvmNetwork, TempoEvmNetwork},
+};
 use foundry_wallets::{
     TempoAccessKeyConfig, WalletSigner,
     tempo::{TempoLookup, lookup_signer},
@@ -817,39 +820,16 @@ impl BundledState<TempoEvmNetwork> {
             }
         };
 
-        // CREATE2 deployer must exist on-chain for the rewritten CREATEs.
         let create2_deployer = self.script_config.evm_opts.create2_deployer;
-        if provider.get_code_at(create2_deployer).await?.is_empty() {
-            bail!(
-                "CREATE2 deployer {create2_deployer:#x} is not deployed on this Tempo network; \
-                 --batch requires it. Deploy it first and retry."
-            );
-        }
-
         let mut calls: Vec<Call> = Vec::new();
-        let mut has_create = false;
-        for (idx, tx) in sequence.transactions().enumerate() {
-            let to = match tx.to() {
-                Some(addr) => TxKind::Call(addr),
-                None => {
-                    if idx > 0 {
-                        bail!(
-                            "Contract creation must be the first transaction in --batch mode. \
-                             Found CREATE at position {}. Reorder your script or deploy separately.",
-                            idx + 1
-                        );
-                    }
-                    if has_create {
-                        bail!("Only one contract creation is allowed per --batch transaction.");
-                    }
-                    has_create = true;
-                    TxKind::Create
-                }
-            };
+        for tx in sequence.transactions() {
+            let addr = tx.to().unwrap_or_else(|| {
+                unreachable!("--batch rewrites all CREATEs via the CREATE2 factory")
+            });
             let value = tx.value().unwrap_or(U256::ZERO);
             let input = tx.input().cloned().unwrap_or_default();
 
-            calls.push(Call { to, value, input });
+            calls.push(Call { to: TxKind::Call(addr), value, input });
         }
 
         if calls.is_empty() {
@@ -860,6 +840,19 @@ impl BundledState<TempoEvmNetwork> {
                 build_data: self.build_data,
                 sequence: self.sequence,
             });
+        }
+
+        // CREATE2 deployer must exist on-chain for the rewritten CREATEs.
+        let needs_factory =
+            calls.iter().any(|c| matches!(c.to, TxKind::Call(a) if a == create2_deployer));
+        if needs_factory {
+            let code = provider.get_code_at(create2_deployer).await?;
+            if keccak256(&code) != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
+                bail!(
+                    "CREATE2 deployer {create2_deployer:#x} is not deployed on this Tempo network; \
+                     --batch requires it. Deploy it first and retry."
+                );
+            }
         }
 
         sh_println!(
@@ -976,19 +969,17 @@ impl BundledState<TempoEvmNetwork> {
             bail!("Batch transaction failed (reverted)");
         }
 
-        // Use simulation's contract_address; fall back to sender.create(nonce) for legacy path.
-        let per_tx_addresses: Vec<Option<Address>> = sequence
-            .transactions
-            .iter()
-            .enumerate()
-            .map(|(idx, tx)| {
-                if idx == 0 && has_create && tx.contract_address.is_none() {
-                    Some(sender.create(nonce))
-                } else {
-                    tx.contract_address
-                }
-            })
-            .collect();
+        // Receipts are pushed 1:1 with recorded transactions.
+        if calls.len() != sequence.transactions.len() {
+            bail!(
+                "batch call count ({}) does not match recorded transactions ({}); \
+                 refusing to push misaligned receipts",
+                calls.len(),
+                sequence.transactions.len()
+            );
+        }
+        let per_tx_addresses: Vec<Option<Address>> =
+            sequence.transactions.iter().map(|tx| tx.contract_address).collect();
 
         for (idx, addr) in per_tx_addresses.iter().enumerate() {
             if let Some(addr) = addr {
