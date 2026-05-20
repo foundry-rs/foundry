@@ -1990,6 +1990,29 @@ fn solver_portfolio_resolves_parallel_commands() {
     assert!(!commands[2].smt_timeout);
 }
 
+#[test]
+/// Regression coverage for `solver_portfolio_availability_warning_reports_missing_entries`.
+fn solver_portfolio_availability_warning_reports_missing_entries() {
+    let warning = symbolic_solver_portfolio_availability_warning(&SymbolicConfig {
+        solver_portfolio: vec!["foundry-missing-symbolic-solver".to_string()],
+        ..Default::default()
+    })
+    .unwrap();
+
+    assert!(warning.contains("Symbolic solver portfolio is degraded"));
+    assert!(warning.contains("foundry-missing-symbolic-solver"));
+    assert!(warning.contains("No configured portfolio entries are currently available"));
+
+    assert!(
+        symbolic_solver_portfolio_availability_warning(&SymbolicConfig {
+            solver_portfolio: vec!["foundry-missing-symbolic-solver".to_string()],
+            solver_command: Some("custom-solver".to_string()),
+            ..Default::default()
+        })
+        .is_none()
+    );
+}
+
 #[cfg(unix)]
 #[test]
 /// Regression coverage for `portfolio_sat_beats_early_unsat`.

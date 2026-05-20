@@ -232,6 +232,37 @@ pub(crate) fn solver_commands_for_config(
     Ok(vec![named_solver_command(&config.solver)?])
 }
 
+/// Returns a warning when a configured portfolio will run with unavailable solver entries.
+pub(crate) fn solver_portfolio_availability_warning(config: &SymbolicConfig) -> Option<String> {
+    if config.solver_command.as_deref().is_some_and(|command| !command.trim().is_empty())
+        || config.solver_portfolio.iter().all(|entry| entry.trim().is_empty())
+    {
+        return None;
+    }
+
+    let commands = solver_commands_for_config(config).ok()?;
+    let unavailable = commands
+        .iter()
+        .filter_map(|command| {
+            solver_command_availability_error(command)
+                .map(|err| format!("`{}` ({err})", command.display))
+        })
+        .collect::<Vec<_>>();
+    if unavailable.is_empty() {
+        return None;
+    }
+
+    let suffix = if unavailable.len() == commands.len() {
+        "No configured portfolio entries are currently available."
+    } else {
+        "Available portfolio entries will still be used."
+    };
+    Some(format!(
+        "Symbolic solver portfolio is degraded; unavailable entries: {}. {suffix}",
+        unavailable.join("; ")
+    ))
+}
+
 /// Returns the default command for a known solver name.
 pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, String> {
     let (parts, smt_timeout) = match solver {
@@ -285,6 +316,15 @@ pub(crate) fn split_solver_command(command: &str) -> Result<Vec<String>, String>
     }
 
     Ok(parts)
+}
+
+fn solver_command_availability_error(command: &SolverCommand) -> Option<String> {
+    let output = match Command::new(&command.program).arg("--version").output() {
+        Ok(output) => output,
+        Err(err) => return Some(format!("failed to execute `{}`: {err}", command.program)),
+    };
+    (!output.status.success())
+        .then(|| format!("`{}` is not a usable SMT solver executable", command.program))
 }
 
 #[derive(Debug)]

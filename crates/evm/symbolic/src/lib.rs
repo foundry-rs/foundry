@@ -70,6 +70,11 @@ pub fn symbolic_solver_is_builtin(solver: &str) -> bool {
     BUILTIN_SYMBOLIC_SOLVERS.contains(&solver)
 }
 
+/// Returns a warning when a configured symbolic solver portfolio has unavailable entries.
+pub fn symbolic_solver_portfolio_availability_warning(config: &SymbolicConfig) -> Option<String> {
+    runtime::solver_portfolio_availability_warning(config)
+}
+
 /// Returns the `selector_for` symbolic public API helper result.
 fn selector_for(signature: &str) -> [u8; 4] {
     let hash = keccak256(signature);

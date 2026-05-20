@@ -38,6 +38,7 @@ use foundry_evm::{
 use foundry_evm_symbolic::{
     SymbolicExecutor, SymbolicInvariantRunInput, SymbolicInvariantRunResult, SymbolicInvariantStep,
     SymbolicInvariantTarget, SymbolicRunInput, SymbolicRunResult, symbolic_solver_is_builtin,
+    symbolic_solver_portfolio_availability_warning,
 };
 use itertools::Itertools;
 use proptest::test_runner::{RngAlgorithm, TestError, TestRng, TestRunner};
@@ -46,7 +47,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     cmp::min,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
@@ -453,6 +454,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         if let Some(warning) = self.symbolic_solver_command_warning(&functions) {
             warnings.push(warning);
         }
+        warnings.extend(self.symbolic_solver_portfolio_availability_warnings(&functions));
 
         let identified_contracts = has_invariants.then(|| {
             load_contracts(setup.traces.iter().map(|(_, t)| &t.arena), &self.mcr.known_contracts)
@@ -560,6 +562,25 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         } else {
             Some(self.config.symbolic.clone())
         }
+    }
+
+    fn symbolic_solver_portfolio_availability_warnings(
+        &self,
+        functions: &[&Function],
+    ) -> Vec<String> {
+        if !self.config.symbolic.enabled {
+            return Vec::new();
+        }
+
+        functions
+            .iter()
+            .copied()
+            .filter(|func| is_symbolic_entrypoint(func) || func.is_invariant_test())
+            .filter_map(|func| self.effective_symbolic_config(func))
+            .filter_map(|symbolic| symbolic_solver_portfolio_availability_warning(&symbolic))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 }
 
