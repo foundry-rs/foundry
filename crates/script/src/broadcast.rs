@@ -822,10 +822,14 @@ impl BundledState<TempoEvmNetwork> {
 
         let create2_deployer = self.script_config.evm_opts.create2_deployer;
         let mut calls: Vec<Call> = Vec::new();
-        for tx in sequence.transactions() {
-            let addr = tx.to().unwrap_or_else(|| {
-                unreachable!("--batch rewrites all CREATEs via the CREATE2 factory")
-            });
+        for (idx, tx) in sequence.transactions().enumerate() {
+            let Some(addr) = tx.to() else {
+                bail!(
+                    "--batch encountered a CREATE transaction at position {} that was not \
+                     routed through the CREATE2 factory; cannot include it in the batch.",
+                    idx + 1
+                );
+            };
             let value = tx.value().unwrap_or(U256::ZERO);
             let input = tx.input().cloned().unwrap_or_default();
 
@@ -1025,13 +1029,6 @@ impl BundledState<TempoEvmNetwork> {
             sh_println!("\n\n==========================")?;
             sh_println!("\nBATCH EXECUTION COMPLETE & SUCCESSFUL.")?;
             sh_println!("All {} calls executed atomically in a single transaction.", calls.len())?;
-            let rewrites = calls
-                .iter()
-                .filter(|c| matches!(c.to, TxKind::Call(a) if a == create2_deployer))
-                .count();
-            if rewrites > 0 {
-                sh_println!("Rewrote {rewrites} CREATE(s) via {create2_deployer:#x}.")?;
-            }
         }
 
         Ok(BroadcastedState {

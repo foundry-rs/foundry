@@ -1081,15 +1081,14 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         if let FrameInput::Create(inputs) = frame_input
             && self.should_use_create2_factory(ecx.journal().depth(), inputs)
         {
-            // The Arachnid factory is not payable, so a rewritten CREATE that carries value
-            // would silently revert at the factory. Surface the limitation up front instead.
-            if matches!(inputs.scheme(), CreateScheme::Create) && !inputs.value().is_zero() {
+            // The Arachnid factory is not payable; reject non-zero value up front.
+            if !inputs.value().is_zero() {
                 self.inner.pending_create2_error = Some(CreateOutcome {
                     result: InterpreterResult {
                         result: InstructionResult::Revert,
                         output: Bytes::from(
-                            "--batch cannot rewrite CREATE with non-zero value: \
-                             Arachnid factory is not payable"
+                            "--batch cannot route a deployment with non-zero value through \
+                             the CREATE2 factory: Arachnid factory is not payable"
                                 .as_bytes()
                                 .to_vec(),
                         ),
@@ -1112,13 +1111,9 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         );
                         self.inner.batch_rewrite_warned = true;
                     }
-                    let process_salt =
-                        *self.inner.batch_rewrite_process_salt.get_or_insert_with(rand::random);
                     let chain_id = ecx.cfg().chain_id();
-                    let counter = self.inner.batch_create_counter;
-                    self.inner.batch_create_counter = counter.wrapping_add(1);
                     let nonce = ecx.journal_mut().load_account(inputs.caller()).ok()?.info.nonce;
-                    compute_batch_create_salt(process_salt, chain_id, nonce, counter)
+                    self.inner.next_batch_create_salt(chain_id, nonce)
                 }
                 _ => return None,
             };
@@ -1571,6 +1566,17 @@ impl<FEN: FoundryEvmNetwork> DerefMut for InspectorStack<FEN> {
     }
 }
 
+impl InspectorStackInner {
+    /// Derive the next `--batch` CREATE2 salt and advance the per-batch counter.
+    /// The per-inspector random seed is lazily initialized on first use.
+    fn next_batch_create_salt(&mut self, chain_id: u64, nonce: u64) -> U256 {
+        let process_salt = *self.batch_rewrite_process_salt.get_or_insert_with(rand::random);
+        let counter = self.batch_create_counter;
+        self.batch_create_counter = counter.wrapping_add(1);
+        compute_batch_create_salt(process_salt, chain_id, nonce, counter)
+    }
+}
+
 /// Derive the CREATE2 salt used by `--batch` CREATE rewrites.
 ///
 /// Mixes a per-inspector random seed, the chain id, the caller nonce, and a per-batch counter
@@ -1587,7 +1593,7 @@ fn compute_batch_create_salt(process_salt: u64, chain_id: u64, nonce: u64, count
 
 #[cfg(test)]
 mod tests {
-    use super::compute_batch_create_salt;
+    use super::{Address, InspectorStackInner, compute_batch_create_salt};
 
     #[test]
     fn distinct_salts_across_simulations_at_same_nonce() {
@@ -1616,5 +1622,22 @@ mod tests {
         let a = compute_batch_create_salt(42, 1, 5, 7);
         let b = compute_batch_create_salt(42, 1, 5, 7);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn distinct_create2_addresses_across_inspector_instances_at_same_onchain_state() {
+        // Two fresh inspectors fed identical (chain_id, nonce) must produce CREATE2 addresses
+        // that differ when routed through the same factory with the same init code.
+        let factory = Address::with_last_byte(0x42);
+        let init_code = b"\x60\x80\x60\x40".as_slice();
+
+        let mut a = InspectorStackInner::default();
+        let mut b = InspectorStackInner::default();
+        let salt_a = a.next_batch_create_salt(1, 5).to_be_bytes::<32>();
+        let salt_b = b.next_batch_create_salt(1, 5).to_be_bytes::<32>();
+
+        let addr_a = factory.create2_from_code(salt_a, init_code);
+        let addr_b = factory.create2_from_code(salt_b, init_code);
+        assert_ne!(addr_a, addr_b);
     }
 }
