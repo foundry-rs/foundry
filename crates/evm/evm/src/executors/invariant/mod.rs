@@ -1,7 +1,8 @@
 use crate::{
     executors::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, FuzzTestTimer,
-        RawCallResult, corpus::WorkerCorpus,
+        RawCallResult,
+        corpus::{DynamicTargetCtx, WorkerCorpus},
     },
     inspectors::Fuzzer,
 };
@@ -461,6 +462,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
     pub fn config(self) -> InvariantConfig {
         self.config
+    }
+
+    /// Refs for tracking contracts deployed mid-sequence during corpus replay.
+    pub const fn dynamic_target_ctx(&self) -> DynamicTargetCtx<'_> {
+        DynamicTargetCtx {
+            project_contracts: self.project_contracts,
+            setup_contracts: self.setup_contracts,
+            artifact_filters: &self.artifact_filters,
+        }
     }
 
     /// Fuzzes any deployed contract and checks any broken invariant at `invariant_address`.
@@ -1039,6 +1049,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             Some(&self.executor),
             None,
             Some(&targeted_contracts),
+            Some(self.dynamic_target_ctx()),
         )?;
 
         let mut invariant_test =

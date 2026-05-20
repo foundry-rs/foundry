@@ -14,12 +14,12 @@
 
 use crate::executors::{
     Executor,
-    corpus::WorkerCorpus,
+    corpus::{DynamicTargetCtx, WorkerCorpus, register_replay_created, rollback_replay_created},
     corpus_io::{canonical_replay_dir, read_corpus_dir},
     invariant::execute_tx,
 };
 use alloy_json_abi::Function;
-use alloy_primitives::{B256, hex};
+use alloy_primitives::{Address, B256, hex};
 use eyre::{Result, eyre};
 use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_coverage::HitMaps;
@@ -96,11 +96,14 @@ pub struct ShowmapStats {
 ///
 /// `fuzzed_function` is set for stateless fuzz tests; `fuzzed_contracts` is set
 /// for invariant tests (txs are committed between calls in that case).
+/// `dynamic` lets invariant replay register contracts deployed mid-sequence so
+/// follow-up calls into them aren't dropped.
 pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     corpus_dir: &Path,
     fuzzed_function: Option<&Function>,
     fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+    dynamic: Option<&DynamicTargetCtx<'_>>,
     opts: &ShowmapOpts,
 ) -> Result<ShowmapStats> {
     let replay_dir = canonical_replay_dir(corpus_dir);
@@ -131,6 +134,8 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
         let mut had_replayable = false;
 
         let mut executor = executor.clone();
+        // Targets deployed during this entry, cleared after the entry.
+        let mut created: Vec<Address> = Vec::new();
         for tx in &tx_seq {
             if !WorkerCorpus::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                 continue;
@@ -154,11 +159,19 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
                 }
             }
 
+            register_replay_created(
+                &call_result.state_changeset,
+                dynamic,
+                fuzzed_contracts,
+                &mut created,
+            );
+
             // Stateful tests need the tx committed so subsequent calls see its effects.
             if fuzzed_contracts.is_some() {
                 executor.commit(&mut call_result);
             }
         }
+        rollback_replay_created(fuzzed_contracts, created);
 
         if !had_replayable {
             stats.skipped_entries += 1;

@@ -67,6 +67,7 @@ mod sancov;
 mod showmap;
 mod trace;
 
+pub use corpus::DynamicTargetCtx;
 pub use showmap::{ShowmapDomain, ShowmapOpts, ShowmapStats, replay_corpus_to_showmap};
 pub use trace::TracingExecutor;
 

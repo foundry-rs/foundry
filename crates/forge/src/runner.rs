@@ -855,7 +855,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     return self.result;
                 }
             };
-            return self.run_showmap(func, corpus_dir, &showmap, None, Some(&targeted));
+            let dynamic = evm.dynamic_target_ctx();
+            return self.run_showmap(
+                func,
+                corpus_dir,
+                &showmap,
+                None,
+                Some(&targeted),
+                Some(&dynamic),
+            );
         }
 
         // Filter out additional invariants to test if we already have a persisted failure.
@@ -1418,7 +1426,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if let Some(showmap) = self.cr.mcr.tcfg.showmap.clone() {
             let corpus_dir =
                 showmap.corpus_dir.clone().or_else(|| fuzz_config.corpus.corpus_dir.clone());
-            return self.run_showmap(func, corpus_dir, &showmap, Some(func), None);
+            return self.run_showmap(func, corpus_dir, &showmap, Some(func), None, None);
         }
 
         let progress = start_fuzz_progress(
@@ -1541,6 +1549,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         showmap: &crate::multi_runner::ShowmapConfig,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&foundry_evm::fuzz::invariant::FuzzRunIdentifiedContracts>,
+        dynamic: Option<&foundry_evm::executors::DynamicTargetCtx<'_>>,
     ) -> TestResult {
         let Some(corpus_dir) = corpus_dir else {
             self.result.replay_skip("no corpus_dir configured for this test");
@@ -1576,6 +1585,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &corpus_dir,
             fuzzed_function,
             fuzzed_contracts,
+            dynamic,
             &opts,
         );
         let duration = start.elapsed();
