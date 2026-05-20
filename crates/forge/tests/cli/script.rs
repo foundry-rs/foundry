@@ -151,6 +151,24 @@ contract OutOfGasScript is Script {
 }
 "#;
 
+static MULTI_DEPLOY_SCRIPT: &str = r#"
+import "forge-std/Script.sol";
+
+contract A { function ping() external pure returns (uint256) { return 1; } }
+contract B { address public a; constructor(address _a) { a = _a; } }
+contract C { bytes32 public tag; constructor(bytes32 _t) { tag = _t; } }
+
+contract MultiDeploy is Script {
+    function run() external {
+        vm.startBroadcast();
+        A a = new A();
+        new B(address(a));
+        new C(bytes32(uint256(0x1234)));
+        vm.stopBroadcast();
+    }
+}
+"#;
+
 // Tests that execution throws upon encountering a revert in the script.
 forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
@@ -3722,33 +3740,62 @@ Error: --batch mode is only supported on Tempo networks
 "#]]);
 });
 
-// Dry-run against Tempo Moderato testnet to verify CREATE→CREATE2 rewriting.
+/// Asserts that the dry-run sequence under `root` rewrote every CREATE to a unique CREATE2
+/// call targeting the Arachnid factory.
+fn assert_create2_rewrite_dry_run(root: &std::path::Path) {
+    let run_latest = foundry_common::fs::json_files(&root.join("broadcast"))
+        .find(|file| file.ends_with("dry-run/run-latest.json"))
+        .expect("no dry-run broadcast artifact found");
+
+    let json: Value = foundry_common::fs::read_json_file(&run_latest).unwrap();
+    let txs = json["transactions"].as_array().unwrap();
+    assert_eq!(txs.len(), 3, "three CREATE attempts in script");
+
+    let factory = foundry_evm::constants::DEFAULT_CREATE2_DEPLOYER.to_string().to_lowercase();
+    for tx in txs {
+        assert_eq!(tx["transactionType"], "CREATE2", "plain CREATE was rewritten");
+        assert_eq!(tx["transaction"]["to"].as_str().unwrap().to_lowercase(), factory);
+    }
+
+    let addrs: std::collections::HashSet<_> =
+        txs.iter().map(|t| t["contractAddress"].as_str().unwrap().to_owned()).collect();
+    assert_eq!(addrs.len(), 3, "rewritten CREATE2 addresses should be unique");
+}
+
+// Dry-run against a local anvil to verify CREATE→CREATE2 rewriting.
+forgetest_async!(script_batch_rewrites_creates_to_create2, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+
+    let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
+
+    // Tempo mode pre-deploys the Arachnid CREATE2 factory and PATH_USD fee token.
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let dev = handle.dev_accounts().next().unwrap();
+
+    cmd.arg("script").arg(script).args([
+        "--tc",
+        "MultiDeploy",
+        "--rpc-url",
+        &handle.http_endpoint(),
+        "--sender",
+        format!("{dev:?}").as_str(),
+        "--batch",
+        "--network",
+        "tempo",
+    ]);
+    cmd.assert_success();
+
+    assert_create2_rewrite_dry_run(prj.root());
+});
+
+// Same dry-run assertions against the live Moderato testnet.
 forgetest_async!(
     #[ignore]
-    script_batch_rewrites_creates_to_create2,
+    script_batch_rewrites_creates_to_create2_moderato,
     |prj, cmd| {
         foundry_test_utils::util::initialize(prj.root());
 
-        let script = prj.add_source(
-            "MultiDeploy",
-            r#"
-import "forge-std/Script.sol";
-
-contract A { function ping() external pure returns (uint256) { return 1; } }
-contract B { address public a; constructor(address _a) { a = _a; } }
-contract C { bytes32 public tag; constructor(bytes32 _t) { tag = _t; } }
-
-contract MultiDeploy is Script {
-    function run() external {
-        vm.startBroadcast();
-        A a = new A();
-        new B(address(a));
-        new C(bytes32(uint256(0x1234)));
-        vm.stopBroadcast();
-    }
-}
-"#,
-        );
+        let script = prj.add_source("MultiDeploy", MULTI_DEPLOY_SCRIPT);
 
         cmd.arg("script").arg(script).args([
             "--tc",
@@ -3761,42 +3808,7 @@ contract MultiDeploy is Script {
         ]);
         cmd.assert_success();
 
-        let sequence_path = prj
-            .root()
-            .join("broadcast")
-            .join("MultiDeploy.sol")
-            .join("42431")
-            .join("dry-run")
-            .join("run-latest.json");
-
-        let raw = fs::read_to_string(&sequence_path).unwrap_or_else(|e| {
-            let broadcast_dir = prj.root().join("broadcast");
-            let listing = fs::read_dir(&broadcast_dir)
-                .map(|d| {
-                    d.flatten()
-                        .map(|e| e.path().display().to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n  ")
-                })
-                .unwrap_or_else(|_| "<no broadcast dir>".to_string());
-            panic!(
-                "couldn't read sequence at {}: {e}\nbroadcast/ entries:\n  {listing}",
-                sequence_path.display()
-            );
-        });
-        let json: Value = serde_json::from_str(&raw).unwrap();
-        let txs = json["transactions"].as_array().unwrap();
-        assert_eq!(txs.len(), 3, "three CREATE attempts in script");
-
-        let create2_deployer = "0x4e59b44847b379578588920ca78fbf26c0b4956c";
-        for tx in txs {
-            assert_eq!(tx["transactionType"], "CREATE2", "plain CREATE was rewritten");
-            assert_eq!(tx["transaction"]["to"].as_str().unwrap().to_lowercase(), create2_deployer);
-        }
-
-        let addrs: std::collections::HashSet<_> =
-            txs.iter().map(|t| t["contractAddress"].as_str().unwrap().to_owned()).collect();
-        assert_eq!(addrs.len(), 3);
+        assert_create2_rewrite_dry_run(prj.root());
     }
 );
 
