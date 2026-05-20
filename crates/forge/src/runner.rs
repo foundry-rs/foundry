@@ -489,14 +489,12 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             });
         }
 
-        // Start from the invariants matched by the current test filter.
-        let matched_invariant_fns =
-            functions.iter().copied().filter(|func| func.is_invariant_test()).collect::<Vec<_>>();
-        // Keep only boolean invariants; optimization invariants stay isolated per function.
-        let matched_boolean_invariant_fns = matched_invariant_fns
+        // Keep only boolean invariants matched by the current test filter; optimization
+        // invariants stay isolated per function.
+        let matched_boolean_invariant_fns = functions
             .iter()
             .copied()
-            .filter(|func| !is_optimization_invariant(func))
+            .filter(|func| func.is_invariant_test() && !is_optimization_invariant(func))
             .collect::<Vec<_>>();
         // Contract-local boolean invariants are eligible for a shared campaign only when all
         // of them enable `assert_all` and share the same effective inline invariant config.
@@ -523,18 +521,18 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 }
                 // Invariant tests run either as a shared boolean suite or as a single
                 // optimization campaign; other test kinds keep their original invariant set.
-                let invariants = if func.is_invariant_test() {
+                let invariants: &[&Function] = if func.is_invariant_test() {
                     if is_optimization_invariant(func) {
-                        vec![func]
+                        std::slice::from_ref(&func)
                     } else {
                         // Only the suite anchor runs the merged boolean campaign.
                         if merge_invariant_suite && invariant_suite_anchor != Some(func) {
                             return None;
                         }
-                        boolean_invariant_fns.clone()
+                        boolean_invariant_fns.as_slice()
                     }
                 } else {
-                    invariant_fns.clone()
+                    invariant_fns.as_slice()
                 };
 
                 // Skip invariant anchors that have no predicates to execute.
@@ -642,22 +640,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     fn run(
         mut self,
         func: &Function,
-        invariants: Vec<&Function>,
+        invariants: &[&Function],
         kind: TestFunctionKind,
         call_after_invariant: bool,
         identified_contracts: Option<&ContractsByAddress>,
     ) -> TestResult {
-        let fail_on_revert_for = |f: &Function| {
-            if self.inline_config.contains_function(self.cr.name, &f.name)
-                && let Ok(config) = self.cr.inline_config(Some(f))
-            {
-                return config.invariant.fail_on_revert;
-            }
-            self.config.invariant.fail_on_revert
-        };
-        let invariant_fns: Vec<_> =
-            invariants.into_iter().map(|f| (f, fail_on_revert_for(f))).collect();
-
         if let Err(e) = self.apply_function_inline_config(func) {
             self.result.single_fail(Some(e.to_string()));
             return self.result;
@@ -667,12 +654,24 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             TestFunctionKind::UnitTest { .. } => self.run_unit_test(func),
             TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func),
             TestFunctionKind::TableTest => self.run_table_test(func),
-            TestFunctionKind::InvariantTest => self.run_invariant_test(
-                func,
-                invariant_fns,
-                call_after_invariant,
-                identified_contracts.unwrap(),
-            ),
+            TestFunctionKind::InvariantTest => {
+                let fail_on_revert_for = |f: &Function| {
+                    if self.inline_config.contains_function(self.cr.name, &f.name)
+                        && let Ok(config) = self.cr.inline_config(Some(f))
+                    {
+                        return config.invariant.fail_on_revert;
+                    }
+                    self.config.invariant.fail_on_revert
+                };
+                let invariant_fns: Vec<_> =
+                    invariants.iter().copied().map(|f| (f, fail_on_revert_for(f))).collect();
+                self.run_invariant_test(
+                    func,
+                    invariant_fns,
+                    call_after_invariant,
+                    identified_contracts.unwrap(),
+                )
+            }
             _ => unreachable!(),
         }
     }
