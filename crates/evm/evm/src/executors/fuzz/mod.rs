@@ -267,6 +267,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
         let mut call = executor
             .call_raw(self.sender, address, calldata.clone(), U256::ZERO)
             .map_err(|e| TestCaseError::fail(e.to_string()))?;
+        let cmp_values = call.evm_cmp_values.take().unwrap_or_default();
         let new_coverage = coverage_metrics.merge_edge_coverage(&mut call);
         coverage_metrics.process_inputs(
             &[BasicTxDetails {
@@ -279,6 +280,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     value: None,
                 },
             }],
+            &[cmp_values],
             new_coverage,
             None,
         );
