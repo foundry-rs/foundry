@@ -207,9 +207,7 @@ FOUNDRY_SYMBOLIC_TIMEOUT=120 forge test --symbolic
 ```
 
 Known solver names are `z3`, `yices`, `cvc5`, `cvc5-int`, `bitwuzla`, and
-`bitwuzla-abs`. Versioned aliases are provided for the solver versions this
-backend has been checked against, including `yices-2.7.0`, `cvc5-1.3.4`, and
-`bitwuzla-0.9.0`. Unknown `symbolic.solver` values are treated as z3-compatible
+`bitwuzla-abs`. Unknown `symbolic.solver` values are treated as z3-compatible
 executables and are invoked with `-in -smt2` to preserve the old
 `symbolic.solver = "/path/to/z3"` behavior. Use `symbolic.solver_command` for
 non-z3-compatible command lines or wrapper tools.

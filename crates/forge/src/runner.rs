@@ -67,14 +67,11 @@ const BUILTIN_SYMBOLIC_SOLVERS: &[&str] = &[
     "yices",
     "yices-2.6.4",
     "yices-2.6.5",
-    "yices-2.7.0",
     "cvc5",
     "cvc5-1.2.1",
-    "cvc5-1.3.4",
     "cvc5-int",
     "bitwuzla",
     "bitwuzla-0.8.1",
-    "bitwuzla-0.9.0",
     "bitwuzla-abs",
 ];
 

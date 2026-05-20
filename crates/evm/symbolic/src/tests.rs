@@ -1893,13 +1893,6 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     assert!(!command.smt_timeout);
 
     let commands = solver_commands_for_config(&SymbolicConfig {
-        solver: "yices-2.7.0".to_string(),
-        ..Default::default()
-    })
-    .unwrap();
-    assert_eq!(commands[0].program, "yices-smt2");
-
-    let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "cvc5-int".to_string(),
         ..Default::default()
     })
@@ -1911,13 +1904,6 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     assert!(!command.smt_timeout);
 
     let commands = solver_commands_for_config(&SymbolicConfig {
-        solver: "cvc5-1.3.4".to_string(),
-        ..Default::default()
-    })
-    .unwrap();
-    assert_eq!(commands[0].program, "cvc5");
-
-    let commands = solver_commands_for_config(&SymbolicConfig {
         solver: "bitwuzla-abs".to_string(),
         ..Default::default()
     })
@@ -1927,13 +1913,6 @@ fn known_solver_names_resolve_to_smtlib_commands() {
     assert_eq!(command.program, "bitwuzla");
     assert_eq!(command.args, vec!["--produce-models", "--abstraction"]);
     assert!(!command.smt_timeout);
-
-    let commands = solver_commands_for_config(&SymbolicConfig {
-        solver: "bitwuzla-0.9.0".to_string(),
-        ..Default::default()
-    })
-    .unwrap();
-    assert_eq!(commands[0].program, "bitwuzla");
 }
 
 #[test]
