@@ -13,7 +13,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, Bytes, TxKind, U256, address};
 use alloy_provider::Provider;
-use alloy_rpc_types::{BlockNumberOrTag, TransactionRequest};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
@@ -614,6 +614,61 @@ async fn test_tempo_aa_transaction_with_2d_nonce() {
 
         assert!(receipt.status(), "Tempo AA transaction with nonce_key {nonce_key} should succeed");
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_nonzero_lane_pending_tx_does_not_advance_scalar_nonce() {
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let provider = handle.http_provider();
+
+    api.anvil_set_auto_mine(false).await.unwrap();
+
+    let accounts: Vec<Address> = handle.dev_accounts().collect();
+    let recipient = accounts[1];
+    let signer = dev_key(0);
+    let from = signer.address();
+
+    let pending_nonce =
+        provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
+    assert_eq!(pending_nonce, 0);
+
+    let token = IERC20::new(PATH_USD, &provider);
+    let transfer_call = token.transfer(recipient, U256::from(50_000));
+    let calldata: Bytes = transfer_call.calldata().clone();
+
+    let chain_id = provider.get_chain_id().await.unwrap();
+    let base_fee = provider.get_gas_price().await.unwrap();
+
+    let tempo_tx = TempoTransaction {
+        chain_id,
+        fee_token: Some(ALPHA_USD),
+        max_priority_fee_per_gas: base_fee / 10,
+        max_fee_per_gas: base_fee * 2,
+        gas_limit: TIP20_TRANSFER_GAS,
+        calls: vec![Call { to: TxKind::Call(PATH_USD), value: U256::ZERO, input: calldata }],
+        access_list: Default::default(),
+        nonce_key: U256::from(42),
+        nonce: 7,
+        fee_payer_signature: None,
+        valid_before: None,
+        valid_after: None,
+        key_authorization: None,
+        tempo_authorization_list: vec![],
+    };
+
+    let sig_hash = tempo_tx.signature_hash();
+    let signature = signer.sign_hash(&sig_hash).await.unwrap();
+    let tempo_sig = TempoSignature::Primitive(PrimitiveSignature::Secp256k1(signature));
+    let signed_tx = AASigned::new_unhashed(tempo_tx, tempo_sig);
+    let envelope = TempoTxEnvelope::AA(signed_tx);
+
+    let mut encoded = Vec::new();
+    envelope.encode_2718(&mut encoded);
+    let _ = provider.send_raw_transaction(&encoded).await.unwrap();
+
+    let pending_nonce =
+        provider.get_transaction_count(from).block_id(BlockId::pending()).await.unwrap();
+    assert_eq!(pending_nonce, 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]

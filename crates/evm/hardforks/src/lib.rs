@@ -3,7 +3,10 @@
 //! Provides [`FoundryHardfork`], a unified enum over Ethereum, Optimism, and Tempo hardforks
 //! with `FromStr`/`Serialize`/`Deserialize` support for CLI and config usage.
 
-use std::str::FromStr;
+use std::{
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
@@ -131,9 +134,7 @@ impl FoundryHardfork {
         if let Some(fork) = OpHardfork::from_chain_and_timestamp(chain, timestamp) {
             return Some(Self::Optimism(fork));
         }
-        // TODO: add tempo support after https://github.com/tempoxyz/tempo/pull/3514 release
-        // providing TempoHardfork::from_chain_and_timestamp
-        None
+        TempoHardfork::from_chain_and_timestamp(chain_id, timestamp).map(Self::Tempo)
     }
 }
 
@@ -362,7 +363,7 @@ impl ExecutionSpec for OpSpecId {
 
 impl FromEvmVersion for TempoHardfork {
     fn from_evm_version(_: EvmVersion) -> Self {
-        Self::default()
+        latest_active_tempo_hardfork()
     }
 }
 
@@ -389,6 +390,18 @@ impl ExecutionSpec for TempoHardfork {
 /// Returns the spec id derived from [`EvmVersion`] for a given spec type.
 pub fn evm_spec_id<SPEC: FromEvmVersion>(evm_version: EvmVersion) -> SPEC {
     SPEC::from_evm_version(evm_version)
+}
+
+/// Returns the latest Tempo hardfork that has an activation on a known Tempo network.
+pub fn latest_active_tempo_hardfork() -> TempoHardfork {
+    // Tempo currently publishes activation timestamps through chain-aware hardfork resolution.
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(u64::MAX);
+    TempoHardfork::from_chain_and_timestamp(4217, now)
+        .or_else(|| TempoHardfork::from_chain_and_timestamp(42431, now))
+        .unwrap_or_default()
 }
 
 // Parses an EVM version or network-specific hardfork into the given spec type.
@@ -437,6 +450,20 @@ mod tests {
     #[test]
     fn test_tempo_spec_id_mapping() {
         assert_eq!(SpecId::from(TempoHardfork::Genesis), SpecId::OSAKA);
+    }
+
+    #[test]
+    fn test_tempo_evm_version_defaults_to_latest_active_hardfork() {
+        assert_eq!(latest_active_tempo_hardfork(), TempoHardfork::T4);
+        assert_eq!(evm_spec_id::<TempoHardfork>(EvmVersion::Osaka), TempoHardfork::T4);
+    }
+
+    #[test]
+    fn test_tempo_hardfork_from_chain_and_timestamp() {
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T4))
+        );
     }
 
     #[test]

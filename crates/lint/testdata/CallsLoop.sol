@@ -73,6 +73,8 @@ contract CallsLoop {
     mapping(address => IReceiver) internal receiverByAddress;
     Target internal target;
     LocalLib.Box[] internal boxes;
+    address[] internal scratchTargets;
+    mapping(address => address[]) internal targetLists;
 
     modifier loopedPlaceholder() {
         for (uint256 i; i < 1; ++i) {
@@ -191,6 +193,18 @@ contract CallsLoop {
     function localInternalCallsAreIgnored() external {
         for (uint256 i; i < boxes.length; ++i) {
             _local(i);
+        }
+    }
+
+    function arrayBuiltinsAreIgnored(address targetAddress) external {
+        for (uint256 i; i < receivers.length; ++i) {
+            scratchTargets.push(targetAddress);
+        }
+    }
+
+    function mappingArrayBuiltinsAreIgnored(address targetKey, address targetAddress) external {
+        for (uint256 i; i < receivers.length; ++i) {
+            targetLists[targetKey].push(targetAddress);
         }
     }
 
