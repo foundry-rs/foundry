@@ -2759,3 +2759,47 @@ const fn will_exit(action: &InterpreterAction) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cheats(flag: bool, broadcast: Option<Broadcast>) -> Cheatcodes {
+        let config = CheatsConfig { batch_rewrite_creates: flag, ..Default::default() };
+        let mut cheats = Cheatcodes::new(Arc::new(config));
+        cheats.broadcast = broadcast;
+        cheats
+    }
+
+    fn create_inputs() -> CreateInputs {
+        CreateInputs::new(Address::ZERO, CreateScheme::Create, U256::ZERO, Bytes::new(), 100_000, 0)
+    }
+
+    fn broadcast_at(depth: usize) -> Broadcast {
+        Broadcast { depth, ..Default::default() }
+    }
+
+    #[test]
+    fn flag_off_with_broadcast_returns_false() {
+        let mut cheats = cheats(false, Some(broadcast_at(1)));
+        assert!(!cheats.should_use_create2_factory(1, &create_inputs()));
+    }
+
+    #[test]
+    fn flag_on_without_broadcast_returns_false() {
+        let mut cheats = cheats(true, None);
+        assert!(!cheats.should_use_create2_factory(1, &create_inputs()));
+    }
+
+    #[test]
+    fn flag_on_with_broadcast_depth_mismatch_returns_false() {
+        let mut cheats = cheats(true, Some(broadcast_at(2)));
+        assert!(!cheats.should_use_create2_factory(1, &create_inputs()));
+    }
+
+    #[test]
+    fn flag_on_with_broadcast_depth_match_returns_true() {
+        let mut cheats = cheats(true, Some(broadcast_at(1)));
+        assert!(cheats.should_use_create2_factory(1, &create_inputs()));
+    }
+}

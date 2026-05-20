@@ -1586,7 +1586,7 @@ fn compute_batch_create_salt(process_salt: u64, chain_id: u64, nonce: u64, count
 }
 
 #[cfg(test)]
-mod batch_create_salt_tests {
+mod tests {
     use super::compute_batch_create_salt;
 
     #[test]
