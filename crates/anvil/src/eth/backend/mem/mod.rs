@@ -4240,10 +4240,7 @@ fn get_pool_transactions_nonce(
         .iter()
         .filter(|tx| {
             *tx.pending_transaction.sender() == address
-                && !matches!(
-                    tx.pending_transaction.transaction.as_ref(),
-                    FoundryTxEnvelope::Tempo(aa_tx) if !aa_tx.tx().nonce_key.is_zero()
-                )
+                && !tx.pending_transaction.transaction.as_ref().has_nonzero_tempo_nonce_key()
         })
         .map(|tx| tx.pending_transaction.nonce())
         .max()
