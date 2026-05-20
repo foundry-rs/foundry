@@ -211,7 +211,7 @@ contract AnotherCounterHandler is Test {
     cmd.args(["test", "--mt", "invariant_"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS]
-Suite predicates:
+Invariant/Property Tests:
 [PASS] invariant_counter
 [PASS] invariant_counter2
  invariant_counter() (runs: 10, calls: 5000, reverts: [..])
@@ -413,9 +413,9 @@ Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
 	[Sequence] (original: 3, shrunk: 3)
-		sender=0x0000000000000000000000000000000000001490 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x00000000000000000000000000000000000016C5 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
  invariant_increment() (runs: 256, calls: 258, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
@@ -467,9 +467,9 @@ Failing tests:
 Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSequenceLenTest
 [FAIL: invariant increment failure]
 	[Sequence] (original: 3, shrunk: 3)
-		sender=0x0000000000000000000000000000000000001490 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
-		sender=0x00000000000000000000000000000000000016C5 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
  invariant_increment() (runs: 1, calls: 1, reverts: 1)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
@@ -852,7 +852,7 @@ Compiler run successful!
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetTest
 [PASS]
-Suite predicates:
+Invariant/Property Tests:
 [PASS] invariant_considered_target
 [PASS] invariant_foo_called
 [PASS] invariant_setUp_considered_target
@@ -1618,14 +1618,14 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 	[Sequence] (original: [..], shrunk: [..])
 ...
 
-Suite assert_all: 4/5 invariants broken
-4 invariant failure(s) persisted to cache/invariant/failures/CounterTest — rerun to shrink
+Invariant/Property Tests: 4/5 invariants broken
+[FAIL: condition 1 met] invariant_cond1
 ...
 "#]]);
 
     // Re-running the same target replays cond3's persisted counterexample and exits without
     // running a fresh campaign — only the primary block, no secondary [FAIL]s, no
-    // persisted-failures footer, no `Suite assert_all` roll-up. A stderr warning calls out
+    // persisted-failures footer, no `Invariant/Property Tests` roll-up. A stderr warning calls out
     // the three secondaries that were skipped because they already have persisted failures
     // (cond1, cond2, cond5) so users aren't surprised they're missing from the report.
     cmd.forge_fuse()
@@ -1701,7 +1701,7 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 	[Sequence] (original: [..], shrunk: [..])
 ...
 
-Suite assert_all: 1/2 invariants broken
+Invariant/Property Tests: 1/2 invariants broken
 ...
  invariant_breakable() (runs: [..], calls: [..], reverts: [..])
 ...
@@ -1709,7 +1709,7 @@ Suite assert_all: 1/2 invariants broken
 });
 
 // Under `assert_all` + `fail_on_revert = false`, a handler `assert(false)` is now routed to
-// the dedicated `Suite handlers:` section instead of being attributed to every live invariant
+// the dedicated `Assertion Tests:` section instead of being attributed to every live invariant
 // (handler-side assertions are decoupled from invariant predicates — see PR #14482). The live
 // invariants stay green; the campaign keeps running for its full budget. See also
 // `handler::assert_all_handler_assertion_routed_to_handler_section`.
@@ -1757,13 +1757,46 @@ contract AssertAllAssertTest is Test {
     cmd.args(["test", "--mt", "invariant_a"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/AssertAllAssertTest.t.sol:AssertAllAssertTest
-...
-Suite assert_all: 0/2 invariants broken
 
-Suite handlers: 1 assertion bug(s) found
+Invariant/Property Tests: 0/2 invariants broken
+[PASS] invariant_a
+[PASS] invariant_b
+
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)] src/AssertHandler.sol:AssertHandler::alwaysAssert
-	[Sequence] (original: [..], shrunk: [..])
-...
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[src/AssertHandler.sol:AssertHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=alwaysAssert() args=[]
+ invariant_a() (runs: 1, calls: 10, reverts: 10)
+
+╭---------------+--------------+-------+---------+----------╮
+| Contract      | Selector     | Calls | Reverts | Discards |
++===========================================================+
+| AssertHandler | alwaysAssert | 10    | 10      | 0        |
+╰---------------+--------------+-------+---------+----------╯
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/AssertAllAssertTest.t.sol:AssertAllAssertTest
+
+Invariant/Property Tests: 0/2 invariants broken
+[PASS] invariant_a
+[PASS] invariant_b
+
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)] src/AssertHandler.sol:AssertHandler::alwaysAssert
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[src/AssertHandler.sol:AssertHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=alwaysAssert() args=[]
+ invariant_a() (runs: 1, calls: 10, reverts: 10)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });
 
@@ -1996,13 +2029,63 @@ contract StaleSecondaryTest is Test {
     // and `invariant_second` is re-evaluated — the suite roll-up shows 2/2 broken. With the
     // bug, the bare `.exists()` check filtered the secondary out and only the primary block
     // would render (no roll-up).
-    cmd.forge_fuse().args(["test", "--mt", "invariant_first"]).assert_failure().stdout_eq(str![[
-        r#"
-...
-Suite assert_all: 2/2 invariants broken
-...
-"#
-    ]]);
+    cmd.forge_fuse().args(["test", "--mt", "invariant_first"]).assert_failure().stdout_eq(str![[r#"
+No files changed, compilation skipped
+
+Ran 1 test for test/StaleSecondaryTest.t.sol:StaleSecondaryTest
+[FAIL: first broken] invariant_first
+	[Sequence] (original: 2, shrunk: 2)
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+
+[FAIL: second broken] invariant_second
+	[Sequence] (original: 3, shrunk: 3)
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+
+Invariant/Property Tests: 2/2 invariants broken
+[FAIL: first broken] invariant_first
+[FAIL: second broken] invariant_second
+2 invariant failure(s) persisted to /private/var/folders/p4/rl3tc43j51s311jt6pq7zq180000gn/T/[..]/cache/invariant/failures/StaleSecondaryTest — rerun to shrink
+ invariant_first() (runs: 0, calls: 0, reverts: 0)
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
++==================================================+
+| Counter  | inc      | 3     | 0       | 0        |
+╰----------+----------+-------+---------+----------╯
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/StaleSecondaryTest.t.sol:StaleSecondaryTest
+[FAIL: first broken] invariant_first
+	[Sequence] (original: 2, shrunk: 2)
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+
+[FAIL: second broken] invariant_second
+	[Sequence] (original: 3, shrunk: 3)
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+
+Invariant/Property Tests: 2/2 invariants broken
+[FAIL: first broken] invariant_first
+[FAIL: second broken] invariant_second
+2 invariant failure(s) persisted to /private/var/folders/p4/rl3tc43j51s311jt6pq7zq180000gn/T/[..]/cache/invariant/failures/StaleSecondaryTest — rerun to shrink
+ invariant_first() (runs: 0, calls: 0, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
 });
 
 // Verifies that when the selected primary invariant passes but a secondary fails under
@@ -2056,11 +2139,43 @@ contract SecondaryOnlyTest is Test {
     cmd.args(["test", "--mt", "invariant_safe"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: breakable broken] invariant_breakable
-...
-Suite assert_all: 1/2 invariants broken
-...
+	[Sequence] (original: 2, shrunk: 2)
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+
+Invariant/Property Tests: 1/2 invariants broken
+[FAIL: breakable broken] invariant_breakable
+[PASS] invariant_safe
  invariant_safe() (runs: 5, calls: 250, reverts: 0)
-...
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
++==================================================+
+| Counter  | inc      | 250   | 0       | 0        |
+╰----------+----------+-------+---------+----------╯
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/SecondaryOnlyTest.t.sol:SecondaryOnlyTest
+[FAIL: breakable broken] invariant_breakable
+	[Sequence] (original: 2, shrunk: 2)
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
+
+Invariant/Property Tests: 1/2 invariants broken
+[FAIL: breakable broken] invariant_breakable
+[PASS] invariant_safe
+ invariant_safe() (runs: 5, calls: 250, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });
 

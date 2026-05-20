@@ -1521,7 +1521,7 @@ contract InvariantFailOnAssertPanic is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnAssertPanic.t.sol:InvariantFailOnAssertPanic
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)][..]
 ...
  invariant_fail_on_assert_panic() ([RUNS])
@@ -1566,7 +1566,7 @@ contract InvariantIgnoreAssertWhenFlagOff is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantIgnoreAssertWhenFlagOff.t.sol:InvariantIgnoreAssertWhenFlagOff
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)][..]
 ...
  invariant_assert_discarded() ([RUNS])
@@ -1695,7 +1695,7 @@ contract ReplayFailOnAssertTest is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantReplayFailOnAssert.t.sol:ReplayFailOnAssertTest
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)][..]
 ...
 "#]]);
@@ -1703,7 +1703,7 @@ Suite handlers: 1 assertion bug(s) found
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantReplayFailOnAssert.t.sol:ReplayFailOnAssertTest
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)][..]
 ...
 "#]]);
@@ -1747,7 +1747,7 @@ contract InvariantFailOnVmAssertRevert is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnVmAssertRevert.t.sol:InvariantFailOnVmAssertRevert
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: assertion failed: 1 != 2][..]
 ...
  invariant_fail_on_vm_assert_revert() ([RUNS])
@@ -1793,7 +1793,7 @@ contract InvariantIgnoreVmAssertWhenFlagOff is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantIgnoreVmAssertWhenFlagOff.t.sol:InvariantIgnoreVmAssertWhenFlagOff
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: assertion failed: 1 != 2][..]
 ...
  invariant_vm_assert_discarded() ([RUNS])
@@ -1840,7 +1840,7 @@ contract InvariantFailOnVmAssertGlobalFlag is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnVmAssertGlobalFlag.t.sol:InvariantFailOnVmAssertGlobalFlag
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: assertion failed][..]
 ...
  invariant_fail_on_vm_assert_global_flag() ([RUNS])
@@ -1887,7 +1887,7 @@ contract InvariantIgnoreVmAssertGlobalFlagWhenFlagOff is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantIgnoreVmAssertGlobalFlagWhenFlagOff.t.sol:InvariantIgnoreVmAssertGlobalFlagWhenFlagOff
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: assertion failed][..]
 ...
  invariant_vm_assert_global_flag_discarded() ([RUNS])
@@ -1945,12 +1945,12 @@ Ran 1 test for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
 ...
 [FAIL: wrong counter require] invariant_with_require
 	[SEQUENCE]
+
+Invariant/Property Tests: 2/2 invariants broken
 ...
-Suite assert_all: 2/2 invariants broken
-...
-Suite predicates:
 [FAIL: wrong counter assert] invariant_with_assert
 [FAIL: wrong counter require] invariant_with_require
+...
  invariant_with_assert() ([RUNS])
 ...
 "#]]);

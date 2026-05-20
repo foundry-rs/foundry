@@ -5,7 +5,7 @@
 
 use foundry_test_utils::{forgetest_init, str};
 
-// Handler `assert(false)` surfaces under `Suite handlers:`, not as a live invariant failure.
+// Handler `assert(false)` surfaces under `Assertion Tests:`, not as a live invariant failure.
 forgetest_init!(assert_all_handler_assertion_routed_to_handler_section, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
@@ -50,12 +50,14 @@ contract AssertAllAssertTest is Test {
     cmd.args(["test", "--mt", "invariant_a"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/AssertAllAssertTest.t.sol:AssertAllAssertTest
-...
-Suite assert_all: 0/2 invariants broken
 
-Suite handlers: 1 assertion bug(s) found
+Invariant/Property Tests: 0/2 invariants broken
+...
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)] src/AssertHandler.sol:AssertHandler::alwaysAssert
 	[Sequence] (original: [..], shrunk: [..])
+...
+ invariant_a() (runs: 1, calls: [..], reverts: [..])
 ...
 "#]]);
 });
@@ -123,12 +125,43 @@ contract MultiPathTest is Test {
 
     cmd.args(["test", "--mt", "invariant_ok", "--fuzz-seed", "119"]).assert_failure().stdout_eq(
         str![[r#"
-...
-Suite handlers: 1 assertion bug(s) found
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
+
+Ran 1 test for test/MultiPathTest.t.sol:MultiPathTest
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
-	[Sequence] (original: [..], shrunk: 1)
-		sender=[..] addr=[..] calldata=maybeAssert(uint8) args=[..]
-...
+	[Sequence] (original: 2, shrunk: 1)
+		sender=[..] addr=[src/MultiPathHandler.sol:MultiPathHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=maybeAssert(uint8) args=[2]
+ invariant_ok() (runs: 1, calls: 200, reverts: 102)
+
+╭------------------+-------------+-------+---------+----------╮
+| Contract         | Selector    | Calls | Reverts | Discards |
++=============================================================+
+| MultiPathHandler | maybeAssert | 102   | 102     | 0        |
+|------------------+-------------+-------+---------+----------|
+| MultiPathHandler | noop        | 98    | 0       | 0        |
+╰------------------+-------------+-------+---------+----------╯
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/MultiPathTest.t.sol:MultiPathTest
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
+	[Sequence] (original: 2, shrunk: 1)
+		sender=[..] addr=[src/MultiPathHandler.sol:MultiPathHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=maybeAssert(uint8) args=[2]
+ invariant_ok() (runs: 1, calls: 200, reverts: 102)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]],
     );
 
@@ -269,7 +302,7 @@ contract AlwaysAssert {
     // mis-identified as the handler bug that's still reproducing. Re-persist a handler bug
     // first, then patch the handler to no-op AND make `invariant_ok` assert. Replay must
     // delete the (now stale) handler file and surface the failure as a primary invariant
-    // failure, not under `Suite handlers:`.
+    // failure, not under `Assertion Tests:`.
     prj.add_source(
         "AlwaysAssert.sol",
         r#"
@@ -369,9 +402,61 @@ contract MultiHandlerTest is Test {
     );
 
     cmd.args(["test", "--mt", "invariant_ok"]).assert_failure().stdout_eq(str![[r#"
-...
-Suite handlers: 2 assertion bug(s) found
-...
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:5:5:
+  |
+5 |     function boomA() external { assert(false); }
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:5:5:
+  |
+5 |     function boomB() external { assert(false); }
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+Ran 1 test for test/MultiHandlerTest.t.sol:MultiHandlerTest
+Assertion Tests: 2 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)] src/HandlerB.sol:HandlerB::boomB
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[src/HandlerB.sol:HandlerB]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=boomB() args=[]
+[FAIL: panic: assertion failed (0x01)] src/HandlerA.sol:HandlerA::boomA
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[src/HandlerA.sol:HandlerA]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=boomA() args=[]
+ invariant_ok() (runs: 1, calls: 20, reverts: 20)
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
++==================================================+
+| HandlerA | boomA    | [..]  | [..]    | 0        |
+|----------+----------+-------+---------+----------|
+| HandlerB | boomB    | [..]  | [..]    | 0        |
+╰----------+----------+-------+---------+----------╯
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/MultiHandlerTest.t.sol:MultiHandlerTest
+Assertion Tests: 2 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)] src/HandlerB.sol:HandlerB::boomB
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[src/HandlerB.sol:HandlerB]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=boomB() args=[]
+[FAIL: panic: assertion failed (0x01)] src/HandlerA.sol:HandlerA::boomA
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[src/HandlerA.sol:HandlerA]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=boomA() args=[]
+ invariant_ok() (runs: 1, calls: 20, reverts: 20)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 
     let handlers_dir = prj
@@ -446,12 +531,32 @@ contract ShrinkReplayTest is Test {
         config.invariant.runs = 0;
     });
     cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure().stdout_eq(str![[r#"
-...
-Suite handlers: 1 assertion bug(s) found
+No files changed, compilation skipped
+
+Ran 1 test for test/ShrinkReplayTest.t.sol:ShrinkReplayTest
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)] src/ShrinkableHandler.sol:ShrinkableHandler::boom
 	[Sequence] (original: 1, shrunk: 1)
-		sender=[..] addr=[..] calldata=boom() args=[]
-...
+		sender=[..] addr=[src/ShrinkableHandler.sol:ShrinkableHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=boom() args=[]
+ invariant_ok() (runs: 0, calls: 0, reverts: 0)
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/ShrinkReplayTest.t.sol:ShrinkReplayTest
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)] src/ShrinkableHandler.sol:ShrinkableHandler::boom
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[src/ShrinkableHandler.sol:ShrinkableHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=boom() args=[]
+ invariant_ok() (runs: 0, calls: 0, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });
 
@@ -716,15 +821,46 @@ contract HandlerVmAssertPoisonTest is Test {
 "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_counter_below_three"]).assert_failure().stdout_eq(str![[
-        r#"
+    cmd.args(["test", "--mt", "invariant_counter_below_three"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/HandlerVmAssertPoisonTest.t.sol:HandlerVmAssertPoisonTest
 [FAIL: counter reached 3]
-...
-Suite handlers: 1 assertion bug(s) found
+	[Sequence] (original: 3, shrunk: 1)
+		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
+
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: assertion failed] test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler::step
-...
-"#
-    ]]);
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
+ invariant_counter_below_three() (runs: 1, calls: 3, reverts: 0)
+
+╭-------------------+----------+-------+---------+----------╮
+| Contract          | Selector | Calls | Reverts | Discards |
++===========================================================+
+| OncePoisonHandler | step     | 3     | 0       | 0        |
+╰-------------------+----------+-------+---------+----------╯
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
+
+Failing tests:
+Encountered 1 failing test in test/HandlerVmAssertPoisonTest.t.sol:HandlerVmAssertPoisonTest
+[FAIL: counter reached 3]
+	[Sequence] (original: 3, shrunk: 1)
+		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
+
+Assertion Tests: 1 assertion bug(s) found
+[FAIL: assertion failed] test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler::step
+	[Sequence] (original: 1, shrunk: 1)
+		sender=[..] addr=[test/HandlerVmAssertPoisonTest.t.sol:OncePoisonHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=step() args=[]
+ invariant_counter_below_three() (runs: 1, calls: 3, reverts: 0)
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]);
 });

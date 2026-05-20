@@ -518,14 +518,15 @@ pub struct TestResult {
 
     /// Total number of invariants exercised in this `assert_all` run (primary + secondaries that
     /// were not skipped by persisted-failure filtering). When `Some(n)` the test report renders
-    /// a `Suite assert_all: <broken>/<n> invariants broken` summary so users get an at-a-glance
-    /// health line without counting `[FAIL]` blocks. `None` for non-`assert_all` campaigns.
+    /// an `Invariant/Property Tests: <broken>/<n> invariants broken` summary so users get an
+    /// at-a-glance health line without counting `[FAIL]` blocks. `None` for non-`assert_all`
+    /// campaigns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assert_all_invariant_count: Option<usize>,
 
     /// Handler-side assertion bugs found during the campaign, deduped by
     /// `(reverter, selector)` site (Medusa/Echidna semantics). Rendered in a dedicated
-    /// `Suite handlers:` section.
+    /// `Assertion Tests` section.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invariant_handler_failures: Vec<InvariantFailure>,
 
@@ -576,6 +577,12 @@ pub struct TestResult {
 
 impl fmt::Display for TestResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.render_status_block(false))
+    }
+}
+
+impl TestResult {
+    fn render_status_block(&self, user_facing: bool) -> String {
         match self.status {
             TestStatus::Success => {
                 // For optimization mode, show the best example sequence in green.
@@ -592,8 +599,8 @@ impl fmt::Display for TestResult {
                         writeln!(s, "{ex}").unwrap();
                     }
                 }
-                self.write_invariant_predicate_results(&mut s);
-                s.green().wrap().fmt(f)
+                self.write_invariant_predicate_results(&mut s, user_facing, true);
+                format!("{}", s.green().wrap())
             }
             TestStatus::Skipped => {
                 let mut s = String::from("[SKIP");
@@ -601,7 +608,7 @@ impl fmt::Display for TestResult {
                     write!(s, ": {reason}").unwrap();
                 }
                 s.push(']');
-                s.yellow().fmt(f)
+                format!("{}", s.yellow())
             }
             TestStatus::Failure => {
                 let mut s = String::new();
@@ -644,7 +651,6 @@ impl fmt::Display for TestResult {
                         if i > 0 {
                             s.push('\n');
                         }
-                        // `is_anchor` only applies to predicate failures.
                         let is_anchor =
                             matches!(failure, InvariantFailure::Predicate { is_anchor: true, .. });
                         let name_suffix = if multi || !is_anchor {
@@ -652,8 +658,6 @@ impl fmt::Display for TestResult {
                         } else {
                             String::new()
                         };
-                        // With a counterexample: full `[FAIL: reason]<suffix>\n\t[Sequence] ...`
-                        // block; otherwise just `[FAIL: reason]<suffix>`.
                         if let Some(CounterExample::Sequence(original, sequence)) =
                             failure.counterexample()
                         {
@@ -672,81 +676,113 @@ impl fmt::Display for TestResult {
                         }
                     }
                 }
-                // Suite roll-up: `Suite assert_all: <broken>/<total>` for multi-invariant
-                // `assert_all` campaigns.
-                if let Some(total) = self.assert_all_invariant_count
-                    && total > 1
-                    && is_invariant_failure
-                {
-                    writeln!(
-                        s,
-                        "\nSuite assert_all: {}/{total} invariants broken",
-                        self.invariant_failures.len()
-                    )
-                    .unwrap();
-                }
-                // Persistence note only for multi-invariant campaigns; rendered after the
-                // `Suite assert_all:` roll-up.
-                if self.invariant_failures.len() > 1
-                    && let Some(dir) = &self.invariant_failure_dir
-                {
-                    writeln!(
-                        s,
-                        "{} invariant failure(s) persisted to {} — rerun to shrink",
-                        self.invariant_failures.len(),
-                        dir.display()
-                    )
-                    .unwrap();
-                }
-                // Handler-side assertion bug section: bugs *inside* a fuzzed handler function,
-                // distinct from the invariant predicate violations rendered above. Surfaced as
-                // `Suite handlers: N assertion bug(s) found` + one `[FAIL: ...]` per site.
-                if has_handler_failures {
-                    // Leading blank line if a preceding section was rendered.
-                    let preceded = !self.invariant_failures.is_empty()
-                        || matches!(self.assert_all_invariant_count, Some(t) if t > 1);
-                    let prefix = if preceded { "\n" } else { "" };
-                    writeln!(
-                        s,
-                        "{prefix}Suite handlers: {} assertion bug(s) found",
-                        self.invariant_handler_failures.len()
-                    )
-                    .unwrap();
-                    for failure in &self.invariant_handler_failures {
-                        if let Some(CounterExample::Sequence(original, sequence)) =
-                            failure.counterexample()
-                        {
-                            writeln!(
-                                s,
-                                "[FAIL: {}] {}\n\t[Sequence] (original: {original}, shrunk: {})",
-                                failure.reason(),
-                                failure.name(),
-                                sequence.len()
-                            )
-                            .unwrap();
-                            for ex in sequence {
-                                writeln!(s, "{ex}").unwrap();
-                            }
-                        } else {
-                            writeln!(s, "[FAIL: {}] {}", failure.reason(), failure.name()).unwrap();
-                        }
-                    }
-                }
-                self.write_invariant_predicate_results(&mut s);
-                s.red().wrap().fmt(f)
+
+                let rollup_rendered =
+                    self.write_invariant_rollup(&mut s, user_facing, is_invariant_failure);
+                let show_predicate_header = if user_facing { !rollup_rendered } else { true };
+                self.write_invariant_predicate_results(&mut s, user_facing, show_predicate_header);
+                self.write_invariant_persistence_note(&mut s);
+                let handler_preceded = if user_facing {
+                    rollup_rendered
+                        || self.invariant_predicate_results.len() > 1
+                        || !self.invariant_failures.is_empty()
+                } else {
+                    !self.invariant_failures.is_empty()
+                        || matches!(self.assert_all_invariant_count, Some(t) if t > 1)
+                };
+                self.write_handler_failures(&mut s, user_facing, handler_preceded);
+
+                format!("{}", s.red().wrap())
             }
         }
     }
-}
 
-impl TestResult {
-    /// Appends the suite-level invariant predicate summary for multi-predicate campaigns.
-    fn write_invariant_predicate_results(&self, s: &mut String) {
+    fn write_invariant_rollup(
+        &self,
+        s: &mut String,
+        user_facing: bool,
+        is_invariant_failure: bool,
+    ) -> bool {
+        let Some(total) = self.assert_all_invariant_count else {
+            return false;
+        };
+        if total <= 1 || !is_invariant_failure {
+            return false;
+        }
+
+        writeln!(
+            s,
+            "\n{}: {}/{total} invariants broken",
+            if user_facing { "Invariant/Property Tests" } else { "Suite assert_all" },
+            self.invariant_failures.len()
+        )
+        .unwrap();
+        true
+    }
+
+    fn write_invariant_persistence_note(&self, s: &mut String) {
+        if self.invariant_failures.len() > 1
+            && let Some(dir) = &self.invariant_failure_dir
+        {
+            writeln!(
+                s,
+                "{} invariant failure(s) persisted to {} — rerun to shrink",
+                self.invariant_failures.len(),
+                dir.display()
+            )
+            .unwrap();
+        }
+    }
+
+    fn write_handler_failures(&self, s: &mut String, user_facing: bool, preceded: bool) {
+        if self.invariant_handler_failures.is_empty() {
+            return;
+        }
+
+        let prefix = if preceded { "\n" } else { "" };
+        writeln!(
+            s,
+            "{prefix}{}: {} assertion bug(s) found",
+            if user_facing { "Assertion Tests" } else { "Suite handlers" },
+            self.invariant_handler_failures.len()
+        )
+        .unwrap();
+        for failure in &self.invariant_handler_failures {
+            if let Some(CounterExample::Sequence(original, sequence)) = failure.counterexample() {
+                writeln!(
+                    s,
+                    "[FAIL: {}] {}\n\t[Sequence] (original: {original}, shrunk: {})",
+                    failure.reason(),
+                    failure.name(),
+                    sequence.len()
+                )
+                .unwrap();
+                for ex in sequence {
+                    writeln!(s, "{ex}").unwrap();
+                }
+            } else {
+                writeln!(s, "[FAIL: {}] {}", failure.reason(), failure.name()).unwrap();
+            }
+        }
+    }
+
+    /// Appends the invariant/property summary for multi-predicate campaigns.
+    fn write_invariant_predicate_results(
+        &self,
+        s: &mut String,
+        user_facing: bool,
+        show_header: bool,
+    ) {
         if self.invariant_predicate_results.len() <= 1 {
             return;
         }
 
-        s.push_str("\nSuite predicates:\n");
+        if show_header {
+            s.push('\n');
+            s.push_str(if user_facing { "Invariant/Property Tests" } else { "Suite predicates" });
+            s.push_str(":\n");
+        }
+
         for predicate in &self.invariant_predicate_results {
             match predicate.status {
                 TestStatus::Success => {
@@ -1032,7 +1068,7 @@ impl TestResult {
 
     /// Formats the test result into a string (for printing).
     pub fn short_result(&self, name: &str) -> String {
-        format!("{self} {name} {}", self.kind.report())
+        format!("{} {name} {}", self.render_status_block(true), self.kind.report())
     }
 
     /// Merges the given raw call result into `self`.
