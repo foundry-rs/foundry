@@ -1,5 +1,5 @@
 use super::InvariantContract;
-use crate::executors::RawCallResult;
+use crate::{executors::RawCallResult, inspectors::EdgeCoverage};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, Selector, keccak256};
 use foundry_config::InvariantConfig;
@@ -204,11 +204,24 @@ pub fn handler_site_already_minimal(
 pub fn snapshot_edge_fingerprint<FEN: FoundryEvmNetwork>(
     call_result: &RawCallResult<FEN>,
 ) -> Option<B256> {
-    let edges = call_result.edge_coverage.as_deref()?;
-    if edges.is_empty() || edges.iter().all(|b| *b == 0) {
+    let edges = call_result.edge_coverage.as_ref()?;
+    if edges.is_empty() {
         return None;
     }
-    Some(keccak256(edges))
+    match edges {
+        EdgeCoverage::Hash(edges) => Some(keccak256(edges)),
+        EdgeCoverage::CollisionFree(hits) => {
+            let mut bytes = Vec::with_capacity(hits.len() * (20 + 8 + 32 + 8 + 1));
+            for hit in hits {
+                bytes.extend_from_slice(hit.edge.address.as_slice());
+                bytes.extend_from_slice(&hit.edge.pc.to_le_bytes());
+                bytes.extend_from_slice(&hit.edge.jump_dest.to_be_bytes::<32>());
+                bytes.extend_from_slice(&hit.edge.depth.unwrap_or(0).to_le_bytes());
+                bytes.push(hit.count);
+            }
+            Some(keccak256(bytes))
+        }
+    }
 }
 
 /// Identifies a single entry in the [`InvariantFailures`] map. Invariant predicate

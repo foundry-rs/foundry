@@ -1,7 +1,7 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, CmpOperands, CustomPrintTracer, EdgeCovInspector,
-    Fuzzer, LineCoverageCollector, LogCollector, RevertDiagnostic, ScriptExecutionInspector,
-    TempoLabels, TracingInspector,
+    Cheatcodes, CheatsConfig, ChiselState, CmpOperands, CustomPrintTracer, EdgeCovConfig,
+    EdgeCovInspector, EdgeCovKind, EdgeCoverage, Fuzzer, LineCoverageCollector, LogCollector,
+    RevertDiagnostic, ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256,
@@ -315,7 +315,7 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
     pub labels: AddressHashMap<String>,
     pub traces: Option<SparsedTraceArena>,
     pub line_coverage: Option<HitMaps>,
-    pub edge_coverage: Option<Vec<u8>>,
+    pub edge_coverage: Option<EdgeCoverage>,
     pub evm_cmp_values: Option<Vec<CmpOperands>>,
     pub cheatcodes: Option<Box<Cheatcodes<FEN>>>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
@@ -543,8 +543,26 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
     /// Set whether to enable the edge coverage collector.
     #[inline]
     pub fn collect_edge_coverage(&mut self, yes: bool) {
+        self.collect_edge_coverage_with_config(yes, EdgeCovConfig::default());
+    }
+
+    /// Set whether to enable the edge coverage collector with the given configuration.
+    #[inline]
+    pub fn collect_edge_coverage_with_config(&mut self, yes: bool, config: EdgeCovConfig) {
         // TODO: configurable edge size?
-        self.edge_coverage = yes.then(EdgeCovInspector::new).map(Into::into);
+        self.edge_coverage = yes.then(|| EdgeCovInspector::with_config(config)).map(Into::into);
+    }
+
+    /// Set whether to enable the edge coverage collector with Foundry config options.
+    #[inline]
+    pub fn collect_edge_coverage_with_options(
+        &mut self,
+        yes: bool,
+        collision_free: bool,
+        include_call_depth: bool,
+    ) {
+        let kind = if collision_free { EdgeCovKind::CollisionFree } else { EdgeCovKind::Hash };
+        self.collect_edge_coverage_with_config(yes, EdgeCovConfig::new(kind, include_call_depth));
     }
 
     /// Set whether to collect EVM comparison operands.

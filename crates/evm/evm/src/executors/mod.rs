@@ -7,7 +7,8 @@
 // the concrete `Executor` type.
 
 use crate::inspectors::{
-    Cheatcodes, CmpOperands, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
+    Cheatcodes, CmpOperands, EdgeCoverage, EdgeIndexMap, InspectorData, InspectorStack,
+    cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -982,7 +983,7 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The line coverage info collected during the call
     pub line_coverage: Option<HitMaps>,
     /// The edge coverage info collected during the call
-    pub edge_coverage: Option<Vec<u8>>,
+    pub edge_coverage: Option<EdgeCoverage>,
     /// EVM comparison operands collected during the call.
     pub evm_cmp_values: Option<Vec<CmpOperands>>,
     /// Sancov edge coverage from instrumented native Rust crates (e.g. precompiles).
@@ -1093,49 +1094,84 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
     }
 
     /// Update provided history map with edge coverage info collected during this call.
-    /// Uses AFL binning algo <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
-    pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> (bool, bool) {
+    pub fn merge_edge_coverage(
+        &mut self,
+        history_map: &mut Vec<u8>,
+        edge_indices: &mut EdgeIndexMap,
+    ) -> (bool, bool) {
         let mut new_coverage = false;
         let mut is_edge = false;
         if let Some(x) = &mut self.edge_coverage {
-            // Iterate over the current map and the history map together and update
-            // the history map, if we discover some new coverage, report true
-            for (curr, hist) in std::iter::zip(x, history_map) {
-                // If we got a hitcount of at least 1
-                if *curr > 0 {
-                    // Convert hitcount into bucket count
-                    let bucket = match *curr {
-                        0 => 0,
-                        1 => 1,
-                        2 => 2,
-                        3 => 4,
-                        4..=7 => 8,
-                        8..=15 => 16,
-                        16..=31 => 32,
-                        32..=127 => 64,
-                        128..=255 => 128,
-                    };
-
-                    // If the old record for this edge pair is lower, update
-                    if *hist < bucket {
-                        if *hist == 0 {
-                            // Counts as an edge the first time we see it, otherwise it's a feature.
-                            is_edge = true;
-                        }
-                        *hist = bucket;
-                        new_coverage = true;
+            match x {
+                EdgeCoverage::Hash(x) => {
+                    if history_map.len() < x.len() {
+                        history_map.resize(x.len(), 0);
                     }
+                    // Iterate over the current map and the history map together and update
+                    // the history map, if we discover some new coverage, report true
+                    for (curr, hist) in std::iter::zip(x.iter_mut(), history_map.iter_mut()) {
+                        Self::merge_edge_count(*curr, hist, &mut new_coverage, &mut is_edge);
 
-                    // Zero out the current map for next iteration.
-                    *curr = 0;
+                        // Hash reuses its map; collision-free drains hits.
+                        *curr = 0;
+                    }
+                }
+                EdgeCoverage::CollisionFree(hits) => {
+                    for hit in hits.drain(..) {
+                        let edge_index = edge_indices.edge_index(hit.edge);
+                        if history_map.len() <= edge_index {
+                            debug_assert_eq!(history_map.len(), edge_index);
+                            // Reserve more space to speculatively avoid reallocations
+                            history_map.reserve(1);
+                            history_map.push(0);
+                        }
+                        Self::merge_edge_count(
+                            hit.count,
+                            &mut history_map[edge_index],
+                            &mut new_coverage,
+                            &mut is_edge,
+                        );
+                    }
                 }
             }
         }
         (new_coverage, is_edge)
     }
 
+    fn merge_edge_count(curr: u8, hist: &mut u8, new_coverage: &mut bool, is_edge: &mut bool) {
+        let Some(bucket) = Self::bin_count(curr) else {
+            return;
+        };
+
+        // If the old record for this edge pair is lower, update
+        if *hist < bucket {
+            if *hist == 0 {
+                // Counts as an edge the first time we see it, otherwise it's a feature.
+                *is_edge = true;
+            }
+            *hist = bucket;
+            *new_coverage = true;
+        }
+    }
+
+    /// Convert a hitcount into an AFL-style bucket.
+    /// <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
+    fn bin_count(count: u8) -> Option<u8> {
+        match count {
+            0 => None,
+            1 => Some(1),
+            2 => Some(2),
+            3 => Some(4),
+            4..=7 => Some(8),
+            8..=15 => Some(16),
+            16..=31 => Some(32),
+            32..=127 => Some(64),
+            128..=255 => Some(128),
+        }
+    }
+
     /// Update provided history map with sancov coverage info collected during this call.
-    /// Same AFL binning algo as [`Self::merge_edge_coverage`].
+    /// Same AFL binning algo as [`Self::bin_count`].
     pub fn merge_sancov_coverage(&mut self, history_map: &mut Vec<u8>) -> (bool, bool) {
         let mut new_coverage = false;
         let mut is_edge = false;
@@ -1145,23 +1181,14 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
             }
             for (curr, hist) in std::iter::zip(x.iter_mut(), history_map.iter_mut()) {
                 if *curr > 0 {
-                    let bucket = match *curr {
-                        0 => 0,
-                        1 => 1,
-                        2 => 2,
-                        3 => 4,
-                        4..=7 => 8,
-                        8..=15 => 16,
-                        16..=31 => 32,
-                        32..=127 => 64,
-                        128..=255 => 128,
-                    };
-                    if *hist < bucket {
-                        if *hist == 0 {
-                            is_edge = true;
+                    if let Some(bucket) = Self::bin_count(*curr) {
+                        if *hist < bucket {
+                            if *hist == 0 {
+                                is_edge = true;
+                            }
+                            *hist = bucket;
+                            new_coverage = true;
                         }
-                        *hist = bucket;
-                        new_coverage = true;
                     }
                     *curr = 0;
                 }
@@ -1174,10 +1201,11 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
     /// Returns `(new_coverage, is_edge)` — true if either domain produced new coverage.
     pub fn merge_all_coverage(
         &mut self,
-        evm_history: &mut [u8],
+        evm_history: &mut Vec<u8>,
+        evm_edge_indices: &mut EdgeIndexMap,
         sancov_history: &mut Vec<u8>,
     ) -> (bool, bool) {
-        let (new_evm, edge_evm) = self.merge_edge_coverage(evm_history);
+        let (new_evm, edge_evm) = self.merge_edge_coverage(evm_history, evm_edge_indices);
         let (new_san, edge_san) = self.merge_sancov_coverage(sancov_history);
         (new_evm || new_san, edge_evm || edge_san)
     }
@@ -1342,8 +1370,44 @@ impl EarlyExit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inspectors::{EdgeCovHit, EdgeKey};
     use foundry_evm_core::constants::MAGIC_SKIP;
     use revm::{context::Cfg, primitives::hardfork::SpecId};
+
+    fn dense_call(edge: EdgeKey) -> RawCallResult {
+        RawCallResult {
+            edge_coverage: Some(EdgeCoverage::CollisionFree(vec![EdgeCovHit { edge, count: 1 }])),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn collision_free_edge_merge_uses_stable_indices() {
+        let first =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(10) };
+        let second =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(20) };
+        let mut history = Vec::new();
+        let mut edge_indices = EdgeIndexMap::default();
+
+        assert_eq!(
+            dense_call(first).merge_edge_coverage(&mut history, &mut edge_indices),
+            (true, true)
+        );
+        assert_eq!(history, [1]);
+
+        assert_eq!(
+            dense_call(second).merge_edge_coverage(&mut history, &mut edge_indices),
+            (true, true)
+        );
+        assert_eq!(history, [1, 1]);
+
+        assert_eq!(
+            dense_call(first).merge_edge_coverage(&mut history, &mut edge_indices),
+            (false, false)
+        );
+        assert_eq!(history, [1, 1]);
+    }
 
     #[test]
     fn cheatcode_skip_payload_is_classified_as_skip() {
