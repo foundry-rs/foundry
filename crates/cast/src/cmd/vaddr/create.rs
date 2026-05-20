@@ -4,7 +4,7 @@ use crate::{
         send::{cast_send, cast_send_with_access_key},
         tip20::mine,
     },
-    tx::{SendTxOpts, TxParams},
+    tx::{self, SendTxOpts, TxParams},
 };
 use alloy_primitives::{Address, B256};
 use alloy_signer::Signer;
@@ -133,7 +133,7 @@ async fn register(
     owner: Address,
     salt: B256,
     send_tx: SendTxOpts,
-    tx_opts: TxParams,
+    mut tx_opts: TxParams,
 ) -> Result<()> {
     let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
     let signer = signer.ok_or_else(|| {
@@ -156,6 +156,8 @@ async fn register(
     let mut tx = IAddressRegistry::new(ADDRESS_REGISTRY_ADDRESS, &provider)
         .registerVirtualMaster(salt)
         .into_transaction_request();
+    let expires_at = tx_opts.tempo.resolve_expires();
+    tx::print_tempo_expires(expires_at)?;
     tx_opts.apply::<TempoNetwork>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
 
     sh_println!("Submitting registerVirtualMaster({salt})...")?;

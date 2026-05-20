@@ -55,6 +55,7 @@ impl BatchMakeTxArgs {
     pub async fn run(self) -> Result<()> {
         let Self { calls, mut tx, eth, raw_unsigned, ethsign } = self;
         let has_nonce = tx.nonce.is_some();
+        let expires_at = tx.tempo.resolve_expires();
 
         if calls.is_empty() {
             return Err(eyre!("No calls specified. Use --call to specify at least one call."));
@@ -95,6 +96,7 @@ impl BatchMakeTxArgs {
         }
 
         sh_println!("Building batch transaction with {} call(s)...", tempo_calls.len())?;
+        tx::print_tempo_expires(expires_at)?;
 
         // Preserve key_id for modes that do not call build_with_access_key, such as raw unsigned.
         if let Some(ref access_key) = tempo_access_key {

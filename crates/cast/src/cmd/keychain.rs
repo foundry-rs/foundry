@@ -41,7 +41,7 @@ use foundry_cli::utils::{maybe_print_resolved_lane, resolve_lane};
 
 use crate::{
     cmd::send::cast_send,
-    tx::{CastTxBuilder, CastTxSender, SendTxOpts},
+    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
 };
 
 /// Tempo keychain management commands.
@@ -1126,6 +1126,7 @@ async fn send_keychain_tx(
 ) -> Result<()> {
     let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
+    let expires_at = tx_opts.tempo.resolve_expires();
     let tempo_sponsor =
         if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
 
@@ -1178,6 +1179,8 @@ async fn send_keychain_tx(
         }
         return Ok(());
     }
+
+    tx::print_tempo_expires(expires_at)?;
 
     if let Some(browser) = browser {
         let chain = builder.chain();
