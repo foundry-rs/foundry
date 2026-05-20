@@ -4,10 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{
-        BinOp, BinOpKind, Expr, ExprKind, IndexKind, LitKind, SourceUnit,
-        visit::Visit,
-    },
+    ast::{BinOp, BinOpKind, Expr, ExprKind, IndexKind, LitKind, SourceUnit, visit::Visit},
     interface::SpannedOption,
 };
 use std::ops::ControlFlow;
