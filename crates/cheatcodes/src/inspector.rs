@@ -313,6 +313,9 @@ pub struct EnvOverrides {
     /// active. Prevents tx_type being stuck at EIP4844 after reverting from a
     /// blobhashes-set state.
     pub pre_override_tx_type: Option<u8>,
+    /// `tx.blob_hashes` captured at snapshot time when no blob_hashes override
+    /// was active.
+    pub pre_override_blob_hashes: Option<Vec<B256>>,
     /// The opcode about to run (captured in `step`, consumed in `step_end`),
     /// used to know what was just executed when `step_end` fires — at that
     /// point `interpreter.bytecode.opcode()` already points at the *next*

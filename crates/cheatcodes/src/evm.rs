@@ -1382,6 +1382,8 @@ fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN
     }
     if env_overrides.blob_hashes.is_none() {
         env_overrides.pre_override_tx_type = Some(ccx.ecx.tx().tx_type());
+        env_overrides.pre_override_blob_hashes =
+            Some(ccx.ecx.tx().blob_versioned_hashes().to_vec());
     }
     let (db, inner) = ccx.ecx.db_journal_inner_mut();
     let id = db.snapshot_state(inner, &evm_env);
@@ -1418,7 +1420,10 @@ fn sync_tx_after_env_override_restore<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCt
             ccx.ecx.tx_mut().set_tx_type(EIP4844_TX_TYPE_ID);
         }
         None => {
-            ccx.ecx.tx_mut().set_blob_hashes(vec![]);
+            // Restore the pre-override blob hashes recorded at snapshot time.
+            let pre_hashes =
+                ccx.state.env_overrides.pre_override_blob_hashes.clone().unwrap_or_default();
+            ccx.ecx.tx_mut().set_blob_hashes(pre_hashes);
             // Restore pre-override tx_type; without this it stays at EIP4844 even
             // after the blob hashes are cleared.
             let pre_type = ccx.state.env_overrides.pre_override_tx_type.unwrap_or(0);
