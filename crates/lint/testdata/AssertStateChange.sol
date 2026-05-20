@@ -91,8 +91,18 @@ interface IToken {
     function update(uint256 n) external view returns (bool);
 }
 
+// Interface with view functions that share names with low-level address builtins.
+// These must NOT be flagged, the name-only heuristic must not fire when the receiver
+// resolves to a known contract/interface.
+interface IRouter {
+    function send(uint256 amount) external view returns (bool);
+    function call(bytes calldata data) external view returns (bool);
+    function transfer(uint256 amount) external view returns (bool);
+}
+
 contract AssertStateChangeExternal {
     IToken public token;
+    IRouter public router;
     address payable public recipient;
 
     // Bad: .send() always transfers ether (state-changing), returns bool
@@ -120,5 +130,52 @@ contract AssertStateChangeExternal {
     // overload with this arity, so correctly flagged.
     function badOverloadMutating(address target, uint256 amt) external {
         assert(token.update(target, amt)); //~WARN: assert() argument contains a state-modifying expression
+    }
+
+    // Good: view functions on an interface that happen to be named send/call/transfer
+    // must NOT trigger the name-only address heuristic (fix for false positives).
+    function goodViewSend(uint256 n) external view {
+        assert(router.send(n));
+    }
+
+    function goodViewCall(bytes calldata data) external view {
+        assert(router.call(data));
+    }
+
+    function goodViewTransfer(uint256 n) external view {
+        assert(router.transfer(n));
+    }
+}
+
+// ---- using-for library extension calls ----
+// Solar does not yet embed Res on Member expressions for extension methods, so a dedicated
+// library-scan fallback is required (fix for false negatives on using-for mutations).
+
+library StorageLib {
+    function bump(uint256[] storage arr) internal returns (bool) {
+        arr.push(1);
+        return true;
+    }
+
+    function peek(uint256[] storage arr) internal view returns (uint256) {
+        return arr.length;
+    }
+}
+
+contract AssertStateChangeUsingFor {
+    using StorageLib for uint256[];
+
+    uint256[] public items;
+
+    // Bad: bump() writes to storage via a using-for library extension, must be flagged.
+    function badLibraryExtension() external returns (bool) {
+        assert(items.bump()); //~WARN: assert() argument contains a state-modifying expression
+        return true;
+    }
+
+    // Good: peek() is a view extension — must NOT be flagged.
+    function goodLibraryView() external view returns (bool) {
+        assert(items.peek() >= 0);
+        return true;
     }
 }

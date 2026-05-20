@@ -4,8 +4,8 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::UnOpKind,
-    interface::{Span, kw, sym},
+    ast::{DataLocation, UnOpKind},
+    interface::{Span, Symbol, kw, sym},
     sema::{
         Hir,
         hir::{ContractId, Expr, ExprKind, FunctionId, ItemId, Res, TypeKind},
@@ -87,10 +87,15 @@ fn find_state_change<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Sp
                 return Some(expr.span);
             }
 
-            // Known always-mutating member calls: .call(), .delegatecall(), .send(), .transfer()
-            if let ExprKind::Member(_, method) = &callee.kind {
+            // Low-level address calls (.call/.delegatecall/.send/.transfer) are always mutating.
+            // Only apply this name-based heuristic when the receiver does NOT resolve to a known
+            // contract/interface, those are handled precisely by `resolve_member_overloads`,
+            // avoiding false positives on interface methods that happen to share these names.
+            if let ExprKind::Member(base, method) = &callee.kind {
                 let n = method.name;
-                if n == kw::Call || n == kw::Delegatecall || n == sym::send || n == sym::transfer {
+                if (n == kw::Call || n == kw::Delegatecall || n == sym::send || n == sym::transfer)
+                    && contract_id_of(hir, base).is_none()
+                {
                     return Some(expr.span);
                 }
             }
@@ -103,6 +108,17 @@ fn find_state_change<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Sp
                 && candidates.iter().all(|&fid| hir.function(fid).mutates_state())
             {
                 return Some(expr.span);
+            }
+
+            if let ExprKind::Member(base, method) = &callee.kind
+                && lvalue_is_state_var(hir, base)
+            {
+                let lib_candidates = resolve_library_extension(hir, method.name, args.len());
+                if !lib_candidates.is_empty()
+                    && lib_candidates.iter().all(|&fid| hir.function(fid).mutates_state())
+                {
+                    return Some(expr.span);
+                }
             }
 
             // Bare-identifier internal function calls: same all-must-mutate policy.
@@ -198,6 +214,41 @@ fn contract_id_of<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Contr
         ) => Some(*cid),
         _ => None,
     }
+}
+
+/// Finds library functions in the HIR that could be a `using for` extension matching the given
+/// method name and call arity. A library extension function has `arg_count + 1` parameters
+/// (the extra one being the receiver passed implicitly) with the first parameter in storage.
+///
+/// Solar does not yet embed resolution info on `ExprKind::Member` for extension methods, so
+/// this is a best-effort fallback: it returns all library functions across the entire compilation
+/// unit that fit the signature.
+fn resolve_library_extension<'hir>(
+    hir: &Hir<'hir>,
+    method_name: Symbol,
+    arg_count: usize,
+) -> Vec<FunctionId> {
+    let expected_params = arg_count + 1; // +1 for the implicit storage receiver
+    hir.function_ids()
+        .filter(|&fid| {
+            let f = hir.function(fid);
+            // Must be in a library
+            let Some(cid) = f.contract else { return false };
+            if !hir.contract(cid).kind.is_library() {
+                return false;
+            }
+            // Name and arity match
+            if !f.name.is_some_and(|n| n.name == method_name) {
+                return false;
+            }
+            if f.parameters.len() != expected_params {
+                return false;
+            }
+            // First parameter must be a storage reference (the `using for` receiver slot)
+            let first_param = f.parameters.first().copied().map(|id| hir.variable(id));
+            first_param.is_some_and(|v| v.data_location == Some(DataLocation::Storage))
+        })
+        .collect()
 }
 
 /// Returns `true` if the lvalue expression ultimately targets a storage variable.
