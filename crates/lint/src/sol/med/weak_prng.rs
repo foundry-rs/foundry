@@ -52,8 +52,7 @@ fn is_randomness_expr(expr: &Expr<'_>) -> bool {
         }
         ExprKind::Call(callee, args) => {
             let callee = callee.peel_parens();
-            (is_keccak256(callee) || is_abi_encode(callee))
-                && args.exprs().any(contains_predictable_source)
+            is_keccak256(callee) && args.exprs().any(contains_predictable_source)
         }
         _ => false,
     }
@@ -80,8 +79,11 @@ fn is_timestamp_time_bucket_expr(expr: &Expr<'_>) -> bool {
 }
 
 fn is_time_bucket_modulus(expr: &Expr<'_>) -> bool {
+    const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
+
     is_time_subdenomination(expr)
-        || const_eval_u64(expr).is_some_and(|value| value >= 60 && value % 60 == 0)
+        || const_eval_u64(expr)
+            .is_some_and(|value| value >= SECONDS_PER_DAY && value % SECONDS_PER_DAY == 0)
 }
 
 fn is_time_subdenomination(expr: &Expr<'_>) -> bool {
@@ -125,6 +127,9 @@ fn contains_predictable_source(expr: &Expr<'_>) -> bool {
         ExprKind::Array(elems) => elems.iter().any(|elem| contains_predictable_source(elem)),
         ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
             contains_predictable_source(lhs) || contains_predictable_source(rhs)
+        }
+        ExprKind::Call(callee, args) if is_abi_encode(callee.peel_parens()) => {
+            args.exprs().any(contains_predictable_source)
         }
         ExprKind::Call(callee, args) => {
             contains_predictable_source(callee) || args.exprs().any(contains_predictable_source)

@@ -49,40 +49,40 @@ LL │ …     return uint256(keccak256(abi.encodePacked(block.timestamp, msg.se
 warning[weak-prng]: weak randomness derived from a predictable on-chain value
    ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
    │
-LL │         return abi.encodePacked(block.prevrandao, msg.sender);
-   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LL │ …     return keccak256(abi.encodePacked(block.prevrandao, msg.sender));
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/weak-prng
 
 warning[weak-prng]: weak randomness derived from a predictable on-chain value
    ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
    │
-LL │         return abi.encode(block.coinbase, msg.sender);
-   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LL │         return keccak256(abi.encode(block.coinbase, msg.sender));
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/weak-prng
 
 warning[weak-prng]: weak randomness derived from a predictable on-chain value
    ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
    │
-LL │ …     return abi.encodeWithSelector(Receiver.record.selector, block.timestamp);
-   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LL │ …     return keccak256(abi.encodeWithSelector(Receiver.record.selector, block.timestamp));
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/weak-prng
 
 warning[weak-prng]: weak randomness derived from a predictable on-chain value
    ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
    │
-LL │ …     return abi.encodeWithSignature("record(uint256)", block.timestamp);
-   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LL │ …     return keccak256(abi.encodeWithSignature("record(uint256)", block.timestamp));
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/weak-prng
 
 warning[weak-prng]: weak randomness derived from a predictable on-chain value
    ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
    │
-LL │         return abi.encodeCall(Receiver.record, (block.timestamp));
-   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+LL │ …     return keccak256(abi.encodeCall(Receiver.record, (block.timestamp)));
+   │              ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/weak-prng
 
@@ -107,6 +107,22 @@ warning[weak-prng]: weak randomness derived from a predictable on-chain value
    │
 LL │     function modifierArgument() external seeded(block.timestamp % 10) {}
    │                                                 ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/weak-prng
+
+warning[weak-prng]: weak randomness derived from a predictable on-chain value
+   ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
+   │
+LL │         return block.timestamp % 60;
+   │                ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/weak-prng
+
+warning[weak-prng]: weak randomness derived from a predictable on-chain value
+   ╭▸ ROOT/testdata/WeakPrng.sol:LL:CC
+   │
+LL │         return block.timestamp % 600;
+   │                ━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/weak-prng
 

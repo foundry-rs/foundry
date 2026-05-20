@@ -378,6 +378,8 @@ impl InvariantTest {
 struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     // Invariant run call sequence.
     inputs: Vec<BasicTxDetails>,
+    // Per-call EVM comparison operands (parallel to `inputs`), captured for I2S corpus mutation.
+    cmp_seq: Vec<Vec<crate::inspectors::CmpOperands>>,
     // Current invariant run executor.
     executor: Executor<FEN>,
     // Invariant run stat reports (eg. gas usage).
@@ -403,6 +405,7 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
     fn new(first_input: BasicTxDetails, executor: Executor<FEN>, depth: usize) -> Self {
         Self {
             inputs: vec![first_input],
+            cmp_seq: Vec::with_capacity(depth),
             executor,
             fuzz_runs: Vec::with_capacity(depth),
             created_contracts: vec![],
@@ -562,6 +565,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &mut current_run.executor,
                     current_run.inputs.last().expect("checked above"),
                 )?;
+                // Capture per-call EVM cmp operands for I2S corpus mutation. Kept parallel
+                // to `current_run.inputs`; populated unconditionally so dropped calls (magic
+                // assumes / pops below) get zero-length entries that the corpus side filters out.
+                let call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                 if self.config.show_metrics {
                     invariant_test.record_metrics(
@@ -725,6 +732,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         }
                     };
 
+                    // Keep `cmp_seq` parallel to `inputs`: only push when the input survived the
+                    // pop branch above.
+                    if current_run.cmp_seq.len() < current_run.inputs.len() {
+                        current_run.cmp_seq.push(call_cmp_values);
+                    }
+
                     if !continues || current_run.depth == self.config.depth - 1 {
                         invariant_test.set_last_run_inputs(&current_run.inputs);
                     }
@@ -770,6 +783,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             });
             corpus_manager.process_inputs(
                 &current_run.inputs,
+                &current_run.cmp_seq,
                 current_run.new_coverage,
                 optimization,
             );
@@ -1408,7 +1422,6 @@ fn collect_data<FEN: FoundryEvmNetwork>(
             cmp_values.iter().map(|s| (s.width, alloy_primitives::B256::from(s.value))),
         );
     }
-
     // Re-add changes
     if let Some(changed) = sender_changeset {
         state_changeset.insert(tx.sender, changed);

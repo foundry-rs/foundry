@@ -36,24 +36,24 @@ contract WeakPrng is WeakPrngBase(block.timestamp % 10) { //~WARN: weak randomne
         return uint256(keccak256(abi.encodePacked(block.timestamp, msg.sender))) % upper; //~WARN: weak randomness derived from a predictable on-chain value
     }
 
-    function encodePackedPrevrandao() external view returns (bytes memory) {
-        return abi.encodePacked(block.prevrandao, msg.sender); //~WARN: weak randomness derived from a predictable on-chain value
+    function hashEncodePackedPrevrandao() external view returns (bytes32) {
+        return keccak256(abi.encodePacked(block.prevrandao, msg.sender)); //~WARN: weak randomness derived from a predictable on-chain value
     }
 
-    function encodeCoinbase() external view returns (bytes memory) {
-        return abi.encode(block.coinbase, msg.sender); //~WARN: weak randomness derived from a predictable on-chain value
+    function hashEncodeCoinbase() external view returns (bytes32) {
+        return keccak256(abi.encode(block.coinbase, msg.sender)); //~WARN: weak randomness derived from a predictable on-chain value
     }
 
-    function encodeWithSelectorTimestamp() external view returns (bytes memory) {
-        return abi.encodeWithSelector(Receiver.record.selector, block.timestamp); //~WARN: weak randomness derived from a predictable on-chain value
+    function hashEncodeWithSelectorTimestamp() external view returns (bytes32) {
+        return keccak256(abi.encodeWithSelector(Receiver.record.selector, block.timestamp)); //~WARN: weak randomness derived from a predictable on-chain value
     }
 
-    function encodeWithSignatureTimestamp() external view returns (bytes memory) {
-        return abi.encodeWithSignature("record(uint256)", block.timestamp); //~WARN: weak randomness derived from a predictable on-chain value
+    function hashEncodeWithSignatureTimestamp() external view returns (bytes32) {
+        return keccak256(abi.encodeWithSignature("record(uint256)", block.timestamp)); //~WARN: weak randomness derived from a predictable on-chain value
     }
 
-    function encodeCallTimestamp() external view returns (bytes memory) {
-        return abi.encodeCall(Receiver.record, (block.timestamp)); //~WARN: weak randomness derived from a predictable on-chain value
+    function hashEncodeCallTimestamp() external view returns (bytes32) {
+        return keccak256(abi.encodeCall(Receiver.record, (block.timestamp))); //~WARN: weak randomness derived from a predictable on-chain value
     }
 
     function hashDifficulty() external view returns (bytes32) {
@@ -65,6 +65,14 @@ contract WeakPrng is WeakPrngBase(block.timestamp % 10) { //~WARN: weak randomne
     }
 
     function modifierArgument() external seeded(block.timestamp % 10) {} //~WARN: weak randomness derived from a predictable on-chain value
+
+    function timestampMinuteBound() external view returns (uint256) {
+        return block.timestamp % 60; //~WARN: weak randomness derived from a predictable on-chain value
+    }
+
+    function timestampTenMinuteBound() external view returns (uint256) {
+        return block.timestamp % 600; //~WARN: weak randomness derived from a predictable on-chain value
+    }
 
     // SHOULD PASS:
 
@@ -98,6 +106,26 @@ contract WeakPrng is WeakPrngBase(block.timestamp % 10) { //~WARN: weak randomne
 
     function hashInput(bytes memory data) external pure returns (bytes32) {
         return keccak256(data);
+    }
+
+    function encodePackedPrevrandao() external view returns (bytes memory) {
+        return abi.encodePacked(block.prevrandao, msg.sender);
+    }
+
+    function encodeCoinbase() external view returns (bytes memory) {
+        return abi.encode(block.coinbase, msg.sender);
+    }
+
+    function encodeWithSelectorTimestamp() external view returns (bytes memory) {
+        return abi.encodeWithSelector(Receiver.record.selector, block.timestamp);
+    }
+
+    function encodeWithSignatureTimestamp() external view returns (bytes memory) {
+        return abi.encodeWithSignature("record(uint256)", block.timestamp);
+    }
+
+    function encodeCallTimestamp() external view returns (bytes memory) {
+        return abi.encodeCall(Receiver.record, (block.timestamp));
     }
 
     function encodePackedInput(address account) external pure returns (bytes memory) {
