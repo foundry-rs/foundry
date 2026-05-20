@@ -395,7 +395,10 @@ pub fn evm_spec_id<SPEC: FromEvmVersion>(evm_version: EvmVersion) -> SPEC {
 /// Returns the latest Tempo hardfork that has an activation on a known Tempo network.
 pub fn latest_active_tempo_hardfork() -> TempoHardfork {
     // Tempo currently publishes activation timestamps through chain-aware hardfork resolution.
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(u64::MAX);
     TempoHardfork::from_chain_and_timestamp(4217, now)
         .or_else(|| TempoHardfork::from_chain_and_timestamp(42431, now))
         .unwrap_or_default()
