@@ -734,7 +734,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
     pub fn verify_preflight_check(&self) -> Result<()> {
         for sequence in self.sequence.sequences() {
             let chain: Chain = sequence.chain.into();
-            let etherscan_key = self.script_config.config.get_etherscan_api_key(Some(chain));
+            let etherscan_key = self
+                .script_config
+                .config
+                .get_etherscan_api_key(Some(chain))
+                .or_else(|| self.script_config.config.etherscan_api_key.clone());
             // Use the centralized resolver so the preflight reflects the provider that will
             // actually be used at verification time (not just the explicit CLI value).
             let resolved = self.args.verifier.resolve(etherscan_key.as_deref(), Some(chain));

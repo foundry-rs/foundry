@@ -98,7 +98,8 @@ impl VerifyBundle {
     pub fn set_chain(&mut self, config: &Config, chain: Chain) {
         // If dealing with multiple chains, we need to be able to change in between the config
         // chain_id.
-        self.etherscan.key = config.get_etherscan_api_key(Some(chain));
+        self.etherscan.key =
+            config.get_etherscan_api_key(Some(chain)).or_else(|| config.etherscan_api_key.clone());
         self.etherscan.chain = Some(chain);
     }
 
