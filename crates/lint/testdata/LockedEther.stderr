@@ -110,3 +110,35 @@ LL │ contract LockedSameArityOverload is OverloadByType {
    │
    ╰ help: https://getfoundry.sh/forge/linting/locked-ether
 
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedThisCallWithValue {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedAddressThisCallWithValue {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedTransferToSelf {
+   │          ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedSelfdestructToSelf {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+

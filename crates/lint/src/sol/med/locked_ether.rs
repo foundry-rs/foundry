@@ -396,19 +396,24 @@ fn expr_sends_ether(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     let ExprKind::Call(callee, args, named_args) = &expr.kind else {
         return false;
     };
+    let callee = callee.peel_parens();
 
-    // `foo{value: x}(...)` / `new C{value: x}(...)` with `x != 0`.
+    // `foo{value: x}(...)` / `new C{value: x}(...)` with `x != 0`. Targeting `self`
+    // keeps the ETH in this contract, so it is not an exit.
     if let Some(opts) = named_args
         && opts.iter().any(|arg| arg.name.name == sym::value && !is_literal_zero(&arg.value))
     {
-        return true;
+        let self_call =
+            matches!(&callee.kind, ExprKind::Member(receiver, _) if is_self_address(receiver));
+        if !self_call {
+            return true;
+        }
     }
 
-    let callee = callee.peel_parens();
     match &callee.kind {
         ExprKind::Member(receiver, member) => {
-            // Only address-typed receivers can move ETH via these members.
-            if !receiver_is_address(hir, receiver) {
+            // Only address-typed receivers that aren't `self` can move ETH out.
+            if !receiver_is_address(hir, receiver) || is_self_address(receiver) {
                 return false;
             }
             // Single-arg `.transfer`/`.send` to disambiguate from ERC20's 2-arg `transfer`.
@@ -425,12 +430,35 @@ fn expr_sends_ether(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
         ExprKind::Ident(reses)
             if reses.iter().any(|r| matches!(r, Res::Builtin(Builtin::Selfdestruct))) =>
         {
-            return true;
+            // `selfdestruct(self)` burns balance in-place; not an exit.
+            return !args.exprs().next().is_some_and(is_self_address);
         }
         _ => {}
     }
 
     false
+}
+
+/// Returns `true` when `expr` syntactically denotes this contract's own address:
+/// `this`, `address(this)`, `payable(this)`, or any nested combination thereof.
+fn is_self_address(expr: &hir::Expr<'_>) -> bool {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(reses) => reses.iter().any(|r| matches!(r, Res::Builtin(Builtin::This))),
+        ExprKind::Payable(inner) => is_self_address(inner),
+        // `address(<self>)` cast.
+        ExprKind::Call(callee, args, _)
+            if matches!(
+                &callee.peel_parens().kind,
+                ExprKind::Type(hir::Type {
+                    kind: TypeKind::Elementary(ElementaryType::Address(_)),
+                    ..
+                })
+            ) =>
+        {
+            args.exprs().next().is_some_and(is_self_address)
+        }
+        _ => false,
+    }
 }
 
 /// Returns `true` if `expr` is statically known to be an `address`/`address payable` value.

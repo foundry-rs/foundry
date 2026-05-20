@@ -357,6 +357,42 @@ contract OkNamedArgOverload {
     }
 }
 
+// Self-sends keep ETH inside the contract; they must not count as exits.
+contract LockedThisCallWithValue { //~WARN: contract can receive ETH but has no mechanism to send it out
+    receive() external payable {}
+
+    function deposit() external payable {}
+
+    function loop(uint256 x) external {
+        this.deposit{value: x}();
+    }
+}
+
+contract LockedAddressThisCallWithValue { //~WARN: contract can receive ETH but has no mechanism to send it out
+    receive() external payable {}
+
+    function loop(uint256 x) external {
+        (bool ok,) = address(this).call{value: x}("");
+        require(ok);
+    }
+}
+
+contract LockedTransferToSelf { //~WARN: contract can receive ETH but has no mechanism to send it out
+    receive() external payable {}
+
+    function loop(uint256 x) external {
+        payable(address(this)).transfer(x);
+    }
+}
+
+contract LockedSelfdestructToSelf { //~WARN: contract can receive ETH but has no mechanism to send it out
+    receive() external payable {}
+
+    function nuke() external {
+        selfdestruct(payable(address(this)));
+    }
+}
+
 // `Lib.<fn>(...)` member-call dispatch.
 library SendLib {
     function pay(address payable to, uint256 amount) internal {
