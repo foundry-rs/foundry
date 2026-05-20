@@ -1,4 +1,5 @@
 use super::{INLINE_CONFIG_PREFIX, InlineConfigError, InlineConfigErrorKind};
+use crate::split_quoted_args;
 use figment::Profile;
 use foundry_compilers::{
     ProjectCompileOutput,
@@ -220,51 +221,7 @@ fn translate_halmos_config(args: &str, values: &mut Vec<String>) -> Result<(), S
 }
 
 fn split_halmos_args(args: &str) -> Result<Vec<String>, String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut quote = None;
-    let mut escaped = false;
-
-    for ch in args.chars() {
-        if escaped {
-            current.push(ch);
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if let Some(quote_ch) = quote {
-            if ch == quote_ch {
-                quote = None;
-            } else {
-                current.push(ch);
-            }
-            continue;
-        }
-        if matches!(ch, '"' | '\'') {
-            quote = Some(ch);
-        } else if ch.is_whitespace() {
-            if !current.is_empty() {
-                tokens.push(std::mem::take(&mut current));
-            }
-        } else {
-            current.push(ch);
-        }
-    }
-
-    if let Some(quote_ch) = quote {
-        return Err(format!("unterminated {quote_ch} quote in @custom:halmos config"));
-    }
-    if escaped {
-        current.push('\\');
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-
-    Ok(tokens)
+    split_quoted_args(args, "@custom:halmos config")
 }
 
 fn halmos_numeric_symbolic_field(flag: &str) -> Option<&'static str> {

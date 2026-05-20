@@ -225,6 +225,10 @@ Security note: `symbolic.solver_command` and `symbolic.solver_portfolio` execute
 local programs when symbolic tests run. This also applies when these values come
 from inline `forge-config:` or translated legacy `@custom:halmos` annotations.
 Review solver settings before running symbolic tests from untrusted projects.
+Timeouts and portfolio cancellation terminate only the direct solver child
+process. Wrapper commands should forward termination to any subprocesses they
+spawn and close inherited stdout/stderr so descendant solvers do not outlive the
+cancelled query.
 
 Halmos-style annotations are accepted as compatibility input and translated into
 the same internal config:
@@ -317,8 +321,9 @@ Important internal pieces:
   storage, logs, returndata, snapshots, and account lifecycle changes.
 - `CallFrame` tracks address, code address, storage address, caller, call value,
   static context, calldata, stack, memory, and returndata.
-- `SymbolicSolver` is the small internal trait used by the default Z3 subprocess
-  backend.
+- `SymbolicSolver` is the small internal trait used by the default SMT-LIB
+  subprocess backend, which resolves named solvers (z3, cvc5, yices, bitwuzla,
+  etc.) into solver-specific argv via `solver_commands_for_config`.
 
 ## EVM And World Semantics
 

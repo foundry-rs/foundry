@@ -1749,6 +1749,24 @@ fn parse_model_rejects_oversized_bitvector_literals() {
 }
 
 #[test]
+/// Regression coverage for `validate_solver_model_output_rejects_unsatisfied_models`.
+fn validate_solver_model_output_rejects_unsatisfied_models() {
+    let output = "\
+sat
+(
+  (define-fun calldata_0 () (_ BitVec 8)
+    #x00)
+)
+";
+    let constraints =
+        vec![BoolExpr::eq(Expr::Var("calldata_0".to_string()), Expr::Const(U256::from(1)))];
+
+    let err = validate_solver_model_output(output, &constraints).unwrap_err();
+
+    assert!(err.to_string().contains("does not satisfy path constraints"));
+}
+
+#[test]
 /// Regression coverage for `fallback_model_finds_wrapping_arithmetic_riddle_candidate`.
 fn fallback_model_finds_wrapping_arithmetic_riddle_candidate() {
     let var = Expr::Var("calldata_0".to_string());
@@ -1864,6 +1882,14 @@ fn solver_command_overrides_solver_name() {
     assert_eq!(command.program, "custom-solver");
     assert_eq!(command.args, vec!["--flag", "two words"]);
     assert!(!command.smt_timeout);
+}
+
+#[test]
+/// Regression coverage for `split_solver_command_preserves_empty_quoted_args`.
+fn split_solver_command_preserves_empty_quoted_args() {
+    let parts = split_solver_command(r#"custom-solver "" arg ''"#).unwrap();
+
+    assert_eq!(parts, vec!["custom-solver", "", "arg", ""]);
 }
 
 #[test]

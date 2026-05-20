@@ -142,19 +142,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         let output = self.query(constraints, true)?;
         let mut lines = output.lines();
         match lines.next().unwrap_or_default().trim() {
-            "sat" => {
-                let model = parse_model(&output)?;
-                if constraints
-                    .iter()
-                    .all(|constraint| eval_bool_expr(constraint, &model).unwrap_or(false))
-                {
-                    Ok(model)
-                } else {
-                    Err(SymbolicError::Solver(
-                        "solver model does not satisfy path constraints".to_string(),
-                    ))
-                }
-            }
+            "sat" => parse_and_validate_model(&output, constraints),
             "unsat" => Err(SymbolicError::Solver("counterexample path became unsat".to_string())),
             "unknown" => fallback_single_var_model(constraints).ok_or(SymbolicError::SolverUnknown),
             other => Err(SymbolicError::Solver(format!("unexpected solver response `{other}`"))),
@@ -210,7 +198,7 @@ impl SmtLibSubprocessSolver {
             let _ = writeln!(stderr, "--- symbolic SMT query {} ---\n{smt}", self.queries);
         }
 
-        run_solver_commands(commands, &smt, self.timeout)
+        run_solver_commands(commands, &smt, self.timeout, model.then_some(constraints))
     }
 }
 
@@ -284,50 +272,7 @@ pub(crate) fn solver_command_for_portfolio_entry(entry: &str) -> Result<SolverCo
 
 /// Splits a shell-like solver command into argv parts.
 pub(crate) fn split_solver_command(command: &str) -> Result<Vec<String>, String> {
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let mut quote = None;
-    let mut escaped = false;
-
-    for ch in command.chars() {
-        if escaped {
-            current.push(ch);
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if let Some(quote_ch) = quote {
-            if ch == quote_ch {
-                quote = None;
-            } else {
-                current.push(ch);
-            }
-            continue;
-        }
-        if matches!(ch, '"' | '\'') {
-            quote = Some(ch);
-        } else if ch.is_whitespace() {
-            if !current.is_empty() {
-                parts.push(std::mem::take(&mut current));
-            }
-        } else {
-            current.push(ch);
-        }
-    }
-
-    if let Some(quote_ch) = quote {
-        return Err(format!("unterminated {quote_ch} quote in symbolic solver command"));
-    }
-    if escaped {
-        current.push('\\');
-    }
-    if !current.is_empty() {
-        parts.push(current);
-    }
-
+    let parts = split_quoted_args(command, "symbolic solver command")?;
     if parts.is_empty() {
         return Err("symbolic solver command is empty".to_string());
     }
@@ -348,6 +293,7 @@ fn run_solver_commands(
     commands: &[SolverCommand],
     smt: &str,
     timeout: Option<u32>,
+    model_constraints: Option<&[BoolExpr]>,
 ) -> Result<String, SymbolicError> {
     if commands.is_empty() {
         return Err(SymbolicError::Solver("symbolic solver portfolio is empty".to_string()));
@@ -382,6 +328,13 @@ fn run_solver_commands(
         while let Ok((display, outcome)) = rx.recv() {
             match outcome {
                 SolverProcessOutcome::Output(output) if solver_output_is_decisive(&output) => {
+                    if let Some(constraints) = model_constraints
+                        && solver_output_is_sat(&output)
+                        && let Err(err) = validate_solver_model_output(&output, constraints)
+                    {
+                        errors.push(format!("{display}: {err}"));
+                        continue;
+                    }
                     decisive = Some(output);
                     cancel.store(true, Ordering::SeqCst);
                     break;
@@ -450,6 +403,8 @@ fn run_solver_process(
     let deadline = timeout
         .filter(|seconds| *seconds > 0)
         .map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
+    let mut backoff = Duration::from_micros(200);
+    const MAX_BACKOFF: Duration = Duration::from_millis(50);
     let status = loop {
         if cancel.load(Ordering::SeqCst) {
             kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
@@ -461,7 +416,10 @@ fn run_solver_process(
         }
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                thread::sleep(backoff);
+                backoff = (backoff * 2).min(MAX_BACKOFF);
+            }
             Err(err) => {
                 kill_and_reap_solver_process(&mut child, stdout_reader, stderr_reader);
                 return SolverProcessOutcome::Error(format!("failed to read solver output: {err}"));
@@ -510,6 +468,8 @@ fn kill_and_reap_solver_process(
     stdout_reader: Option<thread::JoinHandle<Result<String, String>>>,
     stderr_reader: Option<thread::JoinHandle<Result<String, String>>>,
 ) {
+    // This only terminates the direct child. Wrapper commands should forward termination and close
+    // inherited pipes so descendant solver processes do not outlive cancelled queries.
     let _ = child.kill();
     let _ = child.wait();
     let _ = join_pipe_output(stdout_reader, "stdout");
@@ -538,12 +498,35 @@ fn solver_output_is_decisive(output: &str) -> bool {
     matches!(first_solver_line(output), "sat" | "unsat")
 }
 
+fn solver_output_is_sat(output: &str) -> bool {
+    first_solver_line(output) == "sat"
+}
+
 fn solver_output_is_unknown(output: &str) -> bool {
     first_solver_line(output) == "unknown"
 }
 
 fn first_solver_line(output: &str) -> &str {
     output.lines().next().unwrap_or_default().trim()
+}
+
+pub(crate) fn parse_and_validate_model(
+    output: &str,
+    constraints: &[BoolExpr],
+) -> Result<BTreeMap<String, U256>, SymbolicError> {
+    let model = parse_model(output)?;
+    if constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap_or(false)) {
+        Ok(model)
+    } else {
+        Err(SymbolicError::Solver("solver model does not satisfy path constraints".to_string()))
+    }
+}
+
+pub(crate) fn validate_solver_model_output(
+    output: &str,
+    constraints: &[BoolExpr],
+) -> Result<(), SymbolicError> {
+    parse_and_validate_model(output, constraints).map(|_| ())
 }
 
 /// Implements the `constraints_prefer_fallback_first` solver helper.

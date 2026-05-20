@@ -14,7 +14,7 @@ use alloy_primitives::{Address, Bytes, Selector, U256, address, map::HashMap};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::{Config, FuzzCorpusConfig, InvariantConfig};
+use foundry_config::{Config, FuzzCorpusConfig, InvariantConfig, SymbolicConfig};
 use foundry_evm::{
     constants::CALLER,
     core::evm::FoundryEvmNetwork,
@@ -450,6 +450,9 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             self.contract.abi.functions().count(),
             find_timer.elapsed(),
         );
+        if let Some(warning) = self.symbolic_solver_command_warning(&functions) {
+            warnings.push(warning);
+        }
 
         let identified_contracts = has_invariants.then(|| {
             load_contracts(setup.traces.iter().map(|(_, t)| &t.arena), &self.mcr.known_contracts)
@@ -528,6 +531,44 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         let duration = start.elapsed();
         SuiteResult::new(duration, test_results, warnings)
     }
+
+    fn symbolic_solver_command_warning(&self, functions: &[&Function]) -> Option<String> {
+        if !self.config.symbolic.enabled
+            || !functions.iter().copied().any(|func| {
+                is_symbolic_entrypoint(func)
+                    && self.effective_symbolic_config(func).is_some_and(|symbolic| {
+                        symbolic_solver_config_executes_custom_command(&symbolic)
+                    })
+            })
+        {
+            return None;
+        }
+
+        Some(
+            "Symbolic solver command configuration can execute arbitrary local programs. \
+             Review `symbolic.solver_command`, command-like `symbolic.solver_portfolio` entries, \
+             and inline `forge-config:` or `@custom:halmos` annotations before running symbolic \
+             tests from untrusted projects."
+                .to_string(),
+        )
+    }
+
+    fn effective_symbolic_config(&self, func: &Function) -> Option<SymbolicConfig> {
+        if self.inline_config.contains_function(self.name, &func.name) {
+            self.inline_config(Some(func)).ok().map(|config| config.symbolic)
+        } else {
+            Some(self.config.symbolic.clone())
+        }
+    }
+}
+
+fn symbolic_solver_config_executes_custom_command(symbolic: &SymbolicConfig) -> bool {
+    symbolic.solver_command.as_deref().is_some_and(|command| !command.trim().is_empty())
+        || symbolic.solver_portfolio.iter().any(|entry| {
+            let entry = entry.trim();
+            !entry.is_empty()
+                && entry.chars().any(|ch| ch.is_whitespace() || matches!(ch, '"' | '\'' | '\\'))
+        })
 }
 
 /// Executes a single test function, returning a [`TestResult`].
