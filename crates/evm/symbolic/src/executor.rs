@@ -18,6 +18,16 @@ impl SymbolicExecutor {
         self.solver.portfolio_diagnostics().cloned()
     }
 
+    /// Defers verbose solver diagnostics until the caller explicitly takes them.
+    pub fn capture_diagnostics(&mut self) {
+        self.solver.capture_diagnostics();
+    }
+
+    /// Returns and clears deferred verbose solver diagnostics.
+    pub fn take_diagnostics(&mut self) -> Option<String> {
+        self.solver.take_diagnostics()
+    }
+
     /// Executes one function symbolically against an already-deployed test contract.
     ///
     /// The input executor supplies the deployed bytecode, storage backend, caller, and

@@ -570,6 +570,10 @@ pub struct TestResult {
     /// Staged solver portfolio diagnostics collected during symbolic execution.
     #[serde(skip)]
     pub symbolic_portfolio_diagnostics: Option<PortfolioDiagnostics>,
+
+    /// Verbose symbolic solver diagnostics deferred until test output rendering.
+    #[serde(skip)]
+    pub symbolic_diagnostics: Option<String>,
 }
 
 impl fmt::Display for TestResult {

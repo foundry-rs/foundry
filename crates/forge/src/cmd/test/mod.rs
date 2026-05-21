@@ -896,6 +896,13 @@ impl TestArgs {
                     !self.suppress_successful_traces || result.status == TestStatus::Failure;
                 if !silent {
                     sh_println!("{}", result.short_result(name))?;
+                    if let Some(diagnostics) = result
+                        .symbolic_diagnostics
+                        .take()
+                        .filter(|diagnostics| !diagnostics.is_empty())
+                    {
+                        sh_print!("{diagnostics}")?;
+                    }
 
                     // Display invariant metrics if invariant kind.
                     if let TestKind::Invariant { metrics, .. } = &result.kind

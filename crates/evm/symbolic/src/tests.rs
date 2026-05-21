@@ -2092,6 +2092,32 @@ fn portfolio_delayed_solver_can_rescue_stalled_leader() {
     assert!(started_at.elapsed() >= Duration::from_millis(100));
 }
 
+#[cfg(unix)]
+#[test]
+/// Regression coverage for deferring SMT and portfolio diagnostics during progress rendering.
+fn solver_capture_diagnostics_buffers_dump_smt_output() {
+    let commands = vec![
+        SolverCommand::new(vec!["/bin/echo".to_string(), "sat".to_string()], false).unwrap(),
+        SolverCommand::new(
+            vec!["/bin/sh".to_string(), "-c".to_string(), "printf 'sat\n'".to_string()],
+            false,
+        )
+        .unwrap(),
+    ];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 1, true);
+
+    solver.capture_diagnostics();
+
+    assert!(solver.is_sat(&[]).unwrap());
+    let diagnostics = solver.take_diagnostics().unwrap();
+
+    assert!(diagnostics.contains("--- symbolic SMT query 1 ---"));
+    assert!(diagnostics.contains("(check-sat)"));
+    assert!(diagnostics.contains("--- symbolic solver portfolio outcomes ---"));
+    assert!(diagnostics.contains("winner"));
+    assert!(solver.take_diagnostics().is_none());
+}
+
 #[test]
 /// Regression coverage for `PortfolioDiagnostics::record`.
 fn portfolio_diagnostics_counts_staged_outcomes() {
