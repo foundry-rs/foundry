@@ -18,6 +18,7 @@ use foundry_evm::{
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
+use foundry_evm_symbolic::PortfolioDiagnostics;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap as Map},
@@ -90,6 +91,17 @@ impl TestOutcome {
     /// Returns an iterator over all individual tests and their names.
     pub fn tests(&self) -> impl Iterator<Item = (&String, &TestResult)> {
         self.results.values().flat_map(|suite| suite.tests())
+    }
+
+    /// Returns merged symbolic solver portfolio diagnostics across all tests in this outcome.
+    pub fn symbolic_portfolio_diagnostics(&self) -> Option<PortfolioDiagnostics> {
+        let mut diagnostics = PortfolioDiagnostics::default();
+        for (_, result) in self.tests() {
+            if let Some(result_diagnostics) = &result.symbolic_portfolio_diagnostics {
+                diagnostics.merge(result_diagnostics);
+            }
+        }
+        (!diagnostics.is_empty()).then_some(diagnostics)
     }
 
     /// Flattens the test outcome into a list of individual tests.
@@ -554,6 +566,10 @@ pub struct TestResult {
     /// Deprecated cheatcodes (mapped to their replacements, if any) used in current test.
     #[serde(skip)]
     pub deprecated_cheatcodes: HashMap<&'static str, Option<&'static str>>,
+
+    /// Staged solver portfolio diagnostics collected during symbolic execution.
+    #[serde(skip)]
+    pub symbolic_portfolio_diagnostics: Option<PortfolioDiagnostics>,
 }
 
 impl fmt::Display for TestResult {

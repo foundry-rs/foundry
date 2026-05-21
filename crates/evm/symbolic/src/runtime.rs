@@ -19,6 +19,7 @@ pub(crate) use evm::*;
 pub(crate) use expressions::*;
 pub(crate) use memory::*;
 pub(crate) use precompiles::*;
+pub use solver::PortfolioDiagnostics;
 pub(crate) use solver::*;
 pub(crate) use state::*;
 

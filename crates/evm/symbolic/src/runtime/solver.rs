@@ -5,6 +5,19 @@ const MAX_SOLVER_POLL_BACKOFF: Duration = Duration::from_millis(50);
 const SECOND_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(100);
 const RESCUE_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(500);
 
+const OUTCOME_CANCELLED: &str = "cancelled";
+const OUTCOME_ERROR: &str = "error";
+const OUTCOME_NOT_STARTED: &str = "not-started";
+const OUTCOME_SAT_AFTER_WINNER: &str = "sat-after-winner";
+const OUTCOME_SAT_INVALID: &str = "sat-invalid";
+const OUTCOME_SAT_VALID: &str = "sat-valid";
+const OUTCOME_TIMEOUT_OR_UNKNOWN: &str = "timeout-or-unknown";
+const OUTCOME_UNKNOWN: &str = "unknown";
+const OUTCOME_UNKNOWN_AFTER_WINNER: &str = "unknown-after-winner";
+const OUTCOME_UNSAT: &str = "unsat";
+const OUTCOME_UNSAT_AFTER_WINNER: &str = "unsat-after-winner";
+const OUTCOME_UNEXPECTED: &str = "unexpected";
+
 /// Minimal solver backend interface used by the symbolic executor.
 ///
 /// Implementations are responsible for translating accumulated symbolic constraints
@@ -14,6 +27,9 @@ const RESCUE_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(500);
 pub(crate) trait SymbolicSolver {
     /// Returns solver counters collected by this backend.
     fn stats(&self) -> SymbolicStats;
+
+    /// Returns aggregate staged-portfolio diagnostics collected by this backend.
+    fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics>;
 
     /// Verifies that the configured solver can be invoked before exploration starts.
     ///
@@ -103,6 +119,11 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         SymbolicStats { paths: 0, solver_queries: self.queries }
     }
 
+    /// Returns staged-portfolio diagnostics collected by this solver.
+    fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics> {
+        (!self.portfolio_diagnostics.is_empty()).then_some(&self.portfolio_diagnostics)
+    }
+
     /// Validates the `check_available` solver helper.
     fn check_available(&self) -> Result<(), SymbolicError> {
         let commands = self.commands()?;
@@ -188,15 +209,14 @@ impl SmtLibSubprocessSolver {
             constraint.collect_vars(&mut vars);
         }
 
+        let commands = self.commands()?;
+
         let mut smt = String::new();
         smt.push_str("(set-logic QF_BV)\n");
+        if commands.iter().all(|command| command.smt_timeout)
+            && let Some(timeout) = self.timeout.filter(|timeout| *timeout > 0)
         {
-            let commands = self.commands()?;
-            if commands.iter().all(|command| command.smt_timeout)
-                && let Some(timeout) = self.timeout.filter(|timeout| *timeout > 0)
-            {
-                let _ = writeln!(smt, "(set-option :timeout {})", timeout.saturating_mul(1000));
-            }
+            let _ = writeln!(smt, "(set-option :timeout {})", timeout.saturating_mul(1000));
         }
         for var in vars {
             let _ = writeln!(smt, "(declare-fun {var} () (_ BitVec 256))");
@@ -213,16 +233,13 @@ impl SmtLibSubprocessSolver {
             let _ = writeln!(stderr, "--- symbolic SMT query {} ---\n{smt}", self.queries);
         }
 
-        let result = {
-            let commands = self.commands()?;
-            run_solver_commands(
-                commands,
-                &smt,
-                self.timeout,
-                model.then_some(constraints),
-                self.dump_smt,
-            )
-        };
+        let result = run_solver_commands(
+            commands,
+            &smt,
+            self.timeout,
+            model.then_some(constraints),
+            self.dump_smt,
+        );
         if self.dump_smt {
             self.portfolio_diagnostics.record(&result.summaries);
         }
@@ -431,8 +448,8 @@ impl SolverRunSummary {
     }
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct PortfolioDiagnostics {
+#[derive(Clone, Debug, Default)]
+pub struct PortfolioDiagnostics {
     pub(crate) queries: usize,
     pub(crate) solver_runs: usize,
     pub(crate) rescue_runs: usize,
@@ -448,6 +465,11 @@ pub(crate) struct PortfolioDiagnostics {
 }
 
 impl PortfolioDiagnostics {
+    /// Returns whether this diagnostic set is empty.
+    pub const fn is_empty(&self) -> bool {
+        self.queries == 0
+    }
+
     /// Records one portfolio query's per-solver summaries.
     pub(crate) fn record(&mut self, summaries: &[SolverRunSummary]) {
         if summaries.len() <= 1 {
@@ -466,13 +488,13 @@ impl PortfolioDiagnostics {
             }
 
             match summary.outcome {
-                "not-started" => self.not_started += 1,
-                "cancelled"
-                | "sat-after-winner"
-                | "unsat-after-winner"
-                | "unknown-after-winner" => self.cancelled_after_winner += 1,
-                "sat-invalid" => self.invalid_models += 1,
-                "error" => self.solver_errors += 1,
+                OUTCOME_NOT_STARTED => self.not_started += 1,
+                OUTCOME_CANCELLED
+                | OUTCOME_SAT_AFTER_WINNER
+                | OUTCOME_UNSAT_AFTER_WINNER
+                | OUTCOME_UNKNOWN_AFTER_WINNER => self.cancelled_after_winner += 1,
+                OUTCOME_SAT_INVALID => self.invalid_models += 1,
+                OUTCOME_ERROR => self.solver_errors += 1,
                 _ => {}
             }
 
@@ -488,47 +510,62 @@ impl PortfolioDiagnostics {
         }
     }
 
-    /// Writes the aggregate portfolio summary to stderr.
-    fn dump(&self) {
-        if self.queries == 0 {
-            return;
-        }
-
-        let mut stderr = std::io::stderr().lock();
-        let _ = writeln!(stderr, "--- symbolic solver portfolio summary ---");
-        let _ = writeln!(stderr, "queries: {}", self.queries);
-        let _ = writeln!(stderr, "solver runs: {}", self.solver_runs);
-        let _ = writeln!(stderr, "rescue solver runs: {}", self.rescue_runs);
-        let _ = writeln!(stderr, "not-started solver runs: {}", self.not_started);
-        let _ = writeln!(stderr, "non-primary wins: {}", self.non_primary_wins);
-        let _ = writeln!(stderr, "rescue wins: {}", self.rescue_wins);
-        let _ = writeln!(stderr, "cancelled after winner: {}", self.cancelled_after_winner);
-        let _ = writeln!(stderr, "invalid models: {}", self.invalid_models);
-        let _ = writeln!(stderr, "solver errors: {}", self.solver_errors);
-        if !self.winner_counts.is_empty() {
-            let _ = writeln!(stderr, "winner counts:");
-            for (solver, count) in &self.winner_counts {
-                let _ = writeln!(stderr, "  {solver}: {count}");
-            }
-        }
-        if !self.launch_counts.is_empty() {
-            let _ = writeln!(stderr, "launch counts:");
-            for (solver, count) in &self.launch_counts {
-                let _ = writeln!(stderr, "  {solver}: {count}");
-            }
-        }
-        let _ = writeln!(stderr, "outcome counts:");
-        for (outcome, count) in &self.outcome_counts {
-            let _ = writeln!(stderr, "  {outcome}: {count}");
-        }
+    /// Merges another aggregate portfolio summary into this one.
+    pub fn merge(&mut self, other: &Self) {
+        self.queries += other.queries;
+        self.solver_runs += other.solver_runs;
+        self.rescue_runs += other.rescue_runs;
+        self.non_primary_wins += other.non_primary_wins;
+        self.rescue_wins += other.rescue_wins;
+        self.not_started += other.not_started;
+        self.cancelled_after_winner += other.cancelled_after_winner;
+        self.invalid_models += other.invalid_models;
+        self.solver_errors += other.solver_errors;
+        merge_counts(&mut self.winner_counts, &other.winner_counts);
+        merge_counts(&mut self.launch_counts, &other.launch_counts);
+        merge_counts(&mut self.outcome_counts, &other.outcome_counts);
     }
 }
 
-impl Drop for SmtLibSubprocessSolver {
-    fn drop(&mut self) {
-        if self.dump_smt {
-            self.portfolio_diagnostics.dump();
+impl fmt::Display for PortfolioDiagnostics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_empty() {
+            return Ok(());
         }
+
+        writeln!(f, "--- symbolic solver portfolio summary ---")?;
+        writeln!(f, "queries: {}", self.queries)?;
+        writeln!(f, "solver runs: {}", self.solver_runs)?;
+        writeln!(f, "rescue solver runs: {}", self.rescue_runs)?;
+        writeln!(f, "not-started solver runs: {}", self.not_started)?;
+        writeln!(f, "non-primary wins: {}", self.non_primary_wins)?;
+        writeln!(f, "rescue wins: {}", self.rescue_wins)?;
+        writeln!(f, "cancelled after winner: {}", self.cancelled_after_winner)?;
+        writeln!(f, "invalid models: {}", self.invalid_models)?;
+        writeln!(f, "solver errors: {}", self.solver_errors)?;
+        if !self.winner_counts.is_empty() {
+            writeln!(f, "winner counts:")?;
+            for (solver, count) in &self.winner_counts {
+                writeln!(f, "  {solver}: {count}")?;
+            }
+        }
+        if !self.launch_counts.is_empty() {
+            writeln!(f, "launch counts:")?;
+            for (solver, count) in &self.launch_counts {
+                writeln!(f, "  {solver}: {count}")?;
+            }
+        }
+        writeln!(f, "outcome counts:")?;
+        for (outcome, count) in &self.outcome_counts {
+            writeln!(f, "  {outcome}: {count}")?;
+        }
+        Ok(())
+    }
+}
+
+fn merge_counts<K: Ord + Clone>(base: &mut BTreeMap<K, usize>, other: &BTreeMap<K, usize>) {
+    for (key, count) in other {
+        *base.entry(key.clone()).or_default() += count;
     }
 }
 
@@ -640,7 +677,7 @@ fn run_solver_commands(
                         && let Err(err) = validate_solver_model_output(&output, constraints)
                     {
                         summaries.push(
-                            SolverRunSummary::new(display.clone(), elapsed, "sat-invalid")
+                            SolverRunSummary::new(display.clone(), elapsed, OUTCOME_SAT_INVALID)
                                 .with_schedule(index, scheduled_after, Some(started_after))
                                 .with_detail(err.to_string()),
                         );
@@ -649,7 +686,7 @@ fn run_solver_commands(
                         continue;
                     }
                     summaries.push(
-                        SolverRunSummary::new(display, elapsed, "sat-valid")
+                        SolverRunSummary::new(display, elapsed, OUTCOME_SAT_VALID)
                             .with_schedule(index, scheduled_after, Some(started_after))
                             .winner(),
                     );
@@ -660,16 +697,18 @@ fn run_solver_commands(
                     }
                 }
                 SolverProcessOutcome::Output(output) if solver_output_is_unsat(&output) => {
-                    summaries.push(SolverRunSummary::new(display, elapsed, "unsat").with_schedule(
-                        index,
-                        scheduled_after,
-                        Some(started_after),
-                    ));
+                    summaries.push(
+                        SolverRunSummary::new(display, elapsed, OUTCOME_UNSAT).with_schedule(
+                            index,
+                            scheduled_after,
+                            Some(started_after),
+                        ),
+                    );
                     saw_unsat = true;
                 }
                 SolverProcessOutcome::Output(output) if solver_output_is_unknown(&output) => {
                     summaries.push(
-                        SolverRunSummary::new(display, elapsed, "unknown").with_schedule(
+                        SolverRunSummary::new(display, elapsed, OUTCOME_UNKNOWN).with_schedule(
                             index,
                             scheduled_after,
                             Some(started_after),
@@ -680,7 +719,7 @@ fn run_solver_commands(
                 SolverProcessOutcome::Output(output) => {
                     let first_line = first_solver_line(&output).to_string();
                     summaries.push(
-                        SolverRunSummary::new(display.clone(), elapsed, "unexpected")
+                        SolverRunSummary::new(display.clone(), elapsed, OUTCOME_UNEXPECTED)
                             .with_schedule(index, scheduled_after, Some(started_after))
                             .with_detail(first_line.clone()),
                     );
@@ -688,14 +727,14 @@ fn run_solver_commands(
                 }
                 SolverProcessOutcome::Unknown => {
                     summaries.push(
-                        SolverRunSummary::new(display, elapsed, "timeout-or-unknown")
+                        SolverRunSummary::new(display, elapsed, OUTCOME_TIMEOUT_OR_UNKNOWN)
                             .with_schedule(index, scheduled_after, Some(started_after)),
                     );
                     saw_unknown = true;
                 }
                 SolverProcessOutcome::Cancelled => {
                     summaries.push(
-                        SolverRunSummary::new(display, elapsed, "cancelled").with_schedule(
+                        SolverRunSummary::new(display, elapsed, OUTCOME_CANCELLED).with_schedule(
                             index,
                             scheduled_after,
                             Some(started_after),
@@ -704,7 +743,7 @@ fn run_solver_commands(
                 }
                 SolverProcessOutcome::Error(err) => {
                     summaries.push(
-                        SolverRunSummary::new(display.clone(), elapsed, "error")
+                        SolverRunSummary::new(display.clone(), elapsed, OUTCOME_ERROR)
                             .with_schedule(index, scheduled_after, Some(started_after))
                             .with_detail(err.clone()),
                     );
@@ -715,7 +754,8 @@ fn run_solver_commands(
 
         if decisive.is_none()
             && saw_unsat
-            && let Some(summary) = summaries.iter_mut().find(|summary| summary.outcome == "unsat")
+            && let Some(summary) =
+                summaries.iter_mut().find(|summary| summary.outcome == OUTCOME_UNSAT)
         {
             summary.winner = true;
         }
@@ -775,11 +815,8 @@ fn next_portfolio_launch_wait(
 
 /// Summarizes a solver that was never launched because the portfolio already won.
 fn summary_for_unstarted_solver(solver: ScheduledSolver) -> SolverRunSummary {
-    SolverRunSummary::new(solver.command.display, Duration::ZERO, "not-started").with_schedule(
-        solver.index,
-        solver.launch_after,
-        None,
-    )
+    SolverRunSummary::new(solver.command.display, Duration::ZERO, OUTCOME_NOT_STARTED)
+        .with_schedule(solver.index, solver.launch_after, None)
 }
 
 /// Summarizes a solver result received after a portfolio winner was chosen.
@@ -793,24 +830,26 @@ fn summary_for_cancelled_solver_result(
 ) -> SolverRunSummary {
     let summary = match outcome {
         SolverProcessOutcome::Output(output) if solver_output_is_sat(&output) => {
-            SolverRunSummary::new(display, elapsed, "sat-after-winner")
+            SolverRunSummary::new(display, elapsed, OUTCOME_SAT_AFTER_WINNER)
         }
         SolverProcessOutcome::Output(output) if solver_output_is_unsat(&output) => {
-            SolverRunSummary::new(display, elapsed, "unsat-after-winner")
+            SolverRunSummary::new(display, elapsed, OUTCOME_UNSAT_AFTER_WINNER)
         }
         SolverProcessOutcome::Output(output) if solver_output_is_unknown(&output) => {
-            SolverRunSummary::new(display, elapsed, "unknown-after-winner")
+            SolverRunSummary::new(display, elapsed, OUTCOME_UNKNOWN_AFTER_WINNER)
         }
         SolverProcessOutcome::Output(output) => {
-            SolverRunSummary::new(display, elapsed, "unexpected")
+            SolverRunSummary::new(display, elapsed, OUTCOME_UNEXPECTED)
                 .with_detail(first_solver_line(&output).to_string())
         }
         SolverProcessOutcome::Unknown => {
-            SolverRunSummary::new(display, elapsed, "timeout-or-unknown")
+            SolverRunSummary::new(display, elapsed, OUTCOME_TIMEOUT_OR_UNKNOWN)
         }
-        SolverProcessOutcome::Cancelled => SolverRunSummary::new(display, elapsed, "cancelled"),
+        SolverProcessOutcome::Cancelled => {
+            SolverRunSummary::new(display, elapsed, OUTCOME_CANCELLED)
+        }
         SolverProcessOutcome::Error(err) => {
-            SolverRunSummary::new(display, elapsed, "error").with_detail(err)
+            SolverRunSummary::new(display, elapsed, OUTCOME_ERROR).with_detail(err)
         }
     };
     summary.with_schedule(index, scheduled_after, Some(started_after))

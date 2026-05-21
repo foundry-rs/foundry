@@ -55,7 +55,7 @@ mod abi;
 mod executor;
 mod runtime;
 
-pub use runtime::{SymbolicError, SymbolicRunInput};
+pub use runtime::{PortfolioDiagnostics, SymbolicError, SymbolicRunInput};
 
 /// Symbolic solver names with built-in command-line mappings.
 pub const BUILTIN_SYMBOLIC_SOLVERS: &[&str] =
