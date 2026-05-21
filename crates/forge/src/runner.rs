@@ -5,7 +5,7 @@ use crate::{
     coverage::HitMaps,
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{TestContract, TestRunnerConfig},
-    progress::{TestsProgress, start_fuzz_progress},
+    progress::{TestsProgress, start_fuzz_progress, start_symbolic_progress},
     result::{InvariantFailure, SuiteResult, TestResult, TestSetup},
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -749,6 +749,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if self.should_defer_symbolic_diagnostics() {
             symbolic.capture_diagnostics();
         }
+        let progress = start_symbolic_progress(
+            self.cr.progress,
+            self.cr.name,
+            &func.name,
+            self.config.symbolic.max_solver_queries,
+        );
+        if let Some(progress) = progress.as_ref() {
+            let progress = progress.clone();
+            symbolic.set_query_observer(move |queries| progress.set_position(queries as u64));
+        }
         let result = symbolic.run(SymbolicRunInput {
             executor: self.executor.as_ref(),
             target: self.address,
@@ -757,6 +767,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             value: U256::ZERO,
             ffi_enabled: self.config.ffi,
         });
+        if let Some(progress) = progress {
+            progress.finish_and_clear();
+        }
         let portfolio_diagnostics = symbolic.portfolio_diagnostics();
         let symbolic_diagnostics = symbolic.take_diagnostics();
 
@@ -901,6 +914,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         if self.should_defer_symbolic_diagnostics() {
             symbolic.capture_diagnostics();
         }
+        let progress = start_symbolic_progress(
+            self.cr.progress,
+            self.cr.name,
+            &func.name,
+            self.config.symbolic.max_solver_queries,
+        );
+        if let Some(progress) = progress.as_ref() {
+            let progress = progress.clone();
+            symbolic.set_query_observer(move |queries| progress.set_position(queries as u64));
+        }
         let result = symbolic.run_invariant(SymbolicInvariantRunInput {
             executor: self.executor.as_ref(),
             invariant_address: self.address,
@@ -913,6 +936,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             fail_on_revert,
             ffi_enabled: self.config.ffi,
         });
+        if let Some(progress) = progress {
+            progress.finish_and_clear();
+        }
         let portfolio_diagnostics = symbolic.portfolio_diagnostics();
         let symbolic_diagnostics = symbolic.take_diagnostics();
 

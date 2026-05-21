@@ -47,6 +47,8 @@ impl fmt::Display for SolverOutcome {
     }
 }
 
+pub(crate) type QueryObserver = Box<dyn Fn(usize) + Send + Sync + 'static>;
+
 /// Minimal solver backend interface used by the symbolic executor.
 ///
 /// Implementations are responsible for translating accumulated symbolic constraints
@@ -56,6 +58,9 @@ impl fmt::Display for SolverOutcome {
 pub(crate) trait SymbolicSolver {
     /// Returns solver counters collected by this backend.
     fn stats(&self) -> SymbolicStats;
+
+    /// Registers a callback invoked after each logical solver query is reserved.
+    fn set_query_observer(&mut self, observer: Option<QueryObserver>);
 
     /// Returns aggregate staged-portfolio diagnostics collected by this backend.
     fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics>;
@@ -115,6 +120,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     pub(crate) timeout: Option<u32>,
     pub(crate) max_queries: usize,
     pub(crate) queries: usize,
+    query_observer: Option<QueryObserver>,
     pub(crate) dump_smt: bool,
     portfolio_diagnostics: PortfolioDiagnostics,
     captured_diagnostics: Option<String>,
@@ -133,6 +139,7 @@ impl SmtLibSubprocessSolver {
             timeout,
             max_queries,
             queries: 0,
+            query_observer: None,
             dump_smt,
             portfolio_diagnostics: PortfolioDiagnostics::default(),
             captured_diagnostics: None,
@@ -154,6 +161,11 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     /// Implements the `stats` solver helper.
     fn stats(&self) -> SymbolicStats {
         SymbolicStats { paths: 0, solver_queries: self.queries }
+    }
+
+    /// Registers a live query observer for progress rendering.
+    fn set_query_observer(&mut self, observer: Option<QueryObserver>) {
+        self.query_observer = observer;
     }
 
     /// Returns staged-portfolio diagnostics collected by this solver.
@@ -194,7 +206,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     /// Returns whether `is_sat` holds.
     fn is_sat(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError> {
         self.reserve_query()?;
-        self.queries += 1;
+        self.record_query();
         if constraints_prefer_fallback_first(constraints)
             && fallback_single_var_model(constraints).is_some()
         {
@@ -214,7 +226,7 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     /// Implements the `model` solver helper.
     fn model(&mut self, constraints: &[BoolExpr]) -> Result<BTreeMap<String, U256>, SymbolicError> {
         self.reserve_query()?;
-        self.queries += 1;
+        self.record_query();
         if constraints_prefer_fallback_first(constraints)
             && let Some(model) = fallback_single_var_model(constraints)
         {
@@ -253,6 +265,14 @@ impl SmtLibSubprocessSolver {
             return Err(SymbolicError::SolverQueryLimit(self.max_queries));
         }
         Ok(())
+    }
+
+    /// Records one logical solver query and notifies the live observer, if any.
+    fn record_query(&mut self) {
+        self.queries += 1;
+        if let Some(observer) = &self.query_observer {
+            observer(self.queries);
+        }
     }
 
     /// Implements the `query` solver helper.
