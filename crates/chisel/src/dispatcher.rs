@@ -13,7 +13,7 @@ use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
 use foundry_config::{Config, RpcEndpointUrl};
 use foundry_evm::{
-    core::evm::{EthEvmNetwork, FoundryEvmNetwork},
+    core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
@@ -49,7 +49,7 @@ pub const CHISEL_CHAR: &str = "⚒️";
 
 /// Chisel input dispatcher
 #[derive(Debug)]
-pub struct ChiselDispatcher<FEN: FoundryEvmNetwork = EthEvmNetwork> {
+pub struct ChiselDispatcher<FEN: FoundryEvmNetwork> {
     pub session: ChiselSession<FEN>,
     pub helper: SolidityHelper,
 }

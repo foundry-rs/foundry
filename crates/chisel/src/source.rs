@@ -14,10 +14,7 @@ use foundry_compilers::{
 use foundry_config::{Config, SolcReq};
 use foundry_evm::{
     backend::Backend,
-    core::{
-        bytecode::InstIter,
-        evm::{EthEvmNetwork, FoundryEvmNetwork},
-    },
+    core::{bytecode::InstIter, evm::FoundryEvmNetwork},
     opts::EvmOpts,
 };
 use semver::Version;
@@ -280,7 +277,7 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
 /// Configuration for the [SessionSource]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct SessionSourceConfig<FEN: FoundryEvmNetwork = EthEvmNetwork> {
+pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     /// Foundry configuration
     pub foundry_config: Config,
     /// EVM Options
@@ -324,7 +321,7 @@ impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
 /// Heavily based on soli's [`ConstructedSource`](https://github.com/jpopesculian/soli/blob/master/src/main.rs#L166)
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct SessionSource<FEN: FoundryEvmNetwork = EthEvmNetwork> {
+pub struct SessionSource<FEN: FoundryEvmNetwork> {
     /// The file name
     pub file_name: String,
     /// The contract name
@@ -628,6 +625,7 @@ enum ParseTreeFragment {
 mod tests {
     use super::*;
     use foundry_compilers::artifacts::remappings::{RelativeRemapping, RelativeRemappingPathBuf};
+    use foundry_evm::core::evm::EthEvmNetwork;
     use std::fs;
 
     /// Regression test for <https://github.com/foundry-rs/foundry/issues/14711>.
@@ -646,7 +644,7 @@ mod tests {
             path: RelativeRemappingPathBuf { parent: None, path: tmp.path().to_path_buf() },
         };
 
-        let mut config: SessionSourceConfig = SessionSourceConfig {
+        let mut config: SessionSourceConfig<EthEvmNetwork> = SessionSourceConfig {
             foundry_config: Config {
                 solc: Some(SolcReq::Version(Version::new(0, 8, 29))),
                 remappings: vec![remapping],

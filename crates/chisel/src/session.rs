@@ -5,7 +5,7 @@
 
 use crate::prelude::{SessionSource, SessionSourceConfig};
 use eyre::Result;
-use foundry_evm::core::evm::{EthEvmNetwork, FoundryEvmNetwork};
+use foundry_evm::core::evm::FoundryEvmNetwork;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use time::{OffsetDateTime, format_description};
@@ -13,7 +13,7 @@ use time::{OffsetDateTime, format_description};
 /// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(bound = "")]
-pub struct ChiselSession<FEN: FoundryEvmNetwork = EthEvmNetwork> {
+pub struct ChiselSession<FEN: FoundryEvmNetwork> {
     /// The `SessionSource` object that houses the REPL session.
     pub source: SessionSource<FEN>,
     /// The current session's identifier
