@@ -54,18 +54,20 @@ impl GlobalArgs {
     /// Check if `--markdown-help` was passed and print CLI reference as Markdown, then exit.
     ///
     /// This must be called **before** parsing arguments, since commands with required
-    /// subcommands would fail parsing before the flag is checked.
+    /// subcommands would fail parsing before the flag is checked. Binaries call
+    /// [`check_introspect`](Self::check_introspect) first, so `--introspect` wins when
+    /// both flags are present.
     ///
     /// Agents should prefer `--introspect`, which emits a stable machine-readable
-    /// document. A deprecation notice is written to stderr to steer that migration;
-    /// the rendered Markdown itself is unchanged from previous releases.
+    /// document. A stderr note steers that migration; the rendered Markdown itself
+    /// is unchanged from previous releases.
     pub fn check_markdown_help<C: clap::CommandFactory>() {
-        if std::env::args().any(|arg| arg == "--markdown-help") {
+        if pre_parse_flag_present("--markdown-help") {
             // Pre-parse: `Shell` is not initialized yet, so `sh_*` is unavailable.
             #[allow(clippy::disallowed_macros)]
             {
                 eprintln!(
-                    "warning: `--markdown-help` is intended for human documentation; \
+                    "note: `--markdown-help` is intended for human documentation; \
                      agents should use `--introspect` for machine-readable command discovery",
                 );
             }
@@ -77,6 +79,7 @@ impl GlobalArgs {
     /// Check if `--introspect` was passed and print the introspection document as JSON, then exit.
     ///
     /// Must run **before** clap parsing so required subcommands or args don't block discovery.
+    /// Takes precedence over `--markdown-help` when both are present.
     pub fn check_introspect<C: clap::CommandFactory>() {
         Self::check_introspect_with(C::command(), &crate::introspect::CommandRegistry::EMPTY)
     }
@@ -87,10 +90,8 @@ impl GlobalArgs {
         command: clap::Command,
         registry: &crate::introspect::CommandRegistry,
     ) {
-        if std::env::args().any(|arg| arg == "--introspect") {
-            let doc = crate::introspect::build_document(&command, registry);
-            let json =
-                serde_json::to_string(&doc).expect("introspect document must be serializable");
+        if pre_parse_flag_present("--introspect") {
+            let json = crate::introspect::render_introspect_document(&command, registry);
             // Pre-parse: `Shell` is not initialized yet, so `sh_*` is unavailable.
             #[allow(clippy::disallowed_macros)]
             {
@@ -168,6 +169,16 @@ impl GlobalArgs {
     pub fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
         self.tokio_runtime().block_on(future)
     }
+}
+
+/// Returns whether `flag` is present in the process arguments before any `--`
+/// separator.
+///
+/// Uses `args_os` so non-UTF-8 positional values don't panic, and stops at
+/// `--` so a literal positional like `cast call ... -- --introspect` cannot
+/// accidentally trigger a pre-parse flag handler.
+fn pre_parse_flag_present(flag: &str) -> bool {
+    std::env::args_os().skip(1).take_while(|a| a != "--").any(|a| a == flag)
 }
 
 /// Initialize the global thread pool.

@@ -35,6 +35,7 @@ codes MUST NOT collide with this global table.
 ## Machine-mode interaction
 
 Under `--machine`, the binary always emits a JSON envelope on stdout when
-exiting with a non-zero code. Parse, usage, and help failures are no
-exception — they are emitted as `JsonEnvelope::error` with the appropriate
-diagnostic code.
+exiting with a non-zero code, including for parse and usage errors — these
+are emitted as `JsonEnvelope::error` with the appropriate diagnostic code.
+Help and version requests are not failures: they exit `0` and are emitted as
+a success envelope wrapping the rendered text.

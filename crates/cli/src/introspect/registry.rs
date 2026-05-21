@@ -5,10 +5,12 @@
 //! flags, and any command-specific exit codes.
 //!
 //! Each binary owns and ships its own [`CommandRegistry`]. Entries are keyed
-//! by the **clap path** (e.g. `["forge", "build"]`). When no entry is found
-//! for a command, the [`build_document`](super::build_document) helper fills
-//! in safe defaults: a derived `command_id` (path joined by `.`) and no
-//! machine-mode contract.
+//! by the **clap path excluding the binary name** (e.g. `["build"]` for
+//! `forge build`); the binary name is implicit from the owning binary. When
+//! no entry is found for a command, the
+//! [`build_document`](super::build_document) helper fills in safe defaults: a
+//! derived `command_id` (path joined by `.`) marked `command_id_stable=false`
+//! and `Capabilities::NONE` marked `capabilities_declared=false`.
 //!
 //! Only commands intended to be referenced by stable identifiers need to be
 //! registered explicitly. Once a command is registered, its `command_id` is

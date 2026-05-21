@@ -38,6 +38,9 @@ pub struct BinaryInfo {
 pub struct CommandInfo {
     /// Stable machine identifier (e.g. `forge.build`).
     pub command_id: String,
+    /// Whether `command_id` is pinned in the per-binary registry (frozen) or
+    /// derived from the clap path (provisional and may shift on CLI renames).
+    pub command_id_stable: bool,
     /// Clap path components (e.g. `["forge", "build"]`).
     pub path: Vec<String>,
     /// Visible aliases for this command.
@@ -54,6 +57,10 @@ pub struct CommandInfo {
     pub subcommands: Vec<Self>,
     /// Capabilities reported for agent consumers.
     pub capabilities: Capabilities,
+    /// Whether `capabilities` was authored in the registry. When `false`,
+    /// every capability field is a non-authoritative default and consumers
+    /// MUST treat side-effects, project requirement, etc. as unknown.
+    pub capabilities_declared: bool,
     /// Command-specific exit codes (in addition to the global table).
     pub exit_codes: Vec<ExitCodeInfo>,
     /// Whether this command is hidden in the human-facing help.
@@ -128,6 +135,9 @@ pub enum OutputMode {
 }
 
 /// Coarse classification of a command's side effects.
+///
+/// Reports only the highest-impact effect (e.g. a chain-writing command that
+/// also writes files reports `ChainWrite`); it is not an exhaustive set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SideEffects {

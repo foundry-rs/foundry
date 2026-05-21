@@ -850,7 +850,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_cli::introspect::{CommandRegistry, build_document, duplicate_command_ids};
+    use foundry_cli::introspect::{
+        CommandRegistry, INTROSPECT_SCHEMA_ID, IntrospectDocument, build_document,
+        duplicate_command_ids, render_introspect_document,
+    };
 
     /// Every `command_id` exposed by `cast --introspect` MUST be unique.
     /// This is the foundation of the agent contract — agents key on
@@ -873,5 +876,24 @@ mod tests {
             .join()
             .expect("worker thread join");
         assert!(dups.is_empty(), "duplicate cast command_ids: {dups:?}");
+    }
+
+    /// `cast --introspect` must produce a JSON document that parses back into
+    /// the canonical `IntrospectDocument` shape. Runs on a 16 MiB worker
+    /// thread for the same reason as the uniqueness check above.
+    #[test]
+    fn introspect_document_is_valid_json() {
+        let json = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let cmd = <CastArgs as clap::CommandFactory>::command();
+                render_introspect_document(&cmd, &CommandRegistry::EMPTY)
+            })
+            .expect("spawn worker thread")
+            .join()
+            .expect("worker thread join");
+        let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
+        assert_eq!(doc.binary.name, "cast");
     }
 }

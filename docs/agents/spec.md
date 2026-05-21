@@ -7,6 +7,16 @@ The contract is layered on top of the existing CLIs and does **not** change
 the behavior of legacy `--json` users. New agent semantics are opt-in via
 `--machine` and via the discovery flag `--introspect`.
 
+## Forward compatibility within `@v1`
+
+Within a major schema version (e.g. `foundry:introspect@v1`), fields may be
+**added** without bumping the schema id. Consumers MUST ignore unknown fields.
+Field removals or semantic changes require a new major (`@v2`).
+
+Array order in introspect output follows clap declaration/traversal order and
+is **not semantic**. Agents MUST key by `command_id`, argument `name`, etc.,
+not by position.
+
 ---
 
 ## 1. Discovery — `--introspect`
@@ -39,21 +49,68 @@ Top-level shape:
 
 `CommandInfo` exposes, per command:
 
-- `command_id` — stable machine identifier (e.g. `forge.build`)
+- `command_id` — machine identifier (e.g. `forge.build`)
+- `command_id_stable` — `true` only when the id is pinned in the binary's
+  registry (frozen across CLI renames); `false` means the id is derived from
+  the current clap path and may shift until the command is registered
 - `path` — clap path components (e.g. `["forge", "build"]`)
 - `aliases` — visible aliases for the command name
 - `summary`, `description`
 - `args[]` — each with `name`, `kind` (`flag`/`option`/`positional`),
-  `value_type`, `help`, `long`, `short`, `aliases`, `env`, `default`,
-  `possible_values`, `required`, `repeatable`, `conflicts_with`,
-  `help_heading`. The `conflicts_with` field is **best-effort and may be
-  empty**: clap's public API does not expose conflict relationships from
-  an `Arg`, so populating this field requires per-binary annotations.
-  When non-empty, it is authoritative; when empty, agents MUST NOT assume
-  the absence of conflicts.
+  `value_type` (best-effort UI hint, not a normative invocation schema),
+  `help`, `long`, `short`, `aliases`, `env`, `default`, `possible_values`,
+  `required`, `repeatable`, `conflicts_with`, `help_heading`. The
+  `conflicts_with` field is **best-effort and may be empty**: clap's public
+  API does not expose conflict relationships from an `Arg`, so populating
+  this field requires per-binary annotations. When non-empty, it is
+  authoritative; when empty, agents MUST NOT assume the absence of conflicts.
 - `subcommands[]` — recursive `CommandInfo`
 - `capabilities` — see §3
+- `capabilities_declared` — `true` only when the registry authored the
+  capabilities for this command; when `false`, every capability field is a
+  non-authoritative default and consumers MUST treat side-effects, project
+  requirement, etc. as unknown
 - `exit_codes[]` — command-specific exit codes (in addition to the global set)
+
+### Example `CommandInfo`
+
+```json
+{
+  "command_id": "forge.build",
+  "command_id_stable": true,
+  "path": ["forge", "build"],
+  "aliases": ["b"],
+  "summary": "Build the project's smart contracts",
+  "args": [
+    {
+      "name": "jobs",
+      "kind": "option",
+      "value_type": "integer",
+      "long": "jobs",
+      "short": "j",
+      "aliases": [],
+      "possible_values": [],
+      "required": false,
+      "repeatable": false,
+      "conflicts_with": [],
+      "hidden": false
+    }
+  ],
+  "subcommands": [],
+  "capabilities": {
+    "output_mode": "envelope",
+    "result_schema_ref": "foundry:forge.build@v1",
+    "reads_stdin": false,
+    "supports_output_path": false,
+    "requires_project": true,
+    "side_effects": "fs_write",
+    "long_running": false,
+    "stateful": false
+  },
+  "capabilities_declared": true,
+  "exit_codes": []
+}
+```
 
 ---
 
@@ -84,7 +141,7 @@ Each `CommandInfo.capabilities` block exposes machine-relevant behavior:
 | `reads_stdin`          | bool                                                                | Whether the command can take input via `--input -`                       |
 | `supports_output_path` | bool                                                                | Whether the command supports `--output PATH`                             |
 | `requires_project`     | bool                                                                | Whether the command needs a Foundry project                              |
-| `side_effects`         | `none` \| `fs_write` \| `network` \| `chain_write` \| `spawn_server`| Coarse classification of what the command does                           |
+| `side_effects`         | `none` \| `fs_write` \| `network` \| `chain_write` \| `spawn_server`| Highest-impact side-effect class (not an exhaustive set)                 |
 | `long_running`         | bool                                                                | Whether the command can stream output for an extended period             |
 | `stateful`             | bool                                                                | Whether the command opens a session that persists beyond a single call   |
 
@@ -167,18 +224,20 @@ record on startup carrying:
 This is **not** a terminal envelope. Subsequent session records may follow.
 The session-record schema is `foundry:anvil.session@v1`.
 
-### Anvil introspection limitation
+### Root/default command limitation (anvil, chisel)
 
-`anvil --introspect` reports only the explicit subcommands declared on the
-binary (today: `completions`). The default "no subcommand → start server"
-mode is **not** yet exposed as a discoverable `command_id` because clap
-models it as the absence of a subcommand. An explicit `anvil.start`
-`command_id` and the `session_start` record described above are tracked as
-follow-up work.
+`--introspect` walks the subcommand tree only; the default "no subcommand"
+behavior is **not** yet exposed as a discoverable `command_id` because clap
+models it as the absence of a subcommand. This affects:
 
-Until then, agents should treat `anvil --introspect` as a discovery surface
-for tooling subcommands only and rely on the existing `anvil` flags for
-server startup.
+- `anvil` — default mode starts the JSON-RPC server
+- `chisel` — default mode opens an interactive REPL
+
+Explicit root command_ids (`anvil.start`, `chisel.repl`) and the
+`session_start` record described above are tracked as follow-up work. Until
+then, agents should treat `anvil --introspect` and `chisel --introspect` as
+discovery surfaces for tooling subcommands only and rely on the existing
+top-level flags to invoke the default behavior.
 
 ---
 
@@ -225,7 +284,8 @@ introspection no longer lists it.
 
 - emits its declared `output_mode` only
 - never writes color, progress bars, or interactive prompts to stdout
-- structures parse, usage, version, and help failures as envelopes
+- wraps parse and usage failures in an error envelope, and wraps help/version
+  output in a success envelope (instead of plain text on stderr/stdout)
 - maps process-exit failures to the canonical `ExitCode` enum
 
 Agents may also rely on `--introspect` for discovery and on the existing

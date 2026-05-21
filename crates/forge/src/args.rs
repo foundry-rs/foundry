@@ -147,7 +147,10 @@ pub fn run_command(args: Forge) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_cli::introspect::{CommandRegistry, build_document, duplicate_command_ids};
+    use foundry_cli::introspect::{
+        CommandRegistry, INTROSPECT_SCHEMA_ID, IntrospectDocument, build_document,
+        duplicate_command_ids, render_introspect_document,
+    };
 
     /// Every `command_id` exposed by `forge --introspect` MUST be unique.
     /// This is the foundation of the agent contract — agents key on
@@ -159,5 +162,16 @@ mod tests {
         let doc = build_document(&cmd, &CommandRegistry::EMPTY);
         let dups = duplicate_command_ids(&doc);
         assert!(dups.is_empty(), "duplicate forge command_ids: {dups:?}");
+    }
+
+    /// `forge --introspect` must produce a JSON document that parses back into
+    /// the canonical `IntrospectDocument` shape.
+    #[test]
+    fn introspect_document_is_valid_json() {
+        let cmd = <Forge as clap::CommandFactory>::command();
+        let json = render_introspect_document(&cmd, &CommandRegistry::EMPTY);
+        let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
+        assert_eq!(doc.binary.name, "forge");
     }
 }

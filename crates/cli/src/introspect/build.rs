@@ -86,7 +86,11 @@ fn build_command_info(
     let meta = registry.lookup(&lookup_path);
 
     let command_id = derive_command_id(&path, meta);
+    // `command_id` is stable only when the registry pins it explicitly.
+    let command_id_stable = meta.and_then(|m| m.command_id).is_some();
     let capabilities = meta.map_or_else(Capabilities::default, |m| m.capabilities.clone());
+    // Capabilities are authoritative only when a registry entry declares them.
+    let capabilities_declared = meta.is_some();
     let exit_codes = meta.map_or_else(Vec::new, |m| m.exit_codes.to_vec());
 
     let aliases = command.get_visible_aliases().map(str::to_string).collect::<Vec<_>>();
@@ -105,6 +109,7 @@ fn build_command_info(
 
     CommandInfo {
         command_id,
+        command_id_stable,
         path,
         aliases,
         summary,
@@ -112,9 +117,20 @@ fn build_command_info(
         args,
         subcommands,
         capabilities,
+        capabilities_declared,
         exit_codes,
         hidden: command.is_hide_set(),
     }
+}
+
+/// Serialize an [`IntrospectDocument`] as compact JSON.
+///
+/// This is the pure rendering step `--introspect` performs before exit, split
+/// out so binaries and tests can validate the emitted JSON without spawning
+/// a subprocess.
+pub fn render_introspect_document(command: &Command, registry: &CommandRegistry) -> String {
+    let doc = build_document(command, registry);
+    serde_json::to_string(&doc).expect("introspect document must be serializable")
 }
 
 /// Derive the stable command id.
@@ -280,6 +296,20 @@ mod tests {
 
         let build = doc.commands.iter().find(|c| c.path.last().unwrap() == "build").unwrap();
         assert_eq!(build.command_id, "demo.compile");
+        // Pinned in the registry → stable; declared capabilities → authoritative.
+        assert!(build.command_id_stable);
+        assert!(build.capabilities_declared);
+    }
+
+    #[test]
+    fn unregistered_commands_are_provisional() {
+        // Without a registry entry, both provenance bits must be false so
+        // consumers know not to treat the defaults as authoritative.
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let build = doc.commands.iter().find(|c| c.path.last().unwrap() == "build").unwrap();
+        assert!(!build.command_id_stable);
+        assert!(!build.capabilities_declared);
     }
 
     #[test]
@@ -323,5 +353,27 @@ mod tests {
         let json = serde_json::to_string(&doc).unwrap();
         let parsed: IntrospectDocument = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, doc);
+    }
+
+    #[test]
+    fn schema_id_and_version_agree() {
+        // The `@vN` suffix on `schema_id` must match the numeric `schema_version`.
+        let expected = format!("foundry:introspect@v{INTROSPECT_SCHEMA_VERSION}");
+        assert_eq!(INTROSPECT_SCHEMA_ID, expected);
+    }
+
+    #[test]
+    fn build_does_not_require_successful_parse() {
+        // `--introspect` must work even when required args/subcommands are
+        // missing; `build_document` is the only function called pre-parse, so
+        // it must not invoke clap's parsing path.
+        let cmd = clap::Command::new("strict")
+            .subcommand_required(true)
+            .arg_required_else_help(true)
+            .subcommand(clap::Command::new("run").arg(clap::Arg::new("input").required(true)));
+        let json = render_introspect_document(&cmd, &CommandRegistry::EMPTY);
+        let parsed: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(parsed.commands.len(), 1);
+        assert_eq!(parsed.commands[0].command_id, "strict.run");
     }
 }

@@ -194,4 +194,18 @@ mod tests {
         let dups = duplicate_command_ids(&doc);
         assert!(dups.is_empty(), "duplicate chisel command_ids: {dups:?}");
     }
+
+    /// `chisel --introspect` must produce a JSON document that parses back into
+    /// the canonical `IntrospectDocument` shape.
+    #[test]
+    fn introspect_document_is_valid_json() {
+        use foundry_cli::introspect::{
+            CommandRegistry, INTROSPECT_SCHEMA_ID, IntrospectDocument, render_introspect_document,
+        };
+        let cmd = Chisel::command();
+        let json = render_introspect_document(&cmd, &CommandRegistry::EMPTY);
+        let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
+        assert_eq!(doc.binary.name, "chisel");
+    }
 }
