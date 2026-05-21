@@ -2014,6 +2014,16 @@ fn solver_portfolio_availability_warning_reports_missing_entries() {
 }
 
 #[cfg(unix)]
+/// Returns a unique marker path for solver portfolio tests.
+fn portfolio_test_marker(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "foundry-symbolic-{name}-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    ))
+}
+
+#[cfg(unix)]
 #[test]
 /// Regression coverage for `portfolio_sat_beats_early_unsat`.
 fn portfolio_sat_beats_early_unsat() {
@@ -2037,13 +2047,81 @@ fn portfolio_sat_beats_early_unsat() {
 
 #[cfg(unix)]
 #[test]
+/// Regression coverage for adaptive portfolio scheduling promoting recent winners.
+fn portfolio_scheduler_promotes_recent_sat_winner() {
+    let marker = portfolio_test_marker("adaptive-slow-leader");
+    let marker_arg = marker.display().to_string();
+    let commands = vec![
+        SolverCommand::new(
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "printf started > \"$1\"; sleep 0.3; printf 'unknown\n'".to_string(),
+                "sh".to_string(),
+                marker_arg,
+            ],
+            false,
+        )
+        .unwrap(),
+        SolverCommand::new(
+            vec!["/bin/sh".to_string(), "-c".to_string(), "printf 'sat\n'".to_string()],
+            false,
+        )
+        .unwrap(),
+    ];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 2, false);
+
+    assert!(solver.is_sat(&[]).unwrap());
+    assert!(marker.exists());
+    let _ = std::fs::remove_file(&marker);
+
+    assert!(solver.is_sat(&[]).unwrap());
+    assert!(!marker.exists());
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for adaptive portfolio scheduling penalizing invalid models.
+fn portfolio_scheduler_penalizes_invalid_models() {
+    let marker = portfolio_test_marker("adaptive-invalid-model");
+    let marker_arg = marker.display().to_string();
+    let invalid_model = "sat\n((define-fun calldata_0 () (_ BitVec 256) #x0000000000000000000000000000000000000000000000000000000000000000))\n";
+    let valid_model = "sat\n((define-fun calldata_0 () (_ BitVec 256) #x0000000000000000000000000000000000000000000000000000000000000001))\n";
+    let commands = vec![
+        SolverCommand::new(
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                format!("printf started > \"$1\"; printf '{}'", invalid_model),
+                "sh".to_string(),
+                marker_arg,
+            ],
+            false,
+        )
+        .unwrap(),
+        SolverCommand::new(
+            vec!["/bin/sh".to_string(), "-c".to_string(), format!("printf '{}'", valid_model)],
+            false,
+        )
+        .unwrap(),
+    ];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 2, false);
+    let constraints =
+        vec![BoolExpr::eq(Expr::Var("calldata_0".to_string()), Expr::Const(U256::from(1)))];
+
+    assert_eq!(solver.model(&constraints).unwrap().get("calldata_0"), Some(&U256::from(1)));
+    assert!(marker.exists());
+    let _ = std::fs::remove_file(&marker);
+
+    assert_eq!(solver.model(&constraints).unwrap().get("calldata_0"), Some(&U256::from(1)));
+    assert!(!marker.exists());
+}
+
+#[cfg(unix)]
+#[test]
 /// Regression coverage for `run_solver_commands` staged portfolio launching.
 fn portfolio_winner_skips_delayed_solver() {
-    let marker = std::env::temp_dir().join(format!(
-        "foundry-symbolic-delayed-solver-{}-{}",
-        std::process::id(),
-        SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
-    ));
+    let marker = portfolio_test_marker("delayed-solver");
     let marker_arg = marker.display().to_string();
     let commands = vec![
         SolverCommand::new(vec!["/bin/echo".to_string(), "sat".to_string()], false).unwrap(),
