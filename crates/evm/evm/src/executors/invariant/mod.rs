@@ -29,7 +29,7 @@ use foundry_evm_fuzz::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, InvariantSettings,
         RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
-    strategies::{EvmFuzzState, invariant_strat, override_call_strat},
+    strategies::{EvmFuzzState, InvariantFuzzState, invariant_strat, override_call_strat},
 };
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
@@ -281,7 +281,7 @@ struct InvariantTestData {
 /// Contains invariant test data.
 struct InvariantTest {
     // Fuzz state of invariant test.
-    fuzz_state: EvmFuzzState,
+    fuzz_state: InvariantFuzzState,
     // Contracts fuzzed by the invariant test.
     targeted_contracts: FuzzRunIdentifiedContracts,
     // Data collected during invariant runs.
@@ -291,7 +291,7 @@ struct InvariantTest {
 impl InvariantTest {
     /// Instantiates an invariant test.
     fn new(
-        fuzz_state: EvmFuzzState,
+        fuzz_state: InvariantFuzzState,
         targeted_contracts: FuzzRunIdentifiedContracts,
         failures: InvariantFailures,
         branch_runner: TestRunner,
@@ -334,9 +334,7 @@ impl InvariantTest {
     /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
     /// separated from reverts.
     fn record_metrics(&mut self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
-        if let Some(metric_key) =
-            self.targeted_contracts.targets.lock().fuzzed_metric_key(tx_details)
-        {
+        if let Some(metric_key) = self.targeted_contracts.targets().fuzzed_metric_key(tx_details) {
             let test_metrics = &mut self.test_data.metrics;
             let invariant_metrics = test_metrics.entry(metric_key).or_default();
             invariant_metrics.calls += 1;
@@ -565,6 +563,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &mut current_run.executor,
                     current_run.inputs.last().expect("checked above"),
                 )?;
+                if let Some(fuzzer) = current_run.executor.inspector_mut().fuzzer.as_mut() {
+                    invariant_test.fuzz_state.collect_values(fuzzer.drain_collected_values());
+                }
                 // Capture per-call EVM cmp operands for I2S corpus mutation. Kept parallel
                 // to `current_run.inputs`; populated unconditionally so dropped calls (magic
                 // assumes / pops below) get zero-length entries that the corpus side filters out.
@@ -617,12 +618,19 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     // See <https://github.com/foundry-rs/foundry/issues/9764>.
                     let mut state_changeset = std::mem::take(&mut call_result.state_changeset);
                     if !call_result.reverted {
+                        let mapping_slots = current_run
+                            .executor
+                            .inspector()
+                            .fuzzer
+                            .as_ref()
+                            .and_then(|fuzzer| fuzzer.mapping_slots.as_ref());
                         collect_data(
                             &invariant_test,
                             &mut state_changeset,
                             current_run.inputs.last().expect("checked above"),
                             &call_result,
                             self.config.depth,
+                            mapping_slots,
                         );
                     }
 
@@ -945,6 +953,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
             self.select_contracts_and_senders(invariant_contract.address)?;
+        let fuzz_state = fuzz_state.into_invariant();
 
         // Creates the invariant strategy.
         let strategy = invariant_strat(
@@ -958,19 +967,20 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         // If any of the targeted contracts have the storage layout enabled then we can sample
         // mapping values. To accomplish, we need to record the mapping storage slots and keys.
-        let fuzz_state =
-            if targeted_contracts.targets.lock().iter().any(|(_, t)| t.storage_layout.is_some()) {
-                fuzz_state.with_mapping_slots(AddressMap::default())
-            } else {
-                fuzz_state
-            };
+        let mapping_slots = targeted_contracts
+            .targets()
+            .iter()
+            .any(|(_, t)| t.storage_layout.is_some())
+            .then(AddressMap::default);
 
         // Set up fuzzer WITHOUT call_generator initially.
         // We defer call_override until after the initial invariant check to avoid
         // injecting random calls during setup which would break the invariant assertion.
         self.executor.inspector_mut().set_fuzzer(Fuzzer {
             call_generator: None,
-            fuzz_state: fuzz_state.clone(),
+            collected_values: Vec::new(),
+            max_collected_values: self.config.dictionary.max_fuzz_dictionary_values,
+            mapping_slots,
             collect: true,
         });
 
@@ -991,6 +1001,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &[],
             &mut failures,
         )?;
+        if let Some(fuzzer) = self.executor.inspector_mut().fuzzer.as_mut() {
+            fuzz_state.collect_values(fuzzer.drain_collected_values());
+        }
         // First broken invariant in declaration order (anchor first, then secondaries).
         // Iterates `invariant_fns` so the lookup is deterministic, unlike HashMap iteration.
         if let Some(error) =
@@ -1012,15 +1025,23 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             // Collect handler addresses - these are the contracts we want to inject
             // reentrancy into (simulating malicious receive() functions).
             let handler_addresses: std::collections::HashSet<Address> =
-                targeted_contracts.targets.lock().keys().copied().collect();
+                targeted_contracts.targets().keys().copied().collect();
+            let override_targets = targeted_contracts
+                .targets()
+                .iter()
+                .filter_map(|(address, contract)| {
+                    let functions = contract.abi_fuzzed_functions().cloned().collect::<Vec<_>>();
+                    (!functions.is_empty()).then_some((*address, functions))
+                })
+                .collect::<Vec<_>>();
 
             let call_generator = RandomCallGenerator::new(
                 invariant_contract.address,
                 handler_addresses,
                 self.runner.clone(),
                 override_call_strat(
-                    fuzz_state.clone(),
-                    targeted_contracts.clone(),
+                    fuzz_state.snapshot(),
+                    override_targets,
                     target_contract_ref.clone(),
                     fuzz_fixtures.clone(),
                 ),
@@ -1379,7 +1400,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         self.select_contract_artifacts(invariant_address)?;
         let (sender_filters, targeted_contracts) =
             self.select_contracts_and_senders(invariant_address)?;
-        let targets = targeted_contracts.targets.lock();
+        let targets = targeted_contracts.targets();
         Ok(InvariantSettings::new(&targets, &sender_filters, self.config.fail_on_revert))
     }
 }
@@ -1393,6 +1414,7 @@ fn collect_data<FEN: FoundryEvmNetwork>(
     tx: &BasicTxDetails,
     call_result: &RawCallResult<FEN>,
     run_depth: u32,
+    mapping_slots: Option<&AddressMap<foundry_common::mapping_slots::MappingSlots>>,
 ) {
     // Verify it has no code.
     let has_code = if let Some(Some(code)) =
@@ -1414,6 +1436,7 @@ fn collect_data<FEN: FoundryEvmNetwork>(
         &call_result.logs,
         &*state_changeset,
         run_depth,
+        mapping_slots,
     );
 
     // Inject typed sancov trace-cmp operands into the fuzz dictionary.

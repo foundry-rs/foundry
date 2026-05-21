@@ -2798,6 +2798,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tempo-alloy",
+ "tempo-chainspec",
  "tempo-contracts",
  "tempo-primitives",
  "tokio",
