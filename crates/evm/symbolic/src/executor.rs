@@ -28,6 +28,11 @@ impl SymbolicExecutor {
         self.solver.take_diagnostics()
     }
 
+    /// Registers a callback invoked after each solver query for live progress rendering.
+    pub fn set_query_observer(&mut self, observer: impl Fn(usize) + Send + Sync + 'static) {
+        self.solver.set_query_observer(Some(Box::new(observer)));
+    }
+
     /// Executes one function symbolically against an already-deployed test contract.
     ///
     /// The input executor supplies the deployed bytecode, storage backend, caller, and
