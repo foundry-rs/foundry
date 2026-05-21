@@ -123,6 +123,39 @@ contract LockedLibraryOverload { //~WARN: contract can receive ETH but has no me
     }
 }
 
+// Overridden base implementation is no longer in the dispatch table.
+abstract contract OverriddenBaseWithExit {
+    function withdraw() external virtual {
+        payable(msg.sender).transfer(address(this).balance);
+    }
+}
+
+contract LockedOverriddenWithdraw is OverriddenBaseWithExit { //~WARN: contract can receive ETH but has no mechanism to send it out
+    receive() external payable {}
+
+    function withdraw() external override {}
+}
+
+// Same dispatch rule for `receive`: only the most-derived one is reachable.
+abstract contract BaseReceiveWithExit {
+    receive() external payable virtual {
+        payable(msg.sender).transfer(msg.value);
+    }
+}
+
+contract LockedOverriddenReceive is BaseReceiveWithExit { //~WARN: contract can receive ETH but has no mechanism to send it out
+    receive() external payable override {}
+}
+
+// Constructor exits don't cover runtime ETH inflows.
+contract LockedCtorExitWithRuntimeReceive { //~WARN: contract can receive ETH but has no mechanism to send it out
+    constructor() payable {
+        payable(msg.sender).transfer(msg.value);
+    }
+
+    receive() external payable {}
+}
+
 // SHOULD PASS:
 
 contract OkTransfer {

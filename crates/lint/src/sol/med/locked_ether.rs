@@ -14,7 +14,7 @@ use solar::{
         },
     },
 };
-use std::{collections::HashSet, ops::ControlFlow};
+use std::{collections::HashSet, fmt::Write as _, ops::ControlFlow};
 
 declare_forge_lint!(
     LOCKED_ETHER,
@@ -44,25 +44,32 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
             return;
         }
 
-        // Any `Payable` function counts as a receive vector except those that always revert.
-        let has_payable_entry = contract.linearized_bases.iter().any(|&cid| {
+        // Effective dispatch surface: most-derived implementation per signature,
+        // plus the most-derived `receive`/`fallback`. Constructors are excluded.
+        let runtime_entries = effective_runtime_dispatch_surface(hir, contract.linearized_bases);
+
+        // Inflow channels are tracked independently: a runtime payable entry vs. a
+        // payable constructor. Constructor inflows are deployer-controlled and have
+        // no runtime exit path, so they must not be conflated with runtime ETH flow.
+        let has_runtime_inflow = runtime_entries.iter().any(|&fid| {
+            let f = hir.function(fid);
+            f.state_mutability == StateMutability::Payable && !function_always_reverts(hir, f)
+        });
+        let has_ctor_inflow = contract.linearized_bases.iter().any(|&cid| {
             hir.contract(cid).all_functions().any(|fid| {
                 let f = hir.function(fid);
-                f.state_mutability == StateMutability::Payable && !function_always_reverts(hir, f)
+                matches!(f.kind, FunctionKind::Constructor)
+                    && f.state_mutability == StateMutability::Payable
             })
         });
-        if !has_payable_entry {
+        if !has_runtime_inflow && !has_ctor_inflow {
             return;
         }
 
-        // Seed entry points; internal helpers are reached transitively by `SendChecker`.
+        // Seed runtime entries only; internal helpers are reached transitively by
+        // `SendChecker`. Constructor bodies are excluded so their exits don't count.
         let mut visited: HashSet<FunctionId> = HashSet::new();
-        let mut worklist: Vec<FunctionId> = contract
-            .linearized_bases
-            .iter()
-            .flat_map(|&cid| hir.contract(cid).all_functions())
-            .filter(|&fid| is_externally_reachable(hir.function(fid)))
-            .collect();
+        let mut worklist: Vec<FunctionId> = runtime_entries;
 
         while let Some(fid) = worklist.pop() {
             if !visited.insert(fid) {
@@ -171,14 +178,82 @@ fn is_literal_false(expr: &hir::Expr<'_>) -> bool {
     false
 }
 
-/// Returns `true` if `func` is callable from outside the contract.
-const fn is_externally_reachable(func: &hir::Function<'_>) -> bool {
-    match func.kind {
-        FunctionKind::Constructor | FunctionKind::Receive | FunctionKind::Fallback => true,
-        FunctionKind::Function => {
-            matches!(func.visibility, Visibility::Public | Visibility::External)
+/// Runtime entry points reachable on the deployed contract: the most-derived
+/// implementation of each `(name, parameter signature)` plus the most-derived
+/// `receive` / `fallback`. `bases` must be the C3 linearization (leaf first).
+/// Later entries with the same key are overridden and dropped. Constructors and
+/// modifiers are excluded.
+fn effective_runtime_dispatch_surface<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    bases: &[hir::ContractId],
+) -> Vec<FunctionId> {
+    let mut seen_funcs: HashSet<(Symbol, String)> = HashSet::new();
+    let mut seen_receive = false;
+    let mut seen_fallback = false;
+    let mut out: Vec<FunctionId> = Vec::new();
+    for &cid in bases {
+        for fid in hir.contract(cid).all_functions() {
+            let f = hir.function(fid);
+            match f.kind {
+                FunctionKind::Function => {
+                    if !matches!(f.visibility, Visibility::Public | Visibility::External) {
+                        continue;
+                    }
+                    let Some(name) = f.name else { continue };
+                    let sig = parameter_signature(hir, f.parameters);
+                    if seen_funcs.insert((name.name, sig)) {
+                        out.push(fid);
+                    }
+                }
+                FunctionKind::Receive => {
+                    if !seen_receive {
+                        seen_receive = true;
+                        out.push(fid);
+                    }
+                }
+                FunctionKind::Fallback => {
+                    if !seen_fallback {
+                        seen_fallback = true;
+                        out.push(fid);
+                    }
+                }
+                FunctionKind::Constructor | FunctionKind::Modifier => {}
+            }
         }
-        FunctionKind::Modifier => false,
+    }
+    out
+}
+
+/// Structural string for a parameter list, used as a hash key to dedup
+/// overloads across the inheritance chain.
+fn parameter_signature(hir: &hir::Hir<'_>, params: &[VariableId]) -> String {
+    let mut s = String::new();
+    for (i, &p) in params.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        write_type_signature(&hir.variable(p).ty.kind, &mut s);
+    }
+    s
+}
+
+fn write_type_signature(ty: &TypeKind<'_>, out: &mut String) {
+    match ty {
+        TypeKind::Elementary(e) => write!(out, "{e:?}").unwrap(),
+        TypeKind::Array(a) => {
+            write_type_signature(&a.element.kind, out);
+            out.push_str("[]");
+        }
+        TypeKind::Function(_) => out.push_str("fn"),
+        TypeKind::Mapping(m) => {
+            out.push_str("map(");
+            write_type_signature(&m.key.kind, out);
+            out.push(',');
+            write_type_signature(&m.value.kind, out);
+            out.push(')');
+        }
+        TypeKind::Custom(id) => write!(out, "{id:?}").unwrap(),
+        TypeKind::Err(_) => out.push('?'),
     }
 }
 
