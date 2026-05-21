@@ -68,11 +68,19 @@ pub fn build_document(command: &Command, registry: &CommandRegistry) -> Introspe
 }
 
 fn build_binary_info(command: &Command) -> BinaryInfo {
+    // Root `global = true` args; not surfaced by `get_arguments()` on subcommands.
+    let global_args = command
+        .get_arguments()
+        .filter(|a| a.is_global_set() && !is_help_or_version(a))
+        .map(build_arg_info)
+        .collect();
+
     BinaryInfo {
         name: command.get_name().to_string(),
         version: command.get_version().unwrap_or("").to_string(),
         long_version: command.get_long_version().map(str::to_string),
         description: command.get_about().map(|s| s.to_string()),
+        global_args,
     }
 }
 
@@ -241,6 +249,10 @@ mod tests {
     #[derive(Parser)]
     #[command(name = "demo", version = "0.1.0")]
     struct Demo {
+        /// Global flag, must appear on `BinaryInfo.global_args`.
+        #[arg(global = true, long)]
+        quiet: bool,
+
         #[command(subcommand)]
         cmd: DemoSub,
     }
@@ -265,6 +277,18 @@ mod tests {
     enum CacheSub {
         /// Clean cache.
         Clean,
+    }
+
+    #[test]
+    fn global_args_land_on_binary_info() {
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+
+        assert!(
+            doc.binary.global_args.iter().any(|a| a.name == "quiet"),
+            "global args missing from BinaryInfo: {:?}",
+            doc.binary.global_args,
+        );
     }
 
     #[test]

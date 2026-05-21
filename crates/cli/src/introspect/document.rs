@@ -4,6 +4,7 @@
 //! contract these types implement.
 
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 /// Top-level introspection document.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +32,9 @@ pub struct BinaryInfo {
     /// Description of the binary.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Args accepted by every command (clap `global = true`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub global_args: Vec<ArgInfo>,
 }
 
 /// Information about a single command (or group) in the CLI tree.
@@ -75,13 +79,13 @@ pub struct Capabilities {
     pub output_mode: OutputMode,
     /// Stable schema id for the envelope payload.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub result_schema_ref: Option<String>,
+    pub result_schema_ref: Option<Cow<'static, str>>,
     /// Stable schema id for stream event records.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub event_schema_ref: Option<String>,
+    pub event_schema_ref: Option<Cow<'static, str>>,
     /// Stable schema id for session-record startup/state.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_schema_ref: Option<String>,
+    pub session_schema_ref: Option<Cow<'static, str>>,
     /// Whether the command can take input on stdin via `--input -`.
     pub reads_stdin: bool,
     /// Whether the command supports `--output PATH`.
@@ -229,9 +233,9 @@ pub struct ExitCodeInfo {
     /// Numeric process exit code.
     pub code: i32,
     /// Stable name (e.g. `TestFailure`).
-    pub name: String,
+    pub name: Cow<'static, str>,
     /// Description of when this code is emitted.
-    pub description: String,
+    pub description: Cow<'static, str>,
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]

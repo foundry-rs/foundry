@@ -56,7 +56,7 @@ impl GlobalArgs {
     /// This must be called **before** parsing arguments, since commands with required
     /// subcommands would fail parsing before the flag is checked.
     pub fn check_markdown_help<C: clap::CommandFactory>() {
-        if pre_parse_flag_present("--markdown-help") {
+        if std::env::args().take_while(|a| a != "--").any(|a| a == "--markdown-help") {
             // Pre-parse: `Shell` is not initialized yet, so `sh_*` is unavailable.
             #[allow(clippy::disallowed_macros)]
             {
@@ -76,7 +76,10 @@ impl GlobalArgs {
     /// Uses `CommandRegistry::EMPTY`; for per-command metadata, call
     /// [`check_introspect_with`](Self::check_introspect_with) with a populated registry.
     pub fn check_introspect<C: clap::CommandFactory>() {
-        Self::check_introspect_with(C::command(), &crate::introspect::CommandRegistry::EMPTY)
+        if !pre_parse_flag_present("--introspect") {
+            return;
+        }
+        emit_introspect_and_exit(C::command(), &crate::introspect::CommandRegistry::EMPTY);
     }
 
     /// Like [`check_introspect`](Self::check_introspect) but uses an explicit
@@ -86,13 +89,7 @@ impl GlobalArgs {
         registry: &crate::introspect::CommandRegistry,
     ) {
         if pre_parse_flag_present("--introspect") {
-            let json = crate::introspect::render_introspect_document(&command, registry);
-            // Pre-parse: `Shell` is not initialized yet, so `sh_*` is unavailable.
-            #[allow(clippy::disallowed_macros)]
-            {
-                println!("{json}");
-            }
-            std::process::exit(0);
+            emit_introspect_and_exit(command, registry);
         }
     }
 
@@ -164,6 +161,19 @@ impl GlobalArgs {
     pub fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
         self.tokio_runtime().block_on(future)
     }
+}
+
+fn emit_introspect_and_exit(
+    command: clap::Command,
+    registry: &crate::introspect::CommandRegistry,
+) -> ! {
+    let json = crate::introspect::render_introspect_document(&command, registry);
+    // Pre-parse: `Shell` is not initialized yet, so `sh_*` is unavailable.
+    #[allow(clippy::disallowed_macros)]
+    {
+        println!("{json}");
+    }
+    std::process::exit(0);
 }
 
 /// Returns whether `flag` is present among the binary's leading top-level options.

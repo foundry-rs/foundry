@@ -96,6 +96,7 @@ impl CommandRegistry {
 mod tests {
     use super::*;
     use crate::introspect::document::OutputMode;
+    use std::borrow::Cow;
 
     fn fixture_registry() -> CommandRegistry {
         static ENTRIES: &[RegistryEntry] = &[RegistryEntry {
@@ -137,5 +138,41 @@ mod tests {
     #[test]
     fn empty_registry_yields_no_entries() {
         assert_eq!(CommandRegistry::EMPTY.entries().count(), 0);
+    }
+
+    /// A registry with real strings (schema refs, exit-code names) must be
+    /// authorable in a plain `static` without lazy allocation.
+    #[test]
+    fn static_registry_supports_real_strings() {
+        static EXITS: &[ExitCodeInfo] = &[ExitCodeInfo {
+            code: 2,
+            name: Cow::Borrowed("TestFailure"),
+            description: Cow::Borrowed("at least one test failed"),
+        }];
+        static ENTRIES: &[RegistryEntry] = &[RegistryEntry {
+            path: &["test"],
+            meta: CommandMeta {
+                command_id: Some("forge.test"),
+                capabilities: Capabilities {
+                    output_mode: OutputMode::Envelope,
+                    result_schema_ref: Some(Cow::Borrowed("foundry:test-result@v1")),
+                    event_schema_ref: None,
+                    session_schema_ref: None,
+                    reads_stdin: false,
+                    supports_output_path: false,
+                    requires_project: true,
+                    side_effects: super::super::document::SideEffects::None,
+                    long_running: false,
+                    stateful: false,
+                },
+                capabilities_declared: true,
+                exit_codes: EXITS,
+            },
+        }];
+        let registry = CommandRegistry::new(ENTRIES);
+
+        let meta = registry.lookup(&["test"]).unwrap();
+        assert_eq!(meta.capabilities.result_schema_ref.as_deref(), Some("foundry:test-result@v1"));
+        assert_eq!(meta.exit_codes[0].name, "TestFailure");
     }
 }
