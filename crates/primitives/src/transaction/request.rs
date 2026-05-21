@@ -31,9 +31,9 @@ use crate::FoundryNetwork;
 ///   `TEMPO_TX_TYPE_ID`
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FoundryTransactionRequest {
-    Ethereum(TransactionRequest),
+    Ethereum(Box<TransactionRequest>),
     #[cfg(feature = "optimism")]
-    Op(WithOtherFields<TransactionRequest>),
+    Op(Box<WithOtherFields<TransactionRequest>>),
     Tempo(Box<TempoTransactionRequest>),
 }
 
@@ -48,7 +48,7 @@ impl FoundryTransactionRequest {
     /// Consume the [`FoundryTransactionRequest`] and return the inner transaction request.
     pub fn into_inner(self) -> TransactionRequest {
         match self {
-            Self::Ethereum(tx) => tx,
+            Self::Ethereum(tx) => *tx,
             #[cfg(feature = "optimism")]
             Self::Op(tx) => tx.inner,
             Self::Tempo(tx) => tx.inner,
@@ -176,11 +176,12 @@ impl FoundryTransactionRequest {
             // format), try to build to eip4844 without sidecar
             self.into_inner()
                 .build_4844_without_sidecar()
-                .map_err(|e| Self::Ethereum(e.into_value()))
+                .map_err(|e| Self::Ethereum(Box::new(e.into_value())))
                 .map(|tx| FoundryTypedTx::Eip4844(tx.into()))
         } else {
             // Use the inner transaction request to build EthereumTypedTransaction
-            let typed_tx = self.into_inner().build_typed_tx().map_err(Self::Ethereum)?;
+            let typed_tx =
+                self.into_inner().build_typed_tx().map_err(|tx| Self::Ethereum(Box::new(tx)))?;
             // Convert EthereumTypedTransaction to FoundryTypedTx
             Ok(match typed_tx {
                 EthereumTypedTransaction::Legacy(tx) => FoundryTypedTx::Legacy(tx),
@@ -195,7 +196,7 @@ impl FoundryTransactionRequest {
 
 impl Default for FoundryTransactionRequest {
     fn default() -> Self {
-        Self::Ethereum(TransactionRequest::default())
+        Self::Ethereum(Box::<TransactionRequest>::default())
     }
 }
 
@@ -268,20 +269,20 @@ impl From<WithOtherFields<TransactionRequest>> for FoundryTransactionRequest {
             || tx.transaction_type == Some(POST_EXEC_TX_TYPE_ID)
             || get_deposit_tx_parts(&tx.other).is_ok()
         {
-            return Self::Op(tx);
+            return Self::Op(Box::new(tx));
         }
-        Self::Ethereum(tx.into_inner())
+        Self::Ethereum(Box::new(tx.into_inner()))
     }
 }
 
 impl From<FoundryTypedTx> for FoundryTransactionRequest {
     fn from(tx: FoundryTypedTx) -> Self {
         match tx {
-            FoundryTypedTx::Legacy(tx) => Self::Ethereum(Into::<TransactionRequest>::into(tx)),
-            FoundryTypedTx::Eip2930(tx) => Self::Ethereum(Into::<TransactionRequest>::into(tx)),
-            FoundryTypedTx::Eip1559(tx) => Self::Ethereum(Into::<TransactionRequest>::into(tx)),
-            FoundryTypedTx::Eip4844(tx) => Self::Ethereum(Into::<TransactionRequest>::into(tx)),
-            FoundryTypedTx::Eip7702(tx) => Self::Ethereum(Into::<TransactionRequest>::into(tx)),
+            FoundryTypedTx::Legacy(tx) => Self::Ethereum(Box::new(tx.into())),
+            FoundryTypedTx::Eip2930(tx) => Self::Ethereum(Box::new(tx.into())),
+            FoundryTypedTx::Eip1559(tx) => Self::Ethereum(Box::new(tx.into())),
+            FoundryTypedTx::Eip4844(tx) => Self::Ethereum(Box::new(tx.into())),
+            FoundryTypedTx::Eip7702(tx) => Self::Ethereum(Box::new(tx.into())),
             #[cfg(feature = "optimism")]
             FoundryTypedTx::Deposit(tx) => {
                 let other = OtherFields::from_iter([
