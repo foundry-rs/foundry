@@ -1081,24 +1081,10 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
         if let FrameInput::Create(inputs) = frame_input
             && self.should_use_create2_factory(ecx.journal().depth(), inputs)
         {
-            // The Arachnid factory is not payable; reject non-zero value up front.
-            if !inputs.value().is_zero() {
-                self.inner.pending_create2_error = Some(CreateOutcome {
-                    result: InterpreterResult {
-                        result: InstructionResult::Revert,
-                        output: Bytes::from(
-                            "--batch cannot route a deployment with non-zero value through \
-                             the CREATE2 factory: Arachnid factory is not payable"
-                                .as_bytes()
-                                .to_vec(),
-                        ),
-                        gas: Gas::new(inputs.gas_limit()),
-                    },
-                    address: None,
-                });
-                return None;
-            }
-
+            // `get_create2_factory_call_inputs` forwards `inputs.value()` to the factory
+            // as `CallValue::Transfer`, and the default factory runtime forwards CALLVALUE
+            // into CREATE2, so payable deploys are supported on both the explicit
+            // `new C{salt, value}` path and the `--batch` rewrite path.
             let salt = match inputs.scheme() {
                 CreateScheme::Create2 { salt } => salt,
                 // --batch: nonce makes re-runs unique, counter makes each deploy unique.
