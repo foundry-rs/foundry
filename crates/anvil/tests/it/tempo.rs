@@ -35,6 +35,25 @@ const THETA_USD: Address = address!("0x20C0000000000000000000000000000000000003"
 /// Gas limit for TIP20 transfer calls (precompile interactions need more gas).
 const TIP20_TRANSFER_GAS: u64 = 300_000;
 
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_fork_detects_hardfork_from_fork_timestamp() {
+    use tempo_chainspec::hardfork::TempoHardfork;
+
+    let fork_timestamp = TempoHardfork::T3.mainnet_activation_timestamp().unwrap();
+    let (_source_api, source_handle) = spawn(
+        NodeConfig::test()
+            .with_chain_id(Some(4217u64))
+            .with_genesis_timestamp(Some(fork_timestamp)),
+    )
+    .await;
+
+    let (api, _handle) =
+        spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
+
+    let node_info = api.anvil_node_info().await.unwrap();
+    assert_eq!(node_info.hard_fork, "T3");
+}
+
 sol! {
     #[sol(rpc)]
     interface IFeeManagerRpc {

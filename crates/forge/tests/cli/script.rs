@@ -187,7 +187,9 @@ forgetest_async!(assert_exit_code_error_on_out_of_gas_script, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
 
-    cmd.arg("script").arg(script);
+    // Use a small block gas limit so the infinite loop exhausts gas in milliseconds rather than
+    // >25s at the default ~1B limit, which often exceeds the nextest slow-timeout window on CI.
+    cmd.arg("script").arg(script).args(["--block-gas-limit", "1000000"]);
 
     cmd.assert_failure().stderr_eq(str![[r#"
 Error: script failed: EvmError: OutOfGas
@@ -200,7 +202,8 @@ forgetest_async!(assert_exit_code_error_on_out_of_gas_script_with_json, |prj, cm
     foundry_test_utils::util::initialize(prj.root());
     let script = prj.add_source("OutOfGasScript", OUT_OF_GAS_SCRIPT);
 
-    cmd.arg("script").arg(script).arg("--json");
+    // See `assert_exit_code_error_on_out_of_gas_script`
+    cmd.arg("script").arg(script).arg("--json").args(["--block-gas-limit", "1000000"]);
 
     cmd.assert_failure().stderr_eq(str![[r#"
 Error: script failed: EvmError: OutOfGas
