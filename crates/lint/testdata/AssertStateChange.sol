@@ -315,3 +315,62 @@ contract AssertStateChangeUnrelatedLib {
         return items.length == 0;
     }
 }
+
+// ---- struct-field receiver chain (issue: false negatives) ----
+// cfg.token.transfer(...), the receiver is a struct field of contract type;
+// contract_id_of must walk through the struct field to find the ContractId.
+struct Config {
+    IToken token;
+}
+
+contract AssertStateChangeStructFieldReceiver {
+    Config public cfg;
+
+    // Bad: mutating call through a struct-field contract variable.
+    function badStructFieldCall(address to, uint256 amt) external {
+        assert(cfg.token.transfer(to, amt)); //~WARN: assert() argument contains a state-modifying expression
+    }
+
+    // Good: view call through a struct-field contract variable must NOT warn.
+    function goodStructFieldViewCall(address who) external view {
+        assert(cfg.token.balanceOf(who) > 0);
+    }
+}
+
+// ---- function-call-result receiver (issue: false negatives) ----
+// getToken().transfer(...), the receiver is the return value of a function call;
+// contract_id_of must resolve the function's return type to find the ContractId.
+contract AssertStateChangeFnReturnReceiver {
+    IToken private tok;
+
+    function getToken() internal view returns (IToken) {
+        return tok;
+    }
+
+    // Bad: mutating call on the return value of a function.
+    function badFnReturnCall(address to, uint256 amt) external {
+        assert(getToken().transfer(to, amt)); //~WARN: assert() argument contains a state-modifying expression
+    }
+
+    // Good: view call on the return value of a function must NOT warn.
+    function goodFnReturnViewCall(address who) external view {
+        assert(getToken().balanceOf(who) > 0);
+    }
+}
+
+// ---- address-mapping index receiver (issue: false negatives) ----
+// payees[user].send(...), the receiver is an element of an address mapping;
+// is_address_like must handle Mapping value types, not only Array element types.
+contract AssertStateChangeAddressMappingReceiver {
+    mapping(address => address payable) public payees;
+
+    // Bad: .send() on a mapping-indexed address value.
+    function badMappingAddressSend(address user) external {
+        assert(payees[user].send(1 ether)); //~WARN: assert() argument contains a state-modifying expression
+    }
+
+    // Good: reading a mapping-indexed address value (no call) must NOT warn.
+    function goodMappingAddressRead(address user) external view {
+        assert(payees[user] != address(0));
+    }
+}

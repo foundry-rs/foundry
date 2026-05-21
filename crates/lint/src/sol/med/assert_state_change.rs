@@ -125,7 +125,7 @@ fn find_state_change<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<Sp
                 let lib_candidates =
                     resolve_library_extension(hir, method.name, args.len(), recv_ty);
                 if !lib_candidates.is_empty()
-                    && lib_candidates.iter().any(|&fid| hir.function(fid).mutates_state())
+                    && lib_candidates.iter().all(|&fid| hir.function(fid).mutates_state())
                 {
                     return Some(expr.span);
                 }
@@ -207,33 +207,19 @@ fn resolve_member_overloads<'hir>(
         .collect()
 }
 
-/// Extracts the contract ID from an expression that is a contract variable or interface cast.
+/// Extracts the contract ID from an expression whose static type is a contract or interface.
 fn contract_id_of<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<ContractId> {
-    match &expr.peel_parens().kind {
-        // `token.foo()` where `token` is a state/local variable of contract type
-        ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
-            if let TypeKind::Custom(ItemId::Contract(cid)) = hir.variable(*id).ty.kind {
-                Some(cid)
-            } else {
-                None
-            }
-        }
-        // `IToken(addr).foo()` — explicit interface cast
-        ExprKind::Call(
-            Expr { kind: ExprKind::Ident([Res::Item(ItemId::Contract(cid))]), .. },
-            ..,
-        ) => Some(*cid),
-        // `tokens[i].foo()` or `byUser[user].foo()`, element of an array/mapping of contract type
-        ExprKind::Index(_, _) => {
-            let element_ty = receiver_type(hir, expr)?;
-            if let TypeKind::Custom(ItemId::Contract(cid)) = element_ty.kind {
-                Some(cid)
-            } else {
-                None
-            }
-        }
-        _ => None,
+    // `IToken(addr).foo()`, explicit interface cast; the callee Ident resolves to the contract
+    // itself rather than a function, so receiver_type's Call arm would not match it.
+    if let ExprKind::Call(
+        Expr { kind: ExprKind::Ident([Res::Item(ItemId::Contract(cid))]), .. },
+        ..,
+    ) = &expr.peel_parens().kind
+    {
+        return Some(*cid);
     }
+    let ty = receiver_type(hir, expr)?;
+    if let TypeKind::Custom(ItemId::Contract(cid)) = ty.kind { Some(cid) } else { None }
 }
 
 /// Finds library functions in the HIR that could be a `using for` extension matching the given
@@ -310,11 +296,16 @@ fn library_extensions_by_name(hir: &Hir<'_>) -> Rc<HashMap<Symbol, Vec<FunctionI
     })
 }
 
-/// Returns the static type of a receiver expression, when statically derivable from HIR alone.
-/// Handles a plain state-variable `Ident` and `Index` into an array; other forms (struct
-/// `Member`, function-call results, etc.) require resolved-type information that is only
-/// available via `gcx`, so we return `None` conservatively. Returning `None` causes the library
-/// fallback to skip the call site, biasing toward false negatives over false positives.
+/// Returns the static type of a receiver expression, when derivable from HIR alone.
+///
+/// Handles:
+///   * plain `Ident` resolving to a variable;
+///   * `base[idx]` for array and mapping types;
+///   * `base.field` where `base` has a struct type (looks up the field in the HIR);
+///   * `f(...)` where `f` resolves to a single unambiguous function with exactly one return.
+///
+/// Returns `None` conservatively for anything else, biasing toward false negatives over false
+/// positives.
 fn receiver_type<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<&'hir Type<'hir>> {
     match &expr.peel_parens().kind {
         ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => Some(&hir.variable(*id).ty),
@@ -325,6 +316,24 @@ fn receiver_type<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<&
                 TypeKind::Mapping(map) => Some(&map.value),
                 _ => None,
             }
+        }
+        // `cfg.token` where `cfg` is a struct variable, look up the named field's type.
+        ExprKind::Member(base, field) => {
+            let base_ty = receiver_type(hir, base)?;
+            let TypeKind::Custom(ItemId::Struct(sid)) = base_ty.kind else { return None };
+            hir.strukt(sid).fields.iter().find_map(|&fid| {
+                let v = hir.variable(fid);
+                v.name.is_some_and(|n| n.name == field.name).then_some(&v.ty)
+            })
+        }
+        // `getToken()`, single-return free or member function call.
+        ExprKind::Call(callee, ..) => {
+            let ExprKind::Ident(reses) = &callee.peel_parens().kind else { return None };
+            let fid = reses.iter().find_map(|r| {
+                if let Res::Item(ItemId::Function(fid)) = r { Some(*fid) } else { None }
+            })?;
+            let f = hir.function(fid);
+            (f.returns.len() == 1).then(|| &hir.variable(f.returns[0]).ty)
         }
         _ => None,
     }
@@ -379,11 +388,11 @@ fn is_address_like<'hir>(hir: &Hir<'hir>, expr: &'hir Expr<'hir>) -> bool {
         ExprKind::Ident([Res::Item(ItemId::Variable(id)), ..]) => {
             matches!(hir.variable(*id).ty.kind, TypeKind::Elementary(ElementaryType::Address(_)))
         }
-        // `addresses[i]` where `addresses` resolves to a state var of `address[]` etc.
-        ExprKind::Index(base, _) => matches!(
-            receiver_type(hir, base).map(|t| &t.kind),
-            Some(TypeKind::Array(arr))
-                if matches!(arr.element.kind, TypeKind::Elementary(ElementaryType::Address(_)))
+        // `addresses[i]` / `payees[user]`, element of an address array or mapping.
+        // receiver_type on the full Index expression returns the element/value type directly.
+        ExprKind::Index(..) => matches!(
+            receiver_type(hir, expr).map(|t| &t.kind),
+            Some(TypeKind::Elementary(ElementaryType::Address(_)))
         ),
         ExprKind::Tuple(exprs) => {
             let mut iter = exprs.iter().flatten();
