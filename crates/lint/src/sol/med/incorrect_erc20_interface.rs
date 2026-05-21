@@ -1,7 +1,7 @@
 use super::IncorrectERC20Interface;
 use crate::{
     linter::{LateLintPass, LintContext},
-    sol::{Severity, SolLint},
+    sol::{Severity, SolLint, analysis::interface::is_elementary},
 };
 use solar::sema::hir;
 
@@ -68,21 +68,12 @@ fn has_incorrect_erc20_signature(
     parameters: &[hir::VariableId],
     returns: &[hir::VariableId],
 ) -> bool {
-    let is_type = |var_id: hir::VariableId, type_str: &str| {
-        matches!(
-            &hir.variable(var_id).ty.kind,
-            hir::TypeKind::Elementary(ty) if ty.to_abi_str() == type_str
-        )
+    let sig_match = |vars: &[hir::VariableId], expected: &[&str]| -> bool {
+        vars.len() == expected.len()
+            && vars.iter().zip(expected).all(|(&id, &ty)| is_elementary(hir, id, ty))
     };
-
-    let params_match = |params: &[hir::VariableId], expected: &[&str]| -> bool {
-        params.len() == expected.len()
-            && params.iter().zip(expected).all(|(&id, &ty)| is_type(id, ty))
-    };
-
-    let returns_match = |rets: &[hir::VariableId], expected: &[&str]| -> bool {
-        rets.len() == expected.len() && rets.iter().zip(expected).all(|(&id, &ty)| is_type(id, ty))
-    };
+    let params_match = sig_match;
+    let returns_match = sig_match;
 
     match name {
         // function transfer(address,uint256) external returns (bool)

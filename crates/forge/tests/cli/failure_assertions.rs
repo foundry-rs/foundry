@@ -71,7 +71,7 @@ Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
             r#"No files changed, compilation skipped
 ...
 [FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectPartialRevertWrongReverterTopLevelCreate() ([GAS])
-[FAIL: Reverter != expected reverter: [..] != [..]] testShouldFailExpectRevertNestedCreateInnerAddress() ([GAS])
+[FAIL: Reverter != expected reverter: [..] != [..]] testShouldFailExpectRevertNestedCreateOuterAddress() ([GAS])
 [FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectRevertWithBytesWrongReverterTopLevelCreate() ([GAS])
 [FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectRevertWrongReverterNestedCreate() ([GAS])
 [FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectRevertWrongReverterTopLevelCreate() ([GAS])
