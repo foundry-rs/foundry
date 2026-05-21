@@ -6,14 +6,7 @@ use alloy_primitives::{Address, U64, U256, uint};
 use alloy_provider::Provider;
 use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
 use alloy_serde::WithOtherFields;
-use anvil::{
-    NodeConfig,
-    eth::{
-        error::{BlockchainError, FeeHistoryError},
-        fees::INITIAL_BASE_FEE,
-    },
-    spawn,
-};
+use anvil::{NodeConfig, eth::fees::INITIAL_BASE_FEE, spawn};
 
 const GAS_TRANSFER: u64 = 21_000;
 
@@ -245,13 +238,20 @@ async fn test_load_state_refreshes_fee_history_cache() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_fee_history_errors_on_cache_miss() {
-    let (api, _) = spawn(NodeConfig::test()).await;
+async fn test_reset_refreshes_fee_history_cache() {
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
 
-    let err =
-        api.fee_history(U256::from(1), BlockNumberOrTag::Number(1), vec![]).await.unwrap_err();
+    api.anvil_reset(None).await.unwrap();
 
-    assert!(matches!(err, BlockchainError::FeeHistory(FeeHistoryError::InvalidBlockRange)));
+    let latest_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let fee_history = provider.get_fee_history(1, BlockNumberOrTag::Latest, &[]).await.unwrap();
+
+    assert_eq!(fee_history.base_fee_per_gas.len(), 2);
+    assert_eq!(
+        fee_history.base_fee_per_gas.first().copied(),
+        latest_block.header.base_fee_per_gas.map(Into::into)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -36,7 +36,6 @@ use alloy_consensus::{
 use alloy_dyn_abi::TypedData;
 use alloy_eips::{
     eip2718::Encodable2718,
-    eip7840::BlobParams,
     eip7910::{EthConfig, EthForkConfig},
 };
 use alloy_evm::overrides::{OverrideBlockHashes, apply_state_overrides};
@@ -100,7 +99,7 @@ use revm::{
     context_interface::{block::BlobExcessGasAndPrice, result::Output},
     database::CacheDB,
     interpreter::{InstructionResult, return_ok, return_revert},
-    primitives::{eip7702::PER_EMPTY_ACCOUNT_COST, hardfork::SpecId},
+    primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -619,11 +618,7 @@ impl<N: Network> EthApi<N> {
 
         let (_, new_blocks) = unbounded();
         let fee_history_service = FeeHistoryService::new(
-            match self.backend.spec_id() {
-                SpecId::OSAKA => BlobParams::osaka(),
-                SpecId::PRAGUE => BlobParams::prague(),
-                _ => BlobParams::cancun(),
-            },
+            self.backend.blob_params(),
             new_blocks,
             self.fee_history_cache.clone(),
             self.storage_info(),
@@ -703,7 +698,10 @@ impl<N: Network> EthApi<N> {
     /// If `forking` is `None` then this will disable forking entirely.
     ///
     /// Handler for RPC call: `anvil_reset`
-    pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()> {
+    pub async fn anvil_reset(&self, forking: Option<Forking>) -> Result<()>
+    where
+        N::ReceiptEnvelope: TxReceipt<Log = alloy_primitives::Log>,
+    {
         self.reset_instance_id();
         node_info!("anvil_reset");
         if let Some(forking) = forking {
@@ -713,7 +711,7 @@ impl<N: Network> EthApi<N> {
             // Reset to a fresh in-memory state
             self.backend.reset_to_in_mem().await?;
         }
-        self.fee_history_cache.lock().clear();
+        self.rebuild_fee_history_cache();
         // Clear pending transactions since they reference the old chain state.
         self.pool.clear();
         Ok(())
@@ -1188,26 +1186,24 @@ impl<N: Network> EthApi<N> {
             // iter over the requested block range
             for n in lowest..=highest {
                 // <https://eips.ethereum.org/EIPS/eip-1559>
-                let Some(block) = fee_history.get(&n) else {
-                    return Err(FeeHistoryError::InvalidBlockRange.into());
-                };
+                if let Some(block) = fee_history.get(&n) {
+                    response.base_fee_per_gas.push(block.base_fee);
+                    response.base_fee_per_blob_gas.push(block.base_fee_per_blob_gas.unwrap_or(0));
+                    response.blob_gas_used_ratio.push(block.blob_gas_used_ratio);
+                    response.gas_used_ratio.push(block.gas_used_ratio);
 
-                response.base_fee_per_gas.push(block.base_fee);
-                response.base_fee_per_blob_gas.push(block.base_fee_per_blob_gas.unwrap_or(0));
-                response.blob_gas_used_ratio.push(block.blob_gas_used_ratio);
-                response.gas_used_ratio.push(block.gas_used_ratio);
-
-                // requested percentiles
-                if !reward_percentiles.is_empty() {
-                    let mut block_rewards = Vec::new();
-                    let resolution_per_percentile: f64 = 2.0;
-                    for p in &reward_percentiles {
-                        let p = p.clamp(0.0, 100.0);
-                        let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
-                        let reward = block.rewards.get(index as usize).map_or(0, |r| *r);
-                        block_rewards.push(reward);
+                    // requested percentiles
+                    if !reward_percentiles.is_empty() {
+                        let mut block_rewards = Vec::new();
+                        let resolution_per_percentile: f64 = 2.0;
+                        for p in &reward_percentiles {
+                            let p = p.clamp(0.0, 100.0);
+                            let index = ((p.round() / 2f64) * 2f64) * resolution_per_percentile;
+                            let reward = block.rewards.get(index as usize).map_or(0, |r| *r);
+                            block_rewards.push(reward);
+                        }
+                        rewards.push(block_rewards);
                     }
-                    rewards.push(block_rewards);
                 }
             }
         }
