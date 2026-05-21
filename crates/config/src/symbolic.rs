@@ -56,6 +56,7 @@ pub struct SymbolicConfig {
     /// Maximum number of calls in a bounded symbolic invariant sequence.
     pub invariant_depth: u32,
     /// Order used to select the next pending symbolic path.
+    #[serde(default)]
     pub exploration_order: SymbolicExplorationOrder,
     /// Maximum number of solver queries.
     pub max_solver_queries: u32,
@@ -129,5 +130,34 @@ impl SymbolicConfig {
     /// configuration spellings feed the same path exploration budget.
     pub fn path_width(&self) -> u32 {
         self.width.unwrap_or(self.max_paths)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_exploration_order_defaults_to_bfs() {
+        let value = serde_json::json!({
+            "enabled": false,
+            "solver": "z3",
+            "timeout": 30,
+            "max_depth": 10000,
+            "max_paths": 1024,
+            "invariant_depth": 10,
+            "max_solver_queries": 10000,
+            "default_dynamic_length": 2,
+            "max_dynamic_length": 256,
+            "array_lengths": [],
+            "max_calldata_bytes": 4096,
+            "symbolic_call_targets": false,
+            "dump_smt": false,
+            "storage_layout": "solidity"
+        });
+
+        let config: SymbolicConfig = serde_json::from_value(value).unwrap();
+
+        assert_eq!(config.exploration_order, SymbolicExplorationOrder::Bfs);
     }
 }

@@ -7351,6 +7351,7 @@ mod tests {
                 symbolic_warnings.is_empty(),
                 "Valid symbolic keys should not trigger warnings, got: {symbolic_warnings:?}"
             );
+            assert_eq!(cfg.symbolic.exploration_order, SymbolicExplorationOrder::Dfs);
 
             Ok(())
         });
