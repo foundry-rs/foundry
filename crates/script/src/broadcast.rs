@@ -40,15 +40,6 @@ use itertools::Itertools;
 use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 use tempo_primitives::transaction::Call;
 
-const fn pending_sequence_index(
-    already_broadcasted: usize,
-    batch_number: usize,
-    batch_size: usize,
-    batch_index: usize,
-) -> usize {
-    already_broadcasted + batch_number * batch_size + batch_index
-}
-
 pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
@@ -518,8 +509,9 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 let transactions = sequence
                     .transactions
                     .iter()
+                    .enumerate()
                     .skip(already_broadcasted)
-                    .map(|tx_with_metadata| {
+                    .map(|(sequence_index, tx_with_metadata)| {
                         let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
 
                         let kind = match tx_with_metadata.tx().clone() {
@@ -558,7 +550,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                             }
                         };
 
-                        Ok((kind, is_fixed_gas_limit))
+                        Ok((sequence_index, kind, is_fixed_gas_limit))
                     })
                     .collect::<Result<Vec<_>>>()?;
 
@@ -587,16 +579,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     ));
 
                     if !batch.is_empty() {
-                        let pending_transactions = batch.iter().enumerate().map(
-                            |(batch_index, (kind, is_fixed_gas_limit))| {
+                        let pending_transactions =
+                            batch.iter().map(|(sequence_index, kind, is_fixed_gas_limit)| {
                                 let provider = provider.clone();
                                 let tempo_sponsor = tempo_sponsor.clone();
-                                let sequence_index = pending_sequence_index(
-                                    already_broadcasted,
-                                    batch_number,
-                                    batch_size,
-                                    batch_index,
-                                );
+                                let sequence_index = *sequence_index;
                                 async move {
                                     let res = kind
                                         .clone()
@@ -612,8 +599,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                                     (res, sequence_index, kind, *is_fixed_gas_limit, 0, None)
                                 }
                                 .boxed()
-                            },
-                        );
+                            });
 
                         let mut buffer = pending_transactions.collect::<FuturesUnordered<_>>();
 
@@ -1071,18 +1057,13 @@ mod tests {
             ..Default::default()
         };
 
-        let already_broadcasted = 1;
-        let batch_number = 0;
-        let batch_size = 100;
         let completions = [
-            (2, B256::repeat_byte(0x22)),
-            (0, B256::repeat_byte(0x00)),
-            (1, B256::repeat_byte(0x11)),
+            (3, B256::repeat_byte(0x22)),
+            (1, B256::repeat_byte(0x00)),
+            (2, B256::repeat_byte(0x11)),
         ];
 
-        for (batch_index, tx_hash) in completions {
-            let sequence_index =
-                pending_sequence_index(already_broadcasted, batch_number, batch_size, batch_index);
+        for (sequence_index, tx_hash) in completions {
             sequence.add_pending(sequence_index, tx_hash);
         }
 
