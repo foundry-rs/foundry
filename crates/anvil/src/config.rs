@@ -1490,6 +1490,7 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
+            hardfork: self.hardfork,
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
