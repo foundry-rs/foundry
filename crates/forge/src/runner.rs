@@ -749,6 +749,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             value: U256::ZERO,
             ffi_enabled: self.config.ffi,
         });
+        let portfolio_diagnostics = symbolic.portfolio_diagnostics();
 
         match result {
             SymbolicRunResult::Safe(stats) => {
@@ -776,6 +777,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     Err(EvmError::Execution(err)) => (err.raw, Some(err.reason)),
                     Err(EvmError::Skip(reason)) => {
                         self.result.single_skip(reason);
+                        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
                         return self.result;
                     }
                     Err(err) => {
@@ -786,6 +788,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             stats.paths,
                             stats.solver_queries,
                         );
+                        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
                         return self.result;
                     }
                 };
@@ -815,6 +818,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
 
+        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
         self.result
     }
 
@@ -894,6 +898,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             fail_on_revert,
             ffi_enabled: self.config.ffi,
         });
+        let portfolio_diagnostics = symbolic.portfolio_diagnostics();
 
         match result {
             SymbolicInvariantRunResult::Safe(stats) => {
@@ -925,6 +930,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
 
+        self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
         self.result
     }
 

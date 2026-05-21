@@ -54,6 +54,7 @@ use revm::context::Transaction;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
+    io::Write as IoWrite,
     path::{Path, PathBuf},
     sync::{Arc, mpsc::channel},
     time::{Duration, Instant},
@@ -519,6 +520,7 @@ impl TestArgs {
                 let summary_report = TestSummaryReport::new(self.detailed, outcome.clone());
                 sh_println!("{}", &summary_report)?;
             }
+            print_symbolic_portfolio_summary(&outcome);
 
             (libraries, outcome)
         };
@@ -757,6 +759,10 @@ impl TestArgs {
             runner.decode_internal = InternalTraceMode::Full;
         }
 
+        // In multi-pass mode, suppress per-pass portfolio summaries and print the merged summary
+        // once after all network passes complete.
+        let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
+
         // Run tests in a non-streaming fashion and collect results for serialization.
         if !self.gas_report && !self.summary && shell::is_json() {
             let mut results = runner.test_collect(filter)?;
@@ -773,14 +779,22 @@ impl TestArgs {
             }
             sh_println!("{}", serde_json::to_string(&results)?)?;
             let kc = runner.known_contracts.clone();
-            return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
+            let outcome = TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed);
+            if !is_multi_pass {
+                print_symbolic_portfolio_summary(&outcome);
+            }
+            return Ok(outcome);
         }
 
         if self.junit {
             let results = runner.test_collect(filter)?;
             sh_println!("{}", junit_xml_report(&results, verbosity).to_string()?)?;
             let kc = runner.known_contracts.clone();
-            return Ok(TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed));
+            let outcome = TestOutcome::new(Some(kc), results, self.allow_failure, fuzz_seed);
+            if !is_multi_pass {
+                print_symbolic_portfolio_summary(&outcome);
+            }
+            return Ok(outcome);
         }
 
         let remote_chain =
@@ -788,11 +802,6 @@ impl TestArgs {
         let known_contracts = runner.known_contracts.clone();
 
         let libraries = runner.libraries.clone();
-
-        // Capture multi-pass state before moving `runner` into the spawn task.
-        // In multi-pass mode the per-pass summary is suppressed; the merged summary is
-        // printed once by the caller after all passes complete.
-        let is_multi_pass = !runner.tcfg.multi_network.all_override_networks.is_empty();
 
         // Run tests in a streaming fashion.
         let (tx, rx) = channel::<(String, SuiteResult)>();
@@ -1143,6 +1152,10 @@ impl TestArgs {
             },
         }
 
+        if !is_multi_pass {
+            print_symbolic_portfolio_summary(&outcome);
+        }
+
         // Persist test run failures to enable replaying.
         persist_run_failures(&config, &outcome);
 
@@ -1303,6 +1316,14 @@ fn list<FEN: FoundryEvmNetwork>(
         }
     }
     Ok(TestOutcome::empty(Some(runner.known_contracts), false))
+}
+
+/// Prints merged symbolic portfolio diagnostics for a completed test outcome.
+fn print_symbolic_portfolio_summary(outcome: &TestOutcome) {
+    if let Some(diagnostics) = outcome.symbolic_portfolio_diagnostics() {
+        let mut stderr = std::io::stderr().lock();
+        let _ = write!(stderr, "{diagnostics}");
+    }
 }
 
 /// Merges `other` into `base` by extending suite results.

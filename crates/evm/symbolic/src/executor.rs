@@ -13,6 +13,11 @@ impl SymbolicExecutor {
         Self { config, solver: Box::new(solver) }
     }
 
+    /// Returns staged solver portfolio diagnostics collected by this executor.
+    pub fn portfolio_diagnostics(&self) -> Option<PortfolioDiagnostics> {
+        self.solver.portfolio_diagnostics().cloned()
+    }
+
     /// Executes one function symbolically against an already-deployed test contract.
     ///
     /// The input executor supplies the deployed bytecode, storage backend, caller, and
