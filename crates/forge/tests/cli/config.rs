@@ -8,7 +8,7 @@ use foundry_compilers::{
 };
 use foundry_config::{
     CompilationRestrictions, Config, FsPermissions, FuzzConfig, FuzzCorpusConfig, InvariantConfig,
-    SettingsOverrides, SolcReq, SymbolicConfig, SymbolicStorageLayout,
+    SettingsOverrides, SolcReq, SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout,
     cache::{CachedChains, CachedEndpoints, StorageCachingConfig},
     filter::GlobMatcher,
     fs_permissions::{FsAccessPermission, PathPermission},
@@ -125,6 +125,7 @@ timeout = 30
 max_depth = 10000
 max_paths = 1024
 invariant_depth = 10
+exploration_order = "bfs"
 max_solver_queries = 10000
 default_dynamic_length = 2
 max_dynamic_length = 256
@@ -335,6 +336,7 @@ forgetest!(can_extract_config_values, |prj, cmd| {
             max_depth: 123,
             max_paths: 456,
             invariant_depth: 5,
+            exploration_order: SymbolicExplorationOrder::Dfs,
             max_solver_queries: 789,
             default_dynamic_length: 3,
             max_dynamic_length: 99,
@@ -1396,6 +1398,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "max_depth": 10000,
     "max_paths": 1024,
     "invariant_depth": 10,
+    "exploration_order": "bfs",
     "max_solver_queries": 10000,
     "default_dynamic_length": 2,
     "max_dynamic_length": 256,

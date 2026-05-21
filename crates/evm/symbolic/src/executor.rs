@@ -1,5 +1,16 @@
 use super::{abi::*, runtime::*, *};
 
+/// Pops the next pending path according to the configured exploration order.
+pub(crate) fn pop_worklist<T>(
+    worklist: &mut VecDeque<T>,
+    order: SymbolicExplorationOrder,
+) -> Option<T> {
+    match order {
+        SymbolicExplorationOrder::Bfs => worklist.pop_front(),
+        SymbolicExplorationOrder::Dfs => worklist.pop_back(),
+    }
+}
+
 impl SymbolicExecutor {
     /// Creates a symbolic executor from Foundry's symbolic configuration.
     ///
@@ -134,7 +145,7 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = worklist.pop_front() {
+        while let Some(mut state) = pop_worklist(&mut worklist, self.config.exploration_order) {
             if completed_paths >= path_limit {
                 return Ok(SymbolicRunResult::Incomplete {
                     kind: SymbolicStopReason::Stuck,
@@ -532,7 +543,7 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = worklist.pop_front() {
+        while let Some(mut state) = pop_worklist(&mut worklist, self.config.exploration_order) {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }
@@ -3028,7 +3039,7 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = worklist.pop_front() {
+        while let Some(mut state) = pop_worklist(&mut worklist, self.config.exploration_order) {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }

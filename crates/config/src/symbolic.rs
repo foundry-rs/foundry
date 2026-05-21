@@ -14,6 +14,17 @@ pub enum SymbolicStorageLayout {
     Generic,
 }
 
+/// Pending symbolic path exploration order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolicExplorationOrder {
+    /// Explore pending paths in first-in, first-out order.
+    #[default]
+    Bfs,
+    /// Explore pending paths in last-in, first-out order.
+    Dfs,
+}
+
 /// Configuration for symbolic testing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SymbolicConfig {
@@ -44,6 +55,8 @@ pub struct SymbolicConfig {
     pub max_paths: u32,
     /// Maximum number of calls in a bounded symbolic invariant sequence.
     pub invariant_depth: u32,
+    /// Order used to select the next pending symbolic path.
+    pub exploration_order: SymbolicExplorationOrder,
     /// Maximum number of solver queries.
     pub max_solver_queries: u32,
     /// Default bounded length for dynamic ABI inputs.
@@ -85,6 +98,7 @@ impl Default for SymbolicConfig {
             max_depth: 10_000,
             max_paths: 1_024,
             invariant_depth: 10,
+            exploration_order: SymbolicExplorationOrder::default(),
             max_solver_queries: 10_000,
             default_dynamic_length: 2,
             max_dynamic_length: 256,

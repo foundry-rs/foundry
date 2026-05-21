@@ -107,6 +107,11 @@ product implied by the selected outer lengths. Eager calldata expansion is cappe
 by the effective symbolic path width (`symbolic.width` / `symbolic.max_paths`).
 Extra positional `array_lengths` entries are rejected as config errors.
 
+Pending symbolic paths are explored in breadth-first order by default. Set
+`symbolic.exploration_order = "dfs"` to use depth-first ordering instead. This
+only changes which queued path is explored next; it does not change path limits,
+solver query limits, or solver portfolio scheduling.
+
 Supported ABI shapes include:
 
 - integers, booleans, addresses, fixed bytes, and dynamic bytes
@@ -157,6 +162,7 @@ solver = "z3"
 timeout = 30
 max_depth = 10000
 max_paths = 1024
+exploration_order = "bfs"
 max_solver_queries = 10000
 default_dynamic_length = 2
 max_dynamic_length = 256
@@ -178,6 +184,7 @@ The same values can be set inline with NatSpec:
 /// forge-config: default.symbolic.array_lengths = [2, 4]
 /// forge-config: default.symbolic.dynamic_lengths = { data = [3] }
 /// forge-config: default.symbolic.default_bytes_lengths = [8]
+/// forge-config: default.symbolic.exploration_order = "dfs"
 /// forge-config: default.symbolic.invariant_depth = 6
 function check_with_bounds(bytes memory data, uint256[] memory b) external {
     // ...

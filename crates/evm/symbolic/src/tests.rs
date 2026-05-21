@@ -29,6 +29,30 @@ fn precompile_address(index: u8) -> Address {
 }
 
 #[test]
+/// Regression coverage for `pop_worklist` respecting configured exploration order.
+fn pop_worklist_respects_exploration_order() {
+    let mut bfs_worklist = VecDeque::from([1, 2, 3]);
+    assert_eq!(
+        super::executor::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
+        Some(1)
+    );
+    assert_eq!(
+        super::executor::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
+        Some(2)
+    );
+
+    let mut dfs_worklist = VecDeque::from([1, 2, 3]);
+    assert_eq!(
+        super::executor::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
+        Some(3)
+    );
+    assert_eq!(
+        super::executor::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
+        Some(2)
+    );
+}
+
+#[test]
 /// Regression coverage for `binary_helpers_use_evm_operand_order`.
 fn binary_helpers_use_evm_operand_order() {
     let mut state = empty_state();

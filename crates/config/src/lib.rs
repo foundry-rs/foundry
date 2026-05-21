@@ -114,7 +114,7 @@ mod invariant;
 pub use invariant::InvariantConfig;
 
 mod symbolic;
-pub use symbolic::{SymbolicConfig, SymbolicStorageLayout};
+pub use symbolic::{SymbolicConfig, SymbolicExplorationOrder, SymbolicStorageLayout};
 
 mod inline;
 pub use inline::{InlineConfig, InlineConfigError, NatSpec};
@@ -7328,6 +7328,7 @@ mod tests {
                 loop = 4
                 depth = 100
                 width = 8
+                exploration_order = "dfs"
                 dynamic_lengths = { payload = [1], values = [2, 3] }
                 default_array_lengths = [0, 2]
                 default_bytes_lengths = [1, 3]

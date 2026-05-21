@@ -59,6 +59,7 @@ const SYMBOLIC_KEYS: &[&str] = &[
     "max_depth",
     "max_paths",
     "invariant_depth",
+    "exploration_order",
     "max_solver_queries",
     "default_dynamic_length",
     "max_dynamic_length",
