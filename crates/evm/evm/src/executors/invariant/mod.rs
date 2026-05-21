@@ -392,6 +392,8 @@ struct InvariantTestRun<FEN: FoundryEvmNetwork> {
     rejects: u32,
     // Whether new coverage was discovered during this run.
     new_coverage: bool,
+    // Unique coverage indices hit during this run, used to build the corpus minset.
+    corpus_edges: Vec<usize>,
     // For optimization mode: the best value found during this run (if any).
     optimization_value: Option<I256>,
     // For optimization mode: the length of the input prefix that produced the best value.
@@ -411,6 +413,7 @@ impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
             depth: 0,
             rejects: 0,
             new_coverage: false,
+            corpus_edges: Vec::new(),
             optimization_value: None,
             optimization_prefix_len: 0,
         }
@@ -604,7 +607,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     None
                 };
                 // Collect edge coverage and set the flag in the current run.
-                if corpus_manager.merge_edge_coverage(&mut call_result) {
+                if corpus_manager
+                    .merge_edge_coverage_into(&mut call_result, &mut current_run.corpus_edges)
+                {
                     current_run.new_coverage = true;
                 }
 
@@ -806,6 +811,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 &current_run.inputs,
                 &current_run.cmp_seq,
                 current_run.new_coverage,
+                std::mem::take(&mut current_run.corpus_edges),
                 optimization,
             );
 

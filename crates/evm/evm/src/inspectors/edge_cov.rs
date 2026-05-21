@@ -140,14 +140,14 @@ pub struct EdgeCovHit {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EdgeCoverage {
-    Hash(Vec<u8>),
+    Hash { hitcount: Vec<u8>, indices: Vec<usize> },
     CollisionFree(Vec<EdgeCovHit>),
 }
 
 impl EdgeCoverage {
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         match self {
-            Self::Hash(hitcount) => hitcount.iter().all(|&count| count == 0),
+            Self::Hash { indices, .. } => indices.is_empty(),
             Self::CollisionFree(hits) => hits.is_empty(),
         }
     }
@@ -162,6 +162,8 @@ impl EdgeCoverage {
 pub struct EdgeCovInspector {
     /// Map of hitcounts that can be diffed against to determine if new coverage was reached.
     hitcount: Vec<u8>,
+    /// Hash-map indices hit during this execution.
+    hit_indices: Vec<usize>,
     /// Configuration for edge ID generation.
     config: EdgeCovConfig,
     /// Per-execution dense edge hitcounts. Stable IDs are assigned by the corpus history owner.
@@ -200,12 +202,23 @@ impl EdgeCovInspector {
     /// [`EdgeCovKind::Hash`] preallocates a fixed-size bitmap;
     /// [`EdgeCovKind::CollisionFree`] grows its dense map on demand.
     pub fn with_config(config: EdgeCovConfig) -> Self {
+        Self::with_capacity_and_config(MAX_EDGE_COUNT, config)
+    }
+
+    /// Create a new `EdgeCovInspector` with the given hitcount buffer capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self::with_capacity_and_config(capacity, EdgeCovConfig::default())
+    }
+
+    /// Create a new `EdgeCovInspector` with the given capacity and configuration.
+    pub fn with_capacity_and_config(capacity: usize, config: EdgeCovConfig) -> Self {
         let hitcount = match config.kind {
-            EdgeCovKind::Hash => vec![0; MAX_EDGE_COUNT],
+            EdgeCovKind::Hash => vec![0; capacity.max(1)],
             EdgeCovKind::CollisionFree => Vec::new(),
         };
         Self {
             hitcount,
+            hit_indices: Vec::new(),
             config,
             dense_hitcount: HashMap::default(),
             hash_builder: DefaultHashBuilder::default(),
@@ -228,7 +241,11 @@ impl EdgeCovInspector {
     pub fn reset(&mut self) {
         match self.config.kind {
             EdgeCovKind::CollisionFree => self.dense_hitcount.clear(),
-            EdgeCovKind::Hash => self.hitcount.fill(0),
+            EdgeCovKind::Hash => {
+                for index in self.hit_indices.drain(..) {
+                    self.hitcount[index] = 0;
+                }
+            }
         }
         if let Some(cmp_log) = &mut self.cmp_log {
             cmp_log.clear();
@@ -244,10 +261,39 @@ impl EdgeCovInspector {
         }
     }
 
+    /// Get an immutable reference to the hitcount.
+    pub const fn get_hitcount(&self) -> &[u8] {
+        self.hitcount.as_slice()
+    }
+
+    pub fn get_dense_hits(&self) -> Vec<EdgeCovHit> {
+        self.dense_hits()
+    }
+
+    /// Consume the inspector and take ownership of the hitcount.
+    pub fn into_hitcount(self) -> EdgeCoverage {
+        self.into_coverage()
+    }
+
     /// Consume the inspector and take ownership of both the hitcount and comparison log.
-    pub fn into_parts(mut self) -> (EdgeCoverage, Vec<CmpOperands>) {
-        let cmp_log = self.cmp_log.take().unwrap_or_default();
-        (self.into(), cmp_log)
+    pub fn into_parts(self) -> (EdgeCoverage, Vec<CmpOperands>) {
+        let Self { hitcount, hit_indices, config, dense_hitcount, cmp_log, .. } = self;
+        let coverage = match config.kind {
+            EdgeCovKind::CollisionFree => {
+                let mut hits = dense_hitcount
+                    .into_iter()
+                    .map(|(edge, count)| EdgeCovHit { edge, count })
+                    .collect::<Vec<_>>();
+                hits.sort_by_key(|hit| hit.edge);
+                EdgeCoverage::CollisionFree(hits)
+            }
+            EdgeCovKind::Hash => {
+                let mut indices = hit_indices;
+                indices.sort_unstable();
+                EdgeCoverage::Hash { hitcount, indices }
+            }
+        };
+        (coverage, cmp_log.unwrap_or_default())
     }
 
     /// Number of unique collision-free edges discovered so far.
@@ -264,6 +310,9 @@ impl EdgeCovInspector {
             }
             EdgeCovKind::Hash => self.hash_edge_id(address, depth, pc, jump_dest),
         };
+        if self.hitcount[edge_id] == 0 {
+            self.hit_indices.push(edge_id);
+        }
         self.hitcount[edge_id] = self.hitcount[edge_id].wrapping_add(1).max(1);
     }
 
@@ -292,7 +341,6 @@ impl EdgeCovInspector {
         (hasher.finish() % self.hitcount.len() as u64) as usize
     }
 
-    #[cfg(test)]
     fn dense_hits(&self) -> Vec<EdgeCovHit> {
         let mut hits = self
             .dense_hitcount
@@ -301,6 +349,17 @@ impl EdgeCovInspector {
             .collect::<Vec<_>>();
         hits.sort_by_key(|hit| hit.edge);
         hits
+    }
+
+    fn into_coverage(self) -> EdgeCoverage {
+        match self.config.kind {
+            EdgeCovKind::CollisionFree => EdgeCoverage::CollisionFree(self.dense_hits()),
+            EdgeCovKind::Hash => {
+                let mut indices = self.hit_indices;
+                indices.sort_unstable();
+                EdgeCoverage::Hash { hitcount: self.hitcount, indices }
+            }
+        }
     }
 
     /// Store comparison operands for CmpLog-style guided fuzzing.
@@ -398,7 +457,7 @@ impl Default for EdgeCovInspector {
 
 impl From<EdgeCovInspector> for EdgeCoverage {
     fn from(inspector: EdgeCovInspector) -> Self {
-        let EdgeCovInspector { hitcount, config, dense_hitcount, .. } = inspector;
+        let EdgeCovInspector { hitcount, hit_indices, config, dense_hitcount, .. } = inspector;
         match config.kind {
             // Hits are deliberately not sorted here — this is the per-call drain
             // path and `merge_edge_coverage` doesn't care about order. Consumers
@@ -410,7 +469,7 @@ impl From<EdgeCovInspector> for EdgeCoverage {
                     .map(|(edge, count)| EdgeCovHit { edge, count })
                     .collect(),
             ),
-            EdgeCovKind::Hash => Self::Hash(hitcount),
+            EdgeCovKind::Hash => Self::Hash { hitcount, indices: hit_indices },
         }
     }
 }
