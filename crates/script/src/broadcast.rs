@@ -40,6 +40,7 @@ use foundry_wallets::{
 };
 use futures::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use itertools::Itertools;
+use revm_inspectors::tracing::types::CallKind;
 use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 use tempo_primitives::transaction::Call;
 
@@ -982,12 +983,22 @@ impl BundledState<TempoEvmNetwork> {
                 sequence.transactions.len()
             );
         }
-        let per_tx_addresses: Vec<Option<Address>> =
-            sequence.transactions.iter().map(|tx| tx.contract_address).collect();
+        // Only carry through contract_address for actual deployments; plain calls also
+        // store the callee in `contract_address`, which would otherwise be copied into
+        // the receipt and treated as a fresh deployment by downstream consumers
+        // (broadcast JSON, verifier).
+        let per_tx_addresses: Vec<Option<Address>> = sequence
+            .transactions
+            .iter()
+            .map(|tx| match tx.call_kind {
+                CallKind::Create | CallKind::Create2 => tx.contract_address,
+                _ => None,
+            })
+            .collect();
 
         for (idx, addr) in per_tx_addresses.iter().enumerate() {
             if let Some(addr) = addr {
-                sh_println!("  call[{idx}] contract address: {addr:#x}")?;
+                sh_println!("  call[{idx}] deployed at: {addr:#x}")?;
             }
         }
 
