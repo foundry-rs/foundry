@@ -36,10 +36,12 @@ use tempo_alloy::TempoNetwork;
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
-    setup()?;
-
+    // Pre-parse discovery flags run before `setup()` so they cannot be blocked
+    // by panic-handler / tracing init failures and avoid that init's cost.
     foundry_cli::opts::GlobalArgs::check_introspect::<CastArgs>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<CastArgs>();
+
+    setup()?;
 
     let args = CastArgs::parse();
     args.global.init()?;

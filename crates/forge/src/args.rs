@@ -11,10 +11,12 @@ use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 
 /// Run the `forge` command line interface.
 pub fn run() -> Result<()> {
-    setup()?;
-
+    // Pre-parse discovery flags run before `setup()` so they cannot be blocked
+    // by panic-handler / tracing init failures and avoid that init's cost.
     foundry_cli::opts::GlobalArgs::check_introspect::<Forge>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Forge>();
+
+    setup()?;
 
     let args = Forge::parse();
     args.global.init()?;

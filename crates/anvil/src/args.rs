@@ -5,10 +5,12 @@ use foundry_cli::utils;
 
 /// Run the `anvil` command line interface.
 pub fn run() -> Result<()> {
-    setup()?;
-
+    // Pre-parse discovery flags run before `setup()` so they cannot be blocked
+    // by panic-handler / tracing init failures and avoid that init's cost.
     foundry_cli::opts::GlobalArgs::check_introspect::<Anvil>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Anvil>();
+
+    setup()?;
 
     let mut args = Anvil::parse();
     args.global.init()?;
