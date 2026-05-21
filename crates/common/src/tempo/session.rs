@@ -8,6 +8,9 @@ use std::path::PathBuf;
 /// Relative path from Tempo home to the session registry file.
 pub const WALLET_SESSIONS_PATH: &str = "wallet/sessions.toml";
 
+const SESSIONS_HEADER: &str =
+    "# Tempo session registry — managed by Foundry / Tempo CLI.\n# Do not edit manually.";
+
 /// Status of a local session entry.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -64,6 +67,10 @@ pub struct SessionEntry {
     pub root_account: Address,
     pub chain_id: u64,
     pub key_address: Address,
+    /// Unix timestamp in seconds when the session expires.
+    ///
+    /// Tempo sessions are always bounded-lifetime. `0` is not a "never
+    /// expires" sentinel; it is already expired.
     pub expiry: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope: Vec<SessionCallScope>,
@@ -130,35 +137,33 @@ pub fn session_registry_path() -> Option<PathBuf> {
 /// Errors are logged as warnings.
 pub fn read_session_record() -> Option<SessionRecord> {
     let path = session_registry_path()?;
-    read_toml_file(&path, "tempo sessions")
+    match read_toml_file(&path, "tempo sessions") {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::warn!(?path, %e, "failed to load tempo sessions file");
+            None
+        }
+    }
 }
 
 /// Atomically upsert a [`SessionEntry`] into the session registry.
 pub fn upsert_session_entry(entry: SessionEntry) -> eyre::Result<()> {
     let path =
         session_registry_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
-    let mut record = read_session_record().unwrap_or_default();
+    let mut record = read_toml_file::<SessionRecord>(&path, "tempo sessions")?.unwrap_or_default();
     record.upsert(entry);
 
-    write_toml_file_atomic(
-        &path,
-        &record,
-        "# Tempo session registry — managed by Foundry / Tempo CLI.\n# Do not edit manually.",
-    )
+    write_toml_file_atomic(&path, &record, SESSIONS_HEADER)
 }
 
 /// Atomically remove a session from the registry.
 pub fn remove_session_entry(session_id: B256) -> eyre::Result<bool> {
     let path =
         session_registry_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
-    let mut record = read_session_record().unwrap_or_default();
+    let mut record = read_toml_file::<SessionRecord>(&path, "tempo sessions")?.unwrap_or_default();
     let removed = record.remove(session_id);
     if removed {
-        write_toml_file_atomic(
-            &path,
-            &record,
-            "# Tempo session registry — managed by Foundry / Tempo CLI.\n# Do not edit manually.",
-        )?;
+        write_toml_file_atomic(&path, &record, SESSIONS_HEADER)?;
     }
     Ok(removed)
 }
@@ -166,16 +171,8 @@ pub fn remove_session_entry(session_id: B256) -> eyre::Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tempo::{TEMPO_HOME_ENV, test_env_mutex};
-    use std::str::FromStr;
-
-    fn with_tempo_home<F: FnOnce()>(f: F) {
-        let tmp = tempfile::tempdir().unwrap();
-        let _g = test_env_mutex().blocking_lock();
-        unsafe { std::env::set_var(TEMPO_HOME_ENV, tmp.path()) };
-        f();
-        unsafe { std::env::remove_var(TEMPO_HOME_ENV) };
-    }
+    use crate::tempo::with_tempo_home;
+    use std::{fs, str::FromStr};
 
     fn sample_entry(session_id: B256, expiry: u64, status: SessionStatus) -> SessionEntry {
         SessionEntry {
@@ -266,5 +263,35 @@ mod tests {
         assert_eq!(decoded.limits.len(), 1);
         assert_eq!(decoded.status, SessionStatus::Revoking);
         assert!(decoded.is_expired_at(1234));
+    }
+
+    #[test]
+    fn upsert_fails_closed_when_session_file_is_corrupt() {
+        with_tempo_home(|| {
+            let path = session_registry_path().unwrap();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "sessions = [").unwrap();
+            let original = fs::read_to_string(&path).unwrap();
+
+            let session_id = B256::from([0x77; 32]);
+            let entry = sample_entry(session_id, 100, SessionStatus::Pending);
+
+            assert!(read_session_record().is_none());
+            assert!(upsert_session_entry(entry).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        });
+    }
+
+    #[test]
+    fn remove_fails_closed_when_session_file_is_corrupt() {
+        with_tempo_home(|| {
+            let path = session_registry_path().unwrap();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "sessions = [").unwrap();
+            let original = fs::read_to_string(&path).unwrap();
+
+            assert!(remove_session_entry(B256::from([0x88; 32])).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        });
     }
 }

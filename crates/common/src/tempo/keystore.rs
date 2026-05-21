@@ -98,16 +98,6 @@ pub struct KeysFile {
     pub keys: Vec<KeyEntry>,
 }
 
-/// Process-wide mutex used by tests that mutate `TEMPO_HOME`.
-///
-/// Returns a [`tokio::sync::Mutex`] so async tests can hold it across `.await`
-/// points without tripping `clippy::await_holding_lock`.
-#[cfg(test)]
-pub(crate) fn test_env_mutex() -> &'static tokio::sync::Mutex<()> {
-    static M: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-    M.get_or_init(|| tokio::sync::Mutex::new(()))
-}
-
 /// Resolve the Tempo home directory.
 ///
 /// Uses `TEMPO_HOME` env var if set, otherwise `~/.tempo`.
@@ -129,7 +119,13 @@ pub fn tempo_keys_path() -> Option<PathBuf> {
 /// Errors are logged as warnings.
 pub fn read_tempo_keys_file() -> Option<KeysFile> {
     let keys_path = tempo_keys_path()?;
-    read_toml_file(&keys_path, "tempo keys")
+    match read_toml_file(&keys_path, "tempo keys") {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::warn!(?keys_path, %e, "failed to load tempo keys file");
+            None
+        }
+    }
 }
 
 /// Decodes a hex-encoded, RLP-encoded key authorization.
@@ -151,7 +147,7 @@ pub fn decode_key_authorization<T: Decodable>(hex_str: &str) -> eyre::Result<T> 
 /// temp file + rename so a crash mid-write cannot corrupt the file.
 pub(crate) fn upsert_key_entry(entry: KeyEntry) -> eyre::Result<()> {
     let path = tempo_keys_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
-    let mut file = read_tempo_keys_file().unwrap_or_default();
+    let mut file = read_toml_file::<KeysFile>(&path, "tempo keys")?.unwrap_or_default();
     file.keys
         .retain(|k| !(k.wallet_address == entry.wallet_address && k.chain_id == entry.chain_id));
     file.keys.push(entry);
@@ -166,16 +162,8 @@ pub(crate) fn upsert_key_entry(entry: KeyEntry) -> eyre::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::str::FromStr;
-
-    fn with_tempo_home<F: FnOnce()>(f: F) {
-        let tmp = tempfile::tempdir().unwrap();
-        // SAFETY: process-global env access is serialized via the shared mutex.
-        let _g = test_env_mutex().blocking_lock();
-        unsafe { std::env::set_var(TEMPO_HOME_ENV, tmp.path()) };
-        f();
-        unsafe { std::env::remove_var(TEMPO_HOME_ENV) };
-    }
+    use crate::tempo::with_tempo_home;
+    use std::{fs, str::FromStr};
 
     #[test]
     fn upsert_replaces_matching_entry_atomically() {
@@ -238,6 +226,34 @@ mod tests {
             let file = read_tempo_keys_file().unwrap();
             assert_eq!(file.keys.len(), 1, "old entry must be replaced, not duplicated");
             assert_eq!(file.keys[0].key_address, Some(new_key));
+        });
+    }
+
+    #[test]
+    fn upsert_fails_closed_when_keys_file_is_corrupt() {
+        with_tempo_home(|| {
+            let path = tempo_keys_path().unwrap();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "keys = [").unwrap();
+            let original = fs::read_to_string(&path).unwrap();
+
+            let wallet = Address::from_str("0x0000000000000000000000000000000000000001").unwrap();
+            let key = Address::from_str("0x0000000000000000000000000000000000000abc").unwrap();
+            let entry = KeyEntry {
+                wallet_type: WalletType::Passkey,
+                wallet_address: wallet,
+                chain_id: 4217,
+                key_type: KeyType::Secp256k1,
+                key_address: Some(key),
+                key: Some("0xdead".to_string()),
+                key_authorization: Some("0xbeef".to_string()),
+                expiry: Some(100),
+                limits: vec![],
+            };
+
+            assert!(read_tempo_keys_file().is_none());
+            assert!(upsert_key_entry(entry).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
         });
     }
 }
