@@ -5,18 +5,47 @@ const MAX_SOLVER_POLL_BACKOFF: Duration = Duration::from_millis(50);
 const SECOND_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(100);
 const RESCUE_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(500);
 
-const OUTCOME_CANCELLED: &str = "cancelled";
-const OUTCOME_ERROR: &str = "error";
-const OUTCOME_NOT_STARTED: &str = "not-started";
-const OUTCOME_SAT_AFTER_WINNER: &str = "sat-after-winner";
-const OUTCOME_SAT_INVALID: &str = "sat-invalid";
-const OUTCOME_SAT_VALID: &str = "sat-valid";
-const OUTCOME_TIMEOUT_OR_UNKNOWN: &str = "timeout-or-unknown";
-const OUTCOME_UNKNOWN: &str = "unknown";
-const OUTCOME_UNKNOWN_AFTER_WINNER: &str = "unknown-after-winner";
-const OUTCOME_UNSAT: &str = "unsat";
-const OUTCOME_UNSAT_AFTER_WINNER: &str = "unsat-after-winner";
-const OUTCOME_UNEXPECTED: &str = "unexpected";
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum SolverOutcome {
+    Cancelled,
+    Error,
+    NotStarted,
+    SatAfterWinner,
+    SatInvalid,
+    SatValid,
+    TimeoutOrUnknown,
+    Unknown,
+    UnknownAfterWinner,
+    Unsat,
+    UnsatAfterWinner,
+    Unexpected,
+}
+
+impl SolverOutcome {
+    /// Returns the diagnostic label for this solver outcome.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cancelled => "cancelled",
+            Self::Error => "error",
+            Self::NotStarted => "not-started",
+            Self::SatAfterWinner => "sat-after-winner",
+            Self::SatInvalid => "sat-invalid",
+            Self::SatValid => "sat-valid",
+            Self::TimeoutOrUnknown => "timeout-or-unknown",
+            Self::Unknown => "unknown",
+            Self::UnknownAfterWinner => "unknown-after-winner",
+            Self::Unsat => "unsat",
+            Self::UnsatAfterWinner => "unsat-after-winner",
+            Self::Unexpected => "unexpected",
+        }
+    }
+}
+
+impl fmt::Display for SolverOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 /// Minimal solver backend interface used by the symbolic executor.
 ///
@@ -402,14 +431,14 @@ pub(crate) struct SolverRunSummary {
     scheduled_after: Option<Duration>,
     started_after: Option<Duration>,
     elapsed: Duration,
-    outcome: &'static str,
+    outcome: SolverOutcome,
     detail: Option<String>,
     winner: bool,
 }
 
 impl SolverRunSummary {
     /// Builds a portfolio run summary with no detail or winner marker.
-    pub(crate) const fn new(display: String, elapsed: Duration, outcome: &'static str) -> Self {
+    pub(crate) const fn new(display: String, elapsed: Duration, outcome: SolverOutcome) -> Self {
         Self {
             index: None,
             display,
@@ -461,7 +490,7 @@ pub struct PortfolioDiagnostics {
     pub(crate) solver_errors: usize,
     pub(crate) winner_counts: BTreeMap<String, usize>,
     pub(crate) launch_counts: BTreeMap<String, usize>,
-    pub(crate) outcome_counts: BTreeMap<&'static str, usize>,
+    pub(crate) outcome_counts: BTreeMap<SolverOutcome, usize>,
 }
 
 impl PortfolioDiagnostics {
@@ -488,13 +517,13 @@ impl PortfolioDiagnostics {
             }
 
             match summary.outcome {
-                OUTCOME_NOT_STARTED => self.not_started += 1,
-                OUTCOME_CANCELLED
-                | OUTCOME_SAT_AFTER_WINNER
-                | OUTCOME_UNSAT_AFTER_WINNER
-                | OUTCOME_UNKNOWN_AFTER_WINNER => self.cancelled_after_winner += 1,
-                OUTCOME_SAT_INVALID => self.invalid_models += 1,
-                OUTCOME_ERROR => self.solver_errors += 1,
+                SolverOutcome::NotStarted => self.not_started += 1,
+                SolverOutcome::Cancelled
+                | SolverOutcome::SatAfterWinner
+                | SolverOutcome::UnsatAfterWinner
+                | SolverOutcome::UnknownAfterWinner => self.cancelled_after_winner += 1,
+                SolverOutcome::SatInvalid => self.invalid_models += 1,
+                SolverOutcome::Error => self.solver_errors += 1,
                 _ => {}
             }
 
@@ -677,16 +706,20 @@ fn run_solver_commands(
                         && let Err(err) = validate_solver_model_output(&output, constraints)
                     {
                         summaries.push(
-                            SolverRunSummary::new(display.clone(), elapsed, OUTCOME_SAT_INVALID)
-                                .with_schedule(index, scheduled_after, Some(started_after))
-                                .with_detail(err.to_string()),
+                            SolverRunSummary::new(
+                                display.clone(),
+                                elapsed,
+                                SolverOutcome::SatInvalid,
+                            )
+                            .with_schedule(index, scheduled_after, Some(started_after))
+                            .with_detail(err.to_string()),
                         );
                         saw_invalid_sat_model = true;
                         errors.push(format!("{display}: {err}"));
                         continue;
                     }
                     summaries.push(
-                        SolverRunSummary::new(display, elapsed, OUTCOME_SAT_VALID)
+                        SolverRunSummary::new(display, elapsed, SolverOutcome::SatValid)
                             .with_schedule(index, scheduled_after, Some(started_after))
                             .winner(),
                     );
@@ -698,28 +731,22 @@ fn run_solver_commands(
                 }
                 SolverProcessOutcome::Output(output) if solver_output_is_unsat(&output) => {
                     summaries.push(
-                        SolverRunSummary::new(display, elapsed, OUTCOME_UNSAT).with_schedule(
-                            index,
-                            scheduled_after,
-                            Some(started_after),
-                        ),
+                        SolverRunSummary::new(display, elapsed, SolverOutcome::Unsat)
+                            .with_schedule(index, scheduled_after, Some(started_after)),
                     );
                     saw_unsat = true;
                 }
                 SolverProcessOutcome::Output(output) if solver_output_is_unknown(&output) => {
                     summaries.push(
-                        SolverRunSummary::new(display, elapsed, OUTCOME_UNKNOWN).with_schedule(
-                            index,
-                            scheduled_after,
-                            Some(started_after),
-                        ),
+                        SolverRunSummary::new(display, elapsed, SolverOutcome::Unknown)
+                            .with_schedule(index, scheduled_after, Some(started_after)),
                     );
                     saw_unknown = true;
                 }
                 SolverProcessOutcome::Output(output) => {
                     let first_line = first_solver_line(&output).to_string();
                     summaries.push(
-                        SolverRunSummary::new(display.clone(), elapsed, OUTCOME_UNEXPECTED)
+                        SolverRunSummary::new(display.clone(), elapsed, SolverOutcome::Unexpected)
                             .with_schedule(index, scheduled_after, Some(started_after))
                             .with_detail(first_line.clone()),
                     );
@@ -727,23 +754,20 @@ fn run_solver_commands(
                 }
                 SolverProcessOutcome::Unknown => {
                     summaries.push(
-                        SolverRunSummary::new(display, elapsed, OUTCOME_TIMEOUT_OR_UNKNOWN)
+                        SolverRunSummary::new(display, elapsed, SolverOutcome::TimeoutOrUnknown)
                             .with_schedule(index, scheduled_after, Some(started_after)),
                     );
                     saw_unknown = true;
                 }
                 SolverProcessOutcome::Cancelled => {
                     summaries.push(
-                        SolverRunSummary::new(display, elapsed, OUTCOME_CANCELLED).with_schedule(
-                            index,
-                            scheduled_after,
-                            Some(started_after),
-                        ),
+                        SolverRunSummary::new(display, elapsed, SolverOutcome::Cancelled)
+                            .with_schedule(index, scheduled_after, Some(started_after)),
                     );
                 }
                 SolverProcessOutcome::Error(err) => {
                     summaries.push(
-                        SolverRunSummary::new(display.clone(), elapsed, OUTCOME_ERROR)
+                        SolverRunSummary::new(display.clone(), elapsed, SolverOutcome::Error)
                             .with_schedule(index, scheduled_after, Some(started_after))
                             .with_detail(err.clone()),
                     );
@@ -755,7 +779,7 @@ fn run_solver_commands(
         if decisive.is_none()
             && saw_unsat
             && let Some(summary) =
-                summaries.iter_mut().find(|summary| summary.outcome == OUTCOME_UNSAT)
+                summaries.iter_mut().find(|summary| summary.outcome == SolverOutcome::Unsat)
         {
             summary.winner = true;
         }
@@ -815,7 +839,7 @@ fn next_portfolio_launch_wait(
 
 /// Summarizes a solver that was never launched because the portfolio already won.
 fn summary_for_unstarted_solver(solver: ScheduledSolver) -> SolverRunSummary {
-    SolverRunSummary::new(solver.command.display, Duration::ZERO, OUTCOME_NOT_STARTED)
+    SolverRunSummary::new(solver.command.display, Duration::ZERO, SolverOutcome::NotStarted)
         .with_schedule(solver.index, solver.launch_after, None)
 }
 
@@ -830,26 +854,26 @@ fn summary_for_cancelled_solver_result(
 ) -> SolverRunSummary {
     let summary = match outcome {
         SolverProcessOutcome::Output(output) if solver_output_is_sat(&output) => {
-            SolverRunSummary::new(display, elapsed, OUTCOME_SAT_AFTER_WINNER)
+            SolverRunSummary::new(display, elapsed, SolverOutcome::SatAfterWinner)
         }
         SolverProcessOutcome::Output(output) if solver_output_is_unsat(&output) => {
-            SolverRunSummary::new(display, elapsed, OUTCOME_UNSAT_AFTER_WINNER)
+            SolverRunSummary::new(display, elapsed, SolverOutcome::UnsatAfterWinner)
         }
         SolverProcessOutcome::Output(output) if solver_output_is_unknown(&output) => {
-            SolverRunSummary::new(display, elapsed, OUTCOME_UNKNOWN_AFTER_WINNER)
+            SolverRunSummary::new(display, elapsed, SolverOutcome::UnknownAfterWinner)
         }
         SolverProcessOutcome::Output(output) => {
-            SolverRunSummary::new(display, elapsed, OUTCOME_UNEXPECTED)
+            SolverRunSummary::new(display, elapsed, SolverOutcome::Unexpected)
                 .with_detail(first_solver_line(&output).to_string())
         }
         SolverProcessOutcome::Unknown => {
-            SolverRunSummary::new(display, elapsed, OUTCOME_TIMEOUT_OR_UNKNOWN)
+            SolverRunSummary::new(display, elapsed, SolverOutcome::TimeoutOrUnknown)
         }
         SolverProcessOutcome::Cancelled => {
-            SolverRunSummary::new(display, elapsed, OUTCOME_CANCELLED)
+            SolverRunSummary::new(display, elapsed, SolverOutcome::Cancelled)
         }
         SolverProcessOutcome::Error(err) => {
-            SolverRunSummary::new(display, elapsed, OUTCOME_ERROR).with_detail(err)
+            SolverRunSummary::new(display, elapsed, SolverOutcome::Error).with_detail(err)
         }
     };
     summary.with_schedule(index, scheduled_after, Some(started_after))

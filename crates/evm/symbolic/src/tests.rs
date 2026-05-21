@@ -2096,17 +2096,33 @@ fn portfolio_delayed_solver_can_rescue_stalled_leader() {
 /// Regression coverage for `PortfolioDiagnostics::record`.
 fn portfolio_diagnostics_counts_staged_outcomes() {
     let summaries = vec![
-        SolverRunSummary::new("primary".to_string(), Duration::from_millis(3), "sat-valid")
-            .with_schedule(0, Duration::ZERO, Some(Duration::ZERO))
-            .winner(),
-        SolverRunSummary::new("secondary".to_string(), Duration::ZERO, "not-started")
+        SolverRunSummary::new(
+            "primary".to_string(),
+            Duration::from_millis(3),
+            SolverOutcome::SatValid,
+        )
+        .with_schedule(0, Duration::ZERO, Some(Duration::ZERO))
+        .winner(),
+        SolverRunSummary::new("secondary".to_string(), Duration::ZERO, SolverOutcome::NotStarted)
             .with_schedule(1, Duration::from_millis(100), None),
-        SolverRunSummary::new("rescue".to_string(), Duration::from_millis(5), "cancelled")
-            .with_schedule(2, Duration::from_millis(500), Some(Duration::from_millis(500))),
-        SolverRunSummary::new("bad".to_string(), Duration::from_millis(1), "sat-invalid")
-            .with_schedule(3, Duration::from_millis(1000), Some(Duration::from_millis(1000))),
-        SolverRunSummary::new("missing".to_string(), Duration::from_millis(1), "error")
-            .with_schedule(4, Duration::from_millis(1500), Some(Duration::from_millis(1500))),
+        SolverRunSummary::new(
+            "rescue".to_string(),
+            Duration::from_millis(5),
+            SolverOutcome::Cancelled,
+        )
+        .with_schedule(2, Duration::from_millis(500), Some(Duration::from_millis(500))),
+        SolverRunSummary::new(
+            "bad".to_string(),
+            Duration::from_millis(1),
+            SolverOutcome::SatInvalid,
+        )
+        .with_schedule(3, Duration::from_millis(1000), Some(Duration::from_millis(1000))),
+        SolverRunSummary::new(
+            "missing".to_string(),
+            Duration::from_millis(1),
+            SolverOutcome::Error,
+        )
+        .with_schedule(4, Duration::from_millis(1500), Some(Duration::from_millis(1500))),
     ];
     let mut diagnostics = PortfolioDiagnostics::default();
 
@@ -2125,11 +2141,11 @@ fn portfolio_diagnostics_counts_staged_outcomes() {
     assert_eq!(diagnostics.launch_counts.get("primary"), Some(&1));
     assert_eq!(diagnostics.launch_counts.get("secondary"), None);
     assert_eq!(diagnostics.launch_counts.get("rescue"), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get("sat-valid"), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get("not-started"), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get("cancelled"), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get("sat-invalid"), Some(&1));
-    assert_eq!(diagnostics.outcome_counts.get("error"), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::SatValid), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::NotStarted), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::Cancelled), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::SatInvalid), Some(&1));
+    assert_eq!(diagnostics.outcome_counts.get(&SolverOutcome::Error), Some(&1));
 }
 
 #[test]
