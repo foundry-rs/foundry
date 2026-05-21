@@ -557,8 +557,18 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the active hardfork.
-    pub const fn hardfork(&self) -> FoundryHardfork {
+    pub fn hardfork(&self) -> FoundryHardfork {
+        if let Some(hardfork) =
+            self.fork.read().as_ref().and_then(|fork| fork.config.read().hardfork)
+        {
+            return hardfork;
+        }
         self.hardfork
+    }
+
+    /// Returns the active Tempo hardfork.
+    pub fn tempo_hardfork(&self) -> TempoHardfork {
+        TempoHardfork::from(self.hardfork())
     }
 
     /// Returns the precompiles for the current spec.
@@ -1258,7 +1268,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let hardfork = TempoHardfork::from(self.hardfork);
+        let hardfork = self.tempo_hardfork();
         let tempo_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
             TempoBlockEnv { inner: evm_env.block_env.clone(), timestamp_millis_part: 0 },
@@ -1332,7 +1342,7 @@ impl<N: Network> Backend<N> {
         }
 
         if self.is_tempo() {
-            let hardfork = TempoHardfork::from(self.hardfork);
+            let hardfork = self.tempo_hardfork();
             let tempo_env = EvmEnv::new(
                 evm_env
                     .cfg_env
@@ -2096,7 +2106,7 @@ impl<N: Network> Backend<N> {
             let chain_id = self.evm_env.read().cfg_env.chain_id;
             let timestamp = self.genesis.timestamp;
             let test_accounts: Vec<Address> = self.genesis.accounts.clone();
-            let hardfork = TempoHardfork::from(self.hardfork);
+            let hardfork = self.tempo_hardfork();
             let mut db = self.db.write().await;
             crate::eth::backend::tempo::initialize_tempo_precompiles(
                 &mut **db,
