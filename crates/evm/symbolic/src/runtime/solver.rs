@@ -5,6 +5,9 @@ const MAX_SOLVER_POLL_BACKOFF: Duration = Duration::from_millis(50);
 const SECOND_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(100);
 const RESCUE_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(500);
 pub(crate) const PORTFOLIO_SCHEDULER_HISTORY: usize = 8;
+const PORTFOLIO_SCHEDULER_MIN_RECENCY_WEIGHT: i64 = 1;
+const PORTFOLIO_SCHEDULER_SPEED_BONUS_CAP_MS: u128 = 100;
+const PORTFOLIO_SCHEDULER_MAX_SPEED_BONUS: i64 = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SolverOutcome {
@@ -334,7 +337,48 @@ impl SmtLibSubprocessSolver {
 
 #[derive(Clone, Debug, Default)]
 struct PortfolioScheduler {
-    history: Vec<VecDeque<i64>>,
+    history: Vec<VecDeque<PortfolioSchedulerSignal>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PortfolioSchedulerSignal {
+    Winner { speed_bonus: i64 },
+    InvalidModel,
+    Error,
+    Unknown,
+    Neutral,
+}
+
+impl PortfolioSchedulerSignal {
+    /// Returns the scheduler signal represented by one solver run summary.
+    fn from_summary(summary: &SolverRunSummary) -> Self {
+        let speed_bonus = PORTFOLIO_SCHEDULER_MAX_SPEED_BONUS.saturating_sub(
+            summary.elapsed.as_millis().min(PORTFOLIO_SCHEDULER_SPEED_BONUS_CAP_MS) as i64,
+        );
+        match (summary.winner, summary.outcome) {
+            (true, SolverOutcome::SatValid | SolverOutcome::Unsat) => Self::Winner { speed_bonus },
+            (_, SolverOutcome::SatInvalid) => Self::InvalidModel,
+            (_, SolverOutcome::Error | SolverOutcome::Unexpected) => Self::Error,
+            (_, SolverOutcome::Unknown | SolverOutcome::TimeoutOrUnknown) => Self::Unknown,
+            _ => Self::Neutral,
+        }
+    }
+
+    /// Returns whether this signal should affect later portfolio scheduling.
+    const fn is_neutral(self) -> bool {
+        matches!(self, Self::Neutral)
+    }
+
+    /// Returns the numeric score contribution for adaptive portfolio ordering.
+    const fn score(self) -> i64 {
+        match self {
+            Self::Winner { speed_bonus } => 1_000 + speed_bonus,
+            Self::InvalidModel => -1_000,
+            Self::Error => -750,
+            Self::Unknown => -250,
+            Self::Neutral => 0,
+        }
+    }
 }
 
 impl PortfolioScheduler {
@@ -360,11 +404,11 @@ impl PortfolioScheduler {
             let Some(run_index) = summary.index else { continue };
             let Some((configured_index, _)) = ordered_commands.get(run_index) else { continue };
             let Some(history) = self.history.get_mut(*configured_index) else { continue };
-            let score = portfolio_summary_score(summary);
-            if score == 0 {
+            let signal = PortfolioSchedulerSignal::from_summary(summary);
+            if signal.is_neutral() {
                 continue;
             }
-            history.push_back(score);
+            history.push_back(signal);
             if history.len() > PORTFOLIO_SCHEDULER_HISTORY {
                 history.pop_front();
             }
@@ -384,23 +428,14 @@ impl PortfolioScheduler {
             .flatten()
             .rev()
             .enumerate()
-            .map(|(age, score)| {
-                let recency = PORTFOLIO_SCHEDULER_HISTORY.saturating_sub(age).max(1) as i64;
-                recency * score
+            .map(|(age, signal)| {
+                let recency = PORTFOLIO_SCHEDULER_HISTORY
+                    .saturating_sub(age)
+                    .max(PORTFOLIO_SCHEDULER_MIN_RECENCY_WEIGHT as usize)
+                    as i64;
+                recency * signal.score()
             })
             .sum()
-    }
-}
-
-/// Scores one solver run summary for adaptive portfolio ordering.
-fn portfolio_summary_score(summary: &SolverRunSummary) -> i64 {
-    let speed_bonus = 100i64.saturating_sub(summary.elapsed.as_millis().min(100) as i64);
-    match (summary.winner, summary.outcome) {
-        (true, SolverOutcome::SatValid | SolverOutcome::Unsat) => 1_000 + speed_bonus,
-        (_, SolverOutcome::SatInvalid) => -1_000,
-        (_, SolverOutcome::Error | SolverOutcome::Unexpected) => -750,
-        (_, SolverOutcome::Unknown | SolverOutcome::TimeoutOrUnknown) => -250,
-        _ => 0,
     }
 }
 
