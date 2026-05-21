@@ -68,6 +68,29 @@ contract FeeSnapshotRevertTest is Test {
     }
 }
 
+/// `vm.fee` overrides must be scoped to the fork on which they were set and must
+/// not bleed into other forks when `vm.selectFork` / `vm.createSelectFork`
+/// switches the active fork.
+contract MultiForkFeeIsolationTest is Test {
+    // Use a sentinel basefee that will never occur on any real mainnet block.
+    uint64 constant SENTINEL_FEE = 12_345 gwei;
+    uint256 constant FORK_BLOCK = 14_608_400;
+
+    function test_fee_override_does_not_bleed_across_forks() public {
+        uint256 forkA = vm.createSelectFork("mainnet", FORK_BLOCK);
+        vm.fee(SENTINEL_FEE);
+        assertEq(block.basefee, SENTINEL_FEE, "override not active on forkA");
+
+        // Switching to a second fork must not carry forkA's override along.
+        vm.createSelectFork("mainnet2", FORK_BLOCK + 1);
+        assertTrue(block.basefee != SENTINEL_FEE, "forkA fee override bled into forkB");
+
+        // Switching back to forkA must restore its override.
+        vm.selectFork(forkA);
+        assertEq(block.basefee, SENTINEL_FEE, "forkA override lost after switching back");
+    }
+}
+
 /// Same regression as `FeeSnapshotRevertTest`, but exercised under `--isolate`
 /// where `vm.fee` only writes the override (the real `block.basefee` is left
 /// untouched), so the snapshot/revert path is the only thing that can roll

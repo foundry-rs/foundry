@@ -35,7 +35,7 @@ use foundry_common::{
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
+    backend::{DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
@@ -644,7 +644,10 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     ///
     /// Needed because in isolation mode the synthetic inner transaction
     /// zeroes the corresponding tx/block env fields for fee-accounting.
-    pub env_overrides: EnvOverrides,
+    ///
+    /// Keyed by active fork ID (`None` -> local) so that multi-fork tests do not bleed overrides
+    /// across forks when `vm.selectFork` / `vm.createSelectFork` switches the active fork.
+    pub env_overrides: HashMap<Option<LocalForkId>, EnvOverrides>,
 
     /// Per-state-snapshot copies of [`Self::env_overrides`], captured by
     /// `vm.snapshotState` and restored by `vm.revertToState[AndDelete]`.
@@ -655,7 +658,7 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// `revertToState`, and the BASEFEE/GASPRICE/BLOBHASH opcodes (which
     /// the override layer rewrites in `step_end`) would keep returning
     /// the post-snapshot value even though `EvmEnv` was rolled back.
-    pub env_overrides_snapshots: HashMap<U256, EnvOverrides>,
+    pub env_overrides_snapshots: HashMap<U256, HashMap<Option<LocalForkId>, EnvOverrides>>,
 
     /// Whether we are currently executing inside an isolation context, i.e.
     /// the synthetic inner transaction wrapped by
@@ -734,6 +737,17 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
     pub fn set_analysis(&mut self, analysis: CheatcodeAnalysis) {
         self.analysis = Some(analysis);
+    }
+
+    /// Returns the env overrides for the given fork (`None` = no-fork / local).
+    pub fn env_overrides_for(&self, fork_id: Option<U256>) -> Option<&EnvOverrides> {
+        self.env_overrides.get(&fork_id).filter(|o| o.is_any_set())
+    }
+
+    /// Returns a mutable reference to the env overrides for the given fork, inserting a
+    /// default entry if absent.
+    pub fn env_overrides_for_mut(&mut self, fork_id: Option<U256>) -> &mut EnvOverrides {
+        self.env_overrides.entry(fork_id).or_default()
     }
 
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
@@ -1375,21 +1389,23 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // `step_end` runs the PC has already advanced past it. Also peek the
         // BLOBHASH index now (still on top of stack before execution) so we
         // can look up the override later.
-        if self.env_overrides.is_any_set() {
+        let fork_id = ecx.db().active_fork_id();
+        if let Some(env_overrides) = self.env_overrides.get_mut(&fork_id).filter(|o| o.is_any_set())
+        {
             // Always clear stale pending state first so a leftover value from
             // a prior step (e.g. when `peek` failed, or when an override
             // wasn't actually used) cannot leak into the next opcode.
-            self.env_overrides.pending_opcode = None;
-            self.env_overrides.pending_blobhash_index = None;
+            env_overrides.pending_opcode = None;
+            env_overrides.pending_blobhash_index = None;
 
             let opcode = interpreter.bytecode.opcode();
             match opcode {
                 op::BASEFEE | op::GASPRICE => {
-                    self.env_overrides.pending_opcode = Some(opcode);
+                    env_overrides.pending_opcode = Some(opcode);
                 }
                 op::BLOBHASH => {
-                    self.env_overrides.pending_opcode = Some(opcode);
-                    self.env_overrides.pending_blobhash_index =
+                    env_overrides.pending_opcode = Some(opcode);
+                    env_overrides.pending_blobhash_index =
                         interpreter.stack.peek(0).ok().and_then(|index| index.try_into().ok());
                 }
                 _ => {}
@@ -1420,7 +1436,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // successfully and pushed its result; otherwise (stack underflow on
         // BLOBHASH, OOG before push, etc.) the stack is in an error state and
         // a blind `pop()+push()` would corrupt the failing frame.
-        if self.env_overrides.is_any_set() {
+        let fork_id = ecx.db().active_fork_id();
+        if self.env_overrides.get(&fork_id).is_some_and(|o| o.is_any_set()) {
             // Mirrors the pattern used by `meter_gas_record`: when `action` is
             // `Some` with an `instruction_result`, the opcode has set a
             // non-continue result (halt/revert/error) — i.e. it didn't push
@@ -1429,10 +1446,12 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
             let opcode_failed =
                 interpreter.bytecode.action.as_ref().and_then(|a| a.instruction_result()).is_some();
             if opcode_failed {
-                self.env_overrides.pending_opcode = None;
-                self.env_overrides.pending_blobhash_index = None;
+                if let Some(env_overrides) = self.env_overrides.get_mut(&fork_id) {
+                    env_overrides.pending_opcode = None;
+                    env_overrides.pending_blobhash_index = None;
+                }
             } else {
-                self.apply_env_overrides(interpreter);
+                self.apply_env_overrides(interpreter, fork_id);
             }
         }
     }
@@ -2283,24 +2302,27 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     /// here because the PC has already advanced; instead `step` stashes it in
     /// `env_overrides.pending_opcode` for us.
     #[cold]
-    fn apply_env_overrides(&mut self, interpreter: &mut Interpreter) {
-        let Some(opcode) = self.env_overrides.pending_opcode.take() else { return };
+    fn apply_env_overrides(&mut self, interpreter: &mut Interpreter, fork_id: Option<U256>) {
+        let Some(env_overrides) = self.env_overrides.get_mut(&fork_id) else { return };
+        let Some(opcode) = env_overrides.pending_opcode.take() else { return };
         match opcode {
             op::BASEFEE => {
-                if let Some(basefee) = self.env_overrides.basefee {
+                if let Some(basefee) = env_overrides.basefee {
                     // BASEFEE pushed one value; replace it.
                     Self::replace_top_of_stack(interpreter, U256::from(basefee));
                 }
             }
             op::GASPRICE => {
-                if let Some(gas_price) = self.env_overrides.gas_price {
+                if let Some(gas_price) = env_overrides.gas_price {
                     // GASPRICE pushed one value; replace it.
                     Self::replace_top_of_stack(interpreter, U256::from(gas_price));
                 }
             }
             op::BLOBHASH => {
-                if let Some(ref blob_hashes) = self.env_overrides.blob_hashes
-                    && let Some(index) = self.env_overrides.pending_blobhash_index.take()
+                let blob_hashes = env_overrides.blob_hashes.clone();
+                let blobhash_index = env_overrides.pending_blobhash_index.take();
+                if let Some(ref blob_hashes) = blob_hashes
+                    && let Some(index) = blobhash_index
                 {
                     // BLOBHASH popped the index and pushed the hash; replace
                     // the hash with our override (zero for out-of-range, per EIP-4844).
