@@ -10,18 +10,22 @@ use super::{
     registry::{CommandMeta, CommandRegistry},
 };
 
+impl CommandInfo {
+    /// Push this command's id and every descendant id into `out`.
+    fn collect_ids_into(&self, out: &mut Vec<String>) {
+        out.push(self.command_id.clone());
+        for sub in &self.subcommands {
+            sub.collect_ids_into(out);
+        }
+    }
+}
+
 /// Collect every `command_id` (recursively) emitted by an
 /// [`IntrospectDocument`].
 pub fn collect_command_ids(doc: &IntrospectDocument) -> Vec<String> {
-    fn walk(cmd: &CommandInfo, out: &mut Vec<String>) {
-        out.push(cmd.command_id.clone());
-        for sub in &cmd.subcommands {
-            walk(sub, out);
-        }
-    }
     let mut out = Vec::new();
     for cmd in &doc.commands {
-        walk(cmd, &mut out);
+        cmd.collect_ids_into(&mut out);
     }
     out
 }
