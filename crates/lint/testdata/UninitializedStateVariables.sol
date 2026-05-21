@@ -399,3 +399,23 @@ contract SuperWrite is BaseSetter {
     function write(uint256 v) external { super._set(slot, v); }
     function get() public view returns (uint256) { return slot.val; }
 }
+
+// ── super.f(x): child storage overload must NOT suppress warning ──────────────
+// The child defines `_init(Data storage)` but `super._init(slot)` resolves to
+// the parent's `_init(Data memory)` (no storage parameter), so `slot` is never
+// actually written through the super call and the warning must still fire.
+
+contract SuperNonStorageBase {
+    struct Data { uint256 val; }
+    function _init(Data memory) internal virtual {}
+}
+
+contract SuperNonStorageChild is SuperNonStorageBase {
+    Data public slot; //~WARN: state variable is read but never written
+
+    // Child overload with storage param – must NOT affect super dispatch lookup
+    function _init(Data storage target) internal { target.val = 1; }
+
+    function use_() external view returns (uint256) { return slot.val; }
+    function init() external { super._init(slot); }
+}

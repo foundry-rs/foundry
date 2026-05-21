@@ -310,6 +310,7 @@ fn collect_expr_writes_checked<'hir>(
 /// - `f(...)` bare `Ident` with function resolutions
 /// - `Contract.f(...)` `Member` whose base resolves to a `ContractId`
 /// - `super.f(...)` `Member` whose base is the `super` builtin; searches all linearized bases
+///   except the current contract (`bases[0]`), matching Solidity's MRO dispatch semantics
 fn collect_callee_funcs<'hir>(
     hir: &'hir Hir<'hir>,
     callee: &'hir Expr<'hir>,
@@ -333,8 +334,11 @@ fn collect_callee_funcs<'hir>(
                     .any(|r| matches!(r, Res::Builtin(b) if b.name() == sym::super_));
 
                 let contract_ids: Vec<ContractId> = if is_super {
-                    // `super.f(...)`, search across the whole linearized inheritance chain
-                    bases.to_vec()
+                    // `super.f(...)` dispatches to the *parent* MRO entries, never to
+                    // the current contract (bases[0]).  Including bases[0] would let a
+                    // child-only storage overload of `f` suppress a warning even when
+                    // `super.f` actually resolves to a non-storage parent overload.
+                    bases.get(1..).unwrap_or_default().to_vec()
                 } else {
                     resolutions
                         .iter()

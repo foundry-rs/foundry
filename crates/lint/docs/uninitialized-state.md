@@ -25,8 +25,10 @@ to avoid false positives from untracked storage writes.
 
 **Known limitations**:
 - *Storage aliases*: `Foo storage f = bar; f.x = 1;` is not detected as a write to `bar`.
-- *Storage-parameter calls*: calling an internal function that accepts a `storage` reference
-  and mutates it is not detected as a write to the original variable.
+- *Storage-parameter calls (partial)*: the lint detects when a state variable is passed as
+  a storage reference to a bare, qualified, or `super` internal call and treats it as a
+  write. What remains undetected are calls made through a local storage alias, or through
+  a member expression where the receiver is itself a state variable.
 - *Member calls*: any member call whose receiver is a state variable (e.g.
   `oracle.latestAnswer()`, `token.balanceOf(address)`) suppresses the warning for that
   variable. Without full call-graph resolution the lint conservatively treats the receiver
