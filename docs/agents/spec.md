@@ -231,20 +231,22 @@ record on startup carrying:
 This is **not** a terminal envelope. Subsequent session records may follow.
 The session-record schema is `foundry:anvil.session@v1`.
 
-### Root/default command limitation (anvil, chisel)
+### Root/default command surface (anvil, chisel)
 
-`--introspect` walks the subcommand tree only; the default "no subcommand"
-behavior is **not** yet exposed as a discoverable `command_id` because clap
-models it as the absence of a subcommand. This affects:
+Binaries whose root command is invokable without a subcommand (e.g. `anvil`
+starts a JSON-RPC server, `chisel` opens a REPL) expose that default
+invocation as a synthetic top-level `CommandInfo` with `path = [<binary>]`
+(e.g. `["anvil"]`, `["chisel"]`). Its `args[]` lists the root-only,
+non-global options accepted by the default invocation (`--port`,
+`--fork-url`, ...). Truly clap-global options remain reported once on
+`binary.global_args`; they are not duplicated onto the synthetic root
+command.
 
-- `anvil` — default mode starts the JSON-RPC server
-- `chisel` — default mode opens an interactive REPL
-
-Explicit root command_ids (`anvil.start`, `chisel.repl`) and the
-`session_start` record described above are tracked as follow-up work. Until
-then, agents should treat `anvil --introspect` and `chisel --introspect` as
-discovery surfaces for tooling subcommands only and rely on the existing
-top-level flags to invoke the default behavior.
+Until each binary pins a registry entry at the empty path, the synthetic
+root command's `command_id` is derived (e.g. `"anvil"`, `"chisel"`) and
+ships with `command_id_stable=false` and `capabilities_declared=false`.
+Pinning stable ids such as `anvil.start` / `chisel.repl` and emitting the
+`session_start` record described above are tracked as follow-up work.
 
 ---
 

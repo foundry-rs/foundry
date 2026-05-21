@@ -54,6 +54,12 @@ pub fn build_document(command: &Command, registry: &CommandRegistry) -> Introspe
     let binary = build_binary_info(command);
     let mut commands = Vec::new();
 
+    // Surface the root/default invocation when the binary accepts root-only
+    // (non-global) args without requiring a subcommand.
+    if let Some(root) = build_root_command_info(command, registry) {
+        commands.push(root);
+    }
+
     let root_path = vec![command.get_name().to_string()];
     for sub in command.get_subcommands() {
         commands.push(build_command_info(sub, &root_path, registry));
@@ -82,6 +88,61 @@ fn build_binary_info(command: &Command) -> BinaryInfo {
         description: command.get_about().map(|s| s.to_string()),
         global_args,
     }
+}
+
+/// Build a synthetic `CommandInfo` for the root/default invocation.
+///
+/// Returns `None` when the root requires a subcommand or has no root-only args
+/// (i.e. nothing to invoke without a subcommand). The returned command has an
+/// empty `subcommands` list; named subcommands remain top-level siblings.
+///
+/// Registry lookup uses the empty path (`&[]`), so a binary can pin a stable
+/// id and capabilities for its default invocation (e.g. `anvil.start`).
+fn build_root_command_info(command: &Command, registry: &CommandRegistry) -> Option<CommandInfo> {
+    if command.is_subcommand_required_set() {
+        return None;
+    }
+
+    let args: Vec<ArgInfo> = command
+        .get_arguments()
+        .filter(|a| !a.is_global_set() && !is_help_or_version(a))
+        .map(build_arg_info)
+        .collect();
+
+    if args.is_empty() {
+        return None;
+    }
+
+    let path = vec![command.get_name().to_string()];
+    let meta = registry.lookup(&[]);
+
+    let command_id = derive_command_id(&path, meta);
+    let command_id_stable = meta.and_then(|m| m.command_id).is_some();
+    let capabilities = meta.map_or_else(Capabilities::default, |m| m.capabilities.clone());
+    let capabilities_declared = meta.is_some_and(|m| m.capabilities_declared);
+    let exit_codes = meta.map_or_else(Vec::new, |m| m.exit_codes.to_vec());
+
+    let aliases = command.get_visible_aliases().map(str::to_string).collect::<Vec<_>>();
+    let summary = command.get_about().map(|s| s.to_string());
+    let description = command
+        .get_long_about()
+        .map(|s| s.to_string())
+        .filter(|d| Some(d.as_str()) != summary.as_deref());
+
+    Some(CommandInfo {
+        command_id,
+        command_id_stable,
+        path,
+        aliases,
+        summary,
+        description,
+        args,
+        subcommands: Vec::new(),
+        capabilities,
+        capabilities_declared,
+        exit_codes,
+        hidden: command.is_hide_set(),
+    })
 }
 
 fn build_command_info(
@@ -412,6 +473,87 @@ mod tests {
         // The `@vN` suffix on `schema_id` must match the numeric `schema_version`.
         let expected = format!("foundry:introspect@v{INTROSPECT_SCHEMA_VERSION}");
         assert_eq!(INTROSPECT_SCHEMA_ID, expected);
+    }
+
+    #[derive(Parser)]
+    #[command(name = "rooted", version = "0.1.0")]
+    struct Rooted {
+        /// Global flag, must land on `BinaryInfo.global_args`.
+        #[arg(global = true, long)]
+        quiet: bool,
+
+        /// Root-only arg, must land on the synthetic root `CommandInfo`.
+        #[arg(long)]
+        port: Option<u16>,
+
+        #[command(subcommand)]
+        cmd: Option<RootedSub>,
+    }
+
+    #[derive(clap::Subcommand)]
+    enum RootedSub {
+        /// Named subcommand, stays a top-level sibling of the root command.
+        Serve,
+    }
+
+    #[test]
+    fn root_non_global_args_are_emitted_as_synthetic_root_command() {
+        let cmd = <Rooted as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+
+        // Global stays on `BinaryInfo.global_args`.
+        assert!(doc.binary.global_args.iter().any(|a| a.name == "quiet"));
+
+        // Synthetic root command exists with `path = [binary_name]`.
+        let root = doc
+            .commands
+            .iter()
+            .find(|c| c.path == ["rooted"])
+            .expect("root command_info must be present");
+
+        // Root-only arg lives on the root command.
+        assert!(root.args.iter().any(|a| a.name == "port"));
+        // Global is not duplicated onto the root command.
+        assert!(!root.args.iter().any(|a| a.name == "quiet"));
+        // Named subcommands are siblings, not nested under the root command.
+        assert!(root.subcommands.is_empty());
+        assert!(doc.commands.iter().any(|c| c.path == ["rooted", "serve"]));
+    }
+
+    #[test]
+    fn root_command_can_be_overridden_by_empty_registry_path() {
+        static ENTRIES: &[super::super::registry::RegistryEntry] =
+            &[super::super::registry::RegistryEntry {
+                path: &[],
+                meta: CommandMeta {
+                    command_id: Some("rooted.start"),
+                    capabilities: Capabilities::NONE,
+                    capabilities_declared: true,
+                    exit_codes: &[],
+                },
+            }];
+        let registry = CommandRegistry::new(ENTRIES);
+
+        let cmd = <Rooted as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+
+        let root = doc.commands.iter().find(|c| c.path == ["rooted"]).unwrap();
+        assert_eq!(root.command_id, "rooted.start");
+        assert!(root.command_id_stable);
+        assert!(root.capabilities_declared);
+    }
+
+    #[test]
+    fn subcommand_required_root_does_not_emit_synthetic_root_command() {
+        let cmd = clap::Command::new("strict")
+            .subcommand_required(true)
+            .arg(clap::Arg::new("port").long("port"))
+            .subcommand(clap::Command::new("run"));
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+
+        // Only the named subcommand is emitted; no synthetic root entry.
+        assert!(!doc.commands.iter().any(|c| c.path == ["strict"]));
+        assert!(doc.commands.iter().any(|c| c.path == ["strict", "run"]));
     }
 
     #[test]

@@ -140,6 +140,24 @@ mod tests {
         assert_eq!(CommandRegistry::EMPTY.entries().count(), 0);
     }
 
+    /// The root/default invocation is keyed by the empty path; verify that
+    /// `lookup(&[])` finds an entry registered at `path: &[]`.
+    #[test]
+    fn lookup_supports_empty_path_for_root_default() {
+        static ENTRIES: &[RegistryEntry] = &[RegistryEntry {
+            path: &[],
+            meta: CommandMeta {
+                command_id: Some("anvil.start"),
+                capabilities: Capabilities::NONE,
+                capabilities_declared: false,
+                exit_codes: &[],
+            },
+        }];
+        let registry = CommandRegistry::new(ENTRIES);
+        let meta = registry.lookup(&[]).expect("root/default entry");
+        assert_eq!(meta.command_id, Some("anvil.start"));
+    }
+
     /// A registry with real strings (schema refs, exit-code names) must be
     /// authorable in a plain `static` without lazy allocation.
     #[test]
