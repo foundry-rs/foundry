@@ -60,6 +60,12 @@ pub(crate) trait SymbolicSolver {
     /// Returns aggregate staged-portfolio diagnostics collected by this backend.
     fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics>;
 
+    /// Captures verbose diagnostics for later rendering instead of writing them live.
+    fn capture_diagnostics(&mut self);
+
+    /// Takes any captured verbose diagnostics collected by this backend.
+    fn take_diagnostics(&mut self) -> Option<String>;
+
     /// Verifies that the configured solver can be invoked before exploration starts.
     ///
     /// Backends should keep this check lightweight and return a [`SymbolicError`] with
@@ -111,6 +117,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     pub(crate) queries: usize,
     pub(crate) dump_smt: bool,
     portfolio_diagnostics: PortfolioDiagnostics,
+    captured_diagnostics: Option<String>,
 }
 
 impl SmtLibSubprocessSolver {
@@ -128,6 +135,7 @@ impl SmtLibSubprocessSolver {
             queries: 0,
             dump_smt,
             portfolio_diagnostics: PortfolioDiagnostics::default(),
+            captured_diagnostics: None,
         }
     }
 
@@ -151,6 +159,16 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     /// Returns staged-portfolio diagnostics collected by this solver.
     fn portfolio_diagnostics(&self) -> Option<&PortfolioDiagnostics> {
         (!self.portfolio_diagnostics.is_empty()).then_some(&self.portfolio_diagnostics)
+    }
+
+    /// Enables deferred diagnostic rendering for verbose symbolic solver output.
+    fn capture_diagnostics(&mut self) {
+        self.captured_diagnostics.get_or_insert_with(String::new);
+    }
+
+    /// Returns and clears deferred diagnostic rendering output.
+    fn take_diagnostics(&mut self) -> Option<String> {
+        self.captured_diagnostics.take().filter(|diagnostics| !diagnostics.is_empty())
     }
 
     /// Validates the `check_available` solver helper.
@@ -219,6 +237,16 @@ impl SmtLibSubprocessSolver {
         self.commands.as_ref().map(Vec::as_slice).map_err(|err| SymbolicError::Solver(err.clone()))
     }
 
+    /// Emits one verbose solver diagnostic either live or into the deferred buffer.
+    fn emit_diagnostic(&mut self, diagnostic: fmt::Arguments<'_>) {
+        if let Some(captured_diagnostics) = &mut self.captured_diagnostics {
+            let _ = captured_diagnostics.write_fmt(diagnostic);
+        } else {
+            let mut stderr = std::io::stderr().lock();
+            let _ = stderr.write_fmt(diagnostic);
+        }
+    }
+
     /// Validates the `reserve_query` solver helper.
     pub(crate) const fn reserve_query(&self) -> Result<(), SymbolicError> {
         if self.queries >= self.max_queries {
@@ -238,7 +266,7 @@ impl SmtLibSubprocessSolver {
             constraint.collect_vars(&mut vars);
         }
 
-        let commands = self.commands()?;
+        let commands = self.commands()?.to_vec();
 
         let mut smt = String::new();
         smt.push_str("(set-logic QF_BV)\n");
@@ -258,19 +286,20 @@ impl SmtLibSubprocessSolver {
             smt.push_str("(get-model)\n");
         }
         if self.dump_smt {
-            let mut stderr = std::io::stderr().lock();
-            let _ = writeln!(stderr, "--- symbolic SMT query {} ---\n{smt}", self.queries);
+            let query = self.queries;
+            self.emit_diagnostic(format_args!("--- symbolic SMT query {query} ---\n{smt}\n"));
         }
 
-        let result = run_solver_commands(
-            commands,
-            &smt,
-            self.timeout,
-            model.then_some(constraints),
-            self.dump_smt,
-        );
+        let result =
+            run_solver_commands(&commands, &smt, self.timeout, model.then_some(constraints));
         if self.dump_smt {
             self.portfolio_diagnostics.record(&result.summaries);
+            if !result.summaries.is_empty() {
+                self.emit_diagnostic(format_args!(
+                    "{}",
+                    format_solver_portfolio_summaries(&result.summaries)
+                ));
+            }
         }
         result.output
     }
@@ -604,7 +633,6 @@ fn run_solver_commands(
     smt: &str,
     timeout: Option<u32>,
     model_constraints: Option<&[BoolExpr]>,
-    dump_diagnostics: bool,
 ) -> SolverCommandRun {
     if commands.is_empty() {
         return SolverCommandRun {
@@ -784,10 +812,6 @@ fn run_solver_commands(
             summary.winner = true;
         }
 
-        if dump_diagnostics {
-            dump_solver_portfolio_summaries(&summaries);
-        }
-
         let output = if let Some(output) = decisive {
             Ok(output)
         } else if saw_invalid_sat_model {
@@ -879,10 +903,10 @@ fn summary_for_cancelled_solver_result(
     summary.with_schedule(index, scheduled_after, Some(started_after))
 }
 
-/// Writes solver portfolio outcome diagnostics to stderr.
-fn dump_solver_portfolio_summaries(summaries: &[SolverRunSummary]) {
-    let mut stderr = std::io::stderr().lock();
-    let _ = writeln!(stderr, "--- symbolic solver portfolio outcomes ---");
+/// Formats solver portfolio outcome diagnostics.
+fn format_solver_portfolio_summaries(summaries: &[SolverRunSummary]) -> String {
+    let mut output = String::new();
+    let _ = writeln!(output, "--- symbolic solver portfolio outcomes ---");
     for summary in summaries {
         let marker = if summary.winner { " winner" } else { "" };
         let schedule = summary.index.zip(summary.scheduled_after).map(|(index, delay)| {
@@ -893,7 +917,7 @@ fn dump_solver_portfolio_summaries(summaries: &[SolverRunSummary]) {
             format!("#{} scheduled +{delay:.3?}{started} ", index + 1)
         });
         let _ = write!(
-            stderr,
+            output,
             "{}{}: {} in {:.3?}{}",
             schedule.as_deref().unwrap_or_default(),
             summary.display,
@@ -902,10 +926,11 @@ fn dump_solver_portfolio_summaries(summaries: &[SolverRunSummary]) {
             marker
         );
         if let Some(detail) = summary.detail.as_deref().filter(|detail| !detail.is_empty()) {
-            let _ = write!(stderr, " ({detail})");
+            let _ = write!(output, " ({detail})");
         }
-        let _ = writeln!(stderr);
+        let _ = writeln!(output);
     }
+    output
 }
 
 /// Runs one solver process to completion, timeout, or cooperative cancellation.

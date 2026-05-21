@@ -644,6 +644,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         &self.cr.mcr.revert_decoder
     }
 
+    /// Returns whether verbose symbolic diagnostics should be rendered after progress clears.
+    fn should_defer_symbolic_diagnostics(&self) -> bool {
+        self.cr.progress.is_some() && self.config.symbolic.dump_smt
+    }
+
     /// Configures this runner with the inline configuration for the contract.
     fn apply_function_inline_config(&mut self, func: &Function) -> Result<()> {
         if self.inline_config.contains_function(self.cr.name, &func.name) {
@@ -741,6 +746,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
+        if self.should_defer_symbolic_diagnostics() {
+            symbolic.capture_diagnostics();
+        }
         let result = symbolic.run(SymbolicRunInput {
             executor: self.executor.as_ref(),
             target: self.address,
@@ -750,6 +758,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             ffi_enabled: self.config.ffi,
         });
         let portfolio_diagnostics = symbolic.portfolio_diagnostics();
+        let symbolic_diagnostics = symbolic.take_diagnostics();
 
         match result {
             SymbolicRunResult::Safe(stats) => {
@@ -778,6 +787,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     Err(EvmError::Skip(reason)) => {
                         self.result.single_skip(reason);
                         self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
+                        self.result.symbolic_diagnostics = symbolic_diagnostics;
                         return self.result;
                     }
                     Err(err) => {
@@ -789,6 +799,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             stats.solver_queries,
                         );
                         self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
+                        self.result.symbolic_diagnostics = symbolic_diagnostics;
                         return self.result;
                     }
                 };
@@ -819,6 +830,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
+        self.result.symbolic_diagnostics = symbolic_diagnostics;
         self.result
     }
 
@@ -886,6 +898,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .unwrap_or(self.config.invariant.fail_on_revert);
 
         let mut symbolic = SymbolicExecutor::new(self.config.symbolic.clone());
+        if self.should_defer_symbolic_diagnostics() {
+            symbolic.capture_diagnostics();
+        }
         let result = symbolic.run_invariant(SymbolicInvariantRunInput {
             executor: self.executor.as_ref(),
             invariant_address: self.address,
@@ -899,6 +914,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             ffi_enabled: self.config.ffi,
         });
         let portfolio_diagnostics = symbolic.portfolio_diagnostics();
+        let symbolic_diagnostics = symbolic.take_diagnostics();
 
         match result {
             SymbolicInvariantRunResult::Safe(stats) => {
@@ -931,6 +947,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
+        self.result.symbolic_diagnostics = symbolic_diagnostics;
         self.result
     }
 
