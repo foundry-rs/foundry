@@ -129,6 +129,22 @@ LL │ contract LockedCtorExitWithRuntimeReceive {
 warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
    ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
    │
+LL │ contract LockedExitThenRevert {
+   │          ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedExitInRevertingHelper {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
 LL │ contract LockedSameArityOverload is OverloadByType {
    │          ━━━━━━━━━━━━━━━━━━━━━━━
    │
@@ -163,6 +179,14 @@ warning[locked-ether]: contract can receive ETH but has no mechanism to send it 
    │
 LL │ contract LockedSelfdestructToSelf {
    │          ━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ abstract contract PayableBaseCtor {
+   │                   ━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/locked-ether
 

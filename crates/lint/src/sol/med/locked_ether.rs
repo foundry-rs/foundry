@@ -55,12 +55,11 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
             let f = hir.function(fid);
             f.state_mutability == StateMutability::Payable && !function_always_reverts(hir, f)
         });
-        let has_ctor_inflow = contract.linearized_bases.iter().any(|&cid| {
-            hir.contract(cid).all_functions().any(|fid| {
-                let f = hir.function(fid);
-                matches!(f.kind, FunctionKind::Constructor)
-                    && f.state_mutability == StateMutability::Payable
-            })
+        // Only the leaf contract's own constructor receives deployment value; a
+        // non-payable derived ctor rejects ETH regardless of any payable base ctor.
+        let has_ctor_inflow = contract.ctor.is_some_and(|fid| {
+            let f = hir.function(fid);
+            f.state_mutability == StateMutability::Payable && !function_always_reverts(hir, f)
         });
         if !has_runtime_inflow && !has_ctor_inflow {
             return;
@@ -76,6 +75,11 @@ impl<'hir> LateLintPass<'hir> for LockedEther {
                 continue;
             }
             let func = hir.function(fid);
+            // Any ETH movement inside an always-reverting function rolls back, so it
+            // cannot exfiltrate funds. Skip its body and modifier args entirely.
+            if function_always_reverts(hir, func) {
+                continue;
+            }
             // Contract that defines the function being visited; used to resolve `super`.
             let call_site = func.contract;
 

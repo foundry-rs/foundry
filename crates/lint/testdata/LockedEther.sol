@@ -156,6 +156,30 @@ contract LockedCtorExitWithRuntimeReceive { //~WARN: contract can receive ETH bu
     receive() external payable {}
 }
 
+// A send followed by an unconditional revert in the same function body never commits.
+contract LockedExitThenRevert { //~WARN: contract can receive ETH but has no mechanism to send it out
+    receive() external payable {}
+
+    function nope(address payable to, uint256 amount) external {
+        to.transfer(amount);
+        revert();
+    }
+}
+
+// The exit lives in an always-reverting helper, so it can never run on-chain.
+contract LockedExitInRevertingHelper { //~WARN: contract can receive ETH but has no mechanism to send it out
+    receive() external payable {}
+
+    function entry(address payable to, uint256 amount) external {
+        _send(to, amount);
+    }
+
+    function _send(address payable to, uint256 amount) internal {
+        to.transfer(amount);
+        revert();
+    }
+}
+
 // SHOULD PASS:
 
 contract OkTransfer {
@@ -614,6 +638,18 @@ contract OkLibraryCall {
         SendLib.pay(to, amount);
     }
 }
+
+// A non-payable derived ctor rejects deployment value even if a base ctor is payable.
+abstract contract PayableBaseCtor { //~WARN: contract can receive ETH but has no mechanism to send it out
+    constructor() payable {}
+}
+
+contract OkNonPayableChildOfPayableBase is PayableBaseCtor {
+    constructor() PayableBaseCtor() {}
+}
+
+// No explicit ctor: synthesized non-payable rejects deployment value.
+contract OkImplicitCtorOfPayableBase is PayableBaseCtor {}
 
 contract NotPayable {
     function ping() external pure returns (bool) {
