@@ -90,11 +90,9 @@ fn build_command_info(
     let meta = registry.lookup(&lookup_path);
 
     let command_id = derive_command_id(&path, meta);
-    // `command_id` is stable only when the registry pins it explicitly.
     let command_id_stable = meta.and_then(|m| m.command_id).is_some();
     let capabilities = meta.map_or_else(Capabilities::default, |m| m.capabilities.clone());
-    // Capabilities are authoritative only when a registry entry declares them.
-    let capabilities_declared = meta.is_some();
+    let capabilities_declared = meta.is_some_and(|m| m.capabilities_declared);
     let exit_codes = meta.map_or_else(Vec::new, |m| m.exit_codes.to_vec());
 
     let aliases = command.get_visible_aliases().map(str::to_string).collect::<Vec<_>>();
@@ -290,6 +288,7 @@ mod tests {
                 meta: CommandMeta {
                     command_id: Some("demo.compile"),
                     capabilities: Capabilities::NONE,
+                    capabilities_declared: true,
                     exit_codes: &[],
                 },
             }];
@@ -303,6 +302,31 @@ mod tests {
         // Pinned in the registry → stable; declared capabilities → authoritative.
         assert!(build.command_id_stable);
         assert!(build.capabilities_declared);
+    }
+
+    #[test]
+    fn partial_registry_entry_does_not_promote_default_capabilities() {
+        // A registry entry that pins only `command_id` MUST NOT flip
+        // `capabilities_declared` to true; the wire field still reflects the
+        // placeholder `Capabilities::NONE` as non-authoritative.
+        static ENTRIES: &[super::super::registry::RegistryEntry] =
+            &[super::super::registry::RegistryEntry {
+                path: &["build"],
+                meta: CommandMeta {
+                    command_id: Some("demo.compile"),
+                    capabilities: Capabilities::NONE,
+                    capabilities_declared: false,
+                    exit_codes: &[],
+                },
+            }];
+        let registry = CommandRegistry::new(ENTRIES);
+
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+
+        let build = doc.commands.iter().find(|c| c.path.last().unwrap() == "build").unwrap();
+        assert!(build.command_id_stable);
+        assert!(!build.capabilities_declared);
     }
 
     #[test]

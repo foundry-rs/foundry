@@ -7,6 +7,13 @@ The contract is layered on top of the existing CLIs and does **not** change
 the behavior of legacy `--json` users. New agent semantics are opt-in via
 `--machine` and via the discovery flag `--introspect`.
 
+Per-command adoption is signaled in the introspect output itself. A command
+reports `command_id_stable=true` once its identifier is pinned in the
+binary's registry and `capabilities_declared=true` once its capabilities are
+authored. Commands without a registry entry report both as `false`, and
+consumers MUST treat the default `capabilities` payload as non-authoritative
+(side-effects, project requirement, and the rest are unknown, not safe).
+
 ## Forward compatibility within `@v1`
 
 Within a major schema version (e.g. `foundry:introspect@v1`), fields may be

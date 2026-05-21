@@ -54,13 +54,7 @@ impl GlobalArgs {
     /// Check if `--markdown-help` was passed and print CLI reference as Markdown, then exit.
     ///
     /// This must be called **before** parsing arguments, since commands with required
-    /// subcommands would fail parsing before the flag is checked. Binaries call
-    /// [`check_introspect`](Self::check_introspect) first, so `--introspect` wins when
-    /// both flags are present.
-    ///
-    /// Agents should prefer `--introspect`, which emits a stable machine-readable
-    /// document. A stderr note steers that migration; the rendered Markdown itself
-    /// is unchanged from previous releases.
+    /// subcommands would fail parsing before the flag is checked.
     pub fn check_markdown_help<C: clap::CommandFactory>() {
         if pre_parse_flag_present("--markdown-help") {
             // Pre-parse: `Shell` is not initialized yet, so `sh_*` is unavailable.
@@ -79,7 +73,8 @@ impl GlobalArgs {
     /// Check if `--introspect` was passed and print the introspection document as JSON, then exit.
     ///
     /// Must run **before** clap parsing so required subcommands or args don't block discovery.
-    /// Takes precedence over `--markdown-help` when both are present.
+    /// Uses `CommandRegistry::EMPTY`; for per-command metadata, call
+    /// [`check_introspect_with`](Self::check_introspect_with) with a populated registry.
     pub fn check_introspect<C: clap::CommandFactory>() {
         Self::check_introspect_with(C::command(), &crate::introspect::CommandRegistry::EMPTY)
     }
@@ -171,14 +166,49 @@ impl GlobalArgs {
     }
 }
 
-/// Returns whether `flag` is present in the process arguments before any `--`
-/// separator.
+/// Returns whether `flag` is present among the binary's leading top-level options.
 ///
-/// Uses `args_os` so non-UTF-8 positional values don't panic, and stops at
-/// `--` so a literal positional like `cast call ... -- --introspect` cannot
-/// accidentally trigger a pre-parse flag handler.
+/// The scan ends at the first `--` separator, the first subcommand or
+/// positional token, or the first non-UTF-8 token (none of which can match
+/// the ASCII flags this helper supports). Values of known value-taking
+/// global options are skipped, so e.g. `forge --color always --introspect`
+/// and `forge -j 4 --introspect` still match.
 fn pre_parse_flag_present(flag: &str) -> bool {
-    std::env::args_os().skip(1).take_while(|a| a != "--").any(|a| a == flag)
+    pre_parse_flag_present_in(std::env::args_os().skip(1), flag)
+}
+
+/// Value-taking global options declared on [`GlobalArgs`]; their following
+/// argv token is the value, not a flag, and must not be considered by the
+/// pre-parse scan. Must stay in sync with the `#[arg(... long, short)]`
+/// declarations above.
+const VALUE_TAKING_GLOBAL_OPTIONS: &[&str] = &["--color", "-j", "--threads", "--jobs"];
+
+fn pre_parse_flag_present_in<I>(args: I, flag: &str) -> bool
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let mut iter = args.into_iter();
+    while let Some(a) = iter.next() {
+        if a == "--" {
+            return false;
+        }
+        let Some(s) = a.to_str() else {
+            // Non-UTF-8 token: cannot be `--introspect` / `--markdown-help`
+            // and most likely a positional value — stop scanning here.
+            return false;
+        };
+        if !s.starts_with('-') {
+            return false;
+        }
+        if s == flag {
+            return true;
+        }
+        // Skip the value of `--opt VALUE` form; `--opt=VALUE` is one token.
+        if !s.contains('=') && VALUE_TAKING_GLOBAL_OPTIONS.contains(&s) {
+            iter.next();
+        }
+    }
+    false
 }
 
 /// Initialize the global thread pool.
@@ -188,4 +218,40 @@ pub fn init_thread_pool(threads: usize) -> eyre::Result<()> {
         .num_threads(threads)
         .build_global()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    fn argv(slice: &[&str]) -> Vec<OsString> {
+        slice.iter().map(|s| OsString::from(*s)).collect()
+    }
+
+    #[test]
+    fn pre_parse_flag_present_matches_top_level_flags() {
+        for case in [
+            &["--introspect"][..],
+            &["--color", "always", "--introspect"],
+            &["-j", "4", "--introspect"],
+            &["--color=always", "--introspect"],
+            &["--quiet", "--introspect"],
+        ] {
+            assert!(pre_parse_flag_present_in(argv(case), "--introspect"), "case: {case:?}");
+        }
+    }
+
+    #[test]
+    fn pre_parse_flag_present_ignores_values_and_subcommands() {
+        for case in [
+            &[][..],
+            &["--", "--introspect"],
+            &["test", "--introspect"],
+            // `cast call ADDR "method(string)" --data --introspect`
+            &["call", "ADDR", "method(string)", "--data", "--introspect"],
+        ] {
+            assert!(!pre_parse_flag_present_in(argv(case), "--introspect"), "case: {case:?}");
+        }
+    }
 }

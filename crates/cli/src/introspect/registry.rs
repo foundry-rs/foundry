@@ -27,14 +27,21 @@ pub struct CommandMeta {
     pub command_id: Option<&'static str>,
     /// Capabilities reported for agent consumers.
     pub capabilities: Capabilities,
+    /// Set to `true` when `capabilities` is intentionally authored; partial
+    /// entries that pin only `command_id` or `exit_codes` must leave this `false`.
+    pub capabilities_declared: bool,
     /// Command-specific exit codes, in addition to the global table.
     pub exit_codes: &'static [ExitCodeInfo],
 }
 
 impl CommandMeta {
     /// Const-constructible default suitable for use in `static` registries.
-    pub const DEFAULT: Self =
-        Self { command_id: None, capabilities: Capabilities::NONE, exit_codes: &[] };
+    pub const DEFAULT: Self = Self {
+        command_id: None,
+        capabilities: Capabilities::NONE,
+        capabilities_declared: false,
+        exit_codes: &[],
+    };
 }
 
 impl Default for CommandMeta {
@@ -107,6 +114,7 @@ mod tests {
                     long_running: false,
                     stateful: false,
                 },
+                capabilities_declared: true,
                 exit_codes: &[],
             },
         }];
