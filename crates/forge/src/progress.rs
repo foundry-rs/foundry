@@ -102,7 +102,7 @@ impl TestsProgressState {
                 self.multi.insert_after(suite_progress, ProgressBar::new(max_queries as u64));
             symbolic_progress.set_style(
                 indicatif::ProgressStyle::with_template(
-                    "    ↪ {prefix:.bold.dim}: [{pos}/{len}] SMT queries {msg}",
+                    "    ↪ {prefix:.bold.dim}: SMT queries: {pos} {msg}",
                 )
                 .unwrap()
                 .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
