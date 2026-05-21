@@ -1,8 +1,17 @@
 //! Tests for AFL-`afl-showmap`-style corpus replay (`forge test --showmap-out`).
 
+// Locate a showmap file by suffix: the path-flattened id prefix is project-dependent.
+fn find_showmap_file(dir: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+    std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()))
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .find(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(suffix)))
+        .unwrap_or_else(|| panic!("no file ending with {suffix} in {}", dir.display()))
+}
+
 // Generate a corpus by running an invariant + fuzz test, then replay it via
 // `--showmap-out` and verify that showmap files are produced under the
-// expected `<approach>/<contract>__<test>.txt` layout with hex-prefixed IDs.
+// expected `<approach>/<suite>__<test>.txt` layout with hex-prefixed IDs.
 forgetest_init!(showmap_replay_emits_files, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.update_config(|config| {
@@ -55,12 +64,13 @@ contract ShowmapCounterTest is Test {
         ])
         .assert_success();
 
-    // Verify files were produced under <out>/<approach>/<contract>__<test>__<trial>.txt.
+    // Verify files were produced under <out>/<approach>/<sanitized-id>__<test>__<trial>.txt.
+    // The id prefix is the full `path/to/File.sol:Contract` flattened to one segment.
     let approach_dir = prj.root().join("showmap_out").join("replay");
-    let invariant_file = approach_dir.join("ShowmapCounterTest__invariant_counter_called__t1.txt");
-    let fuzz_file = approach_dir.join("ShowmapCounterTest__testFuzz_SetNumber__t1.txt");
-    assert!(invariant_file.exists(), "missing {}", invariant_file.display());
-    assert!(fuzz_file.exists(), "missing {}", fuzz_file.display());
+    let invariant_file =
+        find_showmap_file(&approach_dir, "ShowmapCounterTest__invariant_counter_called__t1.txt");
+    let fuzz_file =
+        find_showmap_file(&approach_dir, "ShowmapCounterTest__testFuzz_SetNumber__t1.txt");
 
     // Sanity-check format: every line is `evm_<hash16>_<pc>:<count>` with count > 0.
     for f in [&invariant_file, &fuzz_file] {
@@ -149,7 +159,7 @@ contract ShowmapCounterTest is Test {
             e.path()
                 .file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.starts_with("ShowmapCounterTest__invariant_counter_called__"))
+                .map(|n| n.contains("ShowmapCounterTest__invariant_counter_called__"))
                 .unwrap_or(false)
         })
         .collect();
@@ -202,8 +212,10 @@ contract ShowmapCounterTest is Test {
     }
 
     let approach_dir = prj.root().join("showmap_out").join("replay");
-    let t1 = approach_dir.join("ShowmapCounterTest__invariant_counter_called__t1.txt");
-    let t2 = approach_dir.join("ShowmapCounterTest__invariant_counter_called__t2.txt");
+    let t1 =
+        find_showmap_file(&approach_dir, "ShowmapCounterTest__invariant_counter_called__t1.txt");
+    let t2 =
+        find_showmap_file(&approach_dir, "ShowmapCounterTest__invariant_counter_called__t2.txt");
     assert!(t1.exists(), "missing trial 1 file {}", t1.display());
     assert!(t2.exists(), "missing trial 2 file {}", t2.display());
 });

@@ -67,7 +67,7 @@ pub struct ShowmapOpts {
     pub out_dir: PathBuf,
     /// Approach name; used as a subdirectory under `out_dir`.
     pub approach: String,
-    /// Per-test stem (e.g. `<contract>__<test>`); identifies which test produced the file.
+    /// Per-test stem (e.g. `<suite>__<test>`); identifies which test produced the file.
     pub program: String,
     /// Rerun identifier appended to the filename so multiple trials accumulate side-by-side.
     pub trial: String,

@@ -1567,12 +1567,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor.inspector_mut().collect_line_coverage(domain.includes_evm());
         executor.inspector_mut().collect_sancov_edges(domain.includes_sancov());
 
-        // Strip the source path prefix to keep the program stem a single-segment filename.
-        let contract = self.cr.name.split(':').next_back().unwrap_or(self.cr.name);
+        // Flatten the full `path/to/File.sol:Contract` identifier into one filename segment
+        // so contracts with the same name in different files don't overwrite each other.
+        let safe_id = self.cr.name.replace(['/', '\\', ':'], "_");
         let opts = ShowmapOpts {
             out_dir: showmap.out_dir.clone(),
             approach: showmap.approach.clone(),
-            program: format!("{contract}__{}", func.name),
+            program: format!("{safe_id}__{}", func.name),
             trial: showmap.trial.clone(),
             per_input: showmap.per_input,
             domain,

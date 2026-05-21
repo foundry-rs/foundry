@@ -33,7 +33,7 @@ every selected fuzz/invariant test:
 |------|-------------|
 | `--showmap-out <DIR>` | Output root. Required to enable showmap mode. |
 | `--showmap-approach <NAME>` | Subdirectory under `--showmap-out` (default: `replay`). |
-| `--showmap-trial <NAME>` | Trial id appended to each filename (default: `trial-<unix_seconds>`, unique per invocation so reruns don't overwrite). |
+| `--showmap-trial <NAME>` | Trial id appended to each filename (default: `trial-<unix_nanos>`, unique per invocation so reruns don't overwrite). |
 | `--showmap-domain <evm\|sancov\|both>` | Bitmap(s) to dump (default: `evm`). |
 | `--showmap-per-input` | Emit one file per corpus entry instead of one aggregated per test. |
 | `--showmap-corpus-dir <PATH>` | Override the corpus dir to replay. |
@@ -41,9 +41,12 @@ every selected fuzz/invariant test:
 ## Output format
 
 ```
-<showmap-out>/<approach>/<contract>__<test>__<trial>.txt              # aggregated
-<showmap-out>/<approach>/<contract>__<test>__<trial>__<uuid>-<ts>.txt # --showmap-per-input
+<showmap-out>/<approach>/<suite>__<test>__<trial>.txt              # aggregated
+<showmap-out>/<approach>/<suite>__<test>__<trial>__<uuid>-<ts>.txt # --showmap-per-input
 ```
+
+`<suite>` is the full `path/to/File.sol:Contract` identifier with `/`, `\`, and `:` replaced
+by `_`, so contracts with the same name in different files don't collide.
 
 Each line: `<id>:<count>` where `count` is the saturating-summed raw hitcount.
 Zero-hit edges are omitted. IDs are deterministic across `forge` processes:
