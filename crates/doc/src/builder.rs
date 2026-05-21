@@ -7,7 +7,7 @@ use eyre::Result;
 use foundry_compilers::{compilers::solc::SOLC_EXTENSIONS, utils::source_files_iter};
 use foundry_config::{DocConfig, filter::expand_globs};
 use rayon::prelude::*;
-use solar::sema::Compiler;
+use solar::{config::CompilerStage, sema::Compiler};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -113,10 +113,11 @@ impl DocBuilder {
         let root = self.root.clone();
 
         let all_pages = compiler.enter_mut(|compiler| -> eyre::Result<Vec<PathBuf>> {
-            if compiler.gcx().stage() < Some(solar::config::CompilerStage::Lowering)
+            if compiler.gcx().stage() < Some(CompilerStage::Lowering)
                 && compiler.lower_asts().is_err()
             {
-                warn!("forge doc: HIR lowering produced errors; documentation may be incomplete");
+                // Diagnostics are already emitted via the solar session.
+                eyre::bail!("forge doc: HIR lowering failed; see diagnostics above");
             }
 
             let gcx = compiler.gcx();
