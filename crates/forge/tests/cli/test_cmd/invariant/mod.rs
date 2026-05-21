@@ -2,6 +2,7 @@ use alloy_primitives::U256;
 use foundry_test_utils::{TestCommand, forgetest_init, snapbox::cmd::OutputAssert, str};
 
 mod common;
+mod handler;
 mod storage;
 mod target;
 
@@ -122,7 +123,7 @@ contract BalanceAssumeTest is Test {
 
     cmd.args(["test", "--mt", "invariant_balance"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: 2, calls: 1000, reverts: 0)
+[FAIL: `vm.assume` rejected too many inputs (10 allowed)] invariant_balance() (runs: [..], calls: [..], reverts: 0)
 ...
 "#]]);
 });
@@ -425,7 +426,7 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 		sender=0x0000000000000000000000000000000000001490 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x8ef7F804bAd9183981A366EA618d9D47D3124649 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=increment() args=[]
 		sender=0x00000000000000000000000000000000000016C5 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=setNumber(uint256) args=[284406551521730736391345481857560031052359183671404042152984097777 [2.844e65]]
- invariant_increment() (runs: 0, calls: 0, reverts: 0)
+ invariant_increment() (runs: 256, calls: 258, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -454,7 +455,7 @@ Encountered 1 failing test in test/InvariantSequenceLenTest.t.sol:InvariantSeque
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
 		vm.prank(0x00000000000000000000000000000000000016C5);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(284406551521730736391345481857560031052359183671404042152984097777);
- invariant_increment() (runs: 0, calls: 0, reverts: 0)
+ invariant_increment() (runs: 256, calls: 258, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -608,14 +609,14 @@ contract InvariantReplayFailReason is Test {
 
     cmd.args(["test", "--mt", "invariant_fail_reason"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: failed to set up invariant testing environment: assertion failed][..]
+[FAIL: assertion failed] invariant_fail_reason() (runs: 1, calls: 1, reverts: 0)
 ...
 "#]]);
 
     // Replay should preserve failure reason instead of generic replay message.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: failed to set up invariant testing environment: assertion failed][..]
+[FAIL: assertion failed] invariant_fail_reason() (runs: 1, calls: 1, reverts: 0)
 ...
 "#]]);
 });
@@ -710,14 +711,14 @@ contract InvariantReplayInvariantCustomError is Test {
         .assert_failure()
         .stdout_eq(str![[r#"
 ...
-[FAIL: failed to set up invariant testing environment: InvariantCustomError(222, "invariant custom")][..]
+[FAIL: InvariantCustomError(222, "invariant custom")] invariant_custom_error_reason_from_invariant() (runs: 1, calls: 1, reverts: 0)
 ...
 "#]]);
 
     // Replay should preserve invariant-level custom error string too.
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: failed to set up invariant testing environment: InvariantCustomError(222, "invariant custom")][..]
+[FAIL: InvariantCustomError(222, "invariant custom")] invariant_custom_error_reason_from_invariant() (runs: 1, calls: 1, reverts: 0)
 ...
 "#]]);
 });
@@ -1489,9 +1490,12 @@ Suite assert_all: 1/2 invariants broken
 "#]]);
 });
 
-// Under `assert_all` + `fail_on_revert = false`, a handler `assert(false)` must still
-// fail the campaign and be attributed to every live invariant.
-forgetest_init!(assert_all_assertion_failure_breaks_all_live_invariants, |prj, cmd| {
+// Under `assert_all` + `fail_on_revert = false`, a handler `assert(false)` is now routed to
+// the dedicated `Suite handlers:` section instead of being attributed to every live invariant
+// (handler-side assertions are decoupled from invariant predicates — see PR #14482). The live
+// invariants stay green; the campaign keeps running for its full budget. See also
+// `handler::assert_all_handler_assertion_routed_to_handler_section`.
+forgetest_init!(assert_all_handler_assertion_does_not_attribute_to_live_invariants, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
@@ -1535,15 +1539,12 @@ contract AssertAllAssertTest is Test {
     cmd.args(["test", "--mt", "invariant_a"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/AssertAllAssertTest.t.sol:AssertAllAssertTest
-[FAIL: panic: assertion failed (0x01)] invariant_a
-	[Sequence] (original: [..], shrunk: [..])
 ...
+Suite assert_all: 0/2 invariants broken
 
-[FAIL: panic: assertion failed (0x01)] invariant_b
+Suite handlers: 1 assertion bug(s) found
+[FAIL: panic: assertion failed (0x01)] src/AssertHandler.sol:AssertHandler::alwaysAssert
 	[Sequence] (original: [..], shrunk: [..])
-...
-
-Suite assert_all: 2/2 invariants broken
 ...
 "#]]);
 });

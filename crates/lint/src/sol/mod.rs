@@ -37,6 +37,7 @@ use thiserror::Error;
 #[macro_use]
 pub mod macros;
 
+pub mod analysis;
 mod calls;
 pub mod codesize;
 pub mod gas;
@@ -285,7 +286,7 @@ impl<'a> SolidityLinter<'a> {
             lints,
             source_file,
         );
-        let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, &gcx.hir);
+        let mut late_visitor = LateLintVisitor::new(&ctx, &mut passes, gcx, &gcx.hir);
 
         // Visit this specific source
         let _ = late_visitor.visit_nested_source(source_id);

@@ -10,11 +10,11 @@ use crate::{
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, U256, address, map::HashMap};
+use alloy_primitives::{Address, Bytes, Selector, U256, address, map::HashMap};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::{Config, FuzzCorpusConfig};
+use foundry_config::{Config, FuzzCorpusConfig, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     core::evm::FoundryEvmNetwork,
@@ -23,8 +23,8 @@ use foundry_evm::{
         CallResult, EvmError, Executor, ITest, RawCallResult,
         fuzz::FuzzedExecutor,
         invariant::{
-            CheckSequenceOptions, InvariantExecutor, InvariantFuzzError, check_sequence,
-            replay_error, replay_run,
+            CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
+            check_sequence, replay_error, replay_handler_failure_sequence, replay_run,
         },
     },
     fuzz::{
@@ -804,6 +804,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor
             .inspector_mut()
             .collect_edge_coverage(invariant_config.corpus.collect_evm_edge_coverage());
+        executor.inspector_mut().collect_evm_cmp_log(invariant_config.corpus.collect_evm_cmp_log());
         executor
             .inspector_mut()
             .collect_sancov_edges(invariant_config.corpus.collect_sancov_edges());
@@ -927,40 +928,25 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_config.runs,
         );
 
+        let replay_ctx = ReplayContext {
+            invariant_contract: &invariant_contract,
+            invariant_config,
+            revert_decoder: self.revert_decoder(),
+            show_solidity,
+        };
+
         // Try to replay recorded failure if any.
         if let Some(InvariantPersistedFailure { mut call_sequence, assertion_failure, .. }) =
             persisted_call_sequence(failure_file.as_path(), &current_settings)
         {
-            // Create calls from failed sequence and check if invariant still broken.
-            let txes = call_sequence
-                .iter_mut()
-                .map(|seq| {
-                    seq.show_solidity = show_solidity;
-                    BasicTxDetails {
-                        warp: seq.warp,
-                        roll: seq.roll,
-                        sender: seq.sender.unwrap_or_default(),
-                        call_details: CallDetails {
-                            target: seq.addr.unwrap_or_default(),
-                            calldata: seq.calldata.clone(),
-                        },
-                    }
-                })
-                .collect::<Vec<BasicTxDetails>>();
-            if let Ok((success, replayed_entirely, replay_reason)) = check_sequence(
+            let (txes, replay) = replay_persisted_call_sequence(
+                &replay_ctx,
                 self.clone_executor(),
-                &txes,
-                (0..min(txes.len(), invariant_config.depth as usize)).collect(),
-                invariant_contract.address,
-                invariant_contract.anchor().selector().to_vec().into(),
-                CheckSequenceOptions {
-                    accumulate_warp_roll: invariant_config.has_delay(),
-                    fail_on_revert: invariant_config.fail_on_revert,
-                    expect_assertion_failure: assertion_failure,
-                    call_after_invariant: invariant_contract.call_after_invariant,
-                    rd: Some(self.revert_decoder()),
-                },
-            ) && !success
+                &mut call_sequence,
+                assertion_failure,
+            );
+            if let Ok((success, replayed_entirely, replay_reason)) = replay
+                && !success
             {
                 let warn = format!(
                     "Replayed invariant failure from {:?} file. \nRun `forge clean` or remove file to ignore failure and to continue invariant test campaign.",
@@ -1021,12 +1007,22 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
 
+        // Replay persisted handler bugs; feed still-reproducing ones into the campaign,
+        // delete stale files in place.
+        let persisted_handler_failures = replay_persisted_handler_failures(
+            &failure_dir.join("handlers"),
+            &current_settings,
+            self.clone_executor(),
+            &replay_ctx,
+        );
+
         let invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
             self.build_fuzz_state(true),
             progress.as_ref(),
             &self.tcfg.early_exit,
+            persisted_handler_failures,
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -1038,7 +1034,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.result.merge_coverages(invariant_result.line_coverage);
 
         let mut counterexample = None;
-        let success = invariant_result.errors.is_empty();
+        // Success requires zero predicate breaks *and* zero handler-side assertion bugs.
+        let success =
+            invariant_result.errors.is_empty() && invariant_result.handler_errors.is_empty();
         let mut invariant_failures: Vec<InvariantFailure> = vec![];
         let mut any_failure_persisted = false;
 
@@ -1147,8 +1145,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         }
                     }
                     InvariantFuzzError::MaxAssumeRejects(_) => None,
+                    // Handler bugs live in `handler_errors`; defensive None here.
+                    InvariantFuzzError::HandlerAssertion(_) => None,
                 };
-                invariant_failures.push(InvariantFailure {
+                invariant_failures.push(InvariantFailure::Predicate {
                     name: invariant_contract.anchor().name.clone(),
                     reason: error.revert_reason().unwrap_or_default(),
                     counterexample: anchor_counterexample,
@@ -1250,7 +1250,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             }
                         }
                     };
-                    invariant_failures.push(InvariantFailure {
+                    invariant_failures.push(InvariantFailure::Predicate {
                         name: invariant.name.clone(),
                         reason: error.revert_reason().unwrap_or_default(),
                         counterexample: secondary_counterexample,
@@ -1268,12 +1268,85 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let assert_all_invariant_count = (invariant_config.assert_all
             && invariant_contract.invariant_fns.len() > 1)
             .then_some(invariant_contract.invariant_fns.len());
+
+        // Convert handler-side assertion bugs into render-ready entries. The name is a
+        // best-effort `Contract::function` from `identified_contracts`, falling back to
+        // `0xreverter::0xselector`. Map is keyed by `(reverter, selector)` site so multiple
+        // code paths through the same function collapse to one entry, rendered in the
+        // dedicated `Suite handlers:` section.
+        let identified_contracts_ro = identified_contracts;
+        let invariant_handler_failures = invariant_result
+            .handler_errors
+            .iter()
+            .sorted_by(|(ka, _), (kb, _)| {
+                // Stable order across runs: sort by `(reverter, selector)` site directly.
+                ka.cmp(kb)
+            })
+            .filter_map(|(site, err)| err.as_handler_assertion().map(|f| (site, f)))
+            .map(|(_site, failure)| {
+                let reverter = failure.reverter;
+                let selector = failure.selector;
+                // Resolve `Contract::function` from identified contracts when possible.
+                let resolved_name = identified_contracts_ro
+                    .get(&reverter)
+                    .and_then(|(contract_name, abi)| {
+                        abi.functions()
+                            .find(|f| f.selector() == selector)
+                            .map(|f| format!("{contract_name}::{}", f.name))
+                    })
+                    .unwrap_or_else(|| format!("{reverter}::{selector}"));
+
+                let counterexample_calls = failure
+                    .call_sequence
+                    .iter()
+                    .map(|tx| {
+                        BaseCounterExample::from_invariant_call(
+                            tx,
+                            identified_contracts_ro,
+                            None,
+                            invariant_config.show_solidity,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                // Persist for next-run replay (skip if nothing to record).
+                if !counterexample_calls.is_empty() {
+                    record_handler_failure(
+                        failure_dir.as_path(),
+                        reverter,
+                        selector,
+                        &counterexample_calls,
+                        &current_settings,
+                    );
+                }
+
+                let counterexample = if counterexample_calls.is_empty() {
+                    None
+                } else {
+                    // Preserve pre-shrink length for `(original: N, shrunk: M)` rendering.
+                    Some(CounterExample::Sequence(
+                        failure.original_sequence_len,
+                        counterexample_calls,
+                    ))
+                };
+
+                InvariantFailure::Handler {
+                    name: resolved_name,
+                    reverter,
+                    selector,
+                    reason: failure.revert_reason.clone(),
+                    counterexample,
+                }
+            })
+            .collect::<Vec<_>>();
+
         self.result.invariant_result(
             invariant_result.gas_report_traces,
             success,
             invariant_failures,
             invariant_failure_dir,
             assert_all_invariant_count,
+            invariant_handler_failures,
             counterexample,
             invariant_result.cases,
             invariant_result.reverts,
@@ -1323,6 +1396,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor
             .inspector_mut()
             .collect_edge_coverage(fuzz_config.corpus.collect_evm_edge_coverage());
+        executor.inspector_mut().collect_evm_cmp_log(fuzz_config.corpus.collect_evm_cmp_log());
         executor.inspector_mut().collect_sancov_edges(fuzz_config.corpus.collect_sancov_edges());
         executor
             .inspector_mut()
@@ -1483,6 +1557,17 @@ struct InvariantPersistedFailure {
     assertion_failure: bool,
 }
 
+/// Mirrors `check_sequence`'s return: `(success, replayed_entirely, optional_reason)`.
+type CheckSequenceResult = eyre::Result<(bool, bool, Option<String>)>;
+
+/// Borrowed context shared by primary-invariant and handler-side replay helpers.
+struct ReplayContext<'a> {
+    invariant_contract: &'a InvariantContract<'a>,
+    invariant_config: &'a InvariantConfig,
+    revert_decoder: &'a RevertDecoder,
+    show_solidity: bool,
+}
+
 /// Helper function to load failed call sequence from file.
 /// Ignores failure if generated with different invariant settings than the current ones.
 fn persisted_call_sequence(
@@ -1502,6 +1587,55 @@ fn persisted_call_sequence(
             Some(persisted_failure)
         },
     )
+}
+
+/// Converts a persisted counterexample to `BasicTxDetails`, setting `show_solidity` in place.
+fn base_counterexamples_to_txes(
+    ctx: &ReplayContext<'_>,
+    call_sequence: &mut [BaseCounterExample],
+) -> Vec<BasicTxDetails> {
+    call_sequence
+        .iter_mut()
+        .map(|seq| {
+            seq.show_solidity = ctx.show_solidity;
+            BasicTxDetails {
+                warp: seq.warp,
+                roll: seq.roll,
+                sender: seq.sender.unwrap_or_default(),
+                call_details: CallDetails {
+                    target: seq.addr.unwrap_or_default(),
+                    calldata: seq.calldata.clone(),
+                    value: seq.value,
+                },
+            }
+        })
+        .collect()
+}
+
+/// Converts a persisted `BaseCounterExample` sequence into `BasicTxDetails` (applying
+/// `ctx.show_solidity` in place) and replays it via `check_sequence`.
+fn replay_persisted_call_sequence<FEN: FoundryEvmNetwork>(
+    ctx: &ReplayContext<'_>,
+    executor: Executor<FEN>,
+    call_sequence: &mut [BaseCounterExample],
+    expect_assertion_failure: bool,
+) -> (Vec<BasicTxDetails>, CheckSequenceResult) {
+    let txes = base_counterexamples_to_txes(ctx, call_sequence);
+    let result = check_sequence(
+        executor,
+        &txes,
+        (0..min(txes.len(), ctx.invariant_config.depth as usize)).collect(),
+        ctx.invariant_contract.address,
+        ctx.invariant_contract.anchor().selector().to_vec().into(),
+        CheckSequenceOptions {
+            accumulate_warp_roll: ctx.invariant_config.has_delay(),
+            fail_on_revert: ctx.invariant_config.fail_on_revert,
+            expect_assertion_failure,
+            call_after_invariant: ctx.invariant_contract.call_after_invariant,
+            rd: Some(ctx.revert_decoder),
+        },
+    );
+    (txes, result)
 }
 
 /// Helper function to set test corpus dir and to compose persisted failure paths.
@@ -1543,4 +1677,111 @@ fn record_invariant_failure(
     ) {
         error!(%err, "Failed to record call sequence");
     }
+}
+
+/// Persists a handler-side assertion bug under `<failure_dir>/handlers/<site>.json`,
+/// where `<site>` is `keccak256(reverter || selector)`.
+fn record_handler_failure(
+    failure_dir: &Path,
+    reverter: Address,
+    selector: Selector,
+    call_sequence: &[BaseCounterExample],
+    settings: &InvariantSettings,
+) {
+    let handlers_dir = failure_dir.join("handlers");
+    if let Err(err) = foundry_common::fs::create_dir_all(&handlers_dir) {
+        error!(%err, "Failed to create handler failure dir");
+        return;
+    }
+    let mut buf = [0u8; 24];
+    buf[..20].copy_from_slice(reverter.as_slice());
+    buf[20..].copy_from_slice(selector.as_slice());
+    let site_hash = alloy_primitives::keccak256(buf);
+    let file = handlers_dir.join(format!("{site_hash:x}.json"));
+    record_invariant_failure(&handlers_dir, &file, call_sequence, settings, true);
+}
+
+/// Replays persisted handler-side assertion bugs. A file is kept only if the anchor still
+/// asserts at the same `(reverter, selector)` site; stale files (anchor no longer asserts,
+/// asserts at a different site, or earlier call asserts) are deleted in place.
+fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
+    handlers_dir: &Path,
+    current_settings: &InvariantSettings,
+    executor: Executor<FEN>,
+    ctx: &ReplayContext<'_>,
+) -> std::collections::HashMap<(Address, Selector), InvariantFuzzError> {
+    let mut replayed: std::collections::HashMap<(Address, Selector), InvariantFuzzError> =
+        std::collections::HashMap::new();
+    let entries = match std::fs::read_dir(handlers_dir) {
+        Ok(e) => e,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return replayed,
+        Err(err) => {
+            error!(%err, "Failed to read handler failure dir");
+            return replayed;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(persisted) = persisted_call_sequence(&path, current_settings) else {
+            continue;
+        };
+        let mut call_sequence = persisted.call_sequence;
+        if call_sequence.is_empty() {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        }
+        let txes = base_counterexamples_to_txes(ctx, &mut call_sequence);
+        // Expected site = (target, selector) of the persisted reproducer's last call.
+        let Some(last) = txes.last() else {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        };
+        let expected_target = last.call_details.target;
+        let expected_selector_bytes: [u8; 4] =
+            last.call_details.calldata.get(..4).and_then(|s| s.try_into().ok()).unwrap_or_default();
+        let expected_site = (expected_target, Selector::from(expected_selector_bytes));
+        let sequence: Vec<usize> =
+            (0..min(txes.len(), ctx.invariant_config.depth as usize)).collect();
+        let outcome = replay_handler_failure_sequence(
+            executor.clone(),
+            &txes,
+            sequence,
+            ctx.invariant_config.has_delay(),
+            Some(ctx.revert_decoder),
+        );
+        match outcome {
+            Ok(outcome) if outcome.anchor_asserted => {
+                let _ = sh_warn!(
+                    "Replayed handler-side assertion bug from {path:?}. \nRun `forge clean` or remove file to ignore."
+                );
+                let failure = HandlerAssertionFailure::from_replayed_sequence(
+                    txes,
+                    outcome.anchor_fingerprint,
+                    outcome.revert_reason.unwrap_or_default(),
+                );
+                // On collision keep the shorter reproducer. Inlined: `replayed` uses the legacy
+                // `(reverter, selector)` key, not the unified `FailureKey`.
+                let already_shorter = replayed
+                    .get(&expected_site)
+                    .and_then(InvariantFuzzError::as_handler_assertion)
+                    .is_some_and(|existing| {
+                        existing.call_sequence.len() <= failure.call_sequence.len()
+                    });
+                if !already_shorter {
+                    replayed.insert(expected_site, InvariantFuzzError::HandlerAssertion(failure));
+                }
+            }
+            // Stale: anchor doesn't assert or earlier call asserts.
+            Ok(_) => {
+                let _ = std::fs::remove_file(&path);
+            }
+            Err(err) => {
+                error!(%err, "Failed to replay handler-side assertion bug");
+            }
+        }
+    }
+    replayed
 }
