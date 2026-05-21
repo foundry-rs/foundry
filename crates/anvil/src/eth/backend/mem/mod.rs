@@ -3559,22 +3559,11 @@ where
         opts: GethDebugTracingOptions,
     ) -> Result<Vec<TraceResult>, BlockchainError> {
         if let Some(block) = self.blockchain.get_block_by_hash(&block_hash) {
-            let mut traces = Vec::new();
-            for tx in &block.body.transactions {
-                let tx_hash = tx.hash();
-                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
-                    Ok(trace) => {
-                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
-                    }
-                    Err(error) => {
-                        traces.push(TraceResult::Error {
-                            error: error.to_string(),
-                            tx_hash: Some(tx_hash),
-                        });
-                    }
-                }
+            if let Some(traces) = self.mined_geth_trace_block(&block, opts.clone()) {
+                return Ok(traces);
             }
-            return Ok(traces);
+
+            return Ok(self.debug_trace_mined_block_transactions(&block, opts).await);
         }
 
         if let Some(fork) = self.get_fork() {
@@ -3593,22 +3582,11 @@ where
         let number = self.convert_block_number(Some(block_number));
 
         if let Some(block) = self.get_block(BlockId::Number(BlockNumber::Number(number))) {
-            let mut traces = Vec::new();
-            for tx in &block.body.transactions {
-                let tx_hash = tx.hash();
-                match self.debug_trace_transaction(tx_hash, opts.clone()).await {
-                    Ok(trace) => {
-                        traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
-                    }
-                    Err(error) => {
-                        traces.push(TraceResult::Error {
-                            error: error.to_string(),
-                            tx_hash: Some(tx_hash),
-                        });
-                    }
-                }
+            if let Some(traces) = self.mined_geth_trace_block(&block, opts.clone()) {
+                return Ok(traces);
             }
-            return Ok(traces);
+
+            return Ok(self.debug_trace_mined_block_transactions(&block, opts).await);
         }
 
         if let Some(fork) = self.get_fork() {
@@ -3616,6 +3594,176 @@ where
         }
 
         Err(BlockchainError::BlockNotFound)
+    }
+
+    async fn debug_trace_mined_block_transactions(
+        &self,
+        block: &Block,
+        opts: GethDebugTracingOptions,
+    ) -> Vec<TraceResult> {
+        let mut traces = Vec::new();
+        for tx in &block.body.transactions {
+            let tx_hash = tx.hash();
+            match self.debug_trace_transaction(tx_hash, opts.clone()).await {
+                Ok(trace) => {
+                    traces.push(TraceResult::Success { result: trace, tx_hash: Some(tx_hash) });
+                }
+                Err(error) => {
+                    traces.push(TraceResult::Error {
+                        error: error.to_string(),
+                        tx_hash: Some(tx_hash),
+                    });
+                }
+            }
+        }
+        traces
+    }
+
+    fn mined_geth_trace_block(
+        &self,
+        block: &Block,
+        opts: GethDebugTracingOptions,
+    ) -> Option<Vec<TraceResult>> {
+        let tracer = match opts.tracer.clone()? {
+            GethDebugTracerType::BuiltInTracer(tracer) => tracer,
+            GethDebugTracerType::JsTracer(_) => return None,
+        };
+
+        if !matches!(
+            tracer,
+            GethDebugBuiltInTracerType::FourByteTracer
+                | GethDebugBuiltInTracerType::CallTracer
+                | GethDebugBuiltInTracerType::PreStateTracer
+        ) {
+            return None;
+        }
+
+        let mined_txs = {
+            let storage = self.blockchain.storage.read();
+            block
+                .body
+                .transactions
+                .iter()
+                .map(|tx| storage.transactions.get(&tx.hash()).cloned())
+                .collect::<Option<Vec<_>>>()?
+        };
+
+        let parent_hash = block.header.parent_hash;
+        let read_guard = self.states.upgradable_read();
+        if let Some(state) = read_guard.get_state(&parent_hash) {
+            self.replay_geth_trace_block(block, &mined_txs, state, tracer, opts)
+        } else {
+            let mut write_guard = RwLockUpgradableReadGuard::upgrade(read_guard);
+            let state = write_guard.get_on_disk_state(&parent_hash)?;
+            self.replay_geth_trace_block(block, &mined_txs, state, tracer, opts)
+        }
+    }
+
+    fn replay_geth_trace_block(
+        &self,
+        block: &Block,
+        mined_txs: &[MinedTransaction<N>],
+        parent_state: &StateDb,
+        tracer: GethDebugBuiltInTracerType,
+        opts: GethDebugTracingOptions,
+    ) -> Option<Vec<TraceResult>> {
+        let mut cache_db = CacheDB::new(Box::new(parent_state));
+        let mut evm_env = self.evm_env.read().clone();
+        evm_env.block_env = block_env_from_header(&block.header);
+
+        let mut traces = Vec::with_capacity(block.body.transactions.len());
+
+        match tracer {
+            GethDebugBuiltInTracerType::FourByteTracer => {
+                for tx in &block.body.transactions {
+                    let tx_hash = tx.hash();
+                    let pending_tx =
+                        PendingTransaction::from_maybe_impersonated(tx.clone()).ok()?;
+                    let mut inspector = FourByteInspector::default();
+                    let (result, _) = self
+                        .transact_envelope_with_inspector_ref(
+                            &cache_db,
+                            &evm_env,
+                            &mut inspector,
+                            pending_tx.transaction.as_ref(),
+                            *pending_tx.sender(),
+                        )
+                        .ok()?;
+
+                    traces.push(TraceResult::Success {
+                        result: FourByteFrame::from(inspector).into(),
+                        tx_hash: Some(tx_hash),
+                    });
+                    cache_db.commit(result.state);
+                }
+            }
+            GethDebugBuiltInTracerType::CallTracer => {
+                let call_config = opts.tracer_config.into_call_config().ok()?;
+                let trace_config = TracingInspectorConfig::from_geth_call_config(&call_config);
+
+                for (tx, mined_tx) in block.body.transactions.iter().zip(mined_txs) {
+                    let tx_hash = tx.hash();
+                    let pending_tx =
+                        PendingTransaction::from_maybe_impersonated(tx.clone()).ok()?;
+                    let mut inspector = TracingInspector::new(trace_config);
+                    let (result, _) = self
+                        .transact_envelope_with_inspector_ref(
+                            &cache_db,
+                            &evm_env,
+                            &mut inspector,
+                            pending_tx.transaction.as_ref(),
+                            *pending_tx.sender(),
+                        )
+                        .ok()?;
+
+                    traces.push(TraceResult::Success {
+                        result: inspector
+                            .geth_builder()
+                            .geth_call_traces(call_config, mined_tx.receipt.cumulative_gas_used())
+                            .into(),
+                        tx_hash: Some(tx_hash),
+                    });
+                    cache_db.commit(result.state);
+                }
+            }
+            GethDebugBuiltInTracerType::PreStateTracer => {
+                let pre_state_config = opts.tracer_config.into_pre_state_config().ok()?;
+                let trace_config =
+                    TracingInspectorConfig::from_geth_prestate_config(&pre_state_config);
+
+                for tx in &block.body.transactions {
+                    let tx_hash = tx.hash();
+                    let pending_tx =
+                        PendingTransaction::from_maybe_impersonated(tx.clone()).ok()?;
+                    let mut inspector = TracingInspector::new(trace_config);
+                    let (result, _) = self
+                        .transact_envelope_with_inspector_ref(
+                            &cache_db,
+                            &evm_env,
+                            &mut inspector,
+                            pending_tx.transaction.as_ref(),
+                            *pending_tx.sender(),
+                        )
+                        .ok()?;
+
+                    traces.push(TraceResult::Success {
+                        result: inspector
+                            .geth_builder()
+                            .geth_prestate_traces(&result, &pre_state_config, &cache_db)
+                            .ok()?
+                            .into(),
+                        tx_hash: Some(tx_hash),
+                    });
+                    cache_db.commit(result.state);
+                }
+            }
+            GethDebugBuiltInTracerType::NoopTracer
+            | GethDebugBuiltInTracerType::MuxTracer
+            | GethDebugBuiltInTracerType::Erc7562Tracer
+            | GethDebugBuiltInTracerType::FlatCallTracer => return None,
+        }
+
+        Some(traces)
     }
 
     fn geth_trace(
