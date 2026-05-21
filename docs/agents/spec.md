@@ -233,7 +233,7 @@ The session-record schema is `foundry:anvil.session@v1`.
 
 ### Root/default command surface (anvil, chisel)
 
-Binaries whose root command is invokable without a subcommand (e.g. `anvil`
+Binaries whose root command is invocable without a subcommand (e.g. `anvil`
 starts a JSON-RPC server, `chisel` opens a REPL) expose that default
 invocation as a synthetic top-level `CommandInfo` with `path = [<binary>]`
 (e.g. `["anvil"]`, `["chisel"]`). Its `args[]` lists the root-only,
