@@ -657,3 +657,56 @@ function tryRecover(bytes32 hash, uint8 v, bytes32 r, bytes32 s) internal pure r
 
     similar_asserts::assert_eq!(content, expected);
 });
+
+// Test that `**Inherits:**` links resolve to the actually-inherited contract even
+// when another contract with the same name lives in a directory closer to the
+// consumer. Without exact-id resolution, the proximity heuristic in
+// `resolve_page` would (wrongly) link to the same-directory namesake.
+forgetest_init!(inheritance_links_use_exact_base_id, |prj, cmd| {
+    // Two unrelated `Token` contracts in sibling directories.
+    prj.add_source(
+        "a/Token.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Token {}
+"#,
+    );
+    prj.add_source(
+        "b/Token.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Token {}
+"#,
+    );
+
+    // Consumer lives next to `a/Token.sol` but explicitly inherits from `b/Token`.
+    prj.add_source(
+        "a/Consumer.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import {Token} from "../b/Token.sol";
+
+contract Consumer is Token {}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/a/contract.Consumer.mdx");
+    let content = std::fs::read_to_string(&doc_path).unwrap();
+
+    assert!(
+        content.contains("**Inherits:** [Token](/src/b/contract.Token)"),
+        "inheritance link must resolve via exact base id to `b/Token`, found:\n{content}"
+    );
+    assert!(
+        !content.contains("[Token](/src/a/contract.Token)"),
+        "inheritance link must not fall back to the same-directory namesake `a/Token`, found:\n{content}"
+    );
+});

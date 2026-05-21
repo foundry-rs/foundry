@@ -10,7 +10,7 @@ use path_slash::PathBufExt;
 use solar::{
     ast::{CommentKind, ContractKind, DocComments, FunctionKind, NatSpecKind, ParameterList},
     interface::source_map::FileName,
-    sema::{Gcx, hir},
+    sema::{Gcx, hir::{ContractId, FunctionId, ItemId, SourceId}},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -20,15 +20,31 @@ use tracing::warn;
 
 // ── name-to-page map ──────────────────────────────────────────────────────────
 
-/// Maps a Solidity identifier (contract / struct / enum / error / event / UDVT)
-/// to all known output MDX page paths relative to `pages/`.
-///
-/// A `Vec` is used so that duplicate top-level names (e.g. same contract name in two
-/// different source files) can coexist. Resolution at lookup time picks the candidate
-/// whose directory is closest to the page being rendered, see [`resolve_page`].
-pub type NameToPage = HashMap<String, Vec<PathBuf>>;
+/// Maps Solidity identifiers and HIR ids to their output MDX page paths
+/// relative to `pages/`.
+#[derive(Debug, Default)]
+pub struct NameToPage {
+    by_name: HashMap<String, Vec<PathBuf>>,
+    by_contract: HashMap<ContractId, PathBuf>,
+}
 
-/// Build the `NameToPage` map from HIR by re-deriving each item's output path.
+impl NameToPage {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Candidate pages defined for a top-level identifier, if any.
+    pub fn get(&self, name: &str) -> Option<&Vec<PathBuf>> {
+        self.by_name.get(name)
+    }
+
+    /// Exact page for a contract id, if it lives in an allowed source.
+    pub fn get_contract(&self, id: ContractId) -> Option<&PathBuf> {
+        self.by_contract.get(&id)
+    }
+}
+
+/// Build the [`NameToPage`] index from HIR by re-deriving each item's output path.
 ///
 /// This mirrors the path computation in `render::source` so links can be resolved
 /// before rendering begins.
@@ -47,31 +63,31 @@ pub fn build_name_to_page(
     let mut item_ids: Vec<_> = gcx.hir.item_ids().collect();
     item_ids.sort_by_key(|id| {
         let (name, source) = match id {
-            hir::ItemId::Contract(id) => {
+            ItemId::Contract(id) => {
                 let c = gcx.hir.contract(*id);
                 (c.name.as_str().to_string(), c.source)
             }
-            hir::ItemId::Struct(id) => {
+            ItemId::Struct(id) => {
                 let s = gcx.hir.strukt(*id);
                 (s.name.as_str().to_string(), s.source)
             }
-            hir::ItemId::Enum(id) => {
+            ItemId::Enum(id) => {
                 let e = gcx.hir.enumm(*id);
                 (e.name.as_str().to_string(), e.source)
             }
-            hir::ItemId::Error(id) => {
+            ItemId::Error(id) => {
                 let e = gcx.hir.error(*id);
                 (e.name.as_str().to_string(), e.source)
             }
-            hir::ItemId::Event(id) => {
+            ItemId::Event(id) => {
                 let e = gcx.hir.event(*id);
                 (e.name.as_str().to_string(), e.source)
             }
-            hir::ItemId::Udvt(id) => {
+            ItemId::Udvt(id) => {
                 let u = gcx.hir.udvt(*id);
                 (u.name.as_str().to_string(), u.source)
             }
-            hir::ItemId::Function(_) | hir::ItemId::Variable(_) => {
+            ItemId::Function(_) | ItemId::Variable(_) => {
                 return (String::new(), String::new());
             }
         };
@@ -83,7 +99,7 @@ pub fn build_name_to_page(
 
     for item_id in item_ids {
         let (name, source, contract, prefix) = match item_id {
-            hir::ItemId::Contract(id) => {
+            ItemId::Contract(id) => {
                 let c = gcx.hir.contract(id);
                 let kind = match c.kind {
                     ContractKind::Contract => "contract",
@@ -93,32 +109,32 @@ pub fn build_name_to_page(
                 };
                 (c.name, c.source, None, kind)
             }
-            hir::ItemId::Struct(id) => {
+            ItemId::Struct(id) => {
                 let s = gcx.hir.strukt(id);
                 (s.name, s.source, s.contract, "struct")
             }
-            hir::ItemId::Enum(id) => {
+            ItemId::Enum(id) => {
                 let e = gcx.hir.enumm(id);
                 (e.name, e.source, e.contract, "enum")
             }
-            hir::ItemId::Error(id) => {
+            ItemId::Error(id) => {
                 let e = gcx.hir.error(id);
                 (e.name, e.source, e.contract, "error")
             }
-            hir::ItemId::Event(id) => {
+            ItemId::Event(id) => {
                 let e = gcx.hir.event(id);
                 (e.name, e.source, e.contract, "event")
             }
-            hir::ItemId::Udvt(id) => {
+            ItemId::Udvt(id) => {
                 let u = gcx.hir.udvt(id);
                 (u.name, u.source, u.contract, "type")
             }
-            hir::ItemId::Function(_) | hir::ItemId::Variable(_) => continue,
+            ItemId::Function(_) | ItemId::Variable(_) => continue,
         };
 
         // For non-contract items, skip those defined inside a contract (they appear on the
         // contract page, not their own page).
-        if contract.is_some() && !matches!(item_id, hir::ItemId::Contract(_)) {
+        if contract.is_some() && !matches!(item_id, ItemId::Contract(_)) {
             continue;
         }
 
@@ -129,21 +145,27 @@ pub fn build_name_to_page(
             let out_dir = rel.parent().unwrap_or(Path::new("")).to_owned();
             let page = out_dir.join(format!("{prefix}.{}.mdx", name.as_str()));
             let name_str = name.as_str().to_string();
-            let entry = map.entry(name_str.clone()).or_default();
+            let entry = map.by_name.entry(name_str.clone()).or_default();
             if !entry.is_empty() {
                 warn!(
                     "forge doc: duplicate top-level name `{name_str}`; \
                      cross-reference `{{{name_str}}}` will resolve by proximity to the referencing page"
                 );
             }
-            entry.push(page);
+            entry.push(page.clone());
+
+            // Record exact contract -> page so inheritance / id-keyed lookups
+            // don't go through the ambiguous name index.
+            if let ItemId::Contract(cid) = item_id {
+                map.by_contract.insert(cid, page);
+            }
         }
     }
 
     map
 }
 
-fn source_paths(gcx: Gcx<'_>, source_id: hir::SourceId, root: &Path) -> Option<(PathBuf, PathBuf)> {
+fn source_paths(gcx: Gcx<'_>, source_id: SourceId, root: &Path) -> Option<(PathBuf, PathBuf)> {
     let file = &gcx.hir.source(source_id).file;
     if let FileName::Real(p) = &file.name {
         let rel = p.strip_prefix(root).unwrap_or(p).to_owned();
@@ -180,7 +202,7 @@ fn resolve_page<'a>(candidates: &'a [PathBuf], current_page: &Path) -> &'a PathB
 /// Each base is either a bare name (when no page is known) or a markdown link.
 pub fn inheritance_links(
     gcx: Gcx<'_>,
-    contract_id: hir::ContractId,
+    contract_id: ContractId,
     name_to_page: &NameToPage,
     current_page: &Path,
 ) -> Option<String> {
@@ -195,7 +217,12 @@ pub fn inheritance_links(
         .map(|&base_id| {
             let base = gcx.hir.contract(base_id);
             let name = base.name.as_str();
-            if let Some(candidates) = name_to_page.get(name) {
+            // Prefer the exact base id; only fall back to the ambiguous name
+            // index when the base has no rendered page of its own.
+            if let Some(page) = name_to_page.get_contract(base_id) {
+                let link = page_link(page, current_page);
+                format!("[{name}]({link})")
+            } else if let Some(candidates) = name_to_page.get(name) {
                 let page = resolve_page(candidates, current_page);
                 let link = page_link(page, current_page);
                 format!("[{name}]({link})")
@@ -227,7 +254,7 @@ pub struct InheritedDoc {
 /// signature match is found, it falls back to the first name match.
 pub fn resolve_inheritdoc(
     gcx: Gcx<'_>,
-    contract_id: hir::ContractId,
+    contract_id: ContractId,
     fn_name: &str,
     base_name: &str,
     param_types: Option<&[String]>,
@@ -246,15 +273,15 @@ pub fn resolve_inheritdoc(
     // We prefer the first level that has both a name match AND non-empty documentation.
     let base_contract = gcx.hir.contract(base_id);
 
-    let search_contracts: Vec<hir::ContractId> = std::iter::once(base_id)
+    let search_contracts: Vec<ContractId> = std::iter::once(base_id)
         .chain(base_contract.linearized_bases.iter().copied().filter(|&id| id != base_id))
         .collect();
 
     for search_id in &search_contracts {
         let search_contract = gcx.hir.contract(*search_id);
-        let mut name_matches: Vec<hir::FunctionId> = Vec::new();
+        let mut name_matches: Vec<FunctionId> = Vec::new();
         for &item_id in search_contract.items {
-            if let hir::ItemId::Function(fid) = item_id {
+            if let ItemId::Function(fid) = item_id {
                 let f = gcx.hir.function(fid);
                 let matches = match f.kind {
                     FunctionKind::Constructor => fn_name == "constructor",
@@ -311,7 +338,7 @@ pub fn resolve_inheritdoc(
 /// Extract the parameter type strings (in source order) for a function.
 ///
 /// Returns `None` if the function's AST item cannot be located.
-fn function_param_types(gcx: Gcx<'_>, fid: hir::FunctionId) -> Option<Vec<String>> {
+fn function_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<String>> {
     let f = gcx.hir.function(fid);
     let ast_source = gcx.sources.get(f.source)?;
     let ast = ast_source.ast.as_ref()?;
@@ -349,7 +376,7 @@ pub fn parameter_type_strings(gcx: Gcx<'_>, params: &ParameterList<'_>) -> Vec<S
         .collect()
 }
 
-fn extract_inherited_doc(gcx: Gcx<'_>, fid: hir::FunctionId) -> Option<InheritedDoc> {
+fn extract_inherited_doc(gcx: Gcx<'_>, fid: FunctionId) -> Option<InheritedDoc> {
     // HIR functions store a span; we need the AST doc comments.
     // The AST source has the doc comments on the Item.
     // We find the source file for this function and look up the AST item by span.
