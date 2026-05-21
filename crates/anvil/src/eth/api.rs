@@ -357,7 +357,7 @@ impl<N: Network> EthApi<N> {
             )
             .into());
         }
-        self.backend.set_gas_price(gas.to());
+        self.backend.set_gas_price(gas.saturating_to());
         Ok(())
     }
 
@@ -372,7 +372,7 @@ impl<N: Network> EthApi<N> {
             )
             .into());
         }
-        self.backend.set_base_fee(basefee.to());
+        self.backend.set_base_fee(basefee.saturating_to());
         Ok(())
     }
 
@@ -503,7 +503,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `evm_setBlockGasLimit`
     pub fn evm_set_block_gas_limit(&self, gas_limit: U256) -> Result<bool> {
         node_info!("evm_setBlockGasLimit");
-        self.backend.set_gas_limit(gas_limit.to());
+        self.backend.set_gas_limit(gas_limit.saturating_to());
         Ok(true)
     }
 
@@ -1102,16 +1102,7 @@ impl<N: Network> EthApi<N> {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
 
-        let current = self.backend.best_number();
-        let slots_in_an_epoch = 32u64;
-
-        let number = match newest_block {
-            BlockNumber::Latest | BlockNumber::Pending => current,
-            BlockNumber::Earliest => 0,
-            BlockNumber::Number(n) => n,
-            BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
-            BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
-        };
+        let number = self.backend.convert_block_number(Some(newest_block));
 
         // check if the number predates the fork, if in fork mode
         if let Some(fork) = self.get_fork() {
@@ -1126,7 +1117,7 @@ impl<N: Network> EthApi<N> {
         }
 
         const MAX_BLOCK_COUNT: u64 = 1024u64;
-        let block_count = block_count.to::<u64>().min(MAX_BLOCK_COUNT);
+        let block_count = block_count.saturating_to::<u64>().min(MAX_BLOCK_COUNT);
 
         // highest and lowest block num in the requested range
         let highest = number;
@@ -2829,7 +2820,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `anvil_mine`
     pub async fn anvil_mine(&self, num_blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
         node_info!("anvil_mine");
-        let interval = interval.map(|i| i.to::<u64>());
+        let interval = interval.map(|i| i.saturating_to::<u64>());
         let blocks = num_blocks.unwrap_or(U256::from(1));
         if blocks.is_zero() {
             return Ok(());
@@ -2837,7 +2828,7 @@ impl EthApi<FoundryNetwork> {
 
         self.on_blocking_task(|this| async move {
             // mine all the blocks
-            for _ in 0..blocks.to::<u64>() {
+            for _ in 0..blocks.saturating_to::<u64>() {
                 // If we have an interval, jump forwards in time to the "next" timestamp
                 if let Some(interval) = interval {
                     this.backend.time().increase_time(interval);
@@ -3651,13 +3642,11 @@ fn tempo_parallel_nonce_markers(
 ) -> Option<(Vec<TxMarker>, Vec<TxMarker>)> {
     // Tempo txs with non-zero nonce_key use a 2D nonce system and should not
     // be sequenced by account nonce markers.
-    if let FoundryTxEnvelope::Tempo(aa_tx) = pending_transaction.transaction.as_ref()
-        && !aa_tx.tx().nonce_key.is_zero()
-    {
-        Some((vec![], vec![pending_transaction.hash().to_vec()]))
-    } else {
-        None
-    }
+    pending_transaction
+        .transaction
+        .as_ref()
+        .has_nonzero_tempo_nonce_key()
+        .then(|| (vec![], vec![pending_transaction.hash().to_vec()]))
 }
 
 fn convert_transact_out(out: &Option<Output>) -> Bytes {

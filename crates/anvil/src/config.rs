@@ -18,7 +18,7 @@ use alloy_eips::{eip1559::BaseFeeParams, eip7840::BlobParams};
 use alloy_evm::EvmEnv;
 use alloy_genesis::Genesis;
 use alloy_network::{AnyNetwork, BlockResponse, TransactionResponse};
-use alloy_primitives::{BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
+use alloy_primitives::{Address, BlockNumber, TxHash, U256, hex, map::HashMap, utils::Unit};
 use alloy_provider::Provider;
 use alloy_rpc_types::BlockNumberOrTag;
 use alloy_signer::Signer;
@@ -77,6 +77,8 @@ pub const NODE_PORT: u16 = 8545;
 pub const CHAIN_ID: u64 = 31337;
 /// The default gas limit for all transactions
 pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
+/// The default number of slots in an epoch used for safe/finalized block tags.
+pub const DEFAULT_SLOTS_IN_AN_EPOCH: u64 = 32;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
 
@@ -207,6 +209,8 @@ pub struct NodeConfig {
     /// The path where persisted states are cached (used with `max_persisted_states`).
     /// This does not affect the fork RPC cache location.
     pub cache_path: Option<PathBuf>,
+    /// Accounts to fund with specific balances on startup (address -> balance in wei).
+    pub funded_accounts: HashMap<Address, U256>,
 }
 
 impl NodeConfig {
@@ -507,12 +511,13 @@ impl Default for NodeConfig {
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
             disable_pool_balance_checks: false,
-            slots_in_an_epoch: 32,
+            slots_in_an_epoch: DEFAULT_SLOTS_IN_AN_EPOCH,
             memory_limit: None,
             precompile_factory: None,
             networks: Default::default(),
             silent: false,
             cache_path: None,
+            funded_accounts: HashMap::default(),
         }
     }
 }
@@ -635,7 +640,7 @@ impl NodeConfig {
     pub fn set_chain_id(&mut self, chain_id: Option<impl Into<u64>>) {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
-        self.networks.with_chain_id(chain_id);
+        self.networks = self.networks.with_chain_id(chain_id);
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(Some(chain_id));
         });
@@ -1109,6 +1114,13 @@ impl NodeConfig {
         self
     }
 
+    /// Sets accounts to fund with custom balances on startup.
+    #[must_use]
+    pub fn with_funded_accounts(mut self, accounts: HashMap<Address, U256>) -> Self {
+        self.funded_accounts = accounts;
+        self
+    }
+
     /// Configures everything related to env, backend and database and returns the
     /// [Backend](mem::Backend)
     ///
@@ -1233,6 +1245,15 @@ impl NodeConfig {
                 .set_create2_deployer(DEFAULT_CREATE2_DEPLOYER)
                 .await
                 .wrap_err("failed to create default create2 deployer")?;
+        }
+
+        if !self.funded_accounts.is_empty() {
+            for (address, balance) in &self.funded_accounts {
+                backend
+                    .set_balance(*address, *balance)
+                    .await
+                    .wrap_err_with(|| format!("failed to fund account {address}"))?;
+            }
         }
 
         Ok(backend)
@@ -1469,6 +1490,7 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
+            hardfork: self.hardfork,
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
@@ -1754,5 +1776,14 @@ mod tests {
         assert!(!config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(Some(10)));
         assert!(config.is_state_history_supported());
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn set_chain_id_updates_network_config() {
+        let mut config = NodeConfig::test();
+        config.set_chain_id(Some(10u64));
+
+        assert!(config.networks.is_optimism());
     }
 }

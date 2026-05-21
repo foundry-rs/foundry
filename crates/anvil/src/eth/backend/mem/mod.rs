@@ -105,7 +105,7 @@ use foundry_evm::{
     },
     utils::{
         block_env_from_header, get_blob_base_fee_update_fraction,
-        get_blob_base_fee_update_fraction_by_spec_id,
+        get_blob_base_fee_update_fraction_by_spec_id, get_blob_params_by_spec_id,
     },
 };
 use foundry_evm_networks::NetworkConfigs;
@@ -119,7 +119,7 @@ use futures::channel::mpsc::{UnboundedSender, unbounded};
 #[cfg(feature = "optimism")]
 use op_alloy_consensus::{DEPOSIT_TX_TYPE_ID, OpTransaction as OpTransactionTrait};
 #[cfg(feature = "optimism")]
-use op_revm::{OpSpecId, OpTransaction, transaction::deposit::DepositTransactionParts};
+use op_revm::{OpTransaction, transaction::deposit::DepositTransactionParts};
 
 /// Side-channel container for OP-specific deposit info produced by
 /// [`Backend::build_call_env`] and consumed by the OP transact path.
@@ -557,8 +557,18 @@ impl<N: Network> Backend<N> {
     }
 
     /// Returns the active hardfork.
-    pub const fn hardfork(&self) -> FoundryHardfork {
+    pub fn hardfork(&self) -> FoundryHardfork {
+        if let Some(hardfork) =
+            self.fork.read().as_ref().and_then(|fork| fork.config.read().hardfork)
+        {
+            return hardfork;
+        }
         self.hardfork
+    }
+
+    /// Returns the active Tempo hardfork.
+    pub fn tempo_hardfork(&self) -> TempoHardfork {
+        TempoHardfork::from(self.hardfork())
     }
 
     /// Returns the precompiles for the current spec.
@@ -602,17 +612,7 @@ impl<N: Network> Backend<N> {
 
     /// Returns [`BlobParams`] corresponding to the current spec.
     pub fn blob_params(&self) -> BlobParams {
-        let spec_id = self.spec_id();
-
-        if spec_id >= SpecId::OSAKA {
-            return BlobParams::osaka();
-        }
-
-        if spec_id >= SpecId::PRAGUE {
-            return BlobParams::prague();
-        }
-
-        BlobParams::cancun()
+        get_blob_params_by_spec_id(self.spec_id())
     }
 
     /// Returns an error if EIP1559 is not active (pre Berlin)
@@ -823,33 +823,7 @@ impl<N: Network> Backend<N> {
 
     /// Returns the block and its hash for the given id
     fn get_block_with_hash(&self, id: impl Into<BlockId>) -> Option<(Block, B256)> {
-        let hash = match id.into() {
-            BlockId::Hash(hash) => hash.block_hash,
-            BlockId::Number(number) => {
-                let storage = self.blockchain.storage.read();
-                let slots_in_an_epoch = self.slots_in_an_epoch;
-                match number {
-                    BlockNumber::Latest => storage.best_hash,
-                    BlockNumber::Earliest => storage.genesis_hash,
-                    BlockNumber::Pending => return None,
-                    BlockNumber::Number(num) => *storage.hashes.get(&num)?,
-                    BlockNumber::Safe => {
-                        if storage.best_number > (slots_in_an_epoch) {
-                            *storage.hashes.get(&(storage.best_number - (slots_in_an_epoch)))?
-                        } else {
-                            storage.genesis_hash // treat the genesis block as safe "by definition"
-                        }
-                    }
-                    BlockNumber::Finalized => {
-                        if storage.best_number > (slots_in_an_epoch * 2) {
-                            *storage.hashes.get(&(storage.best_number - (slots_in_an_epoch * 2)))?
-                        } else {
-                            storage.genesis_hash
-                        }
-                    }
-                }
-            }
-        };
+        let hash = self.blockchain.hash(id.into(), self.slots_in_an_epoch)?;
         let block = self.get_block_by_hash(hash)?;
         Some((block, hash))
     }
@@ -1294,7 +1268,7 @@ impl<N: Network> Backend<N> {
         I: Inspector<TempoContext<WrapDatabaseRef<&'db DB>>>,
         WrapDatabaseRef<&'db DB>: Database<Error = DatabaseError>,
     {
-        let hardfork = TempoHardfork::from(self.hardfork);
+        let hardfork = self.tempo_hardfork();
         let tempo_env = EvmEnv::new(
             evm_env.cfg_env.clone().with_spec_and_gas_params(hardfork, tempo_gas_params(hardfork)),
             TempoBlockEnv { inner: evm_env.block_env.clone(), timestamp_millis_part: 0 },
@@ -1359,7 +1333,7 @@ impl<N: Network> Backend<N> {
         #[cfg(feature = "optimism")]
         if self.is_optimism() {
             let op_env = EvmEnv::new(
-                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(OpSpecId::ISTHMUS),
+                evm_env.cfg_env.clone().with_spec_and_mainnet_gas_params(self.hardfork.into()),
                 evm_env.block_env.clone(),
             );
             let mut evm =
@@ -1368,7 +1342,7 @@ impl<N: Network> Backend<N> {
         }
 
         if self.is_tempo() {
-            let hardfork = TempoHardfork::from(self.hardfork);
+            let hardfork = self.tempo_hardfork();
             let tempo_env = EvmEnv::new(
                 evm_env
                     .cfg_env
@@ -1499,7 +1473,7 @@ impl<N: Network> Backend<N> {
         let op_deposit = {
             // `other` carries OP-only deposit fields; consumed only when feature is enabled.
             let _ = &other;
-            OpCallDepositInfo::default()
+            OpCallDepositInfo
         };
 
         (evm_env, tx_env, op_deposit)
@@ -1552,13 +1526,17 @@ impl<N: Network> Backend<N> {
                     // manager needs a non-zero hash; the actual value doesn't matter
                     // because the state is discarded after estimation.
                     let estimation_hash = keccak256(base.data.as_ref());
+                    // T1B+ uses `TempoTxEnv::unique_tx_identifier` (sender-scoped) as
+                    // the expiring-nonce replay hash; pre-T1B uses `tx_hash`.
+                    // Set both so the synthetic env works across hardforks.
+                    tempo_tx.unique_tx_identifier = Some(estimation_hash);
                     tempo_tx.tempo_tx_env = Some(Box::new(TempoBatchCallEnv {
                         nonce_key,
                         valid_before,
                         valid_after,
                         aa_calls: vec![Call { to: base.kind, value: base.value, input: base.data }],
                         tx_hash: estimation_hash,
-                        expiring_nonce_hash: Some(estimation_hash),
+                        expiring_nonce_idx: Some(0),
                         ..Default::default()
                     }));
                 }
@@ -2128,7 +2106,7 @@ impl<N: Network> Backend<N> {
             let chain_id = self.evm_env.read().cfg_env.chain_id;
             let timestamp = self.genesis.timestamp;
             let test_accounts: Vec<Address> = self.genesis.accounts.clone();
-            let hardfork = TempoHardfork::from(self.hardfork);
+            let hardfork = self.tempo_hardfork();
             let mut db = self.db.write().await;
             crate::eth::backend::tempo::initialize_tempo_precompiles(
                 &mut **db,
@@ -3893,9 +3871,13 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
 
     /// Apply [SerializableState] data to the backend storage.
     pub async fn load_state(&self, state: SerializableState) -> Result<bool, BlockchainError> {
-        // load the blocks and transactions into the storage
-        self.blockchain.storage.write().load_blocks(state.blocks.clone());
-        self.blockchain.storage.write().load_transactions(state.transactions.clone());
+        // load the blocks and transactions into the storage atomically so concurrent readers
+        // never observe blocks without their transactions
+        {
+            let mut storage = self.blockchain.storage.write();
+            storage.load_blocks(state.blocks.clone());
+            storage.load_transactions(state.transactions.clone());
+        }
         // reset the block env
         if let Some(block) = state.block.clone() {
             self.evm_env.write().block_env = block.clone();
@@ -3912,14 +3894,16 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 // Ref: https://github.com/foundry-rs/foundry/issues/9539
                 if best_number > number {
                     self.blockchain.storage.write().best_number = best_number;
-                    let best_hash =
-                        self.blockchain.storage.read().hash(best_number.into()).ok_or_else(
-                            || {
-                                BlockchainError::RpcError(RpcError::internal_error_with(format!(
-                                    "Best hash not found for best number {best_number}",
-                                )))
-                            },
-                        )?;
+                    let best_hash = self
+                        .blockchain
+                        .storage
+                        .read()
+                        .hash(best_number.into(), self.slots_in_an_epoch)
+                        .ok_or_else(|| {
+                            BlockchainError::RpcError(RpcError::internal_error_with(format!(
+                                "Best hash not found for best number {best_number}",
+                            )))
+                        })?;
                     self.blockchain.storage.write().best_hash = best_hash;
                 } else {
                     // If loading state file on a fork, set best number to the fork block number.
@@ -3931,8 +3915,12 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> Backend<N> {
                 self.blockchain.storage.write().best_number = best_number;
 
                 // Set the current best block hash;
-                let best_hash =
-                    self.blockchain.storage.read().hash(best_number.into()).ok_or_else(|| {
+                let best_hash = self
+                    .blockchain
+                    .storage
+                    .read()
+                    .hash(best_number.into(), self.slots_in_an_epoch)
+                    .ok_or_else(|| {
                         BlockchainError::RpcError(RpcError::internal_error_with(format!(
                             "Best hash not found for best number {best_number}",
                         )))
@@ -4322,7 +4310,10 @@ fn get_pool_transactions_nonce(
 ) -> Option<u64> {
     if let Some(highest_nonce) = pool_transactions
         .iter()
-        .filter(|tx| *tx.pending_transaction.sender() == address)
+        .filter(|tx| {
+            *tx.pending_transaction.sender() == address
+                && !tx.pending_transaction.transaction.as_ref().has_nonzero_tempo_nonce_key()
+        })
         .map(|tx| tx.pending_transaction.nonce())
         .max()
     {

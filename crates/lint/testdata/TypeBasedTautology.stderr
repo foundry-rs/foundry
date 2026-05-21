@@ -1,0 +1,152 @@
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x >= 0;
+   │                ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x < 0;
+   │                ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x < 256;
+   │                ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x > 255;
+   │                ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x >= 256;
+   │                ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x <= 255;
+   │                ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return 0 > x;
+   │                ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return 0 <= x;
+   │                ━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return 256 > x;
+   │                ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return 256 <= x;
+   │                ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x >= -128;
+   │                ━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x < -128;
+   │                ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x > 127;
+   │                ━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x <= 127;
+   │                ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return uint8(raw) > 255;
+   │                ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return int8(raw) < -128;
+   │                ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x == 256;
+   │                ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x != 256;
+   │                ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+
+warning[type-based-tautology]: condition is always true or false based on the variable's type
+   ╭▸ ROOT/testdata/TypeBasedTautology.sol:LL:CC
+   │
+LL │         return x == -129;
+   │                ━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/type-based-tautology
+

@@ -29,7 +29,7 @@ use forge_script_sequence::{AdditionalContract, NestedValue};
 use forge_verify::{RetryArgs, VerifierArgs};
 use foundry_cli::{
     opts::{BuildOpts, EvmArgs, GlobalArgs, TempoOpts},
-    utils::{LoadConfig, has_different_gas_calc},
+    utils::LoadConfig,
 };
 use foundry_common::{
     CONTRACT_MAX_SIZE, ContractsByArtifact, SELECTOR_LEN,
@@ -248,36 +248,6 @@ pub struct ScriptArgs {
     pub retry: RetryArgs,
 }
 
-const fn should_default_tempo_fee_token(
-    is_tempo_network: bool,
-    batch: bool,
-    tempo: &TempoOpts,
-) -> bool {
-    // Plain `--network tempo` should stay an ordinary transaction; only Tempo AA opts get defaults.
-    is_tempo_network && tempo.common.fee_token.is_none() && (batch || tempo.is_tempo())
-}
-
-const fn needs_tempo_aa_rpc_estimate(
-    is_tempo_network: bool,
-    batch: bool,
-    tempo: &TempoOpts,
-) -> bool {
-    is_tempo_network && (batch || tempo.is_tempo())
-}
-
-pub(crate) fn needs_script_rpc_estimate(
-    chain_id: u64,
-    is_tempo_network: bool,
-    batch: bool,
-    tempo: &TempoOpts,
-    skip_simulation: bool,
-) -> bool {
-    // Tempo AA needs RPC estimation; plain Tempo scripts can use the local simulation result.
-    (has_different_gas_calc(chain_id) && !is_tempo_network)
-        || needs_tempo_aa_rpc_estimate(is_tempo_network, batch, tempo)
-        || skip_simulation
-}
-
 impl ScriptArgs {
     /// Loads config, resolves evm_opts (including network inference from fork), and returns them.
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
@@ -320,8 +290,8 @@ impl ScriptArgs {
         let mut tempo = self.tempo.clone();
         tempo.resolve_expires();
 
-        if should_default_tempo_fee_token(evm_opts.networks.is_tempo(), self.batch, &tempo) {
-            tempo.common.fee_token = Some(PATH_USD_ADDRESS);
+        if evm_opts.networks.is_tempo() && tempo.fee_token.is_none() {
+            tempo.fee_token = Some(PATH_USD_ADDRESS);
         }
 
         let script_config = ScriptConfig::new(config, evm_opts, self.batch, tempo).await?;
@@ -838,7 +808,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
                             self.evm_opts.clone(),
                             Some(known_contracts),
                             Some(target),
-                            self.tempo.common.fee_token,
+                            self.tempo.fee_token,
                         )
                         .into(),
                     )
@@ -849,7 +819,7 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 
         // Propagate fee token to the transaction environment so that internal EVM calls
         // (e.g. script deployment, setUp) use the correct fee token for Tempo networks.
-        tx_env.set_fee_token(self.tempo.common.fee_token);
+        tx_env.set_fee_token(self.tempo.fee_token);
 
         Ok(ScriptRunner::new(builder.build(evm_env, tx_env, db), self.evm_opts.clone()))
     }
@@ -883,10 +853,10 @@ mod tests {
         ]);
 
         assert_eq!(
-            args.tempo.common.fee_token,
+            args.tempo.fee_token,
             Some(address!("0x20C0000000000000000000000000000000000001"))
         );
-        assert_eq!(args.tempo.common.expires, Some(10));
+        assert_eq!(args.tempo.expires, Some(10));
     }
 
     #[test]
