@@ -185,11 +185,17 @@ impl<'hir> Analyzer<'hir> {
         let Some(from_v) = underlying_var(from) else { return false };
         let Some(token_v) = token else { return false };
         let ExprKind::Call(_, args, _) = &call_expr.kind else { return false };
-        let hir::CallArgsKind::Unnamed(args) = args.kind else { return false };
-        let (to_arg, amount_arg) = match args.len() {
-            3 => (&args[1], &args[2]),
-            4 => (&args[2], &args[3]),
-            _ => return false,
+        // Pick `to` and `amount` from whichever sink shape (3-arg member / 4-arg library).
+        let (to_arg, amount_arg) = if let Some(a) =
+            canonical_args(args.kind, &[&["from"], &["to"], &["value", "amount"]])
+        {
+            (a[1], a[2])
+        } else if let Some(a) =
+            canonical_args(args.kind, &[&["token"], &["from"], &["to"], &["value", "amount"]])
+        {
+            (a[2], a[3])
+        } else {
+            return false;
         };
         if !is_address_self(to_arg) {
             return false;
@@ -454,14 +460,12 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
 /// resolves to a `VariableId`; literal args yield `None`.
 fn match_flash_loan_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<PendingRepayment> {
     let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
-    let hir::CallArgsKind::Unnamed(args) = args.kind else { return None };
-    if args.len() != 5 {
-        return None;
-    }
     let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
     if ident.name.as_str() != "onFlashLoan" {
         return None;
     }
+    let args =
+        canonical_args(args.kind, &[&["initiator"], &["token"], &["amount"], &["fee"], &["data"]])?;
     let cid = receiver_contract_id(hir, recv)?;
     if !contract_has_function(
         hir,
@@ -474,9 +478,9 @@ fn match_flash_loan_call(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<Pen
     }
     Some(PendingRepayment {
         receiver: underlying_var(recv)?,
-        token: underlying_var(&args[1])?,
-        amount: underlying_var(&args[2])?,
-        fee: underlying_var(&args[3])?,
+        token: underlying_var(args[1])?,
+        amount: underlying_var(args[2])?,
+        fee: underlying_var(args[3])?,
     })
 }
 
@@ -504,11 +508,13 @@ fn match_sink<'hir>(
     expr: &'hir hir::Expr<'hir>,
 ) -> Option<(&'hir hir::Expr<'hir>, Option<hir::VariableId>)> {
     let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
-    let hir::CallArgsKind::Unnamed(args) = args.kind else { return None };
     let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
     let name = ident.name.as_str();
 
-    if args.len() == 3 && (name == "transferFrom" || name == "safeTransferFrom") {
+    if (name == "transferFrom" || name == "safeTransferFrom")
+        && let Some(canonical) =
+            canonical_args(args.kind, &[&["from"], &["to"], &["value", "amount"]])
+    {
         // Contract-typed receiver: must actually declare ERC20's `transferFrom`.
         if let Some(cid) = receiver_contract_id(hir, recv)
             && contract_has_function(
@@ -519,36 +525,43 @@ fn match_sink<'hir>(
                 &["bool"],
             )
         {
-            return Some((&args[0], underlying_var(recv)));
+            return Some((canonical[0], underlying_var(recv)));
         }
         // `addr.safeTransferFrom(...)` via `using ... for address`.
         if name == "safeTransferFrom" && expr_is_address(hir, recv) {
-            return Some((&args[0], underlying_var(recv)));
+            return Some((canonical[0], underlying_var(recv)));
         }
-        None
-    } else if args.len() == 4 && name == "safeTransferFrom" {
-        let cid = receiver_contract_id(hir, recv)?;
-        (hir.contract(cid).kind == ContractKind::Library
-            && library_has_safe_transfer_from(hir, cid))
-        .then(|| (&args[1], underlying_var(&args[0])))
-    } else {
-        None
     }
+
+    if name == "safeTransferFrom"
+        && let Some(canonical) =
+            canonical_args(args.kind, &[&["token"], &["from"], &["to"], &["value", "amount"]])
+        && let Some(cid) = receiver_contract_id(hir, recv)
+        && hir.contract(cid).kind == ContractKind::Library
+        && library_has_safe_transfer_from(hir, cid)
+    {
+        return Some((canonical[1], underlying_var(canonical[0])));
+    }
+
+    None
 }
 
 /// Matches `token.permit(owner, address(this), value, deadline, v, r, s)` (EIP-2612 shape).
 /// Only `spender == address(this)` permits are recorded; others can't suppress a sink.
 fn match_permit_call(expr: &hir::Expr<'_>) -> Option<PermitRecord> {
     let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
-    let hir::CallArgsKind::Unnamed(args) = args.kind else { return None };
-    if args.len() != 7 {
-        return None;
-    }
     let ExprKind::Member(recv, ident) = &callee.peel_parens().kind else { return None };
-    if ident.name.as_str() != "permit" || !is_address_self(&args[1]) {
+    if ident.name.as_str() != "permit" {
         return None;
     }
-    Some(PermitRecord { token: underlying_var(recv)?, owner: underlying_var(&args[0])? })
+    let args = canonical_args(
+        args.kind,
+        &[&["owner"], &["spender"], &["value"], &["deadline"], &["v"], &["r"], &["s"]],
+    )?;
+    if !is_address_self(args[1]) {
+        return None;
+    }
+    Some(PermitRecord { token: underlying_var(recv)?, owner: underlying_var(args[0])? })
 }
 
 /// Hoists `require(modParam == msg.sender)` style guards from the modifier prefix (statements
@@ -712,6 +725,33 @@ fn expr_is_address(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
 
 fn is_elementary(hir: &hir::Hir<'_>, id: hir::VariableId, abi: &str) -> bool {
     matches!(&hir.variable(id).ty.kind, TypeKind::Elementary(ty) if ty.to_abi_str() == abi)
+}
+
+/// Resolves positional or named call args to a fixed positional ordering. `aliases[i]`
+/// holds the parameter names accepted for slot `i` in the named form. Returns `None` if
+/// arity differs or any slot is unmatched.
+fn canonical_args<'hir>(
+    kind: hir::CallArgsKind<'hir>,
+    aliases: &[&[&str]],
+) -> Option<Vec<&'hir hir::Expr<'hir>>> {
+    match kind {
+        hir::CallArgsKind::Unnamed(exprs) => {
+            (exprs.len() == aliases.len()).then(|| exprs.iter().collect())
+        }
+        hir::CallArgsKind::Named(named) => {
+            if named.len() != aliases.len() {
+                return None;
+            }
+            aliases
+                .iter()
+                .map(|accepted| {
+                    named.iter().find_map(|a| {
+                        accepted.iter().any(|n| a.name.as_str() == *n).then_some(&a.value)
+                    })
+                })
+                .collect()
+        }
+    }
 }
 
 fn is_address_cast(callee: &hir::Expr<'_>) -> bool {

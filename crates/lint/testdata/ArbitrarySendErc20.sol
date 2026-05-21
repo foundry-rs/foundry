@@ -615,6 +615,43 @@ contract ArbitrarySendErc20 {
         receiver.onFlashLoan(msg.sender, address(token), amount, fee, data);
         token.transferFrom(address(receiver), address(this), fee + amount);
     }
+
+    function badNamedMember(address from, address to, uint256 a) public {
+        token.transferFrom({from: from, to: to, amount: a}); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function badNamedLibrary(address from, address to, uint256 a) public {
+        SafeERC20.safeTransferFrom({token: token, from: from, to: to, value: a}); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function okNamedMemberSender(address to, uint256 a) public {
+        token.transferFrom({from: msg.sender, to: to, amount: a});
+    }
+
+    function okNamedLibrarySelf(address to, uint256 a) public {
+        SafeERC20.safeTransferFrom({token: token, from: address(this), to: to, value: a});
+    }
+
+    function okNamedPermit(
+        address from,
+        address to,
+        uint256 a,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public {
+        token.permit({
+            owner: from,
+            spender: address(this),
+            value: a,
+            deadline: deadline,
+            v: v,
+            r: r,
+            s: s
+        });
+        token.transferFrom({from: from, to: to, amount: a});
+    }
 }
 
 // Solady-style: first param is `address`, not a contract type.
@@ -661,5 +698,13 @@ contract SoladyUsingForAddress {
     function okSoladyMemberGuarded(address from, address to, uint256 a) public {
         require(from == msg.sender, "auth");
         token.safeTransferFrom(from, to, a);
+    }
+
+    function badNamedSolady(address from, address to, uint256 a) public {
+        SafeTransferLib.safeTransferFrom({token: token, from: from, to: to, amount: a}); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function okNamedSoladySender(address to, uint256 a) public {
+        SafeTransferLib.safeTransferFrom({token: token, from: msg.sender, to: to, amount: a});
     }
 }
