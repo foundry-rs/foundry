@@ -10,7 +10,10 @@ use path_slash::PathBufExt;
 use solar::{
     ast::{CommentKind, ContractKind, DocComments, FunctionKind, NatSpecKind, ParameterList},
     interface::source_map::FileName,
-    sema::{Gcx, hir::{ContractId, FunctionId, ItemId, SourceId}},
+    sema::{
+        Gcx,
+        hir::{ContractId, FunctionId, ItemId, SourceId},
+    },
 };
 use std::{
     collections::{HashMap, HashSet},
