@@ -190,3 +190,27 @@ LL │ abstract contract PayableBaseCtor {
    │
    ╰ help: https://getfoundry.sh/forge/linting/locked-ether
 
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedOverriddenVirtualHook is VirtualExitBase {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedReceiveReturnBeforeRevert {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+
+warning[locked-ether]: contract can receive ETH but has no mechanism to send it out
+   ╭▸ ROOT/testdata/LockedEther.sol:LL:CC
+   │
+LL │ contract LockedSelfSendViaInterfaceCast is ISelfSink {
+   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/locked-ether
+

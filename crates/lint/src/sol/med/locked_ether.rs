@@ -144,19 +144,42 @@ fn modifier_always_reverts(modifier: &hir::Function<'_>) -> bool {
     stmts_always_revert(&body.stmts[..first]) || stmts_always_revert(&body.stmts[last + 1..])
 }
 
+/// What execution of a statement (or list) may do. A block "always reverts" iff its
+/// outcome set is exactly `REVERT` — no `FALLTHROUGH` and no `NON_REVERT_EXIT`.
+const REVERT: u8 = 1 << 0;
+const NON_REVERT_EXIT: u8 = 1 << 1;
+const FALLTHROUGH: u8 = 1 << 2;
+
 fn stmts_always_revert(stmts: &[hir::Stmt<'_>]) -> bool {
-    stmts.last().is_some_and(stmt_always_reverts)
+    stmts_outcomes(stmts) == REVERT
 }
 
-fn stmt_always_reverts(stmt: &hir::Stmt<'_>) -> bool {
-    match &stmt.kind {
-        StmtKind::Revert(_) => true,
-        StmtKind::Expr(expr) => is_unconditional_revert_call(expr),
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            stmts_always_revert(block.stmts)
+/// Walks `stmts` left-to-right. Each statement's outcome set replaces the prior
+/// `FALLTHROUGH` bit (since we only reach the next stmt by falling through). We stop as
+/// soon as a stmt cannot fall through, because nothing after it is reachable.
+fn stmts_outcomes(stmts: &[hir::Stmt<'_>]) -> u8 {
+    let mut acc = FALLTHROUGH;
+    for stmt in stmts {
+        let o = stmt_outcomes(stmt);
+        acc = (acc & !FALLTHROUGH) | o;
+        if o & FALLTHROUGH == 0 {
+            break;
         }
-        StmtKind::If(_, t, Some(e)) => stmt_always_reverts(t) && stmt_always_reverts(e),
-        _ => false,
+    }
+    acc
+}
+
+fn stmt_outcomes(stmt: &hir::Stmt<'_>) -> u8 {
+    match &stmt.kind {
+        StmtKind::Revert(_) => REVERT,
+        StmtKind::Return(_) | StmtKind::Break | StmtKind::Continue => NON_REVERT_EXIT,
+        StmtKind::Expr(expr) if is_unconditional_revert_call(expr) => REVERT,
+        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => stmts_outcomes(block.stmts),
+        // `if` without `else`: the missing branch falls through.
+        StmtKind::If(_, t, None) => stmt_outcomes(t) | FALLTHROUGH,
+        StmtKind::If(_, t, Some(e)) => stmt_outcomes(t) | stmt_outcomes(e),
+        // Loops, try, decls, emits, unknowns: assume control may continue past them.
+        _ => FALLTHROUGH,
     }
 }
 
@@ -304,6 +327,34 @@ impl<'hir> SendChecker<'_, 'hir> {
                 _ => {}
             }
         }
+    }
+
+    /// Redirects an unqualified internal call resolved to `fid` to the leaf contract's
+    /// most-derived override of the same `(name, parameter signature)`. If `fid` is not
+    /// inheritable (free function, private, or constructor/modifier), it is returned as-is.
+    fn resolve_virtual(&self, fid: FunctionId, args: &CallArgs<'_>) -> FunctionId {
+        let func = self.hir.function(fid);
+        if func.contract.is_none()
+            || func.visibility == Visibility::Private
+            || !matches!(func.kind, FunctionKind::Function)
+        {
+            return fid;
+        }
+        let Some(name) = func.name else { return fid };
+        let sig = parameter_signature(self.hir, func.parameters);
+        for &cid in self.bases {
+            for cand in self.hir.contract(cid).all_functions() {
+                let c = self.hir.function(cand);
+                if matches!(c.kind, FunctionKind::Function)
+                    && c.name.is_some_and(|n| n.name == name.name)
+                    && parameter_signature(self.hir, c.parameters) == sig
+                    && args_match(self.hir, args, c.parameters)
+                {
+                    return cand;
+                }
+            }
+        }
+        fid
     }
 
     /// Queues arity-matching overloads of `name` from the most-derived contract that defines any.
@@ -529,14 +580,19 @@ impl<'hir> hir::Visit<'hir> for SendChecker<'_, 'hir> {
                     for res in *reses {
                         match res {
                             Res::Item(ItemId::Function(fid))
-                                if !self.visited.contains(fid)
-                                    && args_match(
-                                        self.hir,
-                                        args,
-                                        self.hir.function(*fid).parameters,
-                                    ) =>
+                                if args_match(
+                                    self.hir,
+                                    args,
+                                    self.hir.function(*fid).parameters,
+                                ) =>
                             {
-                                self.worklist.push(*fid);
+                                // Unqualified internal call: dispatch through the leaf's
+                                // linearization so a leaf override of a `virtual` hook
+                                // replaces the base implementation.
+                                let effective = self.resolve_virtual(*fid, args);
+                                if !self.visited.contains(&effective) {
+                                    self.worklist.push(effective);
+                                }
                             }
                             // Function-typed state/local variable: the bound target isn't
                             // statically known to us, so treat the call as opaque.
@@ -629,23 +685,26 @@ fn expr_sends_ether(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
 }
 
 /// Returns `true` when `expr` syntactically denotes this contract's own address:
-/// `this`, `address(this)`, `payable(this)`, or any nested combination thereof.
+/// `this`, `address(this)`, `payable(this)`, a contract/interface cast `IFoo(<self>)`,
+/// or any nested combination thereof.
 fn is_self_address(expr: &hir::Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Ident(reses) => reses.iter().any(|r| matches!(r, Res::Builtin(Builtin::This))),
         ExprKind::Payable(inner) => is_self_address(inner),
-        // `address(<self>)` cast.
-        ExprKind::Call(callee, args, _)
-            if matches!(
-                &callee.peel_parens().kind,
-                ExprKind::Type(hir::Type {
-                    kind: TypeKind::Elementary(ElementaryType::Address(_)),
-                    ..
-                })
-            ) =>
-        {
+        // `address(<self>)`, `IFoo(<self>)` and similar single-arg type casts.
+        ExprKind::Call(callee, args, _) if is_type_cast_callee(callee) => {
             args.exprs().next().is_some_and(is_self_address)
         }
+        _ => false,
+    }
+}
+
+/// `T(...)` callee where `T` names a type: an elementary type, a contract/interface, or
+/// any other item used in a single-argument cast position.
+fn is_type_cast_callee(callee: &hir::Expr<'_>) -> bool {
+    match &callee.peel_parens().kind {
+        ExprKind::Type(_) => true,
+        ExprKind::Ident(reses) => reses.iter().any(|r| matches!(r, Res::Item(ItemId::Contract(_)))),
         _ => false,
     }
 }

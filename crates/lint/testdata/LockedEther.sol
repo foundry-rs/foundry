@@ -651,6 +651,38 @@ contract OkNonPayableChildOfPayableBase is PayableBaseCtor {
 // No explicit ctor: synthesized non-payable rejects deployment value.
 contract OkImplicitCtorOfPayableBase is PayableBaseCtor {}
 
+// Inherited external follows a virtual internal hook; the leaf override removes the exit.
+abstract contract VirtualExitBase {
+    function withdraw(address payable to) external { _exit(to); }
+    function _exit(address payable to) internal virtual { to.transfer(1 wei); }
+}
+
+contract LockedOverriddenVirtualHook is VirtualExitBase { //~WARN: contract can receive ETH but has no mechanism to send it out
+    receive() external payable {}
+    function _exit(address payable) internal override {}
+}
+
+// A `return` on one branch keeps the function reachable even if the other branch reverts,
+// so the payable inflow still counts and the contract is locked.
+contract LockedReceiveReturnBeforeRevert { //~WARN: contract can receive ETH but has no mechanism to send it out
+    bool open;
+    receive() external payable {
+        if (open) return;
+        revert();
+    }
+}
+
+// `{value:...}` on a contract/interface cast of self stays in this contract; not an exit.
+interface ISelfSink { function deposit() external payable; }
+
+contract LockedSelfSendViaInterfaceCast is ISelfSink { //~WARN: contract can receive ETH but has no mechanism to send it out
+    receive() external payable {}
+    function deposit() external payable override {}
+    function loop(uint256 x) external {
+        ISelfSink(address(this)).deposit{value: x}();
+    }
+}
+
 contract NotPayable {
     function ping() external pure returns (bool) {
         return true;
