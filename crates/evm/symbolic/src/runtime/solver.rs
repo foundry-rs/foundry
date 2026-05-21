@@ -4,6 +4,10 @@ const INITIAL_SOLVER_POLL_BACKOFF: Duration = Duration::from_micros(200);
 const MAX_SOLVER_POLL_BACKOFF: Duration = Duration::from_millis(50);
 const SECOND_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(100);
 const RESCUE_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(500);
+pub(crate) const PORTFOLIO_SCHEDULER_HISTORY: usize = 8;
+const PORTFOLIO_SCHEDULER_MIN_RECENCY_WEIGHT: i64 = 1;
+const PORTFOLIO_SCHEDULER_SPEED_BONUS_CAP_MS: u128 = 100;
+const PORTFOLIO_SCHEDULER_MAX_SPEED_BONUS: i64 = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SolverOutcome {
@@ -122,6 +126,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     pub(crate) queries: usize,
     query_observer: Option<QueryObserver>,
     pub(crate) dump_smt: bool,
+    portfolio_scheduler: PortfolioScheduler,
     portfolio_diagnostics: PortfolioDiagnostics,
     captured_diagnostics: Option<String>,
 }
@@ -141,6 +146,7 @@ impl SmtLibSubprocessSolver {
             queries: 0,
             query_observer: None,
             dump_smt,
+            portfolio_scheduler: PortfolioScheduler::default(),
             portfolio_diagnostics: PortfolioDiagnostics::default(),
             captured_diagnostics: None,
         }
@@ -286,7 +292,10 @@ impl SmtLibSubprocessSolver {
             constraint.collect_vars(&mut vars);
         }
 
-        let commands = self.commands()?.to_vec();
+        let configured_commands = self.commands()?.to_vec();
+        let ordered_commands = self.portfolio_scheduler.ordered_commands(&configured_commands);
+        let commands =
+            ordered_commands.iter().map(|(_, command)| command.clone()).collect::<Vec<_>>();
 
         let mut smt = String::new();
         smt.push_str("(set-logic QF_BV)\n");
@@ -312,6 +321,7 @@ impl SmtLibSubprocessSolver {
 
         let result =
             run_solver_commands(&commands, &smt, self.timeout, model.then_some(constraints));
+        self.portfolio_scheduler.record(&ordered_commands, &result.summaries);
         if self.dump_smt {
             self.portfolio_diagnostics.record(&result.summaries);
             if !result.summaries.is_empty() {
@@ -322,6 +332,110 @@ impl SmtLibSubprocessSolver {
             }
         }
         result.output
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct PortfolioScheduler {
+    history: Vec<VecDeque<PortfolioSchedulerSignal>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PortfolioSchedulerSignal {
+    Winner { speed_bonus: i64 },
+    InvalidModel,
+    Error,
+    Unknown,
+    Neutral,
+}
+
+impl PortfolioSchedulerSignal {
+    /// Returns the scheduler signal represented by one solver run summary.
+    fn from_summary(summary: &SolverRunSummary) -> Self {
+        let speed_bonus = PORTFOLIO_SCHEDULER_MAX_SPEED_BONUS.saturating_sub(
+            summary.elapsed.as_millis().min(PORTFOLIO_SCHEDULER_SPEED_BONUS_CAP_MS) as i64,
+        );
+        match (summary.winner, summary.outcome) {
+            (true, SolverOutcome::SatValid | SolverOutcome::Unsat) => Self::Winner { speed_bonus },
+            (_, SolverOutcome::SatInvalid) => Self::InvalidModel,
+            (_, SolverOutcome::Error | SolverOutcome::Unexpected) => Self::Error,
+            (_, SolverOutcome::Unknown | SolverOutcome::TimeoutOrUnknown) => Self::Unknown,
+            _ => Self::Neutral,
+        }
+    }
+
+    /// Returns whether this signal should affect later portfolio scheduling.
+    const fn is_neutral(self) -> bool {
+        matches!(self, Self::Neutral)
+    }
+
+    /// Returns the numeric score contribution for adaptive portfolio ordering.
+    const fn score(self) -> i64 {
+        match self {
+            Self::Winner { speed_bonus } => 1_000 + speed_bonus,
+            Self::InvalidModel => -1_000,
+            Self::Error => -750,
+            Self::Unknown => -250,
+            Self::Neutral => 0,
+        }
+    }
+}
+
+impl PortfolioScheduler {
+    /// Returns configured commands ordered by recent portfolio performance.
+    fn ordered_commands(&mut self, commands: &[SolverCommand]) -> Vec<(usize, SolverCommand)> {
+        self.ensure_len(commands.len());
+        let mut ordered = commands.iter().cloned().enumerate().collect::<Vec<_>>();
+        ordered.sort_by(|(left_index, _), (right_index, _)| {
+            self.score(*right_index)
+                .cmp(&self.score(*left_index))
+                .then_with(|| left_index.cmp(right_index))
+        });
+        ordered
+    }
+
+    /// Records one query's portfolio summaries against original configured solver indexes.
+    fn record(
+        &mut self,
+        ordered_commands: &[(usize, SolverCommand)],
+        summaries: &[SolverRunSummary],
+    ) {
+        for summary in summaries {
+            let Some(run_index) = summary.index else { continue };
+            let Some((configured_index, _)) = ordered_commands.get(run_index) else { continue };
+            let Some(history) = self.history.get_mut(*configured_index) else { continue };
+            let signal = PortfolioSchedulerSignal::from_summary(summary);
+            if signal.is_neutral() {
+                continue;
+            }
+            history.push_back(signal);
+            if history.len() > PORTFOLIO_SCHEDULER_HISTORY {
+                history.pop_front();
+            }
+        }
+    }
+
+    /// Ensures the scheduler has one history slot per configured solver.
+    fn ensure_len(&mut self, len: usize) {
+        self.history.resize_with(len, VecDeque::new);
+    }
+
+    /// Returns the recent-performance score for one configured solver index.
+    fn score(&self, index: usize) -> i64 {
+        self.history
+            .get(index)
+            .into_iter()
+            .flatten()
+            .rev()
+            .enumerate()
+            .map(|(age, signal)| {
+                let recency = PORTFOLIO_SCHEDULER_HISTORY
+                    .saturating_sub(age)
+                    .max(PORTFOLIO_SCHEDULER_MIN_RECENCY_WEIGHT as usize)
+                    as i64;
+                recency * signal.score()
+            })
+            .sum()
     }
 }
 
