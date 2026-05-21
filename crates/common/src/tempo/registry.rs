@@ -1,6 +1,10 @@
 use eyre::{Result, WrapErr};
 use serde::{Serialize, de::DeserializeOwned};
-use std::{fs, io::Write, path::Path};
+use std::{
+    fs,
+    io::{ErrorKind, Write},
+    path::Path,
+};
 
 /// Shared TOML registry helpers for Tempo local state.
 ///
@@ -13,7 +17,7 @@ use std::{fs, io::Write, path::Path};
 pub(crate) fn read_toml_file<T: DeserializeOwned>(path: &Path, label: &str) -> Result<Option<T>> {
     let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        Err(e) if e.kind() == ErrorKind::NotFound => {
             tracing::trace!(?path, "{label} file not found");
             return Ok(None);
         }
