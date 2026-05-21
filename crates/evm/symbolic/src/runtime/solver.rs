@@ -4,7 +4,7 @@ const INITIAL_SOLVER_POLL_BACKOFF: Duration = Duration::from_micros(200);
 const MAX_SOLVER_POLL_BACKOFF: Duration = Duration::from_millis(50);
 const SECOND_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(100);
 const RESCUE_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(500);
-const PORTFOLIO_SCHEDULER_HISTORY: usize = 8;
+pub(crate) const PORTFOLIO_SCHEDULER_HISTORY: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SolverOutcome {
@@ -334,7 +334,7 @@ impl SmtLibSubprocessSolver {
 
 #[derive(Clone, Debug, Default)]
 struct PortfolioScheduler {
-    history: Vec<VecDeque<SolverRunSummary>>,
+    history: Vec<VecDeque<i64>>,
 }
 
 impl PortfolioScheduler {
@@ -360,7 +360,11 @@ impl PortfolioScheduler {
             let Some(run_index) = summary.index else { continue };
             let Some((configured_index, _)) = ordered_commands.get(run_index) else { continue };
             let Some(history) = self.history.get_mut(*configured_index) else { continue };
-            history.push_back(summary.clone());
+            let score = portfolio_summary_score(summary);
+            if score == 0 {
+                continue;
+            }
+            history.push_back(score);
             if history.len() > PORTFOLIO_SCHEDULER_HISTORY {
                 history.pop_front();
             }
@@ -380,9 +384,9 @@ impl PortfolioScheduler {
             .flatten()
             .rev()
             .enumerate()
-            .map(|(age, summary)| {
+            .map(|(age, score)| {
                 let recency = PORTFOLIO_SCHEDULER_HISTORY.saturating_sub(age).max(1) as i64;
-                recency * portfolio_summary_score(summary)
+                recency * score
             })
             .sum()
     }
@@ -548,7 +552,7 @@ struct SolverCommandRun {
     summaries: Vec<SolverRunSummary>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct SolverRunSummary {
     index: Option<usize>,
     display: String,

@@ -2081,6 +2081,36 @@ fn portfolio_scheduler_promotes_recent_sat_winner() {
 
 #[cfg(unix)]
 #[test]
+/// Regression coverage for adaptive portfolio scheduling promoting unsat winners.
+fn portfolio_scheduler_promotes_recent_unsat_winner() {
+    let commands = vec![
+        SolverCommand::new(
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "sleep 0.3; printf 'unknown\n'".to_string(),
+            ],
+            false,
+        )
+        .unwrap(),
+        SolverCommand::new(vec!["/bin/echo".to_string(), "unsat".to_string()], false).unwrap(),
+    ];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 2, true);
+
+    solver.capture_diagnostics();
+
+    assert!(!solver.is_sat(&[]).unwrap());
+    assert!(!solver.is_sat(&[]).unwrap());
+
+    let diagnostics = solver.take_diagnostics().unwrap();
+    let last_outcomes =
+        diagnostics.rsplit("--- symbolic solver portfolio outcomes ---").next().unwrap_or_default();
+    assert!(last_outcomes.contains("#1 scheduled +0.000ns"));
+    assert!(last_outcomes.contains("/bin/echo unsat: unsat"));
+}
+
+#[cfg(unix)]
+#[test]
 /// Regression coverage for adaptive portfolio scheduling penalizing invalid models.
 fn portfolio_scheduler_penalizes_invalid_models() {
     let marker = portfolio_test_marker("adaptive-invalid-model");
@@ -2105,16 +2135,19 @@ fn portfolio_scheduler_penalizes_invalid_models() {
         )
         .unwrap(),
     ];
-    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 2, false);
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 16, false);
     let constraints =
         vec![BoolExpr::eq(Expr::Var("calldata_0".to_string()), Expr::Const(U256::from(1)))];
 
-    assert_eq!(solver.model(&constraints).unwrap().get("calldata_0"), Some(&U256::from(1)));
-    assert!(marker.exists());
-    let _ = std::fs::remove_file(&marker);
-
-    assert_eq!(solver.model(&constraints).unwrap().get("calldata_0"), Some(&U256::from(1)));
-    assert!(!marker.exists());
+    for query in 0..=PORTFOLIO_SCHEDULER_HISTORY {
+        assert_eq!(solver.model(&constraints).unwrap().get("calldata_0"), Some(&U256::from(1)));
+        if query == 0 {
+            assert!(marker.exists());
+            let _ = std::fs::remove_file(&marker);
+        } else {
+            assert!(!marker.exists());
+        }
+    }
 }
 
 #[cfg(unix)]
