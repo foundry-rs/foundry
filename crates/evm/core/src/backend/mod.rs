@@ -2133,7 +2133,7 @@ pub fn update_state<DB: Database>(
     persistent_accounts: Option<&HashSet<Address>>,
 ) -> Result<(), DB::Error> {
     for (addr, acc) in state.iter_mut() {
-        if !persistent_accounts.is_some_and(|accounts| accounts.contains(addr)) {
+        if persistent_accounts.is_none_or(|accounts| !accounts.contains(addr)) {
             acc.info = db.basic(*addr)?.unwrap_or_default();
             for (key, val) in &mut acc.storage {
                 val.present_value = db.storage(*addr, *key)?;
