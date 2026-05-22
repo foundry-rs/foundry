@@ -48,15 +48,21 @@ macro_rules! try_cf {
 /// Run the subcommand.
 pub async fn run_command(args: Chisel) -> Result<()> {
     // Load configuration
-    let (config, evm_opts) = args.load_config_and_evm_opts()?;
+    let (mut config, mut evm_opts) = args.load_config_and_evm_opts()?;
 
-    #[cfg(feature = "optimism")]
-    if config.networks.is_optimism() {
-        return run_command_with_network::<OpEvmNetwork>(args, config, evm_opts).await;
+    if let Some(chain) = config.chain {
+        evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
+    }
+    evm_opts.infer_network_from_fork().await;
+    config.networks = evm_opts.networks;
+
+    if evm_opts.networks.is_tempo() {
+        return run_command_with_network::<TempoEvmNetwork>(args, config, evm_opts).await;
     }
 
-    if config.networks.is_tempo() {
-        return run_command_with_network::<TempoEvmNetwork>(args, config, evm_opts).await;
+    #[cfg(feature = "optimism")]
+    if evm_opts.networks.is_optimism() {
+        return run_command_with_network::<OpEvmNetwork>(args, config, evm_opts).await;
     }
 
     run_command_with_network::<EthEvmNetwork>(args, config, evm_opts).await
