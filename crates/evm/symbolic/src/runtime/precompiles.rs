@@ -13,11 +13,11 @@ pub(crate) fn is_console(address: Address) -> bool {
 /// Returns the `precompile_number` precompile helper result.
 pub(crate) fn precompile_number(address: Address) -> Option<u8> {
     let bytes = address.as_slice();
-    if bytes[..19].iter().any(|byte| *byte != 0) {
+    if bytes[..PRECOMPILE_ADDRESS_LEADING_ZEROS].iter().any(|byte| *byte != 0) {
         return None;
     }
-    match bytes[19] {
-        1..=9 => Some(bytes[19]),
+    match bytes[PRECOMPILE_ADDRESS_LEADING_ZEROS] {
+        1..=9 => Some(bytes[PRECOMPILE_ADDRESS_LEADING_ZEROS]),
         _ => None,
     }
 }
@@ -25,7 +25,7 @@ pub(crate) fn precompile_number(address: Address) -> Option<u8> {
 /// Returns the `precompile_address` precompile helper result.
 pub(crate) fn precompile_address(number: u8) -> Address {
     let mut bytes = [0u8; 20];
-    bytes[19] = number;
+    bytes[PRECOMPILE_ADDRESS_LEADING_ZEROS] = number;
     Address::from(bytes)
 }
 

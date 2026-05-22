@@ -1,14 +1,5 @@
 use super::*;
 
-const INITIAL_SOLVER_POLL_BACKOFF: Duration = Duration::from_micros(200);
-const MAX_SOLVER_POLL_BACKOFF: Duration = Duration::from_millis(50);
-const SECOND_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(100);
-const RESCUE_PORTFOLIO_SOLVER_DELAY: Duration = Duration::from_millis(500);
-pub(crate) const PORTFOLIO_SCHEDULER_HISTORY: usize = 8;
-const PORTFOLIO_SCHEDULER_MIN_RECENCY_WEIGHT: i64 = 1;
-const PORTFOLIO_SCHEDULER_SPEED_BONUS_CAP_MS: u128 = 100;
-const PORTFOLIO_SCHEDULER_MAX_SPEED_BONUS: i64 = 100;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SolverOutcome {
     Cancelled,
