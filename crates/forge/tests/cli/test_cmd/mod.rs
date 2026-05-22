@@ -18,11 +18,18 @@ mod logs;
 mod repros;
 mod spec;
 mod symbolic;
+mod symbolic_calls;
+mod symbolic_cheatcodes;
 mod symbolic_conformance;
+mod symbolic_creates;
 mod symbolic_engine_capabilities;
 mod symbolic_helpers;
 mod symbolic_limits;
+mod symbolic_memory;
+mod symbolic_opcodes;
 mod symbolic_parity;
+mod symbolic_precompiles;
+mod symbolic_storage;
 mod table;
 mod trace;
 
