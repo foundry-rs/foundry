@@ -6,14 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       kind:
-        description: "Benchmarks to run: perf (timing), fuzz (campaign), or both."
+        description: "Benchmarks to run: perf (timing) or fuzz (campaign)."
         required: false
         type: choice
         default: perf
         options:
           - perf
           - fuzz
-          - both
       versions:
         description: "Foundry versions to benchmark, comma-separated. 'local' benchmarks HEAD."
         required: false
@@ -66,7 +65,7 @@ env:
 jobs:
   perf-benchmarks:
     name: Perf Benchmarks
-    if: ${{ (github.event.inputs.kind || 'perf') == 'perf' || (github.event.inputs.kind || 'perf') == 'both' }}
+    if: ${{ github.event.inputs.kind == 'perf' }}
     runs-on: depot-ubuntu-24.04-32
     permissions:
       contents: read
@@ -171,7 +170,7 @@ jobs:
 
   fuzz-benchmarks:
     name: Fuzz Campaign Benchmarks
-    if: ${{ (github.event.inputs.kind || 'perf') == 'fuzz' || (github.event.inputs.kind || 'perf') == 'both' }}
+    if: ${{ github.event.inputs.kind == 'fuzz' }}
     runs-on: depot-ubuntu-24.04-32
     # 2 campaigns × ~1h each + clone/build setup. Bump if more campaigns are added.
     timeout-minutes: 360
