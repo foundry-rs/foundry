@@ -14,6 +14,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
   - `reentrancy-unlimited-gas`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.
 - **Medium Severity:**
+  - `assert-state-change`: Flags state-modifying expressions inside `assert()` arguments.
   - `boolean-cst`: Flags misuse of boolean constants.
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
