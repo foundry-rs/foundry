@@ -1389,26 +1389,29 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // `step_end` runs the PC has already advanced past it. Also peek the
         // BLOBHASH index now (still on top of stack before execution) so we
         // can look up the override later.
-        let fork_id = ecx.db().active_fork_id();
-        if let Some(env_overrides) = self.env_overrides.get_mut(&fork_id).filter(|o| o.is_any_set())
-        {
-            // Always clear stale pending state first so a leftover value from
-            // a prior step (e.g. when `peek` failed, or when an override
-            // wasn't actually used) cannot leak into the next opcode.
-            env_overrides.pending_opcode = None;
-            env_overrides.pending_blobhash_index = None;
+        if !self.env_overrides.is_empty() {
+            let fork_id = ecx.db().active_fork_id();
+            if let Some(env_overrides) =
+                self.env_overrides.get_mut(&fork_id).filter(|o| o.is_any_set())
+            {
+                // Always clear stale pending state first so a leftover value from
+                // a prior step (e.g. when `peek` failed, or when an override
+                // wasn't actually used) cannot leak into the next opcode.
+                env_overrides.pending_opcode = None;
+                env_overrides.pending_blobhash_index = None;
 
-            let opcode = interpreter.bytecode.opcode();
-            match opcode {
-                op::BASEFEE | op::GASPRICE => {
-                    env_overrides.pending_opcode = Some(opcode);
+                let opcode = interpreter.bytecode.opcode();
+                match opcode {
+                    op::BASEFEE | op::GASPRICE => {
+                        env_overrides.pending_opcode = Some(opcode);
+                    }
+                    op::BLOBHASH => {
+                        env_overrides.pending_opcode = Some(opcode);
+                        env_overrides.pending_blobhash_index =
+                            interpreter.stack.peek(0).ok().and_then(|index| index.try_into().ok());
+                    }
+                    _ => {}
                 }
-                op::BLOBHASH => {
-                    env_overrides.pending_opcode = Some(opcode);
-                    env_overrides.pending_blobhash_index =
-                        interpreter.stack.peek(0).ok().and_then(|index| index.try_into().ok());
-                }
-                _ => {}
             }
         }
     }
@@ -1436,22 +1439,28 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // successfully and pushed its result; otherwise (stack underflow on
         // BLOBHASH, OOG before push, etc.) the stack is in an error state and
         // a blind `pop()+push()` would corrupt the failing frame.
-        let fork_id = ecx.db().active_fork_id();
-        if self.env_overrides.get(&fork_id).is_some_and(|o| o.is_any_set()) {
-            // Mirrors the pattern used by `meter_gas_record`: when `action` is
-            // `Some` with an `instruction_result`, the opcode has set a
-            // non-continue result (halt/revert/error) — i.e. it didn't push
-            // its normal result. `None` means "still running", which is the
-            // success path for a stack-only opcode in `step_end`.
-            let opcode_failed =
-                interpreter.bytecode.action.as_ref().and_then(|a| a.instruction_result()).is_some();
-            if opcode_failed {
-                if let Some(env_overrides) = self.env_overrides.get_mut(&fork_id) {
-                    env_overrides.pending_opcode = None;
-                    env_overrides.pending_blobhash_index = None;
+        if !self.env_overrides.is_empty() {
+            let fork_id = ecx.db().active_fork_id();
+            if self.env_overrides.get(&fork_id).is_some_and(|o| o.is_any_set()) {
+                // Mirrors the pattern used by `meter_gas_record`: when `action` is
+                // `Some` with an `instruction_result`, the opcode has set a
+                // non-continue result (halt/revert/error) — i.e. it didn't push
+                // its normal result. `None` means "still running", which is the
+                // success path for a stack-only opcode in `step_end`.
+                let opcode_failed = interpreter
+                    .bytecode
+                    .action
+                    .as_ref()
+                    .and_then(|a| a.instruction_result())
+                    .is_some();
+                if opcode_failed {
+                    if let Some(env_overrides) = self.env_overrides.get_mut(&fork_id) {
+                        env_overrides.pending_opcode = None;
+                        env_overrides.pending_blobhash_index = None;
+                    }
+                } else {
+                    self.apply_env_overrides(interpreter, fork_id);
                 }
-            } else {
-                self.apply_env_overrides(interpreter, fork_id);
             }
         }
     }
