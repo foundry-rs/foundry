@@ -1263,6 +1263,54 @@ contract JsonInvariantReportTest is Test {
     assert!(safe.get("reason").is_none());
 });
 
+forgetest_init!(invariant_campaign_reports_secondary_skip, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 1;
+        config.invariant.depth = 2;
+    });
+    prj.add_test(
+        "SkipPredicateReport.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract SkipPredicateHandler {
+    uint256 public counter;
+
+    function inc() external {
+        counter++;
+    }
+}
+
+contract SkipPredicateReportTest is Test {
+    SkipPredicateHandler handler;
+
+    function setUp() public {
+        handler = new SkipPredicateHandler();
+        targetContract(address(handler));
+    }
+
+    function invariant_live() public view {
+        require(handler.counter() < 10, "live broken");
+    }
+
+    function invariant_skipped() public {
+        vm.skip(true, "secondary");
+    }
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--mt", "invariant_"]).assert_success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(
+        stdout.contains("Ran 2 tests for test/SkipPredicateReport.t.sol:SkipPredicateReportTest"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("[PASS] invariant_live"), "{stdout}");
+    assert!(stdout.contains("[SKIP: secondary] invariant_skipped"), "{stdout}");
+    assert!(stdout.contains("Suite result: ok. 1 passed; 0 failed; 1 skipped;"), "{stdout}");
+});
+
 forgetest_init!(junit_reports_invariant_predicates_and_handler_failures, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;

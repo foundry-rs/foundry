@@ -757,6 +757,7 @@ impl TestArgs {
         let mut any_test_failed = false;
         let mut backtrace_builder = None;
         for (contract_name, mut suite_result) in rx {
+            let len = suite_result.len();
             let tests = &mut suite_result.test_results;
             let has_tests = !tests.is_empty();
 
@@ -784,7 +785,6 @@ impl TestArgs {
                     sh_warn!("{warning}")?;
                 }
                 if has_tests {
-                    let len = tests.len();
                     let tests = if len > 1 { "tests" } else { "test" };
                     sh_println!("Ran {len} {tests} for {contract_name}")?;
                 }

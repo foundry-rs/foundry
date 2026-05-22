@@ -20,7 +20,7 @@ use foundry_config::{Config, FuzzCorpusConfig, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     core::evm::FoundryEvmNetwork,
-    decode::RevertDecoder,
+    decode::{RevertDecoder, SkipReason},
     executors::{
         CallResult, EvmError, Executor, ITest, RawCallResult,
         fuzz::FuzzedExecutor,
@@ -848,23 +848,39 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         call_after_invariant: bool,
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
-        // First, run the test normally to see if it needs to be skipped.
-        if let Err(EvmError::Skip(reason)) = self.executor.call(
-            self.sender,
-            self.address,
-            func,
-            &[],
-            U256::ZERO,
-            Some(self.revert_decoder()),
-        ) {
-            self.result.invariant_skip(reason);
-            return self.result;
-        };
-
         let runner = self.invariant_runner();
         let invariant_config = self.config.invariant.clone();
         let invariant_config = &invariant_config;
         let is_optimization = is_optimization_invariant(func);
+
+        let mut live_invariants = Vec::new();
+        let mut skipped_predicate_results = Vec::new();
+        for (invariant, fail_on_revert) in invariants {
+            if let Some(reason) = self.invariant_skip_reason(invariant) {
+                skipped_predicate_results.push(InvariantPredicateResult {
+                    name: invariant.name.clone(),
+                    status: TestStatus::Skipped,
+                    reason: reason.0,
+                });
+            } else {
+                live_invariants.push((invariant, fail_on_revert));
+            }
+        }
+
+        if live_invariants.is_empty() {
+            let skip_reason = skipped_predicate_results
+                .iter()
+                .find(|predicate| predicate.name == func.name)
+                .and_then(|predicate| predicate.reason.clone());
+            self.result
+                .invariant_skip_with_predicates(SkipReason(skip_reason), skipped_predicate_results);
+            return self.result;
+        }
+        let campaign_anchor = live_invariants
+            .iter()
+            .find(|(invariant_fn, _)| *invariant_fn == func)
+            .map(|(invariant_fn, _)| *invariant_fn)
+            .unwrap_or_else(|| live_invariants[0].0);
 
         let mut executor = self.clone_executor();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
@@ -909,9 +925,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let persisted_invariants = if is_optimization {
             BTreeSet::new()
         } else {
-            invariants
+            live_invariants
                 .iter()
-                .filter(|(invariant_fn, _)| *invariant_fn != func)
+                .filter(|(invariant_fn, _)| *invariant_fn != campaign_anchor)
                 .filter_map(|(invariant_fn, _)| {
                     persisted_invariant_failure(&failure_dir, invariant_fn, &current_settings)
                         .is_some()
@@ -924,10 +940,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // aren't surprised when fewer invariants appear in the report than their contract
         // defines (Echidna/Medusa never skip properties between runs).
         if !is_optimization {
-            let persisted_skipped: Vec<&str> = invariants
+            let persisted_skipped: Vec<&str> = live_invariants
                 .iter()
                 .filter(|(invariant_fn, _)| {
-                    *invariant_fn != func
+                    *invariant_fn != campaign_anchor
                         && persisted_invariants.contains(invariant_fn.name.as_str())
                 })
                 .map(|(invariant_fn, _)| invariant_fn.name.as_str())
@@ -947,18 +963,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // and every other selected predicate that doesn't already have a compatible persisted
         // failure. Track the anchor's index so downstream consumers can resolve the campaign
         // anchor without searching by name.
-        let invariant_fns: Vec<(&Function, bool)> = invariants
+        let invariant_fns: Vec<(&Function, bool)> = live_invariants
             .into_iter()
             .filter(|(invariant_fn, _)| {
-                *invariant_fn == func
+                *invariant_fn == campaign_anchor
                     || (!is_optimization
                         && !persisted_invariants.contains(invariant_fn.name.as_str()))
             })
             .collect();
         let anchor_idx = invariant_fns
             .iter()
-            .position(|(invariant_fn, _)| *invariant_fn == func)
-            .expect("anchor must be present in invariant_fns");
+            .position(|(invariant_fn, _)| *invariant_fn == campaign_anchor)
+            .expect("campaign anchor must be present in invariant_fns");
         let invariant_contract = InvariantContract::new(
             self.address,
             self.cr.name,
@@ -972,7 +988,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let progress = start_fuzz_progress(
             self.cr.progress,
             self.cr.name,
-            &func.name,
+            &invariant_contract.anchor().name,
             invariant_config.timeout,
             invariant_config.runs,
         );
@@ -985,8 +1001,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         };
 
         // Try to replay recorded failure if any.
-        let primary_failure_file = invariant_failure_file(&failure_dir, func);
-        let persisted_primary = persisted_invariant_failure(&failure_dir, func, &current_settings);
+        let primary_failure_file =
+            invariant_failure_file(&failure_dir, invariant_contract.anchor());
+        let persisted_primary = persisted_invariant_failure(
+            &failure_dir,
+            invariant_contract.anchor(),
+            &current_settings,
+        );
         if let Some(InvariantPersistedFailure { mut call_sequence, assertion_failure, .. }) =
             persisted_primary
         {
@@ -1004,7 +1025,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         .to_string();
 
                 if let Some(ref progress) = progress {
-                    progress.set_prefix(format!("{}\n{warn}\n", func.name));
+                    progress.set_prefix(format!("{}\n{warn}\n", invariant_contract.anchor().name));
                 } else {
                     let _ = sh_warn!("{warn}");
                 }
@@ -1314,9 +1335,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let invariant_failure_dir = any_failure_persisted.then(|| failure_dir.clone());
         // Only attach a campaign-level roll-up when this run actually exercised >1 predicate.
         // Single-predicate runs keep the legacy single-block render with no roll-up line.
-        let invariant_count = (invariant_contract.invariant_fns.len() > 1)
-            .then_some(invariant_contract.invariant_fns.len());
-        let invariant_predicate_results = if invariant_contract.invariant_fns.len() > 1 {
+        let invariant_count = (invariant_contract.invariant_fns.len()
+            + skipped_predicate_results.len()
+            > 1)
+        .then_some(invariant_contract.invariant_fns.len() + skipped_predicate_results.len());
+        let invariant_predicate_results = if invariant_count.is_some() {
             let failures_by_name = invariant_failures
                 .iter()
                 .map(|failure| (failure.name(), failure))
@@ -1338,6 +1361,15 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             reason: None,
                         }
                     }
+                })
+                .chain(skipped_predicate_results.drain(..))
+                .sorted_by_key(|predicate| {
+                    self.cr
+                        .contract
+                        .abi
+                        .functions()
+                        .position(|func| func.name == predicate.name)
+                        .unwrap_or(usize::MAX)
                 })
                 .collect()
         } else {
@@ -1431,6 +1463,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_result.optimization_best_value,
         );
         self.result
+    }
+
+    fn invariant_skip_reason(&self, func: &Function) -> Option<SkipReason> {
+        match self.executor.call(
+            self.sender,
+            self.address,
+            func,
+            &[],
+            U256::ZERO,
+            Some(self.revert_decoder()),
+        ) {
+            Err(EvmError::Skip(reason)) => Some(reason),
+            _ => None,
+        }
     }
 
     /// Runs a fuzzed test.

@@ -18,6 +18,7 @@ use foundry_evm::{
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap as Map},
@@ -126,17 +127,17 @@ impl TestOutcome {
 
     /// Returns the number of tests that passed.
     pub fn passed(&self) -> usize {
-        self.successes().count()
+        self.results.values().map(SuiteResult::passed).sum()
     }
 
     /// Returns the number of tests that were skipped.
     pub fn skipped(&self) -> usize {
-        self.skips().count()
+        self.results.values().map(SuiteResult::skipped).sum()
     }
 
     /// Returns the number of tests that failed.
     pub fn failed(&self) -> usize {
-        self.failures().count()
+        self.results.values().map(SuiteResult::failed).sum()
     }
 
     /// Returns `true` if any fuzz or invariant test failed.
@@ -297,17 +298,17 @@ impl SuiteResult {
 
     /// Returns the number of tests that passed.
     pub fn passed(&self) -> usize {
-        self.successes().count()
+        self.test_results.values().map(TestResult::passed_count).sum()
     }
 
     /// Returns the number of tests that were skipped.
     pub fn skipped(&self) -> usize {
-        self.skips().count()
+        self.test_results.values().map(TestResult::skipped_count).sum()
     }
 
     /// Returns the number of tests that failed.
     pub fn failed(&self) -> usize {
-        self.failures().count()
+        self.test_results.values().map(TestResult::failed_count).sum()
     }
 
     /// Iterator over all tests and their names
@@ -322,7 +323,7 @@ impl SuiteResult {
 
     /// The number of tests in this test suite.
     pub fn len(&self) -> usize {
-        self.test_results.len()
+        self.test_results.values().map(TestResult::logical_count).sum()
     }
 
     /// Sums up all the durations of all individual tests in this suite.
@@ -615,6 +616,7 @@ impl TestResult {
                     write!(s, ": {reason}").unwrap();
                 }
                 s.push(']');
+                self.write_invariant_predicate_results(&mut s, user_facing, true);
                 format!("{}", s.yellow())
             }
             TestStatus::Failure => {
@@ -800,7 +802,11 @@ impl TestResult {
                     writeln!(s, "[FAIL: {reason}] {}", predicate.name).unwrap();
                 }
                 TestStatus::Skipped => {
-                    writeln!(s, "[SKIP] {}", predicate.name).unwrap();
+                    if let Some(reason) = &predicate.reason {
+                        writeln!(s, "[SKIP: {reason}] {}", predicate.name).unwrap();
+                    } else {
+                        writeln!(s, "[SKIP] {}", predicate.name).unwrap();
+                    }
                 }
             }
         }
@@ -944,6 +950,15 @@ impl TestResult {
 
     /// Returns the skipped result for invariant test.
     pub fn invariant_skip(&mut self, reason: SkipReason) {
+        self.invariant_skip_with_predicates(reason, Vec::new());
+    }
+
+    /// Returns the skipped result for invariant campaign with per-predicate outcomes.
+    pub fn invariant_skip_with_predicates(
+        &mut self,
+        reason: SkipReason,
+        invariant_predicate_results: Vec<InvariantPredicateResult>,
+    ) {
         self.kind = TestKind::Invariant {
             runs: 1,
             calls: 1,
@@ -954,6 +969,9 @@ impl TestResult {
         };
         self.status = TestStatus::Skipped;
         self.reason = reason.0;
+        self.invariant_count =
+            (invariant_predicate_results.len() > 1).then_some(invariant_predicate_results.len());
+        self.invariant_predicate_results = invariant_predicate_results;
     }
 
     /// Returns the fail result for replayed invariant test.
@@ -1075,7 +1093,52 @@ impl TestResult {
 
     /// Formats the test result into a string (for printing).
     pub fn short_result(&self, name: &str) -> String {
+        if self.status.is_skipped() && self.invariant_predicate_results.len() > 1 {
+            return self
+                .invariant_predicate_results
+                .iter()
+                .map(|predicate| {
+                    let mut s = String::from("[SKIP");
+                    if let Some(reason) = &predicate.reason {
+                        write!(s, ": {reason}").unwrap();
+                    }
+                    s.push(']');
+                    format!("{} {}() {}", s.yellow(), predicate.name, self.kind.report())
+                })
+                .join("\n");
+        }
         format!("{} {name} {}", self.render_status_block(true), self.kind.report())
+    }
+
+    fn logical_count(&self) -> usize {
+        let skipped = self.skipped_predicate_count();
+        if skipped == 0 {
+            1
+        } else if self.status.is_skipped() && skipped == self.invariant_predicate_results.len() {
+            skipped
+        } else {
+            1 + skipped
+        }
+    }
+
+    fn passed_count(&self) -> usize {
+        usize::from(self.status.is_success())
+    }
+
+    fn skipped_count(&self) -> usize {
+        let skipped = self.skipped_predicate_count();
+        if skipped == 0 && self.status.is_skipped() { 1 } else { skipped }
+    }
+
+    fn failed_count(&self) -> usize {
+        usize::from(self.status.is_failure())
+    }
+
+    fn skipped_predicate_count(&self) -> usize {
+        self.invariant_predicate_results
+            .iter()
+            .filter(|predicate| predicate.status.is_skipped())
+            .count()
     }
 
     /// Merges the given raw call result into `self`.
