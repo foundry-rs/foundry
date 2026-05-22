@@ -720,7 +720,7 @@ impl TestResult {
         writeln!(
             s,
             "\n{}: {}/{total} invariants broken",
-            if user_facing { "Invariant/Property Tests" } else { "Suite predicates" },
+            if user_facing { "Invariant/Property Tests" } else { "Predicates" },
             self.invariant_failures.len()
         )
         .unwrap();
@@ -750,7 +750,7 @@ impl TestResult {
         writeln!(
             s,
             "{prefix}{}: {} assertion bug(s) found",
-            if user_facing { "Assertion Tests" } else { "Suite handlers" },
+            if user_facing { "Assertion Tests" } else { "Handler assertions" },
             self.invariant_handler_failures.len()
         )
         .unwrap();
@@ -786,7 +786,7 @@ impl TestResult {
 
         if show_header {
             s.push('\n');
-            s.push_str(if user_facing { "Invariant/Property Tests" } else { "Suite predicates" });
+            s.push_str(if user_facing { "Invariant/Property Tests" } else { "Predicates" });
             s.push_str(":\n");
         }
 

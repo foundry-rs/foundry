@@ -1348,7 +1348,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         // best-effort `Contract::function` from `identified_contracts`, falling back to
         // `0xreverter::0xselector`. Map is keyed by `(reverter, selector)` site so multiple
         // code paths through the same function collapse to one entry, rendered in the
-        // dedicated `Suite handlers:` section.
+        // dedicated handler assertions section.
         let identified_contracts_ro = identified_contracts;
         let invariant_handler_failures = invariant_result
             .handler_errors
