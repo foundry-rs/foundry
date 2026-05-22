@@ -255,17 +255,6 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         Ok(config)
     }
 
-    /// Returns true if `assert_all` is enabled for the given invariant function.
-    fn invariant_assert_all_enabled(&self, func: &Function) -> bool {
-        if self.inline_config.contains_function(self.name, &func.name) {
-            return self
-                .inline_config(Some(func))
-                .map(|config| config.invariant.assert_all)
-                .unwrap_or(false);
-        }
-        self.config.invariant.assert_all
-    }
-
     /// Returns true if all invariant functions share the same effective inline invariant config.
     fn invariant_suite_configs_match(&self, funcs: &[&Function]) -> bool {
         let Some((anchor, rest)) = funcs.split_first() else {
@@ -397,7 +386,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             self.contract.abi.functions().filter(|func| func.is_invariant_test()).collect();
 
         // Validate signatures up front: invariant functions must take no parameters. Without
-        // this, parameterized `invariant_*` functions would slip into `assert_all` secondaries
+        // this, parameterized `invariant_*` functions would slip into contract-level campaigns
         // and fail with a confusing "selector not found" / decode error mid-campaign. Reject
         // here with a per-function result so the failure is obvious to the user.
         let invalid_invariants: Vec<_> = invariant_fns
@@ -489,28 +478,31 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             });
         }
 
-        // Keep only boolean invariants matched by the current test filter; optimization
-        // invariants stay isolated per function.
-        let matched_boolean_invariant_fns = functions
-            .iter()
-            .copied()
-            .filter(|func| func.is_invariant_test() && !is_optimization_invariant(func))
-            .collect::<Vec<_>>();
-        // Contract-local boolean invariants are eligible for a shared campaign only when all
-        // of them enable `assert_all` and share the same effective inline invariant config.
+        // Keep only boolean invariants; optimization invariants stay isolated per function.
         let boolean_invariant_fns = invariant_fns
             .iter()
             .copied()
             .filter(|func| !is_optimization_invariant(func))
             .collect::<Vec<_>>();
-        let merge_invariant_suite = self.config.invariant.assert_all
-            && !matched_boolean_invariant_fns.is_empty()
-            && boolean_invariant_fns.len() > 1
-            && boolean_invariant_fns.iter().all(|func| self.invariant_assert_all_enabled(func))
-            && self.invariant_suite_configs_match(&boolean_invariant_fns);
-        // Use the first matched boolean invariant as the campaign anchor when the suite merges.
-        let invariant_suite_anchor =
-            merge_invariant_suite.then(|| matched_boolean_invariant_fns.first().copied()).flatten();
+        let matched_boolean_invariant_fns = functions
+            .iter()
+            .copied()
+            .filter(|func| func.is_invariant_test() && !is_optimization_invariant(func))
+            .collect::<Vec<_>>();
+        // The boolean invariant campaign is contract-level. Test filters only select which
+        // predicates are evaluated/reported inside that campaign; they must not decide the
+        // corpus/failure namespace. Use the canonical anchor when it is part of the filtered
+        // set, but preserve `--mt`/`--nmt` isolation when the filter deliberately excludes it.
+        let canonical_boolean_anchor = boolean_invariant_fns.first().copied();
+        let merge_invariant_suite = !matched_boolean_invariant_fns.is_empty()
+            && self.invariant_suite_configs_match(&matched_boolean_invariant_fns);
+        let invariant_suite_anchor = merge_invariant_suite
+            .then(|| {
+                canonical_boolean_anchor
+                    .filter(|anchor| matched_boolean_invariant_fns.contains(anchor))
+                    .or_else(|| matched_boolean_invariant_fns.first().copied())
+            })
+            .flatten();
 
         let test_results = functions
             .par_iter()
@@ -524,12 +516,14 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
                 let invariants: &[&Function] = if func.is_invariant_test() {
                     if is_optimization_invariant(func) {
                         std::slice::from_ref(&func)
-                    } else {
+                    } else if merge_invariant_suite {
                         // Only the suite anchor runs the merged boolean campaign.
-                        if merge_invariant_suite && invariant_suite_anchor != Some(func) {
+                        if invariant_suite_anchor != Some(func) {
                             return None;
                         }
-                        boolean_invariant_fns.as_slice()
+                        matched_boolean_invariant_fns.as_slice()
+                    } else {
+                        std::slice::from_ref(&func)
                     }
                 } else {
                     invariant_fns.as_slice()
@@ -900,31 +894,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             identified_contracts,
             &self.cr.mcr.known_contracts,
         );
-        // Filter out additional invariants to test if we already have a persisted failure.
-        // Optimization mode only tracks the primary invariant's return value, so secondary
-        // boolean invariants are excluded to avoid silently skipping them.
-        // When the primary is an optimization invariant and the user has assert_all on, warn
-        // them once that secondary boolean invariants in the same contract are being skipped
-        // — assert_all has no effect under optimization mode, so silently dropping them would
-        // be a footgun.
-        if is_optimization && invariant_config.assert_all {
-            let dropped: Vec<&str> = invariants
-                .iter()
-                .filter(|(invariant_fn, _)| *invariant_fn != func)
-                .map(|(invariant_fn, _)| invariant_fn.name.as_str())
-                .collect();
-            if !dropped.is_empty() {
-                let _ = sh_warn!(
-                    "{}: assert_all is on but {} is an optimization invariant; \
-                     {} boolean invariant(s) skipped: {}. \
-                     Move them to a separate contract to run them.",
-                    self.cr.name,
-                    func.name,
-                    dropped.len(),
-                    dropped.join(", "),
-                );
-            }
-        }
         // Compute current invariant settings up front so secondary persisted-failure handling
         // can use the same compatibility check as the primary replay path below.
         let current_settings = match evm.compute_settings(self.address) {
@@ -934,9 +903,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             }
         };
-        // A secondary's persisted failure is only honored when its embedded settings still
-        // match the current run; stale caches fall back to a fresh campaign.
-        let persisted_invariants = if !is_optimization && invariant_config.assert_all {
+        // A non-anchor predicate's persisted failure is only honored when its embedded settings
+        // still match the current run; stale caches fall back to a fresh campaign.
+        let persisted_invariants = if !is_optimization {
             invariants
                 .iter()
                 .filter(|(invariant_fn, _)| *invariant_fn != func)
@@ -949,11 +918,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         } else {
             BTreeSet::new()
         };
-        // Warn when secondaries are dropped because they already have persisted failures from a
+        // Warn when predicates are dropped because they already have persisted failures from a
         // previous campaign. Symmetric with the primary's persisted-replay warning so users
         // aren't surprised when fewer invariants appear in the report than their contract
         // defines (Echidna/Medusa never skip properties between runs).
-        if !is_optimization && invariant_config.assert_all {
+        if !is_optimization {
             let persisted_skipped: Vec<&str> = invariants
                 .iter()
                 .filter(|(invariant_fn, _)| {
@@ -974,15 +943,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
         // Build the invariant list in source declaration order, retaining the anchor (`func`)
-        // and — under `assert_all` — every other invariant that doesn't already have a
-        // compatible persisted failure. Track the anchor's index so downstream consumers can
-        // resolve the campaign-anchor without searching by name.
+        // and every other selected predicate that doesn't already have a compatible persisted
+        // failure. Track the anchor's index so downstream consumers can resolve the campaign
+        // anchor without searching by name.
         let invariant_fns: Vec<(&Function, bool)> = invariants
             .into_iter()
             .filter(|(invariant_fn, _)| {
                 *invariant_fn == func
                     || (!is_optimization
-                        && invariant_config.assert_all
                         && !persisted_invariants.contains(invariant_fn.name.as_str()))
             })
             .collect();
@@ -1343,11 +1311,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         let invariant_failure_dir = any_failure_persisted.then(|| failure_dir.clone());
-        // Only attach a suite-level roll-up when `assert_all` actually exercised >1 invariant.
-        // Single-invariant runs (no assert_all, or filter-narrowed to one) get the legacy
-        // single-block render with no roll-up line.
-        let assert_all_invariant_count = (invariant_config.assert_all
-            && invariant_contract.invariant_fns.len() > 1)
+        // Only attach a campaign-level roll-up when this run actually exercised >1 predicate.
+        // Single-predicate runs keep the legacy single-block render with no roll-up line.
+        let invariant_count = (invariant_contract.invariant_fns.len() > 1)
             .then_some(invariant_contract.invariant_fns.len());
         let invariant_predicate_results = if invariant_contract.invariant_fns.len() > 1 {
             let failures_by_name = invariant_failures
@@ -1454,7 +1420,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_failures,
             invariant_predicate_results,
             invariant_failure_dir,
-            assert_all_invariant_count,
+            invariant_count,
             invariant_handler_failures,
             counterexample,
             invariant_result.cases,

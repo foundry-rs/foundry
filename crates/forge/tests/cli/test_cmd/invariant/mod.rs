@@ -1121,7 +1121,6 @@ forgetest_init!(contract_level_invariant_corpus_dir, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 2;
         config.invariant.depth = 2;
-        config.invariant.assert_all = true;
         config.invariant.corpus.corpus_dir = Some("invariant_corpus".into());
     });
     prj.add_test(
@@ -1214,7 +1213,6 @@ forgetest_init!(json_reports_invariant_predicate_results, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 2;
-        config.invariant.assert_all = true;
     });
     prj.add_test(
         "JsonInvariantReport.t.sol",
@@ -1270,7 +1268,6 @@ forgetest_init!(junit_reports_invariant_predicates_and_handler_failures, |prj, c
         config.invariant.runs = 1;
         config.invariant.depth = 2;
         config.invariant.fail_on_revert = false;
-        config.invariant.assert_all = true;
     });
     prj.add_source(
         "JunitAssertHandler.sol",
@@ -1306,7 +1303,7 @@ contract JunitInvariantReportTest is Test {
     let output = cmd.args(["test", "--junit", "--mt", "invariant_a"]).assert_failure();
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(stdout.contains(r#"<testcase name="invariant_a()"#), "{stdout}");
-    assert!(stdout.contains(r#"<testcase name="invariant_b()"#), "{stdout}");
+    assert!(!stdout.contains(r#"<testcase name="invariant_b()"#), "{stdout}");
     assert!(stdout.contains(r#"<testcase name="handler src/JunitAssertHandler.sol:JunitAssertHandler::alwaysAssert""#), "{stdout}");
     assert!(stdout.contains("[FAIL: panic: assertion failed (0x01)] handler src/JunitAssertHandler.sol:JunitAssertHandler::alwaysAssert"), "{stdout}");
     assert!(stdout.contains("[Sequence] (original: 1, shrunk: 1)"), "{stdout}");
@@ -1318,7 +1315,6 @@ forgetest_init!(junit_reports_invariant_predicate_counterexamples, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 3;
-        config.invariant.assert_all = true;
     });
     prj.add_test(
         "JunitInvariantCounterexample.t.sol",
@@ -1353,7 +1349,8 @@ contract JunitInvariantCounterexampleTest is Test {
     let output = cmd.args(["test", "--junit", "--mt", "invariant_breaks"]).assert_failure();
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(stdout.contains(r#"<testcase name="invariant_breaks()"#), "{stdout}");
-    assert!(stdout.contains("[FAIL: broken] invariant_breaks()"), "{stdout}");
+    assert!(stdout.contains("[FAIL: broken]"), "{stdout}");
+    assert!(!stdout.contains(r#"<testcase name="invariant_safe()"#), "{stdout}");
     assert!(stdout.contains("[Sequence] (original:"), "{stdout}");
 });
 
@@ -1537,11 +1534,10 @@ contract CheckIntervalInlineTest is Test {
     ]]);
 });
 
-forgetest_init!(assert_all, |prj, cmd| {
+forgetest_init!(invariant_campaign_merges_selected_predicates, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 10;
         config.invariant.depth = 100;
-        config.invariant.assert_all = true;
     });
     prj.add_source(
         "Counter.sol",
@@ -1596,46 +1592,36 @@ contract CounterTest is Test {
    "#,
     );
 
-    // Check that running single `invariant_cond3` test continue to run until it breaks all other
-    // invariants.
-    cmd.args(["test", "--mt", "invariant_cond3"]).assert_failure().stdout_eq(str![[r#"
+    // A wide filter that includes the contract's canonical predicate runs one contract-level
+    // campaign and reports each selected predicate separately.
+    cmd.args(["test", "--mt", "invariant_cond[1-4]"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 Ran 1 test for test/CounterTest.t.sol:CounterTest
+[FAIL: condition 1 met] invariant_cond1
+	[Sequence] (original: [..], shrunk: [..])
+...
+
+[FAIL: condition 2 met] invariant_cond2
+	[Sequence] (original: [..], shrunk: [..])
+...
 [FAIL: condition 3 met] invariant_cond3
 	[Sequence] (original: [..], shrunk: [..])
 ...
 
-[FAIL: condition 1 met] invariant_cond1
-	[Sequence] (original: [..], shrunk: [..])
-...
-[FAIL: condition 2 met] invariant_cond2
-	[Sequence] (original: [..], shrunk: [..])
-...
-[FAIL: EvmError: Revert] invariant_cond5
-	[Sequence] (original: [..], shrunk: [..])
-...
-
-Invariant/Property Tests: 4/5 invariants broken
+Invariant/Property Tests: 3/4 invariants broken
 [FAIL: condition 1 met] invariant_cond1
 ...
 "#]]);
 
-    // Re-running the same target replays cond3's persisted counterexample and exits without
+    // Re-running a single target replays cond3's persisted counterexample and exits without
     // running a fresh campaign — only the primary block, no secondary [FAIL]s, no
     // persisted-failures footer, no `Invariant/Property Tests` roll-up. A stderr warning calls out
-    // the three secondaries that were skipped because they already have persisted failures
-    // (cond1, cond2, cond5) so users aren't surprised they're missing from the report.
-    cmd.forge_fuse()
-        .args(["test", "--mt", "invariant_cond3"])
-        .assert_failure()
-        .stderr_eq(str![[r#"
-Warning: test/CounterTest.t.sol:CounterTest: 3 invariant(s) skipped due to persisted failures: invariant_cond1, invariant_cond2, invariant_cond5. Run `forge clean` or delete files in [..]/cache/invariant/failures/CounterTest to re-include.
-...
-"#]])
-        .stdout_eq(str![[r#"
+    // the other selected predicate with a persisted failure if it would otherwise be included.
+    cmd.forge_fuse().args(["test", "--mt", "invariant_cond3"]).assert_failure().stdout_eq(str![[
+        r#"
 No files changed, compilation skipped
 ...
 Ran 1 test for test/CounterTest.t.sol:CounterTest
@@ -1644,17 +1630,74 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 ...
  invariant_cond3() (runs: 1, calls: 1, reverts: [..])
 ...
-"#]]);
+"#
+    ]]);
 });
 
-// Verifies that when `assert_all` is on but only the primary invariant breaks, the secondary
-// path stays empty: no `[FAIL: ...] <name>` blocks for the passing invariants and no
-// persisted-failures footer.
-forgetest_init!(assert_all_only_primary, |prj, cmd| {
+forgetest_init!(invariant_campaign_keeps_contract_boundary_with_no_match_test, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 20;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "FilteredInvariantTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract FilteredInvariantTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    function invariant_a_excluded_by_filter() public view {
+        require(counter.cond() < 1, "a broken");
+    }
+
+    function invariant_b_checked() public view {
+        require(counter.cond() < 2, "b broken");
+    }
+
+    function invariant_c_checked() public view {
+        require(counter.cond() < 3, "c broken");
+    }
+}
+   "#,
+    );
+
+    let output = cmd.args(["test", "--nmt", "invariant_a_excluded_by_filter"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(
+        stdout.contains("Ran 1 test for test/FilteredInvariantTest.t.sol:FilteredInvariantTest"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Invariant/Property Tests: 2/2 invariants broken"), "{stdout}");
+    assert!(stdout.contains("[FAIL: b broken] invariant_b_checked"), "{stdout}");
+    assert!(stdout.contains("[FAIL: c broken] invariant_c_checked"), "{stdout}");
+    assert!(!stdout.contains("invariant_a_excluded_by_filter"), "{stdout}");
+});
+
+// Verifies that a single selected predicate keeps the output compact: no secondary failure
+// blocks and no persisted-failures footer.
+forgetest_init!(invariant_campaign_single_predicate_stays_clean, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 50;
-        config.invariant.assert_all = true;
     });
     prj.add_source(
         "Counter.sol",
@@ -1685,6 +1728,10 @@ contract CounterTest is Test {
         require(counter.cond() < 3, "primary broken");
     }
 
+    function invariant_other_breakable() public view {
+        require(counter.cond() < 4, "other broken");
+    }
+
     function invariant_safe() public view {
         require(counter.cond() < 1000000, "should never break");
     }
@@ -1692,33 +1739,37 @@ contract CounterTest is Test {
    "#,
     );
 
-    // Only the primary breaks: a single [FAIL] block, the suite roll-up shows 1/2, and the
-    // never-broken `invariant_safe` produces no output.
-    cmd.args(["test", "--mt", "invariant_breakable"]).assert_failure().stdout_eq(str![[r#"
-...
-Ran 1 test for test/CounterTest.t.sol:CounterTest
-[FAIL: primary broken]
-	[Sequence] (original: [..], shrunk: [..])
-...
+    // Only the selected predicate runs: a single [FAIL] block, no suite roll-up, and the
+    // never-selected `invariant_safe` produces no output.
+    let output = cmd.args(["test", "--mt", "invariant_breakable"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("Ran 1 test for test/CounterTest.t.sol:CounterTest"), "{stdout}");
+    assert!(stdout.contains("[FAIL: primary broken]"), "{stdout}");
+    assert!(stdout.contains(" invariant_breakable() (runs:"), "{stdout}");
+    assert!(!stdout.contains("Invariant/Property Tests:"), "{stdout}");
+    assert!(!stdout.contains("invariant_other_breakable"), "{stdout}");
+    assert!(!stdout.contains("invariant_safe"), "{stdout}");
 
-Invariant/Property Tests: 1/2 invariants broken
-...
- invariant_breakable() (runs: [..], calls: [..], reverts: [..])
-...
-"#]]);
+    // The same isolation applies when the selected predicate is not the contract's first
+    // invariant function.
+    let output =
+        cmd.forge_fuse().args(["test", "--mt", "invariant_other_breakable"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("[FAIL: other broken]"), "{stdout}");
+    assert!(stdout.contains(" invariant_other_breakable() (runs:"), "{stdout}");
+    assert!(!stdout.contains("Invariant/Property Tests:"), "{stdout}");
+    assert!(!stdout.contains("invariant_breakable"), "{stdout}");
+    assert!(!stdout.contains("invariant_safe"), "{stdout}");
 });
 
-// Under `assert_all` + `fail_on_revert = false`, a handler `assert(false)` is now routed to
-// the dedicated `Assertion Tests:` section instead of being attributed to every live invariant
-// (handler-side assertions are decoupled from invariant predicates — see PR #14482). The live
-// invariants stay green; the campaign keeps running for its full budget. See also
-// `handler::assert_all_handler_assertion_routed_to_handler_section`.
-forgetest_init!(assert_all_handler_assertion_does_not_attribute_to_live_invariants, |prj, cmd| {
+// A handler `assert(false)` is routed to the dedicated `Assertion Tests:` section instead of
+// being attributed to every live invariant. The live invariants stay green; the campaign keeps
+// running for its full budget. See also `handler::handler_assertion_routed_to_handler_section`.
+forgetest_init!(handler_assertion_is_reported_separately, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = false;
-        config.invariant.assert_all = true;
     });
     prj.add_source(
         "AssertHandler.sol",
@@ -1754,61 +1805,28 @@ contract AssertAllAssertTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_a"]).assert_failure().stdout_eq(str![[r#"
-...
-Ran 1 test for test/AssertAllAssertTest.t.sol:AssertAllAssertTest
-
-Invariant/Property Tests: 0/2 invariants broken
-[PASS] invariant_a
-[PASS] invariant_b
-
-Assertion Tests: 1 assertion bug(s) found
-[FAIL: panic: assertion failed (0x01)] src/AssertHandler.sol:AssertHandler::alwaysAssert
-	[Sequence] (original: 1, shrunk: 1)
-		sender=[..] addr=[src/AssertHandler.sol:AssertHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=alwaysAssert() args=[]
- invariant_a() (runs: 1, calls: 10, reverts: 10)
-
-╭---------------+--------------+-------+---------+----------╮
-| Contract      | Selector     | Calls | Reverts | Discards |
-+===========================================================+
-| AssertHandler | alwaysAssert | 10    | 10      | 0        |
-╰---------------+--------------+-------+---------+----------╯
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
-Failing tests:
-Encountered 1 failing test in test/AssertAllAssertTest.t.sol:AssertAllAssertTest
-
-Invariant/Property Tests: 0/2 invariants broken
-[PASS] invariant_a
-[PASS] invariant_b
-
-Assertion Tests: 1 assertion bug(s) found
-[FAIL: panic: assertion failed (0x01)] src/AssertHandler.sol:AssertHandler::alwaysAssert
-	[Sequence] (original: 1, shrunk: 1)
-		sender=[..] addr=[src/AssertHandler.sol:AssertHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=alwaysAssert() args=[]
- invariant_a() (runs: 1, calls: 10, reverts: 10)
-
-Encountered a total of 1 failing tests, 0 tests succeeded
-
-Tip: Run `forge test --rerun` to retry only the 1 failed test
-
-[SEED] (use `--fuzz-seed` to reproduce)
-
-"#]]);
+    let output = cmd.args(["test", "--mt", "invariant_a"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("Ran 1 test for test/AssertAllAssertTest.t.sol:AssertAllAssertTest"));
+    assert!(stdout.contains("Assertion Tests: 1 assertion bug(s) found"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "[FAIL: panic: assertion failed (0x01)] src/AssertHandler.sol:AssertHandler::alwaysAssert"
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains(" invariant_a() (runs: 1, calls: 10, reverts: 10)"), "{stdout}");
+    assert!(!stdout.contains("Invariant/Property Tests:"), "{stdout}");
+    assert!(!stdout.contains("invariant_b"), "{stdout}");
 });
 
 // Verifies an explicitly selected optimization invariant runs as its own campaign. Boolean
 // predicates in the same contract are not mixed into optimization mode; when unfiltered they run
 // as a separate boolean campaign (covered below).
-forgetest_init!(assert_all_selected_optimization_runs_separately, |prj, cmd| {
+forgetest_init!(selected_optimization_runs_separately, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 5;
-        // assert_all defaults to true post-rename, but make it explicit for the test's intent.
-        config.invariant.assert_all = true;
     });
     prj.add_source(
         "OptHandler.sol",
@@ -1855,11 +1873,10 @@ contract OptTest is Test {
 "#]]);
 });
 
-forgetest_init!(assert_all_optimization_does_not_suppress_boolean_invariants, |prj, cmd| {
+forgetest_init!(optimization_does_not_suppress_boolean_invariants, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 2;
-        config.invariant.assert_all = true;
     });
     prj.add_test(
         "MixedInvariantTest.t.sol",
@@ -1911,13 +1928,12 @@ Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
 "#]]);
 });
 
-// Verifies that under `assert_all` the `afterInvariant` hook keeps running on later runs even
-// after an earlier invariant has already broken.
-forgetest_init!(assert_all_after_invariant_runs_after_earlier_failure, |prj, cmd| {
+// Verifies that the `afterInvariant` hook keeps running on later runs even after an earlier
+// invariant has already broken.
+forgetest_init!(after_invariant_runs_after_earlier_failure, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 20;
-        config.invariant.assert_all = true;
     });
     prj.add_source(
         "Counter.sol",
@@ -1963,7 +1979,7 @@ contract AfterInvariantTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_first"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: after_invariant_marker]
 ...
@@ -1971,12 +1987,11 @@ contract AfterInvariantTest is Test {
 });
 
 // Verifies a stale persisted secondary failure (settings have changed since it was written) is
-// not silently dropped from an `assert_all` campaign — the secondary is re-evaluated instead.
-forgetest_init!(assert_all_secondary_persisted_revalidates_on_settings_change, |prj, cmd| {
+// not silently dropped from the campaign — the secondary is re-evaluated instead.
+forgetest_init!(secondary_persisted_revalidates_on_settings_change, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 50;
-        config.invariant.assert_all = true;
         config.invariant.fail_on_revert = false;
     });
     prj.add_source(
@@ -2016,20 +2031,20 @@ contract StaleSecondaryTest is Test {
    "#,
     );
 
-    // First run: both invariants break and persist their counterexamples under the current
-    // settings (fail_on_revert = false).
-    cmd.args(["test", "--mt", "invariant_first"]).assert_failure();
+    // First run: both invariants break in the shared campaign and persist their counterexamples
+    // under the current settings (fail_on_revert = false).
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
 
     // Flip a tracked InvariantSettings field so the persisted secondary cache is now stale.
     prj.update_config(|config| {
         config.invariant.fail_on_revert = true;
     });
 
-    // Re-run targeting the same primary. With the fix, the stale secondary cache is rejected
+    // Re-run the shared campaign. With the fix, the stale secondary cache is rejected
     // and `invariant_second` is re-evaluated — the suite roll-up shows 2/2 broken. With the
     // bug, the bare `.exists()` check filtered the secondary out and only the primary block
     // would render (no roll-up).
-    cmd.forge_fuse().args(["test", "--mt", "invariant_first"]).assert_failure().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
 No files changed, compilation skipped
 
 Ran 1 test for test/StaleSecondaryTest.t.sol:StaleSecondaryTest
@@ -2048,7 +2063,7 @@ Invariant/Property Tests: 2/2 invariants broken
 [FAIL: first broken] invariant_first
 [FAIL: second broken] invariant_second
 2 invariant failure(s) persisted to /private/var/folders/p4/rl3tc43j51s311jt6pq7zq180000gn/T/[..]/cache/invariant/failures/StaleSecondaryTest — rerun to shrink
- invariant_first() (runs: 0, calls: 0, reverts: 0)
+ invariant_first() (runs: 1, calls: 3, reverts: 0)
 
 ╭----------+----------+-------+---------+----------╮
 | Contract | Selector | Calls | Reverts | Discards |
@@ -2077,7 +2092,7 @@ Invariant/Property Tests: 2/2 invariants broken
 [FAIL: first broken] invariant_first
 [FAIL: second broken] invariant_second
 2 invariant failure(s) persisted to /private/var/folders/p4/rl3tc43j51s311jt6pq7zq180000gn/T/[..]/cache/invariant/failures/StaleSecondaryTest — rerun to shrink
- invariant_first() (runs: 0, calls: 0, reverts: 0)
+ invariant_first() (runs: 1, calls: 3, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -2088,14 +2103,13 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 "#]]);
 });
 
-// Verifies that when the selected primary invariant passes but a secondary fails under
-// `assert_all`, the report doesn't render a hollow `[FAIL]` header for the primary and the
-// suite roll-up counts only the actually-broken invariants.
-forgetest_init!(assert_all_secondary_only_failure_no_hollow_fail, |prj, cmd| {
+// Verifies that when the campaign anchor passes but another selected predicate fails, the report
+// doesn't render a hollow `[FAIL]` header for the primary and the suite roll-up counts only the
+// actually-broken invariants.
+forgetest_init!(secondary_only_failure_no_hollow_fail, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 5;
         config.invariant.depth = 50;
-        config.invariant.assert_all = true;
     });
     prj.add_source(
         "Counter.sol",
@@ -2123,69 +2137,34 @@ contract SecondaryOnlyTest is Test {
         targetContract(address(counter));
     }
 
-    // Selected primary; never breaks.
-    function invariant_safe() public view {
+    // Campaign anchor; never breaks.
+    function invariant_anchor_safe() public view {
         require(counter.cond() < 1000000, "safe broken");
     }
 
-    // Secondary; breaks within the first run.
-    function invariant_breakable() public view {
+    // Another selected predicate; breaks within the first run.
+    function invariant_secondary_breakable() public view {
         require(counter.cond() < 2, "breakable broken");
     }
 }
    "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_safe"]).assert_failure().stdout_eq(str![[r#"
-...
-[FAIL: breakable broken] invariant_breakable
-	[Sequence] (original: 2, shrunk: 2)
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
-
-Invariant/Property Tests: 1/2 invariants broken
-[FAIL: breakable broken] invariant_breakable
-[PASS] invariant_safe
- invariant_safe() (runs: 5, calls: 250, reverts: 0)
-
-╭----------+----------+-------+---------+----------╮
-| Contract | Selector | Calls | Reverts | Discards |
-+==================================================+
-| Counter  | inc      | 250   | 0       | 0        |
-╰----------+----------+-------+---------+----------╯
-
-Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
-
-Failing tests:
-Encountered 1 failing test in test/SecondaryOnlyTest.t.sol:SecondaryOnlyTest
-[FAIL: breakable broken] invariant_breakable
-	[Sequence] (original: 2, shrunk: 2)
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
-		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
-
-Invariant/Property Tests: 1/2 invariants broken
-[FAIL: breakable broken] invariant_breakable
-[PASS] invariant_safe
- invariant_safe() (runs: 5, calls: 250, reverts: 0)
-
-Encountered a total of 1 failing tests, 0 tests succeeded
-
-Tip: Run `forge test --rerun` to retry only the 1 failed test
-
-[SEED] (use `--fuzz-seed` to reproduce)
-
-"#]]);
+    let output = cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("[FAIL: breakable broken] invariant_secondary_breakable"), "{stdout}");
+    assert!(stdout.contains("Invariant/Property Tests: 1/2 invariants broken"), "{stdout}");
+    assert!(stdout.contains("[PASS] invariant_anchor_safe"), "{stdout}");
+    assert!(stdout.contains(" invariant_anchor_safe() (runs: 5, calls: 250, reverts: 0)"));
+    assert!(!stdout.contains("[FAIL: safe broken] invariant_anchor_safe"), "{stdout}");
 });
 
 // Verifies the structured JSON failure event emitted at campaign end attributes the broken
 // invariant in declaration order (deterministic) instead of using arbitrary HashMap iteration.
-forgetest_init!(assert_all_failure_event_uses_declaration_order, |prj, cmd| {
+forgetest_init!(failure_event_uses_declaration_order, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 5;
-        config.invariant.assert_all = true;
     });
     prj.add_source(
         "Counter.sol",
@@ -2229,10 +2208,9 @@ contract FailureEventTest is Test {
    "#,
     );
 
-    // Primary is `invariant_c`, but the failure event must name `invariant_a` (first declared
-    // broken invariant) with its matching reason — not whichever entry HashMap iteration
-    // surfaces.
-    cmd.args(["test", "--mt", "invariant_c"]).assert_failure().stderr_eq(str![[r#"
+    // The event must name `invariant_a` (first declared broken invariant) with its matching
+    // reason — not whichever entry HashMap iteration surfaces.
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure().stderr_eq(str![[r#"
 ...
 {"timestamp":[..],"event":"failure","invariant":"invariant_a","target":"test/FailureEventTest.t.sol:FailureEventTest","reason":"a broken"}
 ...

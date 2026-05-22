@@ -424,7 +424,7 @@ pub enum InvariantFailure {
         counterexample: Option<CounterExample>,
         /// Path where the counterexample was persisted for re-running and shrinking.
         persisted_path: std::path::PathBuf,
-        /// Whether this failure is the campaign anchor (the `--mt`-selected invariant).
+        /// Whether this failure is the stable campaign anchor.
         /// When `true` and this is the only failure, the function name is omitted on the
         /// `[FAIL: ...]` line (the trailing summary already identifies it).
         #[serde(default)]
@@ -497,8 +497,7 @@ pub struct TestResult {
     /// still be successful (i.e self.success == true) when it's expected to fail.
     pub reason: Option<String>,
 
-    /// All broken invariants in this campaign — anchor (`--mt` target) and any `assert_all`
-    /// secondaries — in source declaration order.
+    /// All broken invariant predicates in this campaign in source declaration order.
     ///
     /// For invariant tests, this is the single source of truth used by the renderer.
     /// `reason` and `counterexample` are not populated for invariant tests.
@@ -516,13 +515,13 @@ pub struct TestResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invariant_failure_dir: Option<std::path::PathBuf>,
 
-    /// Total number of invariants exercised in this `assert_all` run (primary + secondaries that
-    /// were not skipped by persisted-failure filtering). When `Some(n)` the test report renders
+    /// Total number of invariant predicates exercised in this campaign. When `Some(n)` the report
+    /// renders
     /// an `Invariant/Property Tests: <broken>/<n> invariants broken` summary so users get an
-    /// at-a-glance health line without counting `[FAIL]` blocks. `None` for non-`assert_all`
+    /// at-a-glance health line without counting `[FAIL]` blocks. `None` for single-predicate
     /// campaigns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assert_all_invariant_count: Option<usize>,
+    pub invariant_count: Option<usize>,
 
     /// Handler-side assertion bugs found during the campaign, deduped by
     /// `(reverter, selector)` site (Medusa/Echidna semantics). Rendered in a dedicated
@@ -688,7 +687,7 @@ impl TestResult {
                         || !self.invariant_failures.is_empty()
                 } else {
                     !self.invariant_failures.is_empty()
-                        || matches!(self.assert_all_invariant_count, Some(t) if t > 1)
+                        || matches!(self.invariant_count, Some(t) if t > 1)
                 };
                 self.write_handler_failures(&mut s, user_facing, handler_preceded);
 
@@ -703,7 +702,7 @@ impl TestResult {
         user_facing: bool,
         is_invariant_failure: bool,
     ) -> bool {
-        let Some(total) = self.assert_all_invariant_count else {
+        let Some(total) = self.invariant_count else {
             return false;
         };
         if total <= 1 || !is_invariant_failure {
@@ -713,7 +712,7 @@ impl TestResult {
         writeln!(
             s,
             "\n{}: {}/{total} invariants broken",
-            if user_facing { "Invariant/Property Tests" } else { "Suite assert_all" },
+            if user_facing { "Invariant/Property Tests" } else { "Suite predicates" },
             self.invariant_failures.len()
         )
         .unwrap();
@@ -999,7 +998,7 @@ impl TestResult {
         invariant_failures: Vec<InvariantFailure>,
         invariant_predicate_results: Vec<InvariantPredicateResult>,
         invariant_failure_dir: Option<std::path::PathBuf>,
-        assert_all_invariant_count: Option<usize>,
+        invariant_count: Option<usize>,
         invariant_handler_failures: Vec<InvariantFailure>,
         counterexample: Option<CounterExample>,
         cases: Vec<FuzzedCases>,
@@ -1025,7 +1024,7 @@ impl TestResult {
         self.invariant_failures = invariant_failures;
         self.invariant_predicate_results = invariant_predicate_results;
         self.invariant_failure_dir = invariant_failure_dir;
-        self.assert_all_invariant_count = assert_all_invariant_count;
+        self.invariant_count = invariant_count;
         self.invariant_handler_failures = invariant_handler_failures;
         // `counterexample` is only used by the renderer for optimization mode (the "best
         // sequence" rendered on success). Invariant check-mode failures live entirely in

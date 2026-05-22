@@ -6,12 +6,11 @@
 use foundry_test_utils::{forgetest_init, str};
 
 // Handler `assert(false)` surfaces under `Assertion Tests:`, not as a live invariant failure.
-forgetest_init!(assert_all_handler_assertion_routed_to_handler_section, |prj, cmd| {
+forgetest_init!(handler_assertion_routed_to_handler_section, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 1;
         config.invariant.depth = 10;
         config.invariant.fail_on_revert = false;
-        config.invariant.assert_all = true;
     });
     prj.add_source(
         "AssertHandler.sol",
@@ -47,19 +46,19 @@ contract AssertAllAssertTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_a"]).assert_failure().stdout_eq(str![[r#"
-...
-Ran 1 test for test/AssertAllAssertTest.t.sol:AssertAllAssertTest
-
-Invariant/Property Tests: 0/2 invariants broken
-...
-Assertion Tests: 1 assertion bug(s) found
-[FAIL: panic: assertion failed (0x01)] src/AssertHandler.sol:AssertHandler::alwaysAssert
-	[Sequence] (original: [..], shrunk: [..])
-...
- invariant_a() (runs: 1, calls: [..], reverts: [..])
-...
-"#]]);
+    let output = cmd.args(["test", "--mt", "invariant_a"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("Ran 1 test for test/AssertAllAssertTest.t.sol:AssertAllAssertTest"));
+    assert!(stdout.contains("Assertion Tests: 1 assertion bug(s) found"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "[FAIL: panic: assertion failed (0x01)] src/AssertHandler.sol:AssertHandler::alwaysAssert"
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains(" invariant_a() (runs: 1, calls:"), "{stdout}");
+    assert!(!stdout.contains("Invariant/Property Tests:"), "{stdout}");
+    assert!(!stdout.contains("invariant_b"), "{stdout}");
 });
 
 // Site-granular dedup: 4 distinct paths through one selector all share the same
@@ -71,7 +70,6 @@ forgetest_init!(handler_assertion_dedupes_by_site, |prj, cmd| {
         config.invariant.runs = 1;
         config.invariant.depth = 200;
         config.invariant.fail_on_revert = false;
-        config.invariant.assert_all = true;
         config.invariant.corpus.corpus_dir = Some("inv_corpus".into());
     });
     prj.add_source(
@@ -360,7 +358,6 @@ forgetest_init!(multi_handler_bugs_each_persist_independently, |prj, cmd| {
         config.invariant.runs = 1;
         config.invariant.depth = 20;
         config.invariant.fail_on_revert = false;
-        config.invariant.assert_all = true;
     });
     prj.add_source(
         "HandlerA.sol",
@@ -716,7 +713,6 @@ forgetest_init!(handler_two_branches_same_function_collapse_to_one_bug, |prj, cm
         config.invariant.runs = 100;
         config.invariant.depth = 20;
         config.invariant.fail_on_revert = false;
-        config.invariant.assert_all = true;
         config.invariant.corpus.corpus_dir = Some("inv_corpus".into());
     });
     prj.add_source(
@@ -781,7 +777,6 @@ forgetest_init!(handler_vm_assert_global_flag_does_not_poison_invariant_checks, 
         config.invariant.runs = 1;
         config.invariant.depth = 5;
         config.invariant.fail_on_revert = false;
-        config.invariant.assert_all = true;
         config.assertions_revert = false;
     });
     prj.add_test(
