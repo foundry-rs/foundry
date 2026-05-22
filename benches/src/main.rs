@@ -114,7 +114,7 @@ fn main() -> Result<()> {
     let versions = if let Some(v) = cli.versions.clone() {
         v
     } else if fuzz_campaign_mode {
-        vec!["local".to_string(), "stable".to_string()]
+        vec!["stable".to_string(), "local".to_string()]
     } else {
         FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
     };

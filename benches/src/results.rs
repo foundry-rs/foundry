@@ -174,9 +174,9 @@ impl BenchmarkResults {
             let per_version = self.fuzz_data.get(campaign);
             for (i, metric) in ["runs", "calls", "reverts", "assertion bugs"].iter().enumerate() {
                 let label_cell = if i == 0 { campaign.as_str() } else { "" };
-                output.push_str(&format!("| {label_cell} | {metric}"));
+                output.push_str(&format!("| {label_cell} | {metric} |"));
                 for v in versions {
-                    let cell = per_version
+                    let val = per_version
                         .and_then(|pv| pv.get(v))
                         .map(|r| match *metric {
                             "runs" => r.runs,
@@ -185,9 +185,9 @@ impl BenchmarkResults {
                             "assertion bugs" => r.assertion_bugs,
                             _ => 0,
                         })
-                        .map(|n| format!(" {n} "))
-                        .unwrap_or_else(|| " N/A ".to_string());
-                    output.push_str(&format!(" |{cell}|"));
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| "N/A".to_string());
+                    output.push_str(&format!(" {val} |"));
                 }
                 output.push('\n');
             }
