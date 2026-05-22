@@ -26,7 +26,7 @@ use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     Inspector,
     context::{
-        Block, Cfg, ContextTr, JournalTr, Transaction,
+        Block, Cfg, ContextTr, JournalTr, Transaction, TransactionType,
         result::{EVMError, ExecutionResult, Output},
     },
     context_interface::CreateScheme,
@@ -797,10 +797,28 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             ecx.tx_mut().set_gas_limit(gas_limit);
         }
         ecx.tx_mut().set_gas_price(0);
+        // If the cached tx is EIP-4844 (e.g. set by `vm.blobhashes`), downgrade
+        // it to EIP-1559 and drop the blob hashes so revm doesn't reject the
+        // synthetic inner tx because `gas_price = 0` plus blob fields fail
+        // 4844 validation. The contract-visible `BLOBHASH` opcode is restored
+        // via `EnvOverrides`. Other types (incl. EIP-2930 access lists) are
+        // intentionally left intact, and the full original tx is restored
+        // from `cached_tx_env` after the inner call.
+        if ecx.tx().tx_type() == TransactionType::Eip4844 as u8 {
+            ecx.tx_mut().set_tx_type(TransactionType::Eip1559 as u8);
+            ecx.tx_mut().set_blob_hashes(Vec::new());
+        }
 
         self.inner_context_data =
             Some(InnerContextData { original_origin: cached_tx_env.caller() });
         self.in_inner_context = true;
+
+        // Tell cheatcodes we're entering the synthetic inner transaction so
+        // env-mutating cheatcodes route through `env_overrides` instead of
+        // fighting with the fee-accounting zeroing above. See `EnvOverrides`.
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats.in_isolation_context = true;
+        }
 
         let evm_env = ecx.evm_clone();
         let tx_env = ecx.tx_clone();
@@ -853,6 +871,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         self.in_inner_context = false;
         self.inner_context_data = None;
+
+        // Reset the cheatcodes isolation flag now that the synthetic inner
+        // transaction has finished.
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats.in_isolation_context = false;
+        }
 
         let mut gas = Gas::new(gas_limit);
 

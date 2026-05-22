@@ -30,6 +30,9 @@ use unsafe_typecast::UNSAFE_TYPECAST;
 mod unused_return;
 use unused_return::UNUSED_RETURN;
 
+mod locked_ether;
+use locked_ether::LOCKED_ETHER;
+
 mod weak_prng;
 use weak_prng::WEAK_PRNG;
 
@@ -44,5 +47,6 @@ register_lints!(
     (UninitializedStateVariables, late, (UNINITIALIZED_STATE_VARIABLES)),
     (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
     (UnusedReturn, late, (UNUSED_RETURN)),
+    (LockedEther, late, (LOCKED_ETHER)),
     (WeakPrng, early, (WEAK_PRNG))
 );

@@ -6,15 +6,25 @@ use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
+use foundry_config::Config;
+#[cfg(feature = "optimism")]
+use foundry_evm::core::evm::OpEvmNetwork;
+use foundry_evm::{
+    core::evm::{EthEvmNetwork, FoundryEvmNetwork, TempoEvmNetwork},
+    opts::EvmOpts,
+};
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
 use yansi::Paint;
 
 /// Run the `chisel` command line interface.
 pub fn run() -> Result<()> {
-    setup()?;
-
+    // Pre-parse discovery flags run before `setup()` so they cannot be blocked
+    // by panic-handler / tracing init failures and avoid that init's cost.
+    foundry_cli::opts::GlobalArgs::check_introspect::<Chisel>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Chisel>();
+
+    setup()?;
 
     let args = Chisel::parse();
     args.global.init()?;
@@ -41,10 +51,33 @@ macro_rules! try_cf {
 /// Run the subcommand.
 pub async fn run_command(args: Chisel) -> Result<()> {
     // Load configuration
-    let (config, evm_opts) = args.load_config_and_evm_opts()?;
+    let (mut config, mut evm_opts) = args.load_config_and_evm_opts()?;
 
+    if let Some(chain) = config.chain {
+        evm_opts.networks = evm_opts.networks.with_chain_id(chain.id());
+    }
+    evm_opts.infer_network_from_fork().await;
+    config.networks = evm_opts.networks;
+
+    if evm_opts.networks.is_tempo() {
+        return run_command_with_network::<TempoEvmNetwork>(args, config, evm_opts).await;
+    }
+
+    #[cfg(feature = "optimism")]
+    if evm_opts.networks.is_optimism() {
+        return run_command_with_network::<OpEvmNetwork>(args, config, evm_opts).await;
+    }
+
+    run_command_with_network::<EthEvmNetwork>(args, config, evm_opts).await
+}
+
+async fn run_command_with_network<FEN: FoundryEvmNetwork>(
+    args: Chisel,
+    config: Config,
+    evm_opts: EvmOpts,
+) -> Result<()> {
     // Create a new cli dispatcher
-    let mut dispatcher = ChiselDispatcher::new(crate::source::SessionSourceConfig {
+    let mut dispatcher = ChiselDispatcher::<FEN>::new(crate::source::SessionSourceConfig {
         // Enable traces if any level of verbosity was passed
         traces: config.verbosity > 0,
         foundry_config: config,
@@ -116,8 +149,8 @@ pub async fn run_command(args: Chisel) -> Result<()> {
 
 /// Evaluate multiple Solidity source files contained within a
 /// Chisel prelude directory.
-async fn evaluate_prelude(
-    dispatcher: &mut ChiselDispatcher,
+async fn evaluate_prelude<FEN: FoundryEvmNetwork>(
+    dispatcher: &mut ChiselDispatcher<FEN>,
     maybe_prelude: Option<PathBuf>,
 ) -> Result<()> {
     let Some(prelude_dir) = maybe_prelude else { return Ok(()) };
@@ -142,8 +175,8 @@ async fn evaluate_prelude(
 }
 
 /// Loads a single Solidity file into the prelude.
-async fn load_prelude_file(
-    dispatcher: &mut ChiselDispatcher,
+async fn load_prelude_file<FEN: FoundryEvmNetwork>(
+    dispatcher: &mut ChiselDispatcher<FEN>,
     file: PathBuf,
 ) -> Result<ControlFlow<()>> {
     let prelude = fs::read_to_string(file)
@@ -151,8 +184,8 @@ async fn load_prelude_file(
     dispatcher.dispatch(&prelude).await
 }
 
-async fn handle_cli_command(
-    d: &mut ChiselDispatcher,
+async fn handle_cli_command<FEN: FoundryEvmNetwork>(
+    d: &mut ChiselDispatcher<FEN>,
     cmd: ChiselSubcommand,
 ) -> Result<ControlFlow<()>> {
     match cmd {
@@ -182,5 +215,29 @@ mod tests {
     #[test]
     fn verify_cli() {
         Chisel::command().debug_assert();
+    }
+
+    /// Every `command_id` exposed by `chisel --introspect` MUST be unique.
+    #[test]
+    fn introspect_command_ids_are_unique() {
+        use foundry_cli::introspect::{CommandRegistry, build_document, duplicate_command_ids};
+        let cmd = Chisel::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let dups = duplicate_command_ids(&doc);
+        assert!(dups.is_empty(), "duplicate chisel command_ids: {dups:?}");
+    }
+
+    /// `chisel --introspect` must produce a JSON document that parses back into
+    /// the canonical `IntrospectDocument` shape.
+    #[test]
+    fn introspect_document_is_valid_json() {
+        use foundry_cli::introspect::{
+            CommandRegistry, INTROSPECT_SCHEMA_ID, IntrospectDocument, render_introspect_document,
+        };
+        let cmd = Chisel::command();
+        let json = render_introspect_document(&cmd, &CommandRegistry::EMPTY);
+        let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
+        assert_eq!(doc.binary.name, "chisel");
     }
 }
