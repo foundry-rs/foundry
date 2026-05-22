@@ -82,15 +82,16 @@ struct Cli {
     /// mutually exclusive with the perf-mode flags `--benchmarks`, `--repos`
     /// and `--json-output`. Multiple invariants in the same repo are
     /// supported; the repo is cloned once and each invariant gets its own
-    /// 1h campaign per Foundry version.
-    ///
-    /// Timeout (1h) and seed (42) are intentionally hard-coded so results are
-    /// comparable to the reference run in PR #14853.
+    /// campaign per Foundry version.
     ///
     /// Example:
     ///   `Recon-Fuzz/aave-v4-scfuzzbench:v0.5.6-recon;CryticToFoundry;invariant_noop`
     #[clap(long, value_delimiter = ',')]
     fuzz_campaigns: Option<Vec<String>>,
+
+    /// Per-campaign invariant timeout in seconds (fuzz-campaign mode only).
+    #[clap(long, default_value_t = fuzz::FUZZ_TIMEOUT_SECS)]
+    fuzz_timeout: u64,
 }
 
 /// Mutex to prevent concurrent foundryup calls
@@ -105,9 +106,15 @@ fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
 
-    // Determine versions to test
+    let fuzz_campaign_mode = cli.fuzz_campaigns.is_some();
+
+    // Determine versions to test. Fuzz-campaign mode defaults to local+stable
+    // (compare the PR branch against the current stable release). Perf mode
+    // defaults to the global FOUNDRY_VERSIONS constant (stable + nightly).
     let versions = if let Some(v) = cli.versions.clone() {
         v
+    } else if fuzz_campaign_mode {
+        vec!["local".to_string(), "stable".to_string()]
     } else {
         FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
     };
@@ -115,7 +122,7 @@ fn main() -> Result<()> {
     // Fuzz campaign mode runs an entirely separate code path: no hyperfine,
     // no perf flags, no markdown table of milliseconds.
     if let Some(specs) = cli.fuzz_campaigns.clone() {
-        return run_fuzz_mode(&cli, &versions, &specs);
+        return run_fuzz_mode(&cli, &versions, &specs, cli.fuzz_timeout);
     }
 
     // Check if hyperfine is installed (perf mode only)
@@ -286,7 +293,12 @@ fn main() -> Result<()> {
 /// re-cloning between versions by reusing the same working tree (each campaign
 /// already `forge clean`s its own cache and `corpus/`).
 #[allow(unused_must_use)]
-fn run_fuzz_mode(cli: &Cli, versions: &[String], specs: &[String]) -> Result<()> {
+fn run_fuzz_mode(
+    cli: &Cli,
+    versions: &[String],
+    specs: &[String],
+    timeout_secs: u64,
+) -> Result<()> {
     let campaigns: Vec<FuzzCampaignSpec> = specs
         .iter()
         .map(|s| s.parse::<FuzzCampaignSpec>())
@@ -350,8 +362,9 @@ fn run_fuzz_mode(cli: &Cli, versions: &[String], specs: &[String]) -> Result<()>
             for spec in specs_in_repo {
                 let label = format!("{}/{} / {}", spec.repo.org, spec.repo.repo, spec.test);
                 sh_println!("▶ [{version}] {label}");
-                let result = fuzz::run_campaign(project_root, spec, version, cli.verbose)
-                    .wrap_err_with(|| format!("Fuzz campaign {label} failed for {version}"))?;
+                let result =
+                    fuzz::run_campaign(project_root, spec, version, timeout_secs, cli.verbose)
+                        .wrap_err_with(|| format!("Fuzz campaign {label} failed for {version}"))?;
                 sh_println!(
                     "  ✔ runs={} calls={} reverts={} assertion_bugs={}",
                     result.runs,
@@ -366,7 +379,7 @@ fn run_fuzz_mode(cli: &Cli, versions: &[String], specs: &[String]) -> Result<()>
 
     let filename =
         cli.output_file.clone().unwrap_or_else(|| "forge_fuzz_campaign_bench.md".to_string());
-    let markdown = results.generate_fuzz_markdown(versions);
+    let markdown = results.generate_fuzz_markdown(versions, timeout_secs);
     let output_path = cli.output_dir.join(filename);
     fs::write(&output_path, markdown).wrap_err("Failed to write fuzz markdown")?;
     sh_println!("✅ Fuzz report written to: {}", output_path.display());

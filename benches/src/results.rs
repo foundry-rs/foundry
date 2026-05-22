@@ -94,7 +94,7 @@ impl BenchmarkResults {
     /// One section per `## Forge Fuzz Campaign`, then one block per campaign
     /// with a small table of metrics × versions so users can eyeball whether
     /// `local` reaches more coverage than `stable`.
-    pub fn generate_fuzz_markdown(&self, versions: &[String]) -> String {
+    pub fn generate_fuzz_markdown(&self, versions: &[String], timeout_secs: u64) -> String {
         let mut output = String::new();
 
         output.push_str("# Foundry Fuzz Campaign Benchmark Results\n\n");
@@ -102,11 +102,18 @@ impl BenchmarkResults {
             "**Date**: {}\n\n",
             chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
         ));
+        let timeout_label = if timeout_secs % 3600 == 0 {
+            format!("{}h", timeout_secs / 3600)
+        } else if timeout_secs % 60 == 0 {
+            format!("{}m", timeout_secs / 60)
+        } else {
+            format!("{timeout_secs}s")
+        };
         output.push_str(&format!(
             "Each campaign runs `forge test --mc <Contract> --mt <invariant> --fuzz-seed {}` \
-             with `FOUNDRY_INVARIANT_TIMEOUT={}` (1h). Numbers are raw counts collected from forge stdout.\n\n",
+             with `FOUNDRY_INVARIANT_TIMEOUT={}` ({timeout_label}). Numbers are raw counts collected from forge stdout.\n\n",
             crate::fuzz::FUZZ_SEED,
-            crate::fuzz::FUZZ_TIMEOUT_SECS,
+            timeout_secs,
         ));
 
         output.push_str("## Summary\n\n");
@@ -167,7 +174,7 @@ impl BenchmarkResults {
             let per_version = self.fuzz_data.get(campaign);
             for (i, metric) in ["runs", "calls", "reverts", "assertion bugs"].iter().enumerate() {
                 let label_cell = if i == 0 { campaign.as_str() } else { "" };
-                output.push_str(&format!("| {label_cell} | {metric} |"));
+                output.push_str(&format!("| {label_cell} | {metric}"));
                 for v in versions {
                     let cell = per_version
                         .and_then(|pv| pv.get(v))
@@ -180,7 +187,7 @@ impl BenchmarkResults {
                         })
                         .map(|n| format!(" {n} "))
                         .unwrap_or_else(|| " N/A ".to_string());
-                    output.push_str(&format!("|{cell}|"));
+                    output.push_str(&format!(" |{cell}|"));
                 }
                 output.push('\n');
             }

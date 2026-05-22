@@ -123,6 +123,7 @@ pub fn run_campaign(
     project_root: &Path,
     spec: &FuzzCampaignSpec,
     version: &str,
+    timeout_secs: u64,
     verbose: bool,
 ) -> Result<FuzzCampaignResult> {
     // Always start from a clean cache so we never replay a cached failure
@@ -134,7 +135,7 @@ pub fn run_campaign(
 
     let extra = spec.repo.extra_args.as_deref().map(str::trim).filter(|s| !s.is_empty());
     sh_println!(
-        "  🚀 [{version}] forge test --mc {} --mt {} --fuzz-seed {FUZZ_SEED}  (timeout={FUZZ_TIMEOUT_SECS}s){}",
+        "  🚀 [{version}] forge test --mc {} --mt {} --fuzz-seed {FUZZ_SEED}  (timeout={timeout_secs}s){}",
         spec.contract,
         spec.test,
         extra.map(|e| format!("  + {e}")).unwrap_or_default(),
@@ -142,7 +143,7 @@ pub fn run_campaign(
 
     let mut cmd = Command::new("forge");
     cmd.current_dir(project_root)
-        .env("FOUNDRY_INVARIANT_TIMEOUT", FUZZ_TIMEOUT_SECS.to_string())
+        .env("FOUNDRY_INVARIANT_TIMEOUT", timeout_secs.to_string())
         .args(["test", "--mc", &spec.contract, "--mt", &spec.test, "--fuzz-seed", FUZZ_SEED]);
     if let Some(extra) = extra {
         for arg in extra.split_whitespace() {
