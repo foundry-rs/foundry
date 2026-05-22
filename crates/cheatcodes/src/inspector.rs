@@ -572,6 +572,11 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub dynamic_gas_limit: bool,
     // Custom execution evm version.
     pub execution_evm_version: Option<SpecFor<FEN>>,
+    /// Registered external cheatcode handlers.
+    ///
+    /// These are tried in order when a call to the cheatcode address does not match any
+    /// built-in cheatcode selector.
+    pub external_cheatcodes: Vec<Arc<dyn crate::ExternalCheatcode>>,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -580,6 +585,85 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
 impl Default for Cheatcodes {
     fn default() -> Self {
         Self::new(Arc::default())
+    }
+}
+
+/// Internal implementation of [`crate::CheatcodeHost`] that bridges the generic EVM context
+/// to the object-safe host trait.
+struct CheatcodeHostImpl<'a, 'db, FEN: FoundryEvmNetwork + 'db> {
+    ecx: &'a mut FoundryContextFor<'db, FEN>,
+    /// Deal records for revert rollback (shared with Cheatcodes state).
+    eth_deals: &'a mut Vec<DealRecord>,
+    caller: Address,
+    gas_limit: u64,
+}
+
+impl<FEN: FoundryEvmNetwork> CheatcodeHostImpl<'_, '_, FEN> {
+    fn is_precompile(&self, address: &Address) -> bool {
+        self.ecx.journal().precompile_addresses().contains(address)
+    }
+
+    fn ensure_not_precompile(&self, address: &Address) -> crate::Result<()> {
+        if self.is_precompile(address) {
+            Err(fmt_err!("cannot use precompile {address} as an argument"))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl<FEN: FoundryEvmNetwork> crate::CheatcodeHost for CheatcodeHostImpl<'_, '_, FEN> {
+    fn caller(&self) -> Address {
+        self.caller
+    }
+
+    fn gas_limit(&self) -> u64 {
+        self.gas_limit
+    }
+
+    fn load(&mut self, account: Address, slot: U256) -> crate::Result<U256> {
+        // Match the same read path as the built-in vm.load cheatcode:
+        // load_account first to ensure it's warm, then sload.
+        self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
+        let val = self.ecx.journal_mut().sload(account, slot).map_err(|e| fmt_err!("{e}"))?;
+        Ok(val.data)
+    }
+
+    fn balance(&mut self, account: Address) -> crate::Result<U256> {
+        let acc = self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
+        Ok(acc.data.info.balance)
+    }
+
+    fn store(&mut self, account: Address, slot: U256, value: U256) -> crate::Result<()> {
+        self.ensure_not_precompile(&account)?;
+        // Match the same write path as the built-in vm.store cheatcode.
+        self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
+        self.ecx.journal_mut().touch_account(account);
+        self.ecx.journal_mut().sstore(account, slot, value).map_err(|e| fmt_err!("{e}"))?;
+        Ok(())
+    }
+
+    fn set_balance(&mut self, account: Address, new_balance: U256) -> crate::Result<()> {
+        // Match the same write path as the built-in vm.deal cheatcode,
+        // including DealRecord for revert rollback.
+        self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
+        self.ecx.journal_mut().touch_account(account);
+        let acc =
+            self.ecx.journal_mut().evm_state_mut().get_mut(&account).expect("account is loaded");
+        let old_balance = std::mem::replace(&mut acc.info.balance, new_balance);
+        self.eth_deals.push(DealRecord { address: account, old_balance, new_balance });
+        Ok(())
+    }
+
+    fn set_code(&mut self, account: Address, code: Bytes) -> crate::Result<()> {
+        self.ensure_not_precompile(&account)?;
+        // Match the same write path as the built-in vm.etch cheatcode.
+        use revm::bytecode::Bytecode;
+        self.ecx.journal_mut().load_account(account).map_err(|e| fmt_err!("{e}"))?;
+        let bytecode = Bytecode::new_raw_checked(code)
+            .map_err(|e| fmt_err!("failed to create bytecode: {e}"))?;
+        self.ecx.journal_mut().set_code(account, bytecode);
+        Ok(())
     }
 }
 
@@ -630,6 +714,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             signatures_identifier: Default::default(),
             dynamic_gas_limit: Default::default(),
             execution_evm_version: None,
+            external_cheatcodes: Vec::new(),
         }
     }
 
@@ -660,6 +745,14 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         self.active_delegations.push(authorization);
     }
 
+    /// Registers an external cheatcode handler.
+    ///
+    /// External handlers are tried in order when a call to the cheatcode address does not
+    /// match any built-in cheatcode selector.
+    pub fn register_external_cheatcode(&mut self, handler: Arc<dyn crate::ExternalCheatcode>) {
+        self.external_cheatcodes.push(handler);
+    }
+
     /// Returns the signatures identifier.
     pub fn signatures_identifier(&self) -> Option<&SignaturesIdentifier> {
         self.signatures_identifier.get_or_init(|| SignaturesIdentifier::new(true).ok()).as_ref()
@@ -672,24 +765,47 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
         call: &CallInputs,
         executor: &mut dyn CheatcodesExecutor<FEN>,
     ) -> Result {
-        // decode the cheatcode call
-        let decoded = Vm::VmCalls::abi_decode(&call.input.bytes(ecx)).map_err(|e| {
-            if let alloy_sol_types::Error::UnknownSelector { name: _, selector } = e {
-                let msg = format!(
-                    "unknown cheatcode with selector {selector}; \
-                     you may have a mismatch between the `Vm` interface (likely in `forge-std`) \
-                     and the `forge` version"
-                );
-                return alloy_sol_types::Error::Other(std::borrow::Cow::Owned(msg));
-            }
-            e
-        })?;
-
         let caller = call.caller;
 
         // ensure the caller is allowed to execute cheatcodes,
         // but only if the backend is in forking mode
         ecx.db_mut().ensure_cheatcode_access_forking_mode(&caller)?;
+
+        // decode the cheatcode call
+        let decoded = match Vm::VmCalls::abi_decode(&call.input.bytes(ecx)) {
+            Ok(decoded) => decoded,
+            Err(alloy_sol_types::Error::UnknownSelector { name: _, selector }) => {
+                // Try registered external cheatcode handlers before erroring.
+                // Clone the Arc vec (cheap) to avoid borrow conflict with `self`.
+                let handlers = self.external_cheatcodes.clone();
+                let calldata = call.input.bytes(ecx);
+
+                for handler in &handlers {
+                    let mut host: CheatcodeHostImpl<'_, '_, FEN> = CheatcodeHostImpl {
+                        ecx: &mut *ecx,
+                        eth_deals: &mut self.eth_deals,
+                        caller,
+                        gas_limit: call.gas_limit,
+                    };
+                    match handler.call(&mut host, &calldata) {
+                        crate::ExternalCheatcodeOutcome::Return(retdata) => {
+                            return Ok(retdata);
+                        }
+                        crate::ExternalCheatcodeOutcome::Revert(e) => {
+                            return Err(e);
+                        }
+                        crate::ExternalCheatcodeOutcome::Unhandled => continue,
+                    }
+                }
+
+                return Err(fmt_err!(
+                    "unknown cheatcode with selector {selector}; \
+                     you may have a mismatch between the `Vm` interface (likely in `forge-std`) \
+                     and the `forge` version"
+                ));
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         apply_dispatch(
             &decoded,
