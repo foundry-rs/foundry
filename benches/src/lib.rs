@@ -491,6 +491,9 @@ pub fn install_local_version() -> Result<()> {
 
     let status = Command::new("foundryup")
         .args(["--path", workspace.to_str().unwrap()])
+        // Unset TAG_NAME so build.rs labels this binary as "-dev" rather than
+        // inheriting a "nightly-*" tag from the CI runner environment.
+        .env_remove("TAG_NAME")
         .status()
         .wrap_err("Failed to run foundryup --path")?;
 
