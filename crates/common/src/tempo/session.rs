@@ -165,9 +165,17 @@ impl SessionRecord {
     pub fn mark_expired(&mut self, now: u64) -> usize {
         let mut updated = 0;
         for session in &mut self.sessions {
-            if session.status.is_live() && session.is_expired_at(now) {
+            let should_expire = session.status.is_live() && session.is_expired_at(now);
+            let should_clear_key =
+                session.key.is_some() && (should_expire || session.status.is_terminal());
+
+            if should_expire {
                 session.status = SessionStatus::Expired;
+            }
+            if should_clear_key {
                 session.key = None;
+            }
+            if should_expire || should_clear_key {
                 updated += 1;
             }
         }
@@ -443,6 +451,31 @@ key = "0x1111"
             assert!(session.key.is_none());
             assert!(read_live_session_key(session_id, 100).is_none());
             assert_eq!(fs::read_to_string(&keys_path).unwrap(), original_keys);
+        });
+    }
+
+    #[test]
+    fn mark_expired_session_entries_clears_terminal_session_keys() {
+        with_tempo_home(|| {
+            let expired_id = B256::from([0xbc; 32]);
+            let revoked_id = B256::from([0xbd; 32]);
+            let failed_id = B256::from([0xbe; 32]);
+
+            upsert_session_entry(sample_entry_with_key(expired_id, 100, SessionStatus::Expired))
+                .unwrap();
+            upsert_session_entry(sample_entry_with_key(revoked_id, 200, SessionStatus::Revoked))
+                .unwrap();
+            upsert_session_entry(sample_entry_with_key(failed_id, 200, SessionStatus::Failed))
+                .unwrap();
+
+            assert_eq!(mark_expired_session_entries(100).unwrap(), 3);
+            let record = read_session_record().unwrap();
+            for session_id in [expired_id, revoked_id, failed_id] {
+                assert!(record.get(session_id).unwrap().key.is_none());
+            }
+            assert_eq!(record.get(expired_id).unwrap().status, SessionStatus::Expired);
+            assert_eq!(record.get(revoked_id).unwrap().status, SessionStatus::Revoked);
+            assert_eq!(record.get(failed_id).unwrap().status, SessionStatus::Failed);
         });
     }
 
