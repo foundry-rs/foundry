@@ -724,8 +724,12 @@ async fn test_fill_transaction_reverts_on_gas_estimation_failure() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_send_transaction_uses_valid_fallback_gas_on_osaka() {
-    let (api, handle) =
-        spawn(NodeConfig::test().with_hardfork(Some(EthereumHardfork::Osaka.into()))).await;
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Osaka.into()))
+            .enable_tx_gas_limit(true),
+    )
+    .await;
 
     let accounts: Vec<_> = handle.dev_wallets().collect();
     let signer: EthereumWallet = accounts[0].clone().into();
