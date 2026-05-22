@@ -11,10 +11,10 @@
 //! The flag is detected before clap parsing — see [`check_machine`] — so the
 //! mode is known by the time clap errors need to be intercepted.
 //!
-//! Adoption of machine-mode output by individual commands lands in follow-up
-//! PRs. PR 2 wires the runtime infrastructure (flag detection, error
-//! interception, exit-code mapping); per-command envelope emission is
-//! deferred.
+//! This module ships the runtime infrastructure (flag detection, error
+//! interception, exit-code mapping). Adoption of machine-mode output by
+//! individual commands lands in follow-up work; per-command envelope
+//! emission is deferred.
 
 use crate::{
     diagnostic,

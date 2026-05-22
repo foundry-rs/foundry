@@ -34,8 +34,18 @@ codes MUST NOT collide with this global table.
 
 ## Machine-mode interaction
 
-Under `--machine`, the binary always emits a JSON envelope on stdout when
-exiting with a non-zero code, including for parse and usage errors — these
-are emitted as `JsonEnvelope::error` with the appropriate diagnostic code.
-Help and version requests are not failures: they exit `0` and are emitted as
-a success envelope wrapping the rendered text.
+Under `--machine`, the CLI runtime guarantees structured envelopes for
+**pre-command exits** (parse errors, missing subcommand, invalid flag
+combination, `--help`, `--version`):
+
+- parse / usage failures exit `2` and emit `JsonEnvelope::error` with
+  diagnostic code `cli.usage.invalid`
+- `--help` / `--version` exit `0` and emit `JsonEnvelope::success`
+  wrapping the rendered text (schemas `foundry:cli.help@v1` /
+  `foundry:cli.version@v1`; see [`spec.md`](./spec.md) §10)
+
+Command-local non-zero exits adopt structured envelopes incrementally
+according to each command's declared
+[`output_mode`](./spec.md#4-output-modes). Until a command opts in, it
+exits with the canonical [`ExitCode`](#) for its failure category but does
+not emit an envelope.
