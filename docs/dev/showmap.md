@@ -25,15 +25,15 @@ every selected fuzz/invariant test:
 2. Walks `worker0/corpus/*.json[.gz]`.
 3. Replays each entry through a fresh executor.
 4. Aggregates per-call EVM (and/or sancov) edge bitmaps with saturating add.
-5. Writes one or more files under `<showmap-out>/<approach>/`.
+5. Writes one or more files under `<showmap-out>/<approach>__<suite>__<test>/`.
 
 ## Flags
 
 | Flag | Description |
 |------|-------------|
 | `--showmap-out <DIR>` | Output root. Required to enable showmap mode. |
-| `--showmap-approach <NAME>` | Subdirectory under `--showmap-out` (default: `replay`). |
-| `--showmap-trial <NAME>` | Trial id appended to each filename (default: `trial-<unix_nanos>`, unique per invocation so reruns don't overwrite). |
+| `--showmap-approach <NAME>` | Approach prefix; test identity is appended to form the dir name (default: `replay`). |
+| `--showmap-trial <NAME>` | Trial id used as the filename (default: `trial-<unix_nanos>`, unique per invocation so reruns don't overwrite). |
 | `--showmap-domain <evm\|sancov\|both>` | Bitmap(s) to dump (default: `evm`). |
 | `--showmap-per-input` | Emit one file per corpus entry instead of one aggregated per test. |
 | `--showmap-corpus-dir <PATH>` | Override the corpus dir to replay. |
@@ -41,12 +41,13 @@ every selected fuzz/invariant test:
 ## Output format
 
 ```
-<showmap-out>/<approach>/<suite>__<test>__<trial>.txt              # aggregated
-<showmap-out>/<approach>/<suite>__<test>__<trial>__<uuid>-<ts>.txt # --showmap-per-input
+<showmap-out>/<approach>__<suite>__<test>/<trial>.txt              # aggregated
+<showmap-out>/<approach>__<suite>__<test>/<trial>__<uuid>-<ts>.txt # --showmap-per-input
 ```
 
-`<suite>` is the full `path/to/File.sol:Contract` identifier with `/`, `\`, and `:` replaced
-by `_`, so contracts with the same name in different files don't collide.
+Each test gets its own approach dir so files inside it are trials of the same test,
+which is the layout `differential-coverage` expects. `<suite>` is the full
+`path/to/File.sol:Contract` identifier with `/`, `\`, and `:` replaced by `_`.
 
 Each line: `<id>:<count>` where `count` is the saturating-summed raw hitcount.
 Zero-hit edges are omitted. IDs are deterministic across `forge` processes:

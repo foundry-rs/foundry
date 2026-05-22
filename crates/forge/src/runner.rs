@@ -1567,13 +1567,13 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor.inspector_mut().collect_line_coverage(domain.includes_evm());
         executor.inspector_mut().collect_sancov_edges(domain.includes_sancov());
 
-        // Flatten the full `path/to/File.sol:Contract` identifier into one filename segment
-        // so contracts with the same name in different files don't overwrite each other.
+        // Fold test identity into the approach dir so each `<approach>/` contains
+        // trials of a single test — what `differential-coverage` expects.
         let safe_id = self.cr.name.replace(['/', '\\', ':'], "_");
+        let safe_fn = func.name.replace(['/', '\\', ':', '(', ')', ',', ' '], "_");
         let opts = ShowmapOpts {
             out_dir: showmap.out_dir.clone(),
-            approach: showmap.approach.clone(),
-            program: format!("{safe_id}__{}", func.name),
+            approach: format!("{}__{safe_id}__{safe_fn}", showmap.approach),
             trial: showmap.trial.clone(),
             per_input: showmap.per_input,
             domain,
