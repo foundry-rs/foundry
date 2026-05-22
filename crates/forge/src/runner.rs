@@ -906,7 +906,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         };
         // A non-anchor predicate's persisted failure is only honored when its embedded settings
         // still match the current run; stale caches fall back to a fresh campaign.
-        let persisted_invariants = if !is_optimization {
+        let persisted_invariants = if is_optimization {
+            BTreeSet::new()
+        } else {
             invariants
                 .iter()
                 .filter(|(invariant_fn, _)| *invariant_fn != func)
@@ -916,8 +918,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         .then_some(invariant_fn.name.as_str())
                 })
                 .collect::<BTreeSet<_>>()
-        } else {
-            BTreeSet::new()
         };
         // Warn when predicates are dropped because they already have persisted failures from a
         // previous campaign. Symmetric with the primary's persisted-replay warning so users
