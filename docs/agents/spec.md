@@ -294,12 +294,20 @@ introspection no longer lists it.
 
 ## 10. Machine mode (`--machine`)
 
-`--machine` is the stable agent-contract selector. When set, a command:
+`--machine` is the stable agent-contract selector. The selector itself is
+shipped by the CLI runtime; per-command behavior is adopted incrementally.
 
-- emits its declared `output_mode` only
-- never writes color, progress bars, or interactive prompts to stdout
-- wraps parse and usage failures in an error envelope, and wraps help/version
-  output in a success envelope (instead of plain text on stderr/stdout)
+The runtime guarantees today, regardless of which command is invoked:
+
+- color is disabled (`ColorChoice::Never`)
+- parse and usage failures are wrapped in an error envelope
+  (`cli.usage.invalid`, exit `2`)
+- `--help` / `--version` are wrapped in a success envelope (exit `0`)
+
+The per-command guarantees a command opts into, once adopted, are:
+
+- emits its declared `output_mode` only on stdout
+- suppresses progress bars and interactive prompts
 - maps process-exit failures to the canonical `ExitCode` enum
 
 Agents may also rely on `--introspect` for discovery and on the existing

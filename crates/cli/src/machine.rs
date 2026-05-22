@@ -1,20 +1,23 @@
 //! Machine mode (`--machine`) — agent-contract output selector.
 //!
-//! See [`docs/agents/spec.md`](../../../docs/agents/spec.md) §10. When a
-//! command is invoked with `--machine`:
+//! See [`docs/agents/spec.md`](../../../docs/agents/spec.md) §10. This
+//! module ships the **runtime layer** of `--machine`: pre-parse detection,
+//! clap-error interception, and the canonical [`ExitCode`] mapping for
+//! pre-command exits.
 //!
-//! - it emits its declared [`output_mode`](crate::introspect::OutputMode) only,
-//! - it never writes color, progress bars, or interactive prompts to stdout,
-//! - parse, usage, version, and help failures are structured as envelopes,
-//! - process-exit failures map to the canonical [`ExitCode`] enum.
+//! Runtime guarantees, regardless of which command is invoked:
 //!
-//! The flag is detected before clap parsing — see [`check_machine`] — so the
-//! mode is known by the time clap errors need to be intercepted.
+//! - color is disabled (wired through [`crate::opts::GlobalArgs::shell`]),
+//! - parse / usage failures are wrapped in an error envelope (`cli.usage.invalid`, exit `2`),
+//! - `--help` / `--version` are wrapped in a success envelope (exit `0`).
 //!
-//! This module ships the runtime infrastructure (flag detection, error
-//! interception, exit-code mapping). Adoption of machine-mode output by
-//! individual commands lands in follow-up work; per-command envelope
-//! emission is deferred.
+//! Per-command behavior — emitting only the declared
+//! [`output_mode`](crate::introspect::OutputMode), suppressing progress
+//! bars and interactive prompts, returning the canonical [`ExitCode`] for
+//! the failure category — is opt-in and adopted incrementally.
+//!
+//! The flag is detected before clap parsing — see [`check_machine`] — so
+//! the mode is known by the time clap errors need to be intercepted.
 
 use crate::{
     diagnostic,

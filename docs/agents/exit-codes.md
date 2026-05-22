@@ -3,9 +3,12 @@
 This document defines the canonical exit-code contract for Foundry binaries.
 Exit codes are part of the agent contract — agents may switch on them.
 
-The table below reflects the target contract. Until the `ExitCode` enum is
-in place, binaries continue to emit `0` on success and a non-zero code on
-failure without further guarantees.
+The table below is the canonical contract. The [`ExitCode`] enum encodes
+it for use in code. Adoption is incremental: commands return the
+appropriate variant as they migrate; until then, callers should expect a
+non-zero exit but may not get the specific code listed here.
+
+[`ExitCode`]: ../../crates/cli/src/exit_code.rs
 
 | Code | Name             | Meaning                                                                        |
 | ---- | ---------------- | ------------------------------------------------------------------------------ |
@@ -44,8 +47,11 @@ combination, `--help`, `--version`):
   wrapping the rendered text (schemas `foundry:cli.help@v1` /
   `foundry:cli.version@v1`; see [`spec.md`](./spec.md) §10)
 
-Command-local non-zero exits adopt structured envelopes incrementally
-according to each command's declared
-[`output_mode`](./spec.md#4-output-modes). Until a command opts in, it
-exits with the canonical [`ExitCode`](#) for its failure category but does
-not emit an envelope.
+Command-local exit-code and envelope adoption is incremental. Each
+command migrates to its canonical [`ExitCode`] and to envelope output
+per its declared [`output_mode`](./spec.md#4-output-modes) as part of
+follow-up work; until a command opts in, it exits `1` on failure (the
+existing `main` fallback) and does not emit an envelope. The two
+exit-code adoptions wired in the runtime layer today are `forge test`
+failure → `TestFailure` (5) and `anvil` signal exit → `Interrupted` (8)
+under `--machine`.
