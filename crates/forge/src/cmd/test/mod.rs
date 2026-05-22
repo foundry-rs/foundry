@@ -1194,20 +1194,23 @@ fn last_run_failures(config: &Config) -> Option<regex::Regex> {
 /// Persist filter with last test run failures (only if there's any failure).
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
-        let mut filter = String::new();
-        let mut failures = outcome.failures().peekable();
-        while let Some((test_name, _)) = failures.next() {
-            if test_name.is_any_test()
-                && let Some(test_match) = test_name.split('(').next()
-            {
-                filter.push_str(test_match);
-                if failures.peek().is_some() {
-                    filter.push('|');
-                }
-            }
-        }
+        let filter =
+            outcome.failures().flat_map(rerun_filter_matches).collect::<Vec<_>>().join("|");
         let _ = fs::write(&config.test_failures_file, filter);
     }
+}
+
+fn rerun_filter_matches<'a>(
+    (test_name, test_result): (&'a String, &'a TestResult),
+) -> impl Iterator<Item = &'a str> {
+    let has_predicate_failures =
+        test_result.invariant_failures.iter().any(|failure| failure.predicate_name().is_some());
+    let predicate_failures =
+        test_result.invariant_failures.iter().filter_map(|failure| failure.predicate_name());
+
+    let fallback = test_name.is_any_test().then(|| test_name.split('(').next()).flatten();
+
+    predicate_failures.chain(fallback.into_iter().filter(move |_| !has_predicate_failures))
 }
 
 /// Generate test report in JUnit XML report format.

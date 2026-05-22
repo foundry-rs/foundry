@@ -462,6 +462,14 @@ impl InvariantFailure {
         }
     }
 
+    /// Invariant predicate name, if this is a predicate failure.
+    pub fn predicate_name(&self) -> Option<&str> {
+        match self {
+            Self::Predicate { name, .. } => Some(name),
+            Self::Handler { .. } => None,
+        }
+    }
+
     /// Counterexample sequence, when one is available.
     pub const fn counterexample(&self) -> Option<&CounterExample> {
         match self {

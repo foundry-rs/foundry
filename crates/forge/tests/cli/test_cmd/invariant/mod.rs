@@ -2159,6 +2159,64 @@ contract SecondaryOnlyTest is Test {
     assert!(!stdout.contains("[FAIL: safe broken] invariant_anchor_safe"), "{stdout}");
 });
 
+// Verifies `forge test --rerun` records the predicate that actually failed inside a merged
+// campaign, not just the campaign anchor. Otherwise a secondary-only failure would be rerun as
+// the passing anchor and incorrectly succeed.
+forgetest_init!(rerun_replays_non_anchor_invariant_failure, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 50;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "RerunSecondaryOnlyTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract RerunSecondaryOnlyTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    function invariant_anchor_safe() public view {
+        require(counter.cond() < 1000000, "safe broken");
+    }
+
+    function invariant_secondary_breakable() public view {
+        require(counter.cond() < 2, "breakable broken");
+    }
+}
+   "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+
+    let test_failures = std::fs::read_to_string(prj.root().join("cache/test-failures")).unwrap();
+    assert!(test_failures.contains("invariant_secondary_breakable"), "{test_failures}");
+    assert!(!test_failures.contains("invariant_anchor_safe"), "{test_failures}");
+
+    let output = cmd.forge_fuse().args(["test", "--rerun"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("[FAIL: breakable broken]"), "{stdout}");
+    assert!(stdout.contains(" invariant_secondary_breakable() (runs:"), "{stdout}");
+    assert!(!stdout.contains("invariant_anchor_safe"), "{stdout}");
+});
+
 // Verifies the structured JSON failure event emitted at campaign end attributes the broken
 // invariant in declaration order (deterministic) instead of using arbitrary HashMap iteration.
 forgetest_init!(failure_event_uses_declaration_order, |prj, cmd| {
