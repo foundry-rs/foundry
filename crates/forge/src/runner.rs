@@ -804,6 +804,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor
             .inspector_mut()
             .collect_edge_coverage(invariant_config.corpus.collect_evm_edge_coverage());
+        executor.inspector_mut().collect_evm_cmp_log(invariant_config.corpus.collect_evm_cmp_log());
         executor
             .inspector_mut()
             .collect_sancov_edges(invariant_config.corpus.collect_sancov_edges());
@@ -1395,6 +1396,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor
             .inspector_mut()
             .collect_edge_coverage(fuzz_config.corpus.collect_evm_edge_coverage());
+        executor.inspector_mut().collect_evm_cmp_log(fuzz_config.corpus.collect_evm_cmp_log());
         executor.inspector_mut().collect_sancov_edges(fuzz_config.corpus.collect_sancov_edges());
         executor
             .inspector_mut()

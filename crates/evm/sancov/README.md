@@ -14,6 +14,8 @@ corpus_dir = "corpus/invariant"
 ```
 
 When `sancov_edges` is enabled, the EVM `EdgeCovInspector` is automatically disabled — sancov replaces EVM bytecode coverage as the guidance signal.
+When `corpus_dir` is set and `sancov_edges` is disabled, EVM edge coverage and EVM comparison operands are collected automatically for coverage-guided fuzzing.
+`sancov_trace_cmp` is independent and only adds comparison operands from sancov-instrumented native code.
 
 ## Build
 
@@ -45,4 +47,3 @@ Then build:
 ```bash
 RUSTC_WRAPPER=./sancov-wrapper.sh cargo build --profile fuzz --bin forge
 ```
-

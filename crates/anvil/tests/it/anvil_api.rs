@@ -1104,6 +1104,28 @@ async fn test_mine_first_block_with_interval() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_safe_and_finalized_use_configured_slots_in_epoch() {
+    let (api, _) = spawn(NodeConfig::test().with_slots_in_an_epoch(2)).await;
+
+    api.anvil_mine(Some(U256::from(5)), None).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let safe_block = api.block_by_number(BlockNumberOrTag::Safe).await.unwrap().unwrap();
+    assert_eq!(safe_block.header.number, 3);
+
+    let finalized_block = api.block_by_number(BlockNumberOrTag::Finalized).await.unwrap().unwrap();
+    assert_eq!(finalized_block.header.number, 1);
+
+    let safe_history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Safe, vec![]).await.unwrap();
+    assert_eq!(safe_history.oldest_block, 3);
+
+    let finalized_history =
+        api.fee_history(U256::from(1), BlockNumberOrTag::Finalized, vec![]).await.unwrap();
+    assert_eq!(finalized_history.oldest_block, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_anvil_reset_non_fork() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();
