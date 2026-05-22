@@ -1,6 +1,6 @@
 use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
-    config::{DEFAULT_MNEMONIC, ForkChoice},
+    config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
     eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
 };
 use alloy_genesis::Genesis;
@@ -94,7 +94,7 @@ pub struct NodeArgs {
     pub block_time: Option<Duration>,
 
     /// Slots in an epoch
-    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = 32)]
+    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = DEFAULT_SLOTS_IN_AN_EPOCH)]
     pub slots_in_an_epoch: u64,
 
     /// Writes output of `anvil` as json to user-specified file.

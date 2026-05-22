@@ -1,3 +1,4 @@
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 
 // Test evm version switch during tests / scripts.
@@ -211,4 +212,67 @@ contract TempoEvmVersionTest is Test {
     );
 
     cmd.args(["test", "--network", "tempo", "--mc", "TempoEvmVersionTest"]).assert_success();
+});
+
+forgetest_init!(test_network_tempo_defaults_to_latest_hardfork, |prj, cmd| {
+    prj.update_config(|config| {
+        config.solc = Some(OTHER_SOLC_VERSION.into());
+    });
+
+    let expected =
+        foundry_evm::hardforks::latest_active_tempo_hardfork().to_string().to_lowercase();
+    prj.add_test(
+        "TempoDefaultEvmVersion.t.sol",
+        &format!(
+            r#"
+pragma solidity >=0.8.20;
+
+import {{Test}} from "forge-std/Test.sol";
+
+interface EvmVm {{
+    function getEvmVersion() external pure returns (string memory evm);
+}}
+
+contract TempoDefaultEvmVersionTest is Test {{
+    EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    function test_network_tempo_defaults_to_latest_hardfork() public {{
+        assertEq(evm.getEvmVersion(), "{expected}");
+    }}
+}}
+   "#
+        ),
+    );
+
+    cmd.args(["test", "--network", "tempo", "--mc", "TempoDefaultEvmVersionTest"]).assert_success();
+});
+
+// Regression test for <https://github.com/foundry-rs/foundry/issues/13040>:
+// configured evm_version must be preserved after createSelectFork / rollFork.
+forgetest_init!(test_fork_preserves_evm_version, |prj, cmd| {
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Cancun;
+    });
+
+    prj.add_test(
+        "ForkEvmVersion.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForkEvmVersionTest is Test {
+    function test_evm_version_preserved_after_fork() public {
+        assertEq(vm.getEvmVersion(), "cancun", "before fork");
+        uint256 forkId = vm.createSelectFork("<rpc>", 21000000);
+        assertEq(vm.getEvmVersion(), "cancun", "after createSelectFork");
+        vm.rollFork(21000001);
+        assertEq(vm.getEvmVersion(), "cancun", "after rollFork");
+    }
+}
+   "#
+        .replace("<rpc>", &endpoint),
+    );
+
+    cmd.args(["test", "--mc", "ForkEvmVersionTest", "-vvvv"]).assert_success();
 });
