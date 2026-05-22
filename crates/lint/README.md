@@ -23,6 +23,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `uninitialized-local`: Local variable is read before being explicitly initialized.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
   - `unused-return`: Return value of an external call is not used.
+  - `locked-ether`: Contracts that can receive ETH but have no mechanism to send it out.
   - `weak-prng`: Flags randomness-like expressions derived from predictable on-chain values.
 - **Low Severity:**
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
