@@ -770,6 +770,18 @@ impl BundledState<TempoEvmNetwork> {
         let provider = Arc::new(ProviderBuilder::<TempoNetwork>::new(sequence.rpc_url()).build()?);
         let tempo_sponsor = self.script_config.tempo.sponsor_config().await?;
 
+        // Reject pre-signed transactions: a batch is a single atomic tx from one sender,
+        // so any tx already signed by another key would silently be re-attributed.
+        if let Some((idx, _)) =
+            sequence.transactions().enumerate().find(|(_, tx)| !tx.is_unsigned())
+        {
+            bail!(
+                "--batch cannot include pre-signed transactions (found at position {}); \
+                 batch mode signs a single atomic transaction from one sender.",
+                idx + 1
+            );
+        }
+
         // Collect sender addresses - batch mode requires single sender
         let senders: AddressHashSet = sequence
             .transactions()
