@@ -1,14 +1,15 @@
 use clap::Parser;
 use eyre::{Result, WrapErr};
 use foundry_bench::{
-    BENCHMARK_REPOS, BenchmarkProject, FOUNDRY_VERSIONS, RUNS, RepoConfig, get_forge_version,
-    get_forge_version_details, install_local_version,
+    BENCHMARK_REPOS, BenchmarkProject, FOUNDRY_VERSIONS, RUNS, RepoConfig,
+    fuzz::{self, FuzzCampaignSpec},
+    get_forge_version, get_forge_version_details, install_local_version,
     results::{BenchmarkResults, HyperfineResult},
     switch_foundry_version,
 };
 use foundry_common::sh_println;
 use rayon::prelude::*;
-use std::{fs, path::PathBuf, process::Command, sync::Mutex};
+use std::{collections::BTreeMap, fs, path::PathBuf, process::Command, sync::Mutex};
 
 const ALL_BENCHMARKS: [&str; 6] = [
     "forge_test",
@@ -46,12 +47,16 @@ struct Cli {
 
     /// Filename for a flat JSON summary (benchmark/repo -> mean_seconds).
     /// Resolved relative to --output-dir. Used by the nightly regression comparison script.
-    #[clap(long)]
+    ///
+    /// Perf mode only — fails if combined with --fuzz-campaigns.
+    #[clap(long, conflicts_with = "fuzz_campaigns")]
     json_output: Option<PathBuf>,
 
     /// Run only specific benchmarks (comma-separated:
-    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage)
-    #[clap(long, value_delimiter = ',')]
+    /// forge_test,forge_build_no_cache,forge_build_with_cache,forge_fuzz_test,forge_coverage).
+    ///
+    /// Perf mode only — fails if combined with --fuzz-campaigns.
+    #[clap(long, value_delimiter = ',', conflicts_with = "fuzz_campaigns")]
     benchmarks: Option<Vec<String>>,
 
     /// Comma-separated list of repositories to benchmark.
@@ -64,8 +69,28 @@ struct Cli {
     /// Examples:
     ///   `ithacaxyz/account:v0.5.7`
     ///   `vectorized/solady:v0.1.26 --nmc 'LifebuoyTest|LibBitTest'`
-    #[clap(long, value_delimiter = ',')]
+    ///
+    /// Perf mode only — fails if combined with --fuzz-campaigns (use that
+    /// flag's per-spec repo field instead).
+    #[clap(long, value_delimiter = ',', conflicts_with = "fuzz_campaigns")]
     repos: Option<Vec<String>>,
+
+    /// Comma-separated list of fuzz campaigns to benchmark.
+    ///
+    /// Each entry has the form `org/repo[:rev];Contract;invariant_test[ <extra>]`.
+    /// When this flag is set, the runner enters fuzz-campaign mode. It is
+    /// mutually exclusive with the perf-mode flags `--benchmarks`, `--repos`
+    /// and `--json-output`. Multiple invariants in the same repo are
+    /// supported; the repo is cloned once and each invariant gets its own
+    /// 1h campaign per Foundry version.
+    ///
+    /// Timeout (1h) and seed (42) are intentionally hard-coded so results are
+    /// comparable to the reference run in PR #14853.
+    ///
+    /// Example:
+    ///   `Recon-Fuzz/aave-v4-scfuzzbench:v0.5.6-recon;CryticToFoundry;invariant_noop`
+    #[clap(long, value_delimiter = ',')]
+    fuzz_campaigns: Option<Vec<String>>,
 }
 
 /// Mutex to prevent concurrent foundryup calls
@@ -80,20 +105,26 @@ fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
 
-    // Check if hyperfine is installed
+    // Determine versions to test
+    let versions = if let Some(v) = cli.versions.clone() {
+        v
+    } else {
+        FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
+    };
+
+    // Fuzz campaign mode runs an entirely separate code path: no hyperfine,
+    // no perf flags, no markdown table of milliseconds.
+    if let Some(specs) = cli.fuzz_campaigns.clone() {
+        return run_fuzz_mode(&cli, &versions, &specs);
+    }
+
+    // Check if hyperfine is installed (perf mode only)
     let hyperfine_check = Command::new("hyperfine").arg("--version").output();
     if hyperfine_check.is_err() || !hyperfine_check.unwrap().status.success() {
         eyre::bail!(
             "hyperfine is not installed. Please install it first: https://github.com/sharkdp/hyperfine"
         );
     }
-
-    // Determine versions to test
-    let versions = if let Some(v) = cli.versions {
-        v
-    } else {
-        FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
-    };
 
     // Get repo configurations
     let repos = if let Some(repo_specs) = cli.repos.clone() {
@@ -244,6 +275,101 @@ fn main() -> Result<()> {
         fs::write(&json_path, json).wrap_err("Failed to write JSON summary")?;
         sh_println!("✅ JSON summary written to: {}", json_path.display());
     }
+
+    Ok(())
+}
+
+/// Drive the fuzz-campaign benchmark mode end-to-end.
+///
+/// Specs are grouped by `(org, repo, rev)` so each repo is cloned once and
+/// then each invariant is run sequentially per Foundry version. We avoid
+/// re-cloning between versions by reusing the same working tree (each campaign
+/// already `forge clean`s its own cache and `corpus/`).
+#[allow(unused_must_use)]
+fn run_fuzz_mode(cli: &Cli, versions: &[String], specs: &[String]) -> Result<()> {
+    let campaigns: Vec<FuzzCampaignSpec> = specs
+        .iter()
+        .map(|s| s.parse::<FuzzCampaignSpec>())
+        .collect::<Result<Vec<_>>>()
+        .wrap_err("Failed to parse --fuzz-campaigns")?;
+
+    sh_println!("🚀 Foundry Fuzz Campaign Runner");
+    sh_println!("Running with versions: {}", versions.join(", "));
+    sh_println!(
+        "Running campaigns: {}",
+        campaigns
+            .iter()
+            .map(|c| format!("{}/{} :: {}::{}", c.repo.org, c.repo.repo, c.contract, c.test))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    if cli.force_install {
+        install_foundry_versions(versions)?;
+    }
+
+    // Group campaigns by repo so we clone each repo only once.
+    let mut by_repo: BTreeMap<String, (RepoConfig, Vec<FuzzCampaignSpec>)> = BTreeMap::new();
+    for spec in &campaigns {
+        let key = format!("{}/{}:{}", spec.repo.org, spec.repo.repo, spec.repo.rev);
+        by_repo.entry(key).or_insert_with(|| (spec.repo.clone(), Vec::new())).1.push(spec.clone());
+    }
+
+    // Materialise each repo once in a deterministic per-repo tempdir.
+    let temp_root = std::env::temp_dir().join("foundry-bench-fuzz");
+    std::fs::create_dir_all(&temp_root)?;
+
+    let mut roots: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for (key, (repo_cfg, _)) in &by_repo {
+        let safe = key.replace('/', "_").replace(':', "@");
+        let project_root = temp_root.join(safe);
+        sh_println!("📦 Setting up fuzz project {key}");
+        fuzz::setup_fuzz_project(repo_cfg, &project_root)
+            .wrap_err_with(|| format!("Failed to setup fuzz project {key}"))?;
+        roots.insert(key.clone(), project_root);
+    }
+    sh_println!("✅ All fuzz projects ready");
+
+    let mut results = BenchmarkResults::new();
+    if let Some(first) = versions.first() {
+        results.set_baseline_version(first.clone());
+    }
+
+    for version in versions {
+        sh_println!("🔧 Switching to Foundry version: {version}");
+        switch_version_safe(version)?;
+
+        let current = get_forge_version()?;
+        sh_println!("Current version: {}", current.trim());
+
+        let version_details = get_forge_version_details()?;
+        results.add_version_details(version, version_details);
+
+        for (key, (_repo_cfg, specs_in_repo)) in &by_repo {
+            let project_root = roots.get(key).expect("project root registered above");
+            for spec in specs_in_repo {
+                let label = format!("{}/{} / {}", spec.repo.org, spec.repo.repo, spec.test);
+                sh_println!("▶ [{version}] {label}");
+                let result = fuzz::run_campaign(project_root, spec, version, cli.verbose)
+                    .wrap_err_with(|| format!("Fuzz campaign {label} failed for {version}"))?;
+                sh_println!(
+                    "  ✔ runs={} calls={} reverts={} assertion_bugs={}",
+                    result.runs,
+                    result.calls,
+                    result.reverts,
+                    result.assertion_bugs,
+                );
+                results.add_fuzz_result(&label, version, result);
+            }
+        }
+    }
+
+    let filename =
+        cli.output_file.clone().unwrap_or_else(|| "forge_fuzz_campaign_bench.md".to_string());
+    let markdown = results.generate_fuzz_markdown(versions);
+    let output_path = cli.output_dir.join(filename);
+    fs::write(&output_path, markdown).wrap_err("Failed to write fuzz markdown")?;
+    sh_println!("✅ Fuzz report written to: {}", output_path.display());
 
     Ok(())
 }

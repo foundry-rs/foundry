@@ -1,4 +1,4 @@
-use crate::RepoConfig;
+use crate::{RepoConfig, fuzz::FuzzCampaignResult};
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, process::Command, thread};
@@ -32,6 +32,13 @@ pub struct HyperfineOutput {
 pub struct BenchmarkResults {
     /// Map of benchmark_name -> version -> repo -> result
     pub data: HashMap<String, HashMap<String, HashMap<String, HyperfineResult>>>,
+    /// Fuzz campaign results: campaign_label -> version -> result.
+    /// `campaign_label` is `repo_name / invariant_test_name` so the same repo
+    /// can host multiple invariants.
+    pub fuzz_data: HashMap<String, HashMap<String, FuzzCampaignResult>>,
+    /// Preserves the order in which fuzz campaigns were registered so the
+    /// final report renders them deterministically.
+    pub fuzz_campaign_order: Vec<String>,
     /// Track the baseline version for comparison
     pub baseline_version: Option<String>,
     /// Map of version name -> full version details
@@ -64,6 +71,122 @@ impl BenchmarkResults {
 
     pub fn add_version_details(&mut self, version: &str, details: String) {
         self.version_details.insert(version.to_string(), details);
+    }
+
+    /// Register a fuzz campaign result for one version.
+    pub fn add_fuzz_result(
+        &mut self,
+        campaign_label: &str,
+        version: &str,
+        result: FuzzCampaignResult,
+    ) {
+        if !self.fuzz_campaign_order.iter().any(|c| c == campaign_label) {
+            self.fuzz_campaign_order.push(campaign_label.to_string());
+        }
+        self.fuzz_data
+            .entry(campaign_label.to_string())
+            .or_default()
+            .insert(version.to_string(), result);
+    }
+
+    /// Generate the standalone Markdown report for the fuzz campaign benchmark.
+    ///
+    /// One section per `## Forge Fuzz Campaign`, then one block per campaign
+    /// with a small table of metrics × versions so users can eyeball whether
+    /// `local` reaches more coverage than `stable`.
+    pub fn generate_fuzz_markdown(&self, versions: &[String]) -> String {
+        let mut output = String::new();
+
+        output.push_str("# Foundry Fuzz Campaign Benchmark Results\n\n");
+        output.push_str(&format!(
+            "**Date**: {}\n\n",
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+        ));
+        output.push_str(&format!(
+            "Each campaign runs `forge test --mc <Contract> --mt <invariant> --fuzz-seed {}` \
+             with `FOUNDRY_INVARIANT_TIMEOUT={}` (1h). Numbers are raw counts collected from forge stdout.\n\n",
+            crate::fuzz::FUZZ_SEED,
+            crate::fuzz::FUZZ_TIMEOUT_SECS,
+        ));
+
+        output.push_str("## Summary\n\n");
+        output.push_str(&format!(
+            "Benchmarked {} Foundry version(s) across {} fuzz campaign(s).\n\n",
+            versions.len(),
+            self.fuzz_campaign_order.len()
+        ));
+
+        output.push_str("### Foundry Versions\n\n");
+        for version in versions {
+            if let Some(details) = self.version_details.get(version) {
+                output.push_str(&format!("- **{version}**: {}\n", details.trim()));
+            } else {
+                output.push_str(&format!("- {version}\n"));
+            }
+        }
+        output.push('\n');
+
+        output.push_str("## Forge Fuzz Campaign\n\n");
+        output.push_str(&self.generate_fuzz_table(versions));
+
+        // Mirror the perf report so combine-benchmarks.sh can pick this up
+        // even when only the fuzz job runs.
+        output.push_str("## System Information\n\n");
+        output.push_str(&format!("- **OS**: {}\n", std::env::consts::OS));
+        output.push_str(&format!(
+            "- **CPU**: {}\n",
+            thread::available_parallelism().map_or(1, |n| n.get())
+        ));
+        output.push_str(&format!(
+            "- **Rustc**: {}\n",
+            get_rustc_version().unwrap_or_else(|_| "unknown".to_string())
+        ));
+
+        output
+    }
+
+    /// Build the per-campaign metric × version table.
+    fn generate_fuzz_table(&self, versions: &[String]) -> String {
+        if self.fuzz_campaign_order.is_empty() {
+            return "_No fuzz campaign results._\n".to_string();
+        }
+
+        let mut output = String::new();
+        output.push_str("| Campaign | Metric |");
+        for v in versions {
+            output.push_str(&format!(" {v} |"));
+        }
+        output.push('\n');
+        output.push_str("|----------|--------|");
+        for _ in versions {
+            output.push_str("--------:|");
+        }
+        output.push('\n');
+
+        for campaign in &self.fuzz_campaign_order {
+            let per_version = self.fuzz_data.get(campaign);
+            for (i, metric) in ["runs", "calls", "reverts", "assertion bugs"].iter().enumerate() {
+                let label_cell = if i == 0 { campaign.as_str() } else { "" };
+                output.push_str(&format!("| {label_cell} | {metric} |"));
+                for v in versions {
+                    let cell = per_version
+                        .and_then(|pv| pv.get(v))
+                        .map(|r| match *metric {
+                            "runs" => r.runs,
+                            "calls" => r.calls,
+                            "reverts" => r.reverts,
+                            "assertion bugs" => r.assertion_bugs,
+                            _ => 0,
+                        })
+                        .map(|n| format!(" {n} "))
+                        .unwrap_or_else(|| " N/A ".to_string());
+                    output.push_str(&format!("|{cell}|"));
+                }
+                output.push('\n');
+            }
+        }
+        output.push('\n');
+        output
     }
 
     /// Generate a flat JSON summary mapping `"benchmark/repo" -> mean_seconds`.

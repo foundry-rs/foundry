@@ -15,6 +15,7 @@ declare -A BENCHMARK_FILES=(
     ["forge_isolate_test_bench.md"]="Forge Test (Isolated)"
     ["forge_build_bench.md"]="Forge Build"
     ["forge_coverage_bench.md"]="Forge Coverage"
+    ["forge_fuzz_campaign_bench.md"]="Forge Fuzz Campaign"
 )
 
 # Function to extract a specific section from a benchmark file
@@ -96,8 +97,9 @@ extract_benchmark_table() {
             if [[ -z "$line" && $found_table -eq 0 ]]; then
                 continue
             fi
-            # Detect table start
-            if [[ "$line" =~ ^\|[[:space:]]*Repository ]]; then
+            # Detect table start (perf tables start with "| Repository",
+            # the fuzz campaign table starts with "| Campaign")
+            if [[ "$line" =~ ^\|[[:space:]]*Repository || "$line" =~ ^\|[[:space:]]*Campaign ]]; then
                 found_table=1
             fi
             # Output table lines
@@ -126,7 +128,7 @@ EOF
 FIRST_FILE=1
 SYSTEM_INFO=""
 
-for bench_file in "forge_test_bench.md" "forge_isolate_test_bench.md" "forge_build_bench.md" "forge_coverage_bench.md"; do
+for bench_file in "forge_test_bench.md" "forge_isolate_test_bench.md" "forge_build_bench.md" "forge_coverage_bench.md" "forge_fuzz_campaign_bench.md"; do
     if [ -f "$OUTPUT_DIR/$bench_file" ]; then
         echo "Processing $bench_file..."
 

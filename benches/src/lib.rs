@@ -12,6 +12,7 @@ use std::{
     str::FromStr,
 };
 
+pub mod fuzz;
 pub mod results;
 
 /// Default number of runs for benchmarks
