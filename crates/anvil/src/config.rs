@@ -77,6 +77,8 @@ pub const NODE_PORT: u16 = 8545;
 pub const CHAIN_ID: u64 = 31337;
 /// The default gas limit for all transactions
 pub const DEFAULT_GAS_LIMIT: u64 = 30_000_000;
+/// The default number of slots in an epoch used for safe/finalized block tags.
+pub const DEFAULT_SLOTS_IN_AN_EPOCH: u64 = 32;
 /// Default mnemonic for dev accounts
 pub const DEFAULT_MNEMONIC: &str = "test test test test test test test test test test test junk";
 
@@ -509,7 +511,7 @@ impl Default for NodeConfig {
             transaction_block_keeper: None,
             disable_default_create2_deployer: false,
             disable_pool_balance_checks: false,
-            slots_in_an_epoch: 32,
+            slots_in_an_epoch: DEFAULT_SLOTS_IN_AN_EPOCH,
             memory_limit: None,
             precompile_factory: None,
             networks: Default::default(),
@@ -638,7 +640,7 @@ impl NodeConfig {
     pub fn set_chain_id(&mut self, chain_id: Option<impl Into<u64>>) {
         self.chain_id = chain_id.map(Into::into);
         let chain_id = self.get_chain_id();
-        self.networks.with_chain_id(chain_id);
+        self.networks = self.networks.with_chain_id(chain_id);
         self.genesis_accounts.iter_mut().for_each(|wallet| {
             *wallet = wallet.clone().with_chain_id(Some(chain_id));
         });
@@ -1488,6 +1490,7 @@ latest block number: {latest_block}"
             provider,
             chain_id,
             override_chain_id,
+            hardfork: self.hardfork,
             timestamp: block.header.timestamp(),
             base_fee: block.header.base_fee_per_gas().map(|g| g as u128),
             timeout: self.fork_request_timeout,
@@ -1773,5 +1776,14 @@ mod tests {
         assert!(!config.is_state_history_supported());
         let config = PruneStateHistoryConfig::from_args(Some(Some(10)));
         assert!(config.is_state_history_supported());
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn set_chain_id_updates_network_config() {
+        let mut config = NodeConfig::test();
+        config.set_chain_id(Some(10u64));
+
+        assert!(config.networks.is_optimism());
     }
 }

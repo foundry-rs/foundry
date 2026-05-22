@@ -3,7 +3,10 @@
 //! Provides [`FoundryHardfork`], a unified enum over Ethereum, Optimism, and Tempo hardforks
 //! with `FromStr`/`Serialize`/`Deserialize` support for CLI and config usage.
 
-use std::str::FromStr;
+use std::{
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use alloy_chains::Chain;
 use alloy_rpc_types::BlockNumberOrTag;
@@ -131,9 +134,7 @@ impl FoundryHardfork {
         if let Some(fork) = OpHardfork::from_chain_and_timestamp(chain, timestamp) {
             return Some(Self::Optimism(fork));
         }
-        // TODO: add tempo support after https://github.com/tempoxyz/tempo/pull/3514 release
-        // providing TempoHardfork::from_chain_and_timestamp
-        None
+        TempoHardfork::from_chain_and_timestamp(chain_id, timestamp).map(Self::Tempo)
     }
 }
 
@@ -260,6 +261,20 @@ pub trait FromEvmVersion: From<FoundryHardfork> {
     fn from_evm_version(version: EvmVersion) -> Self;
 }
 
+/// Trait for parsing and displaying a network-specific execution spec.
+pub trait ExecutionSpec: FromEvmVersion {
+    // Returns the user-facing name for the active execution spec.
+    fn evm_version_name(&self) -> String;
+
+    // Parses an unnamespaced hardfork name for the active network.
+    fn from_network_hardfork(_: &str) -> Option<Self> {
+        None
+    }
+
+    // Converts a namespaced Foundry hardfork if it belongs to this spec family.
+    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self>;
+}
+
 impl FromEvmVersion for SpecId {
     fn from_evm_version(version: EvmVersion) -> Self {
         match version {
@@ -277,6 +292,27 @@ impl FromEvmVersion for SpecId {
             EvmVersion::Cancun => Self::CANCUN,
             EvmVersion::Prague => Self::PRAGUE,
             EvmVersion::Osaka => Self::OSAKA,
+            EvmVersion::Amsterdam => Self::AMSTERDAM,
+        }
+    }
+}
+
+impl ExecutionSpec for SpecId {
+    // Returns the user-facing name for the active execution spec.
+    fn evm_version_name(&self) -> String {
+        self.to_string()
+    }
+
+    // Parses an unnamespaced Ethereum hardfork name.
+    fn from_network_hardfork(hardfork: &str) -> Option<Self> {
+        EthereumHardfork::from_str(hardfork).ok().map(spec_id_from_ethereum_hardfork)
+    }
+
+    // Converts only Ethereum namespaced hardforks to an Ethereum spec.
+    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
+        match hardfork {
+            FoundryHardfork::Ethereum(hardfork) => Some(spec_id_from_ethereum_hardfork(hardfork)),
+            _ => None,
         }
     }
 }
@@ -298,20 +334,89 @@ impl FromEvmVersion for OpSpecId {
             EvmVersion::Shanghai => Self::CANYON,
             EvmVersion::Cancun => Self::ECOTONE,
             EvmVersion::Prague => Self::ISTHMUS,
-            EvmVersion::Osaka => Self::KARST,
+            EvmVersion::Osaka | EvmVersion::Amsterdam => Self::KARST,
+        }
+    }
+}
+
+#[cfg(feature = "optimism")]
+impl ExecutionSpec for OpSpecId {
+    // Returns the user-facing name for the active execution spec.
+    fn evm_version_name(&self) -> String {
+        let name: &'static str = (*self).into();
+        name.to_string()
+    }
+
+    // Parses an unnamespaced Optimism hardfork name.
+    fn from_network_hardfork(hardfork: &str) -> Option<Self> {
+        OpHardfork::from_str(hardfork).ok().map(spec_id_from_optimism_hardfork)
+    }
+
+    // Converts only Optimism namespaced hardforks to an Optimism spec.
+    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
+        match hardfork {
+            FoundryHardfork::Optimism(hardfork) => Some(spec_id_from_optimism_hardfork(hardfork)),
+            _ => None,
         }
     }
 }
 
 impl FromEvmVersion for TempoHardfork {
     fn from_evm_version(_: EvmVersion) -> Self {
-        Self::default()
+        latest_active_tempo_hardfork()
+    }
+}
+
+impl ExecutionSpec for TempoHardfork {
+    // Returns the user-facing name for the active execution spec.
+    fn evm_version_name(&self) -> String {
+        self.to_string()
+    }
+
+    // Parses an unnamespaced Tempo hardfork name.
+    fn from_network_hardfork(hardfork: &str) -> Option<Self> {
+        Self::from_str(hardfork).ok()
+    }
+
+    // Converts only Tempo namespaced hardforks to a Tempo spec.
+    fn from_foundry_hardfork(hardfork: FoundryHardfork) -> Option<Self> {
+        match hardfork {
+            FoundryHardfork::Tempo(hardfork) => Some(hardfork),
+            _ => None,
+        }
     }
 }
 
 /// Returns the spec id derived from [`EvmVersion`] for a given spec type.
 pub fn evm_spec_id<SPEC: FromEvmVersion>(evm_version: EvmVersion) -> SPEC {
     SPEC::from_evm_version(evm_version)
+}
+
+/// Returns the latest Tempo hardfork that has an activation on a known Tempo network.
+pub fn latest_active_tempo_hardfork() -> TempoHardfork {
+    // Tempo currently publishes activation timestamps through chain-aware hardfork resolution.
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(u64::MAX);
+    TempoHardfork::from_chain_and_timestamp(4217, now)
+        .or_else(|| TempoHardfork::from_chain_and_timestamp(42431, now))
+        .unwrap_or_default()
+}
+
+// Parses an EVM version or network-specific hardfork into the given spec type.
+pub fn evm_spec_id_from_str<SPEC: ExecutionSpec>(evm_version: &str) -> Option<SPEC> {
+    let evm_version = evm_version.trim();
+
+    if let Ok(version) = EvmVersion::from_str(evm_version) {
+        return Some(evm_spec_id(version));
+    }
+
+    if let Some(spec) = SPEC::from_network_hardfork(evm_version) {
+        return Some(spec);
+    }
+
+    FoundryHardfork::from_str(evm_version).ok().and_then(SPEC::from_foundry_hardfork)
 }
 
 /// Convert a `BlockNumberOrTag` into an `EthereumHardfork`.
@@ -345,6 +450,27 @@ mod tests {
     #[test]
     fn test_tempo_spec_id_mapping() {
         assert_eq!(SpecId::from(TempoHardfork::Genesis), SpecId::OSAKA);
+    }
+
+    #[test]
+    fn test_tempo_evm_version_defaults_to_latest_active_hardfork() {
+        assert_eq!(latest_active_tempo_hardfork(), TempoHardfork::T4);
+        assert_eq!(evm_spec_id::<TempoHardfork>(EvmVersion::Osaka), TempoHardfork::T4);
+    }
+
+    #[test]
+    fn test_tempo_hardfork_from_chain_and_timestamp() {
+        assert_eq!(
+            FoundryHardfork::from_chain_and_timestamp(4217, u64::MAX),
+            Some(FoundryHardfork::Tempo(TempoHardfork::T4))
+        );
+    }
+
+    #[test]
+    fn test_evm_spec_id_from_str_parses_network_hardforks() {
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("T3"), Some(TempoHardfork::T3));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("tempo:T2"), Some(TempoHardfork::T2));
+        assert_eq!(evm_spec_id_from_str::<TempoHardfork>("ethereum:prague"), None);
     }
 
     #[test]

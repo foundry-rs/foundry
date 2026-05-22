@@ -12,7 +12,11 @@ use foundry_compilers::{
     solc::Solc,
 };
 use foundry_config::{Config, SolcReq};
-use foundry_evm::{backend::Backend, core::bytecode::InstIter, opts::EvmOpts};
+use foundry_evm::{
+    backend::Backend,
+    core::{bytecode::InstIter, evm::FoundryEvmNetwork},
+    opts::EvmOpts,
+};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use solar::{
@@ -272,7 +276,8 @@ impl<'gcx> GeneratedOutputRef<'_, '_, 'gcx> {
 
 /// Configuration for the [SessionSource]
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct SessionSourceConfig {
+#[serde(bound = "")]
+pub struct SessionSourceConfig<FEN: FoundryEvmNetwork> {
     /// Foundry configuration
     pub foundry_config: Config,
     /// EVM Options
@@ -281,7 +286,7 @@ pub struct SessionSourceConfig {
     pub no_vm: bool,
     /// In-memory REVM db for the session's runner.
     #[serde(skip)]
-    pub backend: Option<Backend>,
+    pub backend: Option<Backend<FEN>>,
     /// Optionally enable traces for the REPL contract execution
     pub traces: bool,
     /// Optionally set calldata for the REPL contract execution
@@ -293,7 +298,7 @@ pub struct SessionSourceConfig {
     pub ir_minimum: bool,
 }
 
-impl SessionSourceConfig {
+impl<FEN: FoundryEvmNetwork> SessionSourceConfig<FEN> {
     /// Detect the solc version to know if VM can be injected.
     pub fn detect_solc(&mut self) -> Result<()> {
         if self.foundry_config.solc.is_none() {
@@ -315,14 +320,15 @@ impl SessionSourceConfig {
 ///
 /// Heavily based on soli's [`ConstructedSource`](https://github.com/jpopesculian/soli/blob/master/src/main.rs#L166)
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SessionSource {
+#[serde(bound = "")]
+pub struct SessionSource<FEN: FoundryEvmNetwork> {
     /// The file name
     pub file_name: String,
     /// The contract name
     pub contract_name: String,
 
     /// Session Source configuration
-    pub config: SessionSourceConfig,
+    pub config: SessionSourceConfig<FEN>,
 
     /// Global level Solidity code.
     ///
@@ -347,7 +353,7 @@ fn vm_source() -> Source {
     Source::new(VM_SOURCE)
 }
 
-impl Clone for SessionSource {
+impl<FEN: FoundryEvmNetwork> Clone for SessionSource<FEN> {
     fn clone(&self) -> Self {
         Self {
             file_name: self.file_name.clone(),
@@ -362,7 +368,7 @@ impl Clone for SessionSource {
     }
 }
 
-impl SessionSource {
+impl<FEN: FoundryEvmNetwork> SessionSource<FEN> {
     /// Creates a new source given a solidity compiler version
     ///
     /// # Panics
@@ -377,7 +383,7 @@ impl SessionSource {
     /// ### Returns
     ///
     /// A new instance of [SessionSource]
-    pub fn new(mut config: SessionSourceConfig) -> Result<Self> {
+    pub fn new(mut config: SessionSourceConfig<FEN>) -> Result<Self> {
         config.detect_solc()?;
         Ok(Self {
             file_name: "ReplContract.sol".to_string(),
@@ -558,7 +564,10 @@ impl SessionSource {
                 .filter_map(|e| e.ok())
                 .find(|e| e.file_name() == "Vm.sol")
         {
-            vm_import = format!("import {{Vm}} from \"{}\";\n", vm_path.path().display());
+            vm_import = format!(
+                "import {{Vm}} from \"{}\";\n",
+                vm_path.path().to_string_lossy().replace('\\', "/")
+            );
             vm_constant = "Vm internal constant vm = Vm(address(uint160(uint256(keccak256(\"hevm cheat code\")))));\n".to_string();
         }
 
@@ -610,4 +619,59 @@ enum ParseTreeFragment {
     Contract,
     /// Code for the "run()" function
     Function,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_compilers::artifacts::remappings::{RelativeRemapping, RelativeRemappingPathBuf};
+    use foundry_evm::core::evm::EthEvmNetwork;
+    use std::fs;
+
+    /// Regression test for <https://github.com/foundry-rs/foundry/issues/14711>.
+    ///
+    /// `to_repl_source()` must use forward slashes in the Vm import path regardless of OS,
+    /// because Solidity import statements require `/` as the path separator.
+    #[test]
+    fn test_vm_import_path_uses_forward_slashes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let vm_sol = tmp.path().join("Vm.sol");
+        fs::write(&vm_sol, "// dummy").unwrap();
+
+        let remapping = RelativeRemapping {
+            context: None,
+            name: "forge-std/".to_string(),
+            path: RelativeRemappingPathBuf { parent: None, path: tmp.path().to_path_buf() },
+        };
+
+        let mut config: SessionSourceConfig<EthEvmNetwork> = SessionSourceConfig {
+            foundry_config: Config {
+                solc: Some(SolcReq::Version(Version::new(0, 8, 29))),
+                remappings: vec![remapping],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Pre-set solc so detect_solc() skips the ensure_installed I/O.
+        config.detect_solc().unwrap();
+
+        let source = SessionSource {
+            file_name: "ReplContract.sol".to_string(),
+            contract_name: "REPL".to_string(),
+            config,
+            global_code: Default::default(),
+            contract_code: Default::default(),
+            run_code: Default::default(),
+            vm_source: vm_source(),
+            output: Default::default(),
+        };
+
+        let repl = source.to_repl_source();
+        let import_line = repl.lines().find(|l| l.contains("import {Vm}")).unwrap();
+        assert!(
+            !import_line.contains('\\'),
+            "Vm import path must not contain backslashes, got: {import_line}"
+        );
+        assert!(import_line.contains('/'), "Vm import path must use forward slashes");
+    }
 }
