@@ -161,10 +161,10 @@ pub fn run_campaign(
         let out = proc.wait_with_output().wrap_err("forge wait failed")?;
         // Echo so workflow logs show the full forge output.
         if !out.stdout.is_empty() {
-            print!("{}", String::from_utf8_lossy(&out.stdout));
+            foundry_common::sh_print!("{}", String::from_utf8_lossy(&out.stdout));
         }
         if !out.stderr.is_empty() {
-            eprint!("{}", String::from_utf8_lossy(&out.stderr));
+            foundry_common::sh_eprint!("{}", String::from_utf8_lossy(&out.stderr));
         }
         out
     } else {

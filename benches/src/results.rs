@@ -102,9 +102,9 @@ impl BenchmarkResults {
             "**Date**: {}\n\n",
             chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
         ));
-        let timeout_label = if timeout_secs % 3600 == 0 {
+        let timeout_label = if timeout_secs.is_multiple_of(3600) {
             format!("{}h", timeout_secs / 3600)
-        } else if timeout_secs % 60 == 0 {
+        } else if timeout_secs.is_multiple_of(60) {
             format!("{}m", timeout_secs / 60)
         } else {
             format!("{timeout_secs}s")
