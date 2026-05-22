@@ -1,5 +1,7 @@
 //! Tests for AFL-`afl-showmap`-style corpus replay (`forge test --showmap-out`).
 
+use foundry_test_utils::str;
+
 // Locate a per-test approach dir by suffix (suite/test ids include project-dependent paths).
 fn find_approach_dir(out: &std::path::Path, suffix: &str) -> std::path::PathBuf {
     std::fs::read_dir(out)
@@ -99,22 +101,19 @@ contract ShowmapCounterTest is Test {
     }
 
     // Showmap mode reports replay results, not regular test results.
-    let assert = cmd
-        .forge_fuse()
+    cmd.forge_fuse()
         .args(["test", "--mc", "ShowmapCounterTest", "--showmap-out", "showmap_out2"])
-        .assert_success();
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-    // Order-insensitive: both lines must appear, replay summary format must match.
-    assert!(
-        stdout.contains("invariant_counter_called() (replay:")
-            && stdout.contains("entries,")
-            && stdout.contains("files)"),
-        "missing invariant replay line in:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("testFuzz_SetNumber(uint256) (replay:"),
-        "missing fuzz replay line in:\n{stdout}"
-    );
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+Ran 2 tests for test/ShowmapCounter.t.sol:ShowmapCounterTest
+[PASS] invariant_counter_called() (replay: [..] entries, [..] files)
+[PASS] testFuzz_SetNumber(uint256) (replay: [..] entries, [..] files)
+Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]]);
 });
 
 // Per-input mode emits one file per corpus entry.
