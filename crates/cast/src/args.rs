@@ -871,7 +871,7 @@ mod tests {
         let dups = std::thread::Builder::new()
             .stack_size(16 * 1024 * 1024)
             .spawn(|| {
-                let cmd = <CastArgs as clap::CommandFactory>::command();
+                let cmd = CastArgs::command();
                 let doc = build_document(&cmd, &CommandRegistry::EMPTY);
                 duplicate_command_ids(&doc)
             })
@@ -889,7 +889,7 @@ mod tests {
         let json = std::thread::Builder::new()
             .stack_size(16 * 1024 * 1024)
             .spawn(|| {
-                let cmd = <CastArgs as clap::CommandFactory>::command();
+                let cmd = CastArgs::command();
                 render_introspect_document(&cmd, &CommandRegistry::EMPTY)
             })
             .expect("spawn worker thread")
@@ -908,7 +908,7 @@ mod tests {
         let v = std::thread::Builder::new()
             .stack_size(16 * 1024 * 1024)
             .spawn(|| {
-                let cmd = <CastArgs as clap::CommandFactory>::command();
+                let cmd = CastArgs::command();
                 let doc = build_document(&cmd, &CommandRegistry::EMPTY);
                 capability_violations(&doc)
             })

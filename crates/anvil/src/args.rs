@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn introspect_command_ids_are_unique() {
         use foundry_cli::introspect::{CommandRegistry, build_document, duplicate_command_ids};
-        let cmd = <Anvil as clap::CommandFactory>::command();
+        let cmd = Anvil::command();
         let doc = build_document(&cmd, &CommandRegistry::EMPTY);
         let dups = duplicate_command_ids(&doc);
         assert!(dups.is_empty(), "duplicate anvil command_ids: {dups:?}");
@@ -100,7 +100,7 @@ mod tests {
         use foundry_cli::introspect::{
             CommandRegistry, INTROSPECT_SCHEMA_ID, IntrospectDocument, render_introspect_document,
         };
-        let cmd = <Anvil as clap::CommandFactory>::command();
+        let cmd = Anvil::command();
         let json = render_introspect_document(&cmd, &CommandRegistry::EMPTY);
         let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn introspect_capabilities_are_consistent() {
         use foundry_cli::introspect::{CommandRegistry, build_document, capability_violations};
-        let cmd = <Anvil as clap::CommandFactory>::command();
+        let cmd = Anvil::command();
         let doc = build_document(&cmd, &CommandRegistry::EMPTY);
         let v = capability_violations(&doc);
         assert!(v.is_empty(), "anvil capability violations: {v:?}");

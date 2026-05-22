@@ -161,7 +161,7 @@ mod tests {
     /// downstream tooling.
     #[test]
     fn introspect_command_ids_are_unique() {
-        let cmd = <Forge as clap::CommandFactory>::command();
+        let cmd = Forge::command();
         let doc = build_document(&cmd, &CommandRegistry::EMPTY);
         let dups = duplicate_command_ids(&doc);
         assert!(dups.is_empty(), "duplicate forge command_ids: {dups:?}");
@@ -171,7 +171,7 @@ mod tests {
     /// the canonical `IntrospectDocument` shape.
     #[test]
     fn introspect_document_is_valid_json() {
-        let cmd = <Forge as clap::CommandFactory>::command();
+        let cmd = Forge::command();
         let json = render_introspect_document(&cmd, &CommandRegistry::EMPTY);
         let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
@@ -183,7 +183,7 @@ mod tests {
     /// [`capability_violations`].
     #[test]
     fn introspect_capabilities_are_consistent() {
-        let cmd = <Forge as clap::CommandFactory>::command();
+        let cmd = Forge::command();
         let doc = build_document(&cmd, &CommandRegistry::EMPTY);
         let v = capability_violations(&doc);
         assert!(v.is_empty(), "forge capability violations: {v:?}");
