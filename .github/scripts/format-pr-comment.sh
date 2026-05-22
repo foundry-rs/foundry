@@ -14,21 +14,20 @@ fi
 # Read the file content
 CONTENT=$(cat "$RESULTS_FILE")
 
-# Find where "## Forge Build" starts and split the content
-# Extract everything before "## Forge Build"
-BEFORE_FORGE_BUILD=$(echo "$CONTENT" | awk '/^## Forge Build$/ {exit} {print}')
-
-# Extract everything from "## Forge Build" onwards
-FROM_FORGE_BUILD=$(echo "$CONTENT" | awk '/^## Forge Build$/ {found=1} found {print}')
+# Split at the first benchmark result section (## Forge …) so the summary
+# header stays visible in the comment body and all tables go in the dropdown.
+# This works for both perf-only, fuzz-only, and combined LATEST.md files.
+BEFORE_TABLES=$(echo "$CONTENT" | awk '/^## Forge / {exit} {print}')
+FROM_TABLES=$(echo "$CONTENT" | awk '/^## Forge / {found=1} found {print}')
 
 # Output the formatted comment with dropdown
 cat << EOF
-${BEFORE_FORGE_BUILD}
+${BEFORE_TABLES}
 
 <details>
 <summary>📈 View all benchmark results</summary>
 
-${FROM_FORGE_BUILD}
+${FROM_TABLES}
 
 </details>
 EOF
