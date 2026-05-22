@@ -511,7 +511,17 @@ impl Cheatcode for feeCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newBasefee } = self;
         ensure!(*newBasefee <= U256::from(u64::MAX), "base fee must be less than 2^64");
-        ccx.ecx.block_mut().set_basefee(newBasefee.saturating_to());
+        let basefee: u64 = newBasefee.saturating_to();
+        // Always record the override so `BASEFEE` reads the cheatcode value
+        // even inside the synthetic isolation transaction (which zeroes
+        // `block.basefee` for fee-accounting). See `EnvOverrides`.
+        let fork_id = ccx.ecx.db().active_fork_id();
+        ccx.state.env_overrides_for_mut(fork_id).basefee = Some(basefee);
+        // Outside isolation, also mutate the real env to preserve the
+        // historical behavior other code paths rely on.
+        if !ccx.state.in_isolation_context {
+            ccx.ecx.block_mut().set_basefee(basefee);
+        }
         Ok(Default::default())
     }
 }
@@ -550,9 +560,18 @@ impl Cheatcode for blobhashesCall {
             "`blobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        ccx.ecx.tx_mut().set_blob_hashes(hashes.clone());
-        // force this as 4844 txtype
-        ccx.ecx.tx_mut().set_tx_type(EIP4844_TX_TYPE_ID);
+        // Always record the override so `BLOBHASH` returns the cheatcode
+        // value even inside the synthetic isolation transaction (which does
+        // not propagate `tx.blob_hashes`). See `EnvOverrides`.
+        let fork_id = ccx.ecx.db().active_fork_id();
+        ccx.state.env_overrides_for_mut(fork_id).blob_hashes = Some(hashes.clone());
+        // Outside isolation, also mutate the real env to preserve the
+        // historical behavior other code paths rely on.
+        if !ccx.state.in_isolation_context {
+            ccx.ecx.tx_mut().set_blob_hashes(hashes.clone());
+            // force this as 4844 txtype
+            ccx.ecx.tx_mut().set_tx_type(EIP4844_TX_TYPE_ID);
+        }
         Ok(Default::default())
     }
 }
@@ -565,7 +584,14 @@ impl Cheatcode for getBlobhashesCall {
             "`getBlobhashes` is not supported before the Cancun hard fork; \
              see EIP-4844: https://eips.ethereum.org/EIPS/eip-4844"
         );
-        Ok(ccx.ecx.tx().blob_versioned_hashes().to_vec().abi_encode())
+        let fork_id = ccx.ecx.db().active_fork_id();
+        let hashes = ccx
+            .state
+            .env_overrides
+            .get(&fork_id)
+            .and_then(|o| o.blob_hashes.as_deref())
+            .unwrap_or_else(|| ccx.ecx.tx().blob_versioned_hashes());
+        Ok(hashes.to_vec().abi_encode())
     }
 }
 
@@ -588,7 +614,19 @@ impl Cheatcode for txGasPriceCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { newGasPrice } = self;
         ensure!(*newGasPrice <= U256::from(u64::MAX), "gas price must be less than 2^64");
-        ccx.ecx.tx_mut().set_gas_price(newGasPrice.saturating_to());
+        let gas_price: u128 = newGasPrice.saturating_to();
+        // Always record the override so `GASPRICE` reads the cheatcode value
+        // even inside the synthetic isolation transaction (which zeroes
+        // `tx.gas_price` for fee-accounting). See `EnvOverrides`.
+        let fork_id = ccx.ecx.db().active_fork_id();
+        ccx.state.env_overrides_for_mut(fork_id).gas_price = Some(gas_price);
+        // Outside isolation, also mutate the real env to preserve the
+        // historical behavior other code paths rely on. Inside isolation we
+        // intentionally leave `tx.gas_price` at 0 so that the pranked caller
+        // does not need to pre-fund `gas * gasPrice` (see #7277).
+        if !ccx.state.in_isolation_context {
+            ccx.ecx.tx_mut().set_gas_price(gas_price);
+        }
         Ok(Default::default())
     }
 }
@@ -893,6 +931,7 @@ impl Cheatcode for deleteSnapshotCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
+        ccx.state.env_overrides_snapshots.remove(snapshotId);
         Ok(result.abi_encode())
     }
 }
@@ -901,6 +940,7 @@ impl Cheatcode for deleteStateSnapshotCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self { snapshotId } = self;
         let result = ccx.ecx.db_mut().delete_state_snapshot(*snapshotId);
+        ccx.state.env_overrides_snapshots.remove(snapshotId);
         Ok(result.abi_encode())
     }
 }
@@ -910,6 +950,7 @@ impl Cheatcode for deleteSnapshotsCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
+        ccx.state.env_overrides_snapshots.clear();
         Ok(Default::default())
     }
 }
@@ -918,6 +959,7 @@ impl Cheatcode for deleteStateSnapshotsCall {
     fn apply_stateful<FEN: FoundryEvmNetwork>(&self, ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
         let Self {} = self;
         ccx.ecx.db_mut().delete_state_snapshots();
+        ccx.state.env_overrides_snapshots.clear();
         Ok(Default::default())
     }
 }
@@ -1335,9 +1377,69 @@ pub(super) fn get_nonce<FEN: FoundryEvmNetwork>(
 
 fn inner_snapshot_state<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) -> Result {
     let evm_env = ccx.ecx.evm_clone();
+    // Snapshot the full per-fork override map; additionally fill in the
+    // pre-override tx values for the active fork so that
+    // `sync_tx_after_env_override_restore` can restore them faithfully on
+    // revert instead of falling back to hard-coded zeros.
+    let fork_id = ccx.ecx.db().active_fork_id();
+    let mut all_env_overrides = ccx.state.env_overrides.clone();
+    {
+        let active = all_env_overrides.entry(fork_id).or_default();
+        if active.gas_price.is_none() {
+            active.pre_override_gas_price = Some(ccx.ecx.tx().gas_price());
+        }
+        if active.blob_hashes.is_none() {
+            active.pre_override_tx_type = Some(ccx.ecx.tx().tx_type());
+            active.pre_override_blob_hashes = Some(ccx.ecx.tx().blob_versioned_hashes().to_vec());
+        }
+    }
     let (db, inner) = ccx.ecx.db_journal_inner_mut();
     let id = db.snapshot_state(inner, &evm_env);
+    // Capture the cheatcode-side env overrides alongside the backend
+    // snapshot so they can be rolled back in lockstep with `EvmEnv`. See
+    // `Cheatcodes::env_overrides_snapshots`.
+    ccx.state.env_overrides_snapshots.insert(id, all_env_overrides);
     Ok(id.abi_encode())
+}
+
+/// Syncs the real `tx` fields to match restored `env_overrides`.
+///
+/// `evm_clone` / `set_evm` only save/restore cfg+block, not tx. When a
+/// cheatcode like `vm.blobhashes` or `vm.txGasPrice` mutates both the
+/// override and the real tx, reverting to a snapshot where the override was
+/// absent would leave the real tx field stale. This brings them back into
+/// sync so callers that read the tx directly also see the rolled-back state.
+fn sync_tx_after_env_override_restore<FEN: FoundryEvmNetwork>(ccx: &mut CheatsCtxt<'_, '_, FEN>) {
+    let fork_id = ccx.ecx.db().active_fork_id();
+    // Clone to avoid borrow conflicts when mutating ecx below.
+    let env_overrides = ccx.state.env_overrides.get(&fork_id).cloned().unwrap_or_default();
+    match env_overrides.gas_price {
+        Some(p) if !ccx.state.in_isolation_context => ccx.ecx.tx_mut().set_gas_price(p),
+        None => {
+            // Restore the pre-override gas_price recorded at snapshot time.
+            // Falling back to 0 would be wrong when the tx had a non-zero price
+            // (e.g. --gas-price flag, foundry.toml, or fork mode).
+            let pre = env_overrides.pre_override_gas_price.unwrap_or(0);
+            ccx.ecx.tx_mut().set_gas_price(pre);
+        }
+        _ => {}
+    }
+    match env_overrides.blob_hashes {
+        Some(hashes) if !ccx.state.in_isolation_context => {
+            ccx.ecx.tx_mut().set_blob_hashes(hashes);
+            ccx.ecx.tx_mut().set_tx_type(EIP4844_TX_TYPE_ID);
+        }
+        None => {
+            // Restore the pre-override blob hashes recorded at snapshot time.
+            let pre_hashes = env_overrides.pre_override_blob_hashes.unwrap_or_default();
+            ccx.ecx.tx_mut().set_blob_hashes(pre_hashes);
+            // Restore pre-override tx_type; without this it stays at EIP4844 even
+            // after the blob hashes are cleared.
+            let pre_type = env_overrides.pre_override_tx_type.unwrap_or(0);
+            ccx.ecx.tx_mut().set_tx_type(pre_type);
+        }
+        _ => {}
+    }
 }
 
 fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
@@ -1356,6 +1458,12 @@ fn inner_revert_to_state<FEN: FoundryEvmNetwork>(
     ) {
         *inner = restored;
         ccx.ecx.set_evm(evm_env);
+        // `RevertKeep` keeps the backend snapshot alive for further
+        // reverts, so keep our matching env-overrides copy too.
+        if let Some(snap) = ccx.state.env_overrides_snapshots.get(&snapshot_id) {
+            ccx.state.env_overrides = snap.clone();
+        }
+        sync_tx_after_env_override_restore(ccx);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())
@@ -1378,6 +1486,10 @@ fn inner_revert_to_state_and_delete<FEN: FoundryEvmNetwork>(
     ) {
         *inner = restored;
         ccx.ecx.set_evm(evm_env);
+        if let Some(snap) = ccx.state.env_overrides_snapshots.remove(&snapshot_id) {
+            ccx.state.env_overrides = snap;
+        }
+        sync_tx_after_env_override_restore(ccx);
         Ok(true.abi_encode())
     } else {
         Ok(false.abi_encode())

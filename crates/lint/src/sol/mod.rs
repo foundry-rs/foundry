@@ -125,7 +125,7 @@ impl<'a> SolidityLinter<'a> {
     fn include_lint(&self, lint: SolLint) -> bool {
         self.severity.as_ref().is_none_or(|sev| sev.contains(&lint.severity()))
             && self.lints_included.as_ref().is_none_or(|incl| incl.contains(&lint))
-            && !self.lints_excluded.as_ref().is_some_and(|excl| excl.contains(&lint))
+            && self.lints_excluded.as_ref().is_none_or(|excl| !excl.contains(&lint))
     }
 
     fn process_source_ast<'gcx>(
