@@ -2110,7 +2110,7 @@ Ran 1 test for test/StaleSecondaryTest.t.sol:StaleSecondaryTest
 Invariant/Property Tests: 2/2 invariants broken
 [FAIL: first broken] invariant_first
 [FAIL: second broken] invariant_second
-2 invariant failure(s) persisted to /private/var/folders/p4/rl3tc43j51s311jt6pq7zq180000gn/T/[..]/cache/invariant/failures/StaleSecondaryTest — rerun to shrink
+2 invariant failure(s) persisted to [..]/cache/invariant/failures/StaleSecondaryTest — rerun to shrink
  invariant_first() (runs: 1, calls: 3, reverts: 0)
 
 ╭----------+----------+-------+---------+----------╮
@@ -2139,7 +2139,7 @@ Encountered 1 failing test in test/StaleSecondaryTest.t.sol:StaleSecondaryTest
 Invariant/Property Tests: 2/2 invariants broken
 [FAIL: first broken] invariant_first
 [FAIL: second broken] invariant_second
-2 invariant failure(s) persisted to /private/var/folders/p4/rl3tc43j51s311jt6pq7zq180000gn/T/[..]/cache/invariant/failures/StaleSecondaryTest — rerun to shrink
+2 invariant failure(s) persisted to [..]/cache/invariant/failures/StaleSecondaryTest — rerun to shrink
  invariant_first() (runs: 1, calls: 3, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
