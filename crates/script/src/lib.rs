@@ -135,13 +135,6 @@ pub struct ScriptArgs {
     #[arg(long)]
     pub batch: bool,
 
-    /// Number of calls per Tempo batch transaction.
-    ///
-    /// When `--batch` is enabled, splits the collected calls into multiple batch
-    /// transactions of at most this many calls each.
-    #[arg(long, requires = "batch", default_value = "100")]
-    pub batch_size: usize,
-
     /// Tempo transaction options.
     #[command(flatten)]
     pub tempo: TempoOpts,

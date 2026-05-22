@@ -1020,9 +1020,9 @@ impl BundledState<TempoEvmNetwork> {
             sequence.receipts.push(tx_receipt);
         }
 
-        // Mark all transactions as pending with the batch tx hash
-        for i in 0..sequence.transactions.len() {
-            sequence.add_pending(i, tx_hash);
+        // Batch is already confirmed; just stamp every recorded call with the batch tx hash.
+        for tx in &mut sequence.transactions {
+            tx.hash = Some(tx_hash);
         }
 
         let chain = sequence.chain;
