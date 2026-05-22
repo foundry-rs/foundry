@@ -1,5 +1,38 @@
 use super::{abi::*, runtime::*, *};
 
+/// Pops the next pending path according to the configured exploration order.
+pub(crate) fn pop_worklist<T>(
+    worklist: &mut VecDeque<T>,
+    order: SymbolicExplorationOrder,
+) -> Option<T> {
+    pop_batch(worklist, order)
+}
+
+/// Pops the current path from a local batch according to the configured exploration order.
+pub(crate) fn pop_batch<T>(batch: &mut VecDeque<T>, order: SymbolicExplorationOrder) -> Option<T> {
+    match order {
+        SymbolicExplorationOrder::Bfs => batch.pop_front(),
+        SymbolicExplorationOrder::Dfs => batch.pop_back(),
+    }
+}
+
+/// Spills the remaining local batch onto the global worklist in scheduler order.
+pub(crate) fn spill_batch<T>(
+    batch: VecDeque<T>,
+    worklist: &mut VecDeque<T>,
+    order: SymbolicExplorationOrder,
+) {
+    match order {
+        SymbolicExplorationOrder::Bfs => worklist.extend(batch),
+        SymbolicExplorationOrder::Dfs => {
+            worklist.reserve(batch.len());
+            for path in batch {
+                worklist.push_back(path);
+            }
+        }
+    }
+}
+
 impl SymbolicExecutor {
     /// Creates a symbolic executor from Foundry's symbolic configuration.
     ///
@@ -134,7 +167,7 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = worklist.pop_front() {
+        while let Some(mut state) = pop_worklist(&mut worklist, self.config.exploration_order) {
             if completed_paths >= path_limit {
                 return Ok(SymbolicRunResult::Incomplete {
                     kind: SymbolicStopReason::Stuck,
@@ -532,7 +565,7 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = worklist.pop_front() {
+        while let Some(mut state) = pop_worklist(&mut worklist, self.config.exploration_order) {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }
@@ -2464,7 +2497,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::AssumeRejected);
         };
 
-        let mut parents = Vec::with_capacity(outcomes.len());
+        let mut parents = VecDeque::with_capacity(outcomes.len());
         for outcome in std::iter::once(first).chain(rest.iter()) {
             let mut parent = state.clone();
             parent.constraints = outcome.state.constraints.clone();
@@ -2517,7 +2550,7 @@ impl SymbolicExecutor {
                             &return_data,
                         )?;
                         parent.stack.push(SymWord::Concrete(U256::from(1)))?;
-                        parents.push(parent);
+                        parents.push_back(parent);
                         continue;
                     }
                 }
@@ -2552,15 +2585,14 @@ impl SymbolicExecutor {
                 outcome.status,
                 TopLevelCallStatus::Success
             ))))?;
-            parents.push(parent);
+            parents.push_back(parent);
         }
 
-        let mut iter = parents.into_iter();
-        let Some(first) = iter.next() else {
+        let Some(first) = pop_batch(&mut parents, self.config.exploration_order) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
-        worklist.extend(iter);
+        spill_batch(parents, worklist, self.config.exploration_order);
         Ok(StepOutcome::Continue)
     }
 
@@ -2795,18 +2827,18 @@ impl SymbolicExecutor {
             )? {
                 StepOutcome::Continue => {
                     parents.push_back(branch);
-                    parents.extend(branch_worklist);
+                    spill_batch(branch_worklist, &mut parents, self.config.exploration_order);
                 }
                 StepOutcome::AssumeRejected => {}
                 outcome => return Ok(outcome),
             }
         }
 
-        let Some(first) = parents.pop_front() else {
+        let Some(first) = pop_batch(&mut parents, self.config.exploration_order) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
-        worklist.extend(parents);
+        spill_batch(parents, worklist, self.config.exploration_order);
         Ok(StepOutcome::Continue)
     }
 
@@ -2918,7 +2950,7 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::AssumeRejected);
         };
 
-        let mut parents = Vec::with_capacity(outcomes.len());
+        let mut parents = VecDeque::with_capacity(outcomes.len());
         for outcome in std::iter::once(first).chain(rest.iter()) {
             let mut parent = state.clone();
             parent.constraints = outcome.state.constraints.clone();
@@ -2965,7 +2997,7 @@ impl SymbolicExecutor {
                         parent.function_mocks = outcome.state.function_mocks.clone();
                         parent.world = failure_world.clone();
                         parent.stack.push(created_word.clone())?;
-                        parents.push(parent);
+                        parents.push_back(parent);
                         continue;
                     }
                 }
@@ -3002,15 +3034,14 @@ impl SymbolicExecutor {
                 }
             }
 
-            parents.push(parent);
+            parents.push_back(parent);
         }
 
-        let mut iter = parents.into_iter();
-        let Some(first) = iter.next() else {
+        let Some(first) = pop_batch(&mut parents, self.config.exploration_order) else {
             return Ok(StepOutcome::AssumeRejected);
         };
         *state = first;
-        worklist.extend(iter);
+        spill_batch(parents, worklist, self.config.exploration_order);
         Ok(StepOutcome::Continue)
     }
 
@@ -3028,7 +3059,7 @@ impl SymbolicExecutor {
         let path_limit = self.config.path_width() as usize;
         let depth_limit = self.config.execution_depth() as usize;
 
-        while let Some(mut state) = worklist.pop_front() {
+        while let Some(mut state) = pop_worklist(&mut worklist, self.config.exploration_order) {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }
@@ -3324,11 +3355,11 @@ impl SymbolicExecutor {
             branches.push_back(branch);
         }
 
-        let Some(first_branch) = branches.pop_front() else {
+        let Some(first_branch) = pop_batch(&mut branches, self.config.exploration_order) else {
             return Ok(Some(StepOutcome::AssumeRejected));
         };
         *state = first_branch;
-        worklist.extend(branches);
+        spill_batch(branches, worklist, self.config.exploration_order);
         Ok(Some(StepOutcome::Continue))
     }
 
