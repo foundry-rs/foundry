@@ -374,3 +374,73 @@ contract AssertStateChangeAddressMappingReceiver {
         assert(payees[user] != address(0));
     }
 }
+
+// ---- bare internal overloads with different arities ----
+// Bare identifier resolution must filter overload candidates by arity; the 1-arg view overload
+// should not inherit mutability from the unrelated 2-arg mutating overload.
+contract AssertStateChangeBareOverloadArity {
+    uint256 public counter;
+
+    function check(uint256 n) internal view returns (bool) {
+        return n == counter;
+    }
+
+    function check(uint256 n, uint256 delta) internal returns (bool) {
+        counter = n + delta;
+        return true;
+    }
+
+    // Good: selected overload is view, even though a same-name different-arity overload mutates.
+    function goodDifferentArityBareCall(uint256 n) external view {
+        assert(check(n));
+    }
+}
+
+// ---- this receiver ----
+// `this` is a contract-typed receiver even though it does not resolve through a variable.
+contract AssertStateChangeThisReceiver {
+    uint256 public counter;
+
+    function mutate() external returns (bool) {
+        counter++;
+        return true;
+    }
+
+    function badThisCall() external {
+        assert(this.mutate()); //~WARN: assert() argument contains a state-modifying expression
+    }
+}
+
+// ---- member-call-result receiver ----
+// factory.token().transfer(...), the receiver is a contract returned from a member call.
+interface ITokenFactory {
+    function token() external view returns (IToken);
+}
+
+contract AssertStateChangeMemberReturnReceiver {
+    ITokenFactory public factory;
+
+    // Bad: mutating call on the contract returned by a member function.
+    function badMemberReturnCall(address to, uint256 amt) external {
+        assert(factory.token().transfer(to, amt)); //~WARN: assert() argument contains a state-modifying expression
+    }
+
+    // Good: view call on the contract returned by a member function must NOT warn.
+    function goodMemberReturnViewCall(address who) external view {
+        assert(factory.token().balanceOf(who) > 0);
+    }
+}
+
+// ---- address struct-field receiver ----
+// payee.recipient.send(...), the receiver is an address payable stored inside a struct field.
+struct Payee {
+    address payable recipient;
+}
+
+contract AssertStateChangeAddressStructReceiver {
+    Payee public payee;
+
+    function badStructAddressSend() external {
+        assert(payee.recipient.send(1 ether)); //~WARN: assert() argument contains a state-modifying expression
+    }
+}

@@ -150,3 +150,27 @@ LL │         assert(payees[user].send(1 ether));
    │
    ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
 
+warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+   ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
+   │
+LL │         assert(this.mutate());
+   │                ━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
+
+warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+   ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
+   │
+LL │         assert(factory.token().transfer(to, amt));
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
+
+warning[assert-state-change]: assert() argument contains a state-modifying expression; assert() is for invariants, hoist the mutation before the assert, or use require() for validation
+   ╭▸ ROOT/testdata/AssertStateChange.sol:LL:CC
+   │
+LL │         assert(payee.recipient.send(1 ether));
+   │                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/assert-state-change
+
