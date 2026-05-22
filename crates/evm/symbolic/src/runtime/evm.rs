@@ -276,11 +276,6 @@ pub(crate) fn ensure_jumpdest(
     if jumpdests.contains(&dest) { Ok(()) } else { Err(SymbolicError::InvalidJump(dest)) }
 }
 
-pub(crate) const PANIC_SELECTOR: [u8; 4] = [0x4e, 0x48, 0x7b, 0x71];
-pub(crate) const ERROR_SELECTOR: [u8; 4] = [0x08, 0xc3, 0x79, 0xa0];
-const ASSERT_PANIC_CODE: U256 = U256::from_limbs([1, 0, 0, 0]);
-const ASSERTION_FAILED_PREFIX: &str = "assertion failed";
-
 /// Returns whether `is_assertion_revert` holds.
 pub(crate) fn is_assertion_revert(data: &[u8]) -> bool {
     is_assert_panic(data) || is_revert_assertion_failure(data)
@@ -288,18 +283,19 @@ pub(crate) fn is_assertion_revert(data: &[u8]) -> bool {
 
 /// Returns whether `is_assert_panic` holds.
 pub(crate) fn is_assert_panic(data: &[u8]) -> bool {
-    data.len() >= 36
+    data.len() >= ABI_SELECTOR_PLUS_WORD_LEN
         && data.starts_with(&PANIC_SELECTOR)
-        && abi_word(&data[4..36]).is_some_and(|code| code == ASSERT_PANIC_CODE)
+        && abi_word(&data[4..ABI_SELECTOR_PLUS_WORD_LEN])
+            .is_some_and(|code| code == ASSERT_PANIC_CODE)
 }
 
 /// Returns whether `is_revert_assertion_failure` holds.
 pub(crate) fn is_revert_assertion_failure(data: &[u8]) -> bool {
-    if data.len() < 68 || !data.starts_with(&ERROR_SELECTOR) {
+    if data.len() < ERROR_DATA_MIN_LEN || !data.starts_with(&ERROR_SELECTOR) {
         return false;
     }
 
-    let Some(offset) = abi_word_usize(&data[4..36]) else {
+    let Some(offset) = abi_word_usize(&data[4..ABI_SELECTOR_PLUS_WORD_LEN]) else {
         return false;
     };
     let Some(length_offset) = 4usize.checked_add(offset) else {

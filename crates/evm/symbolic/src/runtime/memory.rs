@@ -6,7 +6,7 @@ pub(crate) struct SymStack(Vec<SymWord>);
 impl SymStack {
     /// Implements the `push` symbolic memory helper.
     pub(crate) fn push(&mut self, value: SymWord) -> Result<(), SymbolicError> {
-        if self.0.len() >= 1024 {
+        if self.0.len() >= EVM_STACK_LIMIT {
             return Err(SymbolicError::StackOverflow);
         }
         self.0.push(value);

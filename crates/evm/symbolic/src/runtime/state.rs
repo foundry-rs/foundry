@@ -635,10 +635,9 @@ pub(crate) fn adjust_expected_call_gas_for_value(
     min_gas: Option<u64>,
 ) -> (Option<u64>, Option<u64>) {
     if value.is_some_and(|value| !value.is_zero()) {
-        const POSITIVE_VALUE_STIPEND: u64 = 2300;
         (
-            gas.map(|gas| gas.saturating_add(POSITIVE_VALUE_STIPEND)),
-            min_gas.map(|gas| gas.saturating_add(POSITIVE_VALUE_STIPEND)),
+            gas.map(|gas| gas.saturating_add(CALL_VALUE_STIPEND)),
+            min_gas.map(|gas| gas.saturating_add(CALL_VALUE_STIPEND)),
         )
     } else {
         (gas, min_gas)
@@ -714,7 +713,7 @@ impl ExpectedCall {
         }
         let mut gas = gas.clone().into_concrete("symbolic expected call gas")?;
         if value.is_some_and(|value| !value.is_zero()) {
-            gas = gas.saturating_add(U256::from(2300));
+            gas = gas.saturating_add(U256::from(CALL_VALUE_STIPEND));
         }
         Ok(self.gas.is_none_or(|expected| gas == U256::from(expected))
             && self.min_gas.is_none_or(|expected| gas >= U256::from(expected)))

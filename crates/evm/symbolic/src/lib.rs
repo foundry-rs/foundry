@@ -4,7 +4,7 @@
 
 use alloy_dyn_abi::{DynSolType, DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, B256, Bytes, I256, U256, address, hex, keccak256};
+use alloy_primitives::{Address, B256, Bytes, I256, U256, hex, keccak256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::{
     MnemonicBuilder, PrivateKeySigner,
@@ -54,19 +54,15 @@ macro_rules! selector {
     }};
 }
 
+mod consts;
+pub use consts::BUILTIN_SYMBOLIC_SOLVERS;
+pub(crate) use consts::*;
+
 mod abi;
 mod executor;
 mod runtime;
 
 pub use runtime::{PortfolioDiagnostics, SymbolicError, SymbolicRunInput};
-
-/// Symbolic solver names with built-in command-line mappings.
-pub const BUILTIN_SYMBOLIC_SOLVERS: &[&str] =
-    &["z3", "yices", "cvc5", "cvc5-int", "bitwuzla", "bitwuzla-abs"];
-
-const DEFAULT_DERIVATION_PATH_PREFIX: &str = "m/44'/60'/0'/0/";
-const MAX_REMEMBER_KEYS: u32 = 64;
-const SYMBOLIC_VM_COMPAT_ADDRESS: Address = address!("0xF3993A62377BCd56AE39D773740A5390411E8BC9");
 
 /// Returns whether `solver` is one of Foundry's semantic symbolic solver names.
 pub fn symbolic_solver_is_builtin(solver: &str) -> bool {
@@ -223,9 +219,6 @@ pub struct SymbolicExecutor {
     config: SymbolicConfig,
     solver: Box<dyn runtime::SymbolicSolver>,
 }
-
-const SYMBOLIC_EXP_CONCRETE_EXPONENT_LIMIT: u64 = 32;
-const CONCRETE_BASE_SYMBOLIC_EXPONENT_LIMIT: u64 = 256;
 
 #[cfg(test)]
 mod tests;
