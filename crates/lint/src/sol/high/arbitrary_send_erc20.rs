@@ -7,7 +7,8 @@ use solar::{
     ast,
     interface::{Span, data_structures::Never, kw, sym},
     sema::hir::{
-        self, ContractKind, ElementaryType, ExprKind, ItemId, Res, StmtKind, TypeKind, Visit,
+        self, ContractKind, ElementaryType, ExprKind, ItemId, LoopSource, Res, StmtKind, StructId,
+        TypeKind, Visit,
     },
 };
 use std::{collections::HashSet, ops::ControlFlow};
@@ -41,9 +42,10 @@ impl<'hir> LateLintPass<'hir> for ArbitrarySendErc20 {
         }
         let Some(body) = func.body else { return };
 
-        let mut a = Analyzer::new(hir);
+        let has_solady_lib = has_solady_safe_transfer_lib(hir);
+        let mut a = Analyzer::new(hir, has_solady_lib);
         for m in func.modifiers {
-            collect_modifier_safety(hir, m, &mut a.safe_vars);
+            collect_modifier_safety(hir, has_solady_lib, m, &mut a.safe_vars);
         }
         for stmt in body.stmts {
             let _ = a.visit_stmt(stmt);
@@ -82,6 +84,8 @@ struct Analyzer<'hir> {
     /// Pending flash-loan repayments. Path-sensitive; killed on reassignment of any
     /// referenced var; consumed once by a matching sink.
     repayments: HashSet<PendingRepayment>,
+    /// Gates the `using ... for address` sink branch on a `SafeTransferLib` being present.
+    has_solady_lib: bool,
     hits: Vec<Span>,
 }
 
@@ -89,12 +93,13 @@ struct Analyzer<'hir> {
 const HELPER_DEPTH: u8 = 3;
 
 impl<'hir> Analyzer<'hir> {
-    fn new(hir: &'hir hir::Hir<'hir>) -> Self {
+    fn new(hir: &'hir hir::Hir<'hir>, has_solady_lib: bool) -> Self {
         Self {
             hir,
             safe_vars: HashSet::new(),
             permits: HashSet::new(),
             repayments: HashSet::new(),
+            has_solady_lib,
             hits: Vec::new(),
         }
     }
@@ -370,8 +375,15 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                 return ControlFlow::Continue(());
             }
 
-            StmtKind::Loop(block, _) => {
-                self.visit_isolated(block.stmts);
+            StmtKind::Loop(block, source) => {
+                // `do-while` runs the body at least once, so facts established inside flow out.
+                if matches!(source, LoopSource::DoWhile) {
+                    for s in block.stmts {
+                        let _ = self.visit_stmt(s);
+                    }
+                } else {
+                    self.visit_isolated(block.stmts);
+                }
                 return ControlFlow::Continue(());
             }
             StmtKind::Try(t) => {
@@ -407,20 +419,22 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
     }
 
     fn visit_expr(&mut self, expr: &'hir hir::Expr<'hir>) -> ControlFlow<Self::BreakValue> {
-        // Short-circuit `&&` / `||`: `lhs`'s facts (or its negation for `||`) are
-        // scoped to `rhs`'s evaluation only.
+        // Short-circuit `&&` / `||`: `rhs` may not execute, so its state mutations must
+        // not survive the expression. `lhs` facts flow into `rhs` only. `hits` persist —
+        // a sink in `rhs` is still reported.
         if let ExprKind::Binary(lhs, op, rhs) = &expr.kind
             && matches!(op.kind, ast::BinOpKind::And | ast::BinOpKind::Or)
         {
             let _ = self.visit_expr(lhs);
             let negate = matches!(op.kind, ast::BinOpKind::Or);
-            let before = self.safe_vars.clone();
+            let saved_safe = self.safe_vars.clone();
+            let saved_permits = self.permits.clone();
+            let saved_repayments = self.repayments.clone();
             self.add_facts(lhs, negate);
-            let added: Vec<_> = self.safe_vars.difference(&before).copied().collect();
             let result = self.visit_expr(rhs);
-            for v in added {
-                self.safe_vars.remove(&v);
-            }
+            self.safe_vars = saved_safe;
+            self.permits = saved_permits;
+            self.repayments = saved_repayments;
             return result;
         }
 
@@ -440,7 +454,7 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                     self.repayments.insert(rep);
                 } else if let Some(p) = match_permit_call(expr) {
                     self.permits.insert(p);
-                } else if let Some((from, token)) = match_sink(self.hir, expr)
+                } else if let Some((from, token)) = match_sink(self.hir, self.has_solady_lib, expr)
                     && !self.is_safe(from)
                     && !self.permit_covers(token, from)
                     && !self.consume_repayment(expr, from, token)
@@ -449,6 +463,8 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                 }
             }
             ExprKind::Assign(lhs, _, rhs) => self.handle_assign(lhs, rhs),
+            // `delete x` resets `x`; treat as unknown reassignment.
+            ExprKind::Delete(target) => self.assign_one(target.peel_parens(), None),
             _ => {}
         }
         self.walk_expr(expr)
@@ -505,6 +521,7 @@ fn is_amount_plus_fee(expr: &hir::Expr<'_>, amount: hir::VariableId, fee: hir::V
 /// - `Lib.safeTransferFrom(token, from, to, amt)` library form.
 fn match_sink<'hir>(
     hir: &'hir hir::Hir<'hir>,
+    has_solady_lib: bool,
     expr: &'hir hir::Expr<'hir>,
 ) -> Option<(&'hir hir::Expr<'hir>, Option<hir::VariableId>)> {
     let ExprKind::Call(callee, args, _) = &expr.kind else { return None };
@@ -527,8 +544,10 @@ fn match_sink<'hir>(
         {
             return Some((canonical[0], underlying_var(recv)));
         }
-        // `addr.safeTransferFrom(...)` via `using ... for address`.
-        if name == "safeTransferFrom" && expr_is_address(hir, recv) {
+        // `addr.safeTransferFrom(...)` via `using SafeTransferLib for address`. HIR doesn't
+        // expose `using-for` bindings, so we proxy by requiring `SafeTransferLib` to be
+        // declared in the compiled sources.
+        if name == "safeTransferFrom" && has_solady_lib && expr_is_address(hir, recv) {
             return Some((canonical[0], underlying_var(recv)));
         }
     }
@@ -568,6 +587,7 @@ fn match_permit_call(expr: &hir::Expr<'_>) -> Option<PermitRecord> {
 /// before its single top-level `_;`), mapping modifier params back to caller args.
 fn collect_modifier_safety(
     hir: &hir::Hir<'_>,
+    has_solady_lib: bool,
     invocation: &hir::Modifier<'_>,
     out_safe: &mut HashSet<hir::VariableId>,
 ) {
@@ -598,7 +618,7 @@ fn collect_modifier_safety(
         return;
     }
 
-    let mut a = Analyzer::new(hir);
+    let mut a = Analyzer::new(hir, has_solady_lib);
     for stmt in &body.stmts[..placeholder_idx] {
         let _ = a.visit_stmt(stmt);
     }
@@ -640,7 +660,8 @@ fn underlying_var(expr: &hir::Expr<'_>) -> Option<hir::VariableId> {
 }
 
 /// Resolves the static contract type of `recv`: a contract-typed variable, a direct contract
-/// reference (e.g. a library), or an `IERC20(addr)` interface wrap.
+/// reference (e.g. a library), an `IERC20(addr)` interface wrap, a struct field, or an
+/// array/mapping element of contract type.
 fn receiver_contract_id(hir: &hir::Hir<'_>, recv: &hir::Expr<'_>) -> Option<hir::ContractId> {
     let recv = recv.peel_parens();
     match &recv.kind {
@@ -659,8 +680,78 @@ fn receiver_contract_id(hir: &hir::Hir<'_>, recv: &hir::Expr<'_>) -> Option<hir:
             }),
             _ => None,
         },
+        // `cfg.token.transferFrom(...)`.
+        ExprKind::Member(base, ident) => {
+            let sid = struct_of(hir, base)?;
+            let strukt = hir.strukt(sid);
+            strukt.fields.iter().find_map(|fid| {
+                let v = hir.variable(*fid);
+                if v.name.is_some_and(|n| n.as_str() == ident.as_str())
+                    && let TypeKind::Custom(ItemId::Contract(cid)) = v.ty.kind
+                {
+                    Some(cid)
+                } else {
+                    None
+                }
+            })
+        }
+        // `tokens[i].transferFrom(...)`, `tokenMap[k].transferFrom(...)`. Direct-ident bases only.
+        ExprKind::Index(base, _) => {
+            let ExprKind::Ident(reses) = &base.peel_parens().kind else { return None };
+            let var = reses.iter().find_map(|r| match r {
+                Res::Item(ItemId::Variable(vid)) => Some(hir.variable(*vid)),
+                _ => None,
+            })?;
+            let element = match &var.ty.kind {
+                TypeKind::Array(arr) => &arr.element.kind,
+                TypeKind::Mapping(m) => &m.value.kind,
+                _ => return None,
+            };
+            match element {
+                TypeKind::Custom(ItemId::Contract(cid)) => Some(*cid),
+                _ => None,
+            }
+        }
         _ => None,
     }
+}
+
+/// Returns the [`StructId`] of `expr` when it is a (possibly chained) struct value.
+fn struct_of(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> Option<StructId> {
+    let expr = expr.peel_parens();
+    match &expr.kind {
+        ExprKind::Ident(reses) => reses.iter().find_map(|r| match r {
+            Res::Item(ItemId::Variable(vid)) => match hir.variable(*vid).ty.kind {
+                TypeKind::Custom(ItemId::Struct(sid)) => Some(sid),
+                _ => None,
+            },
+            _ => None,
+        }),
+        ExprKind::Member(inner, member) => {
+            let sid = struct_of(hir, inner)?;
+            let strukt = hir.strukt(sid);
+            strukt.fields.iter().find_map(|fid| {
+                let v = hir.variable(*fid);
+                if v.name.is_some_and(|n| n.as_str() == member.as_str())
+                    && let TypeKind::Custom(ItemId::Struct(inner_sid)) = v.ty.kind
+                {
+                    Some(inner_sid)
+                } else {
+                    None
+                }
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Whether the sources declare a Solady-shaped `SafeTransferLib` library.
+fn has_solady_safe_transfer_lib(hir: &hir::Hir<'_>) -> bool {
+    hir.contracts_enumerated().any(|(cid, c)| {
+        c.kind == ContractKind::Library
+            && c.name.as_str() == "SafeTransferLib"
+            && library_has_safe_transfer_from(hir, cid)
+    })
 }
 
 fn contract_has_function(

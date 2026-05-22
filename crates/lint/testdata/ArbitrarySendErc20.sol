@@ -652,6 +652,65 @@ contract ArbitrarySendErc20 {
         });
         token.transferFrom({from: from, to: to, amount: a});
     }
+
+    // `delete` clears a prior safe-fact.
+    function badDeleteKillsSafe(address from, address to, uint256 a) public {
+        address x = msg.sender;
+        delete x;
+        x = from;
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // Flash-loan call on the RHS of `&&` may not execute; its repayment must not leak.
+    function badFlashLoanShortCircuit(
+        bool flag,
+        IERC3156FlashBorrower receiver,
+        bytes32 MAGIC,
+        uint256 amount,
+        uint256 fee,
+        bytes calldata data
+    ) public returns (bool) {
+        bool ok = flag
+            && receiver.onFlashLoan(msg.sender, address(token), amount, fee, data) == MAGIC;
+        token.transferFrom(address(receiver), address(this), amount + fee); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+        return ok;
+    }
+
+    // `do-while` body runs at least once — facts established inside flow out.
+    function okDoWhileEstablishesSafe(address from, address to, uint256 a) public {
+        address x = from;
+        do {
+            x = msg.sender;
+        } while (false);
+        token.transferFrom(x, to, a);
+    }
+}
+
+// Struct / array / mapping receivers.
+contract ContainerReceivers {
+    struct Config {
+        IERC20 token;
+    }
+
+    Config cfg;
+    IERC20[] tokens;
+    mapping(uint256 => IERC20) tokenMap;
+
+    function badStructFieldReceiver(address from, address to, uint256 a) public {
+        cfg.token.transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function badArrayElementReceiver(address from, address to, uint256 a) public {
+        tokens[0].transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function badMappingValueReceiver(uint256 id, address from, address to, uint256 a) public {
+        tokenMap[id].transferFrom(from, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function okStructFieldSender(address to, uint256 a) public {
+        cfg.token.transferFrom(msg.sender, to, a);
+    }
 }
 
 // Solady-style: first param is `address`, not a contract type.
