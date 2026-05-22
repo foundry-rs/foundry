@@ -53,6 +53,36 @@ fn pop_worklist_respects_exploration_order() {
 }
 
 #[test]
+/// Regression coverage for local batches respecting configured exploration order.
+fn local_batches_respect_exploration_order() {
+    let mut bfs_batch = VecDeque::from([1, 2, 3]);
+    let mut bfs_worklist = VecDeque::from([10]);
+    assert_eq!(super::executor::pop_batch(&mut bfs_batch, SymbolicExplorationOrder::Bfs), Some(1));
+    super::executor::spill_batch(bfs_batch, &mut bfs_worklist, SymbolicExplorationOrder::Bfs);
+    assert_eq!(
+        super::executor::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
+        Some(10)
+    );
+    assert_eq!(
+        super::executor::pop_worklist(&mut bfs_worklist, SymbolicExplorationOrder::Bfs),
+        Some(2)
+    );
+
+    let mut dfs_batch = VecDeque::from([1, 2, 3]);
+    let mut dfs_worklist = VecDeque::from([10]);
+    assert_eq!(super::executor::pop_batch(&mut dfs_batch, SymbolicExplorationOrder::Dfs), Some(3));
+    super::executor::spill_batch(dfs_batch, &mut dfs_worklist, SymbolicExplorationOrder::Dfs);
+    assert_eq!(
+        super::executor::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
+        Some(2)
+    );
+    assert_eq!(
+        super::executor::pop_worklist(&mut dfs_worklist, SymbolicExplorationOrder::Dfs),
+        Some(1)
+    );
+}
+
+#[test]
 /// Regression coverage for `binary_helpers_use_evm_operand_order`.
 fn binary_helpers_use_evm_operand_order() {
     let mut state = empty_state();
