@@ -2250,7 +2250,7 @@ contract InvariantWarpAndRoll {
 		vm.roll(block.number + 17834);
 		vm.prank([..]);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(24752675372815722001736610830);
- invariant_roll() (runs: 0, calls: 0, reverts: 0)
+ invariant_roll() (runs: 1, calls: 6, reverts: 0)
 ...
 
 "#]]);
