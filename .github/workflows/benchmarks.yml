@@ -15,7 +15,7 @@ on:
           - fuzz
           - both
       versions:
-        description: "Foundry versions to benchmark, comma-separated. 'local' benchmarks HEAD. Default: stable,local."
+        description: "Foundry versions to benchmark, comma-separated. 'local' benchmarks HEAD."
         required: false
         type: string
         default: "stable,local"
