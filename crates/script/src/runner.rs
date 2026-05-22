@@ -68,29 +68,31 @@ impl<FEN: FoundryEvmNetwork> ScriptRunner<FEN> {
 
         // Deploy libraries
         match libraries {
-            ScriptPredeployLibraries::Default(libraries) => libraries.iter().for_each(|code| {
-                let result = self
-                    .executor
-                    .deploy(self.evm_opts.sender, code.clone(), U256::ZERO, None)
-                    .expect("couldn't deploy library")
-                    .raw;
+            ScriptPredeployLibraries::Default(libraries) => {
+                for code in libraries {
+                    let result = self
+                        .executor
+                        .deploy(self.evm_opts.sender, code.clone(), U256::ZERO, None)
+                        .expect("couldn't deploy library")
+                        .raw;
 
-                if let Some(deploy_traces) = result.traces {
-                    traces.push((TraceKind::Deployment, deploy_traces));
+                    if let Some(deploy_traces) = result.traces {
+                        traces.push((TraceKind::Deployment, deploy_traces));
+                    }
+
+                    let mut tx_req = TransactionRequestFor::<FEN>::default()
+                        .with_from(self.evm_opts.sender)
+                        .with_input(code.clone())
+                        .with_nonce(sender_nonce + library_transactions.len() as u64);
+
+                    script_config.tempo.apply::<FEN::Network>(&mut tx_req, None);
+
+                    library_transactions.push_back(BroadcastableTransaction {
+                        rpc: self.evm_opts.fork_url.clone(),
+                        transaction: TransactionMaybeSigned::new(tx_req),
+                    })
                 }
-
-                let mut tx_req = TransactionRequestFor::<FEN>::default()
-                    .with_from(self.evm_opts.sender)
-                    .with_input(code.clone())
-                    .with_nonce(sender_nonce + library_transactions.len() as u64);
-
-                script_config.tempo.apply::<FEN::Network>(&mut tx_req, None);
-
-                library_transactions.push_back(BroadcastableTransaction {
-                    rpc: self.evm_opts.fork_url.clone(),
-                    transaction: TransactionMaybeSigned::new(tx_req),
-                })
-            }),
+            }
             ScriptPredeployLibraries::Create2(libraries, salt) => {
                 let create2_deployer = self.executor.create2_deployer();
                 for library in libraries {
