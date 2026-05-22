@@ -212,6 +212,7 @@ jobs:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
           VERSIONS: ${{ github.event.inputs.versions }}
           FUZZ_CAMPAIGNS: ${{ github.event.inputs.fuzz_campaigns || env.FUZZ_CAMPAIGNS }}
+          RUSTC_WRAPPER: ""
         run: |
           ./target/release/foundry-bench --output-dir ./benches --force-install \
             --versions "$VERSIONS" \
