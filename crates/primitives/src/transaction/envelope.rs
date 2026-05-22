@@ -123,6 +123,11 @@ impl FoundryTxEnvelope {
         matches!(self, Self::Tempo(_))
     }
 
+    /// Returns `true` if this is a Tempo transaction with a nonzero nonce key.
+    pub fn has_nonzero_tempo_nonce_key(&self) -> bool {
+        matches!(self, Self::Tempo(tx) if !tx.tx().nonce_key.is_zero())
+    }
+
     /// Recovers the Ethereum address which was used to sign the transaction.
     pub fn recover(&self) -> Result<Address, RecoveryError> {
         Ok(match self {

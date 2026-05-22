@@ -12,9 +12,12 @@ use yansi::Paint;
 
 /// Run the `chisel` command line interface.
 pub fn run() -> Result<()> {
-    setup()?;
-
+    // Pre-parse discovery flags run before `setup()` so they cannot be blocked
+    // by panic-handler / tracing init failures and avoid that init's cost.
+    foundry_cli::opts::GlobalArgs::check_introspect::<Chisel>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Chisel>();
+
+    setup()?;
 
     let args = Chisel::parse();
     args.global.init()?;
@@ -182,5 +185,29 @@ mod tests {
     #[test]
     fn verify_cli() {
         Chisel::command().debug_assert();
+    }
+
+    /// Every `command_id` exposed by `chisel --introspect` MUST be unique.
+    #[test]
+    fn introspect_command_ids_are_unique() {
+        use foundry_cli::introspect::{CommandRegistry, build_document, duplicate_command_ids};
+        let cmd = Chisel::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let dups = duplicate_command_ids(&doc);
+        assert!(dups.is_empty(), "duplicate chisel command_ids: {dups:?}");
+    }
+
+    /// `chisel --introspect` must produce a JSON document that parses back into
+    /// the canonical `IntrospectDocument` shape.
+    #[test]
+    fn introspect_document_is_valid_json() {
+        use foundry_cli::introspect::{
+            CommandRegistry, INTROSPECT_SCHEMA_ID, IntrospectDocument, render_introspect_document,
+        };
+        let cmd = Chisel::command();
+        let json = render_introspect_document(&cmd, &CommandRegistry::EMPTY);
+        let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
+        assert_eq!(doc.binary.name, "chisel");
     }
 }

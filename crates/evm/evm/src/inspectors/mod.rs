@@ -23,7 +23,7 @@ mod stack;
 pub use stack::{InspectorData, InspectorStack, InspectorStackBuilder};
 
 mod edge_cov;
-pub use edge_cov::EdgeCovInspector;
+pub use edge_cov::{CmpOperands, EdgeCovInspector};
 
 mod revert_diagnostic;
 pub use revert_diagnostic::RevertDiagnostic;

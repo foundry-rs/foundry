@@ -7,7 +7,7 @@
 // the concrete `Executor` type.
 
 use crate::inspectors::{
-    Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
+    Cheatcodes, CmpOperands, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -983,6 +983,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub line_coverage: Option<HitMaps>,
     /// The edge coverage info collected during the call
     pub edge_coverage: Option<Vec<u8>>,
+    /// EVM comparison operands collected during the call.
+    pub evm_cmp_values: Option<Vec<CmpOperands>>,
     /// Sancov edge coverage from instrumented native Rust crates (e.g. precompiles).
     /// Tracked separately from EVM edge coverage to avoid ID-space collisions.
     pub sancov_coverage: Option<Vec<u8>>,
@@ -1020,6 +1022,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             traces: None,
             line_coverage: None,
             edge_coverage: None,
+            evm_cmp_values: None,
             sancov_coverage: None,
             sancov_cmp_values: None,
             transactions: None,
@@ -1239,6 +1242,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         traces,
         line_coverage,
         edge_coverage,
+        evm_cmp_values,
         cheatcodes,
         chisel_state,
         reverter,
@@ -1266,6 +1270,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         traces,
         line_coverage,
         edge_coverage,
+        evm_cmp_values,
         sancov_coverage: None,
         sancov_cmp_values: None,
         transactions,

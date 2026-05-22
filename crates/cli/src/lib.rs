@@ -13,6 +13,7 @@ extern crate tracing;
 
 pub mod clap;
 pub mod handler;
+pub mod introspect;
 pub mod json;
 pub mod opts;
 pub mod utils;

@@ -98,6 +98,7 @@ alloy-serde.workspace = true
 dirs.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
+tempo-chainspec.workspace = true
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]
