@@ -34,19 +34,22 @@ pub fn is_machine() -> bool {
     MACHINE_MODE.load(Ordering::Relaxed)
 }
 
-/// Force machine mode on. Intended for tests and for [`check_machine`].
-#[doc(hidden)]
-pub fn set_machine(on: bool) {
+/// Force machine mode on or off. Intentionally crate-private: production
+/// activation goes through [`check_machine`] (pre-parse) or
+/// [`crate::opts::GlobalArgs::init`] (post-parse re-sync).
+pub(crate) fn set_machine(on: bool) {
     MACHINE_MODE.store(on, Ordering::Relaxed);
 }
 
 /// Pre-parse scan for `--machine`.
 ///
 /// Mirrors `check_introspect` / `check_markdown_help`: runs before clap
-/// parsing so the flag is visible while intercepting parse errors. Does NOT
-/// exit — machine mode persists for the rest of the run.
+/// parsing so the flag is visible while intercepting parse errors. Uses the
+/// same shared top-level scanner so `--machine` after `--`, after a
+/// subcommand/positional, or as a value to another flag does **not** flip
+/// the mode. Non-UTF-8 argv is handled gracefully (no panic).
 pub fn check_machine() {
-    if std::env::args().any(|a| a == "--machine") {
+    if crate::opts::pre_parse_flag_present("--machine") {
         set_machine(true);
     }
 }
@@ -63,7 +66,7 @@ pub fn parse_or_exit<T: Parser + CommandFactory>() -> T {
         Ok(t) => t,
         Err(err) => {
             if is_machine() {
-                handle_machine_clap_error::<T>(err)
+                handle_machine_clap_error(err)
             } else {
                 err.exit()
             }
@@ -71,59 +74,52 @@ pub fn parse_or_exit<T: Parser + CommandFactory>() -> T {
     }
 }
 
-fn handle_machine_clap_error<T: CommandFactory>(err: clap::Error) -> ! {
-    let kind = err.kind();
-    match kind {
-        ErrorKind::DisplayHelp | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
-            let mut cmd = T::command();
-            let help = cmd.render_help().to_string();
-            let envelope = JsonEnvelope::success(json!({ "help": help }));
+/// Convert a clap error into a structured machine-mode envelope and exit.
+///
+/// - `DisplayHelp` / `DisplayVersion` (explicit `--help` / `--version`) → success envelope wrapping
+///   clap's already-rendered, context-aware text (so e.g. `cast call --help` yields `cast call`
+///   help, not root help), exit `0`.
+/// - Everything else (parse errors, missing subcommand, missing required arg, conflict, including
+///   `DisplayHelpOnMissingArgumentOrSubcommand`, which is clap's "render help because args were
+///   missing" — i.e. a usage failure, not a help request) → error envelope with
+///   `cli.usage.invalid`, exit `2`.
+fn handle_machine_clap_error(err: clap::Error) -> ! {
+    let exit = exit_code_for_clap_error(&err);
+    match err.kind() {
+        ErrorKind::DisplayHelp => {
+            let rendered = err.render().to_string();
+            let envelope = JsonEnvelope::success(json!({ "help": rendered }));
             let _ = print_json(&envelope);
-            std::process::exit(ExitCode::Success.to_i32());
         }
         ErrorKind::DisplayVersion => {
-            let cmd = T::command();
-            let envelope = JsonEnvelope::success(json!({
-                "version": cmd.get_version().unwrap_or(""),
-                "long_version": cmd.get_long_version().unwrap_or(""),
-            }));
+            let rendered = err.render().to_string();
+            let envelope = JsonEnvelope::success(json!({ "version": rendered }));
             let _ = print_json(&envelope);
-            std::process::exit(ExitCode::Success.to_i32());
         }
         _ => {
+            // Includes `DisplayHelpOnMissingArgumentOrSubcommand`: clap
+            // rendered help text, but the underlying cause is a missing
+            // required arg or subcommand — a usage failure by contract.
             let message = err.to_string();
-            let envelope = JsonEnvelope::error(
-                JsonMessage::error(diagnostic::cli::USAGE_INVALID, message)
-                    .with_details(json!({ "clap_error_kind": format!("{kind:?}") })),
-            );
+            let envelope =
+                JsonEnvelope::error(JsonMessage::error(diagnostic::cli::USAGE_INVALID, message));
             let _ = print_json(&envelope);
-            std::process::exit(ExitCode::Usage.to_i32());
         }
     }
+    std::process::exit(exit.to_i32());
 }
 
-/// Exit code that maps a clap error kind to the canonical table.
+/// Maps a clap error kind to the canonical [`ExitCode`].
 ///
-/// Useful for callers that have a `clap::Error` they want to classify
-/// without going through [`parse_or_exit`].
-pub fn exit_code_for_clap_error(err: &clap::Error) -> ExitCode {
+/// Only `DisplayHelp` and `DisplayVersion` (explicit `--help` / `--version`)
+/// are successes; everything else (parse errors, missing subcommand,
+/// missing required arg, conflict, `DisplayHelpOnMissingArgumentOrSubcommand`)
+/// is `Usage`.
+fn exit_code_for_clap_error(err: &clap::Error) -> ExitCode {
     match err.kind() {
-        ErrorKind::DisplayHelp
-        | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-        | ErrorKind::DisplayVersion => ExitCode::Success,
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => ExitCode::Success,
         _ => ExitCode::Usage,
     }
-}
-
-/// Emit a structured error envelope on stdout for an `eyre::Report`.
-///
-/// Adoption PRs use this at command-execution failure sites under
-/// `--machine`. PR 2 ships the helper but does not yet route command-error
-/// failures through it; that is part of per-command envelope adoption.
-pub fn report_machine_error(report: &eyre::Report) {
-    let message = format!("{report}");
-    let envelope = JsonEnvelope::error(JsonMessage::error(diagnostic::cli::UNKNOWN, message));
-    let _ = print_json(&envelope);
 }
 
 #[cfg(test)]
@@ -149,6 +145,34 @@ mod tests {
     struct Demo {
         #[arg(long)]
         name: Option<String>,
+        #[command(subcommand)]
+        cmd: Option<DemoSub>,
+    }
+
+    #[derive(Debug, clap::Subcommand)]
+    enum DemoSub {
+        /// Build the project.
+        Build {
+            #[arg(long)]
+            path: Option<String>,
+        },
+    }
+
+    #[derive(Debug, Parser)]
+    #[command(
+        name = "strict",
+        version = "0.1.0",
+        subcommand_required = true,
+        arg_required_else_help = true
+    )]
+    struct Strict {
+        #[command(subcommand)]
+        cmd: StrictSub,
+    }
+
+    #[derive(Debug, clap::Subcommand)]
+    enum StrictSub {
+        Run,
     }
 
     #[test]
@@ -161,5 +185,34 @@ mod tests {
 
         let version = Demo::try_parse_from(["demo", "--version"]).unwrap_err();
         assert_eq!(exit_code_for_clap_error(&version), ExitCode::Success);
+    }
+
+    /// `DisplayHelpOnMissingArgumentOrSubcommand` is clap's "render help
+    /// because args were missing" — a usage failure, not a help request.
+    /// The agent contract maps it to [`ExitCode::Usage`], not `Success`.
+    #[test]
+    fn missing_required_subcommand_classifies_as_usage() {
+        let err = Strict::try_parse_from(["strict"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand);
+        assert_eq!(exit_code_for_clap_error(&err), ExitCode::Usage);
+    }
+
+    /// Subcommand `--help` must surface the **subcommand's** help, not the
+    /// root help. This is the contract test for the I3 fix: rendering
+    /// flows through `err.render()` instead of `T::command().render_help()`.
+    #[test]
+    fn subcommand_help_preserves_command_context() {
+        let err = Demo::try_parse_from(["demo", "build", "--help"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::DisplayHelp);
+        let rendered = err.render().to_string();
+        assert!(
+            rendered.contains("Build the project"),
+            "subcommand help should mention the subcommand description, got: {rendered}"
+        );
+        // Root-only subcommand list MUST NOT appear in subcommand help.
+        assert!(
+            !rendered.contains("Usage: demo [OPTIONS]"),
+            "subcommand help leaked root usage: {rendered}"
+        );
     }
 }

@@ -3,7 +3,7 @@
 //! See [`docs/agents/exit-codes.md`](../../../docs/agents/exit-codes.md) for the
 //! contract these codes implement.
 
-use std::fmt;
+use std::{fmt, fmt::Write};
 
 /// Canonical exit codes emitted by Foundry binaries.
 ///
@@ -78,7 +78,6 @@ impl From<&eyre::Report> for ExitCode {
     fn from(report: &eyre::Report) -> Self {
         let mut buf = String::new();
         for cause in report.chain() {
-            use std::fmt::Write;
             let _ = writeln!(buf, "{cause}");
         }
         let lower = buf.to_lowercase();
@@ -89,12 +88,14 @@ impl From<&eyre::Report> for ExitCode {
         if lower.contains("interrupted") || lower.contains("sigint") || lower.contains("sigterm") {
             return Self::Interrupted;
         }
+
         if lower.contains("foundry.toml")
             || (lower.contains("config")
                 && (lower.contains("invalid") || lower.contains("missing")))
         {
             return Self::Config;
         }
+
         if lower.contains("unauthorized")
             || lower.contains("forbidden")
             || lower.contains("authentication")
@@ -107,6 +108,7 @@ impl From<&eyre::Report> for ExitCode {
         {
             return Self::User;
         }
+
         if lower.contains("rpc")
             || lower.contains("timeout")
             || lower.contains("timed out")
@@ -115,9 +117,11 @@ impl From<&eyre::Report> for ExitCode {
         {
             return Self::Network;
         }
+
         if lower.contains("compil") || lower.contains("solc") || lower.contains("vyper") {
             return Self::Build;
         }
+
         Self::GenericError
     }
 }

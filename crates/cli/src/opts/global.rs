@@ -201,7 +201,10 @@ fn emit_introspect_and_exit(
 /// the ASCII flags this helper supports). Values of known value-taking
 /// global options are skipped, so e.g. `forge --color always --introspect`
 /// and `forge -j 4 --introspect` still match.
-fn pre_parse_flag_present(flag: &str) -> bool {
+///
+/// Shared by every pre-parse flag detector (`--introspect`,
+/// `--markdown-help`, `--machine`) so the activation surface stays uniform.
+pub(crate) fn pre_parse_flag_present(flag: &str) -> bool {
     pre_parse_flag_present_in(std::env::args_os().skip(1), flag)
 }
 
@@ -211,7 +214,7 @@ fn pre_parse_flag_present(flag: &str) -> bool {
 /// declarations above.
 const VALUE_TAKING_GLOBAL_OPTIONS: &[&str] = &["--color", "-j", "--threads", "--jobs"];
 
-fn pre_parse_flag_present_in<I>(args: I, flag: &str) -> bool
+pub(crate) fn pre_parse_flag_present_in<I>(args: I, flag: &str) -> bool
 where
     I: IntoIterator<Item = std::ffi::OsString>,
 {
@@ -281,5 +284,45 @@ mod tests {
         ] {
             assert!(!pre_parse_flag_present_in(argv(case), "--introspect"), "case: {case:?}");
         }
+    }
+
+    /// Regression for the agent-substrate `--machine` pre-parse detector:
+    /// the same scanner discipline applies. `--machine` after a `--`
+    /// separator or after a positional / subcommand boundary must NOT
+    /// flip machine mode, even though it appears in argv.
+    #[test]
+    fn pre_parse_flag_present_machine_boundary_cases() {
+        // Positive: leading top-level flag, with and without other globals.
+        for case in
+            [&["--machine"][..], &["--color", "always", "--machine"], &["-j", "4", "--machine"]]
+        {
+            assert!(pre_parse_flag_present_in(argv(case), "--machine"), "expected match: {case:?}");
+        }
+
+        // Negative: out-of-band positions must not match.
+        for case in [
+            &["--", "--machine"][..],
+            &["test", "--machine"],
+            &["call", "ADDR", "sig(string)", "--data", "--machine"],
+            // `--machine` consumed as a positional value to a known
+            // value-taking global must not match.
+            &["--color", "--machine"],
+        ] {
+            assert!(
+                !pre_parse_flag_present_in(argv(case), "--machine"),
+                "expected NO match: {case:?}"
+            );
+        }
+    }
+
+    /// Non-UTF-8 argv must not panic the scanner; it must short-circuit
+    /// to `false` at the offending token.
+    #[test]
+    #[cfg(unix)]
+    fn pre_parse_flag_present_handles_non_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+        let bad = OsString::from_vec(vec![0xff, 0xfe]);
+        let args = vec![bad, OsString::from("--machine")];
+        assert!(!pre_parse_flag_present_in(args, "--machine"));
     }
 }

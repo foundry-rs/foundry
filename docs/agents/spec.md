@@ -271,6 +271,11 @@ Where the schema id appears:
   `capabilities.result_schema_ref` in introspection. This avoids forcing
   every successful envelope to carry version metadata that is already
   pinned by the `command_id` + introspection contract.
+- **Global (non-command) machine-mode payloads** — a small fixed set of
+  envelopes is emitted by the CLI runtime itself, before any command is
+  resolved (see §10 below). Their payload schemas are listed by name in
+  this document rather than discovered via introspection, because no
+  `command_id` exists at the point of emission.
 
 ---
 
@@ -299,6 +304,37 @@ introspection no longer lists it.
 
 Agents may also rely on `--introspect` for discovery and on the existing
 `--json` flag for legacy machine-readable output.
+
+### Global machine-mode payload schemas
+
+Two payloads are emitted by the CLI runtime itself (before any command is
+resolved) and therefore cannot be discovered via
+`capabilities.result_schema_ref` on a command. Their wire shapes are
+fixed and listed here as part of the contract:
+
+- **`foundry:cli.help@v1`** — emitted as the `data` of a success envelope
+  when `--help` / `-h` is requested under `--machine`. Exit code: `0`.
+
+  ```json
+  { "help": "<clap-rendered help text for the actual command context>" }
+  ```
+
+  The `help` string is clap's own rendered help for the precise
+  subcommand requested (e.g. `cast call --machine --help` carries
+  `cast call` help, not `cast` root help).
+
+- **`foundry:cli.version@v1`** — emitted as the `data` of a success
+  envelope when `--version` / `-V` is requested under `--machine`.
+  Exit code: `0`.
+
+  ```json
+  { "version": "<clap-rendered version text>" }
+  ```
+
+Usage failures (missing subcommand, missing required arg, conflict,
+unknown flag, including clap's `DisplayHelpOnMissingArgumentOrSubcommand`
+case which renders help on missing input) are emitted as an error
+envelope with diagnostic code `cli.usage.invalid` and exit code `2`.
 
 ---
 

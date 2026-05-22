@@ -47,30 +47,55 @@ pub fn collect_command_ids(doc: &IntrospectDocument) -> Vec<String> {
 /// - [`OutputMode::Session`] requires `session_schema_ref`; implies `stateful = true` and
 ///   `long_running = true`.
 ///
-/// Schema refs, when present, must be non-empty and match
-/// `^foundry:[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*(\.event|\.session)?@v\d+$`.
+/// Per-field stem rules (spec §8): every present ref MUST take the exact
+/// shape `foundry:<stem>@v<N>` where `<stem>` is the emitting command's
+/// `command_id` for `result_schema_ref`, the same id suffixed with
+/// `.event` for `event_schema_ref`, and `.session` for `session_schema_ref`.
+/// This makes payload/event/session schemas mechanically derivable from
+/// `command_id` so agents can pin against them without trusting the
+/// registry to map them.
 pub fn capability_violations(doc: &IntrospectDocument) -> Vec<String> {
     static SCHEMA_REF_RE: OnceLock<regex::Regex> = OnceLock::new();
     let schema_re = SCHEMA_REF_RE.get_or_init(|| {
-        regex::Regex::new(r"^foundry:[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*(\.event|\.session)?@v\d+$")
+        regex::Regex::new(r"^foundry:([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)@v\d+$")
             .expect("schema-ref regex compiles")
     });
 
+    /// Validate format and exact-stem equality.
+    ///
+    /// `expected_stem` is `command_id` (for result), `command_id.event`
+    /// (for event), or `command_id.session` (for session). The ref MUST
+    /// match `foundry:<expected_stem>@v<digits>`.
     fn check_ref(
         out: &mut Vec<String>,
         id: &str,
         name: &str,
         val: Option<&str>,
+        expected_stem: &str,
         re: &regex::Regex,
     ) {
-        if let Some(v) = val {
-            if v.is_empty() {
-                out.push(format!("{id}: capabilities.{name} must not be empty"));
-            } else if !re.is_match(v) {
-                out.push(format!(
-                    "{id}: capabilities.{name} = `{v}` does not match `foundry:<id>@vN`"
-                ));
-            }
+        let Some(v) = val else { return };
+        if v.is_empty() {
+            out.push(format!("{id}: capabilities.{name} must not be empty"));
+            return;
+        }
+        let Some(caps) = re.captures(v) else {
+            out.push(format!(
+                "{id}: capabilities.{name} = `{v}` does not match `foundry:<stem>@vN`"
+            ));
+            return;
+        };
+        let stem = &caps[1];
+        if stem != expected_stem {
+            out.push(format!(
+                "{id}: capabilities.{name} = `{v}` stem `{stem}` does not match expected \
+                 `{expected_stem}` (per spec §8: stem must equal `command_id`{suffix})",
+                suffix = match name {
+                    "event_schema_ref" => " + `.event`",
+                    "session_schema_ref" => " + `.session`",
+                    _ => "",
+                },
+            ));
         }
     }
 
@@ -78,10 +103,24 @@ pub fn capability_violations(doc: &IntrospectDocument) -> Vec<String> {
         let caps = &cmd.capabilities;
         let id = cmd.command_id.as_str();
 
-        // Format check on every present ref, regardless of mode.
-        check_ref(out, id, "result_schema_ref", caps.result_schema_ref.as_deref(), re);
-        check_ref(out, id, "event_schema_ref", caps.event_schema_ref.as_deref(), re);
-        check_ref(out, id, "session_schema_ref", caps.session_schema_ref.as_deref(), re);
+        // Format + stem check on every present ref, regardless of mode.
+        check_ref(out, id, "result_schema_ref", caps.result_schema_ref.as_deref(), id, re);
+        check_ref(
+            out,
+            id,
+            "event_schema_ref",
+            caps.event_schema_ref.as_deref(),
+            &format!("{id}.event"),
+            re,
+        );
+        check_ref(
+            out,
+            id,
+            "session_schema_ref",
+            caps.session_schema_ref.as_deref(),
+            &format!("{id}.session"),
+            re,
+        );
 
         match caps.output_mode {
             OutputMode::None | OutputMode::LegacyJson => {
@@ -675,7 +714,7 @@ mod tests {
     fn capability_violations_session_requires_stateful() {
         let registry = registry_with_capabilities(Capabilities {
             output_mode: OutputMode::Session,
-            session_schema_ref: Some(std::borrow::Cow::Borrowed("foundry:demo.session@v1")),
+            session_schema_ref: Some(std::borrow::Cow::Borrowed("foundry:demo.build.session@v1")),
             long_running: true,
             stateful: false,
             ..Capabilities::NONE
@@ -690,7 +729,7 @@ mod tests {
     fn capability_violations_stream_requires_long_running() {
         let registry = registry_with_capabilities(Capabilities {
             output_mode: OutputMode::Stream,
-            event_schema_ref: Some(std::borrow::Cow::Borrowed("foundry:demo.event@v1")),
+            event_schema_ref: Some(std::borrow::Cow::Borrowed("foundry:demo.build.event@v1")),
             long_running: false,
             ..Capabilities::NONE
         });
@@ -698,6 +737,81 @@ mod tests {
         let doc = build_document(&cmd, &registry);
         let v = capability_violations(&doc);
         assert!(v.iter().any(|s| s.contains("implies long_running")), "got {v:?}");
+    }
+
+    /// Spec §8: `result_schema_ref` stem MUST equal `command_id`. A ref
+    /// whose stem drifts away from `command_id` (e.g. `foundry:test-result@v1`
+    /// for `demo.build`) breaks discoverability and must be rejected.
+    #[test]
+    fn capability_violations_rejects_result_ref_stem_mismatch() {
+        let registry = registry_with_capabilities(Capabilities {
+            output_mode: OutputMode::Envelope,
+            result_schema_ref: Some(std::borrow::Cow::Borrowed("foundry:test_result@v1")),
+            ..Capabilities::NONE
+        });
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+        let v = capability_violations(&doc);
+        assert!(
+            v.iter().any(|s| s.contains("stem `test_result` does not match expected `demo.build`")),
+            "got {v:?}"
+        );
+    }
+
+    /// Spec §8: `event_schema_ref` stem MUST equal `<command_id>.event`. A
+    /// missing or wrong `.event` suffix must be rejected.
+    #[test]
+    fn capability_violations_rejects_event_ref_without_event_suffix() {
+        let registry = registry_with_capabilities(Capabilities {
+            output_mode: OutputMode::Stream,
+            event_schema_ref: Some(std::borrow::Cow::Borrowed("foundry:demo.build@v1")),
+            long_running: true,
+            ..Capabilities::NONE
+        });
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+        let v = capability_violations(&doc);
+        assert!(
+            v.iter().any(|s| s.contains("does not match expected `demo.build.event`")),
+            "got {v:?}"
+        );
+    }
+
+    /// Spec §8: `session_schema_ref` stem MUST equal `<command_id>.session`.
+    #[test]
+    fn capability_violations_rejects_session_ref_without_session_suffix() {
+        let registry = registry_with_capabilities(Capabilities {
+            output_mode: OutputMode::Session,
+            session_schema_ref: Some(std::borrow::Cow::Borrowed("foundry:demo.build@v1")),
+            long_running: true,
+            stateful: true,
+            ..Capabilities::NONE
+        });
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+        let v = capability_violations(&doc);
+        assert!(
+            v.iter().any(|s| s.contains("does not match expected `demo.build.session`")),
+            "got {v:?}"
+        );
+    }
+
+    /// Suffix on the wrong field must be rejected:
+    /// `result_schema_ref` MUST NOT end in `.event` or `.session`.
+    #[test]
+    fn capability_violations_rejects_result_ref_with_event_suffix() {
+        let registry = registry_with_capabilities(Capabilities {
+            output_mode: OutputMode::Envelope,
+            result_schema_ref: Some(std::borrow::Cow::Borrowed("foundry:demo.build.event@v1")),
+            ..Capabilities::NONE
+        });
+        let cmd = <Demo as clap::CommandFactory>::command();
+        let doc = build_document(&cmd, &registry);
+        let v = capability_violations(&doc);
+        assert!(
+            v.iter().any(|s| s.contains("stem `demo.build.event` does not match expected `demo.build`")),
+            "got {v:?}"
+        );
     }
 
     #[test]
