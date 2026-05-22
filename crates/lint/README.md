@@ -23,8 +23,10 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `uninitialized-local`: Local variable is read before being explicitly initialized.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
   - `unused-return`: Return value of an external call is not used.
+  - `weak-prng`: Flags randomness-like expressions derived from predictable on-chain values.
 - **Low Severity:**
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
+  - `calls-loop`: External calls inside loops can cause denial-of-service if a call reverts or exhausts gas.
   - `delegatecall-loop`: Payable functions should not use `delegatecall` inside a loop.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
   - `return-bomb`: External calls with a gas limit should not consume unbounded return data.
@@ -55,6 +57,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `could-be-immutable`: Recommends declaring constructor-only state variables as `immutable`.
   - `could-be-constant`: Recommends declaring never-written state variables with a compile-time-constant initializer as `constant`.
   - `custom-errors`: Recommends using custom errors instead of strings and plain reverts for potential gas savings.
+  - `external-function`: `public` functions never called internally should be declared `external` to avoid copying reference-type arguments into memory.
   - `unused-state-variables`: State variables that are never used should be removed.
   - `var-read-using-this`: Reads of state variables (or other `view`/`pure` functions) via `this` cause an unnecessary `STATICCALL`; access them directly.
 - **Code Size:**

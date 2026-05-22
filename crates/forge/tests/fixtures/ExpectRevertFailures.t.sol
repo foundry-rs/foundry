@@ -261,25 +261,22 @@ contract ExpectRevertWithReverterFailureTest is DSTest {
     // <https://github.com/foundry-rs/foundry/issues/14613>
     // Regression: must fail when the innermost reverting frame is a nested
     // CREATE and the reverter address argument does not match the would-be
-    // deployed address of the failed deployment.
+    // deployed address of the failed (innermost) deployment.
     function testShouldFailExpectRevertWrongReverterNestedCreate() public {
         vm.expectRevert(address(0xdead));
         new NestedDContractCreator();
     }
 
     // <https://github.com/foundry-rs/foundry/issues/14613>
-    // Regression: documents the intended semantics for nested CREATEs — the
-    // matched reverter is the *outer* would-be-deployed address (the contract
-    // whose deployment failed), NOT the innermost reverting CREATE's address.
-    // Supplying the inner address must fail.
-    function testShouldFailExpectRevertNestedCreateInnerAddress() public {
-        // Outer = NestedDContractCreator at this contract's next nonce.
-        // Inner = DContract created from inside the outer constructor (deployer
-        // is the outer, nonce 1).
-        address outer =
-            vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
-        address inner = vm.computeCreateAddress(outer, 1);
-        vm.expectRevert(inner);
+    // Regression: documents innermost-wins semantics for nested CREATEs — the
+    // matched reverter is the *innermost* would-be-deployed address. Supplying
+    // the outer address must fail.
+    function testShouldFailExpectRevertNestedCreateOuterAddress() public {
+        // Outer = NestedDContractCreator at this contract's next nonce. Under
+        // innermost-wins, the matched reverter is the inner DContract, not the
+        // outer.
+        address outer = vm.computeCreateAddress(address(this), vm.getNonce(address(this)));
+        vm.expectRevert(outer);
         new NestedDContractCreator();
     }
 }

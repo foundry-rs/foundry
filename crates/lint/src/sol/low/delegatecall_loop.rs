@@ -4,13 +4,13 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{ElementaryType, LitKind, StateMutability, StrKind, TypeSize, Visibility},
-    interface::{Span, kw},
+    ast::{DataLocation, ElementaryType, LitKind, StateMutability, StrKind, TypeSize, Visibility},
+    interface::{Span, kw, sym},
     sema::{
         Gcx, Ty,
         hir::{
-            Block, CallArgs, CallArgsKind, Expr, ExprKind, Function, FunctionId, Hir, ItemId,
-            Modifier, Res, Stmt, StmtKind, VariableId, Visit,
+            Block, CallArgs, CallArgsKind, ContractId, Expr, ExprKind, Function, FunctionId, Hir,
+            ItemId, Modifier, Res, Stmt, StmtKind, VariableId, Visit,
         },
         ty::TyKind,
     },
@@ -48,8 +48,10 @@ impl<'hir> LateLintPass<'hir> for DelegatecallLoop {
             placeholder: None,
             modifier_stack: Vec::new(),
             call_stack: Vec::new(),
+            dispatch_contract: func.contract,
+            current_contract: func.contract,
         };
-        checker.visit_modifier_chain(func.modifiers, 0, body);
+        checker.visit_modifier_chain(func.modifiers, 0, body, func.contract);
     }
 }
 
@@ -68,9 +70,11 @@ struct DelegatecallLoopChecker<'a, 's, 'hir> {
     placeholder: Option<ModifierContinuation<'hir>>,
     modifier_stack: Vec<FunctionId>,
     call_stack: Vec<FunctionId>,
+    dispatch_contract: Option<ContractId>,
+    current_contract: Option<ContractId>,
 }
 
-type ModifierContinuation<'hir> = (&'hir [Modifier<'hir>], usize, Block<'hir>);
+type ModifierContinuation<'hir> = (&'hir [Modifier<'hir>], usize, Block<'hir>, Option<ContractId>);
 
 impl<'a, 's, 'hir> DelegatecallLoopChecker<'a, 's, 'hir> {
     fn visit_modifier_chain(
@@ -78,33 +82,38 @@ impl<'a, 's, 'hir> DelegatecallLoopChecker<'a, 's, 'hir> {
         modifiers: &'hir [Modifier<'hir>],
         index: usize,
         body: Block<'hir>,
+        body_contract: Option<ContractId>,
     ) {
         // Walk modifiers as wrappers; `_` resumes the remaining modifiers and function body.
         let Some(modifier) = modifiers.get(index) else {
-            self.visit_block_with_placeholder(body, None);
+            self.visit_block_with_placeholder(body, None, body_contract);
             return;
         };
 
         let _ = self.visit_call_args(&modifier.args);
 
         let Some(modifier_id) = modifier.id.as_function() else {
-            self.visit_modifier_chain(modifiers, index + 1, body);
+            self.visit_modifier_chain(modifiers, index + 1, body, body_contract);
             return;
         };
 
         if self.modifier_stack.contains(&modifier_id) {
-            self.visit_modifier_chain(modifiers, index + 1, body);
+            self.visit_modifier_chain(modifiers, index + 1, body, body_contract);
             return;
         }
 
         let modifier_func = self.hir.function(modifier_id);
         let Some(modifier_body) = modifier_func.body else {
-            self.visit_modifier_chain(modifiers, index + 1, body);
+            self.visit_modifier_chain(modifiers, index + 1, body, body_contract);
             return;
         };
 
         self.modifier_stack.push(modifier_id);
-        self.visit_block_with_placeholder(modifier_body, Some((modifiers, index + 1, body)));
+        self.visit_block_with_placeholder(
+            modifier_body,
+            Some((modifiers, index + 1, body, body_contract)),
+            modifier_func.contract,
+        );
         self.modifier_stack.pop();
     }
 
@@ -118,10 +127,14 @@ impl<'a, 's, 'hir> DelegatecallLoopChecker<'a, 's, 'hir> {
         &mut self,
         block: Block<'hir>,
         placeholder: Option<ModifierContinuation<'hir>>,
+        current_contract: Option<ContractId>,
     ) {
         let previous = self.placeholder;
+        let previous_contract = self.current_contract;
         self.placeholder = placeholder;
+        self.current_contract = current_contract;
         self.visit_block_stmts(block);
+        self.current_contract = previous_contract;
         self.placeholder = previous;
     }
 }
@@ -140,8 +153,8 @@ impl<'hir> Visit<'hir> for DelegatecallLoopChecker<'_, '_, 'hir> {
             StmtKind::Loop(block, _) => self.visit_loop_block(block),
             // Modifier `_` executes at this statement, preserving the current loop context.
             StmtKind::Placeholder => {
-                if let Some((modifiers, index, body)) = self.placeholder {
-                    self.visit_modifier_chain(modifiers, index, body);
+                if let Some((modifiers, index, body, body_contract)) = self.placeholder {
+                    self.visit_modifier_chain(modifiers, index, body, body_contract);
                 }
                 ControlFlow::Continue(())
             }
@@ -189,7 +202,7 @@ impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
         let Some(body) = func.body else { return };
 
         self.call_stack.push(func_id);
-        self.visit_modifier_chain(func.modifiers, 0, body);
+        self.visit_modifier_chain(func.modifiers, 0, body, func.contract);
         self.call_stack.pop();
     }
 
@@ -244,17 +257,54 @@ impl<'hir> DelegatecallLoopChecker<'_, '_, 'hir> {
             return Vec::new();
         };
 
+        if is_builtin(base, sym::super_) {
+            return self.super_function_ids(member_name);
+        }
+
         reses
             .iter()
             .filter_map(|res| match res {
                 Res::Item(ItemId::Contract(contract_id)) => Some(*contract_id),
                 _ => None,
             })
-            .flat_map(|contract_id| {
-                self.hir.contract(contract_id).functions().filter(move |&func_id| {
-                    let func = self.hir.function(func_id);
-                    func.name.is_some_and(|name| name.name == member_name)
-                })
+            .flat_map(|contract_id| self.contract_function_ids(contract_id, member_name))
+            .collect()
+    }
+
+    fn super_function_ids(&self, member_name: solar::interface::Symbol) -> Vec<FunctionId> {
+        let (Some(dispatch_contract), Some(current_contract)) =
+            (self.dispatch_contract, self.current_contract)
+        else {
+            return Vec::new();
+        };
+
+        let linearized_bases = self.hir.contract(dispatch_contract).linearized_bases;
+        let Some(current_index) = linearized_bases.iter().position(|&id| id == current_contract)
+        else {
+            return Vec::new();
+        };
+
+        for &base_id in linearized_bases.iter().skip(current_index + 1) {
+            let funcs = self.contract_function_ids(base_id, member_name);
+            if !funcs.is_empty() {
+                return funcs;
+            }
+        }
+
+        Vec::new()
+    }
+
+    fn contract_function_ids(
+        &self,
+        contract_id: ContractId,
+        member_name: solar::interface::Symbol,
+    ) -> Vec<FunctionId> {
+        self.hir
+            .contract(contract_id)
+            .functions()
+            .filter(|&func_id| {
+                let func = self.hir.function(func_id);
+                func.name.is_some_and(|name| name.name == member_name)
             })
             .collect()
     }
@@ -279,18 +329,15 @@ fn is_current_context_helper(func: &Function<'_>) -> bool {
 }
 
 fn is_this_or_super(expr: &Expr<'_>) -> bool {
+    is_builtin(expr, sym::this) || is_builtin(expr, sym::super_)
+}
+
+fn is_builtin(expr: &Expr<'_>, symbol: solar::interface::Symbol) -> bool {
     matches!(
         &expr.peel_parens().kind,
         ExprKind::Ident(reses)
             if reses.iter().any(|res| {
-                matches!(
-                    res,
-                    Res::Builtin(builtin)
-                        if matches!(
-                            builtin.name(),
-                            solar::interface::sym::this | solar::interface::sym::super_
-                        )
-                )
+                matches!(res, Res::Builtin(builtin) if builtin.name() == symbol)
             })
     )
 }
@@ -362,6 +409,10 @@ fn expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<T
                 {
                     None
                 }
+                Res::Item(ItemId::Variable(var_id)) => Some(
+                    gcx.type_of_res(res)
+                        .with_loc_if_ref_opt(gcx, variable_data_location(hir, var_id)),
+                ),
                 _ => Some(gcx.type_of_res(res)),
             }
         }
@@ -372,7 +423,7 @@ fn expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<T
             {
                 return None;
             }
-            lhs_ty.base_type(gcx)
+            index_ty(gcx, lhs_ty)
         }
         ExprKind::Lit(lit) => Some(match &lit.kind {
             LitKind::Str(StrKind::Hex, s, _) => {
@@ -407,16 +458,27 @@ fn expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) -> Option<T
                 .collect::<Option<Vec<_>>>()?;
             Some(gcx.mk_ty_tuple(gcx.mk_tys(&tys)))
         }
+        ExprKind::Ternary(_, true_expr, false_expr) => {
+            let true_ty = expr_ty(gcx, hir, true_expr)?;
+            let false_ty = expr_ty(gcx, hir, false_expr)?;
+            common_ty(gcx, true_ty, false_ty)
+        }
         ExprKind::Type(ty) | ExprKind::TypeCall(ty) => {
             let ty = gcx.type_of_hir_ty(ty);
             Some(gcx.mk_ty(TyKind::Type(ty)))
         }
         ExprKind::Unary(_, inner) => expr_ty(gcx, hir, inner),
-        ExprKind::Assign(..)
-        | ExprKind::Binary(..)
-        | ExprKind::Delete(..)
-        | ExprKind::Ternary(..)
-        | ExprKind::Err(_) => None,
+        ExprKind::Assign(..) | ExprKind::Binary(..) | ExprKind::Delete(..) | ExprKind::Err(_) => {
+            None
+        }
+    }
+}
+
+fn common_ty<'gcx>(gcx: Gcx<'gcx>, lhs: Ty<'gcx>, rhs: Ty<'gcx>) -> Option<Ty<'gcx>> {
+    if lhs.convert_implicit_to(rhs, gcx) {
+        Some(rhs)
+    } else {
+        rhs.convert_implicit_to(lhs, gcx).then_some(lhs)
     }
 }
 
@@ -435,6 +497,22 @@ fn explicit_cast_ty<'gcx>(gcx: Gcx<'gcx>, to: Ty<'gcx>, args: &CallArgs<'gcx>) -
     }
 }
 
+fn index_ty<'gcx>(gcx: Gcx<'gcx>, base_ty: Ty<'gcx>) -> Option<Ty<'gcx>> {
+    let loc = indexed_base_data_location(base_ty);
+    match base_ty.peel_refs().kind {
+        TyKind::Mapping(_, value) => Some(value.with_loc_if_ref_opt(gcx, loc)),
+        _ => base_ty.base_type(gcx),
+    }
+}
+
+fn indexed_base_data_location(ty: Ty<'_>) -> Option<DataLocation> {
+    ty.loc().or_else(|| {
+        // Mappings can only live in storage, but Solar does not model `TyKind::Mapping`
+        // itself as a reference type.
+        matches!(ty.kind, TyKind::Mapping(..)).then_some(DataLocation::Storage)
+    })
+}
+
 fn member_ty<'gcx>(
     gcx: Gcx<'gcx>,
     hir: &Hir<'gcx>,
@@ -444,18 +522,7 @@ fn member_ty<'gcx>(
     // Resolve `base.member` through semantic members while keeping `this`/`super`
     // out of address-builtin detection.
     let base_ty = match &base.peel_parens().kind {
-        ExprKind::Ident(reses)
-            if reses.iter().any(|res| {
-                matches!(
-                    res,
-                    Res::Builtin(builtin)
-                        if matches!(
-                            builtin.name(),
-                            solar::interface::sym::this | solar::interface::sym::super_
-                        )
-                )
-            }) =>
-        {
+        ExprKind::Ident(_) if is_this_or_super(base) => {
             return None;
         }
         _ => expr_ty(gcx, hir, base)?,
@@ -484,6 +551,13 @@ fn referenced_item(expr: &Expr<'_>) -> Option<ItemId> {
         ExprKind::Ident([Res::Item(id), ..]) => Some(*id),
         _ => None,
     }
+}
+
+fn variable_data_location(hir: &Hir<'_>, var_id: VariableId) -> Option<DataLocation> {
+    let var = hir.variable(var_id);
+    var.data_location.or_else(|| {
+        (var.function.is_none() && var.contract.is_some()).then_some(DataLocation::Storage)
+    })
 }
 
 fn is_address_ty(ty: Ty<'_>) -> bool {
