@@ -820,7 +820,7 @@ Ran 1 test for test/InvariantInnerContract.t.sol:InvariantInnerContract
 	[Sequence] (original: 2, shrunk: 2)
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Jesus][..] calldata=create_fren() args=[]
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Judas][..] calldata=betray() args=[]
- invariantHideJesus() (runs: 256, calls: 258, reverts: 125)
+ invariantHideJesus() (runs: 1, calls: 3, reverts: 1)
 ...
 "#]]);
     }
@@ -2122,35 +2122,42 @@ contract InvariantTest is Test {
 
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/InvariantTest1.t.sol:InvariantTest
-[FAIL: false]
+Ran 1 test for test/InvariantTest1.t.sol:InvariantTest
+[FAIL: false] invariant_neverFalse
 	[SEQUENCE]
+
+[FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
+	[SEQUENCE]
+
+Invariant/Property Tests: 2/2 invariants broken
+[FAIL: false] invariant_neverFalse
+[FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
+2 invariant failure(s) persisted to cache/invariant/failures/InvariantTest — rerun to shrink
  invariant_neverFalse() ([RUNS])
 
 [STATS]
 
-[FAIL: false]
-	[SEQUENCE]
- statefulFuzz_neverFalseWithInvariantAlias() ([RUNS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-[STATS]
-
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
-Encountered 2 failing tests in test/InvariantTest1.t.sol:InvariantTest
-[FAIL: false]
+Encountered 1 failing test in test/InvariantTest1.t.sol:InvariantTest
+[FAIL: false] invariant_neverFalse
 	[SEQUENCE]
+
+[FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
+	[SEQUENCE]
+
+Invariant/Property Tests: 2/2 invariants broken
+[FAIL: false] invariant_neverFalse
+[FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
+2 invariant failure(s) persisted to cache/invariant/failures/InvariantTest — rerun to shrink
  invariant_neverFalse() ([RUNS])
-[FAIL: false]
-	[SEQUENCE]
- statefulFuzz_neverFalseWithInvariantAlias() ([RUNS])
 
-Encountered a total of 2 failing tests, 0 tests succeeded
+Encountered a total of 1 failing tests, 0 tests succeeded
 
-Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -2210,7 +2217,7 @@ contract InvariantWarpAndRoll {
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=198040 roll=60259 calldata=increment() args=[]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=20609 roll=27086 calldata=setNumber(uint256) args=[26717227324157985679793128079000084308648530834088529513797156275625002 [2.671e70]]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=409368 roll=24864 calldata=increment() args=[]
- invariant_warp() (runs: 0, calls: 0, reverts: 0)
+ invariant_warp() (runs: 1, calls: 5, reverts: 0)
 ...
 
 "#]]);
@@ -2670,7 +2677,7 @@ contract InvariantWarp is Test {
 		vm.roll(block.number + 52068);
 		vm.prank([..]);
 		Roll(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
- invariant_roll() (runs: 256, calls: 258, reverts: 216)
+ invariant_roll() (runs: 1, calls: 3, reverts: 2)
 ...
 
 "#]]);
@@ -2683,7 +2690,7 @@ contract InvariantWarp is Test {
 		vm.warp(block.timestamp + 656868);
 		vm.prank([..]);
 		Warp(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
- invariant_warp() (runs: 256, calls: 258, reverts: 222)
+ invariant_warp() (runs: 1, calls: 3, reverts: 2)
 ...
 
 "#
