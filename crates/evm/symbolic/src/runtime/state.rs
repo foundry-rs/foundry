@@ -179,7 +179,7 @@ impl PathState {
         }
 
         let mut vars = BTreeSet::new();
-        expr.collect_vars(&mut vars);
+        collect_eval_vars(expr, &mut vars);
         let mut model = BTreeMap::new();
         for var in vars {
             let var_expr = Expr::Var(var.clone());
@@ -1042,9 +1042,11 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         address: Address,
         key: SymWord,
+        concrete_key: Option<U256>,
     ) -> Result<SymWord, SymbolicError> {
-        let base = self.storage_base(executor, address, &key)?;
-        Ok(read_storage_writes(&self.storage, address, key, base))
+        let base = self.storage_base(executor, address, &key, concrete_key)?;
+        let read_key = concrete_key.map(SymWord::Concrete).unwrap_or(key);
+        Ok(read_storage_writes(&self.storage, address, read_key, base))
     }
 
     /// Implements the `sstore` symbolic state helper.
@@ -1144,12 +1146,20 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         address: Address,
         key: &SymWord,
+        concrete_key: Option<U256>,
     ) -> Result<SymWord, SymbolicError> {
         if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
             return Ok(SymWord::Expr(Expr::Var(stable_symbol(
                 "storage",
                 format!("{address:?}:{key:?}"),
             ))));
+        }
+        if let Some(key) = concrete_key {
+            return executor
+                .backend()
+                .storage_ref(address, key)
+                .map(SymWord::Concrete)
+                .map_err(|err| SymbolicError::Backend(err.to_string()));
         }
         match key {
             SymWord::Concrete(key) => executor
@@ -1584,6 +1594,49 @@ impl Default for SymbolicBlock {
             blob_basefee: SymWord::zero(),
             block_hashes: BTreeMap::new(),
             blob_hashes: Vec::new(),
+        }
+    }
+}
+
+/// Collects the symbolic variables needed to concretely evaluate an expression.
+fn collect_eval_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
+    match expr {
+        Expr::Const(_) => {}
+        Expr::Var(var) | Expr::Hash { name: var, .. } => {
+            vars.insert(var.clone());
+        }
+        Expr::Keccak { len, bytes, .. } => {
+            collect_eval_vars(len, vars);
+            for byte in bytes {
+                collect_eval_vars(byte, vars);
+            }
+        }
+        Expr::Not(value) => collect_eval_vars(value, vars),
+        Expr::Op(_, left, right) => {
+            collect_eval_vars(left, vars);
+            collect_eval_vars(right, vars);
+        }
+        Expr::Ite(condition, left, right) => {
+            collect_eval_bool_vars(condition, vars);
+            collect_eval_vars(left, vars);
+            collect_eval_vars(right, vars);
+        }
+    }
+}
+
+/// Collects the symbolic variables needed to concretely evaluate a boolean expression.
+fn collect_eval_bool_vars(expr: &BoolExpr, vars: &mut BTreeSet<String>) {
+    match expr {
+        BoolExpr::Const(_) => {}
+        BoolExpr::Not(value) => collect_eval_bool_vars(value, vars),
+        BoolExpr::And(values) => {
+            for value in values {
+                collect_eval_bool_vars(value, vars);
+            }
+        }
+        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
+            collect_eval_vars(left, vars);
+            collect_eval_vars(right, vars);
         }
     }
 }

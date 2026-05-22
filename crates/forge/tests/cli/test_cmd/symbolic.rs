@@ -7476,6 +7476,9 @@ contract SymbolicBoundSkip is Test {
     function externalNoop() external {}
 
     function checkBoundSkipAndGasNoops(uint256 x, int256 y) public {
+        vm.assume(x >= 10 && x <= 12);
+        vm.assume(y >= -3 && y <= 3);
+
         vm.pauseGasMetering();
         vm.resumeGasMetering();
         vm.resetGasMetering();
@@ -7615,6 +7618,16 @@ contract SymbolicBoundInvalid is Test {
     function checkInvalidSignedBound(int256 x) public {
         vm.bound(x, 3, -3);
     }
+
+    function checkOutOfRangeUnsignedBound(uint256 x) public {
+        vm.assume(x < 10 || x > 12);
+        vm.bound(x, 10, 12);
+    }
+
+    function checkOutOfRangeSignedBound(int256 x) public {
+        vm.assume(x < -3 || x > 3);
+        vm.bound(x, -3, 3);
+    }
 }
 "#,
     );
@@ -7628,8 +7641,84 @@ contract SymbolicBoundInvalid is Test {
     assert!(stdout.contains("[FAIL:"), "{stdout}");
     assert!(stdout.contains("checkInvalidUnsignedBound(uint256)"), "{stdout}");
     assert!(stdout.contains("checkInvalidSignedBound(int256)"), "{stdout}");
+    assert!(stdout.contains("checkOutOfRangeUnsignedBound(uint256)"), "{stdout}");
+    assert!(stdout.contains("checkOutOfRangeSignedBound(int256)"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.bound range"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
+});
+
+forgetest_init!(symbolic_soundness_hardening_regressions, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_soundness_hardening_regressions because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSoundnessHardening.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface SvmDynamic {
+    function createUint(uint256 bits, string calldata name) external returns (uint256);
+    function createInt(uint256 bits, string calldata name) external returns (int256);
+}
+
+contract DelegateTarget {
+    function noop() external {}
+}
+
+contract SymbolicSoundnessHardening is Test {
+    address constant SVM_ADDRESS = address(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
+
+    mapping(uint256 => uint256) values;
+    DelegateTarget target;
+
+    function setUp() public {
+        target = new DelegateTarget();
+    }
+
+    function checkConstrainedStorageKeyUsesConcreteSlot(uint256 key) public {
+        values[7] = 0xbeef;
+        vm.assume(key == 7);
+        assertEq(values[key], 0xbeef);
+    }
+
+    function checkRandomUintRejectsOversizedBits() public {
+        vm.randomUint(257);
+    }
+
+    function checkCreateUintRejectsOversizedBits() public {
+        SvmDynamic(SVM_ADDRESS).createUint(257, "too-wide");
+    }
+
+    function checkCreateIntRejectsOversizedBits() public {
+        SvmDynamic(SVM_ADDRESS).createInt(300, "too-wide");
+    }
+
+    function checkPrankDelegatecallReportsUnsupported() public {
+        vm.prank(address(0xB0B));
+        (bool ok,) = address(target).delegatecall(abi.encodeWithSignature("noop()"));
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicSoundnessHardening"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(
+        stdout.contains("[PASS] checkConstrainedStorageKeyUsesConcreteSlot(uint256)"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("symbolic randomUint bits"), "{stdout}");
+    assert!(stdout.contains("symbolic svm.create integer bits"), "{stdout}");
+    assert!(stdout.contains("symbolic prank delegatecall"), "{stdout}");
 });
 
 forgetest_init!(symbolic_vm_assume_no_revert_prunes_reverting_call, |prj, cmd| {
