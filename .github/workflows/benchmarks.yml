@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       kind:
-        description: "Which benchmarks to run: perf (timing), fuzz (1h fuzz campaigns), or both."
+        description: "Benchmarks to run: perf (timing), fuzz (campaign), or both."
         required: false
         type: choice
         default: perf
@@ -15,21 +15,20 @@ on:
           - fuzz
           - both
       versions:
-        description: "Comma-separated list of Foundry versions to benchmark (optional, defaults to 'stable,local'). Use 'local' to bench HEAD of the current branch."
+        description: "Foundry versions to benchmark, comma-separated. 'local' benchmarks HEAD. Default: stable,local."
         required: false
         type: string
+        default: "stable,local"
       repos:
-        description: "Comma-separated repos to benchmark (perf only). Each entry: org/repo[:rev] (e.g. aave/aave-v4:af1f0f2ba323ac6fbaaee3abf6be060c78e22d35). Leave empty to use the per-benchmark default repo lists."
+        description: "Repos to benchmark (perf only), comma-separated: org/repo[:rev]. Default: standard repo list."
         required: false
         type: string
       fuzz_campaigns:
-        description: "Comma-separated fuzz campaigns (fuzz only). Each entry: org/repo[:rev];Contract;invariant_test. Leave empty to use the default Aave V4 SCFuzzBench campaign."
+        description: "Fuzz campaigns (fuzz only), comma-separated: org/repo[:rev];Contract;invariant_test. Default: Aave V4 SCFuzzBench."
         required: false
         type: string
 
 env:
-  DEFAULT_VERSIONS: "stable,local"
-
   # Repos to benchmark per perf step. Each comma-separated entry has the form
   #   org/repo[:rev][ <extra args>]
   # where anything after the first whitespace is appended to every benchmark
@@ -111,7 +110,7 @@ jobs:
       - name: Run forge test benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+          VERSIONS: ${{ github.event.inputs.versions }}
           REPOS: ${{ github.event.inputs.repos || env.TEST_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches --force-install \
@@ -124,7 +123,7 @@ jobs:
       - name: Run forge isolate test benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+          VERSIONS: ${{ github.event.inputs.versions }}
           REPOS: ${{ github.event.inputs.repos || env.ISOLATE_TEST_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches \
@@ -137,7 +136,7 @@ jobs:
       - name: Run forge build benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+          VERSIONS: ${{ github.event.inputs.versions }}
           REPOS: ${{ github.event.inputs.repos || env.BUILD_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches \
@@ -150,7 +149,7 @@ jobs:
       - name: Run forge coverage benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+          VERSIONS: ${{ github.event.inputs.versions }}
           REPOS: ${{ github.event.inputs.repos || env.COVERAGE_REPOS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches \
@@ -212,7 +211,7 @@ jobs:
       - name: Run fuzz campaign benchmarks
         env:
           FOUNDRY_DIR: ${{ github.workspace }}/.foundry
-          VERSIONS: ${{ github.event.inputs.versions || env.DEFAULT_VERSIONS }}
+          VERSIONS: ${{ github.event.inputs.versions }}
           FUZZ_CAMPAIGNS: ${{ github.event.inputs.fuzz_campaigns || env.FUZZ_CAMPAIGNS }}
         run: |
           ./target/release/foundry-bench --output-dir ./benches --force-install \
@@ -267,7 +266,7 @@ jobs:
 
       - name: Commit benchmark results
         id: commit_results
-        if: "!contains(github.event.inputs.versions || env.DEFAULT_VERSIONS, 'local')"
+        if: "!contains(github.event.inputs.versions, 'local')"
         env:
           GITHUB_HEAD_REF: ${{ github.head_ref }}
         run: ./.github/scripts/commit-benchmark-results.sh benches "${{ github.event_name }}" "${{ github.repository }}"
@@ -299,7 +298,7 @@ jobs:
             console.log(`Created PR #${pr.number}: ${pr.html_url}`);
 
       - name: Comment on PR
-        if: contains(github.event.inputs.versions || env.DEFAULT_VERSIONS, 'local')
+        if: contains(github.event.inputs.versions, 'local')
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
