@@ -3,12 +3,9 @@ use super::*;
 forgetest!(filters, |prj, cmd| {
     prj.insert_vm();
     prj.insert_ds_test();
-    // Disable `assert_all` so this test exercises target-filter semantics without secondary
-    // invariants in the same suite being reported alongside the filtered target.
     prj.update_config(|config| {
         config.invariant.runs = 50;
         config.invariant.depth = 10;
-        config.invariant.assert_all = false;
     });
 
     prj.add_test(
@@ -747,28 +744,32 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         .failure()
         .stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/TargetArtifacts.t.sol:TargetArtifacts
+Ran 1 test for test/TargetArtifacts.t.sol:TargetArtifacts
 [FAIL: false world]
 	[SEQUENCE]
+
+Invariant/Property Tests: 1/2 invariants broken
+[FAIL: false world] invariantShouldFail
+[PASS] invariantShouldPass
  invariantShouldFail() ([RUNS])
 
 [STATS]
 
-[PASS] invariantShouldPass() ([RUNS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-[STATS]
-
-Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 1 tests passed, 1 failed, 0 skipped (2 total tests)
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/TargetArtifacts.t.sol:TargetArtifacts
 [FAIL: false world]
 	[SEQUENCE]
+
+Invariant/Property Tests: 1/2 invariants broken
+[FAIL: false world] invariantShouldFail
+[PASS] invariantShouldPass
  invariantShouldFail() ([RUNS])
 
-Encountered a total of 1 failing tests, 1 tests succeeded
+Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 

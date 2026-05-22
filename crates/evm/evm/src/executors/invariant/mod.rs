@@ -190,11 +190,7 @@ impl InvariantFailureMetrics {
 
 /// Bridges newly-recorded invariant breaks from `failures.errors` into the pulse
 /// `failure_metrics` so the live progress stream reflects breaks as they happen.
-///
-/// Without this, `unique_failures` only updates when the campaign is *forced to
-/// stop* (i.e., `can_continue` returns false — which only happens once *all*
-/// invariants are broken under `assert_all`). Iterates in declaration order so
-/// the emitted "failure" events are deterministic.
+/// Iterates in declaration order so the emitted "failure" events are deterministic.
 fn record_new_invariant_failures(
     failure_metrics: &mut InvariantFailureMetrics,
     invariant_contract: &InvariantContract<'_>,
@@ -511,6 +507,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         'stop: while continue_campaign(runs) {
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
+            let mut stop_after_run = false;
 
             let initial_seq = corpus_manager.new_inputs(
                 &mut invariant_test.test_data.branch_runner,
@@ -750,8 +747,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         invariant_test.set_last_run_inputs(&current_run.inputs);
                     }
                     // Bridge newly-recorded predicate breaks into `failure_metrics` even when
-                    // `continues == true` (under `assert_all`, breaks accumulate per tick until
-                    // the last invariant falls).
+                    // `continues == true` in multi-predicate campaigns.
                     if invariant_test.test_data.failures.invariant_count() > errors_before_check
                         || broken.is_some()
                     {
@@ -761,15 +757,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             &invariant_test.test_data.failures,
                         );
                     }
-                    // Keep the campaign running after a recorded predicate failure only when
-                    // `assert_all && !fail_on_revert`; otherwise preserve legacy early-exit.
-                    // Handler-side assertions never reach this branch — they go through
-                    // `failures.broken_handlers` and leave `continues == true`.
                     if !continues {
-                        if self.config.assert_all && !self.config.fail_on_revert {
+                        if invariant_contract.invariant_fns.len() > 1 && !self.config.fail_on_revert
+                        {
                             break;
                         }
-                        break 'stop;
+                        stop_after_run = true;
+                        break;
                     }
                     current_run.depth += 1;
                 }
@@ -797,8 +791,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             );
 
             // Call `afterInvariant` only if declared and the current run produced no new
-            // failure. Under `assert_all` the campaign keeps running after earlier failures,
-            // but the hook must still execute on subsequent runs.
+            // failure. Multi-predicate campaigns keep running after earlier failures, but the
+            // hook must still execute on subsequent runs.
             if invariant_contract.call_after_invariant
                 && invariant_test.test_data.failures.invariant_count() == failures_before_run
             {
@@ -878,6 +872,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             runs += 1;
+            if stop_after_run {
+                break 'stop;
+            }
         }
 
         trace!(?fuzz_fixtures);
@@ -1004,18 +1001,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         if let Some(fuzzer) = self.executor.inspector_mut().fuzzer.as_mut() {
             fuzz_state.collect_values(fuzzer.drain_collected_values());
         }
-        // First broken invariant in declaration order (anchor first, then secondaries).
-        // Iterates `invariant_fns` so the lookup is deterministic, unlike HashMap iteration.
-        if let Some(error) =
-            invariant_contract.invariant_fns.iter().find_map(|(f, _)| failures.get_failure(f))
-        {
-            // Under `assert_all` we record the preflight break and let the campaign run for
-            // the full budget; legacy mode aborts on the first broken invariant.
-            if !self.config.assert_all {
-                return Err(eyre!(error.revert_reason().unwrap_or_default()));
-            }
-        }
-
         // NOW enable call_override after the initial invariant check has passed.
         // This allows `override_call_strat` to inject calls during actual fuzz runs
         // for reentrancy vulnerability detection.
