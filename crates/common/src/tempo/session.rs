@@ -167,6 +167,7 @@ impl SessionRecord {
         for session in &mut self.sessions {
             if session.status.is_live() && session.is_expired_at(now) {
                 session.status = SessionStatus::Expired;
+                session.key = None;
                 updated += 1;
             }
         }
@@ -437,7 +438,9 @@ key = "0x1111"
 
             assert_eq!(mark_expired_session_entries(100).unwrap(), 1);
             let record = read_session_record().unwrap();
-            assert_eq!(record.get(session_id).unwrap().status, SessionStatus::Expired);
+            let session = record.get(session_id).unwrap();
+            assert_eq!(session.status, SessionStatus::Expired);
+            assert!(session.key.is_none());
             assert!(read_live_session_key(session_id, 100).is_none());
             assert_eq!(fs::read_to_string(&keys_path).unwrap(), original_keys);
         });
