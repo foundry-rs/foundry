@@ -1229,8 +1229,12 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
 
         self.active_fork_ids = Some((id, idx));
         // Update current environment with environment of newly selected fork.
+        // Preserve the configured spec (evm_version) from the current environment — the fork's
+        // evm_env is built with SPEC::default() and must not override the user's hardfork setting.
+        let preserved_spec = evm_env.cfg_env.spec;
         tx_env.set_chain_id(Some(fork_evm_env.cfg_env.chain_id));
         *evm_env = fork_evm_env;
+        evm_env.cfg_env.set_spec_and_mainnet_gas_params(preserved_spec);
 
         Ok(())
     }
@@ -1256,7 +1260,9 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
             if active_id == id {
                 // need to update the block's env settings right away, which is otherwise set when
                 // forks are selected `select_fork`
+                let preserved_spec = evm_env.cfg_env.spec;
                 *evm_env = fork_env;
+                evm_env.cfg_env.set_spec_and_mainnet_gas_params(preserved_spec);
 
                 // we also need to update the journaled_state right away, this has essentially the
                 // same effect as selecting (`select_fork`) by discarding

@@ -24,11 +24,17 @@ use tx_origin::TX_ORIGIN;
 mod uninitialized_local;
 use uninitialized_local::UNINITIALIZED_LOCAL;
 
+mod uninitialized_state_variables;
+use uninitialized_state_variables::UNINITIALIZED_STATE_VARIABLES;
+
 mod unsafe_typecast;
 use unsafe_typecast::UNSAFE_TYPECAST;
 
 mod unused_return;
 use unused_return::UNUSED_RETURN;
+
+mod locked_ether;
+use locked_ether::LOCKED_ETHER;
 
 mod weak_prng;
 use weak_prng::WEAK_PRNG;
@@ -42,7 +48,9 @@ register_lints!(
     (TypeBasedTautology, late, (TYPE_BASED_TAUTOLOGY)),
     (TxOrigin, early, (TX_ORIGIN)),
     (UninitializedLocal, late, (UNINITIALIZED_LOCAL)),
+    (UninitializedStateVariables, late, (UNINITIALIZED_STATE_VARIABLES)),
     (UnsafeTypecast, late, (UNSAFE_TYPECAST)),
     (UnusedReturn, late, (UNUSED_RETURN)),
+    (LockedEther, late, (LOCKED_ETHER)),
     (WeakPrng, early, (WEAK_PRNG))
 );
