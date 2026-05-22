@@ -275,29 +275,29 @@ impl SymMemory {
     pub(crate) fn byte_dynamic_with_delta(&self, offset: Expr, delta: usize) -> SymWord {
         let mut result = Expr::Const(U256::ZERO);
         for candidate in (delta..self.size).rev() {
-            let (byte, _) = self.base_byte(candidate);
+            let (byte, base_epoch) = self.base_byte(candidate);
+            let mut candidate_result = byte.into_expr();
+            for write in self.symbolic_writes.iter().filter(|write| write.epoch > base_epoch) {
+                for (idx, byte) in write.bytes.iter().enumerate() {
+                    candidate_result = Expr::Ite(
+                        Box::new(BoolExpr::eq(
+                            Expr::op(
+                                ExprOp::Add,
+                                write.offset.clone(),
+                                Expr::Const(U256::from(idx)),
+                            ),
+                            Expr::Const(U256::from(candidate)),
+                        )),
+                        Box::new(byte.clone().into_expr()),
+                        Box::new(candidate_result),
+                    );
+                }
+            }
             result = Expr::Ite(
                 Box::new(BoolExpr::eq(offset.clone(), Expr::Const(U256::from(candidate - delta)))),
-                Box::new(byte.into_expr()),
+                Box::new(candidate_result),
                 Box::new(result),
             );
-        }
-        let read_offset = if delta == 0 {
-            offset
-        } else {
-            Expr::op(ExprOp::Add, offset, Expr::Const(U256::from(delta)))
-        };
-        for write in &self.symbolic_writes {
-            for (idx, byte) in write.bytes.iter().enumerate() {
-                result = Expr::Ite(
-                    Box::new(BoolExpr::eq(
-                        Expr::op(ExprOp::Add, write.offset.clone(), Expr::Const(U256::from(idx))),
-                        read_offset.clone(),
-                    )),
-                    Box::new(byte.clone().into_expr()),
-                    Box::new(result),
-                );
-            }
         }
         SymWord::Expr(result)
     }
@@ -937,7 +937,12 @@ impl SymReturnData {
     }
 
     /// Converts values for the `to_code` symbolic memory helper.
-    pub(crate) fn to_code(&self) -> SymCode {
-        SymCode { bytes: (0..self.len).map(|offset| self.byte(offset)).collect() }
+    pub(crate) fn to_code(&self) -> Result<SymCode, SymbolicError> {
+        if self.has_symbolic_len() {
+            return Err(SymbolicError::Unsupported(
+                "CREATE with symbolic runtime size not modeled",
+            ));
+        }
+        Ok(SymCode { bytes: (0..self.len).map(|offset| self.byte(offset)).collect() })
     }
 }

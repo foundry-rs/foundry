@@ -26,6 +26,7 @@ use foundry_evm::{
         context::{Block, Transaction},
         database::DatabaseRef,
         precompile::{blake2, bn254, hash, identity, modexp, secp256k1},
+        primitives::hardfork::SpecId,
     },
 };
 use serde::{Deserialize, Serialize};

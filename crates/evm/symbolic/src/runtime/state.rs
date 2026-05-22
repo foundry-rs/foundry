@@ -501,6 +501,25 @@ impl PathState {
         value
     }
 
+    /// Implements the `fresh_bounded_int` symbolic state helper.
+    pub(crate) fn fresh_bounded_int(&mut self, bits: U256) -> SymWord {
+        let value = self.fresh_word("symbolic");
+        if bits.is_zero() {
+            self.constraints.push(BoolExpr::eq(value.clone().into_expr(), Expr::Const(U256::ZERO)));
+        } else if bits < U256::from(256) {
+            let magnitude = U256::from(1) << (bits.to::<usize>() - 1);
+            self.constraints.push(BoolExpr::or(vec![
+                BoolExpr::cmp(BoolExprOp::Ult, value.clone().into_expr(), Expr::Const(magnitude)),
+                BoolExpr::cmp(
+                    BoolExprOp::Uge,
+                    value.clone().into_expr(),
+                    Expr::Const(U256::ZERO.wrapping_sub(magnitude)),
+                ),
+            ]));
+        }
+        value
+    }
+
     /// Implements the `prank_for_next_call` symbolic state helper.
     pub(crate) fn prank_for_next_call(&mut self) -> (Address, SymWord, Option<(Address, SymWord)>) {
         if let Some((caller, caller_word)) = self.prank.next_caller.take() {
@@ -970,6 +989,7 @@ pub(crate) struct SymbolicWorldSnapshot {
     pub(crate) destroyed_accounts: BTreeSet<Address>,
     pub(crate) arbitrary_storage_accounts: BTreeSet<Address>,
     pub(crate) arbitrary_storage_all: bool,
+    pub(crate) zero_init_symbolic_storage: bool,
     pub(crate) symbolic_address_aliases: BTreeMap<SymWord, Address>,
 }
 
@@ -986,6 +1006,7 @@ impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
             destroyed_accounts: world.destroyed_accounts.clone(),
             arbitrary_storage_accounts: world.arbitrary_storage_accounts.clone(),
             arbitrary_storage_all: world.arbitrary_storage_all,
+            zero_init_symbolic_storage: world.zero_init_symbolic_storage,
             symbolic_address_aliases: world.symbolic_address_aliases.clone(),
         }
     }
@@ -1002,6 +1023,7 @@ pub(crate) struct SymbolicWorld {
     pub(crate) destroyed_accounts: BTreeSet<Address>,
     pub(crate) arbitrary_storage_accounts: BTreeSet<Address>,
     pub(crate) arbitrary_storage_all: bool,
+    pub(crate) zero_init_symbolic_storage: bool,
     pub(crate) symbolic_address_aliases: BTreeMap<SymWord, Address>,
     pub(crate) snapshots: BTreeMap<U256, SymbolicWorldSnapshot>,
     pub(crate) next_snapshot_id: u64,
@@ -1011,6 +1033,7 @@ impl SymbolicWorld {
     /// Applies the `set_storage_layout` symbolic state helper.
     pub(crate) const fn set_storage_layout(&mut self, layout: SymbolicStorageLayout) {
         self.arbitrary_storage_all = matches!(layout, SymbolicStorageLayout::Generic);
+        self.zero_init_symbolic_storage = matches!(layout, SymbolicStorageLayout::ZeroInit);
     }
 
     /// Implements the `sload` symbolic state helper.
@@ -1037,6 +1060,11 @@ impl SymbolicWorld {
     /// Implements the `tstore` symbolic state helper.
     pub(crate) fn tstore(&mut self, address: Address, key: SymWord, value: SymWord) {
         self.transient_storage.push(StorageWrite::new(address, key, value));
+    }
+
+    /// Clears transaction-scoped transient storage at a top-level call boundary.
+    pub(crate) fn clear_transient_storage(&mut self) {
+        self.transient_storage.clear();
     }
 
     /// Applies the `enable_arbitrary_storage` symbolic state helper.
@@ -1095,6 +1123,7 @@ impl SymbolicWorld {
         self.destroyed_accounts = snapshot.destroyed_accounts;
         self.arbitrary_storage_accounts = snapshot.arbitrary_storage_accounts;
         self.arbitrary_storage_all = snapshot.arbitrary_storage_all;
+        self.zero_init_symbolic_storage = snapshot.zero_init_symbolic_storage;
         self.symbolic_address_aliases = snapshot.symbolic_address_aliases;
         true
     }
@@ -1128,7 +1157,11 @@ impl SymbolicWorld {
                 .storage_ref(address, *key)
                 .map(SymWord::Concrete)
                 .map_err(|err| SymbolicError::Backend(err.to_string())),
-            SymWord::Expr(_) => Ok(SymWord::zero()),
+            SymWord::Expr(_) if self.zero_init_symbolic_storage => Ok(SymWord::zero()),
+            SymWord::Expr(_) => Ok(SymWord::Expr(Expr::Var(stable_symbol(
+                "storage",
+                format!("{address:?}:{key:?}"),
+            )))),
         }
     }
 

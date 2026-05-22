@@ -5057,7 +5057,14 @@ contract SymbolicSelfdestruct is Test {
     );
 
     let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSelfdestruct"])
+        .args([
+            "test",
+            "--symbolic",
+            "--evm-version",
+            "shanghai",
+            "--match-test",
+            "checkSelfdestruct",
+        ])
         .assert_success()
         .get_output()
         .stdout_lossy();
@@ -5107,7 +5114,14 @@ contract SymbolicSelfdestructBeneficiary is Test {
     );
 
     let stdout = cmd
-        .args(["test", "--symbolic", "--match-test", "checkSelfdestructBeneficiary"])
+        .args([
+            "test",
+            "--symbolic",
+            "--evm-version",
+            "shanghai",
+            "--match-test",
+            "checkSelfdestructBeneficiary",
+        ])
         .assert_success()
         .get_output()
         .stdout_lossy();
@@ -5115,6 +5129,38 @@ contract SymbolicSelfdestructBeneficiary is Test {
     assert!(stdout.contains("[PASS] checkSelfdestructBeneficiary(address)"), "{stdout}");
     assert!(!stdout.contains("symbolic SELFDESTRUCT beneficiary"), "{stdout}");
     assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
+});
+
+forgetest_init!(symbolic_selfdestruct_cancun_reports_incomplete, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_selfdestruct_cancun_reports_incomplete because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSelfdestructCancun.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
+
+contract SymbolicSelfdestructCancun is Test {
+    function checkSelfdestructCancun(address payable beneficiary) public {
+        selfdestruct(beneficiary);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkSelfdestructCancun"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
 });
 
 forgetest_init!(symbolic_precompiles_execute_concrete_inputs, |prj, cmd| {

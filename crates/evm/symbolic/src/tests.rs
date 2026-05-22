@@ -745,6 +745,26 @@ fn memory_concrete_write_overrides_older_symbolic_write() {
 }
 
 #[test]
+/// Regression coverage for `memory_dynamic_read_respects_concrete_overwrite_epoch`.
+fn memory_dynamic_read_respects_concrete_overwrite_epoch() {
+    let mut memory = SymMemory::default();
+
+    memory.store_byte_offset(
+        SymWord::Expr(Expr::Var("write_offset".to_string())),
+        SymWord::Expr(Expr::Var("byte".to_string())),
+    );
+    memory.store_byte(5, SymWord::Concrete(U256::from(0x55)));
+    let loaded = memory.byte_dynamic_with_delta(Expr::Var("read_offset".to_string()), 0);
+
+    let model = BTreeMap::from([
+        ("write_offset".to_string(), U256::from(5)),
+        ("read_offset".to_string(), U256::from(5)),
+        ("byte".to_string(), U256::from(0xab)),
+    ]);
+    assert_eq!(model_word(&loaded, &model).unwrap(), U256::from(0x55));
+}
+
+#[test]
 /// Regression coverage for `memory_store_byte_accepts_symbolic_offsets`.
 fn memory_store_byte_accepts_symbolic_offsets() {
     let mut memory = SymMemory::default();
@@ -1199,9 +1219,23 @@ fn symbolic_return_data_can_be_installed_as_runtime_code() {
         "runtime_byte".to_string(),
     ))]);
 
-    let code = data.to_code();
+    let code = data.to_code().unwrap();
 
     assert_eq!(code.read_bytes(0, 1), vec![SymWord::Expr(Expr::Var("runtime_byte".to_string()))]);
+}
+
+#[test]
+/// Regression coverage for `symbolic_runtime_size_is_not_installed_as_concrete_code`.
+fn symbolic_runtime_size_is_not_installed_as_concrete_code() {
+    let data = SymReturnData::from_symbolic_bytes_with_len(
+        vec![SymWord::Concrete(U256::from(opcode::STOP))],
+        SymWord::Expr(Expr::Var("runtime_len".to_string())),
+    );
+
+    assert!(matches!(
+        data.to_code(),
+        Err(SymbolicError::Unsupported("CREATE with symbolic runtime size not modeled"))
+    ));
 }
 
 #[test]
