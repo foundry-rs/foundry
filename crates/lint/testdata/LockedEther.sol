@@ -639,6 +639,40 @@ contract OkLibraryCall {
     }
 }
 
+// Nested library helpers should not be rebound through same-named functions on the
+// consuming contract.
+library SendLibNested {
+    function pay(address payable to, uint256 amount) internal {
+        _send(to, amount);
+    }
+
+    function _send(address payable to, uint256 amount) internal {
+        to.transfer(amount);
+    }
+}
+
+contract OkNestedLibraryCall {
+    function deposit() external payable {}
+
+    function withdraw(address payable to, uint256 amount) external {
+        SendLibNested.pay(to, amount);
+    }
+
+    function _send(address payable, uint256) internal {}
+}
+
+contract OkReferenceTypeArg {
+    function deposit() external payable {}
+
+    function withdraw(address payable to, uint256[] memory amounts) external {
+        _send(to, amounts);
+    }
+
+    function _send(address payable to, uint256[] memory) internal {
+        to.transfer(1 wei);
+    }
+}
+
 // A non-payable derived ctor rejects deployment value even if a base ctor is payable.
 abstract contract PayableBaseCtor { //~WARN: contract can receive ETH but has no mechanism to send it out
     constructor() payable {}

@@ -331,10 +331,12 @@ impl<'hir> SendChecker<'_, 'hir> {
 
     /// Redirects an unqualified internal call resolved to `fid` to the leaf contract's
     /// most-derived override of the same `(name, parameter signature)`. If `fid` is not
-    /// inheritable (free function, private, or constructor/modifier), it is returned as-is.
+    /// inheritable from the linted contract (free function, library helper, private,
+    /// constructor/modifier), it is returned as-is.
     fn resolve_virtual(&self, fid: FunctionId, args: &CallArgs<'_>) -> FunctionId {
         let func = self.hir.function(fid);
-        if func.contract.is_none()
+        let Some(origin) = func.contract else { return fid };
+        if !self.bases.contains(&origin)
             || func.visibility == Visibility::Private
             || !matches!(func.kind, FunctionKind::Function)
         {
@@ -541,6 +543,20 @@ fn types_compatible(arg: &hir::TypeKind<'_>, param: &hir::TypeKind<'_>) -> bool 
             TypeKind::Custom(ItemId::Contract(_)),
             TypeKind::Elementary(ElementaryType::Address(_)),
         ) => true,
+        (TypeKind::Array(a), TypeKind::Array(b)) => {
+            a.size.is_some() == b.size.is_some()
+                && types_compatible(&a.element.kind, &b.element.kind)
+        }
+        (TypeKind::Mapping(a), TypeKind::Mapping(b)) => {
+            types_compatible(&a.key.kind, &b.key.kind)
+                && types_compatible(&a.value.kind, &b.value.kind)
+        }
+        (TypeKind::Function(a), TypeKind::Function(b)) => {
+            a.visibility == b.visibility
+                && a.state_mutability == b.state_mutability
+                && a.parameters.len() == b.parameters.len()
+                && a.returns.len() == b.returns.len()
+        }
         (TypeKind::Elementary(a), TypeKind::Elementary(b)) => a == b,
         (TypeKind::Custom(a), TypeKind::Custom(b)) => a == b,
         // Don't reject when either side errored out in semantic analysis.
