@@ -212,13 +212,18 @@ pub struct ForkDbStateSnapshot<N: Network, B: ForkBlockEnv = BlockEnv> {
 }
 
 impl<N: Network, B: ForkBlockEnv> ForkDbStateSnapshot<N, B> {
-    fn get_storage(&self, address: Address, index: U256) -> Option<U256> {
-        self.local
-            .cache
-            .accounts
-            .get(&address)
-            .and_then(|account| account.storage.get(&index))
-            .copied()
+    /// Lookup storage in `state_snapshot`, then fall back to the backend (remote RPC).
+    fn storage_from_snapshot_or_backend(
+        &self,
+        address: Address,
+        index: U256,
+    ) -> Result<U256, DatabaseError> {
+        // Check state_snapshot.storage first (data fetched by SharedBackend / disk cache).
+        if let Some(val) = self.state_snapshot.storage.get(&address).and_then(|s| s.get(&index)) {
+            return Ok(*val);
+        }
+        // Fall back to the underlying backend (SharedBackend → remote RPC).
+        DatabaseRef::storage_ref(&self.local, address, index)
     }
 }
 
@@ -250,15 +255,9 @@ impl<N: Network, B: ForkBlockEnv> DatabaseRef for ForkDbStateSnapshot<N, B> {
         match self.local.cache.accounts.get(&address) {
             Some(account) => match account.storage.get(&index) {
                 Some(entry) => Ok(*entry),
-                None => match self.get_storage(address, index) {
-                    None => DatabaseRef::storage_ref(&self.local, address, index),
-                    Some(storage) => Ok(storage),
-                },
+                None => self.storage_from_snapshot_or_backend(address, index),
             },
-            None => match self.get_storage(address, index) {
-                None => DatabaseRef::storage_ref(&self.local, address, index),
-                Some(storage) => Ok(storage),
-            },
+            None => self.storage_from_snapshot_or_backend(address, index),
         }
     }
 
@@ -302,5 +301,29 @@ mod tests {
         let loaded = Database::basic(&mut db, address).unwrap();
         assert!(loaded.is_some());
         assert_eq!(loaded.unwrap(), info);
+    }
+
+    /// Verifies that `ForkDbStateSnapshot::storage_ref` reads from `state_snapshot.storage`
+    /// when the slot is missing from `local.cache.accounts`. Without this lookup the call
+    /// would fall through to the backend and return the unrelated remote value.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fork_db_state_snapshot_reads_storage_from_snapshot() {
+        let rpc = foundry_test_utils::rpc::next_http_rpc_endpoint();
+        let provider = get_http_provider(rpc.clone());
+        let meta = BlockchainDbMeta::new(BlockEnv::default(), rpc);
+        let db = BlockchainDb::new(meta, None);
+        let backend = SharedBackend::spawn_backend(Arc::new(provider), db, None).await;
+
+        let address = Address::random();
+        let slot = U256::from(42u64);
+        let expected = U256::from(0xdeadbeefu64);
+
+        let mut state_snapshot = StateSnapshot::default();
+        state_snapshot.storage.entry(address).or_default().insert(slot, expected);
+
+        let snapshot = ForkDbStateSnapshot { local: CacheDB::new(backend), state_snapshot };
+
+        let got = DatabaseRef::storage_ref(&snapshot, address, slot).unwrap();
+        assert_eq!(got, expected);
     }
 }

@@ -11,6 +11,28 @@ use anvil::{NodeConfig, spawn};
 use foundry_evm::hardfork::EthereumHardfork;
 
 #[tokio::test(flavor = "multi_thread")]
+async fn dropping_handle_releases_http_listener() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let addr = *handle.socket_address();
+
+    drop(handle);
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            match tokio::net::TcpListener::bind(addr).await {
+                Ok(listener) => {
+                    drop(listener);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(10)).await,
+            }
+        }
+    })
+    .await
+    .expect("HTTP listener should shut down after NodeHandle is dropped");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_can_change_mining_mode() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let provider = handle.http_provider();

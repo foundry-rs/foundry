@@ -1,6 +1,7 @@
 use alloy_evm::{Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_op_evm::{OpEvm, OpEvmContext, OpEvmFactory, OpTx};
 use foundry_fork_db::DatabaseError;
+use op_alloy_network::Optimism;
 use op_revm::{OpEvm as RevmEvm, OpHaltReason, OpSpecId, OpTransactionError, handler::OpHandler};
 use revm::{
     context::{
@@ -10,15 +11,32 @@ use revm::{
     handler::{EthFrame, EvmTr, FrameResult, Handler, instructions::EthInstructions},
     inspector::InspectorHandler,
     interpreter::{
-        FrameInput, SharedMemory, interpreter::EthInterpreter, interpreter_action::FrameInit,
+        FrameInput, InstructionResult, SharedMemory, interpreter::EthInterpreter,
+        interpreter_action::FrameInit,
     },
 };
 
 use crate::{
     FoundryContextExt, FoundryInspectorExt,
     backend::{DatabaseExt, JournaledState},
-    evm::{FoundryEvmFactory, NestedEvm},
+    evm::{FoundryEvmFactory, FoundryEvmNetwork, IntoInstructionResult, NestedEvm},
 };
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OpEvmNetwork;
+impl FoundryEvmNetwork for OpEvmNetwork {
+    type Network = Optimism;
+    type EvmFactory = OpEvmFactory;
+}
+
+impl IntoInstructionResult for OpHaltReason {
+    fn into_instruction_result(self) -> InstructionResult {
+        match self {
+            Self::Base(eth) => eth.into(),
+            Self::FailedDeposit => InstructionResult::Stop,
+        }
+    }
+}
 
 type OpEvmHandler<'db, I> =
     OpHandler<OpRevmEvm<'db, I>, EVMError<DatabaseError, OpTransactionError>, EthFrame>;

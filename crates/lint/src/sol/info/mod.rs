@@ -36,6 +36,21 @@ use too_many_digits::TOO_MANY_DIGITS;
 mod pragma_directive;
 use pragma_directive::PRAGMA_INCONSISTENT;
 
+mod inline_assembly;
+use inline_assembly::INLINE_ASSEMBLY;
+
+mod low_level_calls;
+use low_level_calls::LOW_LEVEL_CALLS;
+
+mod redundant_base_constructor_call;
+use redundant_base_constructor_call::REDUNDANT_BASE_CONSTRUCTOR_CALL;
+
+mod missing_inheritance;
+use missing_inheritance::MISSING_INHERITANCE;
+
+mod event_fields;
+use event_fields::EVENT_FIELDS;
+
 register_lints!(
     (BooleanCst, early, (BOOLEAN_CST)),
     (BooleanEqual, early, (BOOLEAN_EQUAL)),
@@ -50,4 +65,9 @@ register_lints!(
     (InterfaceFileNaming, early, (INTERFACE_FILE_NAMING, INTERFACE_NAMING)),
     (TooManyDigits, early, (TOO_MANY_DIGITS)),
     (PragmaDirective, project, (PRAGMA_INCONSISTENT)),
+    (InlineAssembly, early, (INLINE_ASSEMBLY)),
+    (LowLevelCalls, early, (LOW_LEVEL_CALLS)),
+    (RedundantBaseConstructorCall, late, (REDUNDANT_BASE_CONSTRUCTOR_CALL)),
+    (MissingInheritance, project, (MISSING_INHERITANCE)),
+    (EventFields, early, (EVENT_FIELDS)),
 );

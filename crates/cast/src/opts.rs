@@ -6,8 +6,9 @@ use crate::cmd::{
     constructor_args::ConstructorArgsArgs, create2::Create2Args, creation_code::CreationCodeArgs,
     erc20::Erc20Subcommand, estimate::EstimateArgs, find_block::FindBlockArgs,
     interface::InterfaceArgs, keychain::KeychainSubcommand, logs::LogsArgs, mktx::MakeTxArgs,
-    rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, tip20::Tip20Subcommand,
-    trace::TraceArgs, txpool::TxPoolSubcommands, wallet::WalletSubcommands,
+    rpc::RpcArgs, run::RunArgs, send::SendTxArgs, storage::StorageArgs, tempo::TempoSubcommand,
+    tip20::Tip20Subcommand, trace::TraceArgs, txpool::TxPoolSubcommands, vaddr::VaddrSubcommand,
+    wallet::WalletSubcommands,
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::{Address, B256, Selector, U256};
@@ -1188,6 +1189,20 @@ pub enum CastSubcommand {
         #[command(subcommand)]
         command: KeychainSubcommand,
     },
+
+    /// Tempo wallet integration (login, etc.).
+    Tempo {
+        #[command(subcommand)]
+        command: TempoSubcommand,
+    },
+
+    /// TIP-1022 virtual address registry operations (Tempo).
+    #[command(visible_alias = "vaddr")]
+    VirtualAddress {
+        #[command(subcommand)]
+        command: VaddrSubcommand,
+    },
+
     #[command(name = "trace")]
     Trace(TraceArgs),
 }

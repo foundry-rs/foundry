@@ -1,18 +1,20 @@
 use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
-    config::{DEFAULT_MNEMONIC, ForkChoice},
+    config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
     eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
 };
 use alloy_genesis::Genesis;
 use alloy_network::Network;
-use alloy_primitives::{B256, U256, utils::Unit};
+use alloy_primitives::{Address, B256, U256, map::HashMap, utils::Unit};
 use alloy_signer_local::coins_bip39::{English, Mnemonic};
 use anvil_server::ServerConfig;
 use clap::Parser;
 use core::fmt;
 use foundry_common::shell;
 use foundry_config::{Chain, Config, FigmentProviders};
-use foundry_evm::hardfork::{EthereumHardfork, OpHardfork};
+#[cfg(feature = "optimism")]
+use foundry_evm::hardfork::OpHardfork;
+use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
 use futures::FutureExt;
@@ -92,7 +94,7 @@ pub struct NodeArgs {
     pub block_time: Option<Duration>,
 
     /// Slots in an epoch
-    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = 32)]
+    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = DEFAULT_SLOTS_IN_AN_EPOCH)]
     pub slots_in_an_epoch: u64,
 
     /// Writes output of `anvil` as json to user-specified file.
@@ -171,6 +173,13 @@ pub struct NodeArgs {
     )]
     pub load_state: Option<SerializableState>,
 
+    /// Fund specific accounts with custom balances on startup.
+    ///
+    /// Accepts multiple address:balance pairs where balance is in ETH.
+    /// Example: --fund-accounts 0x1234...5678:1000 0xabcd...ef01:5000
+    #[arg(long, value_name = "ADDRESS:AMOUNT", value_delimiter = ' ', num_args = 1..)]
+    pub fund_accounts: Vec<String>,
+
     #[arg(long, help = IPC_HELP, value_name = "PATH", visible_alias = "ipcpath")]
     pub ipc: Option<Option<String>>,
 
@@ -239,16 +248,10 @@ impl NodeArgs {
             }
         }
 
+        let funded_accounts = self.parse_funded_accounts()?;
+
         let hardfork = match &self.hardfork {
-            Some(hf) => {
-                if self.evm.networks.is_optimism() {
-                    Some(OpHardfork::from_str(hf)?.into())
-                } else if self.evm.networks.is_tempo() {
-                    Some(TempoHardfork::from_str(hf)?.into())
-                } else {
-                    Some(EthereumHardfork::from_str(hf)?.into())
-                }
-            }
+            Some(hf) => Some(parse_hardfork(hf, &self.evm.networks)?),
             None => None,
         };
 
@@ -290,7 +293,6 @@ impl NodeArgs {
             .with_host(self.host)
             .set_silent(shell::is_quiet())
             .set_config_out(self.config_out)
-            .with_chain_id(self.evm.chain_id)
             .with_transaction_order(self.order)
             .with_genesis(self.init)
             .with_steps_tracing(self.evm.steps_tracing)
@@ -306,11 +308,37 @@ impl NodeArgs {
             .with_max_transactions(self.max_transactions)
             .with_max_persisted_states(self.max_persisted_states)
             .with_networks(self.evm.networks)
+            // Apply chain-id after explicit network flags so auto-detection can fill in
+            // defaults when no network was set, without being overwritten afterward.
+            .with_chain_id(self.evm.chain_id)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
             .with_memory_limit(self.evm.memory_limit)
-            .with_cache_path(self.cache_path))
+            .with_cache_path(self.cache_path)
+            .with_funded_accounts(funded_accounts))
+    }
+
+    fn parse_funded_accounts(&self) -> eyre::Result<HashMap<Address, U256>> {
+        let mut accounts = HashMap::default();
+        for entry in &self.fund_accounts {
+            let parts: Vec<&str> = entry.split(':').collect();
+            if parts.len() != 2 {
+                eyre::bail!(
+                    "Invalid fund-accounts entry '{}'. Expected format: ADDRESS:AMOUNT",
+                    entry
+                );
+            }
+            let address = parts[0]
+                .parse::<Address>()
+                .map_err(|e| eyre::eyre!("Invalid address '{}': {}", parts[0], e))?;
+            let amount: u64 = parts[1]
+                .parse()
+                .map_err(|e| eyre::eyre!("Invalid amount '{}': {}", parts[1], e))?;
+            let balance = Unit::ETHER.wei().saturating_mul(U256::from(amount));
+            accounts.insert(address, balance);
+        }
+        Ok(accounts)
     }
 
     fn account_generator(&self) -> AccountGenerator {
@@ -849,6 +877,19 @@ impl FromStr for ForkUrl {
     }
 }
 
+/// Parses a hardfork string against the active network configuration.
+fn parse_hardfork(hf: &str, networks: &NetworkConfigs) -> eyre::Result<FoundryHardfork> {
+    #[cfg(feature = "optimism")]
+    if networks.is_optimism() {
+        return Ok(OpHardfork::from_str(hf)?.into());
+    }
+    if networks.is_tempo() {
+        Ok(TempoHardfork::from_str(hf)?.into())
+    } else {
+        Ok(EthereumHardfork::from_str(hf)?.into())
+    }
+}
+
 /// Clap's value parser for genesis. Loads a genesis.json file.
 fn read_genesis_file(path: &str) -> Result<Genesis, String> {
     foundry_common::fs::read_json_file(path.as_ref()).map_err(|err| err.to_string())
@@ -910,6 +951,15 @@ mod tests {
             NodeArgs::parse_from(["anvil", "--optimism", "--hardfork", "Regolith"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, Some(OpHardfork::Regolith.into()));
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn chain_id_infers_optimism_network_in_node_config() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--chain-id", "10"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_optimism());
     }
 
     #[test]

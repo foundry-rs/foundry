@@ -29,15 +29,19 @@ use foundry_common::{
     shell, stdin,
 };
 use foundry_evm_networks::NetworkVariant;
+#[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
 use std::time::Instant;
 use tempo_alloy::TempoNetwork;
 
 /// Run the `cast` command-line interface.
 pub fn run() -> Result<()> {
-    setup()?;
-
+    // Pre-parse discovery flags run before `setup()` so they cannot be blocked
+    // by panic-handler / tracing init failures and avoid that init's cost.
+    foundry_cli::opts::GlobalArgs::check_introspect::<CastArgs>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<CastArgs>();
+
+    setup()?;
 
     let args = CastArgs::parse();
     args.global.init()?;
@@ -351,6 +355,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             // Can use either --raw or specify raw as a field
             let output = if raw || fields.contains(&"raw".into()) {
                 match network {
+                    #[cfg(feature = "optimism")]
                     Some(NetworkVariant::Optimism) => {
                         let provider =
                             ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
@@ -569,6 +574,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             // Can use either --raw or specify raw as a field
             let is_raw = raw || field.as_ref().is_some_and(|f| f == "raw");
             let output = match network {
+                #[cfg(feature = "optimism")]
                 Some(NetworkVariant::Optimism) => {
                     let provider = ProviderBuilder::<Optimism>::from_config(&config)?.build()?;
 
@@ -791,6 +797,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::DecodeTransaction { tx, network } => {
             let tx = stdin::unwrap_line(tx)?;
             let decoded_tx = match network {
+                #[cfg(feature = "optimism")]
                 Some(NetworkVariant::Optimism) => {
                     SimpleCast::decode_raw_transaction::<Optimism>(&tx)?
                 }
@@ -809,6 +816,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Erc20Token { command } => command.run().await?,
         CastSubcommand::Tip20Token { command } => command.run().await?,
         CastSubcommand::Keychain { command } => command.run().await?,
+        CastSubcommand::Tempo { command } => command.run().await?,
+        CastSubcommand::VirtualAddress { command } => command.run().await?,
         #[cfg(feature = "optimism")]
         CastSubcommand::DAEstimate(cmd) => {
             cmd.run().await?;
@@ -838,4 +847,55 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_cli::introspect::{
+        CommandRegistry, INTROSPECT_SCHEMA_ID, IntrospectDocument, build_document,
+        duplicate_command_ids, render_introspect_document,
+    };
+
+    /// Every `command_id` exposed by `cast --introspect` MUST be unique.
+    /// This is the foundation of the agent contract — agents key on
+    /// `command_id` to identify commands, and duplicates would silently break
+    /// downstream tooling.
+    ///
+    /// Cast's clap tree is large and exhausts the default test-thread stack
+    /// (2 MiB) when constructed in debug builds, so we spawn a worker thread
+    /// with an explicit, generous stack size.
+    #[test]
+    fn introspect_command_ids_are_unique() {
+        let dups = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let cmd = <CastArgs as clap::CommandFactory>::command();
+                let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+                duplicate_command_ids(&doc)
+            })
+            .expect("spawn worker thread")
+            .join()
+            .expect("worker thread join");
+        assert!(dups.is_empty(), "duplicate cast command_ids: {dups:?}");
+    }
+
+    /// `cast --introspect` must produce a JSON document that parses back into
+    /// the canonical `IntrospectDocument` shape. Runs on a 16 MiB worker
+    /// thread for the same reason as the uniqueness check above.
+    #[test]
+    fn introspect_document_is_valid_json() {
+        let json = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let cmd = <CastArgs as clap::CommandFactory>::command();
+                render_introspect_document(&cmd, &CommandRegistry::EMPTY)
+            })
+            .expect("spawn worker thread")
+            .join()
+            .expect("worker thread join");
+        let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
+        assert_eq!(doc.binary.name, "cast");
+    }
 }

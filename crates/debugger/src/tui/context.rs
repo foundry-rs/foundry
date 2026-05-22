@@ -4,6 +4,8 @@ use crate::{DebugNode, ExitReason, debugger::DebuggerContext};
 use alloy_primitives::{Address, hex};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use foundry_evm_core::buffer::BufferKind;
+use foundry_tui::TuiApp;
+use ratatui::Frame;
 use revm::bytecode::opcode::OpCode;
 use revm_inspectors::tracing::types::{CallKind, CallTraceStep};
 use std::ops::ControlFlow;
@@ -312,6 +314,18 @@ impl TUIContext<'_> {
 
     fn n_steps(&self) -> usize {
         self.debug_steps().len()
+    }
+}
+
+impl TuiApp for TUIContext<'_> {
+    type Exit = ExitReason;
+
+    fn draw(&mut self, frame: &mut Frame<'_>) {
+        self.draw_layout(frame);
+    }
+
+    fn handle_event(&mut self, event: Event) -> ControlFlow<Self::Exit> {
+        TUIContext::handle_event(self, event)
     }
 }
 

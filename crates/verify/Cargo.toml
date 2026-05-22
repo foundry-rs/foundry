@@ -48,3 +48,12 @@ url.workspace = true
 tokio = { workspace = true, features = ["macros"] }
 foundry-test-utils.workspace = true
 tempfile.workspace = true
+
+[features]
+default = ["optimism"]
+optimism = [
+    "foundry-common/optimism",
+    "foundry-evm/optimism",
+    "foundry-evm-networks/optimism",
+    "foundry-cli/optimism",
+]

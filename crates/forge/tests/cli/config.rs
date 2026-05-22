@@ -224,6 +224,7 @@ failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
 check_interval = 1
+assert_all = true
 
 [labels]
 
@@ -1295,6 +1296,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
   "show_progress": false,
   "fuzz": {
     "runs": 256,
+    "run": null,
+    "worker": null,
     "fail_on_revert": true,
     "max_test_rejects": 65536,
     "seed": null,
@@ -1343,7 +1346,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "show_solidity": false,
     "max_time_delay": null,
     "max_block_delay": null,
-    "check_interval": 1
+    "check_interval": 1,
+    "assert_all": true
   },
   "ffi": false,
   "live_logs": false,
