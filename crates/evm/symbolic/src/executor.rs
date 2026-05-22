@@ -159,6 +159,7 @@ impl SymbolicExecutor {
             );
             root.apply_executor_env(input.executor);
             root.world.set_storage_layout(self.config.storage_layout);
+            root.world.clear_transient_storage();
             worklist.push_back(root);
         }
         let mut completed_paths = 0usize;
@@ -376,6 +377,35 @@ impl SymbolicExecutor {
                                                 },
                                             );
                                         }
+                                        let mut reverted_state = sequence.state.clone();
+                                        reverted_state.world.clear_transient_storage();
+                                        for invariant_outcome in self.execute_invariant_check(
+                                            input.executor,
+                                            reverted_state,
+                                            input.invariant_address,
+                                            input.sender,
+                                            input.invariant,
+                                            input.after_invariant,
+                                            &mut completed_paths,
+                                        )? {
+                                            if invariant_outcome.failed {
+                                                let sequence = self.materialize_sequence(
+                                                    &steps,
+                                                    &invariant_outcome.state,
+                                                )?;
+                                                return Ok(
+                                                    SymbolicInvariantRunResult::Counterexample {
+                                                        sequence,
+                                                        stats: self
+                                                            .stats_with_paths(completed_paths),
+                                                    },
+                                                );
+                                            }
+                                            next_frontier.push(SequencePath {
+                                                state: invariant_outcome.state,
+                                                steps: steps.clone(),
+                                            });
+                                        }
                                     }
                                     TopLevelCallStatus::Success => {
                                         for invariant_outcome in self.execute_invariant_check(
@@ -550,8 +580,8 @@ impl SymbolicExecutor {
         constraints: Vec<BoolExpr>,
         completed_paths: &mut usize,
     ) -> Result<Vec<TopLevelCallOutcome>, SymbolicError> {
-        let code = self.account_code(executor, target)?;
-        let code = SymCode::concrete(code);
+        state.world.clear_transient_storage();
+        let code = state.world.extcode(executor, target)?;
         let jumpdests = analyze_jumpdests(&code);
         state.call_depth = 0;
         state.origin = sender;
@@ -637,22 +667,6 @@ impl SymbolicExecutor {
         }
 
         Ok(outcomes)
-    }
-
-    /// Implements the `account_code` symbolic executor helper.
-    fn account_code<FEN: FoundryEvmNetwork>(
-        &self,
-        executor: &Executor<FEN>,
-        address: Address,
-    ) -> Result<Vec<u8>, SymbolicError> {
-        executor
-            .backend()
-            .basic_ref(address)
-            .map_err(|err| SymbolicError::Backend(err.to_string()))?
-            .ok_or(SymbolicError::MissingAccount(address))?
-            .code
-            .ok_or(SymbolicError::MissingCode(address))
-            .map(|code| code.original_bytes().to_vec())
     }
 
     /// Runs the `materialize_sequence` symbolic executor helper.
@@ -1136,7 +1150,9 @@ impl SymbolicExecutor {
             opcode::SLOAD => {
                 let key = state.stack.pop()?;
                 state.record_sload(state.storage_address, key.clone());
-                let value = state.world.sload(executor, state.storage_address, key)?;
+                let concrete_key = state.constrained_word(&key);
+                let value =
+                    state.world.sload(executor, state.storage_address, key, concrete_key)?;
                 state.stack.push(value)?;
                 Ok(StepOutcome::Continue)
             }
@@ -1225,7 +1241,13 @@ impl SymbolicExecutor {
                 Ok(StepOutcome::Continue)
             }
             opcode::GAS => {
-                state.stack.push(SymWord::Concrete(U256::MAX))?;
+                let gas = state.fresh_word("gasleft");
+                state.constraints.push(BoolExpr::cmp(
+                    BoolExprOp::Ule,
+                    gas.clone().into_expr(),
+                    Expr::Const(U256::from(executor.gas_limit())),
+                ));
+                state.stack.push(gas)?;
                 Ok(StepOutcome::Continue)
             }
             opcode::JUMPDEST => Ok(StepOutcome::Continue),
@@ -1284,6 +1306,10 @@ impl SymbolicExecutor {
                 if state.is_static {
                     state.return_data = SymReturnData::default();
                     return Ok(StepOutcome::Revert);
+                }
+                let spec_id: SpecId = executor.spec_id().into();
+                if spec_id >= SpecId::CANCUN {
+                    return Err(SymbolicError::Unsupported("SELFDESTRUCT/EIP-6780 not modeled"));
                 }
                 let beneficiary = state.pop_address_or_symbolic_slot()?;
                 state.world.selfdestruct(executor, state.address, beneficiary)?;
@@ -2421,6 +2447,14 @@ impl SymbolicExecutor {
                     .cloned()
             })
             .unwrap_or_else(|| SymWord::Concrete(address_word(to)));
+        if matches!(kind, CallKind::DelegateCall)
+            && (state.prank.next_caller.is_some()
+                || state.prank.next_origin.is_some()
+                || state.prank.persistent_caller.is_some()
+                || state.prank.persistent_origin.is_some())
+        {
+            return Err(SymbolicError::Unsupported("symbolic prank delegatecall"));
+        }
         let (pranked_caller, pranked_caller_word, pranked_origin) = state.prank_for_next_call();
         let frame = match kind {
             CallKind::Call => {
@@ -3020,7 +3054,7 @@ impl SymbolicExecutor {
                         kind,
                         &outcome.return_data,
                     )?;
-                    parent.world.install_code(created, outcome.return_data.to_code());
+                    parent.world.install_code(created, outcome.return_data.to_code()?);
                     parent.world.set_nonce(created, 1);
                     parent.stack.push(created_word.clone())?;
                 }
@@ -4144,16 +4178,22 @@ impl SymbolicExecutor {
             return Ok(CheatcodeOutcome::Continue(Vec::new()));
         }
         if selector == selector!("prank(address,bool)") {
-            let _delegate_call =
+            let delegate_call =
                 read_abi_bool_arg(&state.memory, args_offset, 1, "symbolic vm.prank")?;
+            if delegate_call {
+                return Err(SymbolicError::Unsupported("symbolic vm.prank delegatecall"));
+            }
             state.prank.next_caller =
                 Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
             state.prank.next_origin = None;
             return Ok(CheatcodeOutcome::Continue(Vec::new()));
         }
         if selector == selector!("prank(address,address,bool)") {
-            let _delegate_call =
+            let delegate_call =
                 read_abi_bool_arg(&state.memory, args_offset, 2, "symbolic vm.prank")?;
+            if delegate_call {
+                return Err(SymbolicError::Unsupported("symbolic vm.prank delegatecall"));
+            }
             state.prank.next_caller =
                 Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
             state.prank.next_origin =
@@ -4174,16 +4214,22 @@ impl SymbolicExecutor {
             return Ok(CheatcodeOutcome::Continue(Vec::new()));
         }
         if selector == selector!("startPrank(address,bool)") {
-            let _delegate_call =
+            let delegate_call =
                 read_abi_bool_arg(&state.memory, args_offset, 1, "symbolic vm.startPrank")?;
+            if delegate_call {
+                return Err(SymbolicError::Unsupported("symbolic vm.startPrank delegatecall"));
+            }
             state.prank.persistent_caller =
                 Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
             state.prank.persistent_origin = None;
             return Ok(CheatcodeOutcome::Continue(Vec::new()));
         }
         if selector == selector!("startPrank(address,address,bool)") {
-            let _delegate_call =
+            let delegate_call =
                 read_abi_bool_arg(&state.memory, args_offset, 2, "symbolic vm.startPrank")?;
+            if delegate_call {
+                return Err(SymbolicError::Unsupported("symbolic vm.startPrank delegatecall"));
+            }
             state.prank.persistent_caller =
                 Some(read_abi_address_word_or_symbolic_slot_arg(state, args_offset, 0)?);
             state.prank.persistent_origin =
@@ -4330,7 +4376,8 @@ impl SymbolicExecutor {
         if selector == selector!("load(address,bytes32)") {
             let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
             let slot = state.memory.load_word(in_offset + 36)?;
-            let value = state.world.sload(executor, target, slot)?;
+            let concrete_slot = state.constrained_word(&slot);
+            let value = state.world.sload(executor, target, slot, concrete_slot)?;
             return Ok(CheatcodeOutcome::Continue(vec![value]));
         }
         if selector == selector!("getNonce(address)") {
@@ -5443,6 +5490,7 @@ impl SymbolicExecutor {
         if selector == selector!("randomUint(uint256)") {
             let bits =
                 read_abi_constrained_word_arg(state, args_offset, 0, "symbolic randomUint bits")?;
+            Self::validate_symbolic_integer_bits(bits, "symbolic randomUint bits")?;
             return Ok(CheatcodeOutcome::Continue(vec![state.fresh_bounded_uint(bits)]));
         }
         if selector == selector!("randomUint(uint256,uint256)") {
@@ -5467,7 +5515,8 @@ impl SymbolicExecutor {
         if selector == selector!("randomInt(uint256)") {
             let bits =
                 read_abi_constrained_word_arg(state, args_offset, 0, "symbolic randomInt bits")?;
-            return Ok(CheatcodeOutcome::Continue(vec![state.fresh_bounded_uint(bits)]));
+            Self::validate_symbolic_integer_bits(bits, "symbolic randomInt bits")?;
+            return Ok(CheatcodeOutcome::Continue(vec![state.fresh_bounded_int(bits)]));
         }
         if selector == selector!("randomAddress()") {
             let value = state.fresh_bounded_uint(U256::from(160));
@@ -5521,14 +5570,20 @@ impl SymbolicExecutor {
             return Ok(SymReturnData::from_words(vec![state.fresh_word("svm")]));
         }
         for bits in (8..=256).step_by(8) {
-            if selector == selector_for(&format!("createUint{bits}(string)"))
-                || selector == selector_for(&format!("createInt{bits}(string)"))
-            {
+            if selector == selector_for(&format!("createUint{bits}(string)")) {
                 if bits == 256 {
                     return Ok(SymReturnData::from_words(vec![state.fresh_word("svm")]));
                 }
                 return Ok(SymReturnData::from_words(vec![
                     state.fresh_bounded_uint(U256::from(bits)),
+                ]));
+            }
+            if selector == selector_for(&format!("createInt{bits}(string)")) {
+                if bits == 256 {
+                    return Ok(SymReturnData::from_words(vec![state.fresh_word("svm")]));
+                }
+                return Ok(SymReturnData::from_words(vec![
+                    state.fresh_bounded_int(U256::from(bits)),
                 ]));
             }
         }
@@ -5539,16 +5594,25 @@ impl SymbolicExecutor {
                 return Ok(SymReturnData::from_words(vec![value]));
             }
         }
-        if selector == selector!("createUint(uint256,string)")
-            || selector == selector!("createInt(uint256,string)")
-        {
+        if selector == selector!("createUint(uint256,string)") {
             let bits = read_abi_constrained_word_arg(
                 state,
                 in_offset + 4,
                 0,
                 "symbolic svm.create integer bits",
             )?;
+            Self::validate_symbolic_integer_bits(bits, "symbolic svm.create integer bits")?;
             return Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(bits)]));
+        }
+        if selector == selector!("createInt(uint256,string)") {
+            let bits = read_abi_constrained_word_arg(
+                state,
+                in_offset + 4,
+                0,
+                "symbolic svm.create integer bits",
+            )?;
+            Self::validate_symbolic_integer_bits(bits, "symbolic svm.create integer bits")?;
+            return Ok(SymReturnData::from_words(vec![state.fresh_bounded_int(bits)]));
         }
         if selector == selector!("createAddress(string)") {
             return Ok(SymReturnData::from_words(vec![state.fresh_bounded_uint(U256::from(160))]));
@@ -5756,6 +5820,14 @@ impl SymbolicExecutor {
         }
     }
 
+    /// Rejects symbolic integer bit widths outside the EVM word size.
+    fn validate_symbolic_integer_bits(
+        bits: U256,
+        context: &'static str,
+    ) -> Result<(), SymbolicError> {
+        if bits <= U256::from(256) { Ok(()) } else { Err(SymbolicError::Unsupported(context)) }
+    }
+
     /// Runs the `handle_bound_uint` symbolic executor helper.
     fn handle_bound_uint(
         &mut self,
@@ -5769,12 +5841,11 @@ impl SymbolicExecutor {
         if let (SymWord::Concrete(value), SymWord::Concrete(min), SymWord::Concrete(max)) =
             (&value, &min, &max)
         {
-            if min >= max {
+            if min >= max || value < min || value > max {
                 return Ok(CheatcodeOutcome::Failure);
             }
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(bound_uint_concrete(
-                *value, *min, *max,
-            ))]));
+            let bounded = if value == min { *max } else { *min };
+            return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(bounded)]));
         }
 
         if let (SymWord::Concrete(min), SymWord::Concrete(max)) = (&min, &max)
@@ -5782,18 +5853,38 @@ impl SymbolicExecutor {
         {
             return Ok(CheatcodeOutcome::Failure);
         }
+        let (SymWord::Concrete(min_value), SymWord::Concrete(max_value)) = (&min, &max) else {
+            return Err(SymbolicError::Unsupported("symbolic vm.bound range"));
+        };
+
+        let value_expr = value.into_expr();
+        let in_range = BoolExpr::and(vec![
+            BoolExpr::cmp(BoolExprOp::Uge, value_expr.clone(), Expr::Const(*min_value)),
+            BoolExpr::cmp(BoolExprOp::Ule, value_expr.clone(), Expr::Const(*max_value)),
+        ]);
+        let (_in_range_constraints, in_range_sat) =
+            self.constraints_with_condition(state, in_range.clone())?;
+        if !in_range_sat {
+            return Ok(CheatcodeOutcome::Failure);
+        }
+        let (_out_of_range_constraints, out_of_range_sat) =
+            self.constraints_with_condition(state, in_range.not())?;
+        if out_of_range_sat {
+            return Ok(CheatcodeOutcome::Failure);
+        }
 
         let bounded = state.fresh_word("vmBoundUint");
         state.constraints.push(BoolExpr::cmp(
             BoolExprOp::Uge,
             bounded.clone().into_expr(),
-            min.into_expr(),
+            Expr::Const(*min_value),
         ));
         state.constraints.push(BoolExpr::cmp(
             BoolExprOp::Ule,
             bounded.clone().into_expr(),
-            max.into_expr(),
+            Expr::Const(*max_value),
         ));
+        state.constraints.push(BoolExpr::eq(bounded.clone().into_expr(), value_expr).not());
         Ok(CheatcodeOutcome::Continue(vec![bounded]))
     }
 
@@ -5810,10 +5901,10 @@ impl SymbolicExecutor {
         if let (SymWord::Concrete(value), SymWord::Concrete(min), SymWord::Concrete(max)) =
             (&value, &min, &max)
         {
-            if !slt(*min, *max) {
+            if !slt(*min, *max) || slt(*value, *min) || slt(*max, *value) {
                 return Ok(CheatcodeOutcome::Failure);
             }
-            let bounded = if !slt(*value, *min) && !slt(*max, *value) { *value } else { *min };
+            let bounded = if value == min { *max } else { *min };
             return Ok(CheatcodeOutcome::Continue(vec![SymWord::Concrete(bounded)]));
         }
 
@@ -5822,14 +5913,36 @@ impl SymbolicExecutor {
         {
             return Ok(CheatcodeOutcome::Failure);
         }
+        let (SymWord::Concrete(min_value), SymWord::Concrete(max_value)) = (&min, &max) else {
+            return Err(SymbolicError::Unsupported("symbolic vm.bound range"));
+        };
+
+        let value_expr = value.into_expr();
+        let in_range = BoolExpr::and(vec![
+            BoolExpr::cmp(BoolExprOp::Slt, value_expr.clone(), Expr::Const(*min_value)).not(),
+            BoolExpr::cmp(BoolExprOp::Sgt, value_expr.clone(), Expr::Const(*max_value)).not(),
+        ]);
+        let (_in_range_constraints, in_range_sat) =
+            self.constraints_with_condition(state, in_range.clone())?;
+        if !in_range_sat {
+            return Ok(CheatcodeOutcome::Failure);
+        }
+        let (_out_of_range_constraints, out_of_range_sat) =
+            self.constraints_with_condition(state, in_range.not())?;
+        if out_of_range_sat {
+            return Ok(CheatcodeOutcome::Failure);
+        }
 
         let bounded = state.fresh_word("vmBoundInt");
         state.constraints.push(
-            BoolExpr::cmp(BoolExprOp::Slt, bounded.clone().into_expr(), min.into_expr()).not(),
+            BoolExpr::cmp(BoolExprOp::Slt, bounded.clone().into_expr(), Expr::Const(*min_value))
+                .not(),
         );
         state.constraints.push(
-            BoolExpr::cmp(BoolExprOp::Sgt, bounded.clone().into_expr(), max.into_expr()).not(),
+            BoolExpr::cmp(BoolExprOp::Sgt, bounded.clone().into_expr(), Expr::Const(*max_value))
+                .not(),
         );
+        state.constraints.push(BoolExpr::eq(bounded.clone().into_expr(), value_expr).not());
         Ok(CheatcodeOutcome::Continue(vec![bounded]))
     }
 }

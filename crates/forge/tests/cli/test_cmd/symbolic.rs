@@ -468,6 +468,37 @@ contract SymbolicMalformedHalmos {
     assert!(stderr.contains("invalid length `nope`"), "{stderr}");
 });
 
+forgetest_init!(symbolic_selfdestruct_cancun_reports_incomplete, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_selfdestruct_cancun_reports_incomplete because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSelfdestructCancun.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+/// forge-config: default.evm_version = "cancun"
+
+contract SymbolicSelfdestructCancun is Test {
+    function checkSelfdestructCancun(address payable beneficiary) public {
+        selfdestruct(beneficiary);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkSelfdestructCancun"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+});
 forgetest_init!(symbolic_invariant_finds_single_step_counterexample, |prj, cmd| {
     if !z3_available() {
         let _ = sh_eprintln!(
@@ -629,4 +660,77 @@ contract SymbolicInvariantSender is Test {
         stdout.to_lowercase().contains("sender=0x0000000000000000000000000000000000000b0b"),
         "{stdout}"
     );
+});
+forgetest_init!(symbolic_soundness_hardening_regressions, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_soundness_hardening_regressions because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicSoundnessHardening.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+interface SvmDynamic {
+    function createUint(uint256 bits, string calldata name) external returns (uint256);
+    function createInt(uint256 bits, string calldata name) external returns (int256);
+}
+
+contract DelegateTarget {
+    function noop() external {}
+}
+
+contract SymbolicSoundnessHardening is Test {
+    address constant SVM_ADDRESS = address(0xF3993A62377BCd56AE39D773740A5390411E8BC9);
+
+    mapping(uint256 => uint256) values;
+    DelegateTarget target;
+
+    function setUp() public {
+        target = new DelegateTarget();
+    }
+
+    function checkConstrainedStorageKeyUsesConcreteSlot(uint256 key) public {
+        values[7] = 0xbeef;
+        vm.assume(key == 7);
+        assertEq(values[key], 0xbeef);
+    }
+
+    function checkRandomUintRejectsOversizedBits() public {
+        vm.randomUint(257);
+    }
+
+    function checkCreateUintRejectsOversizedBits() public {
+        SvmDynamic(SVM_ADDRESS).createUint(257, "too-wide");
+    }
+
+    function checkCreateIntRejectsOversizedBits() public {
+        SvmDynamic(SVM_ADDRESS).createInt(300, "too-wide");
+    }
+
+    function checkPrankDelegatecallReportsUnsupported() public {
+        vm.prank(address(0xB0B));
+        (bool ok,) = address(target).delegatecall(abi.encodeWithSignature("noop()"));
+        assertTrue(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-contract", "SymbolicSoundnessHardening"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(
+        stdout.contains("[PASS] checkConstrainedStorageKeyUsesConcreteSlot(uint256)"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("symbolic randomUint bits"), "{stdout}");
+    assert!(stdout.contains("symbolic svm.create integer bits"), "{stdout}");
+    assert!(stdout.contains("symbolic prank delegatecall"), "{stdout}");
 });

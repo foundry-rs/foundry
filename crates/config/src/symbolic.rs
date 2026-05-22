@@ -12,6 +12,8 @@ pub enum SymbolicStorageLayout {
     Solidity,
     /// Treat every storage read as potentially arbitrary symbolic storage.
     Generic,
+    /// Treat unwritten symbolic storage reads as zero.
+    ZeroInit,
 }
 
 /// Pending symbolic path exploration order.

@@ -42,15 +42,6 @@ pub(crate) fn slt(left: U256, right: U256) -> bool {
     }
 }
 
-/// Returns the `bound_uint_concrete` EVM semantics helper result.
-pub(crate) fn bound_uint_concrete(value: U256, min: U256, max: U256) -> U256 {
-    if value >= min && value <= max {
-        return value;
-    }
-    let range = max - min;
-    if range == U256::MAX { value } else { min + (value % (range + U256::from(1))) }
-}
-
 /// Implements the `signed_abs` EVM semantics helper.
 pub(crate) fn signed_abs(value: U256) -> U256 {
     if (value >> 255) == U256::from(1) { (!value).wrapping_add(U256::from(1)) } else { value }

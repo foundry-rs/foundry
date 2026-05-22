@@ -179,7 +179,7 @@ impl PathState {
         }
 
         let mut vars = BTreeSet::new();
-        expr.collect_vars(&mut vars);
+        collect_eval_vars(expr, &mut vars);
         let mut model = BTreeMap::new();
         for var in vars {
             let var_expr = Expr::Var(var.clone());
@@ -497,6 +497,25 @@ impl PathState {
                 value.clone().into_expr(),
                 Expr::Const(upper),
             ));
+        }
+        value
+    }
+
+    /// Implements the `fresh_bounded_int` symbolic state helper.
+    pub(crate) fn fresh_bounded_int(&mut self, bits: U256) -> SymWord {
+        let value = self.fresh_word("symbolic");
+        if bits.is_zero() {
+            self.constraints.push(BoolExpr::eq(value.clone().into_expr(), Expr::Const(U256::ZERO)));
+        } else if bits < U256::from(256) {
+            let magnitude = U256::from(1) << (bits.to::<usize>() - 1);
+            self.constraints.push(BoolExpr::or(vec![
+                BoolExpr::cmp(BoolExprOp::Ult, value.clone().into_expr(), Expr::Const(magnitude)),
+                BoolExpr::cmp(
+                    BoolExprOp::Uge,
+                    value.clone().into_expr(),
+                    Expr::Const(U256::ZERO.wrapping_sub(magnitude)),
+                ),
+            ]));
         }
         value
     }
@@ -969,6 +988,7 @@ pub(crate) struct SymbolicWorldSnapshot {
     pub(crate) destroyed_accounts: BTreeSet<Address>,
     pub(crate) arbitrary_storage_accounts: BTreeSet<Address>,
     pub(crate) arbitrary_storage_all: bool,
+    pub(crate) zero_init_symbolic_storage: bool,
     pub(crate) symbolic_address_aliases: BTreeMap<SymWord, Address>,
 }
 
@@ -985,6 +1005,7 @@ impl From<&SymbolicWorld> for SymbolicWorldSnapshot {
             destroyed_accounts: world.destroyed_accounts.clone(),
             arbitrary_storage_accounts: world.arbitrary_storage_accounts.clone(),
             arbitrary_storage_all: world.arbitrary_storage_all,
+            zero_init_symbolic_storage: world.zero_init_symbolic_storage,
             symbolic_address_aliases: world.symbolic_address_aliases.clone(),
         }
     }
@@ -1001,6 +1022,7 @@ pub(crate) struct SymbolicWorld {
     pub(crate) destroyed_accounts: BTreeSet<Address>,
     pub(crate) arbitrary_storage_accounts: BTreeSet<Address>,
     pub(crate) arbitrary_storage_all: bool,
+    pub(crate) zero_init_symbolic_storage: bool,
     pub(crate) symbolic_address_aliases: BTreeMap<SymWord, Address>,
     pub(crate) snapshots: BTreeMap<U256, SymbolicWorldSnapshot>,
     pub(crate) next_snapshot_id: u64,
@@ -1010,6 +1032,7 @@ impl SymbolicWorld {
     /// Applies the `set_storage_layout` symbolic state helper.
     pub(crate) const fn set_storage_layout(&mut self, layout: SymbolicStorageLayout) {
         self.arbitrary_storage_all = matches!(layout, SymbolicStorageLayout::Generic);
+        self.zero_init_symbolic_storage = matches!(layout, SymbolicStorageLayout::ZeroInit);
     }
 
     /// Implements the `sload` symbolic state helper.
@@ -1018,9 +1041,11 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         address: Address,
         key: SymWord,
+        concrete_key: Option<U256>,
     ) -> Result<SymWord, SymbolicError> {
-        let base = self.storage_base(executor, address, &key)?;
-        Ok(read_storage_writes(&self.storage, address, key, base))
+        let base = self.storage_base(executor, address, &key, concrete_key)?;
+        let read_key = concrete_key.map(SymWord::Concrete).unwrap_or(key);
+        Ok(read_storage_writes(&self.storage, address, read_key, base))
     }
 
     /// Implements the `sstore` symbolic state helper.
@@ -1036,6 +1061,11 @@ impl SymbolicWorld {
     /// Implements the `tstore` symbolic state helper.
     pub(crate) fn tstore(&mut self, address: Address, key: SymWord, value: SymWord) {
         self.transient_storage.push(StorageWrite::new(address, key, value));
+    }
+
+    /// Clears transaction-scoped transient storage at a top-level call boundary.
+    pub(crate) fn clear_transient_storage(&mut self) {
+        self.transient_storage.clear();
     }
 
     /// Applies the `enable_arbitrary_storage` symbolic state helper.
@@ -1094,6 +1124,7 @@ impl SymbolicWorld {
         self.destroyed_accounts = snapshot.destroyed_accounts;
         self.arbitrary_storage_accounts = snapshot.arbitrary_storage_accounts;
         self.arbitrary_storage_all = snapshot.arbitrary_storage_all;
+        self.zero_init_symbolic_storage = snapshot.zero_init_symbolic_storage;
         self.symbolic_address_aliases = snapshot.symbolic_address_aliases;
         true
     }
@@ -1114,6 +1145,7 @@ impl SymbolicWorld {
         executor: &Executor<FEN>,
         address: Address,
         key: &SymWord,
+        concrete_key: Option<U256>,
     ) -> Result<SymWord, SymbolicError> {
         if self.arbitrary_storage_all || self.arbitrary_storage_accounts.contains(&address) {
             return Ok(SymWord::Expr(Expr::Var(stable_symbol(
@@ -1121,13 +1153,24 @@ impl SymbolicWorld {
                 format!("{address:?}:{key:?}"),
             ))));
         }
+        if let Some(key) = concrete_key {
+            return executor
+                .backend()
+                .storage_ref(address, key)
+                .map(SymWord::Concrete)
+                .map_err(|err| SymbolicError::Backend(err.to_string()));
+        }
         match key {
             SymWord::Concrete(key) => executor
                 .backend()
                 .storage_ref(address, *key)
                 .map(SymWord::Concrete)
                 .map_err(|err| SymbolicError::Backend(err.to_string())),
-            SymWord::Expr(_) => Ok(SymWord::zero()),
+            SymWord::Expr(_) if self.zero_init_symbolic_storage => Ok(SymWord::zero()),
+            SymWord::Expr(_) => Ok(SymWord::Expr(Expr::Var(stable_symbol(
+                "storage",
+                format!("{address:?}:{key:?}"),
+            )))),
         }
     }
 
@@ -1550,6 +1593,49 @@ impl Default for SymbolicBlock {
             blob_basefee: SymWord::zero(),
             block_hashes: BTreeMap::new(),
             blob_hashes: Vec::new(),
+        }
+    }
+}
+
+/// Collects the symbolic variables needed to concretely evaluate an expression.
+fn collect_eval_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
+    match expr {
+        Expr::Const(_) => {}
+        Expr::Var(var) | Expr::Hash { name: var, .. } => {
+            vars.insert(var.clone());
+        }
+        Expr::Keccak { len, bytes, .. } => {
+            collect_eval_vars(len, vars);
+            for byte in bytes {
+                collect_eval_vars(byte, vars);
+            }
+        }
+        Expr::Not(value) => collect_eval_vars(value, vars),
+        Expr::Op(_, left, right) => {
+            collect_eval_vars(left, vars);
+            collect_eval_vars(right, vars);
+        }
+        Expr::Ite(condition, left, right) => {
+            collect_eval_bool_vars(condition, vars);
+            collect_eval_vars(left, vars);
+            collect_eval_vars(right, vars);
+        }
+    }
+}
+
+/// Collects the symbolic variables needed to concretely evaluate a boolean expression.
+fn collect_eval_bool_vars(expr: &BoolExpr, vars: &mut BTreeSet<String>) {
+    match expr {
+        BoolExpr::Const(_) => {}
+        BoolExpr::Not(value) => collect_eval_bool_vars(value, vars),
+        BoolExpr::And(values) => {
+            for value in values {
+                collect_eval_bool_vars(value, vars);
+            }
+        }
+        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
+            collect_eval_vars(left, vars);
+            collect_eval_vars(right, vars);
         }
     }
 }
