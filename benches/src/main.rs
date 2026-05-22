@@ -106,15 +106,9 @@ fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
 
-    let fuzz_campaign_mode = cli.fuzz_campaigns.is_some();
-
-    // Determine versions to test. Fuzz-campaign mode defaults to local+stable
-    // (compare the PR branch against the current stable release). Perf mode
-    // defaults to the global FOUNDRY_VERSIONS constant (stable + nightly).
+    // Determine versions to test.
     let versions = if let Some(v) = cli.versions.clone() {
         v
-    } else if fuzz_campaign_mode {
-        vec!["stable".to_string(), "local".to_string()]
     } else {
         FOUNDRY_VERSIONS.iter().map(|&s| s.to_string()).collect()
     };
