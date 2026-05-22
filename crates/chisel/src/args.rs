@@ -1,14 +1,28 @@
 use crate::{
+    dispatcher::{ReplMessage, ReplMsgKind},
     opts::{Chisel, ChiselSubcommand},
     prelude::{ChiselCommand, ChiselDispatcher, SolidityHelper},
+    tui::ChiselTuiApp,
 };
 use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
+use foundry_tui::{TuiMode, run_app, tui_mode};
 use rustyline::{Editor, config::Configurer, error::ReadlineError};
 use std::{ops::ControlFlow, path::PathBuf};
 use yansi::Paint;
+
+/// Flush buffered REPL messages to stdout/stderr depending on their kind.
+fn flush_messages(messages: Vec<ReplMessage>) -> Result<()> {
+    for msg in messages {
+        match msg.kind {
+            ReplMsgKind::Out => sh_println!("{}", msg.text)?,
+            ReplMsgKind::Err => sh_err!("{}", msg.text)?,
+        }
+    }
+    Ok(())
+}
 
 /// Run the `chisel` command line interface.
 pub fn run() -> Result<()> {
@@ -66,6 +80,18 @@ pub async fn run_command(args: Chisel) -> Result<()> {
         return Ok(());
     }
 
+    match tui_mode() {
+        TuiMode::Interactive => {
+            let mut app = ChiselTuiApp::new(dispatcher);
+            run_app(&mut app)?;
+            Ok(())
+        }
+        TuiMode::Fallback(_) => run_plain_repl(dispatcher).await,
+    }
+}
+
+/// The original line-oriented REPL loop. Used when stdin/stdout is not a TTY.
+async fn run_plain_repl(mut dispatcher: ChiselDispatcher) -> Result<()> {
     let mut rl = Editor::<SolidityHelper, _>::new()?;
     rl.set_helper(Some(dispatcher.helper.clone()));
     rl.set_auto_add_history(true);
@@ -87,6 +113,7 @@ pub async fn run_command(args: Chisel) -> Result<()> {
                 // Dispatch and match results.
                 let r = dispatcher.dispatch(&line).await;
                 dispatcher.helper.set_errored(r.is_err());
+                flush_messages(dispatcher.drain_messages())?;
                 match r {
                     Ok(ControlFlow::Continue(())) => {}
                     Ok(ControlFlow::Break(())) => break,
@@ -151,14 +178,17 @@ async fn load_prelude_file(
 ) -> Result<ControlFlow<()>> {
     let prelude = fs::read_to_string(file)
         .wrap_err("Could not load source file. Are you sure this path is correct?")?;
-    dispatcher.dispatch(&prelude).await
+    let r = dispatcher.dispatch(&prelude).await;
+    // Drain buffered output produced while loading the prelude so it is shown to the user.
+    flush_messages(dispatcher.drain_messages())?;
+    r
 }
 
 async fn handle_cli_command(
     d: &mut ChiselDispatcher,
     cmd: ChiselSubcommand,
 ) -> Result<ControlFlow<()>> {
-    match cmd {
+    let result = match cmd {
         ChiselSubcommand::List => d.dispatch_command(ChiselCommand::ListSessions).await,
         ChiselSubcommand::Load { id } => d.dispatch_command(ChiselCommand::Load { id }).await,
         ChiselSubcommand::View { id } => {
@@ -170,10 +200,15 @@ async fn handle_cli_command(
         }
         ChiselSubcommand::ClearCache => d.dispatch_command(ChiselCommand::ClearCache).await,
         ChiselSubcommand::Eval { command } => d.dispatch(&command).await,
-    }
+    };
+    // Flush any buffered messages from `dispatch` to stdout/stderr (TUI consumes them via
+    // `drain_messages`; for one-shot CLI subcommands they need to be printed).
+    flush_messages(d.drain_messages())?;
+    result
 }
 
-fn chisel_history_file() -> Option<PathBuf> {
+/// Returns the path to the persistent chisel REPL history file (`~/.foundry/.chisel_history`).
+pub fn chisel_history_file() -> Option<PathBuf> {
     foundry_config::Config::foundry_dir().map(|p| p.join(".chisel_history"))
 }
 

@@ -5,6 +5,10 @@ use crate::{
     dispatcher::PROMPT_ARROW,
     prelude::{COMMAND_LEADER, ChiselCommand, PROMPT_ARROW_STR},
 };
+use ratatui::{
+    style::{Color as RColor, Modifier as RModifier, Style as RStyle},
+    text::Span,
+};
 use rustyline::{
     Helper,
     completion::Completer,
@@ -123,6 +127,67 @@ impl SolidityHelper {
         }
     }
 
+    /// Highlights `input` as a sequence of ratatui [`Span`]s using the same token coloring as
+    /// the rustyline-based [`Self::highlight`].
+    pub fn highlight_ratatui<'a>(&self, input: &'a str) -> Vec<Span<'a>> {
+        // Highlight commands separately, mirroring `highlight()`.
+        if let Some(full_cmd) = input.strip_prefix(COMMAND_LEADER) {
+            let (cmd, rest) = match input.split_once(' ') {
+                Some((cmd, rest)) => (cmd, Some(rest)),
+                None => (input, None),
+            };
+            let cmd_no_leader = cmd.strip_prefix(COMMAND_LEADER).unwrap_or(cmd);
+
+            let mut spans: Vec<Span<'a>> = Vec::with_capacity(4);
+            spans.push(Span::raw("!"));
+            let cmd_style = if ChiselCommand::parse(full_cmd).is_ok() {
+                RStyle::default().fg(RColor::Green)
+            } else {
+                RStyle::default().fg(RColor::Red)
+            };
+            spans.push(Span::styled(cmd_no_leader, cmd_style));
+            if let Some(rest) = rest
+                && !rest.is_empty()
+            {
+                spans.push(Span::raw(" "));
+                spans.push(Span::raw(rest));
+            }
+            return spans;
+        }
+
+        let mut spans: Vec<Span<'a>> = Vec::new();
+        self.with_contiguous_ratatui_styles(input, |style, range| {
+            let s = &input[range];
+            if style == RStyle::default() {
+                spans.push(Span::raw(s));
+            } else {
+                spans.push(Span::styled(s, style));
+            }
+        });
+        spans
+    }
+
+    /// Like [`Self::with_contiguous_styles`], but produces ratatui styles directly. Used by
+    /// [`Self::highlight_ratatui`].
+    fn with_contiguous_ratatui_styles(&self, input: &str, mut f: impl FnMut(RStyle, Range<usize>)) {
+        self.enter(|sess| {
+            let len = input.len();
+            let mut index = 0;
+            for token in Lexer::new(sess, input) {
+                let range = token.span.lo().to_usize()..token.span.hi().to_usize();
+                let style = token_ratatui_style(&token);
+                if index < range.start {
+                    f(RStyle::default(), index..range.start);
+                }
+                index = range.end;
+                f(style, range);
+            }
+            if index < len {
+                f(RStyle::default(), index..len);
+            }
+        });
+    }
+
     /// Returns a list of styles and the ranges they should be applied to.
     ///
     /// Covers the entire source string, including any whitespace.
@@ -146,7 +211,7 @@ impl SolidityHelper {
     }
 
     /// Validate that a source snippet is closed (i.e., all braces and parenthesis are matched).
-    fn validate_closed(&self, input: &str) -> ValidationResult {
+    pub fn validate_closed(&self, input: &str) -> ValidationResult {
         use RawLiteralKind::Str;
         use RawTokenKind::{BlockComment, CloseDelim, Literal, OpenDelim};
         let mut stack = vec![];
@@ -277,6 +342,41 @@ impl Hinter for SolidityHelper {
 
 impl Helper for SolidityHelper {}
 
+/// Mirrors [`token_style`] but produces a [`ratatui::style::Style`].
+#[expect(non_upper_case_globals)]
+#[deny(unreachable_patterns)]
+fn token_ratatui_style(token: &Token) -> RStyle {
+    use solar::parse::{
+        interface::kw::*,
+        token::{
+            TokenKind::{Arrow, Comment, FatArrow, Ident, Literal},
+            TokenLitKind::{HexStr, Str, UnicodeStr},
+        },
+    };
+
+    let style = RStyle::default();
+    match token.kind {
+        Literal(Str | HexStr | UnicodeStr, _) => style.fg(RColor::Green),
+        Literal(..) => style.fg(RColor::Yellow),
+
+        Ident(
+            Memory | Storage | Calldata | Public | Private | Internal | External | Constant | Pure
+            | View | Payable | Anonymous | Indexed | Abstract | Virtual | Override | Modifier
+            | Immutable | Unchecked,
+        ) => style.fg(RColor::Cyan),
+
+        Ident(s) if s.is_elementary_type() => style.fg(RColor::Blue),
+        Ident(Mapping) => style.fg(RColor::Blue),
+
+        Ident(s) if s.is_used_keyword() || s.is_yul_keyword() => style.fg(RColor::Magenta),
+        Arrow | FatArrow => style.fg(RColor::Magenta),
+
+        Comment(..) => style.add_modifier(RModifier::DIM),
+
+        _ => style,
+    }
+}
+
 #[expect(non_upper_case_globals)]
 #[deny(unreachable_patterns)]
 fn token_style(token: &Token) -> Style {
@@ -368,5 +468,38 @@ mod tests {
         valid("/* */");
         valid("/* /* */");
         valid("/* /* */ */");
+    }
+
+    #[test]
+    fn highlight_ratatui_keyword_is_colored() {
+        let helper = SolidityHelper::new();
+        let spans = helper.highlight_ratatui("uint256 x = 42;");
+
+        // The first non-trivial span should be `uint256`, styled with the elementary-type color.
+        let uint_span =
+            spans.iter().find(|s| s.content.as_ref() == "uint256").expect("uint256 span present");
+        assert_eq!(uint_span.style.fg, Some(RColor::Blue), "spans = {spans:?}");
+
+        // Numeric literals should be styled yellow.
+        let lit_span = spans.iter().find(|s| s.content.as_ref() == "42").expect("42 span present");
+        assert_eq!(lit_span.style.fg, Some(RColor::Yellow), "spans = {spans:?}");
+    }
+
+    #[test]
+    fn highlight_ratatui_command_marks_unknown_red() {
+        let helper = SolidityHelper::new();
+        let spans = helper.highlight_ratatui("!nope");
+        let cmd_span =
+            spans.iter().find(|s| s.content.as_ref() == "nope").expect("nope span present");
+        assert_eq!(cmd_span.style.fg, Some(RColor::Red));
+    }
+
+    #[test]
+    fn highlight_ratatui_command_marks_known_green() {
+        let helper = SolidityHelper::new();
+        let spans = helper.highlight_ratatui("!help");
+        let cmd_span =
+            spans.iter().find(|s| s.content.as_ref() == "help").expect("help span present");
+        assert_eq!(cmd_span.style.fg, Some(RColor::Green));
     }
 }
