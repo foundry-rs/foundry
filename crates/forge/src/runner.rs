@@ -1362,7 +1362,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         }
                     }
                 })
-                .chain(skipped_predicate_results.drain(..))
+                .chain(skipped_predicate_results)
                 .sorted_by_key(|predicate| {
                     self.cr
                         .contract
