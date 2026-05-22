@@ -115,18 +115,27 @@ impl SpinnerReporter {
             .name("spinner".into())
             .spawn(move || {
                 let mut spinner = Spinner::new("Compiling...");
+                // Only emit the trailing newline (so past messages aren't overwritten by
+                // future ticks) when the spinner is actually painting to stderr. When
+                // `no_progress` is set the spinner is a no-op, so we shouldn't pollute
+                // stderr with blank lines either.
+                let emits_progress = !spinner.no_progress;
                 loop {
                     spinner.tick();
                     match rx.try_recv() {
                         Ok(SpinnerMsg::Msg(msg)) => {
                             spinner.message(msg);
-                            // new line so past messages are not overwritten
-                            // (matches the spinner channel: stderr)
-                            let _ = sh_eprintln!();
+                            if emits_progress {
+                                // new line so past messages are not overwritten
+                                // (matches the spinner channel: stderr)
+                                let _ = sh_eprintln!();
+                            }
                         }
                         Ok(SpinnerMsg::Shutdown(ack)) => {
-                            // end with a newline (matches the spinner channel: stderr)
-                            let _ = sh_eprintln!();
+                            if emits_progress {
+                                // end with a newline (matches the spinner channel: stderr)
+                                let _ = sh_eprintln!();
+                            }
                             let _ = ack.send(());
                             break;
                         }

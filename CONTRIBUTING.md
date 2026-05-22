@@ -142,8 +142,9 @@ machine-readable result; stderr is everything else** (warnings, errors,
 progress, status prose, prompts). When adding or modifying user-facing output,
 read [`docs/dev/output-channels.md`](docs/dev/output-channels.md) and use the
 `sh_*` macros from `foundry_common::io` (`sh_println!`, `sh_status!`,
-`sh_progress!`, `sh_warn!`, `sh_err!`). Direct `println!` / `eprintln!` is
-banned by clippy outside of `foundry_common::io`, build scripts, and tests.
+`sh_progress!`, `sh_warn!`, `sh_err!`). A workspace-wide clippy
+`disallowed-macros` lint (see [`clippy.toml`](clippy.toml)) forbids
+`std::print*` and `std::eprint*`; use the `sh_*` macros instead.
 
 #### Adding tests
 
