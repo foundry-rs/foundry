@@ -180,9 +180,10 @@ pub async fn try_spawn(mut config: NodeConfig) -> Result<(EthApi<FoundryNetwork>
     } else if no_mining {
         MiningMode::None
     } else {
-        // get a listener for ready transactions
-        let listener = pool.add_ready_listener();
-        MiningMode::instant(max_transactions, listener)
+        // Default to manual mining (no auto-mine)
+        // This aligns CLI behavior with NodeConfig::default() expectations
+        // Users can enable auto-mining via --block-time or evm_setAutomine RPC
+        MiningMode::None
     };
 
     let miner = match &fork {
