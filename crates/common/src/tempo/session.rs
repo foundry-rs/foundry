@@ -268,6 +268,7 @@ pub fn resolve_live_session_signer(
     Ok(Some(ResolvedSessionSigner { session, signer, access_key }))
 }
 
+/// Ensures a session key authorization matches the stored key, chain, root signer, and policy.
 fn validate_session_key_authorization(
     session: &SessionEntry,
     key: &SessionKeyMaterial,
@@ -313,6 +314,7 @@ fn validate_session_key_authorization(
     Ok(())
 }
 
+/// Ensures a session authorization does not outlive or exceed the stored session policy.
 fn validate_session_authorization_policy(
     session: &SessionEntry,
     authorization: &SignedKeyAuthorization,
@@ -363,6 +365,7 @@ fn validate_session_authorization_policy(
     Ok(())
 }
 
+/// Canonical spending limit used for order-independent policy comparisons.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct CanonicalTokenLimit {
     token: Address,
@@ -370,18 +373,21 @@ struct CanonicalTokenLimit {
     period: u64,
 }
 
+/// Canonical target scope used for order-independent policy comparisons.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct CanonicalCallScope {
     target: Address,
     selector_rules: Vec<CanonicalSelectorRule>,
 }
 
+/// Canonical selector rule used for order-independent policy comparisons.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct CanonicalSelectorRule {
     selector: [u8; 4],
     recipients: Vec<Address>,
 }
 
+/// Converts stored session limits into canonical form for authorization comparison.
 fn session_authorization_limits(session: &SessionEntry) -> eyre::Result<Vec<CanonicalTokenLimit>> {
     let mut limits = session
         .limits
@@ -398,6 +404,7 @@ fn session_authorization_limits(session: &SessionEntry) -> eyre::Result<Vec<Cano
     Ok(limits)
 }
 
+/// Converts signed authorization limits into canonical form for session comparison.
 fn authorization_limits(
     limits: &[tempo_primitives::transaction::TokenLimit],
 ) -> Vec<CanonicalTokenLimit> {
@@ -413,12 +420,14 @@ fn authorization_limits(
     limits
 }
 
+/// Parses a stored session spending limit from decimal or 0x-prefixed hex.
 fn parse_session_limit(raw: &str) -> eyre::Result<U256> {
     let raw = raw.trim();
     if let Some(hex) = raw.strip_prefix("0x") { U256::from_str_radix(hex, 16) } else { raw.parse() }
         .map_err(|err| eyre::eyre!("invalid session spending limit `{raw}`: {err}"))
 }
 
+/// Converts stored session scope into canonical form for authorization comparison.
 fn session_authorization_scope(session: &SessionEntry) -> Vec<CanonicalCallScope> {
     let mut scope = session
         .scope
@@ -432,6 +441,7 @@ fn session_authorization_scope(session: &SessionEntry) -> Vec<CanonicalCallScope
     scope
 }
 
+/// Converts signed authorization scope into canonical form for session comparison.
 fn authorization_scope(
     scope: &[tempo_primitives::transaction::CallScope],
 ) -> Vec<CanonicalCallScope> {
@@ -446,6 +456,7 @@ fn authorization_scope(
     scope
 }
 
+/// Converts stored selector rules into canonical form for authorization comparison.
 fn session_authorization_selector_rules(
     rules: &[SessionSelectorRule],
 ) -> Vec<CanonicalSelectorRule> {
@@ -461,6 +472,7 @@ fn session_authorization_selector_rules(
     rules
 }
 
+/// Converts signed authorization selector rules into canonical form for session comparison.
 fn authorization_selector_rules(
     rules: &[tempo_primitives::transaction::SelectorRule],
 ) -> Vec<CanonicalSelectorRule> {
@@ -476,6 +488,7 @@ fn authorization_selector_rules(
     rules
 }
 
+/// Maps stored session key types to Tempo authorization signature types.
 const fn key_type_to_signature_type(
     key_type: KeyType,
 ) -> tempo_primitives::transaction::SignatureType {
@@ -575,6 +588,7 @@ mod tests {
         }
     }
 
+    /// Builds a session entry with matching root and session key material.
     fn sample_entry_with_valid_key(
         session_id: B256,
         expiry: u64,
@@ -595,10 +609,12 @@ mod tests {
         }
     }
 
+    /// Encodes a signed key authorization that matches the supplied session entry.
     fn signed_key_authorization_hex(entry: &SessionEntry) -> String {
         signed_key_authorization_hex_with(entry, std::convert::identity)
     }
 
+    /// Encodes a signed key authorization after applying a test-specific mutation.
     fn signed_key_authorization_hex_with(
         entry: &SessionEntry,
         update: impl FnOnce(KeyAuthorization) -> KeyAuthorization,
@@ -612,6 +628,7 @@ mod tests {
         hex::encode_prefixed(buf)
     }
 
+    /// Builds a key authorization that mirrors the session entry policy.
     fn session_key_authorization(entry: &SessionEntry) -> KeyAuthorization {
         KeyAuthorization::unrestricted(entry.chain_id, SignatureType::Secp256k1, entry.key_address)
             .with_expiry(entry.expiry)
