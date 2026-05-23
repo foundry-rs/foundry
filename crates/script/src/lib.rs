@@ -394,7 +394,7 @@ impl ScriptArgs {
             // Check if there are any missing RPCs and exit early to avoid hard error.
             if pre_simulation.execution_artifacts.rpc_data.missing_rpc {
                 if !shell::is_json() {
-                    sh_println!("\nIf you wish to simulate on-chain transactions pass a RPC URL.")?;
+                    sh_println!("\nIf you wish to simulate on-chain transactions pass an RPC URL.")?;
                 }
 
                 return Ok(None);

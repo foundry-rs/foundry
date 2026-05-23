@@ -1511,7 +1511,7 @@ Compiler run successful!
 Script ran successfully.
 [GAS]
 
-If you wish to simulate on-chain transactions pass a RPC URL.
+If you wish to simulate on-chain transactions pass an RPC URL.
 
 "#]]);
 });
@@ -1587,7 +1587,7 @@ Script ran successfully.
   0x159E2f2F1C094625A2c6c8bF59526d91454c2F3c
   0x159E2f2F1C094625A2c6c8bF59526d91454c2F3c
 
-If you wish to simulate on-chain transactions pass a RPC URL.
+If you wish to simulate on-chain transactions pass an RPC URL.
 
 "#]]);
 });
@@ -1637,7 +1637,7 @@ Compiler run successful!
 Script ran successfully.
 [GAS]
 
-If you wish to simulate on-chain transactions pass a RPC URL.
+If you wish to simulate on-chain transactions pass an RPC URL.
 
 "#]]);
 });

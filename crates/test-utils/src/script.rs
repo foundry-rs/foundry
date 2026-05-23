@@ -278,7 +278,7 @@ pub enum ScriptOutcome {
 impl ScriptOutcome {
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::OkNoEndpoint => "If you wish to simulate on-chain transactions pass a RPC URL.",
+            Self::OkNoEndpoint => "If you wish to simulate on-chain transactions pass an RPC URL.",
             Self::OkSimulation => "SIMULATION COMPLETE. To broadcast these",
             Self::OkBroadcast => "ONCHAIN EXECUTION COMPLETE & SUCCESSFUL",
             Self::WarnSpecifyDeployer => {
