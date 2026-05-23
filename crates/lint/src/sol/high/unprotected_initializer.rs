@@ -4,9 +4,12 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{ContractKind, StateMutability, Visibility},
-    interface::sym,
-    sema::hir::{self, ContractId, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId},
+    ast::{ContractKind, FunctionKind, StateMutability, Visibility},
+    interface::{Symbol, kw, sym},
+    sema::{
+        builtins::Builtin,
+        hir::{self, ContractId, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId},
+    },
 };
 use std::collections::HashSet;
 
@@ -43,11 +46,13 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
             return;
         }
 
+        if !has_destructive_entrypoint(hir, contract) {
+            return;
+        }
+
         for fid in contract.functions() {
             let func = hir.function(fid);
-            if !is_public_initializer(hir, func, upgradeable)
-                || has_modifier_named(hir, func, "onlyProxy")
-            {
+            if !is_public_initializer(hir, func) || has_modifier_named(hir, func, "onlyProxy") {
                 continue;
             }
 
@@ -61,42 +66,205 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
     }
 }
 
-fn is_public_initializer(hir: &hir::Hir<'_>, func: &hir::Function<'_>, upgradeable: bool) -> bool {
-    if !func.kind.is_function()
-        || !matches!(func.visibility, Visibility::Public | Visibility::External)
-        || matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
-    {
-        return false;
-    }
-
-    has_initializer_modifier(hir, func)
-        || (upgradeable && func.name.is_some_and(|name| is_initializer_name(name.as_str())))
-}
-
-fn is_initializer_name(name: &str) -> bool {
-    if matches!(name, "initialize" | "reinitialize") {
-        return true;
-    }
-
-    name.strip_prefix("initialize").is_some_and(|suffix| {
-        suffix
-            .chars()
-            .next()
-            .is_some_and(|c| c == '_' || c.is_ascii_digit() || c.is_ascii_uppercase())
-    }) || name.strip_prefix("reinitialize").is_some_and(|suffix| {
-        suffix
-            .chars()
-            .next()
-            .is_some_and(|c| c == '_' || c.is_ascii_digit() || c.is_ascii_uppercase())
-    })
+fn is_public_initializer(hir: &hir::Hir<'_>, func: &hir::Function<'_>) -> bool {
+    func.kind.is_function()
+        && matches!(func.visibility, Visibility::Public | Visibility::External)
+        && !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
+        && has_initializer_modifier(hir, func)
 }
 
 fn initializers_disabled_in_constructor(hir: &hir::Hir<'_>, contract: &hir::Contract<'_>) -> bool {
     contract.linearized_bases.iter().filter_map(|&cid| hir.contract(cid).ctor).any(|ctor_id| {
         let ctor = hir.function(ctor_id);
         has_modifier_named(hir, ctor, "initializer")
-            || function_calls_named(hir, ctor, "_disableInitializers")
+            || function_calls_named(hir, ctor, contract.linearized_bases, "_disableInitializers")
     })
+}
+
+fn has_destructive_entrypoint(hir: &hir::Hir<'_>, contract: &hir::Contract<'_>) -> bool {
+    effective_runtime_dispatch_surface(hir, contract.linearized_bases).into_iter().any(|fid| {
+        let func = hir.function(fid);
+        if has_modifier_named(hir, func, "onlyProxy") {
+            return false;
+        }
+
+        let Some(body) = func.body else { return false };
+        let mut finder =
+            DestructiveSinkFinder { hir, bases: contract.linearized_bases, stack: vec![fid] };
+        finder.block_has_destructive_sink(body)
+    })
+}
+
+fn effective_runtime_dispatch_surface(hir: &hir::Hir<'_>, bases: &[ContractId]) -> Vec<FunctionId> {
+    let mut seen_functions: HashSet<(Symbol, String)> = HashSet::new();
+    let mut seen_fallback = false;
+    let mut seen_receive = false;
+    let mut entries = Vec::new();
+
+    for &cid in bases {
+        for fid in hir.contract(cid).all_functions() {
+            let func = hir.function(fid);
+            match func.kind {
+                FunctionKind::Function => {
+                    if !matches!(func.visibility, Visibility::Public | Visibility::External) {
+                        continue;
+                    }
+                    let Some(name) = func.name else { continue };
+                    if seen_functions.insert((name.name, parameter_signature(hir, func.parameters)))
+                    {
+                        entries.push(fid);
+                    }
+                }
+                FunctionKind::Fallback => {
+                    if !seen_fallback {
+                        seen_fallback = true;
+                        entries.push(fid);
+                    }
+                }
+                FunctionKind::Receive => {
+                    if !seen_receive {
+                        seen_receive = true;
+                        entries.push(fid);
+                    }
+                }
+                FunctionKind::Constructor | FunctionKind::Modifier => {}
+            }
+        }
+    }
+
+    entries
+}
+
+fn parameter_signature(hir: &hir::Hir<'_>, params: &[VariableId]) -> String {
+    params
+        .iter()
+        .map(|&param| format!("{:?}", hir.variable(param).ty.kind))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+struct DestructiveSinkFinder<'hir> {
+    hir: &'hir hir::Hir<'hir>,
+    bases: &'hir [ContractId],
+    stack: Vec<FunctionId>,
+}
+
+impl<'hir> DestructiveSinkFinder<'hir> {
+    fn block_has_destructive_sink(&mut self, block: hir::Block<'hir>) -> bool {
+        block.stmts.iter().any(|stmt| self.stmt_has_destructive_sink(stmt))
+    }
+
+    fn stmt_has_destructive_sink(&mut self, stmt: &'hir hir::Stmt<'hir>) -> bool {
+        match &stmt.kind {
+            StmtKind::DeclSingle(var_id) => self
+                .hir
+                .variable(*var_id)
+                .initializer
+                .is_some_and(|init| self.expr_has_destructive_sink(init)),
+            StmtKind::DeclMulti(_, expr)
+            | StmtKind::Emit(expr)
+            | StmtKind::Revert(expr)
+            | StmtKind::Return(Some(expr))
+            | StmtKind::Expr(expr) => self.expr_has_destructive_sink(expr),
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
+                self.block_has_destructive_sink(*block)
+            }
+            StmtKind::If(condition, then_stmt, else_stmt) => {
+                self.expr_has_destructive_sink(condition)
+                    || self.stmt_has_destructive_sink(then_stmt)
+                    || else_stmt.is_some_and(|stmt| self.stmt_has_destructive_sink(stmt))
+            }
+            StmtKind::Try(stmt_try) => {
+                self.expr_has_destructive_sink(&stmt_try.expr)
+                    || stmt_try
+                        .clauses
+                        .iter()
+                        .any(|clause| self.block_has_destructive_sink(clause.block))
+            }
+            StmtKind::Return(None)
+            | StmtKind::Break
+            | StmtKind::Continue
+            | StmtKind::Placeholder
+            | StmtKind::Err(_) => false,
+        }
+    }
+
+    fn expr_has_destructive_sink(&mut self, expr: &'hir hir::Expr<'hir>) -> bool {
+        match &expr.kind {
+            ExprKind::Call(callee, args, opts) => {
+                if is_destructive_call(callee) {
+                    return true;
+                }
+
+                if self.expr_has_destructive_sink(callee)
+                    || opts.is_some_and(|opts| {
+                        opts.iter().any(|opt| self.expr_has_destructive_sink(&opt.value))
+                    })
+                    || args.exprs().any(|arg| self.expr_has_destructive_sink(arg))
+                {
+                    return true;
+                }
+
+                resolved_internal_function_ids(self.hir, callee, self.bases)
+                    .into_iter()
+                    .any(|func_id| self.function_has_destructive_sink(func_id))
+            }
+            ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
+                self.expr_has_destructive_sink(lhs) || self.expr_has_destructive_sink(rhs)
+            }
+            ExprKind::Unary(_, inner) | ExprKind::Delete(inner) | ExprKind::Payable(inner) => {
+                self.expr_has_destructive_sink(inner)
+            }
+            ExprKind::Index(base, index) => {
+                self.expr_has_destructive_sink(base)
+                    || index.is_some_and(|index| self.expr_has_destructive_sink(index))
+            }
+            ExprKind::Slice(base, start, end) => {
+                self.expr_has_destructive_sink(base)
+                    || start.is_some_and(|start| self.expr_has_destructive_sink(start))
+                    || end.is_some_and(|end| self.expr_has_destructive_sink(end))
+            }
+            ExprKind::Member(base, _) => self.expr_has_destructive_sink(base),
+            ExprKind::Ternary(condition, if_true, if_false) => {
+                self.expr_has_destructive_sink(condition)
+                    || self.expr_has_destructive_sink(if_true)
+                    || self.expr_has_destructive_sink(if_false)
+            }
+            ExprKind::Array(exprs) => exprs.iter().any(|expr| self.expr_has_destructive_sink(expr)),
+            ExprKind::Tuple(exprs) => {
+                exprs.iter().flatten().any(|expr| self.expr_has_destructive_sink(expr))
+            }
+            ExprKind::Lit(_)
+            | ExprKind::Ident(_)
+            | ExprKind::New(_)
+            | ExprKind::TypeCall(_)
+            | ExprKind::Type(_)
+            | ExprKind::Err(_) => false,
+        }
+    }
+
+    fn function_has_destructive_sink(&mut self, func_id: FunctionId) -> bool {
+        if self.stack.contains(&func_id) {
+            return false;
+        }
+
+        let func = self.hir.function(func_id);
+        let Some(body) = func.body else { return false };
+        self.stack.push(func_id);
+        let found = self.block_has_destructive_sink(body);
+        self.stack.pop();
+        found
+    }
+}
+
+fn is_destructive_call(callee: &hir::Expr<'_>) -> bool {
+    match &callee.peel_parens().kind {
+        ExprKind::Member(_, member) => matches!(member.name, kw::Delegatecall | kw::Callcode),
+        ExprKind::Ident(resolutions) => {
+            resolutions.iter().any(|res| matches!(res, Res::Builtin(Builtin::Selfdestruct)))
+        }
+        _ => false,
+    }
 }
 
 fn has_initializer_modifier(hir: &hir::Hir<'_>, func: &hir::Function<'_>) -> bool {
@@ -115,9 +283,14 @@ fn modifier_name_is(hir: &hir::Hir<'_>, modifier: &hir::Modifier<'_>, name: &str
     }
 }
 
-fn function_calls_named(hir: &hir::Hir<'_>, func: &hir::Function<'_>, name: &str) -> bool {
+fn function_calls_named(
+    hir: &hir::Hir<'_>,
+    func: &hir::Function<'_>,
+    bases: &[ContractId],
+    name: &str,
+) -> bool {
     let Some(body) = func.body else { return false };
-    let mut finder = CallNameFinder { hir, name, bases: &[], stack: vec![] };
+    let mut finder = CallNameFinder { hir, name, bases, stack: vec![] };
     finder.block_calls_named(body)
 }
 
