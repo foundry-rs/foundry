@@ -179,14 +179,13 @@ impl SessionRecord {
             return false;
         };
 
-        let should_clear_key = status.is_terminal() && session.key.is_some();
-        let should_update_status = session.status != status;
-        if !should_update_status && !should_clear_key {
+        let changed = session.status != status || status.is_terminal() && session.key.is_some();
+        if !changed {
             return false;
         }
 
         session.status = status;
-        if should_clear_key {
+        if status.is_terminal() {
             session.key = None;
         }
         true
