@@ -2,8 +2,11 @@
 
 use super::{KeyType, registry::*, tempo_home};
 use alloy_primitives::{Address, B256, Selector};
+use alloy_signer::Signer;
+use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use tempo_primitives::transaction::SignedKeyAuthorization;
 
 /// Relative path from Tempo home to the session registry file.
 pub const WALLET_SESSIONS_PATH: &str = "wallet/sessions.toml";
@@ -183,6 +186,14 @@ impl SessionRecord {
     }
 }
 
+/// A live session key resolved into the signer and Tempo access-key metadata.
+#[derive(Debug)]
+pub struct ResolvedSessionSigner {
+    pub session: SessionEntry,
+    pub signer: WalletSigner,
+    pub access_key: TempoAccessKeyConfig,
+}
+
 /// Returns the path to the Tempo session registry file.
 pub fn session_registry_path() -> Option<PathBuf> {
     tempo_home().map(|home| home.join(WALLET_SESSIONS_PATH))
@@ -206,6 +217,109 @@ pub fn read_session_record() -> Option<SessionRecord> {
 /// Read a live session-scoped key entry by session id.
 pub fn read_live_session_key(session_id: B256, now: u64) -> Option<SessionEntry> {
     read_session_record()?.live_key(session_id, now).cloned()
+}
+
+/// Resolve a live session key into a signer and access-key configuration.
+pub fn resolve_live_session_signer(
+    session_id: B256,
+    now: u64,
+) -> eyre::Result<Option<ResolvedSessionSigner>> {
+    mark_expired_session_entries(now)?;
+
+    let path =
+        session_registry_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
+    let Some(record) = read_toml_file::<SessionRecord>(&path, "tempo sessions")? else {
+        return Ok(None);
+    };
+    let Some(session) = record.live_key(session_id, now).cloned() else {
+        return Ok(None);
+    };
+    let key =
+        session.key.as_ref().ok_or_else(|| eyre::eyre!("live session has no key material"))?;
+
+    let signer = foundry_wallets::utils::create_private_key_signer(&key.key)?;
+    let signer_address = signer.address();
+    if signer_address != session.key_address {
+        eyre::bail!(
+            "session {} key material resolves to {}, expected {}",
+            session.session_id,
+            signer_address,
+            session.key_address
+        );
+    }
+
+    let key_authorization = key
+        .key_authorization
+        .as_deref()
+        .map(|raw| {
+            super::decode_key_authorization::<SignedKeyAuthorization>(raw)
+                .map_err(|err| eyre::eyre!("failed to decode session key_authorization: {err}"))
+        })
+        .transpose()?;
+    if let Some(auth) = &key_authorization {
+        validate_session_key_authorization(&session, key, auth)?;
+    }
+    let access_key = TempoAccessKeyConfig {
+        wallet_address: session.root_account,
+        key_address: session.key_address,
+        key_authorization,
+    };
+
+    Ok(Some(ResolvedSessionSigner { session, signer, access_key }))
+}
+
+fn validate_session_key_authorization(
+    session: &SessionEntry,
+    key: &SessionKeyMaterial,
+    authorization: &SignedKeyAuthorization,
+) -> eyre::Result<()> {
+    if authorization.authorization.key_id != session.key_address {
+        eyre::bail!(
+            "session {} key_authorization key_id is {}, expected {}",
+            session.session_id,
+            authorization.authorization.key_id,
+            session.key_address
+        );
+    }
+    if authorization.authorization.chain_id != session.chain_id {
+        eyre::bail!(
+            "session {} key_authorization chain_id is {}, expected {}",
+            session.session_id,
+            authorization.authorization.chain_id,
+            session.chain_id
+        );
+    }
+    let expected_key_type = key_type_to_signature_type(key.key_type);
+    if authorization.authorization.key_type != expected_key_type {
+        eyre::bail!(
+            "session {} key_authorization key_type is {:?}, expected {:?}",
+            session.session_id,
+            authorization.authorization.key_type,
+            expected_key_type
+        );
+    }
+    let recovered = authorization
+        .recover_signer()
+        .map_err(|err| eyre::eyre!("failed to recover session key_authorization signer: {err}"))?;
+    if recovered != session.root_account {
+        eyre::bail!(
+            "session {} key_authorization signer is {}, expected {}",
+            session.session_id,
+            recovered,
+            session.root_account
+        );
+    }
+    Ok(())
+}
+
+const fn key_type_to_signature_type(
+    key_type: KeyType,
+) -> tempo_primitives::transaction::SignatureType {
+    match key_type {
+        KeyType::Secp256k1 => tempo_primitives::transaction::SignatureType::Secp256k1,
+        KeyType::P256 => tempo_primitives::transaction::SignatureType::P256,
+        KeyType::WebAuthn => tempo_primitives::transaction::SignatureType::WebAuthn,
+    }
 }
 
 /// Atomically upsert a [`SessionEntry`] into the session registry.
@@ -249,7 +363,17 @@ pub fn mark_expired_session_entries(now: u64) -> eyre::Result<usize> {
 mod tests {
     use super::*;
     use crate::tempo::with_tempo_home;
+    use alloy_primitives::hex;
+    use alloy_rlp::Encodable;
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
     use std::{fs, str::FromStr};
+    use tempo_primitives::transaction::{KeyAuthorization, PrimitiveSignature, SignatureType};
+
+    const ROOT_PRIVATE_KEY: &str =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const SESSION_PRIVATE_KEY: &str =
+        "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
 
     fn sample_entry(session_id: B256, expiry: u64, status: SessionStatus) -> SessionEntry {
         SessionEntry {
@@ -283,6 +407,41 @@ mod tests {
             }),
             ..sample_entry(session_id, expiry, status)
         }
+    }
+
+    fn sample_entry_with_valid_key(
+        session_id: B256,
+        expiry: u64,
+        status: SessionStatus,
+    ) -> SessionEntry {
+        let root_signer: PrivateKeySigner = ROOT_PRIVATE_KEY.parse().unwrap();
+        let signer = foundry_wallets::utils::create_private_key_signer(SESSION_PRIVATE_KEY)
+            .expect("valid test private key");
+        SessionEntry {
+            root_account: root_signer.address(),
+            key_address: signer.address(),
+            key: Some(SessionKeyMaterial {
+                key_type: KeyType::Secp256k1,
+                key: SESSION_PRIVATE_KEY.to_string(),
+                key_authorization: None,
+            }),
+            ..sample_entry(session_id, expiry, status)
+        }
+    }
+
+    fn signed_key_authorization_hex(entry: &SessionEntry) -> String {
+        let root_signer: PrivateKeySigner = ROOT_PRIVATE_KEY.parse().unwrap();
+        let auth = KeyAuthorization::unrestricted(
+            entry.chain_id,
+            SignatureType::Secp256k1,
+            entry.key_address,
+        )
+        .with_expiry(entry.expiry);
+        let signature = root_signer.sign_hash_sync(&auth.signature_hash()).unwrap();
+        let signed = auth.into_signed(PrimitiveSignature::Secp256k1(signature));
+        let mut buf = Vec::new();
+        signed.encode(&mut buf);
+        hex::encode_prefixed(buf)
     }
 
     #[test]
@@ -379,6 +538,121 @@ mod tests {
         assert!(record.live_key(revoked_id, 100).is_none());
         assert!(record.live_key(no_key_id, 100).is_none());
         assert!(record.live_key(pending_id, 100).is_none());
+    }
+
+    #[test]
+    fn resolve_live_session_signer_returns_signer_and_access_key_config() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x06; 32]);
+            let entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            upsert_session_entry(entry.clone()).unwrap();
+
+            let resolved = resolve_live_session_signer(session_id, 100).unwrap().unwrap();
+
+            assert_eq!(resolved.session, entry);
+            assert_eq!(Signer::address(&resolved.signer), entry.key_address);
+            assert_eq!(resolved.access_key.wallet_address, entry.root_account);
+            assert_eq!(resolved.access_key.key_address, entry.key_address);
+            assert!(resolved.access_key.key_authorization.is_none());
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_rejects_mismatched_private_key() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x07; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            entry.key_address =
+                Address::from_str("0x0000000000000000000000000000000000000abc").unwrap();
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("key material resolves to"));
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_expires_stale_entries_before_resolving() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x08; 32]);
+            upsert_session_entry(sample_entry_with_valid_key(
+                session_id,
+                100,
+                SessionStatus::Active,
+            ))
+            .unwrap();
+
+            assert!(resolve_live_session_signer(session_id, 100).unwrap().is_none());
+
+            let record = read_session_record().unwrap();
+            let session = record.get(session_id).unwrap();
+            assert_eq!(session.status, SessionStatus::Expired);
+            assert!(session.key.is_none());
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_decodes_and_validates_key_authorization() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x09; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            let auth = signed_key_authorization_hex(&entry);
+            entry.key.as_mut().unwrap().key_authorization = Some(auth);
+            upsert_session_entry(entry.clone()).unwrap();
+
+            let resolved = resolve_live_session_signer(session_id, 100).unwrap().unwrap();
+            let key_authorization = resolved.access_key.key_authorization.unwrap();
+
+            assert_eq!(key_authorization.authorization.key_id, entry.key_address);
+            assert_eq!(key_authorization.authorization.chain_id, entry.chain_id);
+            assert_eq!(key_authorization.authorization.key_type, SignatureType::Secp256k1);
+            assert_eq!(key_authorization.recover_signer().unwrap(), entry.root_account);
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_rejects_invalid_key_authorization() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x0a; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            entry.key.as_mut().unwrap().key_authorization = Some("0xdeadbeef".to_string());
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("key_authorization"));
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_rejects_authorization_for_wrong_chain() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x0b; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            let mut auth_entry = entry.clone();
+            auth_entry.chain_id += 1;
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex(&auth_entry));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("chain_id"));
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_fails_closed_when_session_file_is_corrupt() {
+        with_tempo_home(|| {
+            let path = session_registry_path().unwrap();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "sessions = [").unwrap();
+            let original = fs::read_to_string(&path).unwrap();
+
+            assert!(resolve_live_session_signer(B256::from([0x0c; 32]), 100).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        });
     }
 
     #[test]
