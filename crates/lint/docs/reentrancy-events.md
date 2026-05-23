@@ -7,14 +7,17 @@ Flags `emit` statements that appear after an external call within the same funct
 
 ## What it does
 
-For every function body, the lint performs a control-flow analysis that tracks whether an external call has occurred on the path leading to each statement. External calls include:
+For every function body, the lint performs a control-flow analysis that tracks whether an external call has occurred on the path leading to each statement. Only calls that can plausibly affect log ordering or observable state are considered — `staticcall` and high-level `view` / `pure` external calls are excluded. Tracked calls include:
 
-- Low-level calls: `address.call(...)`, `delegatecall(...)`, `staticcall(...)` (with or without `{value: ...}` / `{gas: ...}` options).
+- Low-level calls: `address.call(...)` and `address.delegatecall(...)` (with or without `{value: ...}` / `{gas: ...}` options).
 - ETH sends: `address.transfer(...)`, `address.send(...)`.
 - `this.method(...)` self-external calls.
-- High-level external calls on interface or contract types (e.g. `IERC20(token).transfer(...)`).
+- High-level state-mutating external calls on interface or contract types (e.g. `IERC20(token).transfer(...)`). `view` and `pure` callees are not tracked.
+- Contract deployments via `new Foo(...)` (the constructor runs as an external interaction).
 
-External calls reached through internal/private/public helper functions and modifiers are also tracked transitively. When the analysis encounters an `emit` statement reachable from a path that already executed an external call, the statement is flagged.
+External calls reached through internal/private/public helper functions and modifiers are tracked transitively when the helper is invoked by a bare identifier (e.g. `_helper()`). Member-form internal dispatch such as `Lib.f(...)`, `using for` syntax, and `super.f(...)` is **not** yet followed; external calls hidden behind those forms may go undetected.
+
+When the analysis encounters an `emit` statement reachable from a path that already executed a tracked external call, the statement is flagged.
 
 ## Why is this bad?
 

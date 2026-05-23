@@ -1,6 +1,6 @@
 use super::{
     ReentrancyEvents,
-    calls_loop::{is_external_call, resolved_internal_function_ids},
+    calls_loop::{is_state_mutating_external_call, resolved_internal_function_ids},
 };
 use crate::{
     linter::{LateLintPass, LintContext},
@@ -239,9 +239,28 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             StmtKind::Break => Exits::break_(entry),
             StmtKind::Continue => Exits::continue_(entry),
             StmtKind::Loop(block, _) => {
-                // Single-pass may-analysis: matches `reentrancy.rs`. May miss cases where the
-                // second iteration would taint earlier emits via the back-edge.
-                let body = self.analyze_block(block, placeholder, entry.clone());
+                // Two-pass fixpoint: with a 1-bit state the back-edge can only strengthen
+                // `external_call_seen` from false to true, so a second pass with the merged
+                // entry suffices to catch emits tainted only on iterations 2..N. Duplicate
+                // diagnostics from the first pass are deduped via `self.emitted`.
+                let first = self.analyze_block(block, placeholder, entry.clone());
+
+                // Back-edge entry: pre-loop entry merged with anything that loops back
+                // (fallthrough at the end of the body, or an explicit `continue`).
+                let mut back_edge = entry.clone();
+                if let Some(ft) = &first.fallthrough {
+                    back_edge.merge(ft);
+                }
+                if let Some(c) = &first.continue_ {
+                    back_edge.merge(c);
+                }
+
+                let body = if back_edge == entry {
+                    first
+                } else {
+                    self.analyze_block(block, placeholder, back_edge)
+                };
+
                 // Post-loop state combines the entry (zero iterations), fallthrough at end of
                 // body, plus any `break` or `continue` exits. Aborting paths are absent and
                 // therefore drop out.
@@ -310,7 +329,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.analyze_expr(arg, state);
                 }
 
-                if is_external_call(self.gcx, self.hir, callee, args.len())
+                if is_state_mutating_external_call(self.gcx, self.hir, callee, args.len())
                     || is_new_expression(callee)
                 {
                     // Deploying a contract (`new Foo(args)`) executes that contract's

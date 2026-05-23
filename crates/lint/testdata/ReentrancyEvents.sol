@@ -5,6 +5,8 @@ pragma solidity ^0.8.15;
 
 interface IExternal {
     function notify(uint256 value) external returns (bool);
+    function peek() external view returns (uint256);
+    function compute(uint256 x) external pure returns (uint256);
 }
 
 contract Other {
@@ -96,6 +98,15 @@ contract ReentrancyEvents {
             d.notify(i);
         }
         emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    // Loop back-edge: the emit is clean on iteration 1 but tainted by the call from the
+    // previous iteration on iterations 2..N. The two-pass fixpoint must catch this.
+    function emitInLoopBeforeCall(IExternal d, uint256 n) external {
+        for (uint256 i; i < n; ++i) {
+            emit Counter(i); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+            d.notify(i);
+        }
     }
 
     function emitAfterTryCall(IExternal d) external {
@@ -242,6 +253,25 @@ contract ReentrancyEvents {
         d.notify(0);
         assert(false);
         emit Tick();
+    }
+
+    // `staticcall` cannot emit logs or perform state-changing reentrancy.
+    function emitAfterStaticcall(address target) external {
+        // forge-lint: disable-next-line(unchecked-call)
+        target.staticcall("");
+        emit Tick();
+    }
+
+    // High-level `view` external calls are read-only and cannot reorder events.
+    function emitAfterViewCall(IExternal d) external {
+        uint256 v = d.peek();
+        emit Counter(v);
+    }
+
+    // High-level `pure` external calls likewise cannot reorder events.
+    function emitAfterPureCall(IExternal d) external {
+        uint256 v = d.compute(1);
+        emit Counter(v);
     }
 
     // --- Helpers ------------------------------------------------------------

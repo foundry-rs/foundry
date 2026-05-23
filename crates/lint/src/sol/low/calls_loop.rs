@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{DataLocation, ElementaryType, Visibility},
+    ast::{DataLocation, ElementaryType, StateMutability, Visibility},
     interface::{kw, sym},
     sema::{
         Gcx, Ty,
@@ -273,6 +273,45 @@ pub(super) fn is_external_call<'gcx>(
     }
 
     matches!(semantic_member_ty(gcx, hir, base, member.name).map(|ty| ty.kind), Some(TyKind::FnPtr(func)) if func.visibility >= Visibility::Public)
+}
+
+/// Like [`is_external_call`], but excludes calls that cannot affect log ordering or
+/// observable state: low-level `staticcall` and high-level `view`/`pure` callees.
+pub(super) fn is_state_mutating_external_call<'gcx>(
+    gcx: Gcx<'gcx>,
+    hir: &Hir<'gcx>,
+    callee: &Expr<'gcx>,
+    explicit_arg_count: usize,
+) -> bool {
+    let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
+
+    // Low-level address calls: `call` and `delegatecall` are in scope; `staticcall` is not.
+    if matches!(member.name, kw::Call | kw::Delegatecall) && is_address_like(hir, base) {
+        return true;
+    }
+
+    if member.name == kw::Staticcall && is_address_like(hir, base) {
+        return false;
+    }
+
+    if matches!(member.name, sym::send | sym::transfer) && is_address_like(hir, base) {
+        return true;
+    }
+
+    if is_this(base) {
+        return true;
+    }
+
+    if resolves_to_internal_library_extension(gcx, hir, base, *member, explicit_arg_count) {
+        return false;
+    }
+
+    matches!(
+        semantic_member_ty(gcx, hir, base, member.name).map(|ty| ty.kind),
+        Some(TyKind::FnPtr(func))
+            if func.visibility >= Visibility::Public
+                && !matches!(func.state_mutability, StateMutability::View | StateMutability::Pure)
+    )
 }
 
 fn resolves_to_internal_library_extension<'gcx>(
