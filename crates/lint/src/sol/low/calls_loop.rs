@@ -246,7 +246,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 }
 
-fn is_external_call<'gcx>(
+pub(super) fn is_external_call<'gcx>(
     gcx: Gcx<'gcx>,
     hir: &Hir<'gcx>,
     callee: &Expr<'gcx>,
@@ -309,7 +309,7 @@ fn member_function_ids<'gcx>(
         .collect()
 }
 
-fn resolved_internal_function_ids<'hir>(
+pub(super) fn resolved_internal_function_ids<'hir>(
     hir: &'hir Hir<'hir>,
     callee: &'hir Expr<'hir>,
 ) -> impl Iterator<Item = FunctionId> + 'hir {
