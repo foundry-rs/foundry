@@ -268,7 +268,7 @@ pub fn resolve_live_session_signer(
     Ok(Some(ResolvedSessionSigner { session, signer, access_key }))
 }
 
-/// Ensures a session key authorization matches the stored key, chain, root signer, and policy.
+/// Ensures a session key authorization matches the stored key, chain, and root signer.
 fn validate_session_key_authorization(
     session: &SessionEntry,
     key: &SessionKeyMaterial,
@@ -314,7 +314,7 @@ fn validate_session_key_authorization(
     Ok(())
 }
 
-/// Ensures a session authorization does not outlive or exceed the stored session policy.
+/// Ensures authorization expiry, limits, and call scope match the stored session policy.
 fn validate_session_authorization_policy(
     session: &SessionEntry,
     authorization: &SignedKeyAuthorization,
