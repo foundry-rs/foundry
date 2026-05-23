@@ -1050,6 +1050,8 @@ async fn test_tx_access_list() {
     let multicall = Multicall::deploy(provider.clone()).await.unwrap();
     let simple_storage = SimpleStorage::deploy(provider.clone(), "foo".to_string()).await.unwrap();
 
+    // Mirrors execution-apis `create-al-contract.io`:
+    // https://github.com/ethereum/execution-apis/blob/8d6b784cc57047ef10e4044ec2efc1c60950dd7f/tests/eth_createAccessList/create-al-contract.io
     // when calling `setValue` on SimpleStorage, both the `lastSender` and `_value` storages are
     // modified The `_value` is a `string`, so the storage slots here (small string) are `0x1`
     // and `keccak(0x1)`
@@ -1061,8 +1063,6 @@ async fn test_tx_access_list() {
         .with_input(set_value_calldata.to_owned());
     let set_value_tx = WithOtherFields::new(set_value_tx);
     let access_list = provider.create_access_list(&set_value_tx).await.unwrap();
-    // let set_value_tx = simple_storage.set_value("bar".to_string()).from(sender).tx;
-    // let access_list = client.create_access_list(&set_value_tx, None).await.unwrap();
     assert_access_list_eq(
         access_list.access_list,
         AccessList::from(vec![AccessListItem {
@@ -1110,7 +1110,6 @@ async fn test_tx_access_list() {
     let access_list = provider.create_access_list(&subcall_tx).await.unwrap();
     assert_access_list_eq(
         access_list.access_list,
-        // H256::from_uint(&(1u64.into())),
         AccessList::from(vec![AccessListItem {
             address: *simple_storage.address(),
             storage_keys: vec![
@@ -1122,6 +1121,49 @@ async fn test_tx_access_list() {
                 .unwrap(),
             ],
         }]),
+    );
+
+    // Mirrors execution-apis `create-al-abi-revert.io`:
+    // https://github.com/ethereum/execution-apis/blob/8d6b784cc57047ef10e4044ec2efc1c60950dd7f/tests/eth_createAccessList/create-al-abi-revert.io
+    // eth_createAccessList should return a successful RPC result for reverted execution,
+    // preserving the generated access list and reporting the revert in the result object.
+    //
+    // Runtime:
+    //   60 00      PUSH1 0x00       ; calldata offset
+    //   35         CALLDATALOAD     ; read the 32-byte storage slot from calldata
+    //   54         SLOAD            ; access that slot so it appears in the access list
+    //   60 00      PUSH1 0x00       ; revert data offset
+    //   60 00      PUSH1 0x00       ; revert data length
+    //   fd         REVERT           ; fail after the storage read
+    let reverter_initcode =
+        Bytes::from(hex!("6009600c60003960096000f36000355460006000fd").to_vec());
+    let funded_sender = handle.dev_accounts().next().unwrap();
+    let deploy_reverter_tx =
+        TransactionRequest::default().from(funded_sender).with_deploy_code(reverter_initcode);
+    let reverter_receipt = provider
+        .send_transaction(WithOtherFields::new(deploy_reverter_tx))
+        .await
+        .unwrap()
+        .get_receipt()
+        .await
+        .unwrap();
+    let reverter = reverter_receipt.contract_address.unwrap();
+
+    let slot =
+        FixedBytes::from_str("0x00000000000000000000000000000000000000000000000000000000000042ff")
+            .unwrap();
+    let reverter_call_tx = TransactionRequest::default()
+        .from(funded_sender)
+        .to(reverter)
+        .input(Bytes::from(slot.to_vec()).into());
+    let reverter_call_tx = WithOtherFields::new(reverter_call_tx);
+    let access_list = provider.create_access_list(&reverter_call_tx).await.unwrap();
+
+    assert_eq!(access_list.error.as_deref(), Some("execution reverted"));
+    assert!(access_list.gas_used > U256::ZERO);
+    assert_access_list_eq(
+        access_list.access_list,
+        AccessList::from(vec![AccessListItem { address: reverter, storage_keys: vec![slot] }]),
     );
 }
 
