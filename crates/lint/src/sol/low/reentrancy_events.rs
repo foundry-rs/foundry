@@ -172,7 +172,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         };
 
         for arg in modifier.args.exprs() {
+            self.expr_aborted = false;
             self.analyze_expr(arg, &mut entry);
+            // An aborting arg means the modifier (and therefore its body) is never entered.
+            if self.expr_aborted {
+                return Exits::abort();
+            }
         }
 
         let Some(modifier_id) = modifier.id.as_function() else {
@@ -224,9 +229,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         placeholder: Placeholder<'hir>,
         mut entry: FlowState,
     ) -> Exits {
+        // Reset once per statement so each branch can read `expr_aborted` after analyzing
+        // its top-level expressions without leaking state from a previous statement.
+        self.expr_aborted = false;
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
-                self.expr_aborted = false;
                 if let Some(init) = self.hir.variable(var_id).initializer {
                     self.analyze_expr(init, &mut entry);
                 }
@@ -236,7 +243,6 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 Exits::fallthrough(entry)
             }
             StmtKind::DeclMulti(_, expr) | StmtKind::Expr(expr) => {
-                self.expr_aborted = false;
                 self.analyze_expr(expr, &mut entry);
                 // Aborts via builtins (`revert()`, `selfdestruct(...)`, `require(false, …)`,
                 // `assert(false)`) or via an inlined helper with no normal exit.
@@ -252,6 +258,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 // Solidity evaluates event arguments before emitting, so an external call inside
                 // the arguments also taints this emit. Analyze the args first, then check state.
                 self.analyze_expr(expr, &mut entry);
+                // If an argument aborts (e.g. `emit E(helperThatAlwaysReverts())`), the emit
+                // itself is unreachable, so it must not be reported and the path aborts.
+                if self.expr_aborted {
+                    return Exits::abort();
+                }
                 if entry.external_call_seen
                     && !self.suppress_inline_reports
                     && self.emitted.insert(stmt.span)
@@ -267,6 +278,10 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             StmtKind::Return(expr) => {
                 if let Some(expr) = expr {
                     self.analyze_expr(expr, &mut entry);
+                }
+                // If the return value computation aborts, the `return` itself never runs.
+                if self.expr_aborted {
+                    return Exits::abort();
                 }
                 Exits::return_(entry)
             }
@@ -317,6 +332,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             StmtKind::If(cond, then_stmt, else_stmt) => {
                 self.analyze_expr(cond, &mut entry);
+                // If the condition aborts (e.g. `if (helperThatAlwaysReverts())`), neither
+                // branch is reachable.
+                if self.expr_aborted {
+                    return Exits::abort();
+                }
 
                 let then_exits = self.analyze_stmt(then_stmt, placeholder, entry.clone());
                 let else_exits = if let Some(else_stmt) = else_stmt {
@@ -331,6 +351,11 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             StmtKind::Try(try_stmt) => {
                 self.analyze_expr(&try_stmt.expr, &mut entry);
+                // If evaluating the try-call expression aborts before the call itself runs
+                // (e.g. an aborting arg), no clause can execute.
+                if self.expr_aborted {
+                    return Exits::abort();
+                }
 
                 let mut summary = Exits::default();
                 for clause in try_stmt.clauses {
@@ -388,6 +413,28 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     resolved_super_function_ids(self.hir, self.enclosing_contract, callee)
                 {
                     self.analyze_internal_call(func_id, state);
+                }
+            }
+            ExprKind::Binary(lhs, op, rhs)
+                if matches!(op.kind, hir::BinOpKind::And | hir::BinOpKind::Or) =>
+            {
+                // Short-circuiting `&&`/`||`: LHS always runs, RHS is conditional. Model RHS
+                // on a forked state so its taint only reaches the merged result when the
+                // short-circuit path is also possible, and so an aborting RHS does not kill
+                // the whole expression (the short-circuit path still falls through).
+                self.analyze_expr(lhs, state);
+                let lhs_aborted = std::mem::replace(&mut self.expr_aborted, false);
+
+                let mut rhs_state = state.clone();
+                self.analyze_expr(rhs, &mut rhs_state);
+                let rhs_aborted = self.expr_aborted;
+
+                // The expression aborts iff LHS aborts (then no path survives); an
+                // RHS-only abort just drops the non-short-circuit path.
+                self.expr_aborted = lhs_aborted;
+
+                if !lhs_aborted && !rhs_aborted {
+                    state.merge(&rhs_state);
                 }
             }
             ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {

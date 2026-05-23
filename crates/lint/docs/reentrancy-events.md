@@ -15,7 +15,7 @@ For every function body, the lint performs a control-flow analysis that tracks w
 - High-level state-mutating external calls on interface or contract types (e.g. `IERC20(token).transfer(...)`). `view` and `pure` callees are not tracked.
 - Contract deployments via `new Foo(...)` (the constructor runs as an external interaction).
 
-External calls reached through internal/private/public helper functions and modifiers are tracked transitively when the helper is invoked by a bare identifier (e.g. `_helper()`). Member-form internal dispatch such as `Lib.f(...)`, `using for` syntax, and `super.f(...)` is **not** yet followed; external calls hidden behind those forms may go undetected.
+External calls reached through internal/private/public helper functions, modifiers, and `super.f(...)` base-chain dispatch are tracked transitively when the helper is invoked by a bare identifier (e.g. `_helper()`) or via `super.`. Member-form internal dispatch such as `Lib.f(...)` and `using for` syntax is **not** yet followed; external calls hidden behind those forms may go undetected.
 
 When the analysis encounters an `emit` statement reachable from a path that already executed a tracked external call, the statement is flagged.
 
