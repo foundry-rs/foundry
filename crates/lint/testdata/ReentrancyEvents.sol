@@ -274,6 +274,25 @@ contract ReentrancyEvents {
         emit Counter(v);
     }
 
+    // Caller is already tainted, then calls a helper that always reverts. The post-call
+    // emit is unreachable and must NOT be flagged.
+    function emitAfterTaintedAlwaysRevertsHelper(IExternal d) external {
+        d.notify(0);
+        _alwaysReverts();
+        emit Tick();
+    }
+
+    // The shared helper `_helperEmitAfterCall` is invoked from two callers. Its tainted
+    // emit must be reported exactly once (in the helper's self-pass), not duplicated per
+    // caller.
+    function callsSharedHelperA() external {
+        _helperEmitAfterCall();
+    }
+
+    function callsSharedHelperB() external {
+        _helperEmitAfterCall();
+    }
+
     // --- Helpers ------------------------------------------------------------
 
     function publicHelper() public {
@@ -302,5 +321,12 @@ contract ReentrancyEvents {
 
     function _pureHelper(uint256 a) internal pure returns (uint256) {
         return a + 1;
+    }
+
+    // Tainted emit inside a shared helper. The lint reports this once (in the helper's
+    // own self-pass), not once per caller.
+    function _helperEmitAfterCall() internal {
+        ext.notify(0);
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
 }

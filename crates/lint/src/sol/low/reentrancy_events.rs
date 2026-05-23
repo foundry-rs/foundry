@@ -116,11 +116,25 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     call_stack: Vec<FunctionId>,
     /// Spans already reported, to dedupe diagnostics across paths/iterations.
     emitted: HashSet<Span>,
+    /// When `true`, suppress emit diagnostics: we are inside an inlined helper that was
+    /// entered with a clean state, so the helper's own self-pass will catch any taint.
+    suppress_inline_reports: bool,
+    /// Set by `analyze_internal_call` when the inlined callee has no normal exits, so the
+    /// enclosing statement can treat itself as aborting.
+    expr_aborted: bool,
 }
 
 impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     fn new(ctx: &'ctx LintContext<'s, 'c>, gcx: Gcx<'hir>, hir: &'hir Hir<'hir>) -> Self {
-        Self { ctx, gcx, hir, call_stack: Vec::new(), emitted: HashSet::new() }
+        Self {
+            ctx,
+            gcx,
+            hir,
+            call_stack: Vec::new(),
+            emitted: HashSet::new(),
+            suppress_inline_reports: false,
+            expr_aborted: false,
+        }
     }
 
     fn analyze_callable(
@@ -198,18 +212,21 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     ) -> Exits {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
+                self.expr_aborted = false;
                 if let Some(init) = self.hir.variable(var_id).initializer {
                     self.analyze_expr(init, &mut entry);
+                }
+                if self.expr_aborted {
+                    return Exits::abort();
                 }
                 Exits::fallthrough(entry)
             }
             StmtKind::DeclMulti(_, expr) | StmtKind::Expr(expr) => {
+                self.expr_aborted = false;
                 self.analyze_expr(expr, &mut entry);
-                // Several Solidity builtins terminate execution but lower to plain expression
-                // statements rather than `StmtKind::Revert`: `revert()`/`revert("msg")`,
-                // `selfdestruct(...)`, `require(false, ...)`, and `assert(false)`. Treat them
-                // as aborts so following statements are not misanalysed as reachable.
-                if is_aborting_call(expr) {
+                // Aborts via builtins (`revert()`, `selfdestruct(...)`, `require(false, …)`,
+                // `assert(false)`) or via an inlined helper with no normal exit.
+                if is_aborting_call(expr) || self.expr_aborted {
                     return Exits::abort();
                 }
                 Exits::fallthrough(entry)
@@ -221,7 +238,10 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 // Solidity evaluates event arguments before emitting, so an external call inside
                 // the arguments also taints this emit. Analyze the args first, then check state.
                 self.analyze_expr(expr, &mut entry);
-                if entry.external_call_seen && self.emitted.insert(stmt.span) {
+                if entry.external_call_seen
+                    && !self.suppress_inline_reports
+                    && self.emitted.insert(stmt.span)
+                {
                     self.ctx.emit(&REENTRANCY_EVENTS, stmt.span);
                 }
                 Exits::fallthrough(entry)
@@ -312,7 +332,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     Exits::fallthrough(entry)
                 }
             }
-            StmtKind::Err(_) => Exits::fallthrough(entry),
+            StmtKind::Err(_) => {
+                // Inline assembly lowers to `StmtKind::Err`; it can perform external
+                // interactions (call/delegatecall/create, logs). Conservatively taint.
+                entry.external_call_seen = true;
+                Exits::fallthrough(entry)
+            }
         }
     }
 
@@ -329,12 +354,7 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.analyze_expr(arg, state);
                 }
 
-                if is_state_mutating_external_call(self.gcx, self.hir, callee, args.len())
-                    || is_new_expression(callee)
-                {
-                    // Deploying a contract (`new Foo(args)`) executes that contract's
-                    // constructor, which is an external interaction that may emit events
-                    // or call back into this contract.
+                if is_state_mutating_external_call(self.gcx, self.hir, callee, args.len()) {
                     state.external_call_seen = true;
                 }
 
@@ -406,15 +426,20 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
         let func = self.hir.function(func_id);
         let Some(body) = func.body else { return };
 
+        // Suppress diagnostics inside helpers entered with a clean state — the helper's
+        // own self-pass will independently catch any intra-helper taint, avoiding
+        // duplicate reports across callers.
+        let prev_suppress = self.suppress_inline_reports;
+        self.suppress_inline_reports = prev_suppress || !state.external_call_seen;
+
         self.call_stack.push(func_id);
         let summary = self.analyze_callable(func, body, state.clone());
         self.call_stack.pop();
 
-        // Caller only inherits the state of paths that return normally to it (implicit
-        // fallthrough at the end of the body, or explicit `return`). If every path inside the
-        // callee aborts (e.g. always `revert`s), the caller's state is left unchanged here —
-        // post-call code is technically dead, but we cannot signal that through the expression
-        // visitor. This is a documented limitation.
+        self.suppress_inline_reports = prev_suppress;
+
+        // Caller inherits the state of paths that return normally. If the callee has no
+        // normal exits (always aborts), signal abort to the enclosing statement.
         let any_normal = summary.fallthrough.is_some() || summary.return_.is_some();
         if any_normal {
             let mut after = FlowState::default();
@@ -425,6 +450,8 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                 after.merge(&rt);
             }
             *state = after;
+        } else {
+            self.expr_aborted = true;
         }
     }
 }
@@ -460,11 +487,4 @@ fn literal_false(expr: &Expr<'_>) -> bool {
         &expr.peel_parens().kind,
         ExprKind::Lit(lit) if matches!(lit.kind, LitKind::Bool(false))
     )
-}
-
-/// Returns `true` if `callee` is a `new` expression — i.e. the call is a contract deployment
-/// (`new Foo(args)`), which executes the deployed contract's constructor and is an external
-/// interaction for our purposes.
-fn is_new_expression(callee: &Expr<'_>) -> bool {
-    matches!(callee.peel_parens().kind, ExprKind::New(_))
 }

@@ -252,6 +252,10 @@ pub(super) fn is_external_call<'gcx>(
     callee: &Expr<'gcx>,
     explicit_arg_count: usize,
 ) -> bool {
+    // `new Foo(...)` runs the deployed contract's constructor — an external interaction.
+    if matches!(callee.peel_parens().kind, ExprKind::New(_)) {
+        return true;
+    }
     let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
 
     if matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
@@ -283,6 +287,10 @@ pub(super) fn is_state_mutating_external_call<'gcx>(
     callee: &Expr<'gcx>,
     explicit_arg_count: usize,
 ) -> bool {
+    // Contract deployment: the constructor runs arbitrary code and can emit logs.
+    if matches!(callee.peel_parens().kind, ExprKind::New(_)) {
+        return true;
+    }
     let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
 
     // Low-level address calls: `call` and `delegatecall` are in scope; `staticcall` is not.
