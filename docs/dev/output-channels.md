@@ -62,10 +62,12 @@ the global `Shell`, so they are not affected by the lint.
 | `sh_eprint!`     | stderr  | yes                                | Same as `sh_eprintln!`, no trailing newline.                       |
 | `prompt!`        | stderr (question) + stdin (answer) | yes (question is `sh_eprint!`) | Interactive question/answer.                          |
 
-The compilation reporter in `foundry_common::compile` automatically writes to
-stderr (either via the [`SpinnerReporter`](../../crates/common/src/term.rs)
-when stderr is a tty, or via a stderr-based fallback otherwise). Calling
-`sh_progress!` directly is also acceptable for one-off progress lines.
+The compilation reporter in `foundry_common::compile` writes its spinner to
+stderr in TTY mode (see [`SpinnerReporter`](../../crates/common/src/term.rs)).
+The non-TTY fallback still writes to stdout today; flipping it to stderr will
+shift many existing snapshot tests and is part of the per-command migration
+backlog. Calling `sh_progress!` directly is also acceptable for one-off
+progress lines.
 
 ## Decision rule for any `sh_println!` call site
 

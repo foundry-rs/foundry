@@ -16,11 +16,10 @@ use foundry_compilers::{
     info::ContractInfo as CompilerContractInfo,
     multi::{MultiCompiler, MultiCompilerSettings},
     project::Preprocessor,
-    report::{NoReporter, Report, Reporter},
+    report::{BasicStdoutReporter, NoReporter, Report},
     solc::SolcSettings,
 };
 use num_format::{Locale, ToFormattedString};
-use semver::Version;
 use std::{
     collections::BTreeMap,
     fmt::Display,
@@ -28,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 /// A Solar compiler instance, to grant syntactic and semantic analysis capabilities.
@@ -557,9 +556,10 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
 
 /// Configures the reporter and runs the given closure.
 ///
-/// Both the interactive [`SpinnerReporter`] and the non-tty fallback emit to stderr so that
-/// stdout stays clean for the command's machine-readable result (see
-/// [`docs/dev/output-channels.md`]).
+/// In TTY mode, [`SpinnerReporter`] paints the progress to stderr. The non-TTY fallback
+/// still writes to stdout via `BasicStdoutReporter`; migrating that path to stderr is
+/// part of the per-command stdout migration tracked in `docs/dev/output-channels.md`
+/// (it would shift many existing snapshot tests at once).
 pub fn with_compilation_reporter<O>(
     quiet: bool,
     project_root: Option<PathBuf>,
@@ -572,65 +572,11 @@ pub fn with_compilation_reporter<O>(
         if std::io::stderr().is_terminal() {
             Report::new(SpinnerReporter::spawn(project_root))
         } else {
-            Report::new(BasicStderrReporter::default())
+            Report::new(BasicStdoutReporter::default())
         }
     };
 
     foundry_compilers::report::with_scoped(&reporter, f)
-}
-
-/// A non-interactive reporter that emits compilation status lines to stderr.
-///
-/// Mirrors `foundry_compilers::report::BasicStdoutReporter` but writes to stderr so the
-/// command's stdout stays reserved for machine-readable output.
-#[derive(Clone, Debug, Default)]
-struct BasicStderrReporter {
-    _priv: (),
-}
-
-impl Reporter for BasicStderrReporter {
-    fn on_compiler_spawn(&self, compiler_name: &str, version: &Version, dirty_files: &[PathBuf]) {
-        let _ = sh_eprintln!(
-            "Compiling {} files with {} {}.{}.{}",
-            dirty_files.len(),
-            compiler_name,
-            version.major,
-            version.minor,
-            version.patch
-        );
-    }
-
-    fn on_compiler_success(&self, compiler_name: &str, version: &Version, duration: &Duration) {
-        let _ = sh_eprintln!(
-            "{} {}.{}.{} finished in {duration:.2?}",
-            compiler_name,
-            version.major,
-            version.minor,
-            version.patch
-        );
-    }
-
-    fn on_solc_installation_start(&self, version: &Version) {
-        let _ = sh_eprintln!("installing solc version \"{version}\"");
-    }
-
-    fn on_solc_installation_success(&self, version: &Version) {
-        let _ = sh_eprintln!("Successfully installed solc {version}");
-    }
-
-    fn on_solc_installation_error(&self, version: &Version, error: &str) {
-        let _ = sh_eprintln!("Failed to install solc {version}: {error}");
-    }
-
-    fn on_unresolved_imports(&self, imports: &[(&Path, &Path)], remappings: &[Remapping]) {
-        if imports.is_empty() {
-            return;
-        }
-        let _ = sh_eprintln!(
-            "{}",
-            foundry_compilers::report::format_unresolved_imports(imports, remappings)
-        );
-    }
 }
 
 /// Container type for parsing contract identifiers from CLI.
