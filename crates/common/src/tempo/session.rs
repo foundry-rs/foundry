@@ -1,11 +1,11 @@
 //! Tempo session registry and local lifecycle metadata.
 
 use super::{KeyType, registry::*, tempo_home};
-use alloy_primitives::{Address, B256, Selector};
+use alloy_primitives::{Address, B256, Selector, U256};
 use alloy_signer::Signer;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{num::NonZeroU64, path::PathBuf};
 use tempo_primitives::transaction::SignedKeyAuthorization;
 
 /// Relative path from Tempo home to the session registry file.
@@ -309,7 +309,171 @@ fn validate_session_key_authorization(
             session.root_account
         );
     }
+    validate_session_authorization_policy(session, authorization)?;
     Ok(())
+}
+
+fn validate_session_authorization_policy(
+    session: &SessionEntry,
+    authorization: &SignedKeyAuthorization,
+) -> eyre::Result<()> {
+    let auth = &authorization.authorization;
+
+    let expected_expiry = NonZeroU64::new(session.expiry)
+        .ok_or_else(|| eyre::eyre!("session {} has invalid zero expiry", session.session_id))?;
+    if auth.expiry != Some(expected_expiry) {
+        eyre::bail!(
+            "session {} key_authorization expiry is {:?}, expected {}",
+            session.session_id,
+            auth.expiry.map(NonZeroU64::get),
+            session.expiry
+        );
+    }
+
+    let Some(auth_limits) = auth.limits.as_deref() else {
+        eyre::bail!(
+            "session {} key_authorization limits are unrestricted, expected session limits",
+            session.session_id
+        );
+    };
+    let expected_limits = session_authorization_limits(session)?;
+    let actual_limits = authorization_limits(auth_limits);
+    if actual_limits != expected_limits {
+        eyre::bail!(
+            "session {} key_authorization limits do not match session limits",
+            session.session_id
+        );
+    }
+
+    let Some(auth_allowed_calls) = auth.allowed_calls.as_deref() else {
+        eyre::bail!(
+            "session {} key_authorization allowed_calls are unrestricted, expected session scope",
+            session.session_id
+        );
+    };
+    let expected_scope = session_authorization_scope(session);
+    let actual_scope = authorization_scope(auth_allowed_calls);
+    if actual_scope != expected_scope {
+        eyre::bail!(
+            "session {} key_authorization allowed_calls do not match session scope",
+            session.session_id
+        );
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct CanonicalTokenLimit {
+    token: Address,
+    limit: U256,
+    period: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct CanonicalCallScope {
+    target: Address,
+    selector_rules: Vec<CanonicalSelectorRule>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct CanonicalSelectorRule {
+    selector: [u8; 4],
+    recipients: Vec<Address>,
+}
+
+fn session_authorization_limits(session: &SessionEntry) -> eyre::Result<Vec<CanonicalTokenLimit>> {
+    let mut limits = session
+        .limits
+        .iter()
+        .map(|limit| {
+            Ok(CanonicalTokenLimit {
+                token: limit.currency,
+                limit: parse_session_limit(&limit.limit)?,
+                period: 0,
+            })
+        })
+        .collect::<eyre::Result<Vec<_>>>()?;
+    limits.sort_by_key(|limit| (limit.token, limit.limit, limit.period));
+    Ok(limits)
+}
+
+fn authorization_limits(
+    limits: &[tempo_primitives::transaction::TokenLimit],
+) -> Vec<CanonicalTokenLimit> {
+    let mut limits = limits
+        .iter()
+        .map(|limit| CanonicalTokenLimit {
+            token: limit.token,
+            limit: limit.limit,
+            period: limit.period,
+        })
+        .collect::<Vec<_>>();
+    limits.sort();
+    limits
+}
+
+fn parse_session_limit(raw: &str) -> eyre::Result<U256> {
+    let raw = raw.trim();
+    if let Some(hex) = raw.strip_prefix("0x") { U256::from_str_radix(hex, 16) } else { raw.parse() }
+        .map_err(|err| eyre::eyre!("invalid session spending limit `{raw}`: {err}"))
+}
+
+fn session_authorization_scope(session: &SessionEntry) -> Vec<CanonicalCallScope> {
+    let mut scope = session
+        .scope
+        .iter()
+        .map(|scope| CanonicalCallScope {
+            target: scope.target,
+            selector_rules: session_authorization_selector_rules(&scope.selector_rules),
+        })
+        .collect::<Vec<_>>();
+    scope.sort();
+    scope
+}
+
+fn authorization_scope(
+    scope: &[tempo_primitives::transaction::CallScope],
+) -> Vec<CanonicalCallScope> {
+    let mut scope = scope
+        .iter()
+        .map(|scope| CanonicalCallScope {
+            target: scope.target,
+            selector_rules: authorization_selector_rules(&scope.selector_rules),
+        })
+        .collect::<Vec<_>>();
+    scope.sort();
+    scope
+}
+
+fn session_authorization_selector_rules(
+    rules: &[SessionSelectorRule],
+) -> Vec<CanonicalSelectorRule> {
+    let mut rules = rules
+        .iter()
+        .map(|rule| {
+            let mut recipients = rule.recipients.clone();
+            recipients.sort();
+            CanonicalSelectorRule { selector: rule.selector.into(), recipients }
+        })
+        .collect::<Vec<_>>();
+    rules.sort();
+    rules
+}
+
+fn authorization_selector_rules(
+    rules: &[tempo_primitives::transaction::SelectorRule],
+) -> Vec<CanonicalSelectorRule> {
+    let mut rules = rules
+        .iter()
+        .map(|rule| {
+            let mut recipients = rule.recipients.clone();
+            recipients.sort();
+            CanonicalSelectorRule { selector: rule.selector, recipients }
+        })
+        .collect::<Vec<_>>();
+    rules.sort();
+    rules
 }
 
 const fn key_type_to_signature_type(
@@ -368,7 +532,9 @@ mod tests {
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use std::{fs, str::FromStr};
-    use tempo_primitives::transaction::{KeyAuthorization, PrimitiveSignature, SignatureType};
+    use tempo_primitives::transaction::{
+        CallScope, KeyAuthorization, PrimitiveSignature, SelectorRule, SignatureType, TokenLimit,
+    };
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -430,18 +596,53 @@ mod tests {
     }
 
     fn signed_key_authorization_hex(entry: &SessionEntry) -> String {
+        signed_key_authorization_hex_with(entry, std::convert::identity)
+    }
+
+    fn signed_key_authorization_hex_with(
+        entry: &SessionEntry,
+        update: impl FnOnce(KeyAuthorization) -> KeyAuthorization,
+    ) -> String {
         let root_signer: PrivateKeySigner = ROOT_PRIVATE_KEY.parse().unwrap();
-        let auth = KeyAuthorization::unrestricted(
-            entry.chain_id,
-            SignatureType::Secp256k1,
-            entry.key_address,
-        )
-        .with_expiry(entry.expiry);
+        let auth = update(session_key_authorization(entry));
         let signature = root_signer.sign_hash_sync(&auth.signature_hash()).unwrap();
         let signed = auth.into_signed(PrimitiveSignature::Secp256k1(signature));
         let mut buf = Vec::new();
         signed.encode(&mut buf);
         hex::encode_prefixed(buf)
+    }
+
+    fn session_key_authorization(entry: &SessionEntry) -> KeyAuthorization {
+        KeyAuthorization::unrestricted(entry.chain_id, SignatureType::Secp256k1, entry.key_address)
+            .with_expiry(entry.expiry)
+            .with_limits(
+                entry
+                    .limits
+                    .iter()
+                    .map(|limit| TokenLimit {
+                        token: limit.currency,
+                        limit: parse_session_limit(&limit.limit).unwrap(),
+                        period: 0,
+                    })
+                    .collect(),
+            )
+            .with_allowed_calls(
+                entry
+                    .scope
+                    .iter()
+                    .map(|scope| CallScope {
+                        target: scope.target,
+                        selector_rules: scope
+                            .selector_rules
+                            .iter()
+                            .map(|rule| SelectorRule {
+                                selector: rule.selector.into(),
+                                recipients: rule.recipients.clone(),
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            )
     }
 
     #[test]
@@ -607,6 +808,9 @@ mod tests {
             assert_eq!(key_authorization.authorization.key_id, entry.key_address);
             assert_eq!(key_authorization.authorization.chain_id, entry.chain_id);
             assert_eq!(key_authorization.authorization.key_type, SignatureType::Secp256k1);
+            assert_eq!(key_authorization.authorization.expiry.unwrap().get(), entry.expiry);
+            assert!(key_authorization.authorization.limits.is_some());
+            assert!(key_authorization.authorization.allowed_calls.is_some());
             assert_eq!(key_authorization.recover_signer().unwrap(), entry.root_account);
         });
     }
@@ -639,6 +843,96 @@ mod tests {
             let error = resolve_live_session_signer(session_id, 100).unwrap_err();
 
             assert!(error.to_string().contains("chain_id"));
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_rejects_authorization_without_session_expiry() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x0d; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |mut auth| {
+                    auth.expiry = None;
+                    auth
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("expiry"));
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_rejects_authorization_without_session_limits() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x0e; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |mut auth| {
+                    auth.limits = None;
+                    auth
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("limits"));
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_rejects_authorization_without_session_scope() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x0f; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |mut auth| {
+                    auth.allowed_calls = None;
+                    auth
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("allowed_calls"));
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_rejects_authorization_with_wider_session_limit() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x10; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |mut auth| {
+                    auth.limits.as_mut().unwrap()[0].limit = U256::from(1);
+                    auth
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("limits"));
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_rejects_authorization_with_wider_session_scope() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x12; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |mut auth| {
+                    auth.allowed_calls.as_mut().unwrap()[0].selector_rules.clear();
+                    auth
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("allowed_calls"));
         });
     }
 
