@@ -1,6 +1,9 @@
 use super::{
     ReentrancyEvents,
-    calls_loop::{is_state_mutating_external_call, resolved_internal_function_ids},
+    calls_loop::{
+        is_state_mutating_external_call, resolved_internal_function_ids,
+        resolved_super_function_ids,
+    },
 };
 use crate::{
     linter::{LateLintPass, LintContext},
@@ -11,7 +14,9 @@ use solar::{
     interface::{Span, kw, sym},
     sema::{
         Gcx,
-        hir::{self, Block, Expr, ExprKind, Function, FunctionId, Hir, Res, Stmt, StmtKind},
+        hir::{
+            self, Block, ContractId, Expr, ExprKind, Function, FunctionId, Hir, Res, Stmt, StmtKind,
+        },
     },
 };
 use std::collections::HashSet;
@@ -33,7 +38,7 @@ impl<'hir> LateLintPass<'hir> for ReentrancyEvents {
     ) {
         let Some(body) = func.body else { return };
 
-        let mut analyzer = Analyzer::new(ctx, gcx, hir);
+        let mut analyzer = Analyzer::new(ctx, gcx, hir, func.contract);
         let _ = analyzer.analyze_callable(func, body, FlowState::default());
     }
 }
@@ -112,6 +117,9 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
     ctx: &'ctx LintContext<'s, 'c>,
     gcx: Gcx<'hir>,
     hir: &'hir Hir<'hir>,
+    /// Top-level analyzed contract; used to resolve `this.<method>` without consulting
+    /// Solar for the `this` builtin. Held fixed across inlined helpers (runtime `this`).
+    enclosing_contract: Option<ContractId>,
     /// Call stack to break recursion when inlining internal helpers and modifiers.
     call_stack: Vec<FunctionId>,
     /// Spans already reported, to dedupe diagnostics across paths/iterations.
@@ -125,11 +133,17 @@ struct Analyzer<'ctx, 's, 'c, 'hir> {
 }
 
 impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
-    fn new(ctx: &'ctx LintContext<'s, 'c>, gcx: Gcx<'hir>, hir: &'hir Hir<'hir>) -> Self {
+    fn new(
+        ctx: &'ctx LintContext<'s, 'c>,
+        gcx: Gcx<'hir>,
+        hir: &'hir Hir<'hir>,
+        enclosing_contract: Option<ContractId>,
+    ) -> Self {
         Self {
             ctx,
             gcx,
             hir,
+            enclosing_contract,
             call_stack: Vec::new(),
             emitted: HashSet::new(),
             suppress_inline_reports: false,
@@ -354,13 +368,25 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.analyze_expr(arg, state);
                 }
 
-                if is_state_mutating_external_call(self.gcx, self.hir, callee, args.len()) {
+                if is_state_mutating_external_call(
+                    self.gcx,
+                    self.hir,
+                    callee,
+                    args.len(),
+                    self.enclosing_contract,
+                ) {
                     state.external_call_seen = true;
                 }
 
                 // Follow internal/private/public helpers transitively so external calls in
                 // helpers also taint the caller's flow state.
                 for func_id in resolved_internal_function_ids(self.hir, callee) {
+                    self.analyze_internal_call(func_id, state);
+                }
+                // Same for `super.<member>(...)` base-chain dispatch.
+                for func_id in
+                    resolved_super_function_ids(self.hir, self.enclosing_contract, callee)
+                {
                     self.analyze_internal_call(func_id, state);
                 }
             }
@@ -388,15 +414,30 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
             }
             ExprKind::Ternary(cond, then_expr, else_expr) => {
                 self.analyze_expr(cond, state);
+                // Sample `expr_aborted` per branch so an aborting branch can't poison the
+                // sibling. The ternary aborts iff `cond` aborts OR both branches abort.
+                let outer_aborted = std::mem::replace(&mut self.expr_aborted, false);
 
                 let mut then_state = state.clone();
                 self.analyze_expr(then_expr, &mut then_state);
+                let then_aborted = std::mem::replace(&mut self.expr_aborted, false);
 
                 let mut else_state = state.clone();
                 self.analyze_expr(else_expr, &mut else_state);
+                let else_aborted = self.expr_aborted;
 
-                *state = then_state;
-                state.merge(&else_state);
+                self.expr_aborted = outer_aborted || (then_aborted && else_aborted);
+
+                // Aborting branches drop their state; only surviving branches contribute.
+                match (then_aborted, else_aborted) {
+                    (true, true) => {}
+                    (true, false) => *state = else_state,
+                    (false, true) => *state = then_state,
+                    (false, false) => {
+                        *state = then_state;
+                        state.merge(&else_state);
+                    }
+                }
             }
             ExprKind::Array(exprs) => {
                 for expr in *exprs {

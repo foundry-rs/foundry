@@ -9,6 +9,14 @@ interface IExternal {
     function compute(uint256 x) external pure returns (uint256);
 }
 
+// Overloaded interface methods exercise the multi-match member lookup.
+interface IBus {
+    function notify(uint256) external returns (bool);
+    function notify(uint256, bytes calldata) external returns (bool);
+    function peek(uint256) external view returns (uint256);
+    function peek(uint256, uint256) external view returns (uint256);
+}
+
 contract Other {
     function action(uint256) external returns (bool) {
         return true;
@@ -214,6 +222,24 @@ contract ReentrancyEvents {
         emit Tick();
     }
 
+    // Ternary with one aborting branch: per-branch abort tracking must let the live
+    // branch's taint survive so the subsequent emit is still flagged.
+    function emitAfterTernaryAbortingElse(IExternal d, bool flag) external {
+        uint256 x = flag ? _peeker(d) : _alwaysRevertsU();
+        emit Counter(x); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function emitAfterTernaryAbortingThen(IExternal d, bool flag) external {
+        uint256 x = flag ? _alwaysRevertsU() : _peeker(d);
+        emit Counter(x); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    // Both ternary branches abort: the post-ternary emit is genuinely unreachable.
+    function emitAfterTernaryBothAbort(bool flag) external {
+        uint256 x = flag ? _alwaysRevertsU() : _alwaysRevertsU2();
+        emit Counter(x);
+    }
+
     // External call inside a loop body followed by a `revert` in the same iteration:
     // post-loop state must not be tainted because every body path aborts.
     function emitAfterLoopThatAlwaysReverts(IExternal d) external {
@@ -274,6 +300,47 @@ contract ReentrancyEvents {
         emit Counter(v);
     }
 
+    // Overloaded mutating external method: must flag despite the name collision in
+    // the interface (member lookup used to drop overloads via a unique-name filter).
+    function emitAfterOverloadedMutatingCall(IBus b) external {
+        b.notify(0);
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    function emitAfterOverloadedMutatingCallTwoArgs(IBus b) external {
+        b.notify(0, "");
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
+    // Overloaded but all overloads are `view` — must NOT flag.
+    function emitAfterOverloadedViewCall(IBus b) external {
+        uint256 v = b.peek(0);
+        emit Counter(v);
+    }
+
+    function emitAfterOverloadedViewCallTwoArgs(IBus b) external {
+        uint256 v = b.peek(0, 1);
+        emit Counter(v);
+    }
+
+    // `this.<view|pure>()` compiles to STATICCALL — cannot reorder events.
+    function emitAfterSelfViewCall() external {
+        uint256 v = this.viewSelf();
+        emit Counter(v);
+    }
+
+    function emitAfterSelfPureCall() external {
+        uint256 v = this.pureSelf(1);
+        emit Counter(v);
+    }
+
+    // Mutating self-external call still taints subsequent emits.
+    function emitAfterSelfMutatingCall() external {
+        counter += 1;
+        this.publicHelper();
+        emit Counter(counter); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+
     // Caller is already tainted, then calls a helper that always reverts. The post-call
     // emit is unreachable and must NOT be flagged.
     function emitAfterTaintedAlwaysRevertsHelper(IExternal d) external {
@@ -299,6 +366,14 @@ contract ReentrancyEvents {
         counter += 1;
     }
 
+    function viewSelf() public view returns (uint256) {
+        return counter;
+    }
+
+    function pureSelf(uint256 a) public pure returns (uint256) {
+        return a + 1;
+    }
+
     function _doExternalWork() internal {
         ext.notify(counter);
     }
@@ -315,6 +390,19 @@ contract ReentrancyEvents {
         revert("nope");
     }
 
+    function _alwaysRevertsU() internal pure returns (uint256) {
+        revert("nope");
+    }
+
+    function _alwaysRevertsU2() internal pure returns (uint256) {
+        revert("nope2");
+    }
+
+    function _peeker(IExternal d) internal returns (uint256) {
+        d.notify(0);
+        return 0;
+    }
+
     function _internalHelper() internal {
         counter += 1;
     }
@@ -327,6 +415,48 @@ contract ReentrancyEvents {
     // own self-pass), not once per caller.
     function _helperEmitAfterCall() internal {
         ext.notify(0);
+        emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+}
+
+// `super.<member>(...)` is internal base-chain dispatch — must not panic the linter and
+// must not be treated as an external call by itself, but external calls inside the
+// resolved base function must still taint the caller.
+contract Base {
+    IExternal internal ext_;
+    event Tick();
+
+    function doExt() internal {
+        ext_.notify(0);
+    }
+
+    function viewBase() internal view returns (uint256) {
+        return 0;
+    }
+
+    function pureBase() internal pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract Child is Base {
+    event Counter(uint256 value);
+
+    // Clean: super resolves to a base function with no external call.
+    function emitAfterSuperViewCall() external {
+        uint256 v = super.viewBase();
+        emit Counter(v);
+    }
+
+    function emitAfterSuperPureCall() external {
+        uint256 v = super.pureBase();
+        emit Counter(v);
+    }
+
+    // Transitive: the base function makes an external call, so the post-super emit is
+    // tainted exactly like a direct `_helper()` call would be.
+    function emitAfterSuperTaintingCall() external {
+        super.doExt();
         emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
 }
