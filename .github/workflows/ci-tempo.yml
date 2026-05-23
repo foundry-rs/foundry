@@ -80,6 +80,10 @@ jobs:
           PRIVATE_KEY: ${{ secrets.THROW_AWAY_MAINNET_PKEY }}
           SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
         run: |
+          if [ -z "$ETH_RPC_URL" ]; then
+            echo "Skipping Tempo mainnet checks because TEMPO_MAINNET_RPC_URL is not set."
+            exit 0
+          fi
           if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
             ./.github/scripts/tempo-check.sh
           fi
@@ -97,6 +101,10 @@ jobs:
           VERIFIER_URL: ${{ secrets.VERIFIER_URL }}
           SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
         run: |
+          if [ -z "$ETH_RPC_URL" ]; then
+            echo "Skipping Tempo testnet checks because TEMPO_TESTNET_RPC_URL is not set."
+            exit 0
+          fi
           if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
             ./.github/scripts/tempo-check.sh
           fi
@@ -114,6 +122,10 @@ jobs:
           ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
           SCRIPTS: ${{ github.event.inputs.scripts || 'both' }}
         run: |
+          if [ -z "$ETH_RPC_URL" ]; then
+            echo "Skipping Tempo devnet checks because TEMPO_DEVNET_RPC_URL is not set."
+            exit 0
+          fi
           if [ "$SCRIPTS" = "check" ] || [ "$SCRIPTS" = "both" ]; then
             ./.github/scripts/tempo-check.sh
           fi
@@ -129,7 +141,12 @@ jobs:
           github.event.inputs.network == 'all'
         env:
           ETH_RPC_URL: ${{ secrets.TEMPO_DEVNET_RPC_URL }}
-        run: ./.github/scripts/tempo-wallet.sh
+        run: |
+          if [ -z "$ETH_RPC_URL" ]; then
+            echo "Skipping Tempo wallet tests because TEMPO_DEVNET_RPC_URL is not set."
+            exit 0
+          fi
+          ./.github/scripts/tempo-wallet.sh
 
   # If the nightly run fails, this will create an issue to signal so.
   issue:
