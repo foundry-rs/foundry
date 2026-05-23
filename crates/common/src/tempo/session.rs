@@ -99,10 +99,14 @@ pub struct SessionEntry {
     /// Tempo sessions are always bounded-lifetime. `0` is not a "never
     /// expires" sentinel; it is already expired.
     pub expiry: u64,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub scope: Vec<SessionCallScope>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub limits: Vec<SessionTokenLimit>,
+    /// Call scope policy for the session key. `None` means unrestricted;
+    /// `Some([])` means no calls are allowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<Vec<SessionCallScope>>,
+    /// Spending limit policy for the session key. `None` means unrestricted;
+    /// `Some([])` means no token spending is allowed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<Vec<SessionTokenLimit>>,
     #[serde(default)]
     pub status: SessionStatus,
     /// Session-scoped key material. This is intentionally separate from
@@ -274,42 +278,38 @@ fn validate_session_key_authorization(
     key: &SessionKeyMaterial,
     authorization: &SignedKeyAuthorization,
 ) -> eyre::Result<()> {
-    if authorization.authorization.key_id != session.key_address {
-        eyre::bail!(
-            "session {} key_authorization key_id is {}, expected {}",
-            session.session_id,
-            authorization.authorization.key_id,
-            session.key_address
-        );
-    }
-    if authorization.authorization.chain_id != session.chain_id {
-        eyre::bail!(
-            "session {} key_authorization chain_id is {}, expected {}",
-            session.session_id,
-            authorization.authorization.chain_id,
-            session.chain_id
-        );
-    }
+    eyre::ensure!(
+        authorization.authorization.key_id == session.key_address,
+        "session {} key_authorization key_id is {}, expected {}",
+        session.session_id,
+        authorization.authorization.key_id,
+        session.key_address
+    );
+    eyre::ensure!(
+        authorization.authorization.chain_id == session.chain_id,
+        "session {} key_authorization chain_id is {}, expected {}",
+        session.session_id,
+        authorization.authorization.chain_id,
+        session.chain_id
+    );
     let expected_key_type = key_type_to_signature_type(key.key_type);
-    if authorization.authorization.key_type != expected_key_type {
-        eyre::bail!(
-            "session {} key_authorization key_type is {:?}, expected {:?}",
-            session.session_id,
-            authorization.authorization.key_type,
-            expected_key_type
-        );
-    }
+    eyre::ensure!(
+        authorization.authorization.key_type == expected_key_type,
+        "session {} key_authorization key_type is {:?}, expected {:?}",
+        session.session_id,
+        authorization.authorization.key_type,
+        expected_key_type
+    );
     let recovered = authorization
         .recover_signer()
         .map_err(|err| eyre::eyre!("failed to recover session key_authorization signer: {err}"))?;
-    if recovered != session.root_account {
-        eyre::bail!(
-            "session {} key_authorization signer is {}, expected {}",
-            session.session_id,
-            recovered,
-            session.root_account
-        );
-    }
+    eyre::ensure!(
+        recovered == session.root_account,
+        "session {} key_authorization signer is {}, expected {}",
+        session.session_id,
+        recovered,
+        session.root_account
+    );
     validate_session_authorization_policy(session, authorization)?;
     Ok(())
 }
@@ -323,44 +323,29 @@ fn validate_session_authorization_policy(
 
     let expected_expiry = NonZeroU64::new(session.expiry)
         .ok_or_else(|| eyre::eyre!("session {} has invalid zero expiry", session.session_id))?;
-    if auth.expiry != Some(expected_expiry) {
-        eyre::bail!(
-            "session {} key_authorization expiry is {:?}, expected {}",
-            session.session_id,
-            auth.expiry.map(NonZeroU64::get),
-            session.expiry
-        );
-    }
+    eyre::ensure!(
+        auth.expiry == Some(expected_expiry),
+        "session {} key_authorization expiry is {:?}, expected {}",
+        session.session_id,
+        auth.expiry.map(NonZeroU64::get),
+        session.expiry
+    );
 
-    let Some(auth_limits) = auth.limits.as_deref() else {
-        eyre::bail!(
-            "session {} key_authorization limits are unrestricted, expected session limits",
-            session.session_id
-        );
-    };
     let expected_limits = session_authorization_limits(session)?;
-    let actual_limits = authorization_limits(auth_limits);
-    if actual_limits != expected_limits {
-        eyre::bail!(
-            "session {} key_authorization limits do not match session limits",
-            session.session_id
-        );
-    }
+    let actual_limits = auth.limits.as_deref().map(authorization_limits);
+    eyre::ensure!(
+        actual_limits == expected_limits,
+        "session {} key_authorization limits do not match session limits",
+        session.session_id
+    );
 
-    let Some(auth_allowed_calls) = auth.allowed_calls.as_deref() else {
-        eyre::bail!(
-            "session {} key_authorization allowed_calls are unrestricted, expected session scope",
-            session.session_id
-        );
-    };
     let expected_scope = session_authorization_scope(session);
-    let actual_scope = authorization_scope(auth_allowed_calls);
-    if actual_scope != expected_scope {
-        eyre::bail!(
-            "session {} key_authorization allowed_calls do not match session scope",
-            session.session_id
-        );
-    }
+    let actual_scope = auth.allowed_calls.as_deref().map(authorization_scope);
+    eyre::ensure!(
+        actual_scope == expected_scope,
+        "session {} key_authorization allowed_calls do not match session scope",
+        session.session_id
+    );
 
     Ok(())
 }
@@ -388,20 +373,27 @@ struct CanonicalSelectorRule {
 }
 
 /// Converts stored session limits into canonical form for authorization comparison.
-fn session_authorization_limits(session: &SessionEntry) -> eyre::Result<Vec<CanonicalTokenLimit>> {
-    let mut limits = session
+fn session_authorization_limits(
+    session: &SessionEntry,
+) -> eyre::Result<Option<Vec<CanonicalTokenLimit>>> {
+    session
         .limits
-        .iter()
-        .map(|limit| {
-            Ok(CanonicalTokenLimit {
-                token: limit.currency,
-                limit: parse_session_limit(&limit.limit)?,
-                period: 0,
-            })
+        .as_deref()
+        .map(|limits| {
+            let mut limits = limits
+                .iter()
+                .map(|limit| {
+                    Ok(CanonicalTokenLimit {
+                        token: limit.currency,
+                        limit: parse_session_limit(&limit.limit)?,
+                        period: 0,
+                    })
+                })
+                .collect::<eyre::Result<Vec<_>>>()?;
+            limits.sort();
+            Ok(limits)
         })
-        .collect::<eyre::Result<Vec<_>>>()?;
-    limits.sort_by_key(|limit| (limit.token, limit.limit, limit.period));
-    Ok(limits)
+        .transpose()
 }
 
 /// Converts signed authorization limits into canonical form for session comparison.
@@ -428,17 +420,18 @@ fn parse_session_limit(raw: &str) -> eyre::Result<U256> {
 }
 
 /// Converts stored session scope into canonical form for authorization comparison.
-fn session_authorization_scope(session: &SessionEntry) -> Vec<CanonicalCallScope> {
-    let mut scope = session
-        .scope
-        .iter()
-        .map(|scope| CanonicalCallScope {
-            target: scope.target,
-            selector_rules: session_authorization_selector_rules(&scope.selector_rules),
-        })
-        .collect::<Vec<_>>();
-    scope.sort();
-    scope
+fn session_authorization_scope(session: &SessionEntry) -> Option<Vec<CanonicalCallScope>> {
+    session.scope.as_deref().map(|scope| {
+        let mut scope = scope
+            .iter()
+            .map(|scope| CanonicalCallScope {
+                target: scope.target,
+                selector_rules: session_authorization_selector_rules(&scope.selector_rules),
+            })
+            .collect::<Vec<_>>();
+        scope.sort();
+        scope
+    })
 }
 
 /// Converts signed authorization scope into canonical form for session comparison.
@@ -561,17 +554,17 @@ mod tests {
             chain_id: 4217,
             key_address: Address::from_str("0x0000000000000000000000000000000000000abc").unwrap(),
             expiry,
-            scope: vec![SessionCallScope {
+            scope: Some(vec![SessionCallScope {
                 target: Address::from_str("0x00000000000000000000000000000000000000aa").unwrap(),
                 selector_rules: vec![SessionSelectorRule {
                     selector: Selector::from_slice(&[0x12, 0x34, 0x56, 0x78]),
                     recipients: vec![],
                 }],
-            }],
-            limits: vec![SessionTokenLimit {
+            }]),
+            limits: Some(vec![SessionTokenLimit {
                 currency: Address::from_str("0x00000000000000000000000000000000000000ff").unwrap(),
                 limit: "0".to_string(),
-            }],
+            }]),
             status,
             key: None,
         }
@@ -630,11 +623,15 @@ mod tests {
 
     /// Builds a key authorization that mirrors the session entry policy.
     fn session_key_authorization(entry: &SessionEntry) -> KeyAuthorization {
-        KeyAuthorization::unrestricted(entry.chain_id, SignatureType::Secp256k1, entry.key_address)
-            .with_expiry(entry.expiry)
-            .with_limits(
-                entry
-                    .limits
+        let mut authorization = KeyAuthorization::unrestricted(
+            entry.chain_id,
+            SignatureType::Secp256k1,
+            entry.key_address,
+        )
+        .with_expiry(entry.expiry);
+        if let Some(limits) = &entry.limits {
+            authorization = authorization.with_limits(
+                limits
                     .iter()
                     .map(|limit| TokenLimit {
                         token: limit.currency,
@@ -642,10 +639,11 @@ mod tests {
                         period: 0,
                     })
                     .collect(),
-            )
-            .with_allowed_calls(
-                entry
-                    .scope
+            );
+        }
+        if let Some(scope) = &entry.scope {
+            authorization = authorization.with_allowed_calls(
+                scope
                     .iter()
                     .map(|scope| CallScope {
                         target: scope.target,
@@ -659,7 +657,9 @@ mod tests {
                             .collect(),
                     })
                     .collect(),
-            )
+            );
+        }
+        authorization
     }
 
     #[test]
@@ -725,8 +725,8 @@ mod tests {
         let decoded: SessionEntry = toml::from_str(&toml).unwrap();
 
         assert_eq!(decoded.session_id, entry.session_id);
-        assert_eq!(decoded.scope.len(), 1);
-        assert_eq!(decoded.limits.len(), 1);
+        assert_eq!(decoded.scope.as_ref().unwrap().len(), 1);
+        assert_eq!(decoded.limits.as_ref().unwrap().len(), 1);
         assert_eq!(decoded.status, SessionStatus::Revoking);
         assert_eq!(decoded.key.as_ref().unwrap().key, "0xdeadbeef");
         assert!(decoded.has_inline_key());
@@ -829,6 +829,45 @@ mod tests {
             assert!(key_authorization.authorization.limits.is_some());
             assert!(key_authorization.authorization.allowed_calls.is_some());
             assert_eq!(key_authorization.recover_signer().unwrap(), entry.root_account);
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_accepts_unrestricted_authorization_when_policy_is_omitted() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x13; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            entry.limits = None;
+            entry.scope = None;
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex(&entry));
+            upsert_session_entry(entry.clone()).unwrap();
+
+            let resolved = resolve_live_session_signer(session_id, 100).unwrap().unwrap();
+            let key_authorization = resolved.access_key.key_authorization.unwrap();
+
+            assert!(key_authorization.authorization.limits.is_none());
+            assert!(key_authorization.authorization.allowed_calls.is_none());
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_rejects_unrestricted_authorization_when_policy_is_empty() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x14; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            let mut auth_entry = entry.clone();
+            auth_entry.limits = None;
+            auth_entry.scope = None;
+            entry.limits = Some(vec![]);
+            entry.scope = Some(vec![]);
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex(&auth_entry));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("limits"));
         });
     }
 
