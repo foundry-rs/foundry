@@ -18,7 +18,10 @@ use eyre::Ok;
 use foundry_evm::hardfork::EthereumHardfork;
 use futures::{FutureExt, StreamExt, future::join_all};
 use revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
-use std::{str::FromStr, time::Duration};
+use std::{
+    str::FromStr,
+    time::{Duration, Instant},
+};
 use tokio::time::timeout;
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1551,4 +1554,148 @@ async fn can_get_tx_by_sender_and_nonce() {
     assert!(result.is_some());
     let found_tx = result.unwrap();
     assert_eq!(found_tx.inner.nonce(), 4);
+}
+
+// Instant-mine coalescing regression tests.
+
+/// Polls `eth_getTransactionReceipt` until a block number is available.
+async fn poll_receipt_block(client: &reqwest::Client, endpoint: &str, tx_hash: &str) -> u64 {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let payload = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_getTransactionReceipt",
+            "params": [tx_hash],
+        });
+        let resp: serde_json::Value =
+            client.post(endpoint).json(&payload).send().await.unwrap().json().await.unwrap();
+        if let Some(receipt) = resp.get("result").and_then(|r| r.as_object())
+            && let Some(block_hex) = receipt.get("blockNumber").and_then(|b| b.as_str())
+        {
+            return u64::from_str_radix(block_hex.trim_start_matches("0x"), 16).unwrap();
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for receipt of {tx_hash}");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// Txs in one JSON-RPC batch POST must share a block.
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mine_groups_json_rpc_batch_in_one_block() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from1 = accounts[1].address();
+    let from2 = accounts[2].address();
+    let to = accounts[0].address();
+
+    let batch = serde_json::json!([
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_sendTransaction",
+            "params": [{"from": from1, "to": to, "value": "0x1"}]
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "eth_sendTransaction",
+            "params": [{"from": from2, "to": to, "value": "0x1"}]
+        }
+    ]);
+
+    let client = reqwest::Client::new();
+    let resp: serde_json::Value =
+        client.post(&endpoint).json(&batch).send().await.unwrap().json().await.unwrap();
+
+    let arr = resp.as_array().expect("expected JSON-RPC batch response");
+    assert_eq!(arr.len(), 2);
+    let hashes: Vec<String> = arr
+        .iter()
+        .map(|r| r.get("result").expect("expected result").as_str().unwrap().to_owned())
+        .collect();
+
+    let mut blocks = Vec::new();
+    for hash in &hashes {
+        let block = poll_receipt_block(&client, &endpoint, hash).await;
+        blocks.push(block);
+    }
+
+    assert_eq!(
+        blocks[0], blocks[1],
+        "batched eth_sendTransaction txs landed in different blocks ({blocks:?})"
+    );
+}
+
+/// Txs from in-process parallel HTTP requests must share a block.
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mine_groups_in_process_parallel_http_in_one_block() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from1 = accounts[1].address();
+    let from2 = accounts[2].address();
+    let to = accounts[0].address();
+
+    let client = reqwest::Client::new();
+
+    let send = |from: Address, id: u64| {
+        let client = client.clone();
+        let endpoint = endpoint.clone();
+        async move {
+            let payload = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "eth_sendTransaction",
+                "params": [{"from": from, "to": to, "value": "0x1"}],
+            });
+            let resp: serde_json::Value =
+                client.post(&endpoint).json(&payload).send().await.unwrap().json().await.unwrap();
+            resp.get("result").unwrap().as_str().unwrap().to_owned()
+        }
+    };
+
+    let (h1, h2) = tokio::join!(send(from1, 1), send(from2, 2));
+
+    let b1 = poll_receipt_block(&client, &endpoint, &h1).await;
+    let b2 = poll_receipt_block(&client, &endpoint, &h2).await;
+
+    assert_eq!(b1, b2, "parallel-HTTP txs landed in different blocks (b1={b1}, b2={b2})");
+}
+
+/// Sends spaced beyond the coalescing window must still mine in separate blocks.
+#[tokio::test(flavor = "multi_thread")]
+async fn instant_mine_does_not_group_sequential_sends_beyond_window() {
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+    let accounts = handle.dev_wallets().collect::<Vec<_>>();
+    let from1 = accounts[1].address();
+    let from2 = accounts[2].address();
+    let to = accounts[0].address();
+    let client = reqwest::Client::new();
+
+    let send = |from: Address, id: u64| {
+        let client = client.clone();
+        let endpoint = endpoint.clone();
+        async move {
+            let payload = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": "eth_sendTransaction",
+                "params": [{"from": from, "to": to, "value": "0x1"}],
+            });
+            let resp: serde_json::Value =
+                client.post(&endpoint).json(&payload).send().await.unwrap().json().await.unwrap();
+            resp.get("result").unwrap().as_str().unwrap().to_owned()
+        }
+    };
+
+    let h1 = send(from1, 1).await;
+    let b1 = poll_receipt_block(&client, &endpoint, &h1).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let h2 = send(from2, 2).await;
+    let b2 = poll_receipt_block(&client, &endpoint, &h2).await;
+
+    assert_ne!(b1, b2, "sequential sends with delay coalesced into the same block ({b1})");
 }
