@@ -35,7 +35,7 @@ Blazing fast, portable and modular toolkit for Ethereum application development,
 ## Installation
 
 ```sh
-curl -L https://foundry.paradigm.xyz | bash
+curl -L https://getfoundry.sh | bash
 foundryup
 ```
 
