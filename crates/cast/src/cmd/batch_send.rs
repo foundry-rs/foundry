@@ -69,8 +69,19 @@ impl BatchSendArgs {
             provider.client().set_poll_interval(Duration::from_secs(interval))
         }
 
-        // Resolve signer to detect keychain mode
-        let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
+        // Resolve signer to detect keychain mode.
+        let session_signer = tx.tempo.session_signer(&send_tx.eth.wallet)?;
+        let (signer, tempo_access_key) = if let Some(session) = session_signer {
+            if unlocked {
+                eyre::bail!("--unlocked cannot be combined with --tempo.session/TEMPO_SESSION_ID");
+            }
+            if send_tx.browser.browser {
+                eyre::bail!("--browser cannot be combined with --tempo.session/TEMPO_SESSION_ID");
+            }
+            (Some(session.signer), Some(session.access_key))
+        } else {
+            send_tx.eth.wallet.maybe_signer().await?
+        };
 
         // Parse all call specs
         let call_specs: Vec<CallSpec> =

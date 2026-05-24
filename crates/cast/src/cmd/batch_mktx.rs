@@ -69,8 +69,18 @@ impl BatchMakeTxArgs {
         // `<root>/tempo.lanes.toml`) and populate `tx.tempo.nonce_key` from the lane.
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
 
-        // Resolve signer to detect keychain mode
-        let (signer, tempo_access_key) = eth.wallet.maybe_signer().await?;
+        // Resolve signer to detect keychain mode.
+        let session_signer = tx.tempo.session_signer(&eth.wallet)?;
+        let (signer, tempo_access_key) = if let Some(session) = session_signer {
+            if raw_unsigned || ethsign {
+                eyre::bail!(
+                    "--raw-unsigned/--ethsign cannot be combined with --tempo.session/TEMPO_SESSION_ID"
+                );
+            }
+            (Some(session.signer), Some(session.access_key))
+        } else {
+            eth.wallet.maybe_signer().await?
+        };
 
         // Parse all call specs
         let call_specs: Vec<CallSpec> =

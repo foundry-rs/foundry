@@ -40,6 +40,17 @@ use itertools::Itertools;
 use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 use tempo_primitives::transaction::Call;
 
+fn resolve_session_signer(
+    tempo: &foundry_cli::opts::TempoOpts,
+    wallets: &foundry_wallets::MultiWalletOpts,
+    sender: Address,
+) -> Result<Option<(WalletSigner, TempoAccessKeyConfig)>> {
+    let Some(session) = tempo.session_signer_for_multi_wallet(wallets, Some(sender))? else {
+        return Ok(None);
+    };
+    Ok(Some((session.signer, session.access_key)))
+}
+
 pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
@@ -366,6 +377,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             );
         }
 
+        if self.args.unlocked && self.script_config.tempo.session_id()?.is_some() {
+            bail!("--unlocked cannot be combined with --tempo.session/TEMPO_SESSION_ID");
+        }
+
         let send_kind = if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses.clone())
         } else {
@@ -384,6 +399,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let mut missing_addresses = Vec::new();
 
             for addr in &required_addresses {
+                if let Some((signer, config)) =
+                    resolve_session_signer(&self.script_config.tempo, &self.args.wallets, *addr)?
+                {
+                    access_keys.insert(*addr, (signer, config));
+                    continue;
+                }
                 if !signers.contains(addr) {
                     match lookup_signer(*addr) {
                         Ok(TempoLookup::Direct(signer)) => {
@@ -797,8 +818,16 @@ impl BundledState<TempoEvmNetwork> {
             TempoKeychain(Box<WalletSigner>, Box<TempoAccessKeyConfig>),
         }
 
+        if self.args.unlocked && self.script_config.tempo.session_id()?.is_some() {
+            bail!("--unlocked cannot be combined with --tempo.session/TEMPO_SESSION_ID");
+        }
+
         let batch_signer = if self.args.unlocked {
             BatchSigner::Unlocked
+        } else if let Some((signer, config)) =
+            resolve_session_signer(&self.script_config.tempo, &self.args.wallets, sender)?
+        {
+            BatchSigner::TempoKeychain(Box::new(signer), Box::new(config))
         } else {
             let mut signers = self.script_wallets.into_multi_wallet().into_signers()?;
             if let Some(signer) = signers.remove(&sender) {

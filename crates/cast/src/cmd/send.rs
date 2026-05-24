@@ -98,7 +98,18 @@ pub enum SendTxSubcommands {
 impl SendTxArgs {
     pub async fn run(self) -> Result<()> {
         // Resolve the signer early so we know if it's a Tempo access key.
-        let (signer, tempo_access_key) = self.send_tx.eth.wallet.maybe_signer().await?;
+        let session_signer = self.tx.tempo.session_signer(&self.send_tx.eth.wallet)?;
+        let (signer, tempo_access_key) = if let Some(session) = session_signer {
+            if self.unlocked {
+                eyre::bail!("--unlocked cannot be combined with --tempo.session/TEMPO_SESSION_ID");
+            }
+            if self.send_tx.browser.browser {
+                eyre::bail!("--browser cannot be combined with --tempo.session/TEMPO_SESSION_ID");
+            }
+            (Some(session.signer), Some(session.access_key))
+        } else {
+            self.send_tx.eth.wallet.maybe_signer().await?
+        };
 
         if tempo_access_key.is_some() || self.tx.tempo.is_tempo() {
             self.run_generic::<TempoNetwork>(signer, tempo_access_key).await
