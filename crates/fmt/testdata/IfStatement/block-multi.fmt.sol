@@ -197,4 +197,15 @@ contract IfStatement {
             revert();
         }
     }
+
+    function test_singleLineIfMultiStatementBlock(bytes memory src) external {
+        for (uint256 i = 0; i < src.length;) {
+            if (src[i] == 0x26) {
+                execute();
+                i += 4;
+                continue;
+            }
+            i++;
+        }
+    }
 }
