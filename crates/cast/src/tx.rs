@@ -106,76 +106,6 @@ impl TxParams {
     }
 }
 
-pub(crate) struct ResolvedSigner {
-    pub(crate) signer: Option<WalletSigner>,
-    pub(crate) access_key: Option<TempoAccessKeyConfig>,
-    pub(crate) is_session: bool,
-}
-
-impl ResolvedSigner {
-    pub(crate) fn into_parts(self) -> (Option<WalletSigner>, Option<TempoAccessKeyConfig>) {
-        (self.signer, self.access_key)
-    }
-
-    pub(crate) fn into_session_parts(self) -> Result<(WalletSigner, TempoAccessKeyConfig)> {
-        let signer = self.signer.ok_or_else(|| eyre::eyre!("Tempo session requires a signer"))?;
-        let access_key =
-            self.access_key.ok_or_else(|| eyre::eyre!("Tempo session requires an access key"))?;
-        Ok((signer, access_key))
-    }
-}
-
-pub(crate) async fn resolve_wallet_or_session_signer(
-    tempo: &TempoOpts,
-    wallet: &WalletOpts,
-    chain_id: u64,
-) -> Result<ResolvedSigner> {
-    if let Some((signer, access_key)) = tempo.session_signing_parts(wallet, chain_id)? {
-        Ok(ResolvedSigner { signer: Some(signer), access_key: Some(access_key), is_session: true })
-    } else {
-        let (signer, access_key) = wallet.maybe_signer().await?;
-        Ok(ResolvedSigner { signer, access_key, is_session: false })
-    }
-}
-
-pub(crate) async fn resolve_optional_wallet_or_session_signer(
-    tempo: &TempoOpts,
-    wallet: &WalletOpts,
-    chain_id: u64,
-) -> Result<ResolvedSigner> {
-    if let Some((signer, access_key)) = tempo.session_signing_parts(wallet, chain_id)? {
-        Ok(ResolvedSigner { signer: Some(signer), access_key: Some(access_key), is_session: true })
-    } else if wallet.from.is_some() {
-        let (signer, access_key) = wallet.maybe_signer().await?;
-        Ok(ResolvedSigner { signer, access_key, is_session: false })
-    } else {
-        Ok(ResolvedSigner { signer: None, access_key: None, is_session: false })
-    }
-}
-
-pub(crate) fn ensure_session_compatible_unlocked(unlocked: bool) -> Result<()> {
-    if unlocked {
-        eyre::bail!("--unlocked cannot be combined with --tempo.session/TEMPO_SESSION_ID");
-    }
-    Ok(())
-}
-
-pub(crate) fn ensure_session_compatible_browser(browser: bool) -> Result<()> {
-    if browser {
-        eyre::bail!("--browser cannot be combined with --tempo.session/TEMPO_SESSION_ID");
-    }
-    Ok(())
-}
-
-pub(crate) fn ensure_session_compatible_raw_modes(raw_unsigned: bool, ethsign: bool) -> Result<()> {
-    if raw_unsigned || ethsign {
-        eyre::bail!(
-            "--raw-unsigned/--ethsign cannot be combined with --tempo.session/TEMPO_SESSION_ID"
-        );
-    }
-    Ok(())
-}
-
 /// Different sender kinds used by [`CastTxBuilder`].
 pub enum SenderKind<'a> {
     /// An address without signer. Used for read-only calls and transactions sent through unlocked
@@ -211,19 +141,6 @@ impl SenderKind<'_> {
             Ok(from.into())
         } else {
             Ok(Address::ZERO.into())
-        }
-    }
-
-    pub async fn from_wallet_opts_or_session(
-        opts: WalletOpts,
-        tx: &mut TransactionOpts,
-        chain_id: u64,
-    ) -> Result<Self> {
-        if let Some(session) = tx.tempo.session_signer(&opts, chain_id)? {
-            tx.tempo.key_id = Some(session.access_key.key_address);
-            Ok(Self::Address(session.access_key.wallet_address))
-        } else {
-            Self::from_wallet_opts(opts).await
         }
     }
 

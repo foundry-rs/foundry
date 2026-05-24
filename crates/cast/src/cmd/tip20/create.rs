@@ -4,10 +4,7 @@ use crate::{
         send::{cast_send, cast_send_with_access_key},
     },
     tempo,
-    tx::{
-        SendTxOpts, TxParams, ensure_session_compatible_browser,
-        resolve_optional_wallet_or_session_signer,
-    },
+    tx::{SendTxOpts, TxParams},
 };
 use alloy_ens::NameOrAddress;
 use alloy_primitives::B256;
@@ -66,6 +63,12 @@ pub(super) async fn run(
     send_tx: SendTxOpts,
     mut tx_opts: TxParams,
 ) -> eyre::Result<()> {
+    let (signer, tempo_access_key) = if send_tx.eth.wallet.from.is_some() {
+        send_tx.eth.wallet.maybe_signer().await?
+    } else {
+        (None, None)
+    };
+
     let config = send_tx.eth.rpc.load_config()?;
 
     if !is_iso4217_currency(&currency) && !force {
@@ -79,14 +82,6 @@ pub(super) async fn run(
 
     let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
     let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    let chain = get_chain(config.chain, &provider).await?;
-    let resolved_signer =
-        resolve_optional_wallet_or_session_signer(&tx_opts.tempo, &send_tx.eth.wallet, chain.id())
-            .await?;
-    if resolved_signer.is_session {
-        ensure_session_compatible_browser(send_tx.browser.browser)?;
-    }
-    let (signer, tempo_access_key) = resolved_signer.into_parts();
     let quote_token_addr = quote_token.resolve(&provider).await?;
     let admin_addr = admin.resolve(&provider).await?;
 
@@ -96,7 +91,7 @@ pub(super) async fn run(
 
     let expires_at = tx_opts.tempo.resolve_expires();
     tempo::print_expires(expires_at)?;
-    tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
+    tx_opts.apply::<TempoNetwork>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
 
     if let Some(ref access_key) = tempo_access_key {
         let signer = signer.as_ref().ok_or_else(|| eyre::eyre!("access key requires a signer"))?;

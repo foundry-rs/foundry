@@ -2808,12 +2808,6 @@ async fn send_keychain_tx(
     mut tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
 ) -> Result<()> {
-    if tx_opts.tempo.session_id()?.is_some() {
-        eyre::bail!(
-            "keychain policy changes cannot be signed with --tempo.session/TEMPO_SESSION_ID; use a root account signer"
-        );
-    }
-
     let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
     let expires_at = tx_opts.tempo.resolve_expires();

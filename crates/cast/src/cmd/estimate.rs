@@ -8,7 +8,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
-    utils::{self, LoadConfig, parse_ether_value},
+    utils::{LoadConfig, parse_ether_value},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use foundry_wallets::WalletOpts;
@@ -96,8 +96,7 @@ impl EstimateArgs {
 
         let config = rpc.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
-        let chain = self::utils::get_chain(config.chain, &provider).await?;
-        let sender = SenderKind::from_wallet_opts_or_session(wallet, &mut tx, chain.id()).await?;
+        let sender = SenderKind::from_wallet_opts(wallet).await?;
 
         let code = if let Some(EstimateSubcommands::Create {
             code,

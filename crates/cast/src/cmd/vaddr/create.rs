@@ -5,9 +5,7 @@ use crate::{
         tip20::mine,
     },
     tempo,
-    tx::{
-        SendTxOpts, TxParams, ensure_session_compatible_browser, resolve_wallet_or_session_signer,
-    },
+    tx::{SendTxOpts, TxParams},
 };
 use alloy_primitives::{Address, B256};
 use alloy_signer::Signer;
@@ -138,17 +136,7 @@ async fn register(
     send_tx: SendTxOpts,
     mut tx_opts: TxParams,
 ) -> Result<()> {
-    let config = send_tx.eth.load_config()?;
-    let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-    let chain = get_chain(config.chain, &provider).await?;
-
-    let resolved_signer =
-        resolve_wallet_or_session_signer(&tx_opts.tempo, &send_tx.eth.wallet, chain.id()).await?;
-    if resolved_signer.is_session {
-        ensure_session_compatible_browser(send_tx.browser.browser)?;
-    }
-    let (signer, tempo_access_key) = resolved_signer.into_parts();
+    let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
     let signer = signer.ok_or_else(|| {
         eyre::eyre!("cast vaddr create requires a signer (for example --private-key or --from)")
     })?;
@@ -162,12 +150,16 @@ async fn register(
         );
     }
 
+    let config = send_tx.eth.load_config()?;
+    let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+
     let mut tx = IAddressRegistry::new(ADDRESS_REGISTRY_ADDRESS, &provider)
         .registerVirtualMaster(salt)
         .into_transaction_request();
     let expires_at = tx_opts.tempo.resolve_expires();
     tempo::print_expires(expires_at)?;
-    tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
+    tx_opts.apply::<TempoNetwork>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
 
     sh_println!("Submitting registerVirtualMaster({salt})...")?;
 

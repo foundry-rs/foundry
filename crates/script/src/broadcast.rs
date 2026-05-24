@@ -40,19 +40,6 @@ use itertools::Itertools;
 use tempo_alloy::{TempoNetwork, rpc::TempoTransactionRequest};
 use tempo_primitives::transaction::Call;
 
-fn resolve_session_signer(
-    tempo: &foundry_cli::opts::TempoOpts,
-    wallets: &foundry_wallets::MultiWalletOpts,
-    sender: Address,
-    chain_id: u64,
-) -> Result<Option<(WalletSigner, TempoAccessKeyConfig)>> {
-    let Some(session) = tempo.session_signer_for_multi_wallet(wallets, Some(sender), chain_id)?
-    else {
-        return Ok(None);
-    };
-    Ok(Some((session.signer, session.access_key)))
-}
-
 pub async fn estimate_gas<N: Network, P: Provider<N>>(
     tx: &mut N::TransactionRequest,
     provider: &P,
@@ -361,7 +348,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
     /// Broadcasts transactions from all sequences.
     pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>> {
-        let required_address_chains = self
+        let required_addresses = self
             .sequence
             .sequences()
             .iter()
@@ -369,20 +356,14 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 sequence
                     .transactions()
                     .filter(|tx| tx.is_unsigned())
-                    .map(|tx| (tx.from().expect("missing from"), sequence.chain))
+                    .map(|tx| tx.from().expect("missing from"))
             })
-            .collect::<Vec<_>>();
-        let required_addresses =
-            required_address_chains.iter().map(|(address, _)| *address).collect::<AddressHashSet>();
+            .collect::<AddressHashSet>();
 
         if required_addresses.contains(&Config::DEFAULT_SENDER) {
             eyre::bail!(
                 "You seem to be using Foundry's default sender. Be sure to set your own --sender."
             );
-        }
-
-        if self.args.unlocked && self.script_config.tempo.session_id()?.is_some() {
-            bail!("--unlocked cannot be combined with --tempo.session/TEMPO_SESSION_ID");
         }
 
         let send_kind = if self.args.unlocked {
@@ -402,16 +383,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let mut direct_signers: AddressHashMap<WalletSigner> = AddressHashMap::default();
             let mut missing_addresses = Vec::new();
 
-            for (addr, chain) in &required_address_chains {
-                if let Some((signer, config)) = resolve_session_signer(
-                    &self.script_config.tempo,
-                    &self.args.wallets,
-                    *addr,
-                    *chain,
-                )? {
-                    access_keys.insert(*addr, (signer, config));
-                    continue;
-                }
+            for addr in &required_addresses {
                 if !signers.contains(addr) {
                     match lookup_signer(*addr) {
                         Ok(TempoLookup::Direct(signer)) => {
@@ -825,19 +797,8 @@ impl BundledState<TempoEvmNetwork> {
             TempoKeychain(Box<WalletSigner>, Box<TempoAccessKeyConfig>),
         }
 
-        if self.args.unlocked && self.script_config.tempo.session_id()?.is_some() {
-            bail!("--unlocked cannot be combined with --tempo.session/TEMPO_SESSION_ID");
-        }
-
         let batch_signer = if self.args.unlocked {
             BatchSigner::Unlocked
-        } else if let Some((signer, config)) = resolve_session_signer(
-            &self.script_config.tempo,
-            &self.args.wallets,
-            sender,
-            sequence.chain,
-        )? {
-            BatchSigner::TempoKeychain(Box::new(signer), Box::new(config))
         } else {
             let mut signers = self.script_wallets.into_multi_wallet().into_signers()?;
             if let Some(signer) = signers.remove(&sender) {

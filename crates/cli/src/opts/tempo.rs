@@ -2,15 +2,11 @@ use alloy_network::{Network, TransactionBuilder};
 use alloy_primitives::{Address, B256, ruint::aliases::U256};
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
-use eyre::{Result, WrapErr};
+use eyre::Result;
 use foundry_common::{
     FoundryTransactionBuilder,
-    tempo::{
-        ResolvedSessionSigner, TempoSponsor, resolve_live_session_signer,
-        resolve_tempo_sponsor_signer,
-    },
+    tempo::{TempoSponsor, resolve_tempo_sponsor_signer},
 };
-use foundry_wallets::{MultiWalletOpts, TempoAccessKeyConfig, WalletOpts, WalletSigner};
 use std::{
     num::NonZeroU64,
     path::PathBuf,
@@ -21,8 +17,8 @@ use std::{
 
 use crate::utils::parse_fee_token_address;
 
-/// Environment variable used to pass a Tempo wallet session to child commands.
-pub const TEMPO_SESSION_ID_ENV: &str = "TEMPO_SESSION_ID";
+mod session;
+pub use session::TEMPO_SESSION_ID_ENV;
 
 /// CLI options for Tempo transactions.
 #[derive(Clone, Debug, Default, Parser)]
@@ -181,121 +177,6 @@ impl TempoOpts {
             || std::env::var(TEMPO_SESSION_ID_ENV).is_ok_and(|raw| !raw.trim().is_empty())
     }
 
-    /// Returns the effective session id, preferring the CLI flag over `TEMPO_SESSION_ID`.
-    pub fn session_id(&self) -> Result<Option<B256>> {
-        if let Some(session) = self.session {
-            return Ok(Some(session));
-        }
-
-        let Ok(raw) = std::env::var(TEMPO_SESSION_ID_ENV) else {
-            return Ok(None);
-        };
-        let raw = raw.trim();
-        if raw.is_empty() {
-            return Ok(None);
-        }
-        B256::from_str(raw).map(Some).wrap_err_with(|| {
-            format!("invalid {TEMPO_SESSION_ID_ENV}: expected 32-byte hex session id")
-        })
-    }
-
-    /// Ensures a configured Tempo session is not combined with explicit wallet signer options.
-    pub fn ensure_session_compatible_wallet(&self, wallet: &WalletOpts) -> Result<()> {
-        if self.session_id()?.is_some() {
-            ensure_no_explicit_wallet_signer(wallet)?;
-        }
-        Ok(())
-    }
-
-    /// Resolves the configured Tempo wallet session, if any.
-    ///
-    /// Explicit session configuration is fail-closed: if a session id was provided but no live
-    /// session can be loaded, callers must not fall back to any long-lived signer.
-    pub fn session_signer(
-        &self,
-        wallet: &WalletOpts,
-        expected_chain_id: u64,
-    ) -> Result<Option<ResolvedSessionSigner>> {
-        let Some(session_id) = self.session_id()? else {
-            return Ok(None);
-        };
-        ensure_no_explicit_wallet_signer(wallet)?;
-        self.resolve_session_signer_for_sender(session_id, wallet.from, expected_chain_id)
-    }
-
-    /// Resolves the configured Tempo wallet session into the signing pieces used by transaction
-    /// senders.
-    pub fn session_signing_parts(
-        &self,
-        wallet: &WalletOpts,
-        expected_chain_id: u64,
-    ) -> Result<Option<(WalletSigner, TempoAccessKeyConfig)>> {
-        Ok(self
-            .session_signer(wallet, expected_chain_id)?
-            .map(|session| (session.signer, session.access_key)))
-    }
-
-    /// Resolves the configured Tempo wallet session for `forge script`, if any.
-    pub fn session_signer_for_multi_wallet(
-        &self,
-        wallets: &MultiWalletOpts,
-        expected_sender: Option<Address>,
-        expected_chain_id: u64,
-    ) -> Result<Option<ResolvedSessionSigner>> {
-        let Some(session_id) = self.session_id()? else {
-            return Ok(None);
-        };
-        ensure_no_explicit_multi_wallet_signer(wallets)?;
-        self.resolve_session_signer_for_sender(session_id, expected_sender, expected_chain_id)
-    }
-
-    /// Resolves the root account for the configured Tempo wallet session for `forge script`.
-    pub fn session_root_account_for_multi_wallet(
-        &self,
-        wallets: &MultiWalletOpts,
-        expected_chain_id: u64,
-    ) -> Result<Option<Address>> {
-        let Some(session_id) = self.session_id()? else {
-            return Ok(None);
-        };
-        ensure_no_explicit_multi_wallet_signer(wallets)?;
-        Ok(self
-            .resolve_session_signer_for_sender(session_id, None, expected_chain_id)?
-            .map(|session| session.access_key.wallet_address))
-    }
-
-    fn resolve_session_signer_for_sender(
-        &self,
-        session_id: B256,
-        expected_sender: Option<Address>,
-        expected_chain_id: u64,
-    ) -> Result<Option<ResolvedSessionSigner>> {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
-        let resolved =
-            resolve_live_session_signer(session_id, now.as_secs())?.ok_or_else(|| {
-                eyre::eyre!("Tempo session {session_id:?} is not active or has no live key")
-            })?;
-
-        if resolved.session.chain_id != expected_chain_id {
-            eyre::bail!(
-                "Tempo session {session_id:?} is for chain {}, but command is using chain {}",
-                resolved.session.chain_id,
-                expected_chain_id
-            );
-        }
-
-        if let Some(from) = expected_sender
-            && from != resolved.access_key.wallet_address
-        {
-            eyre::bail!(
-                "sender {from} does not match Tempo session root account {}",
-                resolved.access_key.wallet_address
-            );
-        }
-
-        Ok(Some(resolved))
-    }
-
     /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.
     pub fn expires_at(&self) -> Option<u64> {
         let secs = self.expires?;
@@ -404,50 +285,6 @@ impl TempoOpts {
     }
 }
 
-fn ensure_no_explicit_wallet_signer(wallet: &WalletOpts) -> Result<()> {
-    let has_explicit_signer = wallet.raw.interactive
-        || wallet.raw.private_key.is_some()
-        || wallet.raw.mnemonic.is_some()
-        || wallet.keystore_path.is_some()
-        || wallet.keystore_account_name.is_some()
-        || wallet.ledger
-        || wallet.trezor
-        || wallet.aws
-        || wallet.gcp
-        || wallet.turnkey
-        || wallet.tempo_access_key.is_some();
-
-    if has_explicit_signer {
-        eyre::bail!(
-            "--tempo.session/TEMPO_SESSION_ID cannot be combined with explicit wallet signer options"
-        );
-    }
-    Ok(())
-}
-
-fn ensure_no_explicit_multi_wallet_signer(wallets: &MultiWalletOpts) -> Result<()> {
-    let has_explicit_signer = wallets.interactive
-        || wallets.interactives > 0
-        || wallets.private_key.is_some()
-        || wallets.private_keys.is_some()
-        || wallets.mnemonics.is_some()
-        || wallets.keystore_paths.is_some()
-        || wallets.keystore_account_names.is_some()
-        || wallets.ledger
-        || wallets.trezor
-        || wallets.aws
-        || wallets.gcp
-        || wallets.turnkey
-        || wallets.browser.browser;
-
-    if has_explicit_signer {
-        eyre::bail!(
-            "--tempo.session/TEMPO_SESSION_ID cannot be combined with explicit wallet signer options"
-        );
-    }
-    Ok(())
-}
-
 fn parse_signature(s: &str) -> Result<Signature, String> {
     Signature::from_str(s).map_err(|e| format!("invalid signature: {e}"))
 }
@@ -467,136 +304,12 @@ fn parse_expires_seconds(s: &str) -> Result<u64, String> {
 mod tests {
     use super::*;
     use alloy_primitives::address;
-    use std::sync::Mutex;
-
-    static ENV_MUTEX: Mutex<()> = Mutex::new(());
-
-    fn with_clean_session_env(test: impl FnOnce()) {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        // SAFETY: serialized with other tests that mutate Tempo env vars.
-        unsafe {
-            std::env::remove_var(TEMPO_SESSION_ID_ENV);
-        }
-        test();
-        // SAFETY: serialized with other tests that mutate Tempo env vars.
-        unsafe {
-            std::env::remove_var(TEMPO_SESSION_ID_ENV);
-        }
-    }
-
-    fn session_id(byte: u8) -> B256 {
-        B256::from([byte; 32])
-    }
 
     #[test]
     fn parses_lane_arg() {
         let opts = TempoOpts::try_parse_from(["", "--tempo.lane", "deploy"]).unwrap();
         assert_eq!(opts.lane.as_deref(), Some("deploy"));
         assert!(opts.nonce_key.is_none());
-    }
-
-    #[test]
-    fn parses_tempo_session_cli_arg() {
-        with_clean_session_env(|| {
-            let id = session_id(0x11);
-            let opts =
-                TempoOpts::try_parse_from(["", "--tempo.session", &format!("{id:?}")]).unwrap();
-
-            assert_eq!(opts.session, Some(id));
-            assert_eq!(opts.session_id().unwrap(), Some(id));
-            assert!(opts.is_tempo());
-        });
-    }
-
-    #[test]
-    fn tempo_session_env_is_used_when_cli_arg_is_absent() {
-        with_clean_session_env(|| {
-            let id = session_id(0x22);
-            // SAFETY: serialized with other tests that mutate Tempo env vars.
-            unsafe { std::env::set_var(TEMPO_SESSION_ID_ENV, format!("{id:?}")) };
-            let opts = TempoOpts::default();
-
-            assert_eq!(opts.session_id().unwrap(), Some(id));
-            assert!(opts.is_tempo());
-        });
-    }
-
-    #[test]
-    fn tempo_session_cli_arg_overrides_env() {
-        with_clean_session_env(|| {
-            let env_id = session_id(0x33);
-            let cli_id = session_id(0x44);
-            // SAFETY: serialized with other tests that mutate Tempo env vars.
-            unsafe { std::env::set_var(TEMPO_SESSION_ID_ENV, format!("{env_id:?}")) };
-
-            let opts =
-                TempoOpts::try_parse_from(["", "--tempo.session", &format!("{cli_id:?}")]).unwrap();
-
-            assert_eq!(opts.session_id().unwrap(), Some(cli_id));
-        });
-    }
-
-    #[test]
-    fn invalid_tempo_session_env_fails_closed() {
-        with_clean_session_env(|| {
-            // SAFETY: serialized with other tests that mutate Tempo env vars.
-            unsafe { std::env::set_var(TEMPO_SESSION_ID_ENV, "not-a-session-id") };
-            let err = TempoOpts::default().session_id().unwrap_err();
-
-            assert!(err.to_string().contains(TEMPO_SESSION_ID_ENV), "{err}");
-        });
-    }
-
-    #[test]
-    fn tempo_session_rejects_explicit_wallet_signers() {
-        let opts = TempoOpts { session: Some(session_id(0x55)), ..Default::default() };
-        let wallet = WalletOpts {
-            raw: foundry_wallets::RawWalletOpts {
-                private_key: Some("0xdead".to_string()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let err = opts.session_signer(&wallet, 4217).unwrap_err();
-        assert!(err.to_string().contains("explicit wallet signer"), "{err}");
-    }
-
-    #[test]
-    fn absent_tempo_session_does_not_reject_explicit_wallet_signers() {
-        with_clean_session_env(|| {
-            let opts = TempoOpts::default();
-            let wallet = WalletOpts {
-                raw: foundry_wallets::RawWalletOpts {
-                    private_key: Some("0xdead".to_string()),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
-
-            assert!(opts.session_signer(&wallet, 4217).unwrap().is_none());
-        });
-    }
-
-    #[test]
-    fn tempo_session_rejects_explicit_multi_wallet_signers() {
-        let opts = TempoOpts { session: Some(session_id(0x66)), ..Default::default() };
-        let wallets =
-            MultiWalletOpts { private_key: Some("0xdead".to_string()), ..Default::default() };
-
-        let err = opts.session_root_account_for_multi_wallet(&wallets, 4217).unwrap_err();
-        assert!(err.to_string().contains("explicit wallet signer"), "{err}");
-    }
-
-    #[test]
-    fn absent_tempo_session_does_not_reject_explicit_multi_wallet_signers() {
-        with_clean_session_env(|| {
-            let opts = TempoOpts::default();
-            let wallets =
-                MultiWalletOpts { private_key: Some("0xdead".to_string()), ..Default::default() };
-
-            assert!(opts.session_root_account_for_multi_wallet(&wallets, 4217).unwrap().is_none());
-        });
     }
 
     #[test]

@@ -17,7 +17,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{ChainValueParser, RpcOpts, TransactionOpts},
-    utils::{self, LoadConfig, TraceResult, parse_ether_value},
+    utils::{LoadConfig, TraceResult, parse_ether_value},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -280,8 +280,7 @@ impl CallArgs {
         }
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
-        let chain = self::utils::get_chain(config.chain, &provider).await?;
-        let sender = SenderKind::from_wallet_opts_or_session(wallet, &mut tx, chain.id()).await?;
+        let sender = SenderKind::from_wallet_opts(wallet).await?;
         let from = sender.address();
 
         let code = if let Some(CallSubcommands::Create {

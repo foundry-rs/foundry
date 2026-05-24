@@ -8,10 +8,7 @@ use crate::{
     call_spec::CallSpec,
     cmd::send::{cast_send, cast_send_with_access_key},
     tempo,
-    tx::{
-        self, CastTxBuilder, SendTxOpts, ensure_session_compatible_browser,
-        ensure_session_compatible_unlocked, resolve_wallet_or_session_signer,
-    },
+    tx::{self, CastTxBuilder, SendTxOpts},
 };
 use alloy_network::{EthereumWallet, TransactionBuilder};
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
@@ -67,25 +64,20 @@ impl BatchSendArgs {
         // Resolve `--tempo.lane <name>` against the lanes file (default
         // `<root>/tempo.lanes.toml`) and populate `tx.tempo.nonce_key` from the lane.
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
-        let chain = utils::get_chain(config.chain, &provider).await?;
 
         if let Some(interval) = send_tx.poll_interval {
             provider.client().set_poll_interval(Duration::from_secs(interval))
         }
 
-        let resolved_signer =
-            resolve_wallet_or_session_signer(&tx.tempo, &send_tx.eth.wallet, chain.id()).await?;
-        if resolved_signer.is_session {
-            ensure_session_compatible_unlocked(unlocked)?;
-            ensure_session_compatible_browser(send_tx.browser.browser)?;
-        }
-        let (signer, tempo_access_key) = resolved_signer.into_parts();
+        // Resolve signer to detect keychain mode
+        let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
 
         // Parse all call specs
         let call_specs: Vec<CallSpec> =
             calls.iter().map(|s| CallSpec::parse(s)).collect::<Result<Vec<_>>>()?;
 
         // Get chain for parsing function args
+        let chain = utils::get_chain(config.chain, &provider).await?;
         let etherscan_config = config.get_etherscan_config_with_chain(Some(chain)).ok().flatten();
         let etherscan_api_key = etherscan_config.as_ref().map(|c| c.key.clone());
         let etherscan_api_url = etherscan_config.map(|c| c.api_url);

@@ -269,31 +269,12 @@ impl ScriptArgs {
         config: Config,
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
-        let session_root = if self.tempo.session_id()?.is_some() {
-            let chain_id = Self::resolved_script_chain_id(&evm_opts).await?;
-            self.tempo.session_root_account_for_multi_wallet(&self.wallets, chain_id)?
-        } else {
-            None
-        };
-        if let Some(session_root) = session_root {
-            if let Some(sender) = self.evm.sender
-                && sender != session_root
-            {
-                eyre::bail!(
-                    "sender {sender} does not match Tempo session root account {session_root}"
-                );
-            }
-            evm_opts.sender = session_root;
-        }
-
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
         let browser_wallet = self.wallets.browser_signer::<FEN::Network>().await?;
 
-        if session_root.is_none()
-            && let Some(sender) = self.maybe_load_private_key()?
-        {
+        if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
-        } else if session_root.is_none() && self.evm.sender.is_none() {
+        } else if self.evm.sender.is_none() {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
             // use the sole signer's address if there's exactly one, or fall back to the browser
             // wallet address if present.
@@ -315,17 +296,6 @@ impl ScriptArgs {
 
         let script_config = ScriptConfig::new(config, evm_opts, self.batch, tempo).await?;
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
-    }
-
-    async fn resolved_script_chain_id(evm_opts: &EvmOpts) -> Result<u64> {
-        if let Some(chain_id) = evm_opts.env.chain_id {
-            return Ok(chain_id);
-        }
-        evm_opts.get_remote_chain_id().await.map(|chain| chain.id()).ok_or_else(|| {
-            eyre::eyre!(
-                "--tempo.session/TEMPO_SESSION_ID requires a resolved chain id or --fork-url"
-            )
-        })
     }
 
     /// Executes the script

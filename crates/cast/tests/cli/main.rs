@@ -1936,38 +1936,6 @@ casttest!(mktx_signer_from_match, |_prj, cmd| {
 "#]]);
 });
 
-casttest!(mktx_tempo_session_rejects_explicit_signer, |_prj, cmd| {
-    let output = cmd
-        .args([
-            "mktx",
-            "--tempo.session",
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "--private-key",
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
-            "--chain",
-            "1",
-            "--nonce",
-            "0",
-            "--gas-limit",
-            "21000",
-            "--gas-price",
-            "10000000000",
-            "--priority-gas-price",
-            "1000000000",
-            "0x0000000000000000000000000000000000000001",
-        ])
-        .assert_failure()
-        .get_output()
-        .stderr_lossy();
-
-    assert!(
-        output.contains(
-            "--tempo.session/TEMPO_SESSION_ID cannot be combined with explicit wallet signer options"
-        ),
-        "{output}"
-    );
-});
-
 casttest!(mktx_raw_unsigned, |_prj, cmd| {
     cmd.args([
         "mktx",

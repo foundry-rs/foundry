@@ -3,10 +3,7 @@ use std::{str::FromStr, time::Duration};
 use crate::{
     cmd::send::{cast_send, cast_send_with_access_key},
     format_uint_exp,
-    tx::{
-        CastTxSender, SendTxOpts, TxParams, ensure_session_compatible_browser,
-        resolve_wallet_or_session_signer,
-    },
+    tx::{CastTxSender, SendTxOpts, TxParams},
 };
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::BlockId;
@@ -321,11 +318,10 @@ impl Erc20Subcommand {
             | Self::Approve { send_tx, .. }
             | Self::Mint { send_tx, .. }
             | Self::Burn { send_tx, .. } => {
-                let tx = self.erc20_opts().expect("state-changing ERC20 variant has tx opts");
-                if tx.tempo.session_id()?.is_some() {
-                    (None, None)
-                } else if send_tx.eth.wallet.from.is_some() {
-                    send_tx.eth.wallet.maybe_signer().await?
+                // Only attempt Tempo lookup if --from is set (avoids unnecessary I/O).
+                if send_tx.eth.wallet.from.is_some() {
+                    let (s, ak) = send_tx.eth.wallet.maybe_signer().await?;
+                    (s, ak)
                 } else {
                     (None, None)
                 }
@@ -377,25 +373,6 @@ impl Erc20Subcommand {
                 }
 
                 let timeout = $send_tx.timeout.unwrap_or(config.transaction_timeout);
-                let (pre_resolved_signer, tempo_keychain) = if tx_opts.tempo.session_id()?.is_some()
-                {
-                    let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
-                    let chain = get_chain(config.chain, &provider).await?;
-                    let resolved_signer = resolve_wallet_or_session_signer(
-                        &tx_opts.tempo,
-                        &$send_tx.eth.wallet,
-                        chain.id(),
-                    )
-                    .await?;
-                    if resolved_signer.is_session {
-                        ensure_session_compatible_browser($send_tx.browser.browser)?;
-                        resolved_signer.into_parts()
-                    } else {
-                        (pre_resolved_signer, tempo_keychain)
-                    }
-                } else {
-                    (pre_resolved_signer, tempo_keychain)
-                };
                 if let Some(ref access_key) = tempo_keychain {
                     let signer = pre_resolved_signer
                         .as_ref()

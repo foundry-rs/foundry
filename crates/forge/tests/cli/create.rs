@@ -125,31 +125,6 @@ forgetest!(can_create_oracle_on_amoy, |prj, cmd| {
     create_on_chain(EnvExternalities::amoy(), prj, cmd, setup_oracle);
 });
 
-forgetest!(create_tempo_session_rejects_explicit_signer, |prj, cmd| {
-    foundry_test_utils::util::initialize(prj.root());
-    prj.initialize_default_contracts();
-
-    let output = cmd
-        .args([
-            "create",
-            "--tempo.session",
-            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "--private-key",
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
-            "src/Counter.sol:Counter",
-        ])
-        .assert_failure()
-        .get_output()
-        .stderr_lossy();
-
-    assert!(
-        output.contains(
-            "--tempo.session/TEMPO_SESSION_ID cannot be combined with explicit wallet signer options"
-        ),
-        "{output}"
-    );
-});
-
 // tests that we can deploy the template contract
 forgetest_async!(can_create_template_contract, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
