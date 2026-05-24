@@ -4,7 +4,9 @@ use crate::{
         send::{cast_send, cast_send_with_access_key},
     },
     tempo,
-    tx::{SendTxOpts, TxParams},
+    tx::{
+        SendTxOpts, TxParams, ensure_session_compatible_browser, resolve_wallet_or_session_signer,
+    },
 };
 use alloy_primitives::{Address, B256, keccak256};
 use alloy_signer::Signer;
@@ -81,15 +83,17 @@ pub(super) async fn register(
     send_tx: SendTxOpts,
     mut tx_opts: TxParams,
 ) -> Result<()> {
-    let session_signer = tx_opts.tempo.session_signer(&send_tx.eth.wallet)?;
-    let (signer, tempo_access_key) = if let Some(session) = session_signer {
-        if send_tx.browser.browser {
-            eyre::bail!("--browser cannot be combined with --tempo.session/TEMPO_SESSION_ID");
-        }
-        (Some(session.signer), Some(session.access_key))
-    } else {
-        send_tx.eth.wallet.maybe_signer().await?
-    };
+    let config = send_tx.eth.load_config()?;
+    let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
+    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
+    let chain = get_chain(config.chain, &provider).await?;
+
+    let resolved_signer =
+        resolve_wallet_or_session_signer(&tx_opts.tempo, &send_tx.eth.wallet, chain.id()).await?;
+    if resolved_signer.is_session {
+        ensure_session_compatible_browser(send_tx.browser.browser)?;
+    }
+    let (signer, tempo_access_key) = resolved_signer.into_parts();
     let signer = signer.ok_or_else(|| {
         eyre::eyre!(
             "--register requires a signer or Tempo keychain identity (for example --private-key or --from)"
@@ -105,16 +109,12 @@ pub(super) async fn register(
         );
     }
 
-    let config = send_tx.eth.load_config()?;
-    let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
-    let provider = ProviderBuilder::<TempoNetwork>::from_config(&config)?.build()?;
-
     let mut tx = IAddressRegistry::new(ADDRESS_REGISTRY_ADDRESS, &provider)
         .registerVirtualMaster(salt)
         .into_transaction_request();
     let expires_at = tx_opts.tempo.resolve_expires();
     tempo::print_expires(expires_at)?;
-    tx_opts.apply::<TempoNetwork>(&mut tx, get_chain(config.chain, &provider).await?.is_legacy());
+    tx_opts.apply::<TempoNetwork>(&mut tx, chain.is_legacy());
 
     sh_println!("Submitting registerVirtualMaster({salt}) on Tempo...")?;
 

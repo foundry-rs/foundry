@@ -10,7 +10,7 @@ use foundry_common::{
         resolve_tempo_sponsor_signer,
     },
 };
-use foundry_wallets::{MultiWalletOpts, WalletOpts};
+use foundry_wallets::{MultiWalletOpts, TempoAccessKeyConfig, WalletOpts, WalletSigner};
 use std::{
     num::NonZeroU64,
     path::PathBuf,
@@ -199,16 +199,40 @@ impl TempoOpts {
         })
     }
 
+    /// Ensures a configured Tempo session is not combined with explicit wallet signer options.
+    pub fn ensure_session_compatible_wallet(&self, wallet: &WalletOpts) -> Result<()> {
+        if self.session_id()?.is_some() {
+            ensure_no_explicit_wallet_signer(wallet)?;
+        }
+        Ok(())
+    }
+
     /// Resolves the configured Tempo wallet session, if any.
     ///
     /// Explicit session configuration is fail-closed: if a session id was provided but no live
     /// session can be loaded, callers must not fall back to any long-lived signer.
-    pub fn session_signer(&self, wallet: &WalletOpts) -> Result<Option<ResolvedSessionSigner>> {
+    pub fn session_signer(
+        &self,
+        wallet: &WalletOpts,
+        expected_chain_id: u64,
+    ) -> Result<Option<ResolvedSessionSigner>> {
         let Some(session_id) = self.session_id()? else {
             return Ok(None);
         };
         ensure_no_explicit_wallet_signer(wallet)?;
-        self.resolve_session_signer_for_sender(session_id, wallet.from)
+        self.resolve_session_signer_for_sender(session_id, wallet.from, expected_chain_id)
+    }
+
+    /// Resolves the configured Tempo wallet session into the signing pieces used by transaction
+    /// senders.
+    pub fn session_signing_parts(
+        &self,
+        wallet: &WalletOpts,
+        expected_chain_id: u64,
+    ) -> Result<Option<(WalletSigner, TempoAccessKeyConfig)>> {
+        Ok(self
+            .session_signer(wallet, expected_chain_id)?
+            .map(|session| (session.signer, session.access_key)))
     }
 
     /// Resolves the configured Tempo wallet session for `forge script`, if any.
@@ -216,25 +240,27 @@ impl TempoOpts {
         &self,
         wallets: &MultiWalletOpts,
         expected_sender: Option<Address>,
+        expected_chain_id: u64,
     ) -> Result<Option<ResolvedSessionSigner>> {
         let Some(session_id) = self.session_id()? else {
             return Ok(None);
         };
         ensure_no_explicit_multi_wallet_signer(wallets)?;
-        self.resolve_session_signer_for_sender(session_id, expected_sender)
+        self.resolve_session_signer_for_sender(session_id, expected_sender, expected_chain_id)
     }
 
     /// Resolves the root account for the configured Tempo wallet session for `forge script`.
     pub fn session_root_account_for_multi_wallet(
         &self,
         wallets: &MultiWalletOpts,
+        expected_chain_id: u64,
     ) -> Result<Option<Address>> {
         let Some(session_id) = self.session_id()? else {
             return Ok(None);
         };
         ensure_no_explicit_multi_wallet_signer(wallets)?;
         Ok(self
-            .resolve_session_signer_for_sender(session_id, None)?
+            .resolve_session_signer_for_sender(session_id, None, expected_chain_id)?
             .map(|session| session.access_key.wallet_address))
     }
 
@@ -242,12 +268,21 @@ impl TempoOpts {
         &self,
         session_id: B256,
         expected_sender: Option<Address>,
+        expected_chain_id: u64,
     ) -> Result<Option<ResolvedSessionSigner>> {
         let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
         let resolved =
             resolve_live_session_signer(session_id, now.as_secs())?.ok_or_else(|| {
                 eyre::eyre!("Tempo session {session_id:?} is not active or has no live key")
             })?;
+
+        if resolved.session.chain_id != expected_chain_id {
+            eyre::bail!(
+                "Tempo session {session_id:?} is for chain {}, but command is using chain {}",
+                resolved.session.chain_id,
+                expected_chain_id
+            );
+        }
 
         if let Some(from) = expected_sender
             && from != resolved.access_key.wallet_address
@@ -523,7 +558,7 @@ mod tests {
             ..Default::default()
         };
 
-        let err = opts.session_signer(&wallet).unwrap_err();
+        let err = opts.session_signer(&wallet, 4217).unwrap_err();
         assert!(err.to_string().contains("explicit wallet signer"), "{err}");
     }
 
@@ -539,7 +574,7 @@ mod tests {
                 ..Default::default()
             };
 
-            assert!(opts.session_signer(&wallet).unwrap().is_none());
+            assert!(opts.session_signer(&wallet, 4217).unwrap().is_none());
         });
     }
 
@@ -549,7 +584,7 @@ mod tests {
         let wallets =
             MultiWalletOpts { private_key: Some("0xdead".to_string()), ..Default::default() };
 
-        let err = opts.session_root_account_for_multi_wallet(&wallets).unwrap_err();
+        let err = opts.session_root_account_for_multi_wallet(&wallets, 4217).unwrap_err();
         assert!(err.to_string().contains("explicit wallet signer"), "{err}");
     }
 
@@ -560,7 +595,7 @@ mod tests {
             let wallets =
                 MultiWalletOpts { private_key: Some("0xdead".to_string()), ..Default::default() };
 
-            assert!(opts.session_root_account_for_multi_wallet(&wallets).unwrap().is_none());
+            assert!(opts.session_root_account_for_multi_wallet(&wallets, 4217).unwrap().is_none());
         });
     }
 

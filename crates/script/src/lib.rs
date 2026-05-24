@@ -269,7 +269,12 @@ impl ScriptArgs {
         config: Config,
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
-        let session_root = self.tempo.session_root_account_for_multi_wallet(&self.wallets)?;
+        let session_root = if self.tempo.session_id()?.is_some() {
+            let chain_id = Self::resolved_script_chain_id(&evm_opts).await?;
+            self.tempo.session_root_account_for_multi_wallet(&self.wallets, chain_id)?
+        } else {
+            None
+        };
         if let Some(session_root) = session_root {
             if let Some(sender) = self.evm.sender
                 && sender != session_root
@@ -310,6 +315,17 @@ impl ScriptArgs {
 
         let script_config = ScriptConfig::new(config, evm_opts, self.batch, tempo).await?;
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
+    }
+
+    async fn resolved_script_chain_id(evm_opts: &EvmOpts) -> Result<u64> {
+        if let Some(chain_id) = evm_opts.env.chain_id {
+            return Ok(chain_id);
+        }
+        evm_opts.get_remote_chain_id().await.map(|chain| chain.id()).ok_or_else(|| {
+            eyre::eyre!(
+                "--tempo.session/TEMPO_SESSION_ID requires a resolved chain id or --fork-url"
+            )
+        })
     }
 
     /// Executes the script

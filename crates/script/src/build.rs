@@ -3,7 +3,7 @@ use crate::{
     multi_sequence::MultiChainSequence, sequence::ScriptSequenceKind,
 };
 use alloy_network::AnyNetwork;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
@@ -20,8 +20,21 @@ use foundry_compilers::{
 };
 use foundry_evm::{core::evm::FoundryEvmNetwork, traces::debug::ContractSources};
 use foundry_linking::Linker;
-use foundry_wallets::wallet_browser::signer::BrowserSigner;
+use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
 use std::{path::PathBuf, str::FromStr, sync::Arc};
+
+fn has_available_resume_signer(
+    from: Address,
+    chain_id: u64,
+    available_signers: &[Address],
+    tempo: &foundry_cli::opts::TempoOpts,
+    wallets: &MultiWalletOpts,
+) -> Result<bool> {
+    if available_signers.contains(&from) {
+        return Ok(true);
+    }
+    Ok(tempo.session_signer_for_multi_wallet(wallets, Some(from), chain_id)?.is_some())
+}
 
 /// Container for the compiled contracts.
 #[derive(Debug)]
@@ -301,11 +314,10 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     self.script_config,
                 )
             } else {
-                let mut froms = sequence.sequences().iter().flat_map(|s| {
-                    s.transactions
-                        .iter()
-                        .skip(s.receipts.len())
-                        .map(|t| t.transaction.from().expect("from is missing in script artifact"))
+                let required_signers = sequence.sequences().iter().flat_map(|s| {
+                    s.transactions.iter().skip(s.receipts.len()).map(|t| {
+                        (t.transaction.from().expect("from is missing in script artifact"), s.chain)
+                    })
                 });
 
                 let available_signers = self
@@ -313,7 +325,21 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     .signers()
                     .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
 
-                if froms.all(|from| available_signers.contains(&from)) {
+                let mut has_all_signers = true;
+                for (from, chain) in required_signers {
+                    if !has_available_resume_signer(
+                        from,
+                        chain,
+                        &available_signers,
+                        &self.script_config.tempo,
+                        &self.args.wallets,
+                    )? {
+                        has_all_signers = false;
+                        break;
+                    }
+                }
+
+                if has_all_signers {
                     (
                         self.args,
                         self.build_data,

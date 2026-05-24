@@ -9,7 +9,7 @@ use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
     opts::{RpcOpts, TransactionOpts},
-    utils::LoadConfig,
+    utils::{self, LoadConfig},
 };
 use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use foundry_wallets::WalletOpts;
@@ -78,13 +78,8 @@ impl AccessListArgs {
 
         let config = rpc.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
-        let session_signer = tx.tempo.session_signer(&wallet)?;
-        let sender = if let Some(session) = session_signer {
-            tx.tempo.key_id = Some(session.access_key.key_address);
-            SenderKind::Address(session.access_key.wallet_address)
-        } else {
-            SenderKind::from_wallet_opts(wallet).await?
-        };
+        let chain = utils::get_chain(config.chain, &provider).await?;
+        let sender = SenderKind::from_wallet_opts_or_session(wallet, &mut tx, chain.id()).await?;
 
         let (tx, _) = CastTxBuilder::new(&provider, tx, &config)
             .await?

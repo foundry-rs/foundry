@@ -1,4 +1,6 @@
-use crate::tx::{self, CastTxBuilder};
+use crate::tx::{
+    self, CastTxBuilder, ensure_session_compatible_raw_modes, resolve_wallet_or_session_signer,
+};
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
@@ -14,9 +16,7 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
-use foundry_common::{
-    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::ResolvedSessionSigner,
-};
+use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
@@ -86,18 +86,14 @@ pub enum MakeTxSubcommands {
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        let session_signer = self.tx.tempo.session_signer(&self.eth.wallet)?;
-        if session_signer.is_some() || self.tx.tempo.is_tempo() {
-            self.run_generic::<TempoNetwork>(session_signer).await
+        if self.tx.tempo.is_tempo() {
+            self.run_generic::<TempoNetwork>().await
         } else {
-            self.run_generic::<Ethereum>(None).await
+            self.run_generic::<Ethereum>().await
         }
     }
 
-    pub async fn run_generic<N: Network>(
-        self,
-        session_signer: Option<ResolvedSessionSigner>,
-    ) -> Result<()>
+    pub async fn run_generic<N: Network>(self) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
         N::UnsignedTx: SignableTransaction<Signature>,
@@ -105,16 +101,6 @@ impl MakeTxArgs {
     {
         let Self { to, mut sig, mut args, command, mut tx, path, eth, raw_unsigned, ethsign } =
             self;
-        let session = if let Some(session) = session_signer {
-            if raw_unsigned || ethsign {
-                eyre::bail!(
-                    "--raw-unsigned/--ethsign cannot be combined with --tempo.session/TEMPO_SESSION_ID"
-                );
-            }
-            Some((session.signer, session.access_key))
-        } else {
-            None
-        };
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
         let expires_at = tx.tempo.resolve_expires();
@@ -152,6 +138,20 @@ impl MakeTxArgs {
             .with_code_sig_and_args(code, sig, args)
             .await?
             .with_blob_data(blob_data)?;
+
+        let session = if tx.tempo.session_id()?.is_some() {
+            let resolved_signer =
+                resolve_wallet_or_session_signer(&tx.tempo, &eth.wallet, tx_builder.chain().id())
+                    .await?;
+            if resolved_signer.is_session {
+                ensure_session_compatible_raw_modes(raw_unsigned, ethsign)?;
+                Some(resolved_signer.into_session_parts()?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // If --tempo.print-sponsor-hash was passed, build the tx, print the hash, and exit.
         if print_sponsor_hash {

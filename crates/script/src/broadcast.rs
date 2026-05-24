@@ -44,8 +44,10 @@ fn resolve_session_signer(
     tempo: &foundry_cli::opts::TempoOpts,
     wallets: &foundry_wallets::MultiWalletOpts,
     sender: Address,
+    chain_id: u64,
 ) -> Result<Option<(WalletSigner, TempoAccessKeyConfig)>> {
-    let Some(session) = tempo.session_signer_for_multi_wallet(wallets, Some(sender))? else {
+    let Some(session) = tempo.session_signer_for_multi_wallet(wallets, Some(sender), chain_id)?
+    else {
         return Ok(None);
     };
     Ok(Some((session.signer, session.access_key)))
@@ -359,7 +361,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
     /// Broadcasts transactions from all sequences.
     pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>> {
-        let required_addresses = self
+        let required_address_chains = self
             .sequence
             .sequences()
             .iter()
@@ -367,9 +369,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 sequence
                     .transactions()
                     .filter(|tx| tx.is_unsigned())
-                    .map(|tx| tx.from().expect("missing from"))
+                    .map(|tx| (tx.from().expect("missing from"), sequence.chain))
             })
-            .collect::<AddressHashSet>();
+            .collect::<Vec<_>>();
+        let required_addresses =
+            required_address_chains.iter().map(|(address, _)| *address).collect::<AddressHashSet>();
 
         if required_addresses.contains(&Config::DEFAULT_SENDER) {
             eyre::bail!(
@@ -398,10 +402,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let mut direct_signers: AddressHashMap<WalletSigner> = AddressHashMap::default();
             let mut missing_addresses = Vec::new();
 
-            for addr in &required_addresses {
-                if let Some((signer, config)) =
-                    resolve_session_signer(&self.script_config.tempo, &self.args.wallets, *addr)?
-                {
+            for (addr, chain) in &required_address_chains {
+                if let Some((signer, config)) = resolve_session_signer(
+                    &self.script_config.tempo,
+                    &self.args.wallets,
+                    *addr,
+                    *chain,
+                )? {
                     access_keys.insert(*addr, (signer, config));
                     continue;
                 }
@@ -824,9 +831,12 @@ impl BundledState<TempoEvmNetwork> {
 
         let batch_signer = if self.args.unlocked {
             BatchSigner::Unlocked
-        } else if let Some((signer, config)) =
-            resolve_session_signer(&self.script_config.tempo, &self.args.wallets, sender)?
-        {
+        } else if let Some((signer, config)) = resolve_session_signer(
+            &self.script_config.tempo,
+            &self.args.wallets,
+            sender,
+            sequence.chain,
+        )? {
             BatchSigner::TempoKeychain(Box::new(signer), Box::new(config))
         } else {
             let mut signers = self.script_wallets.into_multi_wallet().into_signers()?;

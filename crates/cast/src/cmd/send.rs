@@ -10,7 +10,7 @@ use clap::Parser;
 use eyre::{Result, eyre};
 use foundry_cli::{
     opts::TransactionOpts,
-    utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
+    utils::{self, LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
 use foundry_common::{
     FoundryTransactionBuilder,
@@ -23,7 +23,10 @@ use tempo_alloy::TempoNetwork;
 
 use crate::{
     cmd::tip20::iso4217_warning_message,
-    tx::{self, CastTxBuilder, CastTxSender, SendTxOpts},
+    tx::{
+        self, CastTxBuilder, CastTxSender, SendTxOpts, ensure_session_compatible_browser,
+        ensure_session_compatible_unlocked, resolve_wallet_or_session_signer,
+    },
 };
 use tempo_contracts::precompiles::{TIP20_FACTORY_ADDRESS, is_iso4217_currency};
 
@@ -98,15 +101,8 @@ pub enum SendTxSubcommands {
 impl SendTxArgs {
     pub async fn run(self) -> Result<()> {
         // Resolve the signer early so we know if it's a Tempo access key.
-        let session_signer = self.tx.tempo.session_signer(&self.send_tx.eth.wallet)?;
-        let (signer, tempo_access_key) = if let Some(session) = session_signer {
-            if self.unlocked {
-                eyre::bail!("--unlocked cannot be combined with --tempo.session/TEMPO_SESSION_ID");
-            }
-            if self.send_tx.browser.browser {
-                eyre::bail!("--browser cannot be combined with --tempo.session/TEMPO_SESSION_ID");
-            }
-            (Some(session.signer), Some(session.access_key))
+        let (signer, tempo_access_key) = if self.tx.tempo.session_id()?.is_some() {
+            (None, None)
         } else {
             self.send_tx.eth.wallet.maybe_signer().await?
         };
@@ -198,6 +194,21 @@ impl SendTxArgs {
 
         let config = send_tx.eth.load_config()?;
         let provider = ProviderBuilder::<N>::from_config(&config)?.build()?;
+        let chain = utils::get_chain(config.chain, &provider).await?;
+        let (pre_resolved_signer, access_key) = if tx.tempo.session_id()?.is_some() {
+            let resolved_signer =
+                resolve_wallet_or_session_signer(&tx.tempo, &send_tx.eth.wallet, chain.id())
+                    .await?;
+            if resolved_signer.is_session {
+                ensure_session_compatible_unlocked(unlocked)?;
+                ensure_session_compatible_browser(send_tx.browser.browser)?;
+                resolved_signer.into_parts()
+            } else {
+                (pre_resolved_signer, access_key)
+            }
+        } else {
+            (pre_resolved_signer, access_key)
+        };
 
         let resolved_lane = resolve_lane(&mut tx.tempo, &config.root)?;
 
