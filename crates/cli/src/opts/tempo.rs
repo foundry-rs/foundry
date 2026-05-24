@@ -157,8 +157,7 @@ pub struct TempoOpts {
 impl TempoOpts {
     /// Returns `true` if any Tempo-specific option is set.
     pub fn is_tempo(&self) -> bool {
-        self.has_session_hint()
-            || self.fee_token.is_some()
+        self.fee_token.is_some()
             || self.expires.is_some()
             || self.nonce_key.is_some()
             || self.lane.is_some()

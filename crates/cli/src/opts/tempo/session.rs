@@ -12,15 +12,6 @@ use std::{
 pub const TEMPO_SESSION_ID_ENV: &str = "TEMPO_SESSION_ID";
 
 impl TempoOpts {
-    /// Returns `true` when a Tempo session was requested through the CLI or environment.
-    ///
-    /// This intentionally treats any non-empty `TEMPO_SESSION_ID` as a hint without validating it;
-    /// parsing happens later so invalid session ids still enter Tempo handling and fail closed.
-    pub(super) fn has_session_hint(&self) -> bool {
-        self.session.is_some()
-            || std::env::var(TEMPO_SESSION_ID_ENV).is_ok_and(|raw| !raw.trim().is_empty())
-    }
-
     /// Returns the effective session id, preferring the CLI flag over `TEMPO_SESSION_ID`.
     pub fn session_id(&self) -> Result<Option<B256>> {
         if let Some(session) = self.session {
@@ -230,7 +221,6 @@ mod tests {
 
             assert_eq!(opts.session, Some(id));
             assert_eq!(opts.session_id().unwrap(), Some(id));
-            assert!(opts.is_tempo());
         });
     }
 
@@ -243,7 +233,6 @@ mod tests {
             let opts = TempoOpts::default();
 
             assert_eq!(opts.session_id().unwrap(), Some(id));
-            assert!(opts.is_tempo());
         });
     }
 
