@@ -12,6 +12,10 @@ use std::{
 pub const TEMPO_SESSION_ID_ENV: &str = "TEMPO_SESSION_ID";
 
 impl TempoOpts {
+    /// Returns `true` when a Tempo session was requested through the CLI or environment.
+    ///
+    /// This intentionally treats any non-empty `TEMPO_SESSION_ID` as a hint without validating it;
+    /// parsing happens later so invalid session ids still enter Tempo handling and fail closed.
     pub(super) fn has_session_hint(&self) -> bool {
         self.session.is_some()
             || std::env::var(TEMPO_SESSION_ID_ENV).is_ok_and(|raw| !raw.trim().is_empty())
@@ -67,6 +71,10 @@ impl TempoOpts {
     }
 }
 
+/// Loads the live session signer and validates it against the command context.
+///
+/// The session must be active on the requested chain, and any explicit sender must match the
+/// session root account.
 fn resolve_session_signer(
     session_id: B256,
     expected_sender: Option<Address>,
@@ -97,6 +105,9 @@ fn resolve_session_signer(
     Ok(resolved)
 }
 
+/// Rejects single-wallet signer options when a Tempo session is already selected.
+///
+/// Session signing must fail closed instead of falling back to a long-lived or explicit signer.
 fn ensure_no_explicit_wallet_signer(wallet: &WalletOpts) -> Result<()> {
     let has_explicit_signer = wallet.raw.interactive
         || wallet.raw.private_key.is_some()
@@ -118,6 +129,10 @@ fn ensure_no_explicit_wallet_signer(wallet: &WalletOpts) -> Result<()> {
     Ok(())
 }
 
+/// Rejects multi-wallet signer options when a Tempo session is already selected.
+///
+/// Script and broadcast session signing must not fall back to long-lived, browser, or explicit
+/// signers.
 fn ensure_no_explicit_multi_wallet_signer(wallets: &MultiWalletOpts) -> Result<()> {
     let has_explicit_signer = wallets.interactive
         || wallets.interactives > 0
