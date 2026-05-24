@@ -35,7 +35,7 @@ use foundry_common::{
 use foundry_evm_core::{
     Breakpoints, EvmEnv, FoundryTransaction, InspectorExt,
     abi::Vm::stopExpectSafeMemoryCall,
-    backend::{DatabaseError, DatabaseExt, RevertDiagnostic},
+    backend::{DatabaseError, DatabaseExt, LocalForkId, RevertDiagnostic},
     constants::{CHEATCODE_ADDRESS, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME},
     env::FoundryContextExt,
     evm::{
@@ -268,6 +268,72 @@ pub struct RecordDebugStepInfo {
     pub start_node_idx: usize,
     /// The original tracer config when the recording starts.
     pub original_tracer_config: TracingInspectorConfig,
+}
+
+/// Environment overrides applied at the opcode level.
+///
+/// In isolation mode (and inside the synthetic transactions used by
+/// `--gas-report` / `--isolate`) the transaction environment is zeroed for
+/// fee-accounting purposes, so cheatcodes that mutate the env (e.g.
+/// `vm.fee`, `vm.txGasPrice`, `vm.blobhashes`) cannot rely on those
+/// mutations being visible to contracts via the `BASEFEE`, `GASPRICE` and
+/// `BLOBHASH` opcodes. These overrides are applied in `step_end` to fix
+/// the value that was just pushed onto the stack.
+///
+/// # Semantics when invoked from inside the synthetic isolation transaction
+///
+/// `vm.fee` / `vm.txGasPrice` / `vm.blobhashes` consult
+/// [`Cheatcodes::in_isolation_context`]; when set, they only update these
+/// overrides (so `tx.gas_price = 0` continues to apply to fee accounting and
+/// EIP-4844 inner-tx validation does not reject the synthetic call) and
+/// leave the real env untouched. After the inner transaction returns, the
+/// outer env is restored from the cached snapshot taken before
+/// `transact_inner`, which means:
+///
+/// - the override **does** persist for subsequent `BASEFEE`, `GASPRICE` and `BLOBHASH` reads (this
+///   hook fires in `step_end` regardless of isolation),
+/// - `vm.getBlobhashes()` also consults these overrides, so it returns the correct value.
+/// - but the real `block.basefee` / `tx.gas_price` / `tx.blob_hashes` do **not** reflect the
+///   cheatcode value, so other non-opcode env consumers will not see it.
+///
+/// Calling these cheatcodes outside isolation behaves as before (real env
+/// is also mutated and the override mirrors it).
+#[derive(Clone, Debug, Default)]
+pub struct EnvOverrides {
+    /// Override for the `BASEFEE` opcode (set via `vm.fee`).
+    pub basefee: Option<u64>,
+    /// Override for the `GASPRICE` opcode (set via `vm.txGasPrice`).
+    pub gas_price: Option<u128>,
+    /// Override for the `BLOBHASH` opcode (set via `vm.blobhashes`).
+    pub blob_hashes: Option<Vec<B256>>,
+    /// `tx.gas_price` captured at snapshot time when no gas_price override was
+    /// active. `sync_tx_after_env_override_restore` uses this to restore the
+    /// real pre-override value (not hardcoded 0) on revert.
+    pub pre_override_gas_price: Option<u128>,
+    /// `tx.tx_type` captured at snapshot time when no blob_hashes override was
+    /// active. Prevents tx_type being stuck at EIP4844 after reverting from a
+    /// blobhashes-set state.
+    pub pre_override_tx_type: Option<u8>,
+    /// `tx.blob_hashes` captured at snapshot time when no blob_hashes override
+    /// was active.
+    pub pre_override_blob_hashes: Option<Vec<B256>>,
+    /// The opcode about to run (captured in `step`, consumed in `step_end`),
+    /// used to know what was just executed when `step_end` fires — at that
+    /// point `interpreter.bytecode.opcode()` already points at the *next*
+    /// instruction.
+    pending_opcode: Option<u8>,
+    /// Pending index for the `BLOBHASH` opcode, captured in `step` (where
+    /// the index is still on top of the stack) for use in `step_end` (after
+    /// the opcode has consumed it and pushed the looked-up hash).
+    pending_blobhash_index: Option<u64>,
+}
+
+impl EnvOverrides {
+    /// Whether any override is set.
+    #[inline]
+    pub const fn is_any_set(&self) -> bool {
+        self.basefee.is_some() || self.gas_price.is_some() || self.blob_hashes.is_some()
+    }
 }
 
 /// Holds gas metering state.
@@ -572,6 +638,39 @@ pub struct Cheatcodes<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub dynamic_gas_limit: bool,
     // Custom execution evm version.
     pub execution_evm_version: Option<SpecFor<FEN>>,
+
+    /// Opcode-level environment overrides for `BASEFEE`, `GASPRICE` and
+    /// `BLOBHASH`. Set by `vm.fee`, `vm.txGasPrice`, `vm.blobhashes` and
+    /// applied in [`Inspector::step_end`].
+    ///
+    /// Needed because in isolation mode the synthetic inner transaction
+    /// zeroes the corresponding tx/block env fields for fee-accounting.
+    ///
+    /// Keyed by active fork ID (`None` -> local) so that multi-fork tests do not bleed overrides
+    /// across forks when `vm.selectFork` / `vm.createSelectFork` switches the active fork.
+    pub env_overrides: HashMap<Option<LocalForkId>, EnvOverrides>,
+
+    /// Per-state-snapshot copies of [`Self::env_overrides`], captured by
+    /// `vm.snapshotState` and restored by `vm.revertToState[AndDelete]`.
+    ///
+    /// `env_overrides` lives on the cheatcode inspector rather than in
+    /// `EvmEnv`, so the backend's snapshot/revert mechanism does not see
+    /// it. Without this, an override set after a snapshot would survive a
+    /// `revertToState`, and the BASEFEE/GASPRICE/BLOBHASH opcodes (which
+    /// the override layer rewrites in `step_end`) would keep returning
+    /// the post-snapshot value even though `EvmEnv` was rolled back.
+    pub env_overrides_snapshots: HashMap<U256, HashMap<Option<LocalForkId>, EnvOverrides>>,
+
+    /// Whether we are currently executing inside an isolation context, i.e.
+    /// the synthetic inner transaction wrapped by
+    /// `InspectorStackRefMut::transact_inner` (used by `--gas-report` and
+    /// `--isolate`).
+    ///
+    /// Toggled by the inspector stack around the inner `transact_raw`
+    /// call. Cheatcodes that mutate the tx/block env consult this flag and
+    /// route the change through `EnvOverrides` instead of the actual env
+    /// when `true`, so they don't fight with the fee-accounting zeroing.
+    pub in_isolation_context: bool,
 }
 
 // This is not derived because calling this in `fn new` with `..Default::default()` creates a second
@@ -630,12 +729,26 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
             signatures_identifier: Default::default(),
             dynamic_gas_limit: Default::default(),
             execution_evm_version: None,
+            env_overrides: Default::default(),
+            env_overrides_snapshots: Default::default(),
+            in_isolation_context: false,
         }
     }
 
     /// Enables cheatcode analysis capabilities by providing a solar compiler instance.
     pub fn set_analysis(&mut self, analysis: CheatcodeAnalysis) {
         self.analysis = Some(analysis);
+    }
+
+    /// Returns the env overrides for the given fork (`None` = no-fork / local).
+    pub fn env_overrides_for(&self, fork_id: Option<U256>) -> Option<&EnvOverrides> {
+        self.env_overrides.get(&fork_id).filter(|o| o.is_any_set())
+    }
+
+    /// Returns a mutable reference to the env overrides for the given fork, inserting a
+    /// default entry if absent.
+    pub fn env_overrides_for_mut(&mut self, fork_id: Option<U256>) -> &mut EnvOverrides {
+        self.env_overrides.entry(fork_id).or_default()
     }
 
     /// Returns the configured prank at given depth or the first prank configured at a lower depth.
@@ -1272,6 +1385,36 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         if self.gas_metering.recording {
             self.meter_gas_record(interpreter, ecx);
         }
+
+        // Capture the opcode for `step_end` to use, since by the time
+        // `step_end` runs the PC has already advanced past it. Also peek the
+        // BLOBHASH index now (still on top of stack before execution) so we
+        // can look up the override later.
+        if !self.env_overrides.is_empty() {
+            let fork_id = ecx.db().active_fork_id();
+            if let Some(env_overrides) =
+                self.env_overrides.get_mut(&fork_id).filter(|o| o.is_any_set())
+            {
+                // Always clear stale pending state first so a leftover value from
+                // a prior step (e.g. when `peek` failed, or when an override
+                // wasn't actually used) cannot leak into the next opcode.
+                env_overrides.pending_opcode = None;
+                env_overrides.pending_blobhash_index = None;
+
+                let opcode = interpreter.bytecode.opcode();
+                match opcode {
+                    op::BASEFEE | op::GASPRICE => {
+                        env_overrides.pending_opcode = Some(opcode);
+                    }
+                    op::BLOBHASH => {
+                        env_overrides.pending_opcode = Some(opcode);
+                        env_overrides.pending_blobhash_index =
+                            interpreter.stack.peek(0).ok().and_then(|index| index.try_into().ok());
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 
     fn step_end(&mut self, interpreter: &mut Interpreter, ecx: &mut FoundryContextFor<'_, FEN>) {
@@ -1286,6 +1429,40 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>> for Cheatcode
         // `setArbitraryStorage` and `copyStorage`: add arbitrary values to storage.
         if self.arbitrary_storage.is_some() {
             self.arbitrary_storage_end(interpreter, ecx);
+        }
+
+        // Apply opcode-level env overrides (basefee/gasprice/blobhash). Needed
+        // in isolation mode where the actual tx/block env is zeroed for
+        // fee-accounting; in non-isolation mode the override and the real env
+        // are kept in sync by the cheatcode handlers, so this is a no-op fixup.
+        //
+        // We must only rewrite the stack if the opcode actually completed
+        // successfully and pushed its result; otherwise (stack underflow on
+        // BLOBHASH, OOG before push, etc.) the stack is in an error state and
+        // a blind `pop()+push()` would corrupt the failing frame.
+        if !self.env_overrides.is_empty() {
+            let fork_id = ecx.db().active_fork_id();
+            if self.env_overrides.get(&fork_id).is_some_and(|o| o.is_any_set()) {
+                // Mirrors the pattern used by `meter_gas_record`: when `action` is
+                // `Some` with an `instruction_result`, the opcode has set a
+                // non-continue result (halt/revert/error) — i.e. it didn't push
+                // its normal result. `None` means "still running", which is the
+                // success path for a stack-only opcode in `step_end`.
+                let opcode_failed = interpreter
+                    .bytecode
+                    .action
+                    .as_ref()
+                    .and_then(|a| a.instruction_result())
+                    .is_some();
+                if opcode_failed {
+                    if let Some(env_overrides) = self.env_overrides.get_mut(&fork_id) {
+                        env_overrides.pending_opcode = None;
+                        env_overrides.pending_blobhash_index = None;
+                    }
+                } else {
+                    self.apply_env_overrides(interpreter, fork_id);
+                }
+            }
         }
     }
 
@@ -2155,6 +2332,67 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                 interpreter.gas = Gas::new(interpreter.gas.limit());
             }
         }
+    }
+
+    /// Applies opcode-level overrides for `BASEFEE`, `GASPRICE` and `BLOBHASH`.
+    ///
+    /// Called from `step_end` *after* the opcode has executed and only when the
+    /// opcode succeeded (the caller checks `instruction_result`). The opcode
+    /// pushed its (possibly zeroed) result onto the stack; we replace the top
+    /// of stack with the cheatcode-set override. This is what makes `vm.fee`,
+    /// `vm.txGasPrice` and `vm.blobhashes` visible to called contracts under
+    /// `--isolate` / `--gas-report`, where the inner transaction zeroes the
+    /// real fee fields for fee-accounting purposes.
+    ///
+    /// We can't read the just-executed opcode from `interpreter.bytecode.opcode()`
+    /// here because the PC has already advanced; instead `step` stashes it in
+    /// `env_overrides.pending_opcode` for us.
+    #[cold]
+    fn apply_env_overrides(&mut self, interpreter: &mut Interpreter, fork_id: Option<U256>) {
+        let Some(env_overrides) = self.env_overrides.get_mut(&fork_id) else { return };
+        let Some(opcode) = env_overrides.pending_opcode.take() else { return };
+        match opcode {
+            op::BASEFEE => {
+                if let Some(basefee) = env_overrides.basefee {
+                    // BASEFEE pushed one value; replace it.
+                    Self::replace_top_of_stack(interpreter, U256::from(basefee));
+                }
+            }
+            op::GASPRICE => {
+                if let Some(gas_price) = env_overrides.gas_price {
+                    // GASPRICE pushed one value; replace it.
+                    Self::replace_top_of_stack(interpreter, U256::from(gas_price));
+                }
+            }
+            op::BLOBHASH => {
+                let blob_hashes = env_overrides.blob_hashes.clone();
+                let blobhash_index = env_overrides.pending_blobhash_index.take();
+                if let Some(ref blob_hashes) = blob_hashes
+                    && let Some(index) = blobhash_index
+                {
+                    // BLOBHASH popped the index and pushed the hash; replace
+                    // the hash with our override (zero for out-of-range, per EIP-4844).
+                    let hash = blob_hashes.get(index as usize).copied().unwrap_or_default();
+                    Self::replace_top_of_stack(interpreter, hash.into());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Replaces the top of the interpreter stack with `value`.
+    ///
+    /// The caller must only invoke this after a successful opcode that pushed
+    /// a value onto the stack; the `pop()` is therefore expected to succeed.
+    /// If it does not (e.g. because of a bug in the caller's success gating)
+    /// we bail out instead of pushing on top of an unexpected stack, which
+    /// would silently grow the stack and corrupt the frame.
+    fn replace_top_of_stack(interpreter: &mut Interpreter, value: U256) {
+        if interpreter.stack.pop().is_err() {
+            debug_assert!(false, "env override expected opcode result on stack");
+            return;
+        }
+        let _ = interpreter.stack.push(value);
     }
 
     /// Generates or copies arbitrary values for storage slots.
