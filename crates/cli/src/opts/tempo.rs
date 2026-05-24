@@ -172,11 +172,6 @@ impl TempoOpts {
             || self.valid_after.is_some()
     }
 
-    fn has_session_hint(&self) -> bool {
-        self.session.is_some()
-            || std::env::var(TEMPO_SESSION_ID_ENV).is_ok_and(|raw| !raw.trim().is_empty())
-    }
-
     /// Returns the absolute `valid_before` unix timestamp derived from `--tempo.expires`, if set.
     pub fn expires_at(&self) -> Option<u64> {
         let secs = self.expires?;

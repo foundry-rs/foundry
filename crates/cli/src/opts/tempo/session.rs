@@ -12,6 +12,11 @@ use std::{
 pub const TEMPO_SESSION_ID_ENV: &str = "TEMPO_SESSION_ID";
 
 impl TempoOpts {
+    pub(super) fn has_session_hint(&self) -> bool {
+        self.session.is_some()
+            || std::env::var(TEMPO_SESSION_ID_ENV).is_ok_and(|raw| !raw.trim().is_empty())
+    }
+
     /// Returns the effective session id, preferring the CLI flag over `TEMPO_SESSION_ID`.
     pub fn session_id(&self) -> Result<Option<B256>> {
         if let Some(session) = self.session {
