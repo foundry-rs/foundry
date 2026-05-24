@@ -14,7 +14,10 @@ use foundry_cli::{
     opts::{EthereumOpts, TransactionOpts},
     utils::{LoadConfig, maybe_print_resolved_lane, resolve_lane},
 };
-use foundry_common::{FoundryTransactionBuilder, provider::ProviderBuilder};
+use foundry_common::{
+    FoundryTransactionBuilder, provider::ProviderBuilder, tempo::ResolvedSessionSigner,
+};
+use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use std::{path::PathBuf, str::FromStr};
 use tempo_alloy::TempoNetwork;
 
@@ -83,14 +86,18 @@ pub enum MakeTxSubcommands {
 
 impl MakeTxArgs {
     pub async fn run(self) -> Result<()> {
-        if self.tx.tempo.is_tempo() {
-            self.run_generic::<TempoNetwork>().await
+        let session_signer = self.tx.tempo.session_signer(&self.eth.wallet)?;
+        if session_signer.is_some() || self.tx.tempo.is_tempo() {
+            self.run_generic::<TempoNetwork>(session_signer).await
         } else {
-            self.run_generic::<Ethereum>().await
+            self.run_generic::<Ethereum>(None).await
         }
     }
 
-    pub async fn run_generic<N: Network>(self) -> Result<()>
+    pub async fn run_generic<N: Network>(
+        self,
+        session_signer: Option<ResolvedSessionSigner>,
+    ) -> Result<()>
     where
         N::TxEnvelope: From<Signed<N::UnsignedTx>>,
         N::UnsignedTx: SignableTransaction<Signature>,
@@ -98,6 +105,16 @@ impl MakeTxArgs {
     {
         let Self { to, mut sig, mut args, command, mut tx, path, eth, raw_unsigned, ethsign } =
             self;
+        let session = if let Some(session) = session_signer {
+            if raw_unsigned || ethsign {
+                eyre::bail!(
+                    "--raw-unsigned/--ethsign cannot be combined with --tempo.session/TEMPO_SESSION_ID"
+                );
+            }
+            Some((session.signer, session.access_key))
+        } else {
+            None
+        };
 
         let print_sponsor_hash = tx.tempo.print_sponsor_hash;
         let expires_at = tx.tempo.resolve_expires();
@@ -140,9 +157,19 @@ impl MakeTxArgs {
         if print_sponsor_hash {
             // Resolve the signer to derive the actual sender address, since the
             // sponsor hash commits to the sender.
-            let signer = eth.wallet.signer().await?;
-            let from = signer.address();
-            let (tx, _) = tx_builder.build(from).await?;
+            let (mut tx, from) = if let Some((_, ref ak)) = session {
+                let (tx, _) = tx_builder.build_with_access_key(ak.wallet_address, ak).await?;
+                (tx, ak.wallet_address)
+            } else {
+                let signer = eth.wallet.signer().await?;
+                let from = signer.address();
+                let (tx, _) = tx_builder.build(from).await?;
+                (tx, from)
+            };
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx, from).await?;
+            }
             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
                 eyre::eyre!("This network does not support sponsored transactions")
             })?;
@@ -199,22 +226,52 @@ impl MakeTxArgs {
 
         // Default to using the local signer.
         // Get the signer from the wallet, and fail if it can't be constructed.
-        let signer = eth.wallet.signer().await?;
-        let from = signer.address();
+        let signed_tx = if let Some((signer, access_key)) = session {
+            let (mut tx, _) =
+                tx_builder.build_with_access_key(access_key.wallet_address, &access_key).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx, access_key.wallet_address).await?;
+            }
+            sign_access_key_tx(&provider, tx, signer, access_key).await?
+        } else {
+            let signer = eth.wallet.signer().await?;
+            let from = signer.address();
 
-        tx::validate_from_address(eth.wallet.from, from)?;
+            tx::validate_from_address(eth.wallet.from, from)?;
 
-        let (mut tx, _) = tx_builder.build(&signer).await?;
-        maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
-        if let Some(sponsor) = &tempo_sponsor {
-            sponsor.attach_and_print::<N>(&mut tx, from).await?;
-        }
+            let (mut tx, _) = tx_builder.build(&signer).await?;
+            maybe_print_resolved_lane(resolved_lane.as_ref(), tx.nonce().unwrap_or_default())?;
+            if let Some(sponsor) = &tempo_sponsor {
+                sponsor.attach_and_print::<N>(&mut tx, from).await?;
+            }
 
-        let tx = tx.build(&EthereumWallet::new(signer)).await?;
-
-        let signed_tx = hex::encode(tx.encoded_2718());
+            let tx = tx.build(&EthereumWallet::new(signer)).await?;
+            hex::encode(tx.encoded_2718())
+        };
         sh_println!("0x{signed_tx}")?;
 
         Ok(())
     }
+}
+
+async fn sign_access_key_tx<N: Network>(
+    provider: &impl Provider<N>,
+    tx: N::TransactionRequest,
+    signer: WalletSigner,
+    access_key: TempoAccessKeyConfig,
+) -> Result<String>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    let raw_tx = tx
+        .sign_with_access_key(
+            provider,
+            &signer,
+            access_key.wallet_address,
+            access_key.key_address,
+            access_key.key_authorization.as_ref(),
+        )
+        .await?;
+    Ok(hex::encode(raw_tx))
 }

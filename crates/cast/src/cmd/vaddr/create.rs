@@ -136,7 +136,15 @@ async fn register(
     send_tx: SendTxOpts,
     mut tx_opts: TxParams,
 ) -> Result<()> {
-    let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
+    let session_signer = tx_opts.tempo.session_signer(&send_tx.eth.wallet)?;
+    let (signer, tempo_access_key) = if let Some(session) = session_signer {
+        if send_tx.browser.browser {
+            eyre::bail!("--browser cannot be combined with --tempo.session/TEMPO_SESSION_ID");
+        }
+        (Some(session.signer), Some(session.access_key))
+    } else {
+        send_tx.eth.wallet.maybe_signer().await?
+    };
     let signer = signer.ok_or_else(|| {
         eyre::eyre!("cast vaddr create requires a signer (for example --private-key or --from)")
     })?;

@@ -116,7 +116,18 @@ pub struct CreateArgs {
 impl CreateArgs {
     /// Executes the command to create a contract
     pub async fn run(mut self) -> Result<()> {
-        let (signer, tempo_access_key) = self.eth.wallet.maybe_signer().await?;
+        let session_signer = self.tx.tempo.session_signer(&self.eth.wallet)?;
+        let (signer, tempo_access_key) = if let Some(session) = session_signer {
+            if self.unlocked {
+                eyre::bail!("--unlocked cannot be combined with --tempo.session/TEMPO_SESSION_ID");
+            }
+            if self.browser.browser {
+                eyre::bail!("--browser cannot be combined with --tempo.session/TEMPO_SESSION_ID");
+            }
+            (Some(session.signer), Some(session.access_key))
+        } else {
+            self.eth.wallet.maybe_signer().await?
+        };
 
         // Resolve chain early so we can dispatch to the correct network type.
         if self.chain_id().is_none() {

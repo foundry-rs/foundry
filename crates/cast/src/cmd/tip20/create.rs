@@ -63,7 +63,13 @@ pub(super) async fn run(
     send_tx: SendTxOpts,
     mut tx_opts: TxParams,
 ) -> eyre::Result<()> {
-    let (signer, tempo_access_key) = if send_tx.eth.wallet.from.is_some() {
+    let session_signer = tx_opts.tempo.session_signer(&send_tx.eth.wallet)?;
+    let (signer, tempo_access_key) = if let Some(session) = session_signer {
+        if send_tx.browser.browser {
+            eyre::bail!("--browser cannot be combined with --tempo.session/TEMPO_SESSION_ID");
+        }
+        (Some(session.signer), Some(session.access_key))
+    } else if send_tx.eth.wallet.from.is_some() {
         send_tx.eth.wallet.maybe_signer().await?
     } else {
         (None, None)

@@ -280,7 +280,13 @@ impl CallArgs {
         }
 
         let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
-        let sender = SenderKind::from_wallet_opts(wallet).await?;
+        let session_signer = tx.tempo.session_signer(&wallet)?;
+        let sender = if let Some(session) = session_signer {
+            tx.tempo.key_id = Some(session.access_key.key_address);
+            SenderKind::Address(session.access_key.wallet_address)
+        } else {
+            SenderKind::from_wallet_opts(wallet).await?
+        };
         let from = sender.address();
 
         let code = if let Some(CallSubcommands::Create {
