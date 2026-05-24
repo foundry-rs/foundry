@@ -2,9 +2,14 @@ use alloy_json_abi::{Function, JsonAbi};
 use alloy_primitives::{Address, Selector, map::HashMap};
 use foundry_compilers::artifacts::StorageLayout;
 use itertools::Either;
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{
+    cell::{Ref, RefCell},
+    collections::BTreeMap,
+    fmt,
+    rc::Rc,
+    sync::Arc,
+};
 
 mod call_override;
 pub use call_override::RandomCallGenerator;
@@ -28,7 +33,7 @@ pub fn is_optimization_invariant(func: &Function) -> bool {
 #[derive(Clone, Debug)]
 pub struct FuzzRunIdentifiedContracts {
     /// Contracts identified as targets during a fuzz run.
-    pub targets: Arc<Mutex<TargetedContracts>>,
+    pub targets: Rc<RefCell<TargetedContracts>>,
     /// Whether target contracts are updatable or not.
     pub is_updatable: bool,
 }
@@ -36,7 +41,12 @@ pub struct FuzzRunIdentifiedContracts {
 impl FuzzRunIdentifiedContracts {
     /// Creates a new `FuzzRunIdentifiedContracts` instance.
     pub fn new(targets: TargetedContracts, is_updatable: bool) -> Self {
-        Self { targets: Arc::new(Mutex::new(targets)), is_updatable }
+        Self { targets: Rc::new(RefCell::new(targets)), is_updatable }
+    }
+
+    /// Borrows the current targeted contracts.
+    pub fn targets(&self) -> Ref<'_, TargetedContracts> {
+        self.targets.borrow()
     }
 
     /// If targets are updatable, collect all contracts created during an invariant run (which
@@ -53,7 +63,7 @@ impl FuzzRunIdentifiedContracts {
             return Ok(());
         }
 
-        let mut targets = self.targets.lock();
+        let mut targets = self.targets.borrow_mut();
         for (address, account) in state_changeset {
             if setup_contracts.contains_key(address) {
                 continue;
@@ -93,7 +103,7 @@ impl FuzzRunIdentifiedContracts {
     /// Clears targeted contracts created during an invariant run.
     pub fn clear_created_contracts(&self, created_contracts: Vec<Address>) {
         if !created_contracts.is_empty() {
-            let mut targets = self.targets.lock();
+            let mut targets = self.targets.borrow_mut();
             for addr in &created_contracts {
                 targets.remove(addr);
             }
@@ -270,9 +280,9 @@ pub struct InvariantContract<'a> {
     /// Stored in **source declaration order** so failure-event attribution and report
     /// rendering match user expectations.
     pub invariant_fns: Vec<(&'a Function, bool)>,
-    /// Index into [`Self::invariant_fns`] of the campaign anchor — the function chosen by
-    /// the `--mt` filter (or the only one). Used for corpus and persistence file paths and
-    /// for the legacy single-invariant `TestResult.{reason, counterexample}` fields.
+    /// Index into [`Self::invariant_fns`] of the stable campaign anchor. Boolean invariant
+    /// suites use a deterministic contract-local anchor so test filters do not affect
+    /// corpus/failure namespaces.
     pub anchor_idx: usize,
     /// If true, `afterInvariant` function is called after each invariant run.
     pub call_after_invariant: bool,
@@ -295,8 +305,7 @@ impl<'a> InvariantContract<'a> {
         Self { address, name, invariant_fns, anchor_idx, call_after_invariant, abi }
     }
 
-    /// Returns the campaign anchor — the invariant matched by `--mt` (or the only one).
-    /// Used for corpus and persistence file paths and for legacy primary `TestResult` fields.
+    /// Returns the stable campaign anchor.
     pub fn anchor(&self) -> &'a Function {
         self.invariant_fns[self.anchor_idx].0
     }
