@@ -642,7 +642,14 @@ where
             tx.set_gas_price(provider.get_gas_price().await?);
         }
     } else if tx.max_fee_per_gas().is_none() || tx.max_priority_fee_per_gas().is_none() {
-        let estimate = provider.estimate_eip1559_fees().await?;
+        let mut estimate = provider.estimate_eip1559_fees().await?;
+        if tx.max_priority_fee_per_gas().is_none()
+            && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
+            && suggested_tip > estimate.max_priority_fee_per_gas
+        {
+            estimate.max_fee_per_gas += suggested_tip - estimate.max_priority_fee_per_gas;
+            estimate.max_priority_fee_per_gas = suggested_tip;
+        }
         if tx.max_fee_per_gas().is_none() {
             tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
         }
