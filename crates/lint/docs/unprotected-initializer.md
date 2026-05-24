@@ -10,8 +10,7 @@ This lint reports initializer-like functions that:
 - are public or external;
 - are marked with `initializer` or `reinitializer`;
 - write state directly or through an internal helper; and
-- are in an implementation whose constructor does not call `_disableInitializers()` and is not
-  itself marked `initializer`; and
+- are in an implementation whose constructor does not call `_disableInitializers()`; and
 - are in a contract with a public or external `delegatecall`, `callcode`, or `selfdestruct` path
   that is not restricted to proxy calls with `onlyProxy`.
 

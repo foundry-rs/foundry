@@ -76,8 +76,7 @@ fn is_public_initializer(hir: &hir::Hir<'_>, func: &hir::Function<'_>) -> bool {
 fn initializers_disabled_in_constructor(hir: &hir::Hir<'_>, contract: &hir::Contract<'_>) -> bool {
     contract.linearized_bases.iter().filter_map(|&cid| hir.contract(cid).ctor).any(|ctor_id| {
         let ctor = hir.function(ctor_id);
-        has_modifier_named(hir, ctor, "initializer")
-            || function_calls_named(hir, ctor, contract.linearized_bases, "_disableInitializers")
+        function_calls_named(hir, ctor, contract.linearized_bases, "_disableInitializers")
     })
 }
 

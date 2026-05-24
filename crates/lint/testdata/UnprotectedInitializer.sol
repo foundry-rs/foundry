@@ -112,13 +112,18 @@ contract ProtectedDisableInitializers is Initializable {
     }
 }
 
-contract ProtectedConstructorInitializer is Initializable {
-    address public owner;
+contract ConstructorInitializerReinitializer is Initializable {
+    uint256 public fee;
 
     constructor() initializer {}
 
-    function initialize(address owner_) public initializer {
-        owner = owner_;
+    function initializeV2(uint256 fee_) external reinitializer(2) { //~WARN: upgradeable initializer is not protected against direct implementation calls
+        fee = fee_;
+    }
+
+    function execute(address target, bytes calldata data) external {
+        (bool ok,) = target.delegatecall(data);
+        require(ok);
     }
 }
 
