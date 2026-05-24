@@ -44,7 +44,7 @@ impl TempoOpts {
             return Ok(None);
         };
         ensure_no_explicit_wallet_signer(wallet)?;
-        resolve_session_signer(session_id, wallet.from, expected_chain_id)
+        Ok(Some(resolve_session_signer(session_id, wallet.from, expected_chain_id)?))
     }
 
     /// Resolves the configured Tempo wallet session for multi-wallet commands.
@@ -58,7 +58,7 @@ impl TempoOpts {
             return Ok(None);
         };
         ensure_no_explicit_multi_wallet_signer(wallets)?;
-        resolve_session_signer(session_id, expected_sender, expected_chain_id)
+        Ok(Some(resolve_session_signer(session_id, expected_sender, expected_chain_id)?))
     }
 }
 
@@ -66,7 +66,7 @@ fn resolve_session_signer(
     session_id: B256,
     expected_sender: Option<Address>,
     expected_chain_id: u64,
-) -> Result<Option<ResolvedSessionSigner>> {
+) -> Result<ResolvedSessionSigner> {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
     let resolved = resolve_live_session_signer(session_id, now.as_secs())?.ok_or_else(|| {
         eyre::eyre!("Tempo session {session_id:?} is not active or has no live key")
@@ -89,7 +89,7 @@ fn resolve_session_signer(
         );
     }
 
-    Ok(Some(resolved))
+    Ok(resolved)
 }
 
 fn ensure_no_explicit_wallet_signer(wallet: &WalletOpts) -> Result<()> {
@@ -153,29 +153,22 @@ mod tests {
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     fn with_clean_session_env(test: impl FnOnce()) {
-        let _guard = ENV_MUTEX.lock().unwrap();
-        // SAFETY: serialized with other tests that mutate Tempo env vars.
-        unsafe {
-            std::env::remove_var(TEMPO_SESSION_ID_ENV);
-        }
-        test();
-        // SAFETY: serialized with other tests that mutate Tempo env vars.
-        unsafe {
-            std::env::remove_var(TEMPO_SESSION_ID_ENV);
-        }
-    }
-
-    fn session_id(byte: u8) -> B256 {
-        B256::from([byte; 32])
+        with_session_env(None, test);
     }
 
     fn with_clean_session_home(test: impl FnOnce()) {
         let tmp = tempfile::tempdir().unwrap();
+        with_session_env(Some(tmp.path()), test);
+    }
+
+    fn with_session_env(tempo_home: Option<&std::path::Path>, test: impl FnOnce()) {
         let _guard = ENV_MUTEX.lock().unwrap();
         // SAFETY: serialized with other tests that mutate Tempo env vars.
         unsafe {
             std::env::remove_var(TEMPO_SESSION_ID_ENV);
-            std::env::set_var(TEMPO_HOME_ENV, tmp.path());
+            if let Some(tempo_home) = tempo_home {
+                std::env::set_var(TEMPO_HOME_ENV, tempo_home);
+            }
         }
         test();
         // SAFETY: serialized with other tests that mutate Tempo env vars.
@@ -183,6 +176,10 @@ mod tests {
             std::env::remove_var(TEMPO_SESSION_ID_ENV);
             std::env::remove_var(TEMPO_HOME_ENV);
         }
+    }
+
+    fn session_id(byte: u8) -> B256 {
+        B256::from([byte; 32])
     }
 
     fn active_session_entry(session_id: B256) -> SessionEntry {
