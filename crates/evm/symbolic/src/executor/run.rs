@@ -137,15 +137,21 @@ impl SymbolicExecutor {
 
         while let Some(mut state) = pop_worklist(&mut worklist, self.config.exploration_order) {
             if completed_paths >= path_limit {
+                debug!(completed_paths, path_limit, "symbolic path limit reached");
                 return Ok(SymbolicRunResult::Incomplete {
                     kind: SymbolicStopReason::Stuck,
                     reason: format!("symbolic path limit exceeded ({path_limit})"),
                     stats: self.stats_with_paths(completed_paths),
                 });
             }
+            let _path_span =
+                trace_span!("symbolic_path", completed_paths, worklist_size = worklist.len())
+                    .entered();
+            trace!(completed_paths, worklist_size = worklist.len(), "exploring symbolic path");
 
             loop {
                 if state.depth >= depth_limit {
+                    debug!(depth = state.depth, depth_limit, "symbolic depth limit reached");
                     return Ok(SymbolicRunResult::Incomplete {
                         kind: SymbolicStopReason::Stuck,
                         reason: format!("symbolic depth limit exceeded ({depth_limit})"),
@@ -173,6 +179,7 @@ impl SymbolicExecutor {
                     break;
                 };
 
+                let _step_span = trace_span!("symbolic_step", pc = state.pc - 1, op).entered();
                 match self.step(
                     input.executor,
                     &code,
@@ -229,6 +236,7 @@ impl SymbolicExecutor {
         }
 
         if normal_paths == 0 && reverted_paths > 0 {
+            debug!(completed_paths, "all symbolic paths reverted");
             return Ok(SymbolicRunResult::Incomplete {
                 kind: SymbolicStopReason::RevertAll,
                 reason: "all symbolic paths reverted".to_string(),
@@ -236,6 +244,7 @@ impl SymbolicExecutor {
             });
         }
 
+        debug!(completed_paths, "symbolic execution safe");
         Ok(SymbolicRunResult::Safe(self.stats_with_paths(completed_paths)))
     }
 
@@ -246,6 +255,10 @@ impl SymbolicExecutor {
         function: &Function,
         state: &PathState,
     ) -> Result<(Vec<DynSolValue>, Bytes), SymbolicError> {
+        debug!(
+            constraint_count = state.constraints.len(),
+            "materializing counterexample from solver model"
+        );
         let model = self.solver.model(&state.constraints)?;
         let args = calldata.model_to_args(&model)?;
         let calldata_bytes = Bytes::from(function.abi_encode_input(&args)?);

@@ -515,6 +515,8 @@ impl SymbolicExecutor {
                     }
                     Some(false) => Ok(StepOutcome::Continue),
                     None => {
+                        let op_pc = state.pc.saturating_sub(1);
+                        let _branch_span = trace_span!("jumpi_branch", pc = op_pc, dest).entered();
                         let true_cond = cond.nonzero_bool();
                         let false_cond = true_cond.clone().not();
                         let fallthrough = state.pc;
@@ -525,12 +527,14 @@ impl SymbolicExecutor {
                         false_state.constraints.push(false_cond);
                         false_state.pc = fallthrough;
 
-                        if self.take_loop_jump(&mut true_state, fallthrough, dest)
-                            && self.solver.is_sat(&true_state.constraints)?
-                        {
+                        let true_feasible = self.take_loop_jump(&mut true_state, fallthrough, dest)
+                            && self.solver.is_sat(&true_state.constraints)?;
+                        let false_feasible = self.solver.is_sat(&false_state.constraints)?;
+                        trace!(true_feasible, false_feasible, "JUMPI symbolic branch");
+                        if true_feasible {
                             worklist.push_back(true_state);
                         }
-                        if self.solver.is_sat(&false_state.constraints)? {
+                        if false_feasible {
                             worklist.push_back(false_state);
                         }
                         Ok(StepOutcome::Forked)

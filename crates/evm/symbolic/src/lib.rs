@@ -46,6 +46,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
+use tracing::{debug, trace, trace_span, warn};
 
 macro_rules! selector {
     ($signature:literal) => {{
