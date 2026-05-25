@@ -174,10 +174,7 @@ impl InvariantCampaignAggregator {
         #[cfg(debug_assertions)]
         {
             debug_assert!(output.runs.iter().enumerate().all(|(expected, run)| {
-                run.id.global_run == expected as u32
-                    && run.id.worker_id == output.plan.worker_id
-                    && run.id.seed == output.plan.seed
-                    && run.id.global_run == output.plan.first_global_run + run.id.worker_run
+                run.id.worker_run == expected as u32 && output.plan.contains(run.id)
             }));
             debug_assert!(output.failures.iter().all(|failure| output.plan.contains(failure.id)));
         }
@@ -247,6 +244,41 @@ mod tests {
 
         assert_eq!(result.reverts, 2);
         assert_eq!(result.failed_corpus_replays, 3);
+    }
+
+    #[test]
+    fn aggregator_validates_worker_local_run_order() {
+        let seed = Some(U256::from(8));
+        let spec = InvariantCampaignSpec::new(2, seed);
+        let plan = InvariantWorkerPlan { worker_id: 1, first_global_run: 4, runs: 2, seed };
+        let result = InvariantFuzzTestResult::new(
+            HashMap::default(),
+            HashMap::default(),
+            Vec::new(),
+            0,
+            Vec::new(),
+            Vec::new(),
+            None,
+            HashMap::default(),
+            0,
+            None,
+            Vec::new(),
+        );
+        let worker = InvariantWorkerOutput::new(
+            plan,
+            vec![
+                InvariantRunOutput::new(plan.run_id(0), 1, 0, false, None),
+                InvariantRunOutput::new(plan.run_id(1), 1, 0, false, None),
+            ],
+            Vec::new(),
+            result,
+        );
+
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+        aggregator.push(worker);
+        let result = aggregator.finish();
+
+        assert_eq!(result.reverts, 0);
     }
 
     #[test]
