@@ -244,9 +244,6 @@ impl SendTxArgs {
 
         let timeout = send_tx.timeout.unwrap_or(config.transaction_timeout);
 
-        // Launch browser signer if `--browser` flag is set
-        let browser = send_tx.browser.run::<N>().await?;
-
         // --sponsor-url is only valid with a local signer (Case 4). Bail early with a clear
         // error rather than silently ignoring it in the other signing paths.
         if let Some(ref url) = sponsor_url {
@@ -254,13 +251,16 @@ impl SendTxArgs {
             if unlocked {
                 eyre::bail!("--sponsor-url cannot be combined with --unlocked");
             }
-            if browser.is_some() {
+            if send_tx.browser.browser {
                 eyre::bail!("--sponsor-url cannot be combined with --browser");
             }
             if access_key.is_some() {
                 eyre::bail!("--sponsor-url cannot be combined with a Tempo access key");
             }
         }
+
+        // Launch browser signer if `--browser` flag is set
+        let browser = send_tx.browser.run::<N>().await?;
 
         // Case 1:
         // Default to sending via eth_sendTransaction if the --unlocked flag is passed.
