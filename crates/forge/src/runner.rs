@@ -1690,12 +1690,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor.inspector_mut().collect_sancov_edges(domain.includes_sancov());
 
         // Fold test identity into the approach dir so each `<approach>/` contains
-        // trials of a single test — what `differential-coverage` expects.
+        // trials of a single test — what `differential-coverage` expects. Invariant
+        // tests share one corpus per contract, so omit the function name for them
+        // to avoid emitting duplicate approach dirs that replay the same corpus.
         let safe_id = self.cr.name.replace(['/', '\\', ':'], "_");
-        let safe_fn = func.name.replace(['/', '\\', ':', '(', ')', ',', ' '], "_");
+        let approach = if fuzzed_contracts.is_some() {
+            format!("{}__{safe_id}", showmap.approach)
+        } else {
+            let safe_fn = func.name.replace(['/', '\\', ':', '(', ')', ',', ' '], "_");
+            format!("{}__{safe_id}__{safe_fn}", showmap.approach)
+        };
         let opts = ShowmapOpts {
             out_dir: showmap.out_dir.clone(),
-            approach: format!("{}__{safe_id}__{safe_fn}", showmap.approach),
+            approach,
             trial: showmap.trial.clone(),
             per_input: showmap.per_input,
             domain,
