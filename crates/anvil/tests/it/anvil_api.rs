@@ -669,8 +669,8 @@ async fn flaky_test_reorg() {
 
     let accounts = handle.dev_wallets().collect::<Vec<_>>();
 
-    // Test calls
-    // Populate chain
+    // Populate with deterministic block boundaries: disable automine, batch 2 txs, mine.
+    api.anvil_set_auto_mine(false).await.unwrap();
     for i in 0..10 {
         let tx = TransactionRequest::default()
             .to(accounts[0].address())
@@ -685,7 +685,10 @@ async fn flaky_test_reorg() {
             .from(accounts[2].address());
         let tx = WithOtherFields::new(tx);
         api.send_transaction(tx).await.unwrap();
+
+        api.evm_mine(None).await.unwrap();
     }
+    api.anvil_set_auto_mine(true).await.unwrap();
 
     // Define transactions
     let mut txs = vec![];
@@ -699,20 +702,22 @@ async fn flaky_test_reorg() {
     }
 
     let prev_height = provider.get_block_number().await.unwrap();
-    api.anvil_reorg(ReorgOptions { depth: 7, tx_block_pairs: txs }).await.unwrap();
+    let depth = 7u64;
+    api.anvil_reorg(ReorgOptions { depth, tx_block_pairs: txs }).await.unwrap();
 
     let reorged_height = provider.get_block_number().await.unwrap();
     assert_eq!(reorged_height, prev_height);
 
-    // The first 3 reorged blocks should have 5 transactions each
-    for num in 14..17 {
+    // The 3 reorged blocks (one per `tx_block_pairs` group) should each hold 5 txs.
+    let first_reorged = prev_height - depth + 1;
+    for num in first_reorged..first_reorged + 3 {
         let block = provider.get_block_by_number(num.into()).full().await.unwrap();
         let block = block.unwrap();
         assert_eq!(block.transactions.len(), 5);
     }
 
-    // Verify that historic blocks are still accessible
-    for num in (0..14).rev() {
+    // Verify that historic blocks below the reorged range are still accessible
+    for num in (0..first_reorged).rev() {
         let block = provider.get_block_by_number(num.into()).full().await.unwrap();
         assert!(block.is_some(), "Historic block {num} should be accessible after reorg");
     }
