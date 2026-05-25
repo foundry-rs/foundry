@@ -148,12 +148,10 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
         pk.as_str(),
     ]);
 
-    cmd.assert().stdout_eq(str![[r#"
+    cmd.assert().stdout_eq(str![[r#""#]]).stderr_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-
-"#]]).stderr_eq(str![[r#"
 Warning: Dry run enabled, not broadcasting transaction
 
 Contract: Counter
@@ -278,8 +276,6 @@ Warning: To broadcast this transaction, add --broadcast to the previous command.
 0x5FbDB2315678afecb367f032d93F642f64180aa3
 
 "#]])
-        // `No files changed, compilation skipped` is a compile diagnostic; emitted
-        // on stderr (see `docs/dev/output-channels.md`).
         .stderr_eq(str![[r#"
 No files changed, compilation skipped
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -313,13 +309,13 @@ forgetest_async!(can_create_using_unlocked, |prj, cmd| {
 
     cmd.assert()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 0x5FbDB2315678afecb367f032d93F642f64180aa3
 
 "#]])
         .stderr_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 [TX_HASH]
 
@@ -330,8 +326,6 @@ Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
 
 "#]])
-        // `No files changed, compilation skipped` is a compile diagnostic; emitted
-        // on stderr (see `docs/dev/output-channels.md`).
         .stderr_eq(str![[r#"
 No files changed, compilation skipped
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
@@ -379,13 +373,13 @@ contract ConstructorContract {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 0x5FbDB2315678afecb367f032d93F642f64180aa3
 
 "#]])
         .stderr_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 [TX_HASH]
 
@@ -419,13 +413,13 @@ contract TupleArrayConstructorContract {
         ])
         .assert()
         .stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
 
 "#]])
         .stderr_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 [TX_HASH]
 
@@ -469,6 +463,10 @@ contract UniswapV2Swap {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
+0x5FbDB2315678afecb367f032d93F642f64180aa3
+
+"#]])
+        .stderr_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
@@ -478,10 +476,6 @@ Warning (2018): Function state mutability can be restricted to pure
 6 |     function pairInfo() public view returns (uint reserveA, uint reserveB, uint totalSupply) {
   |     ^ (Relevant source part starts here and spans across multiple lines).
 
-0x5FbDB2315678afecb367f032d93F642f64180aa3
-
-"#]])
-        .stderr_eq(str![[r#"
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 [TX_HASH]
 
@@ -521,6 +515,9 @@ abstract contract AbstractCounter {
     ])
     .assert_failure()
     .stderr_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 Error: no bytecode found in bin object for AbstractCounter
 
 "#]]);
@@ -560,6 +557,9 @@ contract RevertingContract {
     ])
     .assert_failure()
     .stderr_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 Error: deployment transaction failed (receipt status 0): [..]
 
 "#]]);

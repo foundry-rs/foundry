@@ -165,8 +165,7 @@ impl CreateArgs {
             project.find_contract_path(&self.contract.name)?
         };
 
-        // Always quiet: keep stdout reserved for the bare deployed address.
-        let output = compile::compile_target(&target_path, &project, true)?;
+        let output = compile::compile_target(&target_path, &project, shell::is_json())?;
 
         let (abi, bin, id) = find_contract_artifacts(output, &target_path, &self.contract.name)?;
 
