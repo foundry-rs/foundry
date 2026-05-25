@@ -131,6 +131,10 @@ impl SymbolicExecutor {
             if *completed_paths >= path_limit {
                 return Err(SymbolicError::Unsupported("symbolic path limit exceeded"));
             }
+            let _path_span =
+                trace_span!("symbolic_path", completed_paths, worklist_size = worklist.len())
+                    .entered();
+            trace!(completed_paths, worklist_size = worklist.len(), "exploring symbolic path");
 
             loop {
                 if state.depth >= depth_limit {
@@ -152,6 +156,7 @@ impl SymbolicExecutor {
                     break;
                 };
 
+                let _step_span = trace_span!("symbolic_step", pc = state.pc - 1, op).entered();
                 match self.step(
                     executor,
                     &code,
