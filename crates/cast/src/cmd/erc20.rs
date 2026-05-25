@@ -3,7 +3,7 @@ use std::{str::FromStr, time::Duration};
 use crate::{
     cmd::send::{cast_send, cast_send_with_access_key},
     format_uint_exp,
-    tx::{CastTxSender, SendTxOpts, TxParams},
+    tx::{CastTxSender, SendTxOpts, TxParams, fill_transaction_gas_fees},
 };
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_eips::BlockId;
@@ -621,10 +621,6 @@ impl Erc20Subcommand {
 /// pre-built transaction request from the sol! macro rather than through the builder pipeline.
 /// Only fills fields that haven't already been set by the user.
 ///
-/// `browser` indicates the tx will be handed to a browser wallet, which may replace the local
-/// priority-fee estimate with the value from `eth_maxPriorityFeePerGas`. In that case we
-/// pre-align `maxFeePerGas` against the higher of the two so the cap doesn't fall below the tip
-/// the wallet actually submits.
 async fn fill_tx<N: Network, P: Provider<N>>(
     provider: &P,
     tx: &mut N::TransactionRequest,
@@ -644,37 +640,7 @@ where
 
     let legacy = chain.is_legacy();
 
-    if legacy {
-        if tx.gas_price().is_none() {
-            tx.set_gas_price(provider.get_gas_price().await?);
-        }
-    } else {
-        if tx.max_fee_per_gas().is_none() || tx.max_priority_fee_per_gas().is_none() {
-            let mut estimate = provider.estimate_eip1559_fees().await?;
-            if browser
-                && tx.max_priority_fee_per_gas().is_none()
-                && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
-                && suggested_tip > estimate.max_priority_fee_per_gas
-            {
-                estimate.max_fee_per_gas += suggested_tip - estimate.max_priority_fee_per_gas;
-                estimate.max_priority_fee_per_gas = suggested_tip;
-            }
-            if tx.max_fee_per_gas().is_none() {
-                tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
-            }
-            if tx.max_priority_fee_per_gas().is_none() {
-                tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
-            }
-        }
-        if let (Some(max_fee), Some(priority)) =
-            (tx.max_fee_per_gas(), tx.max_priority_fee_per_gas())
-        {
-            eyre::ensure!(
-                priority <= max_fee,
-                "max priority fee per gas ({priority}) cannot exceed max fee per gas ({max_fee})"
-            );
-        }
-    }
+    fill_transaction_gas_fees(provider, tx, legacy, browser).await?;
 
     if tx.gas_limit().is_none() {
         let mut estimated = provider.estimate_gas(tx.clone()).await?;

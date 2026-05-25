@@ -391,6 +391,8 @@ pub struct CastTxBuilder<N: Network, P, S> {
     /// Whether to fill gas, fees and nonce. Set to `false` for read-only calls
     /// (eth_call, eth_estimateGas, eth_createAccessList).
     fill: bool,
+    /// Whether the filled transaction will be submitted through a browser wallet.
+    browser: bool,
     auth: Vec<CliAuthorizationList>,
     chain: Chain,
     etherscan_api_key: Option<String>,
@@ -403,6 +405,12 @@ impl<N: Network, P, S> CastTxBuilder<N, P, S> {
     /// Returns the resolved chain for this builder.
     pub const fn chain(&self) -> Chain {
         self.chain
+    }
+
+    /// Marks this transaction as destined for browser wallet submission.
+    pub const fn with_browser_wallet(mut self) -> Self {
+        self.browser = true;
+        self
     }
 }
 
@@ -432,6 +440,7 @@ where
             blob: tx_opts.blob,
             eip4844: tx_opts.eip4844,
             fill: true,
+            browser: false,
             chain,
             etherscan_api_key,
             etherscan_api_url,
@@ -451,6 +460,7 @@ where
             blob: self.blob,
             eip4844: self.eip4844,
             fill: self.fill,
+            browser: self.browser,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             etherscan_api_url: self.etherscan_api_url,
@@ -514,6 +524,7 @@ where
             blob: self.blob,
             eip4844: self.eip4844,
             fill: self.fill,
+            browser: self.browser,
             chain: self.chain,
             etherscan_api_key: self.etherscan_api_key,
             etherscan_api_url: self.etherscan_api_url,
@@ -685,27 +696,11 @@ where
     ///
     /// Only fills values that haven't been explicitly set by the user.
     async fn fill_fees(&mut self) -> Result<()> {
-        if self.legacy && self.tx.gas_price().is_none() {
-            self.tx.set_gas_price(self.provider.get_gas_price().await?);
-        }
-
         if self.blob && self.tx.max_fee_per_blob_gas().is_none() {
             self.tx.set_max_fee_per_blob_gas(self.provider.get_blob_base_fee().await?)
         }
 
-        if !self.legacy
-            && (self.tx.max_fee_per_gas().is_none() || self.tx.max_priority_fee_per_gas().is_none())
-        {
-            let estimate = self.provider.estimate_eip1559_fees().await?;
-
-            if self.tx.max_fee_per_gas().is_none() {
-                self.tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
-            }
-
-            if self.tx.max_priority_fee_per_gas().is_none() {
-                self.tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
-            }
-        }
+        fill_transaction_gas_fees(&self.provider, &mut self.tx, self.legacy, self.browser).await?;
 
         if self.tx.gas_limit().is_none() {
             self.estimate_gas().await?;
@@ -761,6 +756,53 @@ where
         self.fill = false;
         self
     }
+}
+
+/// Fills gas price or EIP-1559 fee fields from the provider and validates the final pair.
+pub(crate) async fn fill_transaction_gas_fees<N: Network, P: Provider<N>>(
+    provider: &P,
+    tx: &mut N::TransactionRequest,
+    legacy: bool,
+    browser: bool,
+) -> Result<()>
+where
+    N::TransactionRequest: FoundryTransactionBuilder<N>,
+{
+    if legacy {
+        if tx.gas_price().is_none() {
+            tx.set_gas_price(provider.get_gas_price().await?);
+        }
+        return Ok(());
+    }
+
+    if tx.max_fee_per_gas().is_none() || tx.max_priority_fee_per_gas().is_none() {
+        let mut estimate = provider.estimate_eip1559_fees().await?;
+        if browser
+            && tx.max_priority_fee_per_gas().is_none()
+            && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
+            && suggested_tip > estimate.max_priority_fee_per_gas
+        {
+            estimate.max_fee_per_gas += suggested_tip - estimate.max_priority_fee_per_gas;
+            estimate.max_priority_fee_per_gas = suggested_tip;
+        }
+
+        if tx.max_fee_per_gas().is_none() {
+            tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+        }
+
+        if tx.max_priority_fee_per_gas().is_none() {
+            tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+        }
+    }
+
+    if let (Some(max_fee), Some(priority)) = (tx.max_fee_per_gas(), tx.max_priority_fee_per_gas()) {
+        eyre::ensure!(
+            priority <= max_fee,
+            "max priority fee per gas ({priority}) cannot exceed max fee per gas ({max_fee})"
+        );
+    }
+
+    Ok(())
 }
 
 /// Helper function that tries to decode custom error name and inputs from error payload data.

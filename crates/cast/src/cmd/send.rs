@@ -284,7 +284,8 @@ impl SendTxArgs {
         // Browser wallet signs and sends the transaction in one step.
         } else if let Some(browser) = browser {
             let chain = builder.chain();
-            let (mut tx_request, _) = builder.build(browser.address()).await?;
+            let (mut tx_request, _) =
+                builder.with_browser_wallet().build(browser.address()).await?;
             maybe_print_resolved_lane(
                 resolved_lane.as_ref(),
                 tx_request.nonce().unwrap_or_default(),
