@@ -215,9 +215,18 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     fn is_sat(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError> {
         self.reserve_query()?;
         self.record_query();
+        let _span = trace_span!(
+            "solver_query",
+            query_id = self.queries,
+            constraint_count = constraints.len(),
+            kind = "is_sat"
+        )
+        .entered();
+        trace!(query_id = self.queries, constraint_count = constraints.len(), "solver is_sat");
         if constraints_prefer_fallback_first(constraints)
             && fallback_single_var_model(constraints).is_some()
         {
+            trace!("is_sat: fallback single-var model");
             return Ok(true);
         }
         let output = self.query(constraints, false)?;
@@ -235,9 +244,18 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     fn model(&mut self, constraints: &[BoolExpr]) -> Result<BTreeMap<String, U256>, SymbolicError> {
         self.reserve_query()?;
         self.record_query();
+        let _span = trace_span!(
+            "solver_query",
+            query_id = self.queries,
+            constraint_count = constraints.len(),
+            kind = "model"
+        )
+        .entered();
+        trace!(query_id = self.queries, constraint_count = constraints.len(), "solver model");
         if constraints_prefer_fallback_first(constraints)
             && let Some(model) = fallback_single_var_model(constraints)
         {
+            trace!("model: fallback single-var model");
             return Ok(model);
         }
         let output = self.query(constraints, true)?;
@@ -786,6 +804,7 @@ fn run_solver_commands(
             SolverProcessOutcome::Output(output) => Ok(output),
             SolverProcessOutcome::Unknown => Err(SymbolicError::SolverUnknown),
             SolverProcessOutcome::Cancelled => {
+                warn!("solver query was cancelled");
                 Err(SymbolicError::Solver("solver query was cancelled".to_string()))
             }
             SolverProcessOutcome::Error(err) => Err(SymbolicError::Solver(err)),
@@ -1223,6 +1242,10 @@ pub(crate) fn parse_and_validate_model(
     if constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap_or(false)) {
         Ok(model)
     } else {
+        debug!(
+            constraint_count = constraints.len(),
+            "solver model does not satisfy path constraints"
+        );
         Err(SymbolicError::Solver("solver model does not satisfy path constraints".to_string()))
     }
 }
