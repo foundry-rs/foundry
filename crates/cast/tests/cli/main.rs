@@ -3003,26 +3003,23 @@ casttest!(send_async_json_emits_hash_object, async |_prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
 
-    let assertion = cmd
-        .args([
-            "send",
-            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-            "--value",
-            "1",
-            "--private-key",
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            "--rpc-url",
-            &endpoint,
-            "--async",
-            "--json",
-        ])
-        .assert_success();
-    let stdout = String::from_utf8_lossy(&assertion.get_output().stdout).into_owned();
+    cmd.args([
+        "send",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--value",
+        "1",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+        "--async",
+        "--json",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{"hash":"[..]"}
 
-    let value: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("stdout must be a single JSON document");
-    let hash = value.get("hash").and_then(|v| v.as_str()).expect("missing `hash` field");
-    assert!(hash.starts_with("0x") && hash.len() == 66, "hash field is not a tx hash: {hash:?}",);
+"#]]);
 });
 
 // Regression test for the shared `print_tx_result` helper used by every send-like cast
@@ -3035,36 +3032,31 @@ casttest!(send_default_routes_receipt_to_stderr, async |_prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
 
-    let assertion = cmd
-        .args([
-            "send",
-            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-            "--value",
-            "1",
-            "--private-key",
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            "--rpc-url",
-            &endpoint,
-        ])
-        .assert_success();
-    let output = assertion.get_output();
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    cmd.args([
+        "send",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--value",
+        "1",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+    ])
+    .assert_success()
+    // stdout: bare tx hash, nothing else.
+    .stdout_eq(str![[r#"
+0x[..]
 
-    // stdout: bare tx hash, no receipt prose.
-    let stdout_trimmed = stdout.trim();
-    assert!(
-        stdout_trimmed.starts_with("0x") && stdout_trimmed.len() == 66,
-        "stdout should be a bare tx hash, got: {stdout_trimmed:?}",
-    );
-    assert!(
-        !stdout.contains("transactionHash") && !stdout.contains("blockNumber"),
-        "stdout must not contain receipt prose: {stdout}",
-    );
-
-    // stderr: pretty receipt with labeled fields.
-    assert!(stderr.contains("transactionHash"), "stderr missing transactionHash: {stderr}");
-    assert!(stderr.contains("blockNumber"), "stderr missing blockNumber: {stderr}");
+"#]])
+    // stderr: pretty receipt with labeled fields. `...` lets us anchor on the
+    // fields we care about without spelling out every dynamic value.
+    .stderr_eq(str![[r#"
+...
+transactionHash      0x[..]
+...
+blockNumber          [..]
+...
+"#]]);
 });
 
 casttest!(send_sync, async |_prj, cmd| {
@@ -3072,35 +3064,33 @@ casttest!(send_sync, async |_prj, cmd| {
     let endpoint = handle.http_endpoint();
 
     // Text mode: bare tx hash on stdout, receipt prose on stderr.
-    let assertion = cmd
-        .args([
-            "send",
-            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-            "--value",
-            "1",
-            "--private-key",
-            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-            "--rpc-url",
-            &endpoint,
-            "--sync",
-        ])
-        .assert_success();
-    let output = assertion.get_output();
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
+    cmd.args([
+        "send",
+        "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "--value",
+        "1",
+        "--private-key",
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "--rpc-url",
+        &endpoint,
+        "--sync",
+    ])
+    .assert_success()
     // stdout: exactly one tx hash, nothing else.
-    let stdout_trimmed = stdout.trim();
-    assert!(
-        stdout_trimmed.starts_with("0x") && stdout_trimmed.len() == 66,
-        "stdout should be a bare tx hash, got: {stdout_trimmed:?}",
-    );
+    .stdout_eq(str![[r#"
+0x[..]
 
+"#]])
     // stderr: pretty-formatted receipt with the labeled fields.
-    assert!(stderr.contains("transactionHash"), "stderr missing transactionHash: {stderr}");
-    assert!(stderr.contains("blockNumber"), "stderr missing blockNumber: {stderr}");
-    assert!(stderr.contains("gasUsed"), "stderr missing gasUsed: {stderr}");
+    .stderr_eq(str![[r#"
+...
+transactionHash      0x[..]
+...
+blockNumber          [..]
+...
+gasUsed              [..]
+...
+"#]]);
 });
 
 casttest!(hash_message, |_prj, cmd| {

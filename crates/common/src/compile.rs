@@ -155,7 +155,8 @@ impl ProjectCompiler {
         // broader refactor across the call chain. Leaving it as-is for now until a larger
         // refactor is feasible.
         if !project.paths.has_input_files() && self.files.is_empty() {
-            sh_println!("Nothing to compile")?;
+            // Compile progress: stderr (see `docs/dev/output-channels.md`).
+            sh_status!("Nothing to compile")?;
             std::process::exit(0);
         }
 
@@ -206,11 +207,14 @@ impl ProjectCompiler {
 
         if !quiet {
             if !shell::is_json() {
+                // Compile diagnostics are progress, not the canonical machine-readable
+                // result: route them to stderr (see `docs/dev/output-channels.md`) so
+                // callers like `forge create` keep stdout reserved for the bare result.
                 if output.is_unchanged() {
-                    sh_println!("No files changed, compilation skipped")?;
+                    sh_status!("No files changed, compilation skipped")?;
                 } else {
                     // print the compiler output / warnings
-                    sh_println!("{output}")?;
+                    sh_status!("{output}")?;
                 }
             }
 
