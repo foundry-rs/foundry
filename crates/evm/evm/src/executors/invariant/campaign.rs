@@ -277,4 +277,44 @@ mod tests {
 
         assert_eq!(result.reverts, 1);
     }
+
+    #[test]
+    fn expanded_worker_plan_contains_timeout_driven_failure() {
+        let seed = Some(U256::from(11));
+        let configured_plan = InvariantCampaignSpec::new(1, seed).single_worker_plan();
+        let late_failure = configured_plan.run_id(2);
+
+        assert!(!configured_plan.contains(late_failure));
+
+        let spec = InvariantCampaignSpec::new(late_failure.worker_run + 1, seed);
+        let plan = spec.single_worker_plan();
+        let result = InvariantFuzzTestResult::new(
+            HashMap::default(),
+            HashMap::default(),
+            Vec::new(),
+            0,
+            Vec::new(),
+            Vec::new(),
+            None,
+            HashMap::default(),
+            0,
+            None,
+            Vec::new(),
+        );
+        let worker = InvariantWorkerOutput::new(
+            plan,
+            Vec::new(),
+            vec![InvariantFailureOutput::new(
+                late_failure,
+                InvariantFailureKind::Predicate("invariant_timeout".to_string()),
+            )],
+            result,
+        );
+
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+        aggregator.push(worker);
+        let result = aggregator.finish();
+
+        assert_eq!(result.reverts, 0);
+    }
 }

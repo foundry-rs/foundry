@@ -494,6 +494,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         let campaign_spec = InvariantCampaignSpec::new(self.config.runs, self.campaign_seed);
         let worker_plan = campaign_spec.single_worker_plan();
+        let mut planned_runs = self.config.runs;
         #[cfg(debug_assertions)]
         let mut run_outputs = Vec::with_capacity(self.config.runs as usize);
 
@@ -524,6 +525,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         'stop: while continue_campaign(runs) {
             let run_id = worker_plan.run_id(runs);
+            planned_runs = planned_runs.max(run_id.worker_run.saturating_add(1));
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
             #[cfg(debug_assertions)]
@@ -983,6 +985,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
+        let campaign_spec = InvariantCampaignSpec::new(planned_runs, self.campaign_seed);
+        let worker_plan = campaign_spec.single_worker_plan();
         #[cfg(debug_assertions)]
         let worker_output =
             InvariantWorkerOutput::new(worker_plan, run_outputs, failure_outputs, worker_result);
