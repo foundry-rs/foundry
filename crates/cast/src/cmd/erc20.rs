@@ -392,7 +392,8 @@ impl Erc20Subcommand {
                             access_key.key_authorization.as_ref(),
                         )
                         .await?;
-                        fill_tx(&$provider, &mut tx, access_key.wallet_address, chain).await?;
+                        fill_tx(&$provider, &mut tx, access_key.wallet_address, chain, false)
+                            .await?;
                         if print_sponsor_hash {
                             let hash = tx
                                 .compute_sponsor_hash(access_key.wallet_address)
@@ -435,7 +436,7 @@ impl Erc20Subcommand {
                     if chain.is_tempo() && tx.fee_token().is_none() {
                         tx.set_fee_token(PATH_USD_ADDRESS);
                     }
-                    fill_tx(&$provider, &mut tx, browser.address(), chain).await?;
+                    fill_tx(&$provider, &mut tx, browser.address(), chain, true).await?;
                     if print_sponsor_hash {
                         let hash = tx.compute_sponsor_hash(browser.address()).ok_or_else(|| {
                             eyre::eyre!("This network does not support sponsored transactions")
@@ -464,7 +465,7 @@ impl Erc20Subcommand {
                     let chain = get_chain(config.chain, &$provider).await?;
                     tx_opts.apply::<N>(&mut tx, chain.is_legacy());
                     if needs_sponsor_payload {
-                        fill_tx(&$provider, &mut tx, from, chain).await?;
+                        fill_tx(&$provider, &mut tx, from, chain, false).await?;
                         if print_sponsor_hash {
                             let hash = tx.compute_sponsor_hash(from).ok_or_else(|| {
                                 eyre::eyre!("This network does not support sponsored transactions")
@@ -615,15 +616,21 @@ impl Erc20Subcommand {
     }
 }
 
-/// Fills from, chain_id, nonce, fees, and gas limit on a transaction request for the browser
-/// wallet path. Mirrors the filling logic in the shared tx builder but operates on a
+/// Fills from, chain_id, nonce, fees, and gas limit on a transaction request for sponsor/browser
+/// wallet flows. Mirrors the filling logic in the shared tx builder but operates on a
 /// pre-built transaction request from the sol! macro rather than through the builder pipeline.
 /// Only fills fields that haven't already been set by the user.
+///
+/// `browser` indicates the tx will be handed to a browser wallet, which may replace the local
+/// priority-fee estimate with the value from `eth_maxPriorityFeePerGas`. In that case we
+/// pre-align `maxFeePerGas` against the higher of the two so the cap doesn't fall below the tip
+/// the wallet actually submits.
 async fn fill_tx<N: Network, P: Provider<N>>(
     provider: &P,
     tx: &mut N::TransactionRequest,
     from: Address,
     chain: Chain,
+    browser: bool,
 ) -> eyre::Result<()>
 where
     N::TransactionRequest: FoundryTransactionBuilder<N>,
@@ -641,20 +648,31 @@ where
         if tx.gas_price().is_none() {
             tx.set_gas_price(provider.get_gas_price().await?);
         }
-    } else if tx.max_fee_per_gas().is_none() || tx.max_priority_fee_per_gas().is_none() {
-        let mut estimate = provider.estimate_eip1559_fees().await?;
-        if tx.max_priority_fee_per_gas().is_none()
-            && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
-            && suggested_tip > estimate.max_priority_fee_per_gas
+    } else {
+        if tx.max_fee_per_gas().is_none() || tx.max_priority_fee_per_gas().is_none() {
+            let mut estimate = provider.estimate_eip1559_fees().await?;
+            if browser
+                && tx.max_priority_fee_per_gas().is_none()
+                && let Ok(suggested_tip) = provider.get_max_priority_fee_per_gas().await
+                && suggested_tip > estimate.max_priority_fee_per_gas
+            {
+                estimate.max_fee_per_gas += suggested_tip - estimate.max_priority_fee_per_gas;
+                estimate.max_priority_fee_per_gas = suggested_tip;
+            }
+            if tx.max_fee_per_gas().is_none() {
+                tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
+            }
+            if tx.max_priority_fee_per_gas().is_none() {
+                tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+            }
+        }
+        if let (Some(max_fee), Some(priority)) =
+            (tx.max_fee_per_gas(), tx.max_priority_fee_per_gas())
         {
-            estimate.max_fee_per_gas += suggested_tip - estimate.max_priority_fee_per_gas;
-            estimate.max_priority_fee_per_gas = suggested_tip;
-        }
-        if tx.max_fee_per_gas().is_none() {
-            tx.set_max_fee_per_gas(estimate.max_fee_per_gas);
-        }
-        if tx.max_priority_fee_per_gas().is_none() {
-            tx.set_max_priority_fee_per_gas(estimate.max_priority_fee_per_gas);
+            eyre::ensure!(
+                priority <= max_fee,
+                "max priority fee per gas ({priority}) cannot exceed max fee per gas ({max_fee})"
+            );
         }
     }
 
