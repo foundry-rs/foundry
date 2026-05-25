@@ -239,6 +239,7 @@ pub struct InvariantFailures {
     /// so the cached counters stay in sync.
     pub(crate) failures: HashMap<FailureKey, InvariantFuzzError>,
     /// Stable run provenance for failures recorded during live fuzz runs.
+    #[cfg(debug_assertions)]
     failure_sources: HashMap<FailureKey, InvariantRunId>,
     /// Cached `FailureKey::Invariant` count, kept O(1) on the hot path.
     invariant_count: usize,
@@ -283,9 +284,12 @@ impl InvariantFailures {
     ) {
         let key = FailureKey::Invariant(invariant.name.clone());
         let prev = self.failures.insert(key.clone(), failure);
+        #[cfg(debug_assertions)]
         if let Some(run_id) = run_id {
             self.failure_sources.insert(key, run_id);
         }
+        #[cfg(not(debug_assertions))]
+        let _ = run_id;
         if prev.is_none() {
             self.invariant_count += 1;
         }
@@ -335,9 +339,12 @@ impl InvariantFailures {
             let key = FailureKey::Handler(site.0, site.1);
             let prev =
                 self.failures.insert(key.clone(), InvariantFuzzError::HandlerAssertion(failure));
+            #[cfg(debug_assertions)]
             if let Some(run_id) = run_id {
                 self.failure_sources.insert(key, run_id);
             }
+            #[cfg(not(debug_assertions))]
+            let _ = run_id;
             if prev.is_none() {
                 self.handler_count += 1;
             }
@@ -358,6 +365,7 @@ impl InvariantFailures {
         }
     }
 
+    #[cfg(debug_assertions)]
     pub(crate) fn failure_sources(&self) -> impl Iterator<Item = (&FailureKey, &InvariantRunId)> {
         self.failure_sources.iter()
     }

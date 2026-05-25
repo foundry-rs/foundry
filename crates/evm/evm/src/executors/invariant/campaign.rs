@@ -1,5 +1,7 @@
 use super::InvariantFuzzTestResult;
-use alloy_primitives::{Address, I256, Selector, U256};
+use alloy_primitives::U256;
+#[cfg(debug_assertions)]
+use alloy_primitives::{Address, I256, Selector};
 
 /// Stable identity for one logical invariant run inside a contract-level campaign.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +66,7 @@ impl InvariantWorkerPlan {
         )
     }
 
+    #[cfg(debug_assertions)]
     pub fn contains(&self, run_id: InvariantRunId) -> bool {
         let same_worker = run_id.worker_id == self.worker_id;
         let same_seed = run_id.seed == self.seed;
@@ -77,12 +80,15 @@ impl InvariantWorkerPlan {
 #[derive(Debug)]
 pub struct InvariantWorkerOutput {
     pub plan: InvariantWorkerPlan,
+    #[cfg(debug_assertions)]
     pub runs: Vec<InvariantRunOutput>,
+    #[cfg(debug_assertions)]
     pub failures: Vec<InvariantFailureOutput>,
     pub result: InvariantFuzzTestResult,
 }
 
 impl InvariantWorkerOutput {
+    #[cfg(debug_assertions)]
     pub const fn new(
         plan: InvariantWorkerPlan,
         runs: Vec<InvariantRunOutput>,
@@ -91,9 +97,15 @@ impl InvariantWorkerOutput {
     ) -> Self {
         Self { plan, runs, failures, result }
     }
+
+    #[cfg(not(debug_assertions))]
+    pub const fn new(plan: InvariantWorkerPlan, result: InvariantFuzzTestResult) -> Self {
+        Self { plan, result }
+    }
 }
 
 /// Worker-local summary for one completed logical run.
+#[cfg(debug_assertions)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvariantRunOutput {
     pub id: InvariantRunId,
@@ -103,6 +115,7 @@ pub struct InvariantRunOutput {
     pub optimization_value: Option<I256>,
 }
 
+#[cfg(debug_assertions)]
 impl InvariantRunOutput {
     pub const fn new(
         id: InvariantRunId,
@@ -116,12 +129,14 @@ impl InvariantRunOutput {
 }
 
 /// Stable source for one failure candidate emitted by a worker.
+#[cfg(debug_assertions)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InvariantFailureOutput {
     pub id: InvariantRunId,
     pub kind: InvariantFailureKind,
 }
 
+#[cfg(debug_assertions)]
 impl InvariantFailureOutput {
     pub const fn new(id: InvariantRunId, kind: InvariantFailureKind) -> Self {
         Self { id, kind }
@@ -129,6 +144,7 @@ impl InvariantFailureOutput {
 }
 
 /// Logical failure key kept independent from the renderer-facing error payload.
+#[cfg(debug_assertions)]
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum InvariantFailureKind {
     Predicate(String),
@@ -139,33 +155,33 @@ pub enum InvariantFailureKind {
 #[derive(Debug)]
 pub struct InvariantCampaignAggregator {
     spec: InvariantCampaignSpec,
-    outputs: Vec<InvariantWorkerOutput>,
+    output: Option<InvariantWorkerOutput>,
 }
 
 impl InvariantCampaignAggregator {
     pub const fn new(spec: InvariantCampaignSpec) -> Self {
-        Self { spec, outputs: Vec::new() }
+        Self { spec, output: None }
     }
 
     pub fn push(&mut self, output: InvariantWorkerOutput) {
-        self.outputs.push(output);
+        debug_assert!(self.output.is_none(), "PR1 only wires the single-worker identity path");
+        self.output = Some(output);
     }
 
-    pub fn finish(mut self) -> InvariantFuzzTestResult {
-        debug_assert_eq!(self.outputs.len(), 1, "PR1 only wires the single-worker identity path");
-        let output = self.outputs.pop().expect("at least one invariant worker output");
+    pub fn finish(self) -> InvariantFuzzTestResult {
+        let output = self.output.expect("at least one invariant worker output");
         debug_assert_eq!(output.plan.runs, self.spec.total_runs);
-        let executed_runs = output.runs.iter().map(|run| run.id).collect::<Vec<_>>();
-        debug_assert_eq!(
-            executed_runs.iter().map(|run| run.global_run).collect::<Vec<_>>(),
-            (0..executed_runs.len() as u32).collect::<Vec<_>>()
-        );
-        debug_assert!(executed_runs.iter().all(|run| {
-            run.worker_id == output.plan.worker_id
-                && run.seed == output.plan.seed
-                && run.global_run == output.plan.first_global_run + run.worker_run
-        }));
-        debug_assert!(output.failures.iter().all(|failure| output.plan.contains(failure.id)));
+        debug_assert_eq!(output.plan.seed, self.spec.seed);
+        #[cfg(debug_assertions)]
+        {
+            debug_assert!(output.runs.iter().enumerate().all(|(expected, run)| {
+                run.id.global_run == expected as u32
+                    && run.id.worker_id == output.plan.worker_id
+                    && run.id.seed == output.plan.seed
+                    && run.id.global_run == output.plan.first_global_run + run.id.worker_run
+            }));
+            debug_assert!(output.failures.iter().all(|failure| output.plan.contains(failure.id)));
+        }
         output.result
     }
 }

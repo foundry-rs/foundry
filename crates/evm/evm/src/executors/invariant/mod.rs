@@ -53,10 +53,9 @@ pub use error::{
 use foundry_evm_coverage::HitMaps;
 
 mod campaign;
-use campaign::{
-    InvariantCampaignAggregator, InvariantCampaignSpec, InvariantFailureKind,
-    InvariantFailureOutput, InvariantRunOutput, InvariantWorkerOutput,
-};
+use campaign::{InvariantCampaignAggregator, InvariantCampaignSpec, InvariantWorkerOutput};
+#[cfg(debug_assertions)]
+use campaign::{InvariantFailureKind, InvariantFailureOutput, InvariantRunOutput};
 
 mod replay;
 pub use replay::{replay_error, replay_run};
@@ -495,7 +494,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         let campaign_spec = InvariantCampaignSpec::new(self.config.runs, self.campaign_seed);
         let worker_plan = campaign_spec.single_worker_plan();
-        let mut run_outputs = Vec::new();
+        #[cfg(debug_assertions)]
+        let mut run_outputs = Vec::with_capacity(self.config.runs as usize);
 
         let (mut invariant_test, mut corpus_manager) = self.prepare_test(
             &invariant_contract,
@@ -526,6 +526,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let run_id = worker_plan.run_id(runs);
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
+            #[cfg(debug_assertions)]
             let reverts_before_run = invariant_test.test_data.failures.reverts;
             let mut stop_after_run = false;
 
@@ -841,6 +842,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // End current invariant test run.
+            #[cfg(debug_assertions)]
             let run_output = InvariantRunOutput::new(
                 run_id,
                 current_run.fuzz_runs.len(),
@@ -906,6 +908,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             runs += 1;
+            #[cfg(debug_assertions)]
             run_outputs.push(run_output);
             if stop_after_run {
                 break 'stop;
@@ -951,6 +954,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
         }
 
+        #[cfg(debug_assertions)]
         let failure_outputs = result
             .failures
             .failure_sources()
@@ -979,8 +983,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
+        #[cfg(debug_assertions)]
         let worker_output =
             InvariantWorkerOutput::new(worker_plan, run_outputs, failure_outputs, worker_result);
+        #[cfg(not(debug_assertions))]
+        let worker_output = InvariantWorkerOutput::new(worker_plan, worker_result);
         let mut aggregator = InvariantCampaignAggregator::new(campaign_spec);
         aggregator.push(worker_output);
         Ok(aggregator.finish())
