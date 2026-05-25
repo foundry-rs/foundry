@@ -1,5 +1,5 @@
 use alloy_network::{Network, TransactionBuilder};
-use alloy_primitives::{Address, ruint::aliases::U256};
+use alloy_primitives::{Address, B256, ruint::aliases::U256};
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::Result;
@@ -17,10 +17,20 @@ use std::{
 
 use crate::utils::parse_fee_token_address;
 
+mod session;
+pub use session::TEMPO_SESSION_ID_ENV;
+
 /// CLI options for Tempo transactions.
 #[derive(Clone, Debug, Default, Parser)]
 #[command(next_help_heading = "Tempo")]
 pub struct TempoOpts {
+    /// Use a live Tempo wallet session for signing.
+    ///
+    /// When set, Foundry resolves the session from `$TEMPO_HOME/wallet/sessions.toml` and signs
+    /// Tempo transactions with the session's temporary access key on behalf of its root account.
+    #[arg(long = "tempo.session", value_name = "SESSION_ID")]
+    pub session: Option<B256>,
+
     /// Fee token address for Tempo transactions.
     ///
     /// When set, builds a Tempo (type 0x76) transaction that pays gas fees
