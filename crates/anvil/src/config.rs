@@ -126,9 +126,9 @@ pub struct NodeConfig {
     pub genesis_block_number: Option<u64>,
     /// Signer accounts that can sign messages/transactions from the EVM node
     pub signer_accounts: Vec<PrivateKeySigner>,
-    /// Configured block time for the EVM chain. Use `None` to mine a new block for every tx
+    /// Configured block time for the EVM chain. Use `None` for instant/auto mining.
     pub block_time: Option<Duration>,
-    /// Disable auto, interval mining mode uns use `MiningMode::None` instead
+    /// Disable auto and interval mining mode and use `MiningMode::None` instead.
     pub no_mining: bool,
     /// Enables auto and interval mining mode
     pub mixed_mining: bool,
