@@ -17,40 +17,43 @@ pub(super) async fn run(addr: Address, rpc: RpcOpts) -> Result<()> {
     let resolve_builder = registry.resolveVirtualAddress(addr);
     let (decoded, master) = tokio::try_join!(decode_builder.call(), resolve_builder.call())?;
 
-    if !decoded.isVirtual {
-        sh_status!("{addr} is not a virtual address")?;
-        // Zero-address sentinel mirrors the JSON branch's `null` so scripts
-        // see a uniform stdout shape for "resolved to nothing".
-        sh_println!("{}", Address::ZERO)?;
-        return Ok(());
-    }
-
+    let is_virtual = decoded.isVirtual;
     let master_id = decoded.masterId;
     let user_tag = decoded.userTag;
     let master: Address = master;
 
     if shell::is_json() {
-        let master_address = if master.is_zero() { None } else { Some(format!("{master}")) };
+        // `master_address` is null when not virtual or unregistered.
+        let master_address =
+            if !is_virtual || master.is_zero() { None } else { Some(format!("{master}")) };
         sh_println!(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "address": format!("{addr}"),
+                "is_virtual": is_virtual,
                 "master_id": format!("0x{}", hex::encode(master_id)),
                 "user_tag": format!("0x{}", hex::encode(user_tag)),
                 "master_address": master_address,
             }))?
         )?;
-    } else {
-        sh_status!("Virtual address: {addr}")?;
-        sh_status!("Master ID:       0x{}", hex::encode(master_id))?;
-        sh_status!("User tag:        0x{}", hex::encode(user_tag))?;
-        if master.is_zero() {
-            sh_status!("Master address:  (unregistered)")?;
-        }
-        // Always emit master on stdout; zero address is the "unregistered"
-        // sentinel, matching the JSON branch's `null` master_address.
-        sh_println!("{master}")?;
+        return Ok(());
     }
+
+    if !is_virtual {
+        // Zero-address sentinel mirrors the JSON branch's null master_address.
+        sh_status!("{addr} is not a virtual address")?;
+        sh_println!("{}", Address::ZERO)?;
+        return Ok(());
+    }
+
+    sh_status!("Virtual address: {addr}")?;
+    sh_status!("Master ID:       0x{}", hex::encode(master_id))?;
+    sh_status!("User tag:        0x{}", hex::encode(user_tag))?;
+    if master.is_zero() {
+        sh_status!("Master address:  (unregistered)")?;
+    }
+    // Always emit master on stdout; zero address is the "unregistered" sentinel.
+    sh_println!("{master}")?;
 
     Ok(())
 }

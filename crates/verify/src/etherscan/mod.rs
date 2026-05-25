@@ -127,12 +127,19 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .await?;
 
         if let Some(resp) = resp {
-            sh_status!(
+            // Standalone verify: GUID/URL is the primary stdout result.
+            // Chained from create/script: chatter on stderr.
+            let submission_msg = format!(
                 "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
                 resp.message,
                 resp.result,
                 etherscan.address_url(args.address)
-            )?;
+            );
+            if args.chained {
+                sh_status!("{submission_msg}")?;
+            } else {
+                sh_println!("{submission_msg}")?;
+            }
 
             if args.watch {
                 let check_args = VerifyCheckArgs {

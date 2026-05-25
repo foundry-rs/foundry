@@ -165,7 +165,8 @@ impl CreateArgs {
             project.find_contract_path(&self.contract.name)?
         };
 
-        let output = compile::compile_target(&target_path, &project, shell::is_json())?;
+        // Always quiet: keep stdout reserved for the bare deployed address.
+        let output = compile::compile_target(&target_path, &project, true)?;
 
         let (abi, bin, id) = find_contract_artifacts(output, &target_path, &self.contract.name)?;
 
@@ -352,6 +353,7 @@ impl CreateArgs {
             compilation_profile: Some(id.profile.clone()),
             language: None,
             creation_transaction_hash: None,
+            chained: true,
         };
 
         // Check config for Etherscan API Keys to avoid preflight check failing if no
@@ -646,6 +648,7 @@ impl CreateArgs {
             compilation_profile: Some(id.profile.clone()),
             language: None,
             creation_transaction_hash: Some(tx_hash),
+            chained: true,
         };
         sh_status!("Waiting for {} to detect contract deployment...", verify.verifier.verifier)?;
         verify.run().await

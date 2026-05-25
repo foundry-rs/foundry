@@ -169,6 +169,7 @@ impl VerifyBundle {
                     compilation_profile: Some(artifact.profile.clone()),
                     language: None,
                     creation_transaction_hash: None,
+                    chained: true,
                 };
 
                 return Some(verify);

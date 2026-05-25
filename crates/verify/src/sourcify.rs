@@ -100,11 +100,16 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 args.verifier.verifier_url.as_deref(),
                 resp.verification_id.clone(),
             );
-            sh_status!(
+            // See Etherscan provider: standalone → stdout, chained → stderr.
+            let submission_msg = format!(
                 "Submitted contract for verification:\n\tVerification Job ID: `{}`\n\tURL: {}",
-                resp.verification_id,
-                job_url
-            )?;
+                resp.verification_id, job_url
+            );
+            if args.chained {
+                sh_status!("{submission_msg}")?;
+            } else {
+                sh_println!("{submission_msg}")?;
+            }
 
             if args.watch {
                 let check_args = VerifyCheckArgs {

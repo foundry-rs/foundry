@@ -173,6 +173,11 @@ pub struct VerifyArgs {
     /// Defaults to `solidity` if none provided.
     #[arg(long, value_enum)]
     pub language: Option<ContractLanguage>,
+
+    /// `true` when invoked from `forge create --verify` / `forge script --verify`:
+    /// providers route their submission GUID/URL to stderr instead of stdout.
+    #[arg(skip)]
+    pub chained: bool,
 }
 
 impl_figment_convert!(VerifyArgs);
