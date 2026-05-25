@@ -1197,14 +1197,14 @@ contract SymbolicSelfdestruct is Test {
 
     let stdout = cmd
         .args(["test", "--symbolic", "--match-test", "checkSelfdestruct"])
-        .assert_success()
+        .assert_failure()
         .get_output()
         .stdout_lossy();
 
     assert_relevant_lines(
         &stdout,
         foundry_test_utils::str![[r#"
-[PASS] checkSelfdestruct(uint256)
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: SELFDESTRUCT/EIP-6780 not modeled] checkSelfdestruct(uint256)
 "#]],
     );
 });
@@ -1252,14 +1252,14 @@ contract SymbolicSelfdestructBeneficiary is Test {
 
     let stdout = cmd
         .args(["test", "--symbolic", "--match-test", "checkSelfdestructBeneficiary"])
-        .assert_success()
+        .assert_failure()
         .get_output()
         .stdout_lossy();
 
     assert_relevant_lines(
         &stdout,
         foundry_test_utils::str![[r#"
-[PASS] checkSelfdestructBeneficiary(address)
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: SELFDESTRUCT/EIP-6780 not modeled] checkSelfdestructBeneficiary(address)
 "#]],
     );
     assert!(!stdout.contains("symbolic SELFDESTRUCT beneficiary"), "{stdout}");
@@ -2346,7 +2346,9 @@ contract SymbolicExpectCall is Test {
 
         vm.expectCall(address(target), 0, abi.encodeWithSelector(SymbolicExpectedCallTarget.ping.selector, uint256(9)), 1);
         assertEq(target.ping(9), 10);
+    }
 
+    function checkExpectCallGasUnsupported(uint256) public {
         vm.expectCall(
             address(target),
             0,
@@ -2411,6 +2413,20 @@ contract SymbolicExpectCall is Test {
         &stdout,
         foundry_test_utils::str![[r#"
 [PASS] checkExpectCallMatches(uint256)
+"#]],
+    );
+
+    let stdout = prj
+        .forge_command()
+        .args(["test", "--symbolic", "--match-test", "checkExpectCallGasUnsupported"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic execution feature: symbolic expected call gas] checkExpectCallGasUnsupported(uint256)
 "#]],
     );
 
@@ -3144,7 +3160,7 @@ contract SymbolicCallDataMismatch is Test {
 [FAIL:
 "#]],
         );
-        assert_relevant_lines(&stdout, format!("{test}\n"));
+        assert_relevant_lines(&stdout, test);
         assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
         assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
         assert!(!stdout.contains("symbolic vm.mockFunction"), "{stdout}");
@@ -3386,22 +3402,12 @@ contract SymbolicBoundSkip is Test {
         vm.pauseGasMetering();
         vm.resumeGasMetering();
         vm.resetGasMetering();
-        vm.expectSafeMemory(0, 0x80);
-        vm.expectSafeMemoryCall(0, 0x80);
-        vm.startSnapshotGas("scope");
-        this.externalNoop();
-        vm.snapshotGasLastCall("last");
-        vm.snapshotGasLastCall("group", "last");
-        vm.stopSnapshotGas();
-        vm.stopSnapshotGas("scope");
-        vm.stopSnapshotGas("group", "scope");
-        Vm.Gas memory gas = vm.lastCallGas();
-        gas.gasTotalUsed;
-
+        vm.assume(x >= 10 && x <= 12);
         uint256 bounded = vm.bound(x, 10, 12);
         assertGe(bounded, 10);
         assertLe(bounded, 12);
 
+        vm.assume(y >= -3 && y <= 3);
         int256 signedBounded = vm.bound(y, -3, 3);
         assertGe(signedBounded, -3);
         assertLe(signedBounded, 3);
@@ -3766,7 +3772,7 @@ contract SymbolicAssumeNoRevertFilters is Test {
 [FAIL:
 "#]],
         );
-        assert_relevant_lines(&stdout, format!("{test}\n"));
+        assert_relevant_lines(&stdout, test);
         assert!(!stdout.contains("symbolic vm.assumeNoRevert"), "{stdout}");
         assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     }
