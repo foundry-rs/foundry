@@ -40,6 +40,11 @@ pub(crate) const PORTFOLIO_SCHEDULER_MIN_RECENCY_WEIGHT: i64 = 1;
 pub(crate) const PORTFOLIO_SCHEDULER_SPEED_BONUS_CAP_MS: u128 = 100;
 pub(crate) const PORTFOLIO_SCHEDULER_MAX_SPEED_BONUS: i64 = 100;
 
+// Hard arithmetic witness search limits
+pub(crate) const HARD_ARITH_FALLBACK_MAX_VARS: usize = 4;
+pub(crate) const HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR: usize = 24;
+pub(crate) const HARD_ARITH_FALLBACK_MAX_ASSIGNMENTS: usize = 50_000;
+
 /// Symbolic solver names with built-in command-line mappings.
 pub const BUILTIN_SYMBOLIC_SOLVERS: &[&str] =
     &["z3", "yices", "cvc5", "cvc5-int", "bitwuzla", "bitwuzla-abs"];
