@@ -100,19 +100,7 @@ fn resolve_session_signer(
 ///
 /// Session signing must fail closed instead of falling back to a long-lived or explicit signer.
 fn ensure_no_explicit_wallet_signer(wallet: &WalletOpts) -> Result<()> {
-    let has_explicit_signer = wallet.raw.interactive
-        || wallet.raw.private_key.is_some()
-        || wallet.raw.mnemonic.is_some()
-        || wallet.keystore_path.is_some()
-        || wallet.keystore_account_name.is_some()
-        || wallet.ledger
-        || wallet.trezor
-        || wallet.aws
-        || wallet.gcp
-        || wallet.turnkey
-        || wallet.tempo_access_key.is_some();
-
-    if has_explicit_signer {
+    if wallet.has_explicit_signer() {
         eyre::bail!(
             "--tempo.session/TEMPO_SESSION_ID cannot be combined with explicit wallet signer options"
         );
@@ -120,31 +108,55 @@ fn ensure_no_explicit_wallet_signer(wallet: &WalletOpts) -> Result<()> {
     Ok(())
 }
 
+trait ExplicitSignerOpts {
+    fn has_explicit_signer(&self) -> bool;
+}
+
+impl ExplicitSignerOpts for WalletOpts {
+    fn has_explicit_signer(&self) -> bool {
+        self.raw.interactive
+            || self.raw.private_key.is_some()
+            || self.raw.mnemonic.is_some()
+            || self.keystore_path.is_some()
+            || self.keystore_account_name.is_some()
+            || self.ledger
+            || self.trezor
+            || self.aws
+            || self.gcp
+            || self.turnkey
+            || self.tempo_access_key.is_some()
+    }
+}
+
 /// Rejects multi-wallet signer options when a Tempo session is already selected.
 ///
 /// Script and broadcast session signing must not fall back to long-lived, browser, or explicit
 /// signers.
 fn ensure_no_explicit_multi_wallet_signer(wallets: &MultiWalletOpts) -> Result<()> {
-    let has_explicit_signer = wallets.interactive
-        || wallets.interactives > 0
-        || wallets.private_key.is_some()
-        || wallets.private_keys.is_some()
-        || wallets.mnemonics.is_some()
-        || wallets.keystore_paths.is_some()
-        || wallets.keystore_account_names.is_some()
-        || wallets.ledger
-        || wallets.trezor
-        || wallets.aws
-        || wallets.gcp
-        || wallets.turnkey
-        || wallets.browser.browser;
-
-    if has_explicit_signer {
+    if wallets.has_explicit_signer() {
         eyre::bail!(
             "--tempo.session/TEMPO_SESSION_ID cannot be combined with explicit wallet signer options"
         );
     }
     Ok(())
+}
+
+impl ExplicitSignerOpts for MultiWalletOpts {
+    fn has_explicit_signer(&self) -> bool {
+        self.interactive
+            || self.interactives > 0
+            || self.private_key.is_some()
+            || self.private_keys.is_some()
+            || self.mnemonics.is_some()
+            || self.keystore_paths.is_some()
+            || self.keystore_account_names.is_some()
+            || self.ledger
+            || self.trezor
+            || self.aws
+            || self.gcp
+            || self.turnkey
+            || self.browser.browser
+    }
 }
 
 #[cfg(test)]
