@@ -1758,6 +1758,7 @@ fn base_counterexamples_to_txes(
                     calldata: seq.calldata.clone(),
                     value: seq.value,
                     gas_limit: None,
+                    gas_price: None,
                 },
             }
         })

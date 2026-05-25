@@ -88,6 +88,12 @@ pub struct CallDetails {
     /// Uses `#[serde(default)]` for backwards compatibility with existing corpus files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gas_limit: Option<u64>,
+    /// Optional override for `tx.gasprice`. Same lifecycle as `gas_limit`: set by the
+    /// gas-envelope sampler when `invariant.gas_fuzz = true`, `None` means default,
+    /// persisted for deterministic replay of gas-price-dependent failures.
+    /// Uses `#[serde(default)]` for backwards compatibility with existing corpus files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gas_price: Option<u128>,
 }
 
 impl BasicTxDetails {

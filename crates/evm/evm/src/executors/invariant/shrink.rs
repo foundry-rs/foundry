@@ -714,6 +714,7 @@ mod tests {
                 calldata: Bytes::new(),
                 value: None,
                 gas_limit: None,
+                gas_price: None,
             },
         }
     }

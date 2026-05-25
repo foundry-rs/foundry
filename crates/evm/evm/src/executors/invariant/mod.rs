@@ -584,27 +584,23 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     (last.call_details.target, Selector::from(sel_bytes))
                 };
 
-                // Per-call gas-envelope sampling. `None` from `sample_gas_limit`
-                // leaves `gas_limit` unset → executor's default budget applies.
-                // `gas_price` is applied via the cheatcodes one-shot slot.
+                // Per-call gas-envelope sampling. Both `gas_limit` and `gas_price`
+                // are stamped onto `call_details` so `execute_tx` applies them on
+                // the run-local executor (not `self.executor`) and so failing
+                // sequences replay with the exact gas envelope that triggered them.
                 if self.config.gas_fuzz {
                     let mut rng = rand::rng();
-                    let sampled = sample_gas_limit(
+                    let sampled_limit = sample_gas_limit(
                         &gas_observations,
                         handler_target,
                         handler_selector,
                         block_gas_cap,
                         &mut rng,
                     );
-                    if let Some(g) = sampled
-                        && let Some(last) = current_run.inputs.last_mut()
-                    {
-                        last.call_details.gas_limit = Some(g);
-                    }
-
                     let sampled_price = sample_gas_price(&mut rng);
-                    if let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_mut() {
-                        cheats.gas_price = Some(sampled_price);
+                    if let Some(last) = current_run.inputs.last_mut() {
+                        last.call_details.gas_limit = sampled_limit;
+                        last.call_details.gas_price = Some(sampled_price);
                     }
                 }
 
@@ -1590,6 +1586,16 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
         executor.set_gas_limit(g);
         saved
     });
+
+    // Per-call `tx.gasprice` override under `gas_fuzz`. The cheatcodes inspector
+    // consumes this one-shot during `initialize_interp` (via `.take()`), so the
+    // executor's natural price applies to any follow-up invariant assertion call
+    // even if the sampled price is non-zero.
+    if let Some(p) = tx.call_details.gas_price
+        && let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
+    {
+        cheats.gas_price = Some(p);
+    }
 
     let result = executor.call_raw(
         tx.sender,

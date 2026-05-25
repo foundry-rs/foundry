@@ -1404,6 +1404,7 @@ mod tests {
                 calldata: Bytes::new(),
                 value: None,
                 gas_limit: None,
+                gas_price: None,
             },
         }
     }
@@ -1430,6 +1431,7 @@ mod tests {
                 calldata,
                 value: None,
                 gas_limit: None,
+                gas_price: None,
             },
         };
         let cmp = CmpOperands {

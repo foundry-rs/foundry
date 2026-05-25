@@ -309,3 +309,57 @@ contract SwallowedOOGWithoutGasFuzzTest is Test {{
 "#]],
     );
 });
+
+// Per-call `tx.gasprice` actually reaches the handler under `gas_fuzz = true`.
+// The handler records distinct `tx.gasprice` values into storage; the invariant
+// asserts no diversity, so it must fire once the sampler delivers a second
+// distinct value. If the sampled price were written to the wrong executor (the
+// pre-fix bug) `uniqueCount` would stay at 1 and the invariant would never fire.
+forgetest_init!(should_apply_sampled_gas_price_to_call, |prj, cmd| {
+    prj.add_test(
+        "GasPriceFuzzTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract GasPriceObserver {
+    mapping(uint256 => bool) public seen;
+    uint256 public uniqueCount;
+
+    function probe() external {
+        uint256 p = tx.gasprice;
+        if (!seen[p]) {
+            seen[p] = true;
+            uniqueCount++;
+        }
+    }
+}
+
+contract GasPriceFuzzTest is Test {
+    GasPriceObserver public obs;
+
+    function setUp() public {
+        obs = new GasPriceObserver();
+        targetContract(address(obs));
+    }
+
+    /// forge-config: default.invariant.runs = 2
+    /// forge-config: default.invariant.depth = 20
+    /// forge-config: default.invariant.fail-on-revert = false
+    /// forge-config: default.invariant.gas-fuzz = true
+    function invariant_gasPriceStaysConstant() public view {
+        assertLe(obs.uniqueCount(), 1, "gas-price diversity observed");
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_gasPriceStaysConstant"]).assert_failure().stdout_eq(str![
+        [r#"
+...
+[FAIL: gas-price diversity observed[..]]
+...
+ invariant_gasPriceStaysConstant() (runs: [..], calls: [..], reverts: [..])
+...
+"#]
+    ]);
+});
