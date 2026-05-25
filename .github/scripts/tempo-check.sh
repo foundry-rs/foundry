@@ -510,7 +510,7 @@ forge build
 REQUIRE_COUNTER_OUTPUT=$(forge create ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} src/Counter.sol:Counter --rpc-url "$ETH_RPC_URL" --private-key "$PK" --broadcast 2>&1)
 echo "Deploy output: $REQUIRE_COUNTER_OUTPUT"
 # `forge create` writes the deployed address as a bare hex line on stdout (diagnostics go to stderr).
-REQUIRE_COUNTER=$(echo "$REQUIRE_COUNTER_OUTPUT" | grep -oE '^0x[a-fA-F0-9]{40}$' | tail -1)
+REQUIRE_COUNTER=$(echo "$REQUIRE_COUNTER_OUTPUT" | sed -n '/^0x[a-fA-F0-9]\{40\}$/p' | tail -1)
 if [[ "$REQUIRE_COUNTER" == "null" || -z "$REQUIRE_COUNTER" ]]; then
   echo "ERROR: Failed to deploy Counter with require"
   exit 1
@@ -626,7 +626,7 @@ forge build
 
 GAS_BURNER_OUTPUT=$(forge create ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} src/GasBurner.sol:GasBurner --rpc-url "$ETH_RPC_URL" --private-key "$PK" --broadcast 2>&1)
 echo "Deploy output: $GAS_BURNER_OUTPUT"
-GAS_BURNER=$(echo "$GAS_BURNER_OUTPUT" | grep -oE '^0x[a-fA-F0-9]{40}$' | tail -1)
+GAS_BURNER=$(echo "$GAS_BURNER_OUTPUT" | sed -n '/^0x[a-fA-F0-9]\{40\}$/p' | tail -1)
 GAS_BURNER_TX=$(echo "$GAS_BURNER_OUTPUT" | sed -n 's/.*Transaction hash: \(0x[a-fA-F0-9]*\).*/\1/p')
 if [[ -z "$GAS_BURNER" ]]; then
   echo "ERROR: Failed to deploy GasBurner"
@@ -659,7 +659,7 @@ forge build
 
 MAX_SIZE_OUTPUT=$(forge create ${FEE_TOKEN_ARG[@]+"${FEE_TOKEN_ARG[@]}"} src/MaxSizeContract.sol:MaxSizeContract --rpc-url "$ETH_RPC_URL" --private-key "$PK" --broadcast 2>&1)
 echo "Deploy output: $MAX_SIZE_OUTPUT"
-MAX_SIZE_ADDR=$(echo "$MAX_SIZE_OUTPUT" | grep -oE '^0x[a-fA-F0-9]{40}$' | tail -1)
+MAX_SIZE_ADDR=$(echo "$MAX_SIZE_OUTPUT" | sed -n '/^0x[a-fA-F0-9]\{40\}$/p' | tail -1)
 if [[ -z "$MAX_SIZE_ADDR" ]]; then
   echo "ERROR: Failed to deploy MaxSizeContract"
   exit 1

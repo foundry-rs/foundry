@@ -188,7 +188,7 @@ Zero-tag address:  {}"#,
         output.master_id,
         output.zero_tag_virtual_address,
     )?;
-    sh_println!("{}", output.salt)?;
+    sh_println!("{}", output.zero_tag_virtual_address)?;
     Ok(())
 }
 

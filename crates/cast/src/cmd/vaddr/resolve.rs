@@ -19,6 +19,9 @@ pub(super) async fn run(addr: Address, rpc: RpcOpts) -> Result<()> {
 
     if !decoded.isVirtual {
         sh_status!("{addr} is not a virtual address")?;
+        // Zero-address sentinel mirrors the JSON branch's `null` so scripts
+        // see a uniform stdout shape for "resolved to nothing".
+        sh_println!("{}", Address::ZERO)?;
         return Ok(());
     }
 
@@ -43,9 +46,10 @@ pub(super) async fn run(addr: Address, rpc: RpcOpts) -> Result<()> {
         sh_status!("User tag:        0x{}", hex::encode(user_tag))?;
         if master.is_zero() {
             sh_status!("Master address:  (unregistered)")?;
-        } else {
-            sh_println!("{master}")?;
         }
+        // Always emit master on stdout; zero address is the "unregistered"
+        // sentinel, matching the JSON branch's `null` master_address.
+        sh_println!("{master}")?;
     }
 
     Ok(())
