@@ -18,9 +18,14 @@ impl TempoOpts {
             return Ok(Some(session));
         }
 
-        let Ok(raw) = std::env::var(TEMPO_SESSION_ID_ENV) else {
-            return Ok(None);
+        let raw = match std::env::var(TEMPO_SESSION_ID_ENV) {
+            Ok(raw) => raw,
+            Err(std::env::VarError::NotPresent) => return Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                eyre::bail!("invalid {TEMPO_SESSION_ID_ENV}: value is not valid UTF-8");
+            }
         };
+
         let raw = raw.trim();
         if raw.is_empty() {
             return Ok(None);
@@ -271,6 +276,22 @@ mod tests {
             let err = TempoOpts::default().session_id().unwrap_err();
 
             assert!(err.to_string().contains(TEMPO_SESSION_ID_ENV), "{err}");
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_tempo_session_env_fails_closed() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+        with_clean_session_env(|| {
+            // SAFETY: serialized with other tests that mutate Tempo env vars.
+            unsafe {
+                std::env::set_var(TEMPO_SESSION_ID_ENV, OsString::from_vec(vec![0xff]));
+            }
+            let err = TempoOpts::default().session_id().unwrap_err();
+
+            assert!(err.to_string().contains("value is not valid UTF-8"), "{err}");
         });
     }
 
