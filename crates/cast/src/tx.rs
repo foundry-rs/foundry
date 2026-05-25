@@ -3,7 +3,7 @@ use alloy_consensus::{SidecarBuilder, SimpleCoder};
 use alloy_dyn_abi::ErrorExt;
 use alloy_ens::NameOrAddress;
 use alloy_json_abi::Function;
-use alloy_network::{Network, TransactionBuilder};
+use alloy_network::{Network, ReceiptResponse, TransactionBuilder};
 use alloy_primitives::{Address, B256, Bytes, TxHash, TxKind, U64, U256, hex};
 use alloy_provider::{PendingTransactionBuilder, Provider};
 use alloy_rpc_types::{AccessList, Authorization, TransactionInputKind};
@@ -225,7 +225,11 @@ where
     }
 
     /// Sends a transaction and waits for receipt synchronously
-    pub async fn send_sync(&self, tx: N::TransactionRequest) -> Result<String> {
+    ///
+    /// Returns the formatted receipt (text or JSON depending on shell mode) along
+    /// with the transaction hash, so callers can emit each on the appropriate
+    /// output channel.
+    pub async fn send_sync(&self, tx: N::TransactionRequest) -> Result<(String, B256)> {
         let mut receipt = TransactionReceiptWithRevertReason::<N> {
             receipt: self.provider.send_transaction_sync(tx).await?,
             revert_reason: None,
@@ -233,7 +237,9 @@ where
         // Allow to fail silently
         let _ = receipt.update_revert_reason(&self.provider).await;
 
-        self.format_receipt(receipt, None)
+        let tx_hash = receipt.receipt.transaction_hash();
+        let formatted = self.format_receipt(receipt, None)?;
+        Ok((formatted, tx_hash))
     }
 
     /// Sends a transaction to the specified address
@@ -289,6 +295,11 @@ where
     ///
     /// This is the shared "output" path used by both the normal send flow and the browser wallet
     /// flow (which sends the transaction out-of-band and only has a tx hash).
+    ///
+    /// Output channel discipline (see `docs/dev/output-channels.md`):
+    /// - text mode: tx hash on stdout, receipt prose (when not `--async`) on stderr.
+    /// - `--json` mode: a single JSON document on stdout — either the full receipt (default/sync)
+    ///   or `{ "hash": "0x…" }` (`--async`).
     pub async fn print_tx_result(
         &self,
         tx_hash: B256,
@@ -297,11 +308,20 @@ where
         timeout: u64,
     ) -> Result<()> {
         if cast_async {
-            sh_println!("{tx_hash:#x}")?;
+            if shell::is_json() {
+                sh_println!("{}", serde_json::json!({ "hash": format!("{tx_hash:#x}") }))?;
+            } else {
+                sh_println!("{tx_hash:#x}")?;
+            }
         } else {
             let receipt =
                 self.receipt(format!("{tx_hash:#x}"), None, confs, Some(timeout), false).await?;
-            sh_println!("{receipt}")?;
+            if shell::is_json() {
+                sh_println!("{receipt}")?;
+            } else {
+                sh_status!("{receipt}")?;
+                sh_println!("{tx_hash:#x}")?;
+            }
         }
         Ok(())
     }

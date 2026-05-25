@@ -187,7 +187,7 @@ impl VerificationProviderType {
         let has_key = key.as_ref().is_some_and(|k| !k.is_empty());
         // 1. If no verifier or `--verifier sourcify` is set and no API key provided, use Sourcify.
         if !has_key && self.is_sourcify() {
-            sh_println!(
+            sh_status!(
                 "Attempting to verify on Sourcify. Pass the --etherscan-api-key <API_KEY> to verify on Etherscan, \
             or use the --verifier flag to verify on another provider."
             )?;

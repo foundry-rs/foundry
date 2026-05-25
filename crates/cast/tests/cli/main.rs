@@ -2997,11 +2997,82 @@ Error: Multiple address-based authorizations provided. Only one address can be s
 "#]]);
 });
 
+// `cast send --async --json` must emit a single JSON document on stdout with shape
+// `{ "hash": "0x…" }`, per the output-channel contract (`docs/dev/output-channels.md`).
+casttest!(send_async_json_emits_hash_object, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    let assertion = cmd
+        .args([
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+            "--async",
+            "--json",
+        ])
+        .assert_success();
+    let stdout = String::from_utf8_lossy(&assertion.get_output().stdout).into_owned();
+
+    let value: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout must be a single JSON document");
+    let hash = value.get("hash").and_then(|v| v.as_str()).expect("missing `hash` field");
+    assert!(hash.starts_with("0x") && hash.len() == 66, "hash field is not a tx hash: {hash:?}",);
+});
+
+// Regression test for the shared `print_tx_result` helper used by every send-like cast
+// command (`cast send`, `cast batch-send`, ERC20/keychain/browser/access-key flows, …).
+//
+// Per the output-channel contract (`docs/dev/output-channels.md`), the default
+// (non-async, non-sync) path waits for the receipt and must route the pretty receipt to
+// stderr while keeping the bare tx hash on stdout.
+casttest!(send_default_routes_receipt_to_stderr, async |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let endpoint = handle.http_endpoint();
+
+    let assertion = cmd
+        .args([
+            "send",
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+            "--value",
+            "1",
+            "--private-key",
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+            "--rpc-url",
+            &endpoint,
+        ])
+        .assert_success();
+    let output = assertion.get_output();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    // stdout: bare tx hash, no receipt prose.
+    let stdout_trimmed = stdout.trim();
+    assert!(
+        stdout_trimmed.starts_with("0x") && stdout_trimmed.len() == 66,
+        "stdout should be a bare tx hash, got: {stdout_trimmed:?}",
+    );
+    assert!(
+        !stdout.contains("transactionHash") && !stdout.contains("blockNumber"),
+        "stdout must not contain receipt prose: {stdout}",
+    );
+
+    // stderr: pretty receipt with labeled fields.
+    assert!(stderr.contains("transactionHash"), "stderr missing transactionHash: {stderr}");
+    assert!(stderr.contains("blockNumber"), "stderr missing blockNumber: {stderr}");
+});
+
 casttest!(send_sync, async |_prj, cmd| {
     let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
     let endpoint = handle.http_endpoint();
 
-    let output = cmd
+    // Text mode: bare tx hash on stdout, receipt prose on stderr.
+    let assertion = cmd
         .args([
             "send",
             "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
@@ -3013,13 +3084,23 @@ casttest!(send_sync, async |_prj, cmd| {
             &endpoint,
             "--sync",
         ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+        .assert_success();
+    let output = assertion.get_output();
 
-    assert!(output.contains("transactionHash"));
-    assert!(output.contains("blockNumber"));
-    assert!(output.contains("gasUsed"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // stdout: exactly one tx hash, nothing else.
+    let stdout_trimmed = stdout.trim();
+    assert!(
+        stdout_trimmed.starts_with("0x") && stdout_trimmed.len() == 66,
+        "stdout should be a bare tx hash, got: {stdout_trimmed:?}",
+    );
+
+    // stderr: pretty-formatted receipt with the labeled fields.
+    assert!(stderr.contains("transactionHash"), "stderr missing transactionHash: {stderr}");
+    assert!(stderr.contains("blockNumber"), "stderr missing blockNumber: {stderr}");
+    assert!(stderr.contains("gasUsed"), "stderr missing gasUsed: {stderr}");
 });
 
 casttest!(hash_message, |_prj, cmd| {
@@ -4166,8 +4247,12 @@ contract ConstructorContract {
     let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
     let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
 
-    // Use cast send --create with constructor arguments
-    let output = cmd
+    // Use cast send --create with constructor arguments.
+    //
+    // Per the output-channel contract (`docs/dev/output-channels.md`), the pretty
+    // receipt (including `contractAddress`) is written to stderr; stdout receives
+    // only the bare transaction hash.
+    let assertion = cmd
         .cast_fuse()
         .args([
             "send",
@@ -4181,21 +4266,19 @@ contract ConstructorContract {
             "42",
             "TestContract",
         ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+        .assert_success();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).into_owned();
 
-    // Extract the deployed contract address from output
-    let lines: Vec<&str> = output.lines().collect();
+    // Extract the deployed contract address from the stderr receipt.
     let mut address = None;
-    for line in lines {
+    for line in stderr.lines() {
         if line.contains("contractAddress") {
             let parts: Vec<&str> = line.split_whitespace().collect();
             address = Some(parts[1]);
             break;
         }
     }
-    let address = address.expect("Contract address not found in output");
+    let address = address.expect("Contract address not found in stderr");
 
     // Verify the contract was deployed correctly by calling getValue()
     let value_output = cmd
@@ -4290,8 +4373,11 @@ contract SimpleContract {
     let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
     let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
 
-    // Deploy with empty constructor
-    let output = cmd
+    // Deploy with empty constructor.
+    //
+    // Per the output-channel contract (`docs/dev/output-channels.md`), the pretty
+    // receipt is written to stderr; stdout receives only the bare transaction hash.
+    let assertion = cmd
         .cast_fuse()
         .args([
             "send",
@@ -4303,12 +4389,11 @@ contract SimpleContract {
             bytecode,
             "constructor()",
         ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+        .assert_success();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).into_owned();
 
     // Verify deployment succeeded
-    assert!(output.contains("contractAddress"));
+    assert!(stderr.contains("contractAddress"), "missing contractAddress on stderr: {stderr}");
 });
 
 // Test complex constructor arguments (multiple types)
@@ -4348,8 +4433,12 @@ contract ComplexContract {
     let contract_data: serde_json::Value = serde_json::from_str(&contract_json).unwrap();
     let bytecode = contract_data["bytecode"]["object"].as_str().unwrap();
 
-    // Deploy with complex arguments
-    let output = cmd
+    // Deploy with complex arguments.
+    //
+    // Per the output-channel contract (`docs/dev/output-channels.md`), the pretty
+    // receipt (including `contractAddress`) is written to stderr; stdout receives
+    // only the bare transaction hash.
+    let assertion = cmd
         .cast_fuse()
         .args([
             "send",
@@ -4364,14 +4453,12 @@ contract ComplexContract {
             "[1,2,3,4,5]",
             "true",
         ])
-        .assert_success()
-        .get_output()
-        .stdout_lossy();
+        .assert_success();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).into_owned();
 
-    // Extract deployed address
-    let lines: Vec<&str> = output.lines().collect();
+    // Extract deployed address from the stderr receipt.
     let mut address = None;
-    for line in lines {
+    for line in stderr.lines() {
         if line.contains("contractAddress") {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 {
@@ -4380,7 +4467,7 @@ contract ComplexContract {
             }
         }
     }
-    let address = address.expect("Contract address not found in output");
+    let address = address.expect("Contract address not found in stderr");
 
     // Verify the array length was set correctly
     let length_output = cmd

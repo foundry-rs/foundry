@@ -35,7 +35,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
         let chain_id = args.etherscan.chain.unwrap_or_default().id();
 
         if !args.skip_is_verified_check && self.is_contract_verified(&args).await? {
-            sh_println!(
+            sh_status!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",
                 context.target_name,
                 args.address.to_string()
@@ -55,7 +55,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
             .into_retry()
             .run_async(|| {
                 async {
-                    sh_println!(
+                    sh_status!(
                         "\nSubmitting verification for [{}] {:?}.",
                         context.target_name,
                         args.address.to_string()
@@ -70,7 +70,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     let status = response.status();
                     match status {
                         StatusCode::CONFLICT => {
-                            sh_println!("Contract source code already fully verified")?;
+                            sh_status!("Contract source code already fully verified")?;
                             Ok(None)
                         }
                         StatusCode::ACCEPTED => {
@@ -100,7 +100,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 args.verifier.verifier_url.as_deref(),
                 resp.verification_id.clone(),
             );
-            sh_println!(
+            sh_status!(
                 "Submitted contract for verification:\n\tVerification Job ID: `{}`\n\tURL: {}",
                 resp.verification_id,
                 job_url
@@ -157,7 +157,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
 
                 if let Some(error) = job_response.error {
                     if error.custom_code == "already_verified" {
-                        let _ = sh_println!("Contract source code already verified");
+                        let _ = sh_status!("Contract source code already verified");
                         return Ok(());
                     }
 
@@ -169,7 +169,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 }
 
                 if let Some(contract_status) = job_response.contract.match_status {
-                    let _ = sh_println!(
+                    let _ = sh_status!(
                         "Contract successfully verified:\nStatus: `{}`",
                         contract_status,
                     );

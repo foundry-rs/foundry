@@ -172,16 +172,22 @@ impl EnvExternalities {
     }
 }
 
-/// Parses the address the contract was deployed to
+/// Parses the address the contract was deployed to.
+///
+/// Post output-channel migration, `forge create` emits the deployed address bare on stdout
+/// (with the "Deployer:"/"Transaction hash:" prose routed to stderr). Returns the last line
+/// that looks like a 0x-prefixed 20-byte hex address.
 pub fn parse_deployed_address(out: &str) -> Option<String> {
-    for line in out.lines() {
-        if line.starts_with("Deployed to") {
-            return Some(line.trim_start_matches("Deployed to: ").to_string());
-        }
-    }
-    None
+    out.lines()
+        .map(str::trim)
+        .rfind(|line| line.starts_with("0x") && line.len() == 42)
+        .map(str::to_string)
 }
 
+/// Parses a verification GUID from `out`.
+///
+/// Post output-channel migration the "Submitted contract for verification: GUID: …" prose
+/// lives on **stderr**, so callers should pass `stderr` here.
 pub fn parse_verification_guid(out: &str) -> Option<String> {
     for line in out.lines() {
         if line.contains("GUID") {

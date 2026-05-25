@@ -74,15 +74,17 @@ fn parse_verification_result(cmd: &mut TestCommand, retries: u32) -> eyre::Resul
     // Give Etherscan some time to verify the contract.
     Retry::new(retries, Duration::from_secs(30)).run(|| -> eyre::Result<()> {
         let output = cmd.execute();
-        let out = String::from_utf8_lossy(&output.stdout);
-        test_debug!("{out}");
-        if out.contains("Contract successfully verified") {
+        // Verification status prose ("Contract successfully verified") is routed to stderr
+        // per the output-channel contract; see `docs/dev/output-channels.md`.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        test_debug!("{stderr}");
+        if stderr.contains("Contract successfully verified") {
             return Ok(());
         }
         eyre::bail!(
             "Failed to get verification, stdout: {}, stderr: {}",
-            out,
-            String::from_utf8_lossy(&output.stderr)
+            String::from_utf8_lossy(&output.stdout),
+            stderr
         )
     })
 }
@@ -116,12 +118,14 @@ fn await_verification_response(info: EnvExternalities, mut cmd: TestCommand) {
         Retry::new(5, Duration::from_secs(60))
             .run(|| -> eyre::Result<String> {
                 let output = cmd.execute();
-                let out = String::from_utf8_lossy(&output.stdout);
-                utils::parse_verification_guid(&out).ok_or_else(|| {
+                // Verification prose (including the GUID line) is routed to stderr per the
+                // output-channel contract; see `docs/dev/output-channels.md`.
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                utils::parse_verification_guid(&stderr).ok_or_else(|| {
                     eyre::eyre!(
                         "Failed to get guid, stdout: {}, stderr: {}",
-                        out,
-                        String::from_utf8_lossy(&output.stderr)
+                        String::from_utf8_lossy(&output.stdout),
+                        stderr
                     )
                 })
             })
@@ -232,15 +236,26 @@ fn create_verify_on_chain(info: Option<EnvExternalities>, prj: TestProject, mut 
         add_single_verify_target_file(&prj);
 
         let contract_path = "src/Verify.sol:Verify";
-        let output = cmd
+        // Per the output-channel contract (`docs/dev/output-channels.md`):
+        // - `forge create` writes the bare deployed address to stdout.
+        // - All verification status prose ("Contract successfully verified") is routed to stderr.
+        let assertion = cmd
             .arg("create")
             .args(info.create_args())
             .args([contract_path, "--etherscan-api-key", info.etherscan.as_str(), "--verify"])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
+            .assert_success();
+        let output = assertion.get_output();
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
-        assert!(output.contains("Contract successfully verified"), "{}", output);
+        assert!(
+            stderr.contains("Contract successfully verified"),
+            "verify success message missing from stderr.\nstdout: {stdout}\nstderr: {stderr}",
+        );
+        assert!(
+            utils::parse_deployed_address(&stdout).is_some(),
+            "no deployed address on stdout.\nstdout: {stdout}\nstderr: {stderr}",
+        );
     }
 }
 
@@ -353,7 +368,7 @@ Error: No known Etherscan API URL for chain `4202`. To fix this, please:
 
 "#]]);
 
-    cmd.forge_fuse().args(["verify-contract", "--rpc-url", "https://rpc.sepolia-api.lisk.com", "--verifier", "blockscout", "--verifier-url", "https://sepolia-blockscout.lisk.com/api", "0x19b248616E4964f43F611b5871CE1250f360E9d3", "src/Counter.sol:Counter"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse().args(["verify-contract", "--rpc-url", "https://rpc.sepolia-api.lisk.com", "--verifier", "blockscout", "--verifier-url", "https://sepolia-blockscout.lisk.com/api", "0x19b248616E4964f43F611b5871CE1250f360E9d3", "src/Counter.sol:Counter"]).assert_success().stderr_eq(str![[r#"
 Start verifying contract `0x19b248616E4964f43F611b5871CE1250f360E9d3` deployed on 4202
 
 Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" is already verified. Skipping verification.

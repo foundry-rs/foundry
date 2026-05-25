@@ -266,21 +266,6 @@ impl VerifyArgs {
         }
 
         let verifier_url = self.verifier.verifier_url.clone();
-        sh_println!("Start verifying contract `{}` deployed on {chain}", self.address)?;
-        if let Some(version) = &self.evm_version {
-            sh_println!("EVM version: {version}")?;
-        }
-        if let Some(version) = &self.compiler_version {
-            sh_println!("Compiler version: {version}")?;
-        }
-        if let Some(optimizations) = &self.num_of_optimizations {
-            sh_println!("Optimizations:    {optimizations}")?
-        }
-        if let Some(args) = &self.constructor_args
-            && !args.is_empty()
-        {
-            sh_println!("Constructor args: {args}")?
-        }
         // `client()` picks Etherscan when `--verifier etherscan` is passed, or when
         // `ETHERSCAN_API_KEY` is set and no other provider was explicitly chosen. This mirrors
         // that selection closely enough to decide whether the host-only URL hint applies.
@@ -293,13 +278,31 @@ impl VerifyArgs {
                         | VerificationProviderType::Oklink
                         | VerificationProviderType::Custom
                 ));
-        self.verifier
-            .verifier
-            .client(
-                etherscan_key.as_deref(),
-                self.etherscan.chain,
-                self.verifier.verifier_url.is_some(),
-            )?
+        // Resolve the client first so a misconfiguration (missing URL, unknown chain, …)
+        // bails before we emit any status prose.
+        let mut client = self.verifier.verifier.client(
+            etherscan_key.as_deref(),
+            self.etherscan.chain,
+            self.verifier.verifier_url.is_some(),
+        )?;
+
+        sh_status!("Start verifying contract `{}` deployed on {chain}", self.address)?;
+        if let Some(version) = &self.evm_version {
+            sh_status!("EVM version: {version}")?;
+        }
+        if let Some(version) = &self.compiler_version {
+            sh_status!("Compiler version: {version}")?;
+        }
+        if let Some(optimizations) = &self.num_of_optimizations {
+            sh_status!("Optimizations:    {optimizations}")?
+        }
+        if let Some(args) = &self.constructor_args
+            && !args.is_empty()
+        {
+            sh_status!("Constructor args: {args}")?
+        }
+
+        client
             .verify(self, context)
             .await
             .map_err(|err| wrap_verifier_url_error(err, verifier_url.as_deref(), using_etherscan))
@@ -506,10 +509,7 @@ impl_figment_convert_cast!(VerifyCheckArgs);
 impl VerifyCheckArgs {
     /// Run the verify command to submit the contract's source code for verification on etherscan
     pub async fn run(self) -> Result<()> {
-        sh_println!(
-            "Checking verification status on {}",
-            self.etherscan.chain.unwrap_or_default()
-        )?;
+        sh_status!("Checking verification status on {}", self.etherscan.chain.unwrap_or_default())?;
         self.verifier
             .verifier
             .client(

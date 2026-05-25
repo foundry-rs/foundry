@@ -65,7 +65,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
         if !args.skip_is_verified_check
             && self.is_contract_verified(&etherscan, &verify_args).await?
         {
-            sh_println!(
+            sh_status!(
                 "\nContract [{}] {:?} is already verified. Skipping verification.",
                 verify_args.contract_name,
                 verify_args.address.to_checksum(None)
@@ -80,7 +80,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .retry
             .into_retry()
             .run_async(|| async {
-                sh_println!(
+                sh_status!(
                     "\nSubmitting verification for [{}] {}.",
                     verify_args.contract_name,
                     verify_args.address
@@ -127,7 +127,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
             .await?;
 
         if let Some(resp) = resp {
-            sh_println!(
+            sh_status!(
                 "Submitted contract for verification:\n\tResponse: `{}`\n\tGUID: `{}`\n\tURL: {}",
                 resp.message,
                 resp.result,
@@ -144,7 +144,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 return self.check(check_args).await;
             }
         } else {
-            sh_println!("Contract source code already verified")?;
+            sh_status!("Contract source code already verified")?;
         }
 
         Ok(())
@@ -165,7 +165,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
 
                 trace!(?resp, "Received verification response");
 
-                let _ = sh_println!(
+                let _ = sh_status!(
                     "Contract verification status:\nResponse: `{}`\nDetails: `{}`",
                     resp.message,
                     resp.result
@@ -182,7 +182,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 }
 
                 if resp.result == "Already Verified" {
-                    let _ = sh_println!("Contract source code already verified");
+                    let _ = sh_status!("Contract source code already verified");
                     return Ok(());
                 }
 
@@ -195,7 +195,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 }
 
                 if resp.result == "Pass - Verified" {
-                    let _ = sh_println!("Contract successfully verified");
+                    let _ = sh_status!("Contract successfully verified");
                 }
 
                 Ok(())
@@ -444,7 +444,7 @@ impl EtherscanVerificationProvider {
         if maybe_creation_code.starts_with(bytecode) {
             let constructor_args = &maybe_creation_code[bytecode.len()..];
             let constructor_args = hex::encode(constructor_args);
-            sh_println!("Identified constructor arguments: {constructor_args}")?;
+            sh_status!("Identified constructor arguments: {constructor_args}")?;
             Ok(constructor_args)
         } else {
             eyre::bail!("Local bytecode doesn't match on-chain bytecode")

@@ -16,6 +16,7 @@ use foundry_common::{
     FoundryTransactionBuilder,
     fmt::{UIfmt, UIfmtReceiptExt},
     provider::ProviderBuilder,
+    shell,
     tempo::TEMPO_BROWSER_GAS_BUFFER,
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
@@ -388,9 +389,18 @@ where
     let cast = CastTxSender::new(provider);
 
     if sync {
-        // Send transaction and wait for receipt synchronously
-        let receipt = cast.send_sync(tx).await?;
-        sh_println!("{receipt}")?;
+        // Send transaction and wait for receipt synchronously.
+        //
+        // Output channel discipline (see `docs/dev/output-channels.md`):
+        // - text mode: receipt prose on stderr, bare tx hash on stdout.
+        // - `--json` mode: full receipt JSON on stdout.
+        let (receipt, tx_hash) = cast.send_sync(tx).await?;
+        if shell::is_json() {
+            sh_println!("{receipt}")?;
+        } else {
+            sh_status!("{receipt}")?;
+            sh_println!("{tx_hash:#x}")?;
+        }
     } else {
         let pending_tx = cast.send(tx).await?;
         let tx_hash = *pending_tx.inner().tx_hash();
