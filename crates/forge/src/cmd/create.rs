@@ -469,19 +469,6 @@ impl CreateArgs {
             deployer.tx.set_access_list(access_list);
         }
 
-        if self.tx.gas_limit.is_none() {
-            let mut estimated = provider.estimate_gas(deployer.tx.clone()).await?;
-
-            // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
-            // costs more gas for signature verification on Tempo chains. Add a
-            // conservative buffer since we can't determine the signature type beforehand.
-            if browser_signer.is_some() && chain.is_tempo() {
-                estimated += TEMPO_BROWSER_GAS_BUFFER;
-            }
-
-            deployer.tx.set_gas_limit(estimated);
-        }
-
         if is_legacy {
             if self.tx.gas_price.is_none() {
                 deployer.tx.set_gas_price(provider.get_gas_price().await?);
@@ -512,6 +499,19 @@ impl CreateArgs {
                     "max priority fee per gas ({priority}) cannot exceed max fee per gas ({max_fee})"
                 );
             }
+        }
+
+        if self.tx.gas_limit.is_none() {
+            let mut estimated = provider.estimate_gas(deployer.tx.clone()).await?;
+
+            // Browser wallets may sign with P256/WebAuthn instead of secp256k1, which
+            // costs more gas for signature verification on Tempo chains. Add a
+            // conservative buffer since we can't determine the signature type beforehand.
+            if browser_signer.is_some() && chain.is_tempo() {
+                estimated += TEMPO_BROWSER_GAS_BUFFER;
+            }
+
+            deployer.tx.set_gas_limit(estimated);
         }
 
         // Before we actually deploy the contract we try check if the verify settings are valid
