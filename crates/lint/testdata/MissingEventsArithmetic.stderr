@@ -1,0 +1,40 @@
+warning[missing-events-arithmetic]: `buyPrice` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         buyPrice = newBuyPrice;
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `sellFeeBps` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         sellFeeBps = fee;
+   │         ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `cap` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         cap = newCap;
+   │         ━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `rewardRate` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         rewardRate += delta;
+   │         ━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `buyPrice` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         buyPrice = newBuyPrice;
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
