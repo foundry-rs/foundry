@@ -1757,8 +1757,8 @@ fn base_counterexamples_to_txes(
                     target: seq.addr.unwrap_or_default(),
                     calldata: seq.calldata.clone(),
                     value: seq.value,
-                    gas_limit: None,
-                    gas_price: None,
+                    gas_limit: seq.gas_limit,
+                    gas_price: seq.gas_price,
                 },
             }
         })

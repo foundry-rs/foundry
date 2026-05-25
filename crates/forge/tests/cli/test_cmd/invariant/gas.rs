@@ -414,3 +414,72 @@ contract GasPriceIsolationTest is Test {
 ...
 "#]]);
 });
+
+forgetest_init!(should_replay_persisted_gas_price_failure, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 2;
+        config.invariant.depth = 20;
+        config.invariant.fail_on_revert = false;
+        config.invariant.gas_fuzz = true;
+    });
+    prj.add_test(
+        "GasPricePersistedReplayTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract PersistedGasPriceObserver {
+    mapping(uint256 => bool) public seen;
+    uint256 public uniqueCount;
+
+    function probe() external {
+        uint256 p = tx.gasprice;
+        if (!seen[p]) {
+            seen[p] = true;
+            uniqueCount++;
+        }
+    }
+}
+
+contract GasPricePersistedReplayTest is Test {
+    PersistedGasPriceObserver public obs;
+
+    function setUp() public {
+        obs = new PersistedGasPriceObserver();
+        targetContract(address(obs));
+    }
+
+    function invariant_gasPriceStaysConstant() public view {
+        assertLe(obs.uniqueCount(), 1, "gas-price diversity observed");
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_gasPriceStaysConstant"]).assert_failure();
+
+    let persisted = prj
+        .root()
+        .join("cache")
+        .join("invariant")
+        .join("failures")
+        .join("GasPricePersistedReplayTest")
+        .join("invariants")
+        .join("invariant_gasPriceStaysConstant");
+    let json: serde_json::Value =
+        serde_json::from_reader(std::fs::File::open(&persisted).unwrap()).unwrap();
+    let calls = json["call_sequence"].as_array().unwrap();
+    assert!(calls.iter().any(|call| call.get("gas_price").is_some()));
+
+    prj.update_config(|config| {
+        config.invariant.runs = 0;
+    });
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_gasPriceStaysConstant"])
+        .assert_failure()
+        .stderr_eq(str![["
+...
+Warning: Replayed invariant failure from persisted file. \u{20}
+Run `forge clean` or remove file to ignore failure and to continue invariant test campaign.
+...
+"]]);
+});
