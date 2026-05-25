@@ -799,12 +799,16 @@ impl TestArgs {
                     sh_println!("{}", result.short_result(name))?;
 
                     // Display invariant metrics if invariant kind.
-                    if let TestKind::Invariant { metrics, .. } = &result.kind
+                    if let TestKind::Invariant { metrics, gas_fuzz, .. } = &result.kind
                         && !metrics.is_empty()
                     {
                         let _ = sh_println!(
                             "\n{}\n",
-                            format_invariant_metrics_table(metrics, Some(block_gas_limit))
+                            format_invariant_metrics_table(
+                                metrics,
+                                Some(block_gas_limit),
+                                *gas_fuzz
+                            )
                         );
                     }
 

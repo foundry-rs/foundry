@@ -964,6 +964,7 @@ impl TestResult {
             calls: 1,
             reverts: 1,
             metrics: HashMap::default(),
+            gas_fuzz: false,
             failed_corpus_replays: 0,
             optimization_best_value: None,
         };
@@ -987,6 +988,7 @@ impl TestResult {
             calls: 1,
             reverts: 1,
             metrics: HashMap::default(),
+            gas_fuzz: false,
             failed_corpus_replays: 0,
             optimization_best_value: None,
         };
@@ -1008,6 +1010,7 @@ impl TestResult {
             calls: 0,
             reverts: 0,
             metrics: HashMap::default(),
+            gas_fuzz: false,
             failed_corpus_replays: 0,
             optimization_best_value: None,
         };
@@ -1030,6 +1033,7 @@ impl TestResult {
         cases: Vec<FuzzedCases>,
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
+        gas_fuzz: bool,
         failed_corpus_replays: usize,
         optimization_best_value: Option<I256>,
     ) {
@@ -1038,6 +1042,7 @@ impl TestResult {
             calls: cases.iter().map(|sequence| sequence.cases().len()).sum(),
             reverts,
             metrics,
+            gas_fuzz,
             failed_corpus_replays,
             optimization_best_value,
         };
@@ -1256,6 +1261,7 @@ pub enum TestKind {
         calls: usize,
         reverts: usize,
         metrics: Map<String, InvariantMetrics>,
+        gas_fuzz: bool,
         failed_corpus_replays: usize,
         /// For optimization mode (int256 return): the best value achieved. None = check mode.
         optimization_best_value: Option<I256>,
@@ -1298,6 +1304,7 @@ impl TestKind {
                 calls,
                 reverts,
                 metrics: _,
+                gas_fuzz: _,
                 failed_corpus_replays,
                 optimization_best_value,
             } => TestKindReport::Invariant {

@@ -140,6 +140,7 @@ impl TestSummaryReport {
 pub(crate) fn format_invariant_metrics_table(
     test_metrics: &HashMap<String, InvariantMetrics>,
     block_gas_limit: Option<u64>,
+    show_max_gas: bool,
 ) -> Table {
     let mut table = Table::new();
     if shell::is_markdown() {
@@ -148,8 +149,7 @@ pub(crate) fn format_invariant_metrics_table(
         table.apply_modifier(UTF8_ROUND_CORNERS);
     }
 
-    // Show "Max Gas" only when populated (i.e. `invariant.gas_fuzz = true`).
-    let show_max_gas = test_metrics.values().any(|m| m.max_gas > 0);
+    let show_max_gas = show_max_gas || test_metrics.values().any(|m| m.max_gas > 0);
 
     let mut header = vec![
         Cell::new("Contract"),
@@ -245,7 +245,7 @@ mod tests {
             "src/universal/Proxy.sol:Proxy.changeAdmin".to_string(),
             InvariantMetrics { calls: 20, reverts: 2, discards: 2, ..Default::default() },
         );
-        let table = format_invariant_metrics_table(&test_metrics, None);
+        let table = format_invariant_metrics_table(&test_metrics, None, false);
         assert_eq!(table.row_count(), 2);
 
         let mut first_row_content = table.row(0).unwrap().cell_iter();
@@ -275,5 +275,18 @@ mod tests {
         assert_eq!(max_gas_color(0, cap), Color::White);
         // Without a cap, gas is always cyan (no warning available).
         assert_eq!(max_gas_color(6_000_000, None), Color::Cyan);
+    }
+
+    #[test]
+    fn max_gas_column_can_be_forced_when_all_maxes_are_zero() {
+        let mut test_metrics = HashMap::new();
+        test_metrics.insert(
+            "SystemConfig.setGasLimit".to_string(),
+            InvariantMetrics { calls: 10, reverts: 10, discards: 0, ..Default::default() },
+        );
+
+        let table = format_invariant_metrics_table(&test_metrics, None, true);
+        let mut row = table.row(0).unwrap().cell_iter();
+        assert_eq!(row.nth(5).unwrap().content(), "0");
     }
 }

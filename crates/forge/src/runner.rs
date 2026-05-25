@@ -1459,6 +1459,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_result.cases,
             invariant_result.reverts,
             invariant_result.metrics,
+            invariant_config.gas_fuzz,
             invariant_result.failed_corpus_replays,
             invariant_result.optimization_best_value,
         );
