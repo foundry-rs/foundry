@@ -1652,7 +1652,7 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
     if let Some(p) = tx.call_details.gas_price
         && let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
     {
-        cheats.gas_price = Some(p);
+        cheats.gas_price = Some(p.into());
     }
 
     let result = executor.call_raw(

@@ -93,7 +93,7 @@ pub struct CallDetails {
     /// persisted for deterministic replay of gas-price-dependent failures.
     /// Uses `#[serde(default)]` for backwards compatibility with existing corpus files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gas_price: Option<u128>,
+    pub gas_price: Option<u64>,
 }
 
 impl BasicTxDetails {
@@ -132,7 +132,7 @@ pub struct BaseCounterExample {
     pub gas_limit: Option<u64>,
     /// Optional transaction gas price override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gas_price: Option<u128>,
+    pub gas_price: Option<u64>,
     /// Contract name if it exists.
     pub contract_name: Option<String>,
     /// Function name if it exists.
@@ -520,4 +520,37 @@ pub fn fixture_name(function_name: String) -> String {
 /// Normalize fixture parameter name, for example `_Owner` to `owner`.
 fn normalize_fixture(param_name: &str) -> String {
     param_name.trim_matches('_').to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::address;
+
+    #[test]
+    fn gas_price_counterexample_serializes_as_json_number() {
+        let tx = BasicTxDetails {
+            warp: None,
+            roll: None,
+            sender: Address::ZERO,
+            call_details: CallDetails {
+                target: address!("00000000000000000000000000000000000000aa"),
+                calldata: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+                value: None,
+                gas_limit: Some(123_456),
+                gas_price: Some(1_000_000_000_000),
+            },
+        };
+
+        let counterexample = BaseCounterExample::from_invariant_call(
+            &tx,
+            &ContractsByAddress::default(),
+            None,
+            false,
+        );
+        let value = serde_json::to_value(&counterexample).unwrap();
+
+        assert_eq!(value["gas_price"], serde_json::json!(1_000_000_000_000_u64));
+        assert!(serde_json::from_value::<BaseCounterExample>(value).is_ok());
+    }
 }

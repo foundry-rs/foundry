@@ -95,12 +95,12 @@ pub fn sample_gas_limit<R: Rng + ?Sized>(
 /// | 40%    | `0`                | Baseline / refund accounting     |
 /// | 40%    | `[1, 1e10)` wei    | Low — typical L2 fee (~0–10 gwei)|
 /// | 20%    | `[1e10, 1e12)` wei | High — congested L1 band         |
-pub fn sample_gas_price<R: Rng + ?Sized>(rng: &mut R) -> u128 {
+pub fn sample_gas_price<R: Rng + ?Sized>(rng: &mut R) -> u64 {
     let bucket: u8 = rng.random_range(0..100);
     match bucket {
         0..40 => 0,
-        40..80 => rng.random_range(1u128..10_000_000_000u128),
-        _ => rng.random_range(10_000_000_000u128..1_000_000_000_000u128),
+        40..80 => rng.random_range(1u64..10_000_000_000u64),
+        _ => rng.random_range(10_000_000_000u64..1_000_000_000_000u64),
     }
 }
 

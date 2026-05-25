@@ -5397,6 +5397,7 @@ dependencies = [
  "rand 0.9.4",
  "revm",
  "serde",
+ "serde_json",
  "solar-compiler",
  "thiserror 2.0.18",
  "tracing",
