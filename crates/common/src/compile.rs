@@ -218,14 +218,11 @@ impl ProjectCompiler {
 
         if !quiet {
             if !shell::is_json() {
-                // Compile diagnostics are progress, not the canonical machine-readable
-                // result: route them to stderr (see `docs/dev/output-channels.md`) so
-                // callers like `forge create` keep stdout reserved for the bare result.
                 if output.is_unchanged() {
                     sh_status!("No files changed, compilation skipped")?;
                 } else {
                     // print the compiler output / warnings
-                    sh_status!("{output}")?;
+                    sh_println!("{output}")?;
                 }
             }
 
