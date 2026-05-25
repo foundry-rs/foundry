@@ -7,11 +7,8 @@ use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, I256, U256, hex, keccak256};
 use alloy_signer::SignerSync;
 use alloy_signer_local::{
-    MnemonicBuilder, PrivateKeySigner,
-    coins_bip39::{
-        ChineseSimplified, ChineseTraditional, Czech, English, French, Italian, Japanese, Korean,
-        Portuguese, Spanish, Wordlist,
-    },
+    PrivateKeySigner,
+    coins_bip39::{English, Wordlist},
 };
 use base64::prelude::*;
 use foundry_config::{

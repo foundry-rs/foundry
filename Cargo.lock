@@ -5448,6 +5448,7 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "base64 0.22.1",
+ "foundry-common",
  "foundry-config",
  "foundry-evm",
  "serde",
