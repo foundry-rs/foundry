@@ -376,8 +376,11 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
             }
 
             StmtKind::Loop(block, source) => {
-                // `do-while` runs the body at least once, so facts established inside flow out.
-                if matches!(source, LoopSource::DoWhile) {
+                // `do-while` runs the body at least once, so facts flow out — unless a user
+                // `break`/`continue` can skip later assignments.
+                if matches!(source, LoopSource::DoWhile)
+                    && !body_has_break_or_continue(do_while_user_stmts(block.stmts))
+                {
                     for s in block.stmts {
                         let _ = self.visit_stmt(s);
                     }
@@ -630,6 +633,44 @@ fn collect_modifier_safety(
     }
 }
 
+/// Strips the synthesized trailing `if (!cond) break;` from the HIR `do-while` lowering.
+fn do_while_user_stmts<'a, 'hir>(stmts: &'a [hir::Stmt<'hir>]) -> &'a [hir::Stmt<'hir>] {
+    match stmts.split_last() {
+        Some((last, rest)) if is_loop_termination_if(last) => rest,
+        _ => stmts,
+    }
+}
+
+fn is_loop_termination_if(stmt: &hir::Stmt<'_>) -> bool {
+    let StmtKind::If(_, then_, else_) = &stmt.kind else { return false };
+    is_break_stmt(then_) || else_.as_ref().is_some_and(|e| is_break_stmt(e))
+}
+
+fn is_break_stmt(stmt: &hir::Stmt<'_>) -> bool {
+    match &stmt.kind {
+        StmtKind::Break => true,
+        StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => {
+            b.stmts.len() == 1 && is_break_stmt(&b.stmts[0])
+        }
+        _ => false,
+    }
+}
+
+/// `break`/`continue` targeting the current loop (nested loops shadow them).
+fn body_has_break_or_continue(stmts: &[hir::Stmt<'_>]) -> bool {
+    fn in_stmt(stmt: &hir::Stmt<'_>) -> bool {
+        match &stmt.kind {
+            StmtKind::Break | StmtKind::Continue => true,
+            StmtKind::Block(b) | StmtKind::UncheckedBlock(b) => body_has_break_or_continue(b.stmts),
+            StmtKind::If(_, t, e) => in_stmt(t) || e.as_ref().is_some_and(|s| in_stmt(s)),
+            StmtKind::Try(t) => t.clauses.iter().any(|c| body_has_break_or_continue(c.block.stmts)),
+            StmtKind::Loop(..) => false,
+            _ => false,
+        }
+    }
+    stmts.iter().any(in_stmt)
+}
+
 fn count_placeholders(stmts: &[hir::Stmt<'_>]) -> usize {
     fn count_in_stmt(stmt: &hir::Stmt<'_>) -> usize {
         match &stmt.kind {
@@ -772,10 +813,9 @@ fn contract_has_function(
     })
 }
 
-/// 4-arg `safeTransferFrom(token, address, address, uint256)`. The `token` param can be
-/// either a contract type (OpenZeppelin SafeERC20: `IERC20`) or an `address` (Solady
-/// SafeTransferLib). Can't go through `contract_has_function` because the first form's
-/// first param isn't elementary.
+/// 4-arg `safeTransferFrom(token, address, address, uint256)`. `token` is either `address`
+/// (Solady) or a contract declaring ERC20's `transferFrom(...)→bool` (OZ SafeERC20);
+/// ERC721/1155 helpers are excluded since their `transferFrom` has no return.
 fn library_has_safe_transfer_from(hir: &hir::Hir<'_>, cid: hir::ContractId) -> bool {
     hir.contract_item_ids(cid).any(|item| {
         let Some(fid) = item.as_function() else { return false };
@@ -783,11 +823,17 @@ fn library_has_safe_transfer_from(hir: &hir::Hir<'_>, cid: hir::ContractId) -> b
         if f.parameters.len() != 4 || f.name.is_none_or(|n| n.name.as_str() != "safeTransferFrom") {
             return false;
         }
-        let token_ok = matches!(
-            hir.variable(f.parameters[0]).ty.kind,
-            TypeKind::Custom(ItemId::Contract(_))
-                | TypeKind::Elementary(ElementaryType::Address(_))
-        );
+        let token_ok = match hir.variable(f.parameters[0]).ty.kind {
+            TypeKind::Elementary(ElementaryType::Address(_)) => true,
+            TypeKind::Custom(ItemId::Contract(token_cid)) => contract_has_function(
+                hir,
+                token_cid,
+                "transferFrom",
+                &["address", "address", "uint256"],
+                &["bool"],
+            ),
+            _ => false,
+        };
         token_ok
             && is_address(hir, f.parameters[1])
             && is_address(hir, f.parameters[2])

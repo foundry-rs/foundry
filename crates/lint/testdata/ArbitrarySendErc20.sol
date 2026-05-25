@@ -684,6 +684,38 @@ contract ArbitrarySendErc20 {
         } while (false);
         token.transferFrom(x, to, a);
     }
+
+    // `break` may skip the safe assignment.
+    function badDoWhileBreakSkipsSafe(address from, address to, uint256 a, bool flag) public {
+        address x = from;
+        do {
+            if (flag) break;
+            x = msg.sender;
+        } while (false);
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // `continue` may also skip the safe assignment.
+    function badDoWhileContinueSkipsSafe(address from, address to, uint256 a, bool flag) public {
+        address x = from;
+        do {
+            if (flag) continue;
+            x = msg.sender;
+        } while (false);
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    // Nested-loop `break` doesn't target the outer do-while.
+    function okDoWhileNestedLoopBreak(address from, address to, uint256 a) public {
+        address x = from;
+        do {
+            for (uint256 i = 0; i < 1; i++) {
+                if (i == 0) break;
+            }
+            x = msg.sender;
+        } while (false);
+        token.transferFrom(x, to, a);
+    }
 }
 
 // Struct / array / mapping receivers.
@@ -765,5 +797,20 @@ contract SoladyUsingForAddress {
 
     function okNamedSoladySender(address to, uint256 a) public {
         SafeTransferLib.safeTransferFrom({token: token, from: msg.sender, to: to, amount: a});
+    }
+}
+
+// ERC721 helper shares the 4-arg shape but is not ERC20.
+library SafeERC721 {
+    function safeTransferFrom(IERC721 nft, address from, address to, uint256 tokenId) internal {
+        nft.safeTransferFrom(from, to, tokenId);
+    }
+}
+
+contract SafeERC721CallSites {
+    IERC721 nft;
+
+    function okSafeErc721ArbitraryFrom(address from, address to, uint256 tokenId) public {
+        SafeERC721.safeTransferFrom(nft, from, to, tokenId);
     }
 }
