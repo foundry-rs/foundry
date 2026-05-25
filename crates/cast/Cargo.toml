@@ -48,6 +48,7 @@ alloy-provider = { workspace = true, features = [
     "txpool-api",
 ] }
 alloy-rlp.workspace = true
+alloy-rpc-client.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
 alloy-rpc-types-beacon.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
@@ -72,7 +73,6 @@ revm = { workspace = true, features = ["optional_balance_check"] }
 rand.workspace = true
 rand_08.workspace = true
 rayon.workspace = true
-reqwest.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 

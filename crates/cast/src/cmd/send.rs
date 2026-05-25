@@ -1,13 +1,11 @@
 use std::{path::PathBuf, str::FromStr, time::Duration};
 
 use alloy_consensus::{SignableTransaction, Signed};
-use alloy_eips::Encodable2718;
 use alloy_ens::NameOrAddress;
-use alloy_network::{
-    Ethereum, EthereumWallet, Network, NetworkTransactionBuilder, TransactionBuilder,
-};
-use alloy_primitives::{Address, B256, hex};
+use alloy_network::{Ethereum, EthereumWallet, Network, TransactionBuilder};
+use alloy_primitives::Address;
 use alloy_provider::{Provider, ProviderBuilder as AlloyProviderBuilder};
+use alloy_rpc_client::BuiltInConnectionString;
 use alloy_signer::{Signature, Signer};
 use clap::Parser;
 use eyre::{Result, eyre};
@@ -22,8 +20,11 @@ use foundry_common::{
     tempo::TEMPO_BROWSER_GAS_BUFFER,
 };
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
-use serde_json::Value;
-use tempo_alloy::TempoNetwork;
+use tempo_alloy::{
+    TempoNetwork,
+    transport::{RelayConnector, SponsorshipMode},
+};
+use tempo_primitives::transaction::FEE_PAYER_SIGNATURE_MARKER;
 
 use crate::{
     cmd::tip20::iso4217_warning_message,
@@ -356,7 +357,7 @@ impl SendTxArgs {
             )
             .await
         // Case 4:
-        // Remote sponsor URL: sign locally, get sponsor signature from the service,
+        // Remote sponsor URL: sign locally, ask the sponsor service for a fee-payer signature,
         // then submit the fully-sponsored tx to the regular RPC.
         } else if let Some(sponsor_url) = sponsor_url {
             let signer = match pre_resolved_signer {
@@ -373,31 +374,28 @@ impl SendTxArgs {
                 tx_request.nonce().unwrap_or_default(),
             )?;
 
-            // Set a placeholder fee_payer_signature so encode_for_signing produces the
-            // *sponsored* signing payload. The sender must commit to this variant; otherwise
-            // the sponsor can't attach its real signature later without invalidating the
-            // sender's hash. The sponsor service will overwrite this placeholder.
-            let dummy_sponsor_sig = Signature::from_scalars_and_parity(
-                B256::with_last_byte(1),
-                B256::with_last_byte(1),
-                false,
-            );
-            tx_request.set_fee_payer_signature(dummy_sponsor_sig);
+            tx_request.set_fee_payer_signature(FEE_PAYER_SIGNATURE_MARKER);
 
-            // Sign the tx locally.
             let wallet = EthereumWallet::from(signer);
-            let signed_tx = tx_request.build(&wallet).await?;
-            let raw_tx = hex::encode_prefixed(signed_tx.encoded_2718());
+            let default_rpc = config.get_rpc_url_or_localhost_http()?.into_owned();
+            let default = BuiltInConnectionString::from_str(&default_rpc)?;
+            let relay = BuiltInConnectionString::from_str(&sponsor_url)?;
+            let connector =
+                RelayConnector::with_config(default, relay, SponsorshipMode::SignOnly, false);
+            let provider = AlloyProviderBuilder::<_, _, N>::default()
+                .wallet(wallet)
+                .connect_with(&connector)
+                .await?;
 
-            // Send to the sponsor service to get the fee payer signature attached.
-            let sponsored_raw_tx = sign_via_sponsor_url(&sponsor_url, &raw_tx).await?;
-
-            // Submit the fully-sponsored tx via the regular RPC.
-            let sponsored_bytes = hex::decode(&sponsored_raw_tx)?;
-            let cast = CastTxSender::new(&provider);
-            let pending = cast.send_raw(&sponsored_bytes).await?;
-            let tx_hash = *pending.inner().tx_hash();
-            cast.print_tx_result(tx_hash, send_tx.cast_async, send_tx.confirmations, timeout).await
+            cast_send(
+                provider,
+                tx_request,
+                send_tx.cast_async,
+                send_tx.sync,
+                send_tx.confirmations,
+                timeout,
+            )
+            .await
         // Case 5:
         // An option to use a local signer was provided.
         // If we cannot successfully instantiate a local signer, then we will assume we don't have
@@ -521,59 +519,4 @@ fn validate_sponsor_url(url: &str) -> Result<()> {
         "--sponsor-url must start with https:// (got {url}). \
          The sponsor relay is a trusted third party; use an encrypted channel."
     );
-}
-
-/// Sends a user-signed raw transaction to a remote sponsor service via JSON-RPC
-/// `eth_signRawTransaction`. The service adds its fee payer signature and returns the
-/// fully-sponsored raw transaction bytes, which are then ready for submission via the
-/// regular RPC.
-async fn sign_via_sponsor_url(url: &str, raw_tx_hex: &str) -> Result<String> {
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "eth_signRawTransaction",
-        "params": [raw_tx_hex]
-    });
-
-    let resp = reqwest::Client::new()
-        .post(url)
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| eyre!("sponsor service request failed: {e}"))?;
-
-    let status = resp.status();
-    let text =
-        resp.text().await.map_err(|e| eyre!("failed to read sponsor service response: {e}"))?;
-
-    if !status.is_success() {
-        eyre::bail!("sponsor service returned HTTP {status}: {text}");
-    }
-
-    #[derive(serde::Deserialize)]
-    struct JsonRpcResponse {
-        result: Option<Value>,
-        error: Option<JsonRpcError>,
-    }
-    // Standard JSON-RPC error object: {code, message, data?}
-    #[derive(serde::Deserialize)]
-    struct JsonRpcError {
-        message: Option<String>,
-        code: Option<i64>,
-    }
-
-    let parsed: JsonRpcResponse =
-        serde_json::from_str(&text).map_err(|e| eyre!("invalid sponsor service response: {e}"))?;
-
-    if let Some(err) = parsed.error {
-        let msg = err.message.unwrap_or_else(|| format!("code {}", err.code.unwrap_or(-1)));
-        eyre::bail!("sponsor service error: {msg}");
-    }
-
-    match parsed.result {
-        Some(serde_json::Value::String(s)) => Ok(s),
-        Some(other) => Err(eyre!("sponsor service returned unexpected result type: {other}")),
-        None => Err(eyre!("sponsor service returned no result")),
-    }
 }
