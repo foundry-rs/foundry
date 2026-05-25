@@ -1,3 +1,4 @@
+use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 use std::{env, process::Command};
@@ -42,19 +43,39 @@ struct ConformanceMatrixCase<'a> {
 fn assert_conformance_matrix_case(stdout: &str, case: &ConformanceMatrixCase<'_>) {
     match case.expected {
         ConformanceStatus::Pass => {
-            assert!(stdout.contains("[PASS]"), "{}\n{stdout}", case.feature);
+            assert_relevant_lines(
+                stdout,
+                foundry_test_utils::str![[r#"
+[PASS]
+"#]],
+            );
         }
         ConformanceStatus::Counterexample => {
-            assert!(stdout.contains("[FAIL"), "{}\n{stdout}", case.feature);
+            assert_relevant_lines(
+                stdout,
+                foundry_test_utils::str![[r#"
+[FAIL
+"#]],
+            );
         }
         ConformanceStatus::RevertAll => {
-            assert!(stdout.contains("RevertAll"), "{}\n{stdout}", case.feature);
-            assert!(stdout.contains("all symbolic paths reverted"), "{}\n{stdout}", case.feature);
+            assert_relevant_lines(
+                stdout,
+                foundry_test_utils::str![[r#"
+RevertAll
+"#]],
+            );
+            assert_relevant_lines(
+                stdout,
+                foundry_test_utils::str![[r#"
+all symbolic paths reverted
+"#]],
+            );
         }
     }
 
     for required in case.required {
-        assert!(stdout.contains(required), "{} missing `{required}`\n{stdout}", case.feature);
+        assert_relevant_lines(stdout, format!("{required}\n"));
     }
     for forbidden in case.forbidden {
         assert!(
@@ -95,7 +116,12 @@ contract SymbolicConformanceBlock is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkBlock(uint256,uint256,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkBlock(uint256,uint256,uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_conformance_vm_store_load_symbolic_value, |prj, cmd| {
@@ -125,7 +151,12 @@ contract SymbolicConformanceStoreLoad is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkStoreLoad(bytes32)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkStoreLoad(bytes32)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_conformance_dstest_fail_store_is_counterexample, |prj, cmd| {
@@ -162,9 +193,24 @@ contract SymbolicConformanceFail {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("checkFailSignal(uint256)"), "{stdout}");
-    assert!(stdout.contains("args=[7]"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkFailSignal(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[7]
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_conformance_revert_all_is_reported, |prj, cmd| {
@@ -189,8 +235,18 @@ contract SymbolicConformanceRevertAll {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("RevertAll"), "{stdout}");
-    assert!(stdout.contains("all symbolic paths reverted"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+RevertAll
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+all symbolic paths reverted
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_conformance_riddle_finds_counterexample, |prj, cmd| {
@@ -226,8 +282,18 @@ contract SymbolicConformanceRiddle {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("check_riddle(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+check_riddle(uint256)
+"#]],
+    );
     assert!(!stdout.contains("Stuck"), "{stdout}");
     assert!(!stdout.contains("RevertAll"), "{stdout}");
 });
@@ -480,8 +546,18 @@ contract SymbolicConformanceHalmosTotalPrice {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("checkBuggyTotal(uint96,uint32)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkBuggyTotal(uint96,uint32)
+"#]],
+    );
     assert!(!stdout.contains("Stuck"), "{stdout}");
     assert!(!stdout.contains("RevertAll"), "{stdout}");
 
@@ -492,7 +568,12 @@ contract SymbolicConformanceHalmosTotalPrice {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkFixedTotal(uint96,uint32)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkFixedTotal(uint96,uint32)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_conformance_halmos_simple_power_of_two_loop, |prj, cmd| {
@@ -533,7 +614,12 @@ contract SymbolicConformanceHalmosPowerOfTwo {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkPowerOfTwoLoop(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkPowerOfTwoLoop(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic loop bound exceeded"), "{stdout}");
 });
 
@@ -602,7 +688,12 @@ contract SymbolicConformanceHalmosVault is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkDepositPreservesSharePrice()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkDepositPreservesSharePrice()
+"#]],
+    );
 
     let stdout = prj
         .forge_command()
@@ -611,8 +702,18 @@ contract SymbolicConformanceHalmosVault is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("checkMintCanDiluteSharePrice()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMintCanDiluteSharePrice()
+"#]],
+    );
     assert!(!stdout.contains("Stuck"), "{stdout}");
     assert!(!stdout.contains("RevertAll"), "{stdout}");
 });
@@ -666,7 +767,12 @@ contract SymbolicConformanceHalmosForkSetup is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkEtchedStorageInvariant(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkEtchedStorageInvariant(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.etch"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
 });
@@ -743,10 +849,17 @@ contract SymbolicConformanceHalmosElection is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(
-        stdout.contains("checkCannotVoteTwiceWithAlternateSignature(uint256,address)"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkCannotVoteTwiceWithAlternateSignature(uint256,address)
+"#]],
     );
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
     assert!(!stdout.contains("Stuck"), "{stdout}");
@@ -853,7 +966,12 @@ contract SymbolicConformanceHalmosMulticaller {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkMulticallReturndata(uint64,bytes)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMulticallReturndata(uint64,bytes)
+"#]],
+    );
     assert!(!stdout.contains("unsupported external CALL"), "{stdout}");
     assert!(!stdout.contains("Stuck"), "{stdout}");
 
@@ -864,9 +982,24 @@ contract SymbolicConformanceHalmosMulticaller {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL"), "{stdout}");
-    assert!(stdout.contains("checkMulticallFindsFailedCall(uint64)"), "{stdout}");
-    assert!(stdout.contains("args=[13]"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMulticallFindsFailedCall(uint64)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[13]
+"#]],
+    );
     assert!(!stdout.contains("unsupported external CALL"), "{stdout}");
     assert!(!stdout.contains("RevertAll"), "{stdout}");
 });
@@ -929,14 +1062,54 @@ contract SymbolicConformanceHalmosSimpleState is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("invariant_phaseBelowThree()"), "{stdout}");
-    assert!(stdout.contains("open(uint256)"), "{stdout}");
-    assert!(stdout.contains("commit(uint256)"), "{stdout}");
-    assert!(stdout.contains("finalize(uint256)"), "{stdout}");
-    assert!(stdout.contains("args=[81]"), "{stdout}");
-    assert!(stdout.contains("args=[167]"), "{stdout}");
-    assert!(stdout.contains("args=[227]"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+invariant_phaseBelowThree()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+open(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+commit(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+finalize(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[81]
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[167]
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[227]
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_conformance_halmos_invariant_reentrancy_exploit, |prj, cmd| {
@@ -1019,10 +1192,30 @@ contract SymbolicConformanceHalmosReentrancy is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("invariant_vaultBacksAttackerAccounting()"), "{stdout}");
-    assert!(stdout.contains("depositOne()"), "{stdout}");
-    assert!(stdout.contains("withdrawOne()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+invariant_vaultBacksAttackerAccounting()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+depositOne()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+withdrawOne()
+"#]],
+    );
     assert!(!stdout.contains("Stuck"), "{stdout}");
 });
 
@@ -1053,7 +1246,12 @@ contract SymbolicConformanceTransient {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkTransient(bytes32)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkTransient(bytes32)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_conformance_mapping_storage_keys, |prj, cmd| {
@@ -1081,7 +1279,12 @@ contract SymbolicConformanceMappingStorage {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkNestedMapping(address,address,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkNestedMapping(address,address,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
@@ -1160,11 +1363,11 @@ contract SymbolicConformanceStorageBreadth is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(
-        stdout.contains(
-            "[PASS] checkStorageBreadth(address,address,uint256,uint256,uint128,uint128,bytes32)"
-        ),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkStorageBreadth(address,address,uint256,uint256,uint128,uint128,bytes32)
+"#]],
     );
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
@@ -1206,7 +1409,12 @@ contract SymbolicConformanceArithmetic {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkArithmetic(uint256,int8,bytes32)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkArithmetic(uint256,int8,bytes32)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_conformance_dynamic_abi_matrix, |prj, cmd| {
@@ -1241,9 +1449,11 @@ contract SymbolicConformanceDynamicAbi {
         .get_output()
         .stdout_lossy();
 
-    assert!(
-        stdout.contains("[PASS] checkDynamic(bytes,string,uint256[],(bytes,uint256[]))"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkDynamic(bytes,string,uint256[],(bytes,uint256[]))
+"#]],
     );
 });
 
@@ -1304,8 +1514,18 @@ contract SymbolicConformanceCalls is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkExternalCall(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkCreate(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExternalCall(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreate(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_conformance_symbolic_selector_backdoor, |prj, cmd| {
@@ -1349,10 +1569,30 @@ contract SymbolicConformanceSelector {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkNoBackdoor(bytes4,uint256)"), "{stdout}");
-    assert!(stdout.contains("args=[0x"), "{stdout}");
-    assert!(stdout.contains("42"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkNoBackdoor(bytes4,uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[0x
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+42
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_conformance_stateful_erc20_invariant, |prj, cmd| {
@@ -1405,7 +1645,12 @@ contract SymbolicConformanceErc20Invariant is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] invariant_totalSupplyConstant()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] invariant_totalSupplyConstant()
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_conformance_stateful_erc721_invariant, |prj, cmd| {
@@ -1508,7 +1753,12 @@ contract SymbolicConformanceErc721Invariant is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] invariant_mintedOwnerIsNeverZero()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] invariant_mintedOwnerIsNeverZero()
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_conformance_stateful_reentrancy_sequence, |prj, cmd| {
@@ -1590,5 +1840,10 @@ contract SymbolicConformanceReentrancyInvariant is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] invariant_vaultBacksHandlerBalance()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] invariant_vaultBacksHandlerBalance()
+"#]],
+    );
 });

@@ -1,3 +1,4 @@
+use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 
@@ -50,8 +51,18 @@ contract SymbolicByteSignextend {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicByteIndex(uint8)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkSymbolicSignextendIndex(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicByteIndex(uint8)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicSignextendIndex(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic BYTE index"), "{stdout}");
     assert!(!stdout.contains("symbolic SIGNEXTEND index"), "{stdout}");
 });
@@ -101,7 +112,12 @@ contract SymbolicShift {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicShiftAmount(uint16)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicShiftAmount(uint16)
+"#]],
+    );
     assert!(!stdout.contains("symbolic shift amount"), "{stdout}");
 });
 
@@ -133,7 +149,12 @@ contract SymbolicExp {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicExpBase(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicExpBase(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic EXP base"), "{stdout}");
 });
 
@@ -166,7 +187,12 @@ contract SymbolicExpExponent {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicExpExponent(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicExpExponent(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic EXP exponent"), "{stdout}");
 });
 
@@ -199,6 +225,11 @@ contract SymbolicExpWideExponent {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicExpWideExponent(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicExpWideExponent(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic EXP exponent"), "{stdout}");
 });

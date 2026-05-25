@@ -2,7 +2,7 @@ use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 use std::process::Command;
 
-use super::symbolic_helpers::assert_symbolic;
+use super::symbolic_helpers::{assert_relevant_lines, assert_symbolic};
 
 fn z3_available() -> bool {
     Command::new("z3").arg("--version").output().is_ok_and(|output| output.status.success())
@@ -26,7 +26,12 @@ contract SymbolicIgnored {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("No tests found") || stdout.contains("0 tests"));
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+No tests found
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_passes_scalar_test, |prj, cmd| {
@@ -50,8 +55,18 @@ contract SymbolicPass {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkNoop(uint256)"));
-    assert!(stdout.contains("(paths:"));
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkNoop(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+(paths:
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_loop_bound_limits_symbolic_unrolling, |prj, cmd| {
@@ -84,7 +99,12 @@ contract SymbolicLoopBound {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkLoopBound(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkLoopBound(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic depth limit exceeded"), "{stdout}");
 });
 
@@ -113,10 +133,30 @@ contract SymbolicAssert {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"));
-    assert!(stdout.contains("panic: assertion failed"));
-    assert!(stdout.contains("checkRejectsFortyTwo(uint256)"));
-    assert!(stdout.contains("args=[42]"));
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+panic: assertion failed
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkRejectsFortyTwo(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[42]
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_finds_wrapping_arithmetic_riddle_counterexample, |prj, cmd| {
@@ -154,9 +194,24 @@ contract SymbolicRiddle {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("panic: assertion failed"), "{stdout}");
-    assert!(stdout.contains("check_riddle(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+panic: assertion failed
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+check_riddle(uint256)
+"#]],
+    );
     assert!(!stdout.contains("unsupported symbolic execution feature"), "{stdout}");
 });
 
@@ -185,8 +240,18 @@ contract SymbolicRequire {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkRequire(uint256)"));
-    assert!(stdout.contains("(paths:"));
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRequire(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+(paths:
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_vm_assume_prunes_paths, |prj, cmd| {
@@ -216,8 +281,18 @@ contract SymbolicAssume is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkAssume(uint256)"));
-    assert!(stdout.contains("(paths:"));
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkAssume(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+(paths:
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_finds_bytes_counterexample_with_native_inline_config, |prj, cmd| {
@@ -248,8 +323,18 @@ contract SymbolicBytes {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkBytes(bytes)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkBytes(bytes)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_replays_string_counterexample, |prj, cmd| {
@@ -281,8 +366,18 @@ contract SymbolicString {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkString(string)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkString(string)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_uses_native_array_lengths, |prj, cmd| {
@@ -310,7 +405,12 @@ contract SymbolicNativeArrayLengths {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkArray(uint256[])"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkArray(uint256[])
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_uses_legacy_halmos_array_lengths, |prj, cmd| {
@@ -339,7 +439,12 @@ contract SymbolicHalmosLengths {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkArray(uint256[])"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkArray(uint256[])
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_handles_nested_struct_dynamic_input, |prj, cmd| {
@@ -374,7 +479,12 @@ contract SymbolicNestedStruct {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkStruct((uint256[],bytes))"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkStruct((uint256[],bytes))
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_allows_shorter_variants_with_positional_inner_lengths, |prj, cmd| {
@@ -464,8 +574,18 @@ contract SymbolicMalformedHalmos {
         .clone();
     let stderr = output.stderr_lossy();
 
-    assert!(stderr.contains("invalid @custom:halmos annotation"), "{stderr}");
-    assert!(stderr.contains("invalid length `nope`"), "{stderr}");
+    assert_relevant_lines(
+        &stderr,
+        foundry_test_utils::str![[r#"
+invalid @custom:halmos annotation
+"#]],
+    );
+    assert_relevant_lines(
+        &stderr,
+        foundry_test_utils::str![[r#"
+invalid length `nope`
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_selfdestruct_cancun_reports_incomplete, |prj, cmd| {
@@ -497,7 +617,12 @@ contract SymbolicSelfdestructCancun is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("SELFDESTRUCT/EIP-6780 not modeled"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+SELFDESTRUCT/EIP-6780 not modeled
+"#]],
+    );
 });
 forgetest_init!(symbolic_invariant_finds_single_step_counterexample, |prj, cmd| {
     if !z3_available() {
@@ -543,10 +668,30 @@ contract SymbolicInvariantSingle is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("invariant_counterNeverEleven()"), "{stdout}");
-    assert!(stdout.contains("set(uint256)"), "{stdout}");
-    assert!(stdout.contains("args=[7]"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+invariant_counterNeverEleven()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+set(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[7]
+"#]],
+    );
     assert!(!stdout.contains("No contracts to fuzz"), "{stdout}");
 });
 
@@ -601,11 +746,36 @@ contract SymbolicInvariantDepth is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("arm(uint256)"), "{stdout}");
-    assert!(stdout.contains("trip(uint256)"), "{stdout}");
-    assert!(stdout.contains("args=[1]"), "{stdout}");
-    assert!(stdout.contains("args=[2]"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+arm(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+trip(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[1]
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[2]
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_invariant_uses_target_sender, |prj, cmd| {
@@ -654,8 +824,18 @@ contract SymbolicInvariantSender is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("touch(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+touch(uint256)
+"#]],
+    );
     assert!(
         stdout.to_lowercase().contains("sender=0x0000000000000000000000000000000000000b0b"),
         "{stdout}"
@@ -726,11 +906,28 @@ contract SymbolicSoundnessHardening is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(
-        stdout.contains("[PASS] checkConstrainedStorageKeyUsesConcreteSlot(uint256)"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkConstrainedStorageKeyUsesConcreteSlot(uint256)
+"#]],
     );
-    assert!(stdout.contains("symbolic randomUint bits"), "{stdout}");
-    assert!(stdout.contains("symbolic svm.create integer bits"), "{stdout}");
-    assert!(stdout.contains("symbolic prank delegatecall"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+symbolic randomUint bits
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+symbolic svm.create integer bits
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+symbolic prank delegatecall
+"#]],
+    );
 });

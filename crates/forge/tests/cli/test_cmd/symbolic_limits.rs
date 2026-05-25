@@ -1,3 +1,4 @@
+use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 use std::{env, process::Command};
@@ -67,10 +68,30 @@ contract SymbolicLimitsRiddle {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("panic: assertion failed"), "{stdout}");
-    assert!(stdout.contains("check_riddle(uint256)"), "{stdout}");
-    assert!(stdout.contains("(paths:"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+panic: assertion failed
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+check_riddle(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+(paths:
+"#]],
+    );
     assert!(!stdout.contains("symbolic counterexample did not replay"), "{stdout}");
     assert!(!stdout.contains("incomplete symbolic execution"), "{stdout}");
 });
@@ -105,9 +126,24 @@ contract SymbolicLimitsPathWidth {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("checkWidth(uint8)"), "{stdout}");
-    assert!(stdout.contains("symbolic path limit exceeded (2)"), "{stdout}");
-    assert!(stdout.contains("incomplete symbolic execution (Stuck)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkWidth(uint8)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+symbolic path limit exceeded (2)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Stuck)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_limits_reports_execution_depth_exhaustion, |prj, cmd| {
@@ -141,9 +177,24 @@ contract SymbolicLimitsDepth {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("checkDepth(uint256)"), "{stdout}");
-    assert!(stdout.contains("symbolic depth limit exceeded (8)"), "{stdout}");
-    assert!(stdout.contains("incomplete symbolic execution (Stuck)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkDepth(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+symbolic depth limit exceeded (8)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Stuck)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_limits_reports_calldata_budget_exhaustion, |prj, cmd| {
@@ -170,9 +221,24 @@ contract SymbolicLimitsCalldataBudget {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("checkCalldataBudget(bytes)"), "{stdout}");
-    assert!(stdout.contains("symbolic calldata size exceeds configured max"), "{stdout}");
-    assert!(stdout.contains("incomplete symbolic execution (Stuck)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkCalldataBudget(bytes)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+symbolic calldata size exceeds configured max
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Stuck)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_limits_invariant_depth_changes_result, |prj, _cmd| {
@@ -221,7 +287,12 @@ contract SymbolicLimitsInvariantDepth is Test {
         .assert_success()
         .get_output()
         .stdout_lossy();
-    assert!(passing.contains("[PASS] invariant_valueNeverTwo()"), "{passing}");
+    assert_relevant_lines(
+        &passing,
+        foundry_test_utils::str![[r#"
+[PASS] invariant_valueNeverTwo()
+"#]],
+    );
 
     let failing = prj
         .forge_command()
@@ -236,7 +307,22 @@ contract SymbolicLimitsInvariantDepth is Test {
         .assert_failure()
         .get_output()
         .stdout_lossy();
-    assert!(failing.contains("[FAIL:"), "{failing}");
-    assert!(failing.contains("symbolic invariant counterexample"), "{failing}");
-    assert!(failing.contains("invariant_valueNeverTwo()"), "{failing}");
+    assert_relevant_lines(
+        &failing,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &failing,
+        foundry_test_utils::str![[r#"
+symbolic invariant counterexample
+"#]],
+    );
+    assert_relevant_lines(
+        &failing,
+        foundry_test_utils::str![[r#"
+invariant_valueNeverTwo()
+"#]],
+    );
 });

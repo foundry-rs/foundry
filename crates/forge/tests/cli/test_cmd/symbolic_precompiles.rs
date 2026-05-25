@@ -1,3 +1,4 @@
+use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 
@@ -83,12 +84,42 @@ contract SymbolicPrecompiles is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkHashPrecompiles(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkIdentityPrecompile(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkModexpPrecompile(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkBn254Precompiles(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkBlake2fPrecompile(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkEcrecoverPrecompile(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkHashPrecompiles(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkIdentityPrecompile(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkModexpPrecompile(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkBn254Precompiles(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkBlake2fPrecompile(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkEcrecoverPrecompile(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_hash_precompiles_accept_symbolic_input, |prj, cmd| {
@@ -135,10 +166,17 @@ contract SymbolicPrecompileInput {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicHashDeterminism(bytes)"), "{stdout}");
-    assert!(
-        stdout.contains("[PASS] checkSymbolicEcrecoverDeterminism(bytes32,uint8,bytes32,bytes32)"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicHashDeterminism(bytes)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicEcrecoverDeterminism(bytes32,uint8,bytes32,bytes32)
+"#]],
     );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
 });
@@ -176,7 +214,12 @@ contract SymbolicIdentityPrecompileInput is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicIdentity(bytes)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicIdentity(bytes)
+"#]],
+    );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
 });
 
@@ -236,8 +279,18 @@ contract SymbolicAdvancedPrecompileInput is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicModexp(bytes1)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkSymbolicBlake2f(bytes1)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicModexp(bytes1)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicBlake2f(bytes1)
+"#]],
+    );
     assert!(!stdout.contains("symbolic precompile input"), "{stdout}");
     assert!(!stdout.contains("symbolic precompile length header"), "{stdout}");
 });
@@ -315,7 +368,17 @@ contract SymbolicPrecompileInputSize is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicIdentityInputSize(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkSymbolicShaInputSize(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicIdentityInputSize(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicShaInputSize(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic precompile CALL input size"), "{stdout}");
 });
