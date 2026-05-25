@@ -15,6 +15,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
   - `reentrancy-unlimited-gas`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.
 - **Medium Severity:**
+  - `assert-state-change`: Flags state-modifying expressions inside `assert()` arguments.
   - `boolean-cst`: Flags misuse of boolean constants.
   - `divide-before-multiply`: Warns against performing division before multiplication in the same expression, which can cause precision loss.
   - `incorrect-erc20-interface`: Flags ERC20 interfaces and implementations with non-compliant function signatures.
@@ -22,14 +23,17 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `incorrect-strict-equality`: Dangerous strict equality check on an externally-influenced value (ETH balance, ERC-20 balance).
   - `tx-origin`: Flags use of `tx.origin` in authorization-like predicates.
   - `uninitialized-local`: Local variable is read before being explicitly initialized.
+  - `uninitialized-state`: State variable is read in functions but never written, so it always returns its zero-value default.
   - `unsafe-typecast`: Typecasts that can truncate values should be checked.
   - `unused-return`: Return value of an external call is not used.
+  - `locked-ether`: Contracts that can receive ETH but have no mechanism to send it out.
   - `weak-prng`: Flags randomness-like expressions derived from predictable on-chain values.
 - **Low Severity:**
   - `block-timestamp`: Warns when `block.timestamp` is used in a comparison, as it may be manipulated by validators.
   - `calls-loop`: External calls inside loops can cause denial-of-service if a call reverts or exhausts gas.
   - `delegatecall-loop`: Payable functions should not use `delegatecall` inside a loop.
   - `missing-zero-check`: Address parameter is used in a state write or value transfer without a zero-address check.
+  - `reentrancy-events`: Events emitted after external calls can be reordered or fabricated by a reentrant callee and mislead off-chain consumers.
   - `return-bomb`: External calls with a gas limit should not consume unbounded return data.
 - **Informational / Style Guide:**
   - `boolean-equal`: Boolean comparisons to constants should be simplified.

@@ -1,6 +1,5 @@
 use crate::{
     provider::{VerificationContext, VerificationProvider},
-    retry::RETRY_CHECK_ON_VERIFY,
     utils::ensure_solc_build_metadata,
     verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs},
 };
@@ -111,7 +110,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 let check_args = VerifyCheckArgs {
                     id: resp.verification_id,
                     etherscan: args.etherscan,
-                    retry: RETRY_CHECK_ON_VERIFY,
+                    retry: args.retry,
                     verifier: args.verifier,
                 };
                 return self.check(check_args).await;

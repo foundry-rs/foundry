@@ -943,11 +943,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 });
 
 forgetest_init!(should_exit_early_on_invariant_failure, |prj, cmd| {
-    // Early-exit semantics require `assert_all = false`; under the post-#12587 default the
-    // campaign runs the full budget and surfaces a different failure shape.
-    prj.update_config(|config| {
-        config.invariant.assert_all = false;
-    });
     prj.add_test(
         "CounterInvariant.t.sol",
         r#"
@@ -975,21 +970,29 @@ contract CounterTest is Test {
      "#,
     );
 
-    // make sure invariant test exit early with 0 runs
+    // make sure a pre-run invariant failure exits after the first campaign call and keeps the
+    // predicate failure attribution.
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 Ran 1 test for test/CounterInvariant.t.sol:CounterTest
-[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
+[FAIL: wrong count] invariant_early_exit() (runs: 1, calls: 1, reverts: 0)
+
+╭----------+----------+-------+---------+----------╮
+| Contract | Selector | Calls | Reverts | Discards |
++==================================================+
+| Counter  | inc      | 1     | 0       | 0        |
+╰----------+----------+-------+---------+----------╯
+
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterInvariant.t.sol:CounterTest
-[FAIL: failed to set up invariant testing environment: wrong count] invariant_early_exit() (runs: 0, calls: 0, reverts: 0)
+[FAIL: wrong count] invariant_early_exit() (runs: 1, calls: 1, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
