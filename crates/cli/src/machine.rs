@@ -46,13 +46,12 @@ pub(crate) fn set_machine(on: bool) {
 
 /// Pre-parse scan for `--machine`.
 ///
-/// Mirrors `check_introspect` / `check_markdown_help`: runs before clap
-/// parsing so the flag is visible while intercepting parse errors. Uses the
-/// same shared top-level scanner so `--machine` after `--`, after a
-/// subcommand/positional, or as a value to another flag does **not** flip
-/// the mode. Non-UTF-8 argv is handled gracefully (no panic).
+/// Runs before clap parsing so the flag is visible while intercepting parse
+/// errors. Honors the `global = true` declaration on
+/// [`crate::opts::GlobalArgs::machine`], so `cast call --machine --help`
+/// also flips the mode. See [`crate::opts::pre_parse_global_flag_present`].
 pub fn check_machine() {
-    if crate::opts::pre_parse_flag_present("--machine") {
+    if crate::opts::pre_parse_global_flag_present("--machine") {
         set_machine(true);
     }
 }
@@ -65,14 +64,23 @@ pub fn check_machine() {
 /// [`ExitCode`]. Without `--machine`, behaves exactly like
 /// [`Parser::parse`].
 pub fn parse_or_exit<T: Parser + CommandFactory>() -> T {
-    match T::try_parse() {
-        Ok(t) => t,
-        Err(err) => {
-            if is_machine() {
-                handle_machine_clap_error(err)
-            } else {
-                err.exit()
-            }
+    if is_machine() {
+        // `GlobalArgs::init()` (which calls `yansi::disable()`) hasn't run
+        // yet; force `ColorChoice::Never` on the command so clap's rendered
+        // help / error text never embeds ANSI escapes in the envelope.
+        let mut cmd = T::command().color(clap::ColorChoice::Never);
+        let mut matches = match cmd.try_get_matches_from_mut(std::env::args_os()) {
+            Ok(m) => m,
+            Err(err) => handle_machine_clap_error(err),
+        };
+        match T::from_arg_matches_mut(&mut matches) {
+            Ok(t) => t,
+            Err(err) => handle_machine_clap_error(err),
+        }
+    } else {
+        match T::try_parse() {
+            Ok(t) => t,
+            Err(err) => err.exit(),
         }
     }
 }

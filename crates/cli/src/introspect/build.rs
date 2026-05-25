@@ -57,7 +57,8 @@ pub fn collect_command_ids(doc: &IntrospectDocument) -> Vec<String> {
 pub fn capability_violations(doc: &IntrospectDocument) -> Vec<String> {
     static SCHEMA_REF_RE: OnceLock<regex::Regex> = OnceLock::new();
     let schema_re = SCHEMA_REF_RE.get_or_init(|| {
-        regex::Regex::new(r"^foundry:([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)@v\d+$")
+        // Versions are canonical, start at 1, and have no leading zeros.
+        regex::Regex::new(r"^foundry:([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*)@v[1-9][0-9]*$")
             .expect("schema-ref regex compiles")
     });
 
@@ -681,6 +682,28 @@ mod tests {
         let doc = build_document(&cmd, &registry);
         let v = capability_violations(&doc);
         assert!(v.iter().any(|s| s.contains("does not match")), "got {v:?}");
+    }
+
+    /// Schema versions are canonical: start at 1, no leading zeros.
+    /// `@v0`, `@v01`, `@v007` must all be rejected.
+    #[test]
+    fn capability_violations_rejects_non_canonical_version() {
+        for ref_str in
+            ["foundry:demo.build@v0", "foundry:demo.build@v01", "foundry:demo.build@v007"]
+        {
+            let registry = registry_with_capabilities(Capabilities {
+                output_mode: OutputMode::Envelope,
+                result_schema_ref: Some(std::borrow::Cow::Owned(ref_str.to_string())),
+                ..Capabilities::NONE
+            });
+            let cmd = <Demo as clap::CommandFactory>::command();
+            let doc = build_document(&cmd, &registry);
+            let v = capability_violations(&doc);
+            assert!(
+                v.iter().any(|s| s.contains("does not match")),
+                "expected rejection of `{ref_str}`, got {v:?}"
+            );
+        }
     }
 
     #[test]

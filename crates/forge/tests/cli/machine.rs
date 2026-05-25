@@ -38,11 +38,20 @@ forgetest!(machine_unknown_flag_emits_usage_envelope, |_prj, cmd| {
 });
 
 // `<subcommand> --help` under `--machine` must surface the subcommand's own help text.
-// `--machine` must lead, since the pre-parse scanner only honors top-level flags.
 forgetest!(machine_subcommand_help_preserves_context, |_prj, cmd| {
     let out =
         cmd.args(["--machine", "build", "--help"]).assert_success().get_output().stdout.clone();
     let env = parse_envelope(&out);
+    let help = env["data"]["help"].as_str().expect("help is a string");
+    assert!(help.contains("Build the project's smart contracts"), "leaked root help: {help}");
+});
+
+// `--machine` after a subcommand must also flip machine mode (clap-global).
+forgetest!(machine_flag_honored_after_subcommand, |_prj, cmd| {
+    let out =
+        cmd.args(["build", "--machine", "--help"]).assert_success().get_output().stdout.clone();
+    let env = parse_envelope(&out);
+    assert_eq!(env["success"], true);
     let help = env["data"]["help"].as_str().expect("help is a string");
     assert!(help.contains("Build the project's smart contracts"), "leaked root help: {help}");
 });

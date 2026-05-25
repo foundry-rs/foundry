@@ -37,7 +37,7 @@ pub struct GlobalArgs {
     /// prompt suppression, canonical exit codes) is adopted incrementally
     /// — see `docs/agents/spec.md` §10. Mutually exclusive with `--json`
     /// and `--md` to keep machine-mode output unambiguous.
-    #[arg(help_heading = "Display options", global = true, long, conflicts_with_all = &["color", "md"])]
+    #[arg(help_heading = "Display options", global = true, long, conflicts_with_all = &["color", "md", "json"])]
     machine: bool,
 
     /// Format log messages as Markdown.
@@ -204,10 +204,17 @@ fn emit_introspect_and_exit(
 /// global options are skipped, so e.g. `forge --color always --introspect`
 /// and `forge -j 4 --introspect` still match.
 ///
-/// Shared by every pre-parse flag detector (`--introspect`,
-/// `--markdown-help`, `--machine`) so the activation surface stays uniform.
+/// Use for non-clap-global pre-parse flags (`--introspect`, `--markdown-help`).
+/// For clap-globals like `--machine`, use [`pre_parse_global_flag_present`].
 pub(crate) fn pre_parse_flag_present(flag: &str) -> bool {
     pre_parse_flag_present_in(std::env::args_os().skip(1), flag)
+}
+
+/// Like [`pre_parse_flag_present`] but scans past subcommands/positionals,
+/// honoring `clap`'s `global = true` placement (e.g. `cast call --machine --help`).
+/// Still stops at `--` and skips values of known value-taking globals.
+pub(crate) fn pre_parse_global_flag_present(flag: &str) -> bool {
+    pre_parse_global_flag_present_in(std::env::args_os().skip(1), flag)
 }
 
 /// Value-taking global options declared on [`GlobalArgs`]; their following
@@ -238,6 +245,27 @@ where
         }
         // Skip the value of `--opt VALUE` form; `--opt=VALUE` is one token.
         if !s.contains('=') && VALUE_TAKING_GLOBAL_OPTIONS.contains(&s) {
+            iter.next();
+        }
+    }
+    false
+}
+
+pub(crate) fn pre_parse_global_flag_present_in<I>(args: I, flag: &str) -> bool
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let mut iter = args.into_iter();
+    while let Some(a) = iter.next() {
+        if a == "--" {
+            return false;
+        }
+        // Non-UTF-8 token: skip but keep scanning.
+        let Some(s) = a.to_str() else { continue };
+        if s == flag {
+            return true;
+        }
+        if s.starts_with('-') && !s.contains('=') && VALUE_TAKING_GLOBAL_OPTIONS.contains(&s) {
             iter.next();
         }
     }
@@ -288,30 +316,26 @@ mod tests {
         }
     }
 
-    /// Regression for the agent-substrate `--machine` pre-parse detector:
-    /// the same scanner discipline applies. `--machine` after a `--`
-    /// separator or after a positional / subcommand boundary must NOT
-    /// flip machine mode, even though it appears in argv.
+    /// Clap-global scanner: matches `--machine` anywhere except after `--`
+    /// or as the value of a known value-taking global.
     #[test]
-    fn pre_parse_flag_present_machine_boundary_cases() {
-        // Positive: leading top-level flag, with and without other globals.
-        for case in
-            [&["--machine"][..], &["--color", "always", "--machine"], &["-j", "4", "--machine"]]
-        {
-            assert!(pre_parse_flag_present_in(argv(case), "--machine"), "expected match: {case:?}");
-        }
-
-        // Negative: out-of-band positions must not match.
+    fn pre_parse_global_flag_present_machine_cases() {
         for case in [
-            &["--", "--machine"][..],
-            &["test", "--machine"],
-            &["call", "ADDR", "sig(string)", "--data", "--machine"],
-            // `--machine` consumed as a positional value to a known
-            // value-taking global must not match.
-            &["--color", "--machine"],
+            &["--machine"][..],
+            &["--color", "always", "--machine"],
+            &["-j", "4", "--machine"],
+            &["build", "--machine"],
+            &["build", "--machine", "--help"],
+            &["call", "ADDR", "sig(string)", "--data", "0x00", "--machine"],
         ] {
             assert!(
-                !pre_parse_flag_present_in(argv(case), "--machine"),
+                pre_parse_global_flag_present_in(argv(case), "--machine"),
+                "expected match: {case:?}"
+            );
+        }
+        for case in [&["--", "--machine"][..], &["--color", "--machine"]] {
+            assert!(
+                !pre_parse_global_flag_present_in(argv(case), "--machine"),
                 "expected NO match: {case:?}"
             );
         }
@@ -326,5 +350,15 @@ mod tests {
         let bad = OsString::from_vec(vec![0xff, 0xfe]);
         let args = vec![bad, OsString::from("--machine")];
         assert!(!pre_parse_flag_present_in(args, "--machine"));
+    }
+
+    /// Non-UTF-8 token must not block a later `--machine` from matching.
+    #[test]
+    #[cfg(unix)]
+    fn pre_parse_global_flag_present_handles_non_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+        let bad = OsString::from_vec(vec![0xff, 0xfe]);
+        let args = vec![bad, OsString::from("--machine")];
+        assert!(pre_parse_global_flag_present_in(args, "--machine"));
     }
 }
