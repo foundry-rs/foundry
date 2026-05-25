@@ -7,7 +7,7 @@
 // the concrete `Executor` type.
 
 use crate::inspectors::{
-    Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
+    Cheatcodes, CmpOperands, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -983,6 +983,8 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     pub line_coverage: Option<HitMaps>,
     /// The edge coverage info collected during the call
     pub edge_coverage: Option<Vec<u8>>,
+    /// EVM comparison operands collected during the call.
+    pub evm_cmp_values: Option<Vec<CmpOperands>>,
     /// Sancov edge coverage from instrumented native Rust crates (e.g. precompiles).
     /// Tracked separately from EVM edge coverage to avoid ID-space collisions.
     pub sancov_coverage: Option<Vec<u8>>,
@@ -1020,6 +1022,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             traces: None,
             line_coverage: None,
             edge_coverage: None,
+            evm_cmp_values: None,
             sancov_coverage: None,
             sancov_cmp_values: None,
             transactions: None,
@@ -1239,6 +1242,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         traces,
         line_coverage,
         edge_coverage,
+        evm_cmp_values,
         cheatcodes,
         chisel_state,
         reverter,
@@ -1266,6 +1270,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         traces,
         line_coverage,
         edge_coverage,
+        evm_cmp_values,
         sancov_coverage: None,
         sancov_cmp_values: None,
         transactions,
@@ -1337,8 +1342,17 @@ impl EarlyExit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm_core::constants::MAGIC_SKIP;
-    use revm::{context::Cfg, primitives::hardfork::SpecId};
+    use alloy_primitives::B256;
+    use foundry_cheatcodes::{
+        CheatsConfig,
+        Vm::{blobhashesCall, revertToStateCall, snapshotStateCall},
+    };
+    use foundry_config::Config;
+    use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
+    use revm::{
+        context::{Cfg, TxEnv},
+        primitives::hardfork::SpecId,
+    };
 
     #[test]
     fn cheatcode_skip_payload_is_classified_as_skip() {
@@ -1400,5 +1414,71 @@ mod tests {
             &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
         );
         assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+    }
+
+    /// Regression test for `pre_override_blob_hashes` restoration.
+    ///
+    /// Exercises the `None` arm of `sync_tx_after_env_override_restore` with
+    /// *non-empty* native blob hashes, the case that cannot be reached from
+    /// Solidity because no cheatcode sets `tx.blob_hashes` without also setting
+    /// `env_overrides.blob_hashes`.
+    ///
+    /// Steps:
+    /// 1. Seed `tx.blob_hashes = original` directly (no cheatcode -> override stays `None`).
+    /// 2. `vm.snapshotState()` -> `inner_snapshot_state` captures `pre_override_blob_hashes =
+    ///    Some(original)`.
+    /// 3. `vm.blobhashes(new)` -> sets override (`Some`) AND real tx hashes.
+    /// 4. `vm.revertToState(id)` -> restores override to `None`,
+    ///    `sync_tx_after_env_override_restore` must restore `tx.blob_hashes = original`.
+    #[test]
+    fn pre_override_blob_hashes_restored_on_revert_to_state() {
+        let cheats_config =
+            Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, None));
+
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .inspectors(|stack| stack.cheatcodes(cheats_config))
+            .spec_id(SpecId::CANCUN)
+            .build(EvmEnv::default(), TxEnv::default(), backend);
+
+        let original: Vec<B256> = vec![B256::repeat_byte(0x11), B256::repeat_byte(0x22)];
+        executor.tx_env_mut().set_blob_hashes(original.clone());
+
+        let snap_result = executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                snapshotStateCall {}.abi_encode().into(),
+                U256::ZERO,
+            )
+            .expect("snapshotState failed");
+        assert!(!snap_result.reverted, "snapshotState reverted unexpectedly");
+        let snapshot_id = U256::from_be_slice(&snap_result.result[..32]);
+
+        let new_hashes = vec![B256::repeat_byte(0x33)];
+        let blob_result = executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                blobhashesCall { hashes: new_hashes }.abi_encode().into(),
+                U256::ZERO,
+            )
+            .expect("blobhashes failed");
+        assert!(!blob_result.reverted, "blobhashes reverted unexpectedly");
+
+        let revert_result = executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                revertToStateCall { snapshotId: snapshot_id }.abi_encode().into(),
+                U256::ZERO,
+            )
+            .expect("revertToState failed");
+        assert!(!revert_result.reverted, "revertToState reverted unexpectedly");
+
+        assert_eq!(
+            revert_result.tx_env.blob_hashes, original,
+            "pre_override_blob_hashes must be restored to original non-empty hashes, not []",
+        );
     }
 }

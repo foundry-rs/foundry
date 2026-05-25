@@ -4,7 +4,7 @@ use crate::{
     decode::decode_console_logs,
     gas_report::GasReport,
     multi_runner::{MultiNetworkConfig, matches_artifact},
-    result::{SuiteResult, TestOutcome, TestStatus},
+    result::{SuiteResult, TestKindReport, TestOutcome, TestResult, TestStatus},
     traces::{
         CallTraceDecoderBuilder, InternalTraceMode, TraceKind,
         debug::{ContractSources, DebugTraceIdentifier},
@@ -45,6 +45,7 @@ use foundry_evm::{
     core::evm::{
         BlockEnvFor, EthEvmNetwork, FoundryEvmNetwork, SpecFor, TempoEvmNetwork, TxEnvFor,
     },
+    fuzz::CounterExample,
     opts::EvmOpts,
     traces::{backtrace::BacktraceBuilder, identifier::TraceIdentifiers, prune_trace_depth},
 };
@@ -756,6 +757,7 @@ impl TestArgs {
         let mut any_test_failed = false;
         let mut backtrace_builder = None;
         for (contract_name, mut suite_result) in rx {
+            let len = suite_result.len();
             let tests = &mut suite_result.test_results;
             let has_tests = !tests.is_empty();
 
@@ -783,7 +785,6 @@ impl TestArgs {
                     sh_warn!("{warning}")?;
                 }
                 if has_tests {
-                    let len = tests.len();
                     let tests = if len > 1 { "tests" } else { "test" };
                     sh_println!("Ran {len} {tests} for {contract_name}")?;
                 }
@@ -1193,20 +1194,23 @@ fn last_run_failures(config: &Config) -> Option<regex::Regex> {
 /// Persist filter with last test run failures (only if there's any failure).
 fn persist_run_failures(config: &Config, outcome: &TestOutcome) {
     if outcome.failed() > 0 && fs::create_file(&config.test_failures_file).is_ok() {
-        let mut filter = String::new();
-        let mut failures = outcome.failures().peekable();
-        while let Some((test_name, _)) = failures.next() {
-            if test_name.is_any_test()
-                && let Some(test_match) = test_name.split('(').next()
-            {
-                filter.push_str(test_match);
-                if failures.peek().is_some() {
-                    filter.push('|');
-                }
-            }
-        }
+        let filter =
+            outcome.failures().flat_map(rerun_filter_matches).collect::<Vec<_>>().join("|");
         let _ = fs::write(&config.test_failures_file, filter);
     }
+}
+
+fn rerun_filter_matches<'a>(
+    (test_name, test_result): (&'a String, &'a TestResult),
+) -> impl Iterator<Item = &'a str> {
+    let has_predicate_failures =
+        test_result.invariant_failures.iter().any(|failure| failure.predicate_name().is_some());
+    let predicate_failures =
+        test_result.invariant_failures.iter().filter_map(|failure| failure.predicate_name());
+
+    let fallback = test_name.is_any_test().then(|| test_name.split('(').next()).flatten();
+
+    predicate_failures.chain(fallback.into_iter().filter(move |_| !has_predicate_failures))
 }
 
 /// Generate test report in JUnit XML report format.
@@ -1220,36 +1224,184 @@ fn junit_xml_report(results: &BTreeMap<String, SuiteResult>, verbosity: u8) -> R
         test_suite.set_time(suite_result.duration);
         test_suite.set_system_out(suite_result.summary());
         for (test_name, test_result) in &suite_result.test_results {
-            let mut test_status = match test_result.status {
-                TestStatus::Success => TestCaseStatus::success(),
-                TestStatus::Failure => TestCaseStatus::non_success(NonSuccessKind::Failure),
-                TestStatus::Skipped => TestCaseStatus::skipped(),
-            };
-            if let Some(reason) = &test_result.reason {
-                test_status.set_message(reason);
-            }
-
-            let mut test_case = TestCase::new(test_name, test_status);
-            test_case.set_time(test_result.duration);
-
-            let mut sys_out = String::new();
-            let result_report = test_result.kind.report();
-            write!(sys_out, "{test_result} {test_name} {result_report}").unwrap();
-            if verbosity >= 2 && !test_result.logs.is_empty() {
-                write!(sys_out, "\\nLogs:\\n").unwrap();
-                let console_logs = decode_console_logs(&test_result.logs);
-                for log in console_logs {
-                    write!(sys_out, "  {log}\\n").unwrap();
-                }
-            }
-
-            test_case.set_system_out(sys_out);
-            test_suite.add_test_case(test_case);
+            add_junit_test_cases(&mut test_suite, test_name, test_result, verbosity);
         }
         junit_report.add_test_suite(test_suite);
     }
     junit_report.set_time(total_duration);
     junit_report
+}
+
+/// Adds JUnit test cases for a test result.
+///
+/// Invariant campaigns are expanded into per-predicate and per-handler cases so CI can report
+/// contract-level execution without losing failure attribution.
+fn add_junit_test_cases(
+    test_suite: &mut TestSuite,
+    test_name: &str,
+    test_result: &TestResult,
+    verbosity: u8,
+) {
+    let output = JunitOutput::new(test_result, verbosity);
+    let expanded_invariant = test_result.kind.is_invariant()
+        && (!test_result.invariant_predicate_results.is_empty()
+            || !test_result.invariant_handler_failures.is_empty());
+
+    if !expanded_invariant {
+        add_junit_test_case(
+            test_suite,
+            test_name,
+            test_result.status,
+            test_result.reason.as_deref(),
+            test_result,
+            output.system_out(test_result, test_name),
+        );
+        return;
+    }
+
+    let mut add_expanded_case =
+        |name: &str,
+         status: TestStatus,
+         reason: Option<&str>,
+         counterexample: Option<&CounterExample>| {
+            add_junit_test_case(
+                test_suite,
+                name,
+                status,
+                reason,
+                test_result,
+                output.case_system_out(status, reason, name, counterexample),
+            );
+        };
+
+    if test_result.invariant_predicate_results.is_empty() {
+        let failure = test_result.invariant_failures.first();
+        let status = if failure.is_some() { TestStatus::Failure } else { TestStatus::Success };
+        add_expanded_case(
+            test_name,
+            status,
+            failure.map(|failure| failure.reason()),
+            failure.and_then(|failure| failure.counterexample()),
+        );
+    } else {
+        for predicate in &test_result.invariant_predicate_results {
+            let failure = test_result
+                .invariant_failures
+                .iter()
+                .find(|failure| failure.name() == predicate.name.as_str());
+            let name = format!("{}()", predicate.name);
+            add_expanded_case(
+                &name,
+                predicate.status,
+                predicate.reason.as_deref(),
+                failure.and_then(|failure| failure.counterexample()),
+            );
+        }
+    }
+
+    for failure in &test_result.invariant_handler_failures {
+        let name = format!("handler {}", failure.name());
+        add_expanded_case(
+            &name,
+            TestStatus::Failure,
+            Some(failure.reason()),
+            failure.counterexample(),
+        );
+    }
+}
+
+/// Adds a single JUnit test case to the suite.
+fn add_junit_test_case(
+    test_suite: &mut TestSuite,
+    test_name: &str,
+    status: TestStatus,
+    message: Option<&str>,
+    test_result: &TestResult,
+    system_out: String,
+) {
+    let mut test_status = match status {
+        TestStatus::Success => TestCaseStatus::success(),
+        TestStatus::Failure => TestCaseStatus::non_success(NonSuccessKind::Failure),
+        TestStatus::Skipped => TestCaseStatus::skipped(),
+    };
+    if let Some(message) = message {
+        test_status.set_message(message);
+    }
+
+    let mut test_case = TestCase::new(test_name, test_status);
+    test_case.set_time(test_result.duration);
+    test_case.set_system_out(system_out);
+    test_suite.add_test_case(test_case);
+}
+
+/// Helper for assembling JUnit output strings.
+struct JunitOutput {
+    result_report: TestKindReport,
+    logs: Option<Vec<String>>,
+}
+
+impl JunitOutput {
+    /// Creates a JUnit output helper for a test result.
+    fn new(test_result: &TestResult, verbosity: u8) -> Self {
+        Self {
+            result_report: test_result.kind.report(),
+            logs: (verbosity >= 2 && !test_result.logs.is_empty())
+                .then(|| decode_console_logs(&test_result.logs)),
+        }
+    }
+
+    /// Renders the suite-level `system-out` payload.
+    fn system_out(&self, test_result: &TestResult, test_name: &str) -> String {
+        let mut sys_out = String::new();
+        write!(sys_out, "{test_result} {test_name} {}", self.result_report).unwrap();
+        self.append_logs(&mut sys_out);
+        sys_out
+    }
+
+    /// Renders the case-level `system-out` payload.
+    fn case_system_out(
+        &self,
+        status: TestStatus,
+        message: Option<&str>,
+        test_name: &str,
+        counterexample: Option<&CounterExample>,
+    ) -> String {
+        let mut sys_out = String::new();
+        match status {
+            TestStatus::Success => write!(sys_out, "[PASS]").unwrap(),
+            TestStatus::Failure => {
+                let message = message.unwrap_or_default();
+                write!(sys_out, "[FAIL: {message}]").unwrap();
+            }
+            TestStatus::Skipped => {
+                if let Some(message) = message {
+                    write!(sys_out, "[SKIP: {message}]").unwrap();
+                } else {
+                    write!(sys_out, "[SKIP]").unwrap();
+                }
+            }
+        }
+        write!(sys_out, " {test_name} {}", self.result_report).unwrap();
+        if let Some(CounterExample::Sequence(original, sequence)) = counterexample {
+            writeln!(sys_out, "\n\t[Sequence] (original: {original}, shrunk: {})", sequence.len())
+                .unwrap();
+            for ex in sequence {
+                writeln!(sys_out, "{ex}").unwrap();
+            }
+        }
+        self.append_logs(&mut sys_out);
+        sys_out
+    }
+
+    /// Appends captured console logs to the output payload.
+    fn append_logs(&self, sys_out: &mut String) {
+        if let Some(logs) = &self.logs {
+            write!(sys_out, "\\nLogs:\\n").unwrap();
+            for log in logs {
+                write!(sys_out, "  {log}\\n").unwrap();
+            }
+        }
+    }
 }
 
 #[cfg(test)]

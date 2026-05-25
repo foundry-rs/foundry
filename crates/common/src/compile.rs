@@ -487,7 +487,8 @@ pub struct ContractInfo {
 
 /// Compiles target file path.
 ///
-/// If `quiet` no solc related output will be emitted to stdout.
+/// If `quiet` is set, the compilation reporter's progress/status output is suppressed.
+/// (When not suppressed, that output is emitted to stderr; see `with_compilation_reporter`.)
 ///
 /// **Note:** this expects the `target_path` to be absolute
 pub fn compile_target<C: Compiler<CompilerContract = Contract>>(
@@ -554,6 +555,11 @@ pub fn etherscan_project(metadata: &Metadata, target_path: &Path) -> Result<Proj
 }
 
 /// Configures the reporter and runs the given closure.
+///
+/// In TTY mode, [`SpinnerReporter`] paints the progress to stderr. The non-TTY fallback
+/// still writes to stdout via `BasicStdoutReporter`; migrating that path to stderr is
+/// part of the per-command stdout migration tracked in `docs/dev/output-channels.md`
+/// (it would shift many existing snapshot tests at once).
 pub fn with_compilation_reporter<O>(
     quiet: bool,
     project_root: Option<PathBuf>,
@@ -563,7 +569,7 @@ pub fn with_compilation_reporter<O>(
     let reporter = if quiet || shell::is_json() {
         Report::new(NoReporter::default())
     } else {
-        if std::io::stdout().is_terminal() {
+        if std::io::stderr().is_terminal() {
             Report::new(SpinnerReporter::spawn(project_root))
         } else {
             Report::new(BasicStdoutReporter::default())
