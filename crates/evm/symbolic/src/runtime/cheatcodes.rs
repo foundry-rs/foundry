@@ -1,3 +1,5 @@
+use foundry_common::wallet::private_key_from_u256;
+
 use super::*;
 
 /// Implements the `foundry_cheatcode_min_input_size` cheatcode runtime helper.
@@ -1139,10 +1141,7 @@ pub(crate) fn parse_env_address(value: &str) -> Result<Address, SymbolicError> {
 
 /// Implements the `private_key_signer` cheatcode runtime helper.
 pub(crate) fn private_key_signer(private_key: U256) -> Result<PrivateKeySigner, SymbolicError> {
-    if private_key.is_zero() {
-        return Err(SymbolicError::Unsupported("symbolic private key cannot be zero"));
-    }
-    PrivateKeySigner::from_slice(&private_key.to_be_bytes::<32>())
+    private_key_from_u256(private_key)
         .map_err(|_| SymbolicError::Unsupported("symbolic private key parse"))
 }
 
@@ -1182,29 +1181,14 @@ pub(crate) fn sign_compact_hash_words(
     Ok(vec![SymWord::Concrete(sig.r()), SymWord::Concrete(sig.s() | y_parity)])
 }
 
-/// Computes the `derive_key_path` cheatcode runtime helper result.
-pub(crate) fn derive_key_path(path: &str, index: u32) -> String {
-    let mut out = path.to_string();
-    if !out.ends_with('/') {
-        out.push('/');
-    }
-    out.push_str(&index.to_string());
-    out
-}
-
 /// Computes the `derive_private_key` cheatcode runtime helper result.
 pub(crate) fn derive_private_key<W: Wordlist>(
     mnemonic: &str,
     path: &str,
     index: u32,
 ) -> Result<U256, SymbolicError> {
-    let wallet = MnemonicBuilder::<W>::default()
-        .phrase(mnemonic)
-        .derivation_path(derive_key_path(path, index))
-        .map_err(|_| SymbolicError::Unsupported("symbolic vm.deriveKey"))?
-        .build()
-        .map_err(|_| SymbolicError::Unsupported("symbolic vm.deriveKey"))?;
-    Ok(U256::from_be_bytes(wallet.credential().to_bytes().into()))
+    foundry_common::wallet::derive_private_key::<W>(mnemonic, path, index)
+        .map_err(|_| SymbolicError::Unsupported("symbolic vm.deriveKey"))
 }
 
 /// Computes the `derive_private_key_with_language` cheatcode runtime helper result.
@@ -1214,19 +1198,8 @@ pub(crate) fn derive_private_key_with_language(
     index: u32,
     language: &str,
 ) -> Result<U256, SymbolicError> {
-    match language {
-        "chinese_simplified" => derive_private_key::<ChineseSimplified>(mnemonic, path, index),
-        "chinese_traditional" => derive_private_key::<ChineseTraditional>(mnemonic, path, index),
-        "czech" => derive_private_key::<Czech>(mnemonic, path, index),
-        "english" => derive_private_key::<English>(mnemonic, path, index),
-        "french" => derive_private_key::<French>(mnemonic, path, index),
-        "italian" => derive_private_key::<Italian>(mnemonic, path, index),
-        "japanese" => derive_private_key::<Japanese>(mnemonic, path, index),
-        "korean" => derive_private_key::<Korean>(mnemonic, path, index),
-        "portuguese" => derive_private_key::<Portuguese>(mnemonic, path, index),
-        "spanish" => derive_private_key::<Spanish>(mnemonic, path, index),
-        _ => Err(SymbolicError::Unsupported("symbolic vm.deriveKey language")),
-    }
+    foundry_common::wallet::derive_private_key_with_language(mnemonic, path, index, language)
+        .map_err(|_| SymbolicError::Unsupported("symbolic vm.deriveKey language"))
 }
 
 /// Implements the `artifact_json_path` cheatcode runtime helper.
