@@ -92,6 +92,7 @@ tokio = { workspace = true, features = ["macros", "signal"] }
 tracing.workspace = true
 yansi.workspace = true
 evmole.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 alloy-hardforks.workspace = true

@@ -1,4 +1,5 @@
 use std::{path::PathBuf, str::FromStr, time::Duration};
+use url::Url;
 
 use alloy_consensus::{SignableTransaction, Signed};
 use alloy_ens::NameOrAddress;
@@ -499,24 +500,45 @@ where
 }
 
 /// Validates that a sponsor URL uses https:// (localhost/127.0.0.1 may use http://).
-fn validate_sponsor_url(url: &str) -> Result<()> {
-    let lower = url.to_lowercase();
-    if lower.starts_with("https://") {
-        return Ok(());
-    }
-    if lower.starts_with("http://") {
-        // Allow plain http only for local testing.
-        let host_part = lower.trim_start_matches("http://");
-        if host_part.starts_with("localhost") || host_part.starts_with("127.0.0.1") {
-            return Ok(());
+fn validate_sponsor_url(raw: &str) -> Result<()> {
+    let url = Url::parse(raw)
+        .map_err(|e| eyre::eyre!("--sponsor-url is not a valid URL ({raw}): {e}"))?;
+
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" => {
+            let host = url.host_str().unwrap_or("");
+            if host == "localhost" || host == "127.0.0.1" {
+                return Ok(());
+            }
+            eyre::bail!(
+                "--sponsor-url must use https:// for non-local endpoints (got {raw}). \
+                 The sponsor relay is a trusted third party; use an encrypted channel."
+            );
         }
-        eyre::bail!(
-            "--sponsor-url must use https:// for non-local endpoints (got {url}). \
+        _ => eyre::bail!(
+            "--sponsor-url must start with https:// (got {raw}). \
              The sponsor relay is a trusted third party; use an encrypted channel."
-        );
+        ),
     }
-    eyre::bail!(
-        "--sponsor-url must start with https:// (got {url}). \
-         The sponsor relay is a trusted third party; use an encrypted channel."
-    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_sponsor_url() {
+        // accepted
+        assert!(validate_sponsor_url("https://sponsor.tempo.xyz/tp_abc").is_ok());
+        assert!(validate_sponsor_url("http://localhost:8545").is_ok());
+        assert!(validate_sponsor_url("http://127.0.0.1:8545").is_ok());
+
+        // rejected
+        assert!(validate_sponsor_url("http://sponsor.tempo.xyz").is_err());
+        assert!(validate_sponsor_url("not-a-url").is_err());
+        // bypass attempts that fooled the old starts_with check
+        assert!(validate_sponsor_url("http://localhost.evil.com").is_err());
+        assert!(validate_sponsor_url("http://127.0.0.1.evil.com").is_err());
+    }
 }

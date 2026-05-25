@@ -2816,6 +2816,7 @@ dependencies = [
  "tempo-primitives",
  "tokio",
  "tracing",
+ "url",
  "yansi",
 ]
 
