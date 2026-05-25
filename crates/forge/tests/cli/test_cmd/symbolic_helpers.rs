@@ -61,5 +61,5 @@ pub fn assert_relevant_lines(stdout: &str, expected: impl IntoData) {
         actual.push('\n');
     }
 
-    assert_data_eq!(Data::from(actual), expected);
+    assert_data_eq!(Data::from(actual.trim_end_matches('\n')), expected);
 }
