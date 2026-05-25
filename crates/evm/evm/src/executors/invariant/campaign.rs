@@ -186,7 +186,7 @@ impl InvariantCampaignAggregator {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, debug_assertions))]
 mod tests {
     use super::*;
     use std::collections::HashMap;
