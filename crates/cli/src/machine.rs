@@ -47,9 +47,8 @@ pub(crate) fn set_machine(on: bool) {
 /// Pre-parse scan for `--machine`.
 ///
 /// Runs before clap parsing so the flag is visible while intercepting parse
-/// errors. Honors the `global = true` declaration on
-/// [`crate::opts::GlobalArgs::machine`], so `cast call --machine --help`
-/// also flips the mode. See [`crate::opts::pre_parse_global_flag_present`].
+/// errors. Honors `--machine`'s clap-global declaration, so `cast call
+/// --machine --help` also flips the mode.
 pub fn check_machine() {
     if crate::opts::pre_parse_global_flag_present("--machine") {
         set_machine(true);
