@@ -5284,7 +5284,6 @@ dependencies = [
  "indicatif",
  "parking_lot",
  "proptest",
- "rand 0.9.4",
  "rayon",
  "revm",
  "revm-inspectors",

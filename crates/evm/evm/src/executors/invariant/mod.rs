@@ -588,16 +588,19 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 // are stamped onto `call_details` so `execute_tx` applies them on
                 // the run-local executor (not `self.executor`) and so failing
                 // sequences replay with the exact gas envelope that triggered them.
+                // The campaign-seeded `branch_runner` RNG is used (not `rand::rng()`)
+                // so `--fuzz-seed` continues to deterministically reproduce gas-fuzzed
+                // campaigns.
                 if self.config.gas_fuzz {
-                    let mut rng = rand::rng();
+                    let rng = invariant_test.test_data.branch_runner.rng();
                     let sampled_limit = sample_gas_limit(
                         &gas_observations,
                         handler_target,
                         handler_selector,
                         block_gas_cap,
-                        &mut rng,
+                        rng,
                     );
-                    let sampled_price = sample_gas_price(&mut rng);
+                    let sampled_price = sample_gas_price(rng);
                     if let Some(last) = current_run.inputs.last_mut() {
                         last.call_details.gas_limit = sampled_limit;
                         last.call_details.gas_price = Some(sampled_price);
