@@ -55,8 +55,12 @@ are allowed:
 2. **per-domain enums** (`ConfigDiagnostic`, `NetworkDiagnostic`, …) that
    serialize to namespaced strings.
 
-A repo-wide test asserts every emitted code matches the format above and
-appears in this document.
+The `foundry-cli` crate exposes a `known_codes()` registry and a
+`DiagnosticCode::new` validator; per-crate tests assert that codes
+declared in `foundry-cli` round-trip through the validator and are
+unique. A truly repo-wide assertion (every emitted code, in every crate)
+is **aspirational** — it requires downstream adopter PRs to register
+their codes with the central list before it can be enforced.
 
 ## Versioning
 
