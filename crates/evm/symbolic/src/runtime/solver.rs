@@ -1,5 +1,16 @@
 use super::*;
 
+/// Errors that arise when parsing or constructing solver commands from configuration.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SolverConfigError {
+    /// The command string parsed to an empty argv.
+    #[error("symbolic solver command is empty")]
+    EmptyCommand,
+    /// The command string contains an unterminated quote character.
+    #[error("unterminated {0} quote in symbolic solver command")]
+    UnterminatedQuote(char),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SolverOutcome {
     Cancelled,
@@ -96,10 +107,10 @@ pub(crate) struct SolverCommand {
 
 impl SolverCommand {
     /// Constructs a solver command from a program plus arguments.
-    pub(crate) fn new(parts: Vec<String>, smt_timeout: bool) -> Result<Self, String> {
+    pub(crate) fn new(parts: Vec<String>, smt_timeout: bool) -> Result<Self, SolverConfigError> {
         let mut parts = parts.into_iter();
         let Some(program) = parts.next().filter(|part| !part.is_empty()) else {
-            return Err("symbolic solver command is empty".to_string());
+            return Err(SolverConfigError::EmptyCommand);
         };
         let args = parts.collect::<Vec<_>>();
         let display = std::iter::once(program.as_str())
@@ -111,7 +122,7 @@ impl SolverCommand {
 }
 
 pub(crate) struct SmtLibSubprocessSolver {
-    pub(crate) commands: Result<Vec<SolverCommand>, String>,
+    pub(crate) commands: Result<Vec<SolverCommand>, SolverConfigError>,
     pub(crate) timeout: Option<u32>,
     pub(crate) max_queries: usize,
     pub(crate) queries: usize,
@@ -125,7 +136,7 @@ pub(crate) struct SmtLibSubprocessSolver {
 impl SmtLibSubprocessSolver {
     /// Constructs a new instance.
     pub(crate) fn new(
-        commands: Result<Vec<SolverCommand>, String>,
+        commands: Result<Vec<SolverCommand>, SolverConfigError>,
         timeout: Option<u32>,
         max_queries: usize,
         dump_smt: bool,
@@ -243,7 +254,10 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
 impl SmtLibSubprocessSolver {
     /// Returns the resolved commands or the stored config error.
     pub(crate) fn commands(&self) -> Result<&[SolverCommand], SymbolicError> {
-        self.commands.as_ref().map(Vec::as_slice).map_err(|err| SymbolicError::Solver(err.clone()))
+        self.commands
+            .as_ref()
+            .map(Vec::as_slice)
+            .map_err(|err| SymbolicError::Solver(err.to_string()))
     }
 
     /// Emits one verbose solver diagnostic either live or into the deferred buffer.
@@ -433,7 +447,7 @@ impl PortfolioScheduler {
 /// Returns the subprocess commands for the configured SMT solver setup.
 pub(crate) fn solver_commands_for_config(
     config: &SymbolicConfig,
-) -> Result<Vec<SolverCommand>, String> {
+) -> Result<Vec<SolverCommand>, SolverConfigError> {
     if let Some(command) = config.solver_command.as_deref().filter(|command| !command.is_empty()) {
         return Ok(vec![SolverCommand::new(split_solver_command(command)?, false)?]);
     }
@@ -483,7 +497,7 @@ pub(crate) fn solver_portfolio_availability_warning(config: &SymbolicConfig) -> 
 }
 
 /// Returns the default command for a known solver name.
-pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, String> {
+pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, SolverConfigError> {
     let (parts, smt_timeout) = match solver {
         "z3" => (vec!["z3", "-in", "-smt2"], true),
         "yices" => (vec!["yices-smt2", "--bvconst-in-decimal"], false),
@@ -519,7 +533,9 @@ pub(crate) fn named_solver_command(solver: &str) -> Result<SolverCommand, String
 }
 
 /// Returns the command for one configured portfolio entry.
-pub(crate) fn solver_command_for_portfolio_entry(entry: &str) -> Result<SolverCommand, String> {
+pub(crate) fn solver_command_for_portfolio_entry(
+    entry: &str,
+) -> Result<SolverCommand, SolverConfigError> {
     if entry.chars().any(|ch| ch.is_whitespace() || matches!(ch, '"' | '\'' | '\\')) {
         SolverCommand::new(split_solver_command(entry)?, false)
     } else {
@@ -528,10 +544,10 @@ pub(crate) fn solver_command_for_portfolio_entry(entry: &str) -> Result<SolverCo
 }
 
 /// Splits a shell-like solver command into argv parts.
-pub(crate) fn split_solver_command(command: &str) -> Result<Vec<String>, String> {
-    let parts = split_quoted_args(command, "symbolic solver command")?;
+pub(crate) fn split_solver_command(command: &str) -> Result<Vec<String>, SolverConfigError> {
+    let parts = split_quoted_args(command).map_err(SolverConfigError::UnterminatedQuote)?;
     if parts.is_empty() {
-        return Err("symbolic solver command is empty".to_string());
+        return Err(SolverConfigError::EmptyCommand);
     }
 
     Ok(parts)

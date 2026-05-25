@@ -221,7 +221,8 @@ fn translate_halmos_config(args: &str, values: &mut Vec<String>) -> Result<(), S
 }
 
 fn split_halmos_args(args: &str) -> Result<Vec<String>, String> {
-    split_quoted_args(args, "@custom:halmos config")
+    split_quoted_args(args)
+        .map_err(|quote_ch| format!("unterminated {quote_ch} quote in @custom:halmos config"))
 }
 
 fn halmos_numeric_symbolic_field(flag: &str) -> Option<&'static str> {
@@ -1011,5 +1012,11 @@ contract SymbolicHalmosLengths {
             natspecs[0].halmos_config_values().unwrap(),
             vec!["default.symbolic.array_lengths = [3]"]
         );
+    }
+
+    #[test]
+    fn split_halmos_args_rejects_unterminated_quote() {
+        let err = split_halmos_args(r#"--width "unterm"#).unwrap_err();
+        assert_eq!(err, r#"unterminated " quote in @custom:halmos config"#);
     }
 }

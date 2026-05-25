@@ -25,7 +25,7 @@ pub(crate) use solver::{
 };
 #[cfg(test)]
 pub(crate) use solver::{
-    SolverCommand, SolverOutcome, SolverRunSummary, fallback_single_var_model,
+    SolverCommand, SolverConfigError, SolverOutcome, SolverRunSummary, fallback_single_var_model,
     named_solver_command, parse_model, solver_commands_for_config, split_solver_command,
     validate_solver_model_output,
 };

@@ -123,7 +123,9 @@ pub fn to_array_value(val: &str) -> Result<Value, figment::Error> {
 /// This supports whitespace separation, single and double quotes, and backslash escaping. It is
 /// intentionally smaller than a shell parser: expansions, redirection, pipelines, and command
 /// separators are treated as plain argument text by callers.
-pub fn split_quoted_args(args: &str, context: &str) -> Result<Vec<String>, String> {
+///
+/// Returns `Err(quote_char)` when the input contains an unterminated quote.
+pub fn split_quoted_args(args: &str) -> Result<Vec<String>, char> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut quote = None;
@@ -166,7 +168,7 @@ pub fn split_quoted_args(args: &str, context: &str) -> Result<Vec<String>, Strin
     }
 
     if let Some(quote_ch) = quote {
-        return Err(format!("unterminated {quote_ch} quote in {context}"));
+        return Err(quote_ch);
     }
     if escaped {
         current.push('\\');
