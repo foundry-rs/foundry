@@ -24,3 +24,6 @@ pub use mutators::BoundMutator;
 
 mod literals;
 pub use literals::{LiteralMaps, LiteralsCollector, LiteralsDictionary};
+
+mod gas_sampler;
+pub use gas_sampler::{GasObservations, sample_gas_limit, sample_gas_price};

@@ -697,6 +697,7 @@ impl TestArgs {
         let known_contracts = runner.known_contracts.clone();
 
         let libraries = runner.libraries.clone();
+        let block_gas_limit = runner.evm_opts.gas_limit();
 
         // Capture multi-pass state before moving `runner` into the spawn task.
         // In multi-pass mode the per-pass summary is suppressed; the merged summary is
@@ -801,7 +802,10 @@ impl TestArgs {
                     if let TestKind::Invariant { metrics, .. } = &result.kind
                         && !metrics.is_empty()
                     {
-                        let _ = sh_println!("\n{}\n", format_invariant_metrics_table(metrics));
+                        let _ = sh_println!(
+                            "\n{}\n",
+                            format_invariant_metrics_table(metrics, Some(block_gas_limit))
+                        );
                     }
 
                     // We only display logs at level 2 and above

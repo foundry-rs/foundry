@@ -29,7 +29,10 @@ use foundry_evm_fuzz::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, InvariantSettings,
         RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
-    strategies::{EvmFuzzState, InvariantFuzzState, invariant_strat, override_call_strat},
+    strategies::{
+        EvmFuzzState, GasObservations, InvariantFuzzState, invariant_strat, override_call_strat,
+        sample_gas_limit, sample_gas_price,
+    },
 };
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
@@ -127,6 +130,18 @@ pub struct InvariantMetrics {
     pub reverts: usize,
     // Count of fuzzed selector discards (through assume cheatcodes).
     pub discards: usize,
+    // Max `gas_used` for a successful call. Populated only when
+    // `invariant.gas_fuzz = true`; `0` otherwise.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub max_gas: u64,
+    // Run prefix up to and including the call that produced `max_gas`.
+    // Acts as a reproducer; updated whenever a strict new max is observed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub max_gas_sequence: Vec<BasicTxDetails>,
+}
+
+const fn is_zero_u64(v: &u64) -> bool {
+    *v == 0
 }
 
 /// Campaign-level throughput metrics for invariant progress reporting.
@@ -326,10 +341,16 @@ impl InvariantTest {
         HitMaps::merge_opt(&mut self.test_data.line_coverage, new_coverage);
     }
 
-    /// Update metrics for a fuzzed selector, extracted from tx details.
-    /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
-    /// separated from reverts.
-    fn record_metrics(&mut self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
+    /// Update metrics for a fuzzed selector. On a successful call with
+    /// `gas_used > max_gas`, also snapshots `run_inputs` as the reproducer.
+    fn record_metrics(
+        &mut self,
+        tx_details: &BasicTxDetails,
+        reverted: bool,
+        discarded: bool,
+        gas_used: u64,
+        run_inputs: Option<&[BasicTxDetails]>,
+    ) {
         if let Some(metric_key) = self.targeted_contracts.targets().fuzzed_metric_key(tx_details) {
             let test_metrics = &mut self.test_data.metrics;
             let invariant_metrics = test_metrics.entry(metric_key).or_default();
@@ -338,6 +359,11 @@ impl InvariantTest {
                 invariant_metrics.discards += 1;
             } else if reverted {
                 invariant_metrics.reverts += 1;
+            } else if gas_used > invariant_metrics.max_gas {
+                invariant_metrics.max_gas = gas_used;
+                if let Some(inputs) = run_inputs {
+                    invariant_metrics.max_gas_sequence = inputs.to_vec();
+                }
             }
         }
     }
@@ -493,6 +519,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let campaign_start = Instant::now();
         let mut throughput = InvariantThroughputMetrics::default();
         let mut failure_metrics = InvariantFailureMetrics::default();
+
+        // Campaign-scoped state for `invariant.gas_fuzz`. Unused when disabled.
+        let gas_observations = GasObservations::new();
+        let block_gas_cap = self.executor.gas_limit();
         let continue_campaign = |runs: u32| {
             if early_exit.should_stop() {
                 return false;
@@ -554,6 +584,30 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     (last.call_details.target, Selector::from(sel_bytes))
                 };
 
+                // Per-call gas-envelope sampling. `None` from `sample_gas_limit`
+                // leaves `gas_limit` unset → executor's default budget applies.
+                // `gas_price` is applied via the cheatcodes one-shot slot.
+                if self.config.gas_fuzz {
+                    let mut rng = rand::rng();
+                    let sampled = sample_gas_limit(
+                        &gas_observations,
+                        handler_target,
+                        handler_selector,
+                        block_gas_cap,
+                        &mut rng,
+                    );
+                    if let Some(g) = sampled
+                        && let Some(last) = current_run.inputs.last_mut()
+                    {
+                        last.call_details.gas_limit = Some(g);
+                    }
+
+                    let sampled_price = sample_gas_price(&mut rng);
+                    if let Some(cheats) = self.executor.inspector_mut().cheatcodes.as_mut() {
+                        cheats.gas_price = Some(sampled_price);
+                    }
+                }
+
                 // Execute call from the randomly generated sequence without committing state.
                 // State is committed only if call is not a magic assume.
                 let mut call_result = execute_tx(
@@ -568,11 +622,19 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 // assumes / pops below) get zero-length entries that the corpus side filters out.
                 let call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
-                if self.config.show_metrics {
+                if self.config.show_metrics || self.config.gas_fuzz {
+                    // gas_used / run_inputs are only meaningful under `gas_fuzz`;
+                    // `show_metrics` alone keeps the legacy table.
+                    let gas_used_for_metric =
+                        if self.config.gas_fuzz { call_result.gas_used } else { 0 };
+                    let run_inputs_for_metric =
+                        self.config.gas_fuzz.then_some(current_run.inputs.as_slice());
                     invariant_test.record_metrics(
                         current_run.inputs.last().expect("checked above"),
                         call_result.reverted,
                         discarded,
+                        gas_used_for_metric,
+                        run_inputs_for_metric,
                     );
                 }
 
@@ -648,6 +710,20 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         .fuzz_runs
                         .push(FuzzCase { gas: call_result.gas_used, stipend: call_result.stipend });
                     throughput.record_call(call_result.gas_used);
+
+                    // Only natural-gas runs feed the observation tracker; calls under
+                    // a tight sampled budget may have OOG'd and would skew the max down.
+                    if self.config.gas_fuzz
+                        && call_result.gas_used > 0
+                        && let Some(last) = current_run.inputs.last()
+                        && last.call_details.gas_limit.is_none()
+                    {
+                        gas_observations.record(
+                            handler_target,
+                            handler_selector,
+                            call_result.gas_used,
+                        );
+                    }
 
                     // Determine if test can continue or should exit.
                     // Check invariants based on check_interval to improve deep run performance.
@@ -1506,9 +1582,27 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
     let requested_value = tx.call_details.value.unwrap_or(U256::ZERO);
     let sender_balance = executor.get_balance(tx.sender)?;
     let value = requested_value.min(sender_balance);
-    executor
-        .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), value)
-        .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
+
+    // Per-call gas-limit override under `gas_fuzz`. Save/restore so the executor's
+    // natural limit applies to invariant assertion calls.
+    let saved_gas_limit = tx.call_details.gas_limit.map(|g| {
+        let saved = executor.gas_limit();
+        executor.set_gas_limit(g);
+        saved
+    });
+
+    let result = executor.call_raw(
+        tx.sender,
+        tx.call_details.target,
+        tx.call_details.calldata.clone(),
+        value,
+    );
+
+    if let Some(saved) = saved_gas_limit {
+        executor.set_gas_limit(saved);
+    }
+
+    result.map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
 }
 
 #[cfg(test)]

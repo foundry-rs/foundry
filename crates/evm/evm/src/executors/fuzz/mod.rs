@@ -278,6 +278,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     target: address,
                     calldata: calldata.clone(),
                     value: None,
+                    gas_limit: None,
                 },
             }],
             &[cmp_values],
@@ -450,7 +451,12 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             warp: None,
             roll: None,
             sender: Default::default(),
-            call_details: CallDetails { target: Default::default(), calldata, value: None },
+            call_details: CallDetails {
+                target: Default::default(),
+                calldata,
+                value: None,
+                gas_limit: None,
+            },
         });
 
         let mut corpus = WorkerCorpus::new(

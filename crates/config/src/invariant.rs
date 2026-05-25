@@ -49,6 +49,15 @@ pub struct InvariantConfig {
     ///
     /// Example: `check_interval = 10` means assert after calls 10, 20, 30, ... and the last call.
     pub check_interval: u32,
+    /// Enable gas-envelope fuzzing and per-selector gas reporting.
+    /// Default `false` (no behavior change, no new output).
+    ///
+    /// Turns on three things at once:
+    /// 1. Per-call `tx.gas_limit` / `tx.gasprice` randomization, biased toward the OOG /
+    ///    branch-on-gasprice bug regimes.
+    /// 2. Per-`(target, selector)` `max_gas` tracking (adds the "Max Gas" column).
+    /// 3. Per-selector reproducer block: the call sequence that produced each peak.
+    pub gas_fuzz: bool,
 }
 
 impl Default for InvariantConfig {
@@ -70,6 +79,7 @@ impl Default for InvariantConfig {
             max_time_delay: None,
             max_block_delay: None,
             check_interval: 1,
+            gas_fuzz: false,
         }
     }
 }
