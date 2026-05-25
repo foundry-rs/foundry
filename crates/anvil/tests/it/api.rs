@@ -721,3 +721,32 @@ async fn test_fill_transaction_reverts_on_gas_estimation_failure() {
         "Error should indicate a revert, got: {error_message}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_send_transaction_uses_valid_fallback_gas_on_osaka() {
+    let (api, handle) = spawn(
+        NodeConfig::test()
+            .with_hardfork(Some(EthereumHardfork::Osaka.into()))
+            .enable_tx_gas_limit(true),
+    )
+    .await;
+
+    let accounts: Vec<_> = handle.dev_wallets().collect();
+    let signer: EthereumWallet = accounts[0].clone().into();
+    let from = accounts[0].address();
+
+    let provider = http_provider_with_signer(&handle.http_endpoint(), signer);
+
+    // Deploy VendingMachine contract.
+    let contract = VendingMachine::deploy(&provider).await.unwrap();
+    let contract_address = *contract.address();
+
+    // Call buy with insufficient ether and without gas limit.
+    let tx_req = TransactionRequest::default()
+        .with_from(from)
+        .with_to(contract_address)
+        .with_input(VendingMachine::buyCall { amount: U256::from(10) }.abi_encode());
+
+    let receipt = api.send_transaction_sync(WithOtherFields::new(tx_req)).await.unwrap();
+    assert!(!receipt.status(), "transaction should preserve send-path revert semantics");
+}
