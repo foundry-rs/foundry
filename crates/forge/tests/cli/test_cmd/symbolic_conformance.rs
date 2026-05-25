@@ -44,7 +44,7 @@ fn assert_conformance_matrix_case(stdout: &str, case: &ConformanceMatrixCase<'_>
     match case.expected {
         ConformanceStatus::Pass => {
             assert_relevant_lines(
-                &stdout,
+                stdout,
                 foundry_test_utils::str![[r#"
 [PASS]
 "#]],
@@ -52,7 +52,7 @@ fn assert_conformance_matrix_case(stdout: &str, case: &ConformanceMatrixCase<'_>
         }
         ConformanceStatus::Counterexample => {
             assert_relevant_lines(
-                &stdout,
+                stdout,
                 foundry_test_utils::str![[r#"
 [FAIL
 "#]],
@@ -60,13 +60,13 @@ fn assert_conformance_matrix_case(stdout: &str, case: &ConformanceMatrixCase<'_>
         }
         ConformanceStatus::RevertAll => {
             assert_relevant_lines(
-                &stdout,
+                stdout,
                 foundry_test_utils::str![[r#"
 RevertAll
 "#]],
             );
             assert_relevant_lines(
-                &stdout,
+                stdout,
                 foundry_test_utils::str![[r#"
 all symbolic paths reverted
 "#]],
