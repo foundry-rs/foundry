@@ -345,7 +345,12 @@ impl<'hir> CallNameFinder<'_, 'hir> {
     fn expr_calls_named(&mut self, expr: &'hir hir::Expr<'hir>) -> bool {
         match &expr.kind {
             ExprKind::Call(callee, args, opts) => {
-                if callee_name_is(self.hir, callee, self.name) {
+                let called_functions = resolved_internal_function_ids(self.hir, callee, self.bases);
+                if called_functions
+                    .iter()
+                    .copied()
+                    .any(|func_id| self.function_matches_name(func_id))
+                {
                     return true;
                 }
 
@@ -359,9 +364,14 @@ impl<'hir> CallNameFinder<'_, 'hir> {
                     return true;
                 }
 
-                resolved_internal_function_ids(self.hir, callee, self.bases)
-                    .into_iter()
-                    .any(|func_id| self.function_calls_named(func_id))
+                for func_id in called_functions {
+                    if self.function_belongs_to_bases(func_id) && self.function_calls_named(func_id)
+                    {
+                        return true;
+                    }
+                }
+
+                false
             }
             ExprKind::Assign(lhs, _, rhs) | ExprKind::Binary(lhs, _, rhs) => {
                 self.expr_calls_named(lhs) || self.expr_calls_named(rhs)
@@ -409,15 +419,17 @@ impl<'hir> CallNameFinder<'_, 'hir> {
         self.stack.pop();
         found
     }
-}
 
-fn callee_name_is(hir: &hir::Hir<'_>, callee: &hir::Expr<'_>, name: &str) -> bool {
-    match &callee.peel_parens().kind {
-        ExprKind::Ident(resolutions) => resolutions.iter().any(|res| {
-            matches!(res, Res::Item(ItemId::Function(fid)) if hir.function(*fid).name.is_some_and(|ident| ident.as_str() == name))
-        }),
-        ExprKind::Member(_, member) => member.as_str() == name,
-        _ => false,
+    fn function_matches_name(&self, func_id: FunctionId) -> bool {
+        self.function_belongs_to_bases(func_id)
+            && self.hir.function(func_id).name.is_some_and(|ident| ident.as_str() == self.name)
+    }
+
+    fn function_belongs_to_bases(&self, func_id: FunctionId) -> bool {
+        self.hir
+            .function(func_id)
+            .contract
+            .is_some_and(|contract_id| self.bases.iter().any(|&base_id| base_id == contract_id))
     }
 }
 

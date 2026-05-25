@@ -143,6 +143,27 @@ contract ProtectedThroughHelper is Initializable {
     }
 }
 
+library UnrelatedInitializerLock {
+    function _disableInitializers() internal pure {}
+}
+
+contract UnrelatedInitializerLockCall is Initializable {
+    address public owner;
+
+    constructor() {
+        UnrelatedInitializerLock._disableInitializers();
+    }
+
+    function initialize(address owner_) public initializer { //~WARN: upgradeable initializer is not protected against direct implementation calls
+        owner = owner_;
+    }
+
+    function execute(address target, bytes calldata data) external {
+        (bool ok,) = target.delegatecall(data);
+        require(ok);
+    }
+}
+
 contract OnlyProxyInitializer is Initializable {
     address public owner;
 
