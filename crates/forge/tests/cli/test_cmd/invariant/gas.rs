@@ -478,7 +478,7 @@ contract GasPricePersistedReplayTest is Test {
         .assert_failure()
         .stderr_eq(str![["
 ...
-Warning: Replayed invariant failure from persisted file.
+Warning: Replayed invariant failure from persisted file.\u{20}
 Run `forge clean` or remove file to ignore failure and to continue invariant test campaign.
 ...
 "]]);
