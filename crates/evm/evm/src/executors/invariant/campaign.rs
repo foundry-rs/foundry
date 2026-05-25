@@ -58,12 +58,11 @@ pub struct InvariantWorkerPlan {
 
 impl InvariantWorkerPlan {
     pub const fn run_id(&self, worker_run: u32) -> InvariantRunId {
-        InvariantRunId::new(
-            self.first_global_run + worker_run,
-            self.worker_id,
-            worker_run,
-            self.seed,
-        )
+        let global_run = match self.first_global_run.checked_add(worker_run) {
+            Some(global_run) => global_run,
+            None => panic!("invariant worker run id overflow"),
+        };
+        InvariantRunId::new(global_run, self.worker_id, worker_run, self.seed)
     }
 
     #[cfg(debug_assertions)]
@@ -202,6 +201,15 @@ mod tests {
         assert_eq!(plan.runs, 3);
         assert_eq!(plan.seed, seed);
         assert_eq!(plan.run_id(2), InvariantRunId::new(2, 0, 2, seed));
+    }
+
+    #[test]
+    #[should_panic(expected = "invariant worker run id overflow")]
+    fn worker_plan_run_id_rejects_overflow() {
+        let plan =
+            InvariantWorkerPlan { worker_id: 1, first_global_run: u32::MAX, runs: 1, seed: None };
+
+        let _ = plan.run_id(1);
     }
 
     #[test]
