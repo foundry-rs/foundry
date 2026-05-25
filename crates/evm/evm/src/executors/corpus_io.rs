@@ -5,23 +5,28 @@ use foundry_evm_fuzz::BasicTxDetails;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-/// Directory name used by the master worker.
-// Note: invariant tests only run a single worker; revisit when they gain parallel workers.
-const MASTER_WORKER_DIR: &str = "worker0";
-/// Subdirectory storing corpus entries.
+const WORKER_DIR_PREFIX: &str = "worker";
 const CORPUS_SUBDIR: &str = "corpus";
 
-/// Resolves the canonical corpus directory used for replay.
-///
-/// Accepts either the per-test root (`.../<contract>/<test>/`) or a path that
-/// already points at `worker0/corpus`. Falls back to the input path if neither
-/// candidate exists, letting the caller surface a clearer error.
-pub fn canonical_replay_dir(root: &Path) -> PathBuf {
-    let canonical = root.join(MASTER_WORKER_DIR).join(CORPUS_SUBDIR);
-    if canonical.is_dir() {
-        return canonical;
+/// Returns every `worker*/corpus/` under `root`, or `[root]` if none exist.
+pub fn canonical_replay_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            let name = p.file_name()?.to_str()?;
+            (p.is_dir() && name.starts_with(WORKER_DIR_PREFIX))
+                .then(|| p.join(CORPUS_SUBDIR))
+                .filter(|d| d.is_dir())
+        })
+        .collect();
+    dirs.sort();
+    if dirs.is_empty() {
+        dirs.push(root.to_path_buf());
     }
-    root.to_path_buf()
+    dirs
 }
 
 /// A single corpus file on disk.

@@ -15,7 +15,7 @@
 use crate::executors::{
     Executor,
     corpus::{DynamicTargetCtx, WorkerCorpus, register_replay_created, rollback_replay_created},
-    corpus_io::{canonical_replay_dir, read_corpus_dir},
+    corpus_io::{canonical_replay_dirs, read_corpus_dir},
     invariant::execute_tx,
 };
 use alloy_json_abi::Function;
@@ -25,12 +25,13 @@ use foundry_evm_core::evm::FoundryEvmNetwork;
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::invariant::FuzzRunIdentifiedContracts;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fmt,
     fs::File,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
+use uuid::Uuid;
 
 /// Which coverage bitmap(s) to dump.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -107,9 +108,9 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     dynamic: Option<&DynamicTargetCtx<'_>>,
     opts: &ShowmapOpts,
 ) -> Result<ShowmapStats> {
-    let replay_dir = canonical_replay_dir(corpus_dir);
-    if !replay_dir.is_dir() {
-        return Err(eyre!("corpus directory not found: {}", replay_dir.display()));
+    let replay_dirs = canonical_replay_dirs(corpus_dir);
+    if !replay_dirs.iter().any(|d| d.is_dir()) {
+        return Err(eyre!("corpus directory not found: {}", corpus_dir.display()));
     }
 
     let approach_dir = opts.out_dir.join(&opts.approach);
@@ -122,7 +123,12 @@ pub fn replay_corpus_to_showmap<FEN: FoundryEvmNetwork>(
     let mut evm_buf: BTreeMap<(B256, u32), u64> = BTreeMap::new();
     let mut san_buf: Vec<u64> = Vec::new();
 
-    for entry in read_corpus_dir(&replay_dir) {
+    // Dedup hard-linked entries shared across workers.
+    let mut seen_uuids: HashSet<Uuid> = HashSet::new();
+    let entries =
+        replay_dirs.iter().flat_map(|d| read_corpus_dir(d)).filter(|e| seen_uuids.insert(e.uuid));
+
+    for entry in entries {
         let tx_seq = match entry.read_tx_seq() {
             Ok(seq) if !seq.is_empty() => seq,
             Ok(_) => continue,
@@ -273,7 +279,6 @@ fn write_sancov<W: Write>(out: &mut W, bitmap: &[u64]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
 
     fn temp_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("foundry-showmap-{}", Uuid::new_v4()));
@@ -331,10 +336,18 @@ mod tests {
     }
 
     #[test]
-    fn canonical_replay_dir_prefers_worker0_corpus() {
+    fn canonical_replay_dirs_collects_all_workers() {
         let dir = temp_dir();
-        let inner = dir.join("worker0").join("corpus");
-        std::fs::create_dir_all(&inner).unwrap();
-        assert_eq!(canonical_replay_dir(&dir), inner);
+        let w0 = dir.join("worker0").join("corpus");
+        let w1 = dir.join("worker1").join("corpus");
+        std::fs::create_dir_all(&w0).unwrap();
+        std::fs::create_dir_all(&w1).unwrap();
+        assert_eq!(canonical_replay_dirs(&dir), vec![w0, w1]);
+    }
+
+    #[test]
+    fn canonical_replay_dirs_falls_back_when_no_workers() {
+        let dir = temp_dir();
+        assert_eq!(canonical_replay_dirs(&dir), vec![dir]);
     }
 }
