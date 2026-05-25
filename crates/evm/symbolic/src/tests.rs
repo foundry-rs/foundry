@@ -2038,6 +2038,30 @@ fn split_solver_command_preserves_empty_quoted_args() {
 }
 
 #[test]
+/// Regression coverage for `split_solver_command_rejects_unterminated_double_quote`.
+fn split_solver_command_rejects_unterminated_double_quote() {
+    let err = split_solver_command(r#"z3 "unterm"#).unwrap_err();
+
+    assert!(
+        matches!(err, SolverConfigError::UnterminatedQuote('"')),
+        "expected UnterminatedQuote('\"'), got {err:?}"
+    );
+    assert_eq!(err.to_string(), r#"unterminated " quote in symbolic solver command"#);
+}
+
+#[test]
+/// Regression coverage for `split_solver_command_rejects_unterminated_single_quote`.
+fn split_solver_command_rejects_unterminated_single_quote() {
+    let err = split_solver_command("z3 'unterm").unwrap_err();
+
+    assert!(
+        matches!(err, SolverConfigError::UnterminatedQuote('\'')),
+        "expected UnterminatedQuote('\\''), got {err:?}"
+    );
+    assert_eq!(err.to_string(), "unterminated ' quote in symbolic solver command");
+}
+
+#[test]
 /// Regression coverage for `custom_solver_names_remain_z3_compatible`.
 fn custom_solver_names_remain_z3_compatible() {
     let commands = solver_commands_for_config(&SymbolicConfig {
