@@ -1,4 +1,7 @@
-use foundry_test_utils::{TestCommand, snapbox::cmd::OutputAssert};
+use foundry_test_utils::{
+    TestCommand,
+    snapbox::{Data, IntoData, assert_data_eq, cmd::OutputAssert},
+};
 use std::process::Command;
 
 pub fn z3_available() -> bool {
@@ -42,4 +45,21 @@ pub fn assert_symbolic_witness(cmd: &mut TestCommand) -> OutputAssert {
         // `args=[1234 [1.2e3], 5678 [5.6e3]]`, so allow one level of nesting.
         ("[ARGS]", r"args=\[(?:[^\[\]]|\[[^\]]*\])*\]"),
     ])
+}
+
+pub fn assert_relevant_lines(stdout: &str, expected: impl IntoData) {
+    let expected = expected.into_data();
+    let expected_lines = expected.to_string();
+    let mut actual = String::new();
+
+    for expected_line in expected_lines.lines().filter(|line| !line.is_empty()) {
+        stdout
+            .lines()
+            .find(|line| line.contains(expected_line))
+            .unwrap_or_else(|| panic!("missing line `{expected_line}` in stdout:\n{stdout}"));
+        actual.push_str(expected_line);
+        actual.push('\n');
+    }
+
+    assert_data_eq!(Data::from(actual), expected);
 }

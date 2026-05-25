@@ -1,3 +1,4 @@
+use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 
@@ -38,7 +39,12 @@ contract SymbolicCalldataLoad {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicCalldataLoad(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicCalldataLoad(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CALLDATALOAD offset"), "{stdout}");
 });
 
@@ -78,7 +84,12 @@ contract SymbolicCalldataCopy {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicCalldataCopy(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicCalldataCopy(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CALLDATACOPY offset"), "{stdout}");
 });
 
@@ -115,7 +126,12 @@ contract SymbolicCalldataCopyDest {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicCalldataCopyDest(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicCalldataCopyDest(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CALLDATACOPY dest"), "{stdout}");
 });
 
@@ -158,7 +174,12 @@ contract SymbolicCalldataCopySize {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicCalldataCopySize(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicCalldataCopySize(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CALLDATACOPY size"), "{stdout}");
 });
 
@@ -199,9 +220,11 @@ contract SymbolicCalldataCopyDestAndSize {
         .get_output()
         .stdout_lossy();
 
-    assert!(
-        stdout.contains("[PASS] checkCalldataCopyDestAndSize(uint8,uint8,bytes32)"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCalldataCopyDestAndSize(uint8,uint8,bytes32)
+"#]],
     );
     assert!(!stdout.contains("symbolic CALLDATACOPY dest"), "{stdout}");
     assert!(!stdout.contains("symbolic CALLDATACOPY size"), "{stdout}");
@@ -258,7 +281,12 @@ contract SymbolicCallInputOffset {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicCallInputOffset(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicCallInputOffset(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CALL input offset"), "{stdout}");
 });
 
@@ -313,7 +341,12 @@ contract SymbolicCallOutputSize {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicCallOutputSize(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicCallOutputSize(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CALL output size"), "{stdout}");
 });
 
@@ -368,7 +401,12 @@ contract SymbolicCallInputSize {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicCallInputSize(uint8,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicCallInputSize(uint8,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CALL input size"), "{stdout}");
 });
 
@@ -409,8 +447,18 @@ contract SymbolicExternalCall {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkExternal(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkExternal(uint256)
+"#]],
+    );
     assert!(!stdout.contains("unsupported symbolic execution feature: external CALL"), "{stdout}");
 });
 
@@ -455,8 +503,18 @@ contract SymbolicLowLevelCall {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkLowLevel(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkLowLevel(uint256)
+"#]],
+    );
     assert!(!stdout.contains("unsupported symbolic execution feature: external CALL"), "{stdout}");
 });
 
@@ -506,9 +564,24 @@ contract SymbolicSelectorBackdoor {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkNoBackdoor(bytes4,uint256)"), "{stdout}");
-    assert!(stdout.contains("args="), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkNoBackdoor(bytes4,uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=
+"#]],
+    );
     assert!(!stdout.contains("symbolic external CALL selector"), "{stdout}");
 });
 
@@ -565,9 +638,24 @@ contract SymbolicTargetBackdoor is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkNoBadTarget(address,uint256)"), "{stdout}");
-    assert!(stdout.contains("args="), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkNoBadTarget(address,uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=
+"#]],
+    );
     assert!(!stdout.contains("symbolic CALL target outside known contracts"), "{stdout}");
 });
 
@@ -615,7 +703,12 @@ contract SymbolicTargetDefaultAuto is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkTarget(address,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkTarget(address,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CALL target"), "{stdout}");
 });
 
@@ -647,7 +740,12 @@ contract SymbolicTargetDefaultOff {
             .get_output()
             .stdout_lossy();
 
-        assert!(stdout.contains("symbolic CALL target"), "{stdout}");
+        assert_relevant_lines(
+            &stdout,
+            foundry_test_utils::str![[r#"
+symbolic CALL target
+"#]],
+        );
     }
 );
 
@@ -684,7 +782,12 @@ contract SymbolicUnboundedTarget {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkUnbounded(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkUnbounded(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CALL target outside known contracts"), "{stdout}");
 });
 
@@ -741,8 +844,18 @@ contract SymbolicDelegateTarget is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkDelegateTarget(address,uint256)"), "{stdout}");
-    assert!(stdout.contains("checkDelegateTarget(address,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkDelegateTarget(address,uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkDelegateTarget(address,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CALL target"), "{stdout}");
 });
 
@@ -788,7 +901,12 @@ contract SymbolicUnknownSelector {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkUnknownSelector(bytes4)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkUnknownSelector(bytes4)
+"#]],
+    );
     assert!(!stdout.contains("symbolic external CALL selector"), "{stdout}");
 });
 
@@ -840,7 +958,12 @@ contract SymbolicSvmBytes4Selector {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSvmBytes4Selector()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSvmBytes4Selector()
+"#]],
+    );
     assert!(!stdout.contains("symbolic external CALL selector"), "{stdout}");
 });
 
@@ -899,7 +1022,12 @@ contract SymbolicSvmCreateCalldata {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSvmCreateCalldata()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSvmCreateCalldata()
+"#]],
+    );
     assert!(!stdout.contains("symbolic external CALL selector"), "{stdout}");
 });
 
@@ -948,7 +1076,12 @@ contract SymbolicExternalRequire {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkRequireCall(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRequireCall(uint256)
+"#]],
+    );
     assert!(!stdout.contains("unsupported symbolic execution feature: external CALL"), "{stdout}");
 });
 
@@ -994,7 +1127,12 @@ contract SymbolicStaticCall {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkStatic(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkStatic(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_delegatecall_writes_caller_storage, |prj, cmd| {
@@ -1041,7 +1179,12 @@ contract SymbolicDelegateCall {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkDelegate(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkDelegate(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_call_transfers_value_and_checks_balance, |prj, cmd| {
@@ -1089,7 +1232,12 @@ contract SymbolicValueCall is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkValueTransfer()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkValueTransfer()
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_call_accepts_symbolic_value, |prj, cmd| {
@@ -1145,7 +1293,12 @@ contract SymbolicValueCall is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicValueTransfer(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicValueTransfer(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic external CALL value"), "{stdout}");
 });
 
@@ -1193,7 +1346,12 @@ contract SymbolicInsufficientValueCall is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicInsufficientValue(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicInsufficientValue(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic external CALL value"), "{stdout}");
 });
 
@@ -1249,6 +1407,11 @@ contract SymbolicCallcodeValue is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicCallcodeValue(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicCallcodeValue(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CALLCODE value"), "{stdout}");
 });

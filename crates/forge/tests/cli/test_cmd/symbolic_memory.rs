@@ -1,3 +1,4 @@
+use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 
@@ -39,7 +40,12 @@ contract SymbolicMload {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicMload(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicMload(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic MLOAD offset"), "{stdout}");
 });
 
@@ -78,7 +84,12 @@ contract SymbolicMstoreConstrained is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkConstrainedMstore(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkConstrainedMstore(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic MSTORE offset"), "{stdout}");
 });
 
@@ -113,7 +124,12 @@ contract SymbolicMstoreUnconstrained {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL: panic: assertion failed"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: panic: assertion failed
+"#]],
+    );
     assert!(!stdout.contains("symbolic MSTORE offset"), "{stdout}");
 });
 
@@ -148,7 +164,12 @@ contract SymbolicMstore8Unconstrained {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL: panic: assertion failed"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL: panic: assertion failed
+"#]],
+    );
     assert!(!stdout.contains("symbolic MSTORE8 offset"), "{stdout}");
 });
 
@@ -183,7 +204,12 @@ contract SymbolicMsizeAfterWrite {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicMsize(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicMsize(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic MSIZE after symbolic memory write"), "{stdout}");
 });
 
@@ -222,7 +248,12 @@ contract SymbolicSha3 {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicSha3(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicSha3(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic SHA3 offset"), "{stdout}");
 });
 
@@ -263,7 +294,12 @@ contract SymbolicSha3ConstrainedSize is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkConstrainedSha3Size(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkConstrainedSha3Size(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic SHA3 size"), "{stdout}");
 });
 
@@ -304,7 +340,12 @@ contract SymbolicSha3BoundedSize is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkBoundedSha3Size(uint8,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkBoundedSha3Size(uint8,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic SHA3 size"), "{stdout}");
 });
 
@@ -345,7 +386,12 @@ contract SymbolicLogOffset is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicLogOffset(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicLogOffset(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic LOG offset"), "{stdout}");
 });
 
@@ -381,7 +427,12 @@ contract SymbolicLogSize is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicLogSize(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicLogSize(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic LOG size"), "{stdout}");
 });
 
@@ -439,7 +490,12 @@ contract SymbolicReturndataCopyConstrained is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkConstrainedReturndataCopy(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkConstrainedReturndataCopy(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic RETURNDATACOPY offset"), "{stdout}");
 });
 
@@ -500,7 +556,12 @@ contract SymbolicReturndataCopyOffset is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicReturndataCopyOffset(uint8,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicReturndataCopyOffset(uint8,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic RETURNDATACOPY offset"), "{stdout}");
 });
 
@@ -550,7 +611,12 @@ contract SymbolicReturndataCopyDest {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicReturndataCopyDest(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicReturndataCopyDest(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic RETURNDATACOPY dest"), "{stdout}");
 });
 
@@ -611,7 +677,12 @@ contract SymbolicReturndataCopySize is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicReturndataCopySize(uint8,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicReturndataCopySize(uint8,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic RETURNDATACOPY size"), "{stdout}");
 });
 
@@ -674,8 +745,18 @@ contract SymbolicReturnRevertOffset {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicReturnOffset(uint16,uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkSymbolicRevertOffset(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicReturnOffset(uint16,uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicRevertOffset(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic RETURN offset"), "{stdout}");
     assert!(!stdout.contains("symbolic REVERT offset"), "{stdout}");
 });
@@ -714,7 +795,12 @@ contract SymbolicMcopy {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicMcopy(uint16,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicMcopy(uint16,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic MCOPY src"), "{stdout}");
 });
 
@@ -769,7 +855,12 @@ contract SymbolicReturnSize {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicReturnSize(uint8,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicReturnSize(uint8,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic RETURN size"), "{stdout}");
 });
 
@@ -824,6 +915,11 @@ contract SymbolicRevertSize {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicRevertSize(uint8,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicRevertSize(uint8,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic REVERT size"), "{stdout}");
 });

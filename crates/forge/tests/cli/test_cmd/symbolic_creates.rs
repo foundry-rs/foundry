@@ -1,3 +1,4 @@
+use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 
@@ -35,8 +36,18 @@ contract SymbolicCreate {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkCreate(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkCreate(uint256)
+"#]],
+    );
     assert!(!stdout.contains("unsupported opcode: 0xf0"), "{stdout}");
 });
 
@@ -74,7 +85,12 @@ contract SymbolicCreateConstructorArgs {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreateConstructorArg(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreateConstructorArg(uint256)
+"#]],
+    );
     assert!(
         !stdout.contains("unsupported symbolic execution feature: symbolic CREATE initcode"),
         "{stdout}"
@@ -119,7 +135,12 @@ contract SymbolicCreateInitcodeOffset is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreateInitcodeOffset(uint16)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreateInitcodeOffset(uint16)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CREATE initcode offset"), "{stdout}");
     assert!(!stdout.contains("symbolic bytecode opcode"), "{stdout}");
 });
@@ -156,8 +177,18 @@ contract SymbolicCreate2 {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkCreate2(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkCreate2(uint256)
+"#]],
+    );
     assert!(!stdout.contains("unsupported opcode: 0xf5"), "{stdout}");
 });
 
@@ -200,7 +231,12 @@ contract SymbolicCreate2Args {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreate2ConstructorArg(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreate2ConstructorArg(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CREATE2 initcode"), "{stdout}");
 });
 
@@ -262,7 +298,12 @@ contract SymbolicExpectCreate is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreateExpectation(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreateExpectation(uint256)
+"#]],
+    );
 
     let stdout = prj
         .forge_command()
@@ -271,7 +312,12 @@ contract SymbolicExpectCreate is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreate2Expectation(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreate2Expectation(uint256)
+"#]],
+    );
 
     let stdout = prj
         .forge_command()
@@ -280,7 +326,12 @@ contract SymbolicExpectCreate is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicCreateExpectation(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicCreateExpectation(address)
+"#]],
+    );
 
     let stdout = prj
         .forge_command()
@@ -289,8 +340,18 @@ contract SymbolicExpectCreate is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkMismatchedSymbolicCreateExpectation(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMismatchedSymbolicCreateExpectation(address)
+"#]],
+    );
 
     let stdout = prj
         .forge_command()
@@ -299,8 +360,18 @@ contract SymbolicExpectCreate is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkMissingCreateExpectation(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMissingCreateExpectation(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_create2_supports_symbolic_salt_and_self_address, |prj, cmd| {
@@ -342,7 +413,12 @@ contract SymbolicCreate2SelfAddress {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreate2SelfAddress(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreate2SelfAddress(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CREATE2 salt"), "{stdout}");
     assert!(!stdout.contains("symbolic CALL target"), "{stdout}");
 });
@@ -386,7 +462,12 @@ contract SymbolicCreate2Collision is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreate2Collision()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreate2Collision()
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_create_failure_bumps_creator_nonce, |prj, cmd| {
@@ -426,7 +507,12 @@ contract SymbolicCreateFailureNonce is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreateFailureNonce(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreateFailureNonce(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_compute_create_address_cheatcodes, |prj, cmd| {
@@ -521,23 +607,47 @@ contract SymbolicComputeCreateAddresses is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkComputeCreateAddress(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkSymbolicComputeCreateAddress(uint64)"), "{stdout}");
-    assert!(
-        stdout.contains("[PASS] checkSymbolicComputeCreateAddressDeployer(address,uint64)"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkComputeCreateAddress(uint256)
+"#]],
     );
-    assert!(stdout.contains("[PASS] checkComputeCreate2Address(uint256)"), "{stdout}");
-    assert!(
-        stdout.contains("[PASS] checkSymbolicComputeCreate2Address(bytes32,bytes32)"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicComputeCreateAddress(uint64)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicComputeCreateAddressDeployer(address,uint64)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkComputeCreate2Address(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicComputeCreate2Address(bytes32,bytes32)
+"#]],
     );
     assert!(
         stdout
             .contains("[PASS] checkSymbolicComputeCreate2AddressDeployer(address,bytes32,bytes32)"),
         "{stdout}"
     );
-    assert!(stdout.contains("[PASS] checkComputeCreate2DefaultDeployer()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkComputeCreate2DefaultDeployer()
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.computeCreateAddress nonce"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.computeCreate2Address init code hash"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.computeCreateAddress deployer"), "{stdout}");
@@ -596,8 +706,18 @@ contract SymbolicNonceCheatcodes is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSetNonceCheatcodes(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkResetNonceCheatcode(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSetNonceCheatcodes(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkResetNonceCheatcode(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_vm_set_nonce_rejects_decrement, |prj, cmd| {
@@ -630,8 +750,18 @@ contract SymbolicSetNonceRejectsDecrement is Test {
         .clone();
     let output = format!("{}{}", output.stdout_lossy(), output.stderr_lossy());
 
-    assert!(output.contains("[FAIL"), "{output}");
-    assert!(output.contains("checkSetNonceRejectsDecrement(uint256)"), "{output}");
+    assert_relevant_lines(
+        &output,
+        foundry_test_utils::str![[r#"
+[FAIL
+"#]],
+    );
+    assert_relevant_lines(
+        &output,
+        foundry_test_utils::str![[r#"
+checkSetNonceRejectsDecrement(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_create_transfers_value_and_checks_balance, |prj, cmd| {
@@ -675,7 +805,12 @@ contract SymbolicCreateValue is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreateValue()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreateValue()
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_create_accepts_symbolic_value, |prj, cmd| {
@@ -720,7 +855,12 @@ contract SymbolicCreateSymbolicValue is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreateSymbolicValue(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreateSymbolicValue(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CREATE value"), "{stdout}");
 });
 
@@ -769,7 +909,12 @@ contract SymbolicCreateInsufficientValue is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreateInsufficientValue(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreateInsufficientValue(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CREATE value"), "{stdout}");
     assert!(!stdout.contains("symbolic CREATE balance"), "{stdout}");
 });
@@ -817,7 +962,12 @@ contract SymbolicCreate2SymbolicValue is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreate2SymbolicValue(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreate2SymbolicValue(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CREATE value"), "{stdout}");
 });
 
@@ -857,7 +1007,12 @@ contract SymbolicCreateInitcodeSize is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCreateInitcodeSize(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCreateInitcodeSize(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CREATE initcode size"), "{stdout}");
     assert!(!stdout.contains("symbolic bytecode opcode"), "{stdout}");
 });
@@ -904,5 +1059,10 @@ contract SymbolicStaticCreate {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkStaticCreate()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkStaticCreate()
+"#]],
+    );
 });

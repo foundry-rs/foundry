@@ -1,3 +1,4 @@
+use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 
@@ -54,11 +55,18 @@ contract SymbolicAddressCheatcodes is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(
-        stdout.contains("[PASS] checkSymbolicDealStoreLoadAndNonce(address,bytes32)"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicDealStoreLoadAndNonce(address,bytes32)
+"#]],
     );
-    assert!(stdout.contains("[PASS] checkSymbolicEtch(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicEtch(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.deal target"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.store target"), "{stdout}");
     assert!(!stdout.contains("symbolic EXTCODESIZE target"), "{stdout}");
@@ -151,10 +159,30 @@ contract SymbolicPrankSender is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicPrank(address)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkSymbolicStartPrank(address)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkSymbolicPrankOrigin(address,address)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkSymbolicStartPrankOrigin(address,address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicPrank(address)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicStartPrank(address)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicPrankOrigin(address,address)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicStartPrankOrigin(address,address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.prank"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.startPrank"), "{stdout}");
 });
@@ -190,7 +218,12 @@ contract SymbolicBalance is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicBalance(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicBalance(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
 });
 
@@ -225,7 +258,12 @@ contract SymbolicExtcodeSize is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicCodeLength(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicCodeLength(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic EXTCODESIZE target"), "{stdout}");
 });
 
@@ -260,7 +298,12 @@ contract SymbolicExtcodeHash is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicCodeHash(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicCodeHash(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic EXTCODEHASH target"), "{stdout}");
 });
 
@@ -301,7 +344,12 @@ contract SymbolicExtcodeCopy is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicExtcodeCopy(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicExtcodeCopy(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic EXTCODECOPY target"), "{stdout}");
 });
 
@@ -362,7 +410,12 @@ contract SymbolicPrank is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkPrank(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkPrank(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
 });
 
@@ -393,9 +446,24 @@ contract SymbolicVmAssert is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkVmAssert(uint256)"), "{stdout}");
-    assert!(stdout.contains("args=[42]"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkVmAssert(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[42]
+"#]],
+    );
     assert!(!stdout.contains("counterexample did not replay"), "{stdout}");
 });
 
@@ -483,8 +551,18 @@ contract SymbolicRecordedLogs is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkRecordedLogs(uint256,bytes)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkRecordedLogsJson(uint256,bytes)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRecordedLogs(uint256,bytes)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRecordedLogsJson(uint256,bytes)
+"#]],
+    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.getRecordedLogsJson"), "{stdout}");
 });
@@ -608,11 +686,36 @@ contract SymbolicEnvCryptoConsole is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkEnvCryptoConsole(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkKeyUtilities()"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkBase64Utilities()"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkParseToStringUtilities()"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkStringUtilities()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkEnvCryptoConsole(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkKeyUtilities()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkBase64Utilities()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkParseToStringUtilities()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkStringUtilities()
+"#]],
+    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
 });
 
@@ -644,7 +747,12 @@ contract SymbolicFfiDisabled is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("symbolic ffi disabled"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+symbolic ffi disabled
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_vm_ffi_success_when_enabled, |prj, cmd| {
@@ -682,7 +790,12 @@ contract SymbolicFfiEnabled is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkFfiEnabled(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkFfiEnabled(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic ffi disabled"), "{stdout}");
 });
 
@@ -745,8 +858,18 @@ contract SymbolicEtch is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkEtch(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkEtchSymbolicBytes(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkEtch(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkEtchSymbolicBytes(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.etch"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.getCode artifact"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
@@ -785,7 +908,12 @@ contract SymbolicCodeHash is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCodeHash(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCodeHash(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_extcodecopy_pads_partial_code_ranges, |prj, cmd| {
@@ -827,7 +955,12 @@ contract SymbolicExtcodeCopy is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkExtcodeCopy(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExtcodeCopy(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_codecopy_accepts_symbolic_offset, |prj, cmd| {
@@ -865,7 +998,12 @@ contract SymbolicCodeCopy {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCodeCopy(uint16)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCodeCopy(uint16)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CODECOPY offset"), "{stdout}");
 });
 
@@ -909,7 +1047,12 @@ contract SymbolicExtcodeCopyOffset is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkExtcodeCopyOffset(uint16)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExtcodeCopyOffset(uint16)
+"#]],
+    );
     assert!(!stdout.contains("symbolic EXTCODECOPY offset"), "{stdout}");
 });
 
@@ -950,7 +1093,12 @@ contract SymbolicCodeCopySize {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkCodeCopySize(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkCodeCopySize(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic CODECOPY size"), "{stdout}");
 });
 
@@ -994,7 +1142,12 @@ contract SymbolicExtcodeCopySize is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkExtcodeCopySize(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExtcodeCopySize(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic EXTCODECOPY size"), "{stdout}");
 });
 
@@ -1048,7 +1201,12 @@ contract SymbolicSelfdestruct is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSelfdestruct(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSelfdestruct(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_selfdestruct_accepts_symbolic_beneficiary, |prj, cmd| {
@@ -1098,7 +1256,12 @@ contract SymbolicSelfdestructBeneficiary is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSelfdestructBeneficiary(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSelfdestructBeneficiary(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic SELFDESTRUCT beneficiary"), "{stdout}");
     assert!(!stdout.contains("symbolic BALANCE target"), "{stdout}");
 });
@@ -1136,7 +1299,12 @@ contract SymbolicBlockhash is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSetBlockhash(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSetBlockhash(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_blockhash_accepts_symbolic_number, |prj, cmd| {
@@ -1173,7 +1341,12 @@ contract SymbolicBlockhashNumber is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicBlockhashNumber(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicBlockhashNumber(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic BLOCKHASH number"), "{stdout}");
 });
 
@@ -1207,7 +1380,12 @@ contract SymbolicBlockhashValue is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicBlockhashValue(bytes32)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicBlockhashValue(bytes32)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.setBlockhash hash"), "{stdout}");
 });
 
@@ -1266,7 +1444,12 @@ contract SymbolicBlockEnvironment is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkBlockEnvironment(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkBlockEnvironment(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_uses_prepared_executor_environment, |prj, cmd| {
@@ -1314,7 +1497,12 @@ contract SymbolicPreparedEnvironment is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkPreparedEnvironment(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkPreparedEnvironment(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_vm_state_snapshots, |prj, cmd| {
@@ -1373,7 +1561,12 @@ contract SymbolicStateSnapshots is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkStateSnapshots(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkStateSnapshots(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_vm_random_bytes, |prj, cmd| {
@@ -1410,7 +1603,12 @@ contract SymbolicRandomBytes is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkRandomBytes(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRandomBytes(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_vm_random_bytes_accepts_bounded_symbolic_length, |prj, cmd| {
@@ -1445,7 +1643,12 @@ contract SymbolicRandomBytesLength is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkRandomBytesSymbolicLength(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRandomBytesSymbolicLength(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic randomBytes len"), "{stdout}");
     assert!(!stdout.contains("symbolic randomBytes length"), "{stdout}");
 });
@@ -1490,8 +1693,18 @@ contract SymbolicConstrainedCheatcodes is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkConstrainedDeal(address,uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkConstrainedRandomBytes(uint16)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkConstrainedDeal(address,uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkConstrainedRandomBytes(uint16)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.deal target"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.deal value"), "{stdout}");
     assert!(!stdout.contains("symbolic randomBytes len"), "{stdout}");
@@ -1535,7 +1748,12 @@ contract SymbolicCheatcodeInputSize is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkLowLevelAssumeSize(uint256,bool)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkLowLevelAssumeSize(uint256,bool)
+"#]],
+    );
     assert!(!stdout.contains("symbolic cheatcode CALL input size"), "{stdout}");
 });
 
@@ -1588,7 +1806,12 @@ contract SymbolicSvmCreators {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSvmCreators(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSvmCreators(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
 });
 forgetest_init!(symbolic_vm_expect_revert_matches_external_reverts, |prj, cmd| {
@@ -1643,7 +1866,12 @@ contract SymbolicExpectRevert is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkExpectRevert(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectRevert(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_vm_expect_revert_missing_is_counterexample, |prj, cmd| {
@@ -1684,8 +1912,18 @@ contract SymbolicExpectRevertMissing is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkMissingExpectedRevert(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMissingExpectedRevert(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_vm_expect_revert_mismatch_is_counterexample, |prj, cmd| {
@@ -1730,8 +1968,18 @@ contract SymbolicExpectRevertMismatch is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkMismatchedExpectedRevert(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMismatchedExpectedRevert(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_vm_expect_revert_accepts_symbolic_data, |prj, cmd| {
@@ -1806,9 +2054,24 @@ contract SymbolicExpectRevertSymbolicData is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSymbolicExpectedRevertPayload(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkSymbolicExpectedRevertSelector(bytes4)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkSymbolicExpectedReverter(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicExpectedRevertPayload(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicExpectedRevertSelector(bytes4)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicExpectedReverter(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.expectRevert"), "{stdout}");
 });
 
@@ -1859,8 +2122,18 @@ contract SymbolicExpectRevertSymbolicMismatch is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkSymbolicExpectedRevertMismatch(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkSymbolicExpectedRevertMismatch(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic expected revert data"), "{stdout}");
 
     let stdout = prj
@@ -1870,8 +2143,18 @@ contract SymbolicExpectRevertSymbolicMismatch is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkSymbolicExpectedReverterMismatch(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkSymbolicExpectedReverterMismatch(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.expectRevert"), "{stdout}");
 });
 
@@ -1927,8 +2210,18 @@ contract SymbolicExpectEmit is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkExpectEmit(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkExpectEmitSymbolicEmitter(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectEmit(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectEmitSymbolicEmitter(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.expectEmit"), "{stdout}");
 });
 
@@ -1983,8 +2276,18 @@ contract SymbolicExpectEmitMismatch is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkMismatchedExpectEmit(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMismatchedExpectEmit(uint256)
+"#]],
+    );
 
     let stdout = prj
         .forge_command()
@@ -1993,8 +2296,18 @@ contract SymbolicExpectEmitMismatch is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkMismatchedExpectEmitSymbolicEmitter(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMismatchedExpectEmitSymbolicEmitter(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.expectEmit"), "{stdout}");
 });
 
@@ -2094,7 +2407,12 @@ contract SymbolicExpectCall is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkExpectCallMatches(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectCallMatches(uint256)
+"#]],
+    );
 
     let stdout = prj
         .forge_command()
@@ -2103,7 +2421,12 @@ contract SymbolicExpectCall is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkExpectCallSymbolicCallee(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectCallSymbolicCallee(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
 
     let stdout = prj
@@ -2113,8 +2436,18 @@ contract SymbolicExpectCall is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkExpectCallMissing(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkExpectCallMissing(uint256)
+"#]],
+    );
 
     let stdout = prj
         .forge_command()
@@ -2123,8 +2456,18 @@ contract SymbolicExpectCall is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkSymbolicCalleeExpectedCallMismatch(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkSymbolicCalleeExpectedCallMismatch(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
 
     let stdout = prj
@@ -2134,8 +2477,18 @@ contract SymbolicExpectCall is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkExpectCallMinGasMissing(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkExpectCallMinGasMissing(uint256)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_vm_mock_call_returns_and_reverts, |prj, cmd| {
@@ -2250,8 +2603,18 @@ contract SymbolicMockCall is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkMockCall(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkMockCallSymbolicCallee(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockCall(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockCallSymbolicCallee(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
 
@@ -2262,7 +2625,12 @@ contract SymbolicMockCall is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSelectorMockCallsAndClear(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSelectorMockCallsAndClear(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
 
     let stdout = prj
@@ -2272,9 +2640,11 @@ contract SymbolicMockCall is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(
-        stdout.contains("[PASS] checkMockCallsAcceptsSymbolicData(address,uint256)"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockCallsAcceptsSymbolicData(address,uint256)
+"#]],
     );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockCalls"), "{stdout}");
@@ -2286,8 +2656,18 @@ contract SymbolicMockCall is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkSymbolicCalleeMockMismatch(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkSymbolicCalleeMockMismatch(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
 });
 
@@ -2355,8 +2735,18 @@ contract SymbolicUnpinnedCallValue is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkExpectCallAllowsSymbolicValue(uint8)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkMockCallAllowsSymbolicValue(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectCallAllowsSymbolicValue(uint8)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockCallAllowsSymbolicValue(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic expected call value"), "{stdout}");
     assert!(!stdout.contains("symbolic mocked call value"), "{stdout}");
 });
@@ -2449,8 +2839,18 @@ contract SymbolicPinnedCallValue is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkExpectCallPinnedValueFindsMismatch(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkExpectCallPinnedValueFindsMismatch(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic expected call value"), "{stdout}");
 
     let stdout = prj
@@ -2460,7 +2860,12 @@ contract SymbolicPinnedCallValue is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkMockCallPinnedValueMatches(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockCallPinnedValueMatches(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic mocked call value"), "{stdout}");
 
     let stdout = prj
@@ -2470,8 +2875,18 @@ contract SymbolicPinnedCallValue is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkMockCallPinnedValueFindsMismatch(uint8)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMockCallPinnedValueFindsMismatch(uint8)
+"#]],
+    );
     assert!(!stdout.contains("symbolic mocked call value"), "{stdout}");
 });
 
@@ -2577,19 +2992,35 @@ contract SymbolicCallDataCheatcodes is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkExpectCallAcceptsSymbolicData(uint256)"), "{stdout}");
-    assert!(
-        stdout.contains("[PASS] checkMockCallAcceptsSymbolicDataAndReturn(uint256)"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkExpectCallAcceptsSymbolicData(uint256)
+"#]],
     );
-    assert!(
-        stdout.contains("[PASS] checkMockCallAcceptsSymbolicBytes4Selector(bytes4)"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockCallAcceptsSymbolicDataAndReturn(uint256)
+"#]],
     );
-    assert!(stdout.contains("[PASS] checkMockFunctionAcceptsSymbolicData(uint256)"), "{stdout}");
-    assert!(
-        stdout.contains("[PASS] checkMockFunctionAcceptsSymbolicCallee(address,uint256)"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockCallAcceptsSymbolicBytes4Selector(bytes4)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockFunctionAcceptsSymbolicData(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockFunctionAcceptsSymbolicCallee(address,uint256)
+"#]],
     );
     assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
@@ -2707,8 +3138,13 @@ contract SymbolicCallDataMismatch is Test {
             .get_output()
             .stdout_lossy();
 
-        assert!(stdout.contains("[FAIL:"), "{stdout}");
-        assert!(stdout.contains(test), "{stdout}");
+        assert_relevant_lines(
+            &stdout,
+            foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+        );
+        assert_relevant_lines(&stdout, format!("{test}\n"));
         assert!(!stdout.contains("symbolic vm.expectCall"), "{stdout}");
         assert!(!stdout.contains("symbolic vm.mockCall"), "{stdout}");
         assert!(!stdout.contains("symbolic vm.mockFunction"), "{stdout}");
@@ -2787,7 +3223,12 @@ contract SymbolicMockFunction is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkMockFunction(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMockFunction(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
 });
 
@@ -2879,10 +3320,17 @@ contract SymbolicRecordAccesses is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkRecordAccesses(bytes32,bytes32)"), "{stdout}");
-    assert!(
-        stdout.contains("[PASS] checkRecordAccessesSymbolicTarget(address,bytes32,bytes32)"),
-        "{stdout}"
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRecordAccesses(bytes32,bytes32)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRecordAccessesSymbolicTarget(address,bytes32,bytes32)
+"#]],
     );
     assert!(
         stdout
@@ -3047,9 +3495,24 @@ contract SymbolicBoundSkip is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkBoundSkipAndGasNoops(uint256,int256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkVmCompatibilityTail()"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkRuntimeNoopsAndArrayAssertions()"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkBoundSkipAndGasNoops(uint256,int256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkVmCompatibilityTail()
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkRuntimeNoopsAndArrayAssertions()
+"#]],
+    );
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
 });
 
@@ -3084,9 +3547,24 @@ contract SymbolicBoundInvalid is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkInvalidUnsignedBound(uint256)"), "{stdout}");
-    assert!(stdout.contains("checkInvalidSignedBound(int256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkInvalidUnsignedBound(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkInvalidSignedBound(int256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.bound range"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
 });
@@ -3132,7 +3610,12 @@ contract SymbolicAssumeNoRevert is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkAssumeNoRevertPrunes(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkAssumeNoRevertPrunes(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.assumeNoRevert"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
 });
@@ -3254,8 +3737,18 @@ contract SymbolicAssumeNoRevertFilters is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkAssumeNoRevertExactFilterPrunes(uint256)"), "{stdout}");
-    assert!(stdout.contains("[PASS] checkAssumeNoRevertArrayFilterPrunes(uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkAssumeNoRevertExactFilterPrunes(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkAssumeNoRevertArrayFilterPrunes(uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.assumeNoRevert"), "{stdout}");
     assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
 
@@ -3267,8 +3760,13 @@ contract SymbolicAssumeNoRevertFilters is Test {
             .get_output()
             .stdout_lossy();
 
-        assert!(stdout.contains("[FAIL:"), "{stdout}");
-        assert!(stdout.contains(test), "{stdout}");
+        assert_relevant_lines(
+            &stdout,
+            foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+        );
+        assert_relevant_lines(&stdout, format!("{test}\n"));
         assert!(!stdout.contains("symbolic vm.assumeNoRevert"), "{stdout}");
         assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     }

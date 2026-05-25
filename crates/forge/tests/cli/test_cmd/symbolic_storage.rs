@@ -1,3 +1,4 @@
+use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
@@ -33,9 +34,24 @@ contract SymbolicMappingStorage {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkMapping(address,uint256)"), "{stdout}");
-    assert!(stdout.contains("args=["), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkMapping(address,uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+args=[
+"#]],
+    );
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
@@ -69,7 +85,12 @@ contract SymbolicNestedMappingStorage {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkNestedMapping(address,address,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkNestedMapping(address,address,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
 });
 
@@ -101,7 +122,12 @@ contract SymbolicVmStoreLoadSlot is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkStoreLoad(bytes32,bytes32)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkStoreLoad(bytes32,bytes32)
+"#]],
+    );
     assert!(!stdout.contains("symbolic vm.store slot"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.load slot"), "{stdout}");
 });
@@ -141,7 +167,12 @@ contract SymbolicMappingDynamicArrayStorage is Test {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkMappingArray(address,uint256,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkMappingArray(address,uint256,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
@@ -185,7 +216,12 @@ contract SymbolicPackedStorage {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkPacked(uint128,uint128,bool,address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkPacked(uint128,uint128,bool,address)
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_erc20_storage_paths_round_trip, |prj, cmd| {
@@ -221,7 +257,12 @@ contract SymbolicErc20Storage {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkErc20Storage(address,address,uint256)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkErc20Storage(address,address,uint256)
+"#]],
+    );
     assert!(!stdout.contains("symbolic SHA3"), "{stdout}");
     assert!(!stdout.contains("symbolic SSTORE key"), "{stdout}");
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
@@ -323,7 +364,12 @@ contract SymbolicSvmStorageHelpers {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[PASS] checkSvmStorageHelpers(bytes32,bytes32)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSvmStorageHelpers(bytes32,bytes32)
+"#]],
+    );
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
 });
 
@@ -366,9 +412,24 @@ contract SymbolicGenericStorage {
         .get_output()
         .stdout_lossy();
 
-    assert!(stdout.contains("[FAIL:"), "{stdout}");
-    assert!(stdout.contains("checkNativeGenericStorage(address)"), "{stdout}");
-    assert!(stdout.contains("checkSvmArbitraryStorage(address)"), "{stdout}");
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[FAIL:
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkNativeGenericStorage(address)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+checkSvmArbitraryStorage(address)
+"#]],
+    );
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
 });
