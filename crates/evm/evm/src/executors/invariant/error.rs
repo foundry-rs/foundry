@@ -1,4 +1,4 @@
-use super::InvariantContract;
+use super::{InvariantContract, campaign::InvariantRunId};
 use crate::executors::RawCallResult;
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, Selector, keccak256};
@@ -150,6 +150,7 @@ pub(crate) fn record_handler_assertion_bug<FEN: FoundryEvmNetwork>(
     call_result: RawCallResult<FEN>,
     call_reverted: bool,
     is_optimization: bool,
+    run_id: Option<InvariantRunId>,
 ) {
     let fingerprint =
         handler_edge_fingerprint(pre_merge_edges_hash, handler_target, handler_selector);
@@ -169,14 +170,17 @@ pub(crate) fn record_handler_assertion_bug<FEN: FoundryEvmNetwork>(
         .decode_revert_reason(&call_result, true);
         let call_sequence = inputs.clone();
         let original_sequence_len = call_sequence.len();
-        failures.record_handler_failure(HandlerAssertionFailure {
-            reverter: handler_target,
-            selector: handler_selector,
-            call_sequence,
-            original_sequence_len,
-            revert_reason,
-            edge_fingerprint: fingerprint,
-        });
+        failures.record_handler_failure_with_run(
+            HandlerAssertionFailure {
+                reverter: handler_target,
+                selector: handler_selector,
+                call_sequence,
+                original_sequence_len,
+                revert_reason,
+                edge_fingerprint: fingerprint,
+            },
+            run_id,
+        );
     }
 
     // Standard reverted-input pop. Delay-enabled campaigns keep reverted calls so
@@ -234,6 +238,8 @@ pub struct InvariantFailures {
     /// Mutate only via `record_failure` / `record_handler_failure` / `seed_handler_failure`
     /// so the cached counters stay in sync.
     pub(crate) failures: HashMap<FailureKey, InvariantFuzzError>,
+    /// Stable run provenance for failures recorded during live fuzz runs.
+    failure_sources: HashMap<FailureKey, InvariantRunId>,
     /// Cached `FailureKey::Invariant` count, kept O(1) on the hot path.
     invariant_count: usize,
     /// Cached `FailureKey::Handler` count, read on progress/metrics ticks.
@@ -266,7 +272,20 @@ impl InvariantFailures {
     }
 
     pub fn record_failure(&mut self, invariant: &Function, failure: InvariantFuzzError) {
-        let prev = self.failures.insert(FailureKey::Invariant(invariant.name.clone()), failure);
+        self.record_failure_with_run(invariant, failure, None);
+    }
+
+    pub(crate) fn record_failure_with_run(
+        &mut self,
+        invariant: &Function,
+        failure: InvariantFuzzError,
+        run_id: Option<InvariantRunId>,
+    ) {
+        let key = FailureKey::Invariant(invariant.name.clone());
+        let prev = self.failures.insert(key.clone(), failure);
+        if let Some(run_id) = run_id {
+            self.failure_sources.insert(key, run_id);
+        }
         if prev.is_none() {
             self.invariant_count += 1;
         }
@@ -303,12 +322,22 @@ impl InvariantFailures {
     /// Records a handler-side assertion bug. Deduped by `(reverter, selector)` site;
     /// shortest sequence wins on collision.
     pub fn record_handler_failure(&mut self, failure: HandlerAssertionFailure) {
+        self.record_handler_failure_with_run(failure, None);
+    }
+
+    pub(crate) fn record_handler_failure_with_run(
+        &mut self,
+        failure: HandlerAssertionFailure,
+        run_id: Option<InvariantRunId>,
+    ) {
         let site = (failure.reverter, failure.selector);
         if !handler_site_already_minimal(&self.failures, site, failure.call_sequence.len()) {
-            let prev = self.failures.insert(
-                FailureKey::Handler(site.0, site.1),
-                InvariantFuzzError::HandlerAssertion(failure),
-            );
+            let key = FailureKey::Handler(site.0, site.1);
+            let prev =
+                self.failures.insert(key.clone(), InvariantFuzzError::HandlerAssertion(failure));
+            if let Some(run_id) = run_id {
+                self.failure_sources.insert(key, run_id);
+            }
             if prev.is_none() {
                 self.handler_count += 1;
             }
@@ -327,6 +356,10 @@ impl InvariantFailures {
         if prev.is_none() {
             self.handler_count += 1;
         }
+    }
+
+    pub(crate) fn failure_sources(&self) -> impl Iterator<Item = (&FailureKey, &InvariantRunId)> {
+        self.failure_sources.iter()
     }
 
     /// Returns true if a handler bug has already been recorded for the given site.

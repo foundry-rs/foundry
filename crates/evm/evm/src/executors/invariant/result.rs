@@ -1,6 +1,7 @@
 use super::{
     InvariantFailures, InvariantFuzzError, InvariantMetrics, InvariantTest, InvariantTestRun,
     call_after_invariant_function, call_invariant_function,
+    campaign::InvariantRunId,
     error::{InvariantRunCtx, record_handler_assertion_bug},
 };
 use crate::executors::{Executor, RawCallResult};
@@ -57,6 +58,37 @@ pub struct InvariantFuzzTestResult {
     pub optimization_best_sequence: Vec<BasicTxDetails>,
 }
 
+impl InvariantFuzzTestResult {
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) const fn new(
+        errors: HashMap<String, InvariantFuzzError>,
+        handler_errors: HashMap<(Address, Selector), InvariantFuzzError>,
+        cases: Vec<FuzzedCases>,
+        reverts: usize,
+        last_run_inputs: Vec<BasicTxDetails>,
+        gas_report_traces: Vec<Vec<CallTraceArena>>,
+        line_coverage: Option<HitMaps>,
+        metrics: HashMap<String, InvariantMetrics>,
+        failed_corpus_replays: usize,
+        optimization_best_value: Option<I256>,
+        optimization_best_sequence: Vec<BasicTxDetails>,
+    ) -> Self {
+        Self {
+            errors,
+            handler_errors,
+            cases,
+            reverts,
+            last_run_inputs,
+            gas_report_traces,
+            line_coverage,
+            metrics,
+            failed_corpus_replays,
+            optimization_best_value,
+            optimization_best_sequence,
+        }
+    }
+}
+
 /// Given the executor state, asserts that no invariant has been broken. Otherwise, it fills the
 /// external `invariant_failures.failed_invariant` map and returns a generic error.
 /// Either returns the call result if successful, or nothing if there was an error.
@@ -75,6 +107,7 @@ pub(crate) fn invariant_preflight_check<FEN: FoundryEvmNetwork>(
         executor,
         calldata,
         invariant_failures,
+        None,
     )?;
     Ok(())
 }
@@ -147,6 +180,7 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
+    run_id: Option<InvariantRunId>,
 ) -> Result<Option<&'a Function>> {
     let inner_sequence = invariant_inner_sequence(executor);
     let mut first_broken: Option<&'a Function> = None;
@@ -171,7 +205,11 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
         if !success {
             let case =
                 ctx.failed_case(invariant, *fail_on_revert, false, call_result, &inner_sequence);
-            invariant_failures.record_failure(invariant, InvariantFuzzError::BrokenInvariant(case));
+            invariant_failures.record_failure_with_run(
+                invariant,
+                InvariantFuzzError::BrokenInvariant(case),
+                run_id,
+            );
             if first_broken.is_none() {
                 first_broken = Some(*invariant);
             }
@@ -223,6 +261,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     handler_target: Address,
     handler_selector: Selector,
     pre_merge_edges_hash: Option<B256>,
+    run_id: InvariantRunId,
 ) -> Result<ContinueOutcome<'a>> {
     let is_optimization = invariant_contract.is_optimization();
     let mut broken: Option<&'a Function> = None;
@@ -274,6 +313,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 &invariant_run.executor,
                 &invariant_run.inputs,
                 &mut invariant_test.test_data.failures,
+                Some(run_id),
             )?;
         }
     } else {
@@ -299,6 +339,7 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 call_result,
                 reverted,
                 is_optimization,
+                Some(run_id),
             );
 
             // No invariant predicate broke; `broken = None`.
@@ -348,13 +389,14 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 );
                 // Handler asserts go to `broken_handlers` above; `BrokenInvariant` arm kept
                 // for non-handler-routed assertion paths.
-                invariant_test.test_data.failures.record_failure(
+                invariant_test.test_data.failures.record_failure_with_run(
                     invariant,
                     if is_assert_failure {
                         InvariantFuzzError::BrokenInvariant(data)
                     } else {
                         InvariantFuzzError::Revert(data)
                     },
+                    Some(run_id),
                 );
             }
         }
@@ -381,6 +423,7 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
     invariant_test: &mut InvariantTest,
     invariant_run: &InvariantTestRun<FEN>,
     invariant_config: &InvariantConfig,
+    run_id: InvariantRunId,
 ) -> Result<Option<&'a Function>> {
     let (call_result, success) =
         call_after_invariant_function(&invariant_run.executor, invariant_contract.address)?;
@@ -398,7 +441,11 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
         calldata: &invariant_run.inputs,
     }
     .failed_case(anchor, invariant_config.fail_on_revert, false, call_result, &[]);
-    invariant_test.set_error(anchor, InvariantFuzzError::BrokenInvariant(case_data));
+    invariant_test.test_data.failures.record_failure_with_run(
+        anchor,
+        InvariantFuzzError::BrokenInvariant(case_data),
+        Some(run_id),
+    );
     Ok(Some(anchor))
 }
 

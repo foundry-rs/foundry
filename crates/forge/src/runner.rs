@@ -910,7 +910,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             config,
             identified_contracts,
             &self.cr.mcr.known_contracts,
-        );
+        )
+        .with_campaign_seed(self.config.fuzz.seed);
         // Compute current invariant settings up front so secondary persisted-failure handling
         // can use the same compatibility check as the primary replay path below.
         let current_settings = match evm.compute_settings(self.address) {
