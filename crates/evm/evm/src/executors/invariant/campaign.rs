@@ -63,6 +63,14 @@ impl InvariantWorkerPlan {
             self.seed,
         )
     }
+
+    pub fn contains(&self, run_id: InvariantRunId) -> bool {
+        let same_worker = run_id.worker_id == self.worker_id;
+        let same_seed = run_id.seed == self.seed;
+        let worker_run_in_range = run_id.worker_run < self.runs;
+        let global_run_matches = run_id.global_run == self.first_global_run + run_id.worker_run;
+        same_worker && same_seed && worker_run_in_range && global_run_matches
+    }
 }
 
 /// Output produced by one invariant worker.
@@ -157,7 +165,7 @@ impl InvariantCampaignAggregator {
                 && run.seed == output.plan.seed
                 && run.global_run == output.plan.first_global_run + run.worker_run
         }));
-        debug_assert!(output.failures.iter().all(|failure| executed_runs.contains(&failure.id)));
+        debug_assert!(output.failures.iter().all(|failure| output.plan.contains(failure.id)));
         output.result
     }
 }
@@ -215,5 +223,42 @@ mod tests {
 
         assert_eq!(result.reverts, 2);
         assert_eq!(result.failed_corpus_replays, 3);
+    }
+
+    #[test]
+    fn aggregator_allows_failure_from_aborted_run() {
+        let seed = Some(U256::from(9));
+        let spec = InvariantCampaignSpec::new(2, seed);
+        let plan = spec.single_worker_plan();
+        let completed = plan.run_id(0);
+        let aborted = plan.run_id(1);
+        let result = InvariantFuzzTestResult::new(
+            HashMap::default(),
+            HashMap::default(),
+            Vec::new(),
+            1,
+            Vec::new(),
+            Vec::new(),
+            None,
+            HashMap::default(),
+            0,
+            None,
+            Vec::new(),
+        );
+        let worker = InvariantWorkerOutput::new(
+            plan,
+            vec![InvariantRunOutput::new(completed, 1, 0, false, None)],
+            vec![InvariantFailureOutput::new(
+                aborted,
+                InvariantFailureKind::Predicate("invariant_aborted".to_string()),
+            )],
+            result,
+        );
+
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+        aggregator.push(worker);
+        let result = aggregator.finish();
+
+        assert_eq!(result.reverts, 1);
     }
 }
