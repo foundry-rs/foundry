@@ -666,6 +666,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 } else {
                     // Commit executed call result.
                     current_run.executor.commit(&mut call_result);
+                    if current_run
+                        .inputs
+                        .last()
+                        .is_some_and(|tx| tx.call_details.gas_price.is_some())
+                    {
+                        clear_pending_gas_price(&mut current_run.executor);
+                    }
 
                     // Collect data for fuzzing from the state changeset.
                     // This step updates the state dictionary and therefore invalidates the
@@ -1612,6 +1619,12 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
     }
 
     result.map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
+}
+
+fn clear_pending_gas_price<FEN: FoundryEvmNetwork>(executor: &mut Executor<FEN>) {
+    if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
+        cheats.gas_price = None;
+    }
 }
 
 #[cfg(test)]

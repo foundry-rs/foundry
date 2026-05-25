@@ -363,3 +363,54 @@ contract GasPriceFuzzTest is Test {
 "#]
     ]);
 });
+
+forgetest_init!(should_not_leak_sampled_gas_price_to_invariant_call, |prj, cmd| {
+    prj.add_test(
+        "GasPriceIsolationTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract GasPriceIsolationObserver {
+    mapping(uint256 => bool) public seen;
+    uint256 public uniqueCount;
+
+    function probe() external {
+        uint256 p = tx.gasprice;
+        if (!seen[p]) {
+            seen[p] = true;
+            uniqueCount++;
+        }
+    }
+}
+
+contract GasPriceIsolationTest is Test {
+    GasPriceIsolationObserver public obs;
+
+    function setUp() public {
+        obs = new GasPriceIsolationObserver();
+        targetContract(address(obs));
+    }
+
+    /// forge-config: default.invariant.runs = 2
+    /// forge-config: default.invariant.depth = 20
+    /// forge-config: default.invariant.fail-on-revert = false
+    /// forge-config: default.invariant.gas-fuzz = true
+    function invariant_sampledGasPriceIsHandlerOnly() public view {
+        assertEq(tx.gasprice, 0, "sampled gas price leaked");
+    }
+
+    function afterInvariant() public view {
+        assertGt(obs.uniqueCount(), 1, "handler saw sampled prices");
+    }
+}
+     "#,
+    );
+
+    cmd.args(["test", "--mt", "invariant_sampledGasPriceIsHandlerOnly"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+...
+[PASS] invariant_sampledGasPriceIsHandlerOnly() (runs: 2, calls: [..], reverts: [..])
+...
+"#]]);
+});
