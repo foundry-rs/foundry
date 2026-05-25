@@ -171,7 +171,7 @@ contract ReentrancyEvents {
         emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
     }
 
-    // Known limitation: member-form internal calls (`Lib.f(...)`, `using for`, `super.f()`)
+    // Known limitation: member-form internal calls (`Lib.f(...)`, `using for`)
     // are not yet followed because Solar's `members_of` for `TyKind::Type(Contract)` is a
     // TODO. The external call inside `staticHelper` is therefore missed and no warning fires.
     function emitAfterLibraryStaticCall() external {
@@ -334,6 +334,13 @@ contract ReentrancyEvents {
         emit Counter(v);
     }
 
+    // Only the selected overload matters: the zero-arg self-call is pure, even though a
+    // one-arg overload below is state-mutating.
+    function emitAfterSelfPureOverloadCall() external {
+        uint256 v = this.overloadedSelf();
+        emit Counter(v);
+    }
+
     // Mutating self-external call still taints subsequent emits.
     function emitAfterSelfMutatingCall() external {
         counter += 1;
@@ -372,6 +379,15 @@ contract ReentrancyEvents {
 
     function pureSelf(uint256 a) public pure returns (uint256) {
         return a + 1;
+    }
+
+    function overloadedSelf() public pure returns (uint256) {
+        return 1;
+    }
+
+    function overloadedSelf(uint256 a) public returns (uint256) {
+        counter += a;
+        return counter;
     }
 
     function _doExternalWork() internal {
@@ -458,5 +474,42 @@ contract Child is Base {
     function emitAfterSuperTaintingCall() external {
         super.doExt();
         emit Tick(); //~WARN: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    }
+}
+
+contract SuperBaseWithTaint {
+    IExternal internal ext__;
+    event Tick();
+
+    function overridden() internal virtual {
+        ext__.notify(0);
+    }
+
+    function arity(uint256) internal {
+        ext__.notify(0);
+    }
+}
+
+contract SuperPureOverride is SuperBaseWithTaint {
+    function overridden() internal pure override {}
+
+    function arity() internal pure {}
+}
+
+contract SuperChild is SuperPureOverride {
+    event Counter(uint256 value);
+
+    // Clean: `super.overridden()` dispatches to the immediate pure override, not the
+    // older base implementation with the same signature that performs an external call.
+    function emitAfterSuperPureOverrideCall() external {
+        super.overridden();
+        emit Tick();
+    }
+
+    // Clean: `super.arity()` dispatches to the zero-arg overload only; the mutating
+    // one-arg overload in the older base must not taint this call.
+    function emitAfterSuperPureArityCall() external {
+        super.arity();
+        emit Counter(0);
     }
 }

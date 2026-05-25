@@ -409,9 +409,12 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
                     self.analyze_internal_call(func_id, state);
                 }
                 // Same for `super.<member>(...)` base-chain dispatch.
-                for func_id in
-                    resolved_super_function_ids(self.hir, self.enclosing_contract, callee)
-                {
+                for func_id in resolved_super_function_ids(
+                    self.hir,
+                    self.enclosing_contract,
+                    callee,
+                    args.len(),
+                ) {
                     self.analyze_internal_call(func_id, state);
                 }
             }

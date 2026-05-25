@@ -319,7 +319,12 @@ pub(super) fn is_state_mutating_external_call<'gcx>(
     if is_this(base) {
         // `this.<view|pure>()` compiles to a STATICCALL and cannot reorder events; only
         // taint when the resolved self-call is state-mutating.
-        return self_call_is_state_mutating(hir, enclosing_contract, member.name);
+        return self_call_is_state_mutating(
+            hir,
+            enclosing_contract,
+            member.name,
+            explicit_arg_count,
+        );
     }
 
     // `super.<member>(...)` is internal dispatch — not an external call.
@@ -348,6 +353,7 @@ fn self_call_is_state_mutating(
     hir: &Hir<'_>,
     enclosing_contract: Option<ContractId>,
     member_name: solar::interface::Symbol,
+    explicit_arg_count: usize,
 ) -> bool {
     let Some(contract_id) = enclosing_contract else { return true };
 
@@ -356,6 +362,9 @@ fn self_call_is_state_mutating(
         let Some(func_id) = item_id.as_function() else { continue };
         let func = hir.function(func_id);
         if func.name.is_none_or(|name| name.name != member_name) {
+            continue;
+        }
+        if func.parameters.len() != explicit_arg_count {
             continue;
         }
         // Only externally-callable functions can appear in a `this.<member>(...)` call.
@@ -464,6 +473,7 @@ pub(super) fn resolved_super_function_ids<'hir>(
     hir: &'hir Hir<'hir>,
     enclosing_contract: Option<ContractId>,
     callee: &'hir Expr<'hir>,
+    explicit_arg_count: usize,
 ) -> Vec<FunctionId> {
     let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return Vec::new() };
     if !is_super(base) {
@@ -478,9 +488,11 @@ pub(super) fn resolved_super_function_ids<'hir>(
             let Some(func_id) = item_id.as_function() else { continue };
             let func = hir.function(func_id);
             if func.name.is_some_and(|name| name.name == member.name)
+                && func.parameters.len() == explicit_arg_count
                 && matches!(func.visibility, Visibility::Internal | Visibility::Public)
             {
                 out.push(func_id);
+                return out;
             }
         }
     }
