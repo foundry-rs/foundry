@@ -168,6 +168,29 @@ impl SessionRecord {
         self.get(session_id).filter(|session| session.has_live_key_at(now))
     }
 
+    /// Update a session status by id. Terminal statuses clear local key material.
+    ///
+    /// Returns `true` when the record changed. Missing sessions and idempotent
+    /// updates return `false`.
+    pub fn set_status(&mut self, session_id: B256, status: SessionStatus) -> bool {
+        let Some(session) =
+            self.sessions.iter_mut().find(|session| session.session_id == session_id)
+        else {
+            return false;
+        };
+
+        let changed = session.status != status || status.is_terminal() && session.key.is_some();
+        if !changed {
+            return false;
+        }
+
+        session.status = status;
+        if status.is_terminal() {
+            session.key = None;
+        }
+        true
+    }
+
     /// Mark expired live entries as expired. Returns the number updated.
     pub fn mark_expired(&mut self, now: u64) -> usize {
         let mut updated = 0;
@@ -492,41 +515,51 @@ const fn key_type_to_signature_type(
     }
 }
 
-/// Atomically upsert a [`SessionEntry`] into the session registry.
-pub fn upsert_session_entry(entry: SessionEntry) -> eyre::Result<()> {
+fn mutate_session_record<R>(f: impl FnOnce(&mut SessionRecord) -> (R, bool)) -> eyre::Result<R> {
     let path =
         session_registry_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
     let mut record = read_toml_file::<SessionRecord>(&path, "tempo sessions")?.unwrap_or_default();
-    record.upsert(entry);
+    let (result, changed) = f(&mut record);
+    if changed {
+        write_toml_file_atomic(&path, &record, SESSIONS_HEADER)?;
+    }
+    Ok(result)
+}
 
-    write_toml_file_atomic(&path, &record, SESSIONS_HEADER)
+/// Atomically upsert a [`SessionEntry`] into the session registry.
+pub fn upsert_session_entry(entry: SessionEntry) -> eyre::Result<()> {
+    mutate_session_record(|record| {
+        record.upsert(entry);
+        ((), true)
+    })
+}
+
+/// Atomically update a session status in the registry.
+///
+/// Terminal statuses (`revoked`, `expired`, `failed`) also clear the
+/// session-scoped private key material. Returns `true` when an entry was found
+/// and changed.
+pub fn update_session_status(session_id: B256, status: SessionStatus) -> eyre::Result<bool> {
+    mutate_session_record(|record| {
+        let changed = record.set_status(session_id, status);
+        (changed, changed)
+    })
 }
 
 /// Atomically remove a session from the registry.
 pub fn remove_session_entry(session_id: B256) -> eyre::Result<bool> {
-    let path =
-        session_registry_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
-    let mut record = read_toml_file::<SessionRecord>(&path, "tempo sessions")?.unwrap_or_default();
-    let removed = record.remove(session_id);
-    if removed {
-        write_toml_file_atomic(&path, &record, SESSIONS_HEADER)?;
-    }
-    Ok(removed)
+    mutate_session_record(|record| {
+        let removed = record.remove(session_id);
+        (removed, removed)
+    })
 }
 
 /// Mark expired live sessions in the registry and persist the status updates.
 pub fn mark_expired_session_entries(now: u64) -> eyre::Result<usize> {
-    let path =
-        session_registry_path().ok_or_else(|| eyre::eyre!("could not resolve tempo home"))?;
-    let Some(mut record) = read_toml_file::<SessionRecord>(&path, "tempo sessions")? else {
-        return Ok(0);
-    };
-
-    let updated = record.mark_expired(now);
-    if updated != 0 {
-        write_toml_file_atomic(&path, &record, SESSIONS_HEADER)?;
-    }
-    Ok(updated)
+    mutate_session_record(|record| {
+        let updated = record.mark_expired(now);
+        (updated, updated != 0)
+    })
 }
 
 #[cfg(test)]
@@ -716,6 +749,39 @@ mod tests {
         assert_eq!(record.mark_expired(11), 1);
         assert_eq!(record.sessions[0].status, SessionStatus::Expired);
         assert_eq!(record.sessions[1].status, SessionStatus::Revoked);
+    }
+
+    #[test]
+    fn session_record_status_updates_preserve_live_keys_and_clear_terminal_keys() {
+        let active_id = B256::from([0x67; 32]);
+        let revoking_id = B256::from([0x68; 32]);
+        let revoked_id = B256::from([0x69; 32]);
+        let failed_id = B256::from([0x6a; 32]);
+        let missing_id = B256::from([0x6b; 32]);
+        let mut record = SessionRecord {
+            sessions: vec![
+                sample_entry_with_key(active_id, 200, SessionStatus::Pending),
+                sample_entry_with_key(revoking_id, 200, SessionStatus::Active),
+                sample_entry_with_key(revoked_id, 200, SessionStatus::Revoking),
+                sample_entry_with_key(failed_id, 200, SessionStatus::Pending),
+            ],
+        };
+
+        assert!(record.set_status(active_id, SessionStatus::Active));
+        assert!(record.set_status(revoking_id, SessionStatus::Revoking));
+        assert!(record.set_status(revoked_id, SessionStatus::Revoked));
+        assert!(record.set_status(failed_id, SessionStatus::Failed));
+        assert!(!record.set_status(missing_id, SessionStatus::Active));
+        assert!(!record.set_status(active_id, SessionStatus::Active));
+
+        assert_eq!(record.get(active_id).unwrap().status, SessionStatus::Active);
+        assert!(record.get(active_id).unwrap().key.is_some());
+        assert_eq!(record.get(revoking_id).unwrap().status, SessionStatus::Revoking);
+        assert!(record.get(revoking_id).unwrap().key.is_some());
+        assert_eq!(record.get(revoked_id).unwrap().status, SessionStatus::Revoked);
+        assert!(record.get(revoked_id).unwrap().key.is_none());
+        assert_eq!(record.get(failed_id).unwrap().status, SessionStatus::Failed);
+        assert!(record.get(failed_id).unwrap().key.is_none());
     }
 
     #[test]
@@ -1104,6 +1170,53 @@ key = "0x1111"
     }
 
     #[test]
+    fn update_session_status_persists_lifecycle_state_and_key_cleanup() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0xbf; 32]);
+            upsert_session_entry(sample_entry_with_key(session_id, 200, SessionStatus::Pending))
+                .unwrap();
+
+            assert!(update_session_status(session_id, SessionStatus::Active).unwrap());
+            let record = read_session_record().unwrap();
+            let session = record.get(session_id).unwrap();
+            assert_eq!(session.status, SessionStatus::Active);
+            assert!(session.key.is_some());
+
+            assert!(update_session_status(session_id, SessionStatus::Revoking).unwrap());
+            let record = read_session_record().unwrap();
+            let session = record.get(session_id).unwrap();
+            assert_eq!(session.status, SessionStatus::Revoking);
+            assert!(session.key.is_some());
+
+            assert!(update_session_status(session_id, SessionStatus::Revoked).unwrap());
+            let record = read_session_record().unwrap();
+            let session = record.get(session_id).unwrap();
+            assert_eq!(session.status, SessionStatus::Revoked);
+            assert!(session.key.is_none());
+            assert!(read_live_session_key(session_id, 100).is_none());
+
+            assert!(!update_session_status(session_id, SessionStatus::Revoked).unwrap());
+            assert!(!update_session_status(B256::from([0xc0; 32]), SessionStatus::Failed).unwrap());
+        });
+    }
+
+    #[test]
+    fn update_session_status_to_failed_clears_key_material() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0xc1; 32]);
+            upsert_session_entry(sample_entry_with_key(session_id, 200, SessionStatus::Active))
+                .unwrap();
+
+            assert!(update_session_status(session_id, SessionStatus::Failed).unwrap());
+
+            let record = read_session_record().unwrap();
+            let session = record.get(session_id).unwrap();
+            assert_eq!(session.status, SessionStatus::Failed);
+            assert!(session.key.is_none());
+        });
+    }
+
+    #[test]
     fn upsert_fails_closed_when_session_file_is_corrupt() {
         with_tempo_home(|| {
             let path = session_registry_path().unwrap();
@@ -1142,6 +1255,19 @@ key = "0x1111"
             let original = fs::read_to_string(&path).unwrap();
 
             assert!(mark_expired_session_entries(100).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        });
+    }
+
+    #[test]
+    fn update_session_status_fails_closed_when_session_file_is_corrupt() {
+        with_tempo_home(|| {
+            let path = session_registry_path().unwrap();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "sessions = [").unwrap();
+            let original = fs::read_to_string(&path).unwrap();
+
+            assert!(update_session_status(B256::from([0xc2; 32]), SessionStatus::Failed).is_err());
             assert_eq!(fs::read_to_string(&path).unwrap(), original);
         });
     }

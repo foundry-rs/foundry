@@ -15,10 +15,14 @@ use missing_zero_check::MISSING_ZERO_CHECK;
 mod return_bomb;
 use return_bomb::RETURN_BOMB;
 
+mod reentrancy_events;
+use reentrancy_events::REENTRANCY_EVENTS;
+
 register_lints!(
     (BlockTimestamp, early, (BLOCK_TIMESTAMP)),
     (CallsLoop, late, (CALLS_LOOP)),
     (DelegatecallLoop, late, (DELEGATECALL_LOOP)),
     (MissingZeroCheck, late, (MISSING_ZERO_CHECK)),
     (ReturnBomb, late, (RETURN_BOMB)),
+    (ReentrancyEvents, late, (REENTRANCY_EVENTS)),
 );
