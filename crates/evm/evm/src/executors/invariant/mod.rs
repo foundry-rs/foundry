@@ -5,13 +5,14 @@ use crate::{
     },
     inspectors::Fuzzer,
 };
-use alloy_primitives::{Address, Bytes, FixedBytes, Selector, U256, map::AddressMap};
+use alloy_json_abi::Function;
+use alloy_primitives::{Address, Bytes, FixedBytes, I256, Selector, U256, map::AddressMap};
 use alloy_sol_types::{SolCall, sol};
 use eyre::{ContextCompat, Result, eyre};
 use foundry_common::{
     TestFunctionExt,
     contracts::{ContractsByAddress, ContractsByArtifact},
-    sh_println,
+    sh_eprintln, sh_println,
 };
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
@@ -23,29 +24,25 @@ use foundry_evm_core::{
     precompiles::PRECOMPILES,
 };
 use foundry_evm_fuzz::{
-    BasicTxDetails, FuzzCase, FuzzFixtures,
+    BasicTxDetails, FuzzCase, FuzzFixtures, FuzzedCases,
     invariant::{
         ArtifactFilters, FuzzRunIdentifiedContracts, InvariantContract, InvariantSettings,
         RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
-    strategies::{EvmFuzzState, invariant_strat, override_call_strat},
+    strategies::{EvmFuzzState, InvariantFuzzState, invariant_strat, override_call_strat},
 };
+use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
 use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, can_continue, did_fail_on_assert, invariant_preflight_check};
 use revm::{context::Block, state::Account};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::{
-    collections::btree_map::Entry,
+    collections::{HashMap as Map, HashSet, btree_map::Entry},
     sync::Arc,
-    time::{Instant, SystemTime, UNIX_EPOCH},
-};
-
-mod campaign;
-use campaign::{
-    InvariantCampaign, InvariantFailureMetrics, InvariantThroughputMetrics, InvariantWorkerRun,
-    build_invariant_progress_json, record_new_invariant_failures,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 mod error;
@@ -53,12 +50,13 @@ pub use error::{
     FailureKey, HandlerAssertionFailure, InvariantFailures, InvariantFuzzError,
     handler_site_already_minimal,
 };
+use foundry_evm_coverage::HitMaps;
 
 mod replay;
 pub use replay::{replay_error, replay_run};
 
 mod result;
-pub use campaign::InvariantFuzzTestResult;
+pub use result::InvariantFuzzTestResult;
 
 mod shrink;
 pub use shrink::{
@@ -131,6 +129,290 @@ pub struct InvariantMetrics {
     pub discards: usize,
 }
 
+/// Campaign-level throughput metrics for invariant progress reporting.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct InvariantThroughputMetrics {
+    total_txs: u64,
+    total_gas: u64,
+}
+
+impl InvariantThroughputMetrics {
+    const fn record_call(&mut self, gas_used: u64) {
+        self.total_txs += 1;
+        self.total_gas += gas_used;
+    }
+
+    fn tx_per_sec(self, elapsed: Duration) -> f64 {
+        rate_per_sec(self.total_txs as f64, elapsed)
+    }
+
+    fn gas_per_sec(self, elapsed: Duration) -> f64 {
+        rate_per_sec(self.total_gas as f64, elapsed)
+    }
+}
+
+/// Converts a cumulative campaign total into an average per-second rate.
+///
+/// Returns `0.0` during the initial zero-elapsed startup window to avoid
+/// dividing by zero while progress reporting is warming up.
+fn rate_per_sec(total: f64, elapsed: Duration) -> f64 {
+    let elapsed_secs = elapsed.as_secs_f64();
+    if elapsed_secs > 0.0 { total / elapsed_secs } else { 0.0 }
+}
+
+/// Tracks invariant failure counts during a campaign.
+#[derive(Debug, Default)]
+struct InvariantFailureMetrics {
+    failures: u64,
+    unique_failures: HashSet<String>,
+    /// Unique handler-side assertion bugs found so far.
+    broken_handlers: usize,
+}
+
+impl InvariantFailureMetrics {
+    /// Records a failure and emits a structured JSON `"failure"` event.
+    fn record_failure(&mut self, invariant_name: &str, target: &str, reason: &str) {
+        self.failures += 1;
+        self.unique_failures.insert(invariant_name.to_string());
+
+        let timestamp =
+            SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let event = json!({
+            "timestamp": timestamp,
+            "event": "failure",
+            "invariant": invariant_name,
+            "target": target,
+            "reason": reason,
+        });
+        let _ = sh_eprintln!("{}", serde_json::to_string(&event).unwrap_or_default());
+    }
+}
+
+/// Bridges newly-recorded invariant breaks from `failures.errors` into the pulse
+/// `failure_metrics` so the live progress stream reflects breaks as they happen.
+/// Iterates in declaration order so the emitted "failure" events are deterministic.
+fn record_new_invariant_failures(
+    failure_metrics: &mut InvariantFailureMetrics,
+    invariant_contract: &InvariantContract<'_>,
+    failures: &InvariantFailures,
+) {
+    for (f, _) in &invariant_contract.invariant_fns {
+        if !failure_metrics.unique_failures.contains(&f.name) && failures.has_failure(f) {
+            let reason =
+                failures.get_failure(f).and_then(|e| e.revert_reason()).unwrap_or_default();
+            failure_metrics.record_failure(&f.name, invariant_contract.name, &reason);
+        }
+    }
+}
+
+/// Builds the machine-readable invariant progress payload emitted during a
+/// campaign.
+///
+/// This keeps the existing corpus progress metrics together with cumulative and
+/// derived throughput fields so downstream benchmark tooling can consume a
+/// single JSON event shape.
+fn build_invariant_progress_json<M: Serialize>(
+    timestamp_secs: u64,
+    invariant_name: &str,
+    corpus_metrics: &M,
+    optimization_best: Option<I256>,
+    throughput: InvariantThroughputMetrics,
+    failure_metrics: &InvariantFailureMetrics,
+    elapsed: Duration,
+) -> serde_json::Value {
+    let mut metrics = serde_json::to_value(corpus_metrics).unwrap_or_default();
+    if let Some(obj) = metrics.as_object_mut() {
+        obj.insert("failures".to_string(), json!(failure_metrics.failures));
+        obj.insert("unique_failures".to_string(), json!(failure_metrics.unique_failures.len()));
+        // Surface unique handler-side assertion bugs in live progress, separate from
+        // invariant predicate violations counted by `failures`.
+        obj.insert("broken_handlers".to_string(), json!(failure_metrics.broken_handlers));
+    }
+
+    let mut payload = json!({
+        "timestamp": timestamp_secs,
+        "event": "pulse",
+        "invariant": invariant_name,
+        "metrics": metrics,
+        "total_txs": throughput.total_txs,
+        "total_gas": throughput.total_gas,
+        "tx_per_sec": throughput.tx_per_sec(elapsed),
+        "gas_per_sec": throughput.gas_per_sec(elapsed),
+    });
+
+    if let Some(best) = optimization_best {
+        payload["optimization_best"] = json!(best.to_string());
+    }
+
+    payload
+}
+
+/// Contains data collected during invariant test runs.
+struct InvariantTestData {
+    // Consumed gas and calldata of every successful fuzz call.
+    fuzz_cases: Vec<FuzzedCases>,
+    // Data related to reverts or failed assertions of the test.
+    failures: InvariantFailures,
+    // Calldata in the last invariant run.
+    last_run_inputs: Vec<BasicTxDetails>,
+    // Additional traces for gas report.
+    gas_report_traces: Vec<Vec<CallTraceArena>>,
+    // Line coverage information collected from all fuzzed calls.
+    line_coverage: Option<HitMaps>,
+    // Metrics for each fuzzed selector.
+    metrics: Map<String, InvariantMetrics>,
+
+    // Proptest runner to query for random values.
+    // The strategy only comes with the first `input`. We fill the rest of the `inputs`
+    // until the desired `depth` so we can use the evolving fuzz dictionary
+    // during the run.
+    branch_runner: TestRunner,
+
+    // Optimization mode state: tracks the best (maximum) value and the sequence that produced it.
+    // Only used when invariant function returns int256.
+    optimization_best_value: Option<I256>,
+    optimization_best_sequence: Vec<BasicTxDetails>,
+}
+
+/// Contains invariant test data.
+struct InvariantTest {
+    // Fuzz state of invariant test.
+    fuzz_state: InvariantFuzzState,
+    // Contracts fuzzed by the invariant test.
+    targeted_contracts: FuzzRunIdentifiedContracts,
+    // Data collected during invariant runs.
+    test_data: InvariantTestData,
+}
+
+impl InvariantTest {
+    /// Instantiates an invariant test.
+    fn new(
+        fuzz_state: InvariantFuzzState,
+        targeted_contracts: FuzzRunIdentifiedContracts,
+        failures: InvariantFailures,
+        branch_runner: TestRunner,
+    ) -> Self {
+        let test_data = InvariantTestData {
+            fuzz_cases: vec![],
+            failures,
+            last_run_inputs: vec![],
+            gas_report_traces: vec![],
+            line_coverage: None,
+            metrics: Map::default(),
+            branch_runner,
+            optimization_best_value: None,
+            optimization_best_sequence: vec![],
+        };
+        Self { fuzz_state, targeted_contracts, test_data }
+    }
+
+    /// Returns number of invariant test reverts.
+    const fn reverts(&self) -> usize {
+        self.test_data.failures.reverts
+    }
+
+    /// Set invariant test error.
+    fn set_error(&mut self, invariant: &Function, error: InvariantFuzzError) {
+        self.test_data.failures.record_failure(invariant, error);
+    }
+
+    /// Set last invariant run call sequence.
+    fn set_last_run_inputs(&mut self, inputs: &Vec<BasicTxDetails>) {
+        self.test_data.last_run_inputs.clone_from(inputs);
+    }
+
+    /// Merge current collected line coverage with the new coverage from last fuzzed call.
+    fn merge_line_coverage(&mut self, new_coverage: Option<HitMaps>) {
+        HitMaps::merge_opt(&mut self.test_data.line_coverage, new_coverage);
+    }
+
+    /// Update metrics for a fuzzed selector, extracted from tx details.
+    /// Always increments number of calls; discarded runs (through assume cheatcodes) are tracked
+    /// separated from reverts.
+    fn record_metrics(&mut self, tx_details: &BasicTxDetails, reverted: bool, discarded: bool) {
+        if let Some(metric_key) = self.targeted_contracts.targets().fuzzed_metric_key(tx_details) {
+            let test_metrics = &mut self.test_data.metrics;
+            let invariant_metrics = test_metrics.entry(metric_key).or_default();
+            invariant_metrics.calls += 1;
+            if discarded {
+                invariant_metrics.discards += 1;
+            } else if reverted {
+                invariant_metrics.reverts += 1;
+            }
+        }
+    }
+
+    /// End invariant test run by collecting results, cleaning collected artifacts and reverting
+    /// created fuzz state.
+    fn end_run<FEN: FoundryEvmNetwork>(&mut self, run: InvariantTestRun<FEN>, gas_samples: usize) {
+        // We clear all the targeted contracts created during this run.
+        self.targeted_contracts.clear_created_contracts(run.created_contracts);
+
+        if self.test_data.gas_report_traces.len() < gas_samples {
+            self.test_data
+                .gas_report_traces
+                .push(run.run_traces.into_iter().map(|arena| arena.arena).collect());
+        }
+        self.test_data.fuzz_cases.push(FuzzedCases::new(run.fuzz_runs));
+
+        // Revert state to not persist values between runs.
+        self.fuzz_state.revert();
+    }
+
+    /// Updates the optimization state if the new value is better (higher) than the current best.
+    fn update_optimization_value(&mut self, value: I256, sequence: &[BasicTxDetails]) {
+        if self.test_data.optimization_best_value.is_none_or(|best| value > best) {
+            self.test_data.optimization_best_value = Some(value);
+            self.test_data.optimization_best_sequence = sequence.to_vec();
+        }
+    }
+}
+
+/// Contains data for an invariant test run.
+struct InvariantTestRun<FEN: FoundryEvmNetwork> {
+    // Invariant run call sequence.
+    inputs: Vec<BasicTxDetails>,
+    // Per-call EVM comparison operands (parallel to `inputs`), captured for I2S corpus mutation.
+    cmp_seq: Vec<Vec<crate::inspectors::CmpOperands>>,
+    // Current invariant run executor.
+    executor: Executor<FEN>,
+    // Invariant run stat reports (eg. gas usage).
+    fuzz_runs: Vec<FuzzCase>,
+    // Contracts created during current invariant run.
+    created_contracts: Vec<Address>,
+    // Traces of each call of the invariant run call sequence.
+    run_traces: Vec<SparsedTraceArena>,
+    // Current depth of invariant run.
+    depth: u32,
+    // Current assume rejects of the invariant run.
+    rejects: u32,
+    // Whether new coverage was discovered during this run.
+    new_coverage: bool,
+    // For optimization mode: the best value found during this run (if any).
+    optimization_value: Option<I256>,
+    // For optimization mode: the length of the input prefix that produced the best value.
+    optimization_prefix_len: usize,
+}
+
+impl<FEN: FoundryEvmNetwork> InvariantTestRun<FEN> {
+    /// Instantiates an invariant test run.
+    fn new(first_input: BasicTxDetails, executor: Executor<FEN>, depth: usize) -> Self {
+        Self {
+            inputs: vec![first_input],
+            cmp_seq: Vec::with_capacity(depth),
+            executor,
+            fuzz_runs: Vec::with_capacity(depth),
+            created_contracts: vec![],
+            run_traces: vec![],
+            depth: 0,
+            rejects: 0,
+            new_coverage: false,
+            optimization_value: None,
+            optimization_prefix_len: 0,
+        }
+    }
+}
+
 /// Wrapper around any [`Executor`] implementer which provides fuzzing support using [`proptest`].
 ///
 /// After instantiation, calling `invariant_fuzz` will proceed to hammer the deployed smart
@@ -197,7 +479,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // suite runner so parameterized `invariant_*` functions are rejected with a per-test
         // failure entry before any campaign runs.
 
-        let (mut campaign, mut corpus_manager) = self.prepare_test(
+        let (mut invariant_test, mut corpus_manager) = self.prepare_test(
             &invariant_contract,
             fuzz_fixtures,
             fuzz_state,
@@ -224,17 +506,17 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         'stop: while continue_campaign(runs) {
             // Per-run failure count snapshot used to gate `afterInvariant` below.
-            let failures_before_run = campaign.state.failures.invariant_count();
+            let failures_before_run = invariant_test.test_data.failures.invariant_count();
             let mut stop_after_run = false;
 
             let initial_seq = corpus_manager.new_inputs(
-                &mut campaign.state.branch_runner,
-                &campaign.fuzz_state,
-                &campaign.targeted_contracts,
+                &mut invariant_test.test_data.branch_runner,
+                &invariant_test.fuzz_state,
+                &invariant_test.targeted_contracts,
             )?;
 
             // Create current invariant run data.
-            let mut current_run = InvariantWorkerRun::new(
+            let mut current_run = InvariantTestRun::new(
                 initial_seq[0].clone(),
                 // Before each run, we must reset the backend state.
                 self.executor.clone(),
@@ -242,7 +524,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             );
 
             // We stop the run immediately if we have reverted, and `fail_on_revert` is set.
-            if self.config.fail_on_revert && campaign.reverts() > 0 {
+            if self.config.fail_on_revert && invariant_test.reverts() > 0 {
                 return Err(eyre!("call reverted"));
             }
 
@@ -279,7 +561,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     current_run.inputs.last().expect("checked above"),
                 )?;
                 if let Some(fuzzer) = current_run.executor.inspector_mut().fuzzer.as_mut() {
-                    campaign.fuzz_state.collect_values(fuzzer.drain_collected_values());
+                    invariant_test.fuzz_state.collect_values(fuzzer.drain_collected_values());
                 }
                 // Capture per-call EVM cmp operands for I2S corpus mutation. Kept parallel
                 // to `current_run.inputs`; populated unconditionally so dropped calls (magic
@@ -287,7 +569,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 let call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
                 if self.config.show_metrics {
-                    campaign.record_metrics(
+                    invariant_test.record_metrics(
                         current_run.inputs.last().expect("checked above"),
                         call_result.reverted,
                         discarded,
@@ -295,7 +577,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 }
 
                 // Collect line coverage from last fuzzed call.
-                campaign.merge_line_coverage(call_result.line_coverage.clone());
+                invariant_test.merge_line_coverage(call_result.line_coverage.clone());
                 // Snapshot the edge fingerprint before `merge_edge_coverage` zeroes the
                 // buffer. Gate on `assertion_failure` to skip keccak on plain reverts.
                 let assertion_failure =
@@ -314,7 +596,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     current_run.inputs.pop();
                     current_run.rejects += 1;
                     if current_run.rejects > self.config.max_assume_rejects {
-                        campaign.set_error(
+                        invariant_test.set_error(
                             invariant_contract.anchor(),
                             InvariantFuzzError::MaxAssumeRejects(self.config.max_assume_rejects),
                         );
@@ -340,7 +622,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             .as_ref()
                             .and_then(|fuzzer| fuzzer.mapping_slots.as_ref());
                         collect_data(
-                            &campaign,
+                            &invariant_test,
                             &mut state_changeset,
                             current_run.inputs.last().expect("checked above"),
                             &call_result,
@@ -351,13 +633,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
                     // Collect created contracts and add to fuzz targets only if targeted contracts
                     // are updatable.
-                    if let Err(error) = &campaign.targeted_contracts.collect_created_contracts(
-                        &state_changeset,
-                        self.project_contracts,
-                        self.setup_contracts,
-                        &self.artifact_filters,
-                        &mut current_run.created_contracts,
-                    ) {
+                    if let Err(error) =
+                        &invariant_test.targeted_contracts.collect_created_contracts(
+                            &state_changeset,
+                            self.project_contracts,
+                            self.setup_contracts,
+                            &self.artifact_filters,
+                            &mut current_run.created_contracts,
+                        )
+                    {
                         warn!(target: "forge::test", "{error}");
                     }
                     current_run
@@ -385,11 +669,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 || is_last_call
                         };
 
-                    let errors_before_check = campaign.state.failures.invariant_count();
+                    let errors_before_check = invariant_test.test_data.failures.invariant_count();
                     let (continues, broken) = if should_check_invariant {
                         let outcome = can_continue(
                             &invariant_contract,
-                            &mut campaign,
+                            &mut invariant_test,
                             &mut current_run,
                             &self.config,
                             call_result,
@@ -403,7 +687,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     } else {
                         // Skip invariant check but still track reverts
                         if call_result.reverted {
-                            campaign.state.failures.reverts += 1;
+                            invariant_test.test_data.failures.reverts += 1;
                         }
                         if assertion_failure {
                             // Handler-side assertion: deduped by `(reverter, selector)` site;
@@ -412,8 +696,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             error::record_handler_assertion_bug(
                                 &invariant_contract,
                                 &self.config,
-                                &campaign.targeted_contracts,
-                                &mut campaign.state.failures,
+                                &invariant_test.targeted_contracts,
+                                &mut invariant_test.test_data.failures,
                                 &mut current_run.inputs,
                                 handler_target,
                                 handler_selector,
@@ -429,7 +713,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             let case_data = error::InvariantRunCtx {
                                 contract: &invariant_contract,
                                 config: &self.config,
-                                targeted_contracts: &campaign.targeted_contracts,
+                                targeted_contracts: &invariant_test.targeted_contracts,
                                 calldata: &current_run.inputs,
                             }
                             .failed_case(
@@ -439,7 +723,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 call_result,
                                 &[],
                             );
-                            campaign.set_error(anchor, InvariantFuzzError::Revert(case_data));
+                            invariant_test.set_error(anchor, InvariantFuzzError::Revert(case_data));
                             (false, Some(anchor))
                         } else if call_result.reverted
                             && !invariant_contract.is_optimization()
@@ -460,17 +744,17 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     }
 
                     if !continues || current_run.depth == self.config.depth - 1 {
-                        campaign.set_last_run_inputs(&current_run.inputs);
+                        invariant_test.set_last_run_inputs(&current_run.inputs);
                     }
                     // Bridge newly-recorded predicate breaks into `failure_metrics` even when
                     // `continues == true` in multi-predicate campaigns.
-                    if campaign.state.failures.invariant_count() > errors_before_check
+                    if invariant_test.test_data.failures.invariant_count() > errors_before_check
                         || broken.is_some()
                     {
                         record_new_invariant_failures(
                             &mut failure_metrics,
                             &invariant_contract,
-                            &campaign.state.failures,
+                            &invariant_test.test_data.failures,
                         );
                     }
                     if !continues {
@@ -485,7 +769,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 }
 
                 current_run.inputs.push(corpus_manager.generate_next_input(
-                    &mut campaign.state.branch_runner,
+                    &mut invariant_test.test_data.branch_runner,
                     &initial_seq,
                     discarded,
                     current_run.depth as usize,
@@ -510,11 +794,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             // failure. Multi-predicate campaigns keep running after earlier failures, but the
             // hook must still execute on subsequent runs.
             if invariant_contract.call_after_invariant
-                && campaign.state.failures.invariant_count() == failures_before_run
+                && invariant_test.test_data.failures.invariant_count() == failures_before_run
             {
                 let broken = assert_after_invariant(
                     &invariant_contract,
-                    &mut campaign,
+                    &mut invariant_test,
                     &current_run,
                     &self.config,
                 )
@@ -524,23 +808,23 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     record_new_invariant_failures(
                         &mut failure_metrics,
                         &invariant_contract,
-                        &campaign.state.failures,
+                        &invariant_test.test_data.failures,
                     );
                 }
             }
 
             // End current invariant test run.
-            campaign.end_run(current_run, self.config.gas_report_samples as usize);
+            invariant_test.end_run(current_run, self.config.gas_report_samples as usize);
             if let Some(progress) = progress {
                 // If running with progress then increment completed runs.
                 progress.inc(1);
                 // Display current best value, corpus metrics, and failure counts.
-                let best = campaign.state.optimization_best_value;
-                let broken = campaign.state.failures.invariant_count();
+                let best = invariant_test.test_data.optimization_best_value;
+                let broken = invariant_test.test_data.failures.invariant_count();
                 // Live count of unique handler-side assertion bugs, separate from the
                 // predicate breaks in `broken`. Synced into `failure_metrics` so all
                 // campaign-level counters share one struct.
-                failure_metrics.broken_handlers = campaign.state.failures.handler_count();
+                failure_metrics.broken_handlers = invariant_test.test_data.failures.handler_count();
                 let handler_bugs = failure_metrics.broken_handlers;
                 let total_invariants = invariant_contract.invariant_fns.len();
                 if edge_coverage_enabled || best.is_some() || broken > 0 || handler_bugs > 0 {
@@ -572,13 +856,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 && last_metrics_report.elapsed() > DURATION_BETWEEN_METRICS_REPORT
             {
                 // Sync handler-bug count snapshot into failure_metrics before emitting.
-                failure_metrics.broken_handlers = campaign.state.failures.handler_count();
+                failure_metrics.broken_handlers = invariant_test.test_data.failures.handler_count();
                 // Display corpus metrics inline as JSON.
                 let metrics = build_invariant_progress_json(
                     SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
                     &invariant_contract.anchor().name,
                     &corpus_manager.metrics,
-                    campaign.state.optimization_best_value,
+                    invariant_test.test_data.optimization_best_value,
                     throughput,
                     &failure_metrics,
                     campaign_start.elapsed(),
@@ -594,9 +878,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         }
 
         trace!(?fuzz_fixtures);
-        campaign.fuzz_state.log_stats();
+        invariant_test.fuzz_state.log_stats();
 
-        let mut result = campaign.state;
+        let mut result = invariant_test.test_data;
 
         // Post-campaign: shrink each handler bug's call sequence to its minimal prefix.
         let total = result.failures.handler_count();
@@ -632,7 +916,21 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
         }
 
-        Ok(result.into_fuzz_result(corpus_manager.failed_replays))
+        let reverts = result.failures.reverts;
+        let (errors, handler_errors) = result.failures.partition();
+        Ok(InvariantFuzzTestResult {
+            errors,
+            handler_errors,
+            cases: result.fuzz_cases,
+            reverts,
+            last_run_inputs: result.last_run_inputs,
+            gas_report_traces: result.gas_report_traces,
+            line_coverage: result.line_coverage,
+            metrics: result.metrics,
+            failed_corpus_replays: corpus_manager.failed_replays,
+            optimization_best_value: result.optimization_best_value,
+            optimization_best_sequence: result.optimization_best_sequence,
+        })
     }
 
     /// Prepares certain structures to execute the invariant tests:
@@ -647,7 +945,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             (Address, Selector),
             InvariantFuzzError,
         >,
-    ) -> Result<(InvariantCampaign, WorkerCorpus)> {
+    ) -> Result<(InvariantTest, WorkerCorpus)> {
         // Finds out the chosen deployed contracts and/or senders.
         self.select_contract_artifacts(invariant_contract.address)?;
         let (targeted_senders, targeted_contracts) =
@@ -749,18 +1047,18 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             Some(&targeted_contracts),
         )?;
 
-        let mut campaign =
-            InvariantCampaign::new(fuzz_state, targeted_contracts, failures, self.runner.clone());
+        let mut invariant_test =
+            InvariantTest::new(fuzz_state, targeted_contracts, failures, self.runner.clone());
 
         // Seed invariant test with previously persisted optimization state,
         // but only if the current invariant is in optimization mode.
         if invariant_contract.is_optimization() {
             let (opt_best_value, opt_best_sequence) = worker.optimization_initial_state();
-            campaign.state.optimization_best_value = opt_best_value;
-            campaign.state.optimization_best_sequence = opt_best_sequence;
+            invariant_test.test_data.optimization_best_value = opt_best_value;
+            invariant_test.test_data.optimization_best_sequence = opt_best_sequence;
         }
 
-        Ok((campaign, worker))
+        Ok((invariant_test, worker))
     }
 
     /// Fills the `InvariantExecutor` with the artifact identifier filters (in `path:name` string
@@ -1096,7 +1394,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 /// before inserting it into the dictionary. Otherwise, we flood the dictionary with
 /// randomly generated addresses.
 fn collect_data<FEN: FoundryEvmNetwork>(
-    campaign: &InvariantCampaign,
+    invariant_test: &InvariantTest,
     state_changeset: &mut AddressMap<Account>,
     tx: &BasicTxDetails,
     call_result: &RawCallResult<FEN>,
@@ -1116,8 +1414,8 @@ fn collect_data<FEN: FoundryEvmNetwork>(
     let sender_changeset = if has_code { None } else { state_changeset.remove(&tx.sender) };
 
     // Collect values from fuzzed call result and add them to fuzz dictionary.
-    campaign.fuzz_state.collect_values_from_call(
-        &campaign.targeted_contracts,
+    invariant_test.fuzz_state.collect_values_from_call(
+        &invariant_test.targeted_contracts,
         tx,
         &call_result.result,
         &call_result.logs,
@@ -1128,7 +1426,7 @@ fn collect_data<FEN: FoundryEvmNetwork>(
 
     // Inject typed sancov trace-cmp operands into the fuzz dictionary.
     if let Some(cmp_values) = &call_result.sancov_cmp_values {
-        campaign.fuzz_state.collect_typed_cmp_values(
+        invariant_test.fuzz_state.collect_typed_cmp_values(
             cmp_values.iter().map(|s| (s.width, alloy_primitives::B256::from(s.value))),
         );
     }
@@ -1211,4 +1509,101 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
     executor
         .call_raw(tx.sender, tx.call_details.target, tx.call_details.calldata.clone(), value)
         .map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn invariant_progress_json_includes_throughput_fields() {
+        let mut throughput = InvariantThroughputMetrics::default();
+        throughput.record_call(20);
+        throughput.record_call(30);
+
+        let payload = build_invariant_progress_json(
+            123,
+            "invariant_balance",
+            &json!({ "corpus_count": 7 }),
+            Some(I256::try_from(42).unwrap()),
+            throughput,
+            &InvariantFailureMetrics::default(),
+            Duration::from_secs(10),
+        );
+
+        assert_eq!(payload["timestamp"], json!(123));
+        assert_eq!(payload["invariant"], json!("invariant_balance"));
+        assert_eq!(payload["metrics"]["corpus_count"], json!(7));
+        assert_eq!(payload["metrics"]["broken_handlers"], json!(0));
+        assert_eq!(payload["total_txs"], json!(2));
+        assert_eq!(payload["total_gas"], json!(50));
+        assert!((payload["tx_per_sec"].as_f64().unwrap() - 0.2).abs() < 1e-12);
+        assert!((payload["gas_per_sec"].as_f64().unwrap() - 5.0).abs() < 1e-12);
+        assert_eq!(payload["optimization_best"], json!("42"));
+    }
+
+    #[test]
+    fn invariant_progress_json_zero_elapsed_reports_zero_rates() {
+        let mut throughput = InvariantThroughputMetrics::default();
+        throughput.record_call(21_000);
+
+        let payload = build_invariant_progress_json(
+            456,
+            "invariant_zero_elapsed",
+            &json!({ "corpus_count": 1 }),
+            None,
+            throughput,
+            &InvariantFailureMetrics::default(),
+            Duration::ZERO,
+        );
+
+        assert_eq!(payload["tx_per_sec"], json!(0.0));
+        assert_eq!(payload["gas_per_sec"], json!(0.0));
+        assert!(payload.get("optimization_best").is_none());
+    }
+
+    #[test]
+    fn invariant_progress_json_includes_failure_counts() {
+        let mut failure_metrics = InvariantFailureMetrics::default();
+        failure_metrics.record_failure("invariant_a", "TestContract", "revert");
+        failure_metrics.record_failure("invariant_a", "TestContract", "revert");
+        failure_metrics.record_failure("invariant_b", "TestContract", "assertion failed");
+        failure_metrics.broken_handlers = 7;
+
+        let payload = build_invariant_progress_json(
+            789,
+            "invariant_a",
+            &json!({ "corpus_count": 5 }),
+            None,
+            InvariantThroughputMetrics::default(),
+            &failure_metrics,
+            Duration::from_secs(1),
+        );
+
+        assert_eq!(payload["metrics"]["failures"], json!(3));
+        assert_eq!(payload["metrics"]["unique_failures"], json!(2));
+        assert_eq!(payload["metrics"]["broken_handlers"], json!(7));
+    }
+
+    #[test]
+    fn failure_metrics_tracks_total_and_unique_failures() {
+        let mut metrics = InvariantFailureMetrics::default();
+        metrics.record_failure("invariant_a", "TestContract", "revert");
+        metrics.record_failure("invariant_a", "TestContract", "revert");
+        metrics.record_failure("invariant_b", "TestContract", "assertion failed");
+
+        assert_eq!(metrics.failures, 3);
+        assert_eq!(metrics.unique_failures.len(), 2);
+        assert!(metrics.unique_failures.contains("invariant_a"));
+        assert!(metrics.unique_failures.contains("invariant_b"));
+    }
+
+    #[test]
+    fn failure_metrics_default_is_zero() {
+        let metrics = InvariantFailureMetrics::default();
+        assert_eq!(metrics.failures, 0);
+        assert!(metrics.unique_failures.is_empty());
+        assert_eq!(metrics.broken_handlers, 0);
+    }
 }
