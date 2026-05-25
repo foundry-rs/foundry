@@ -15,7 +15,10 @@ use alloy_rpc_types::{BlockId, BlockNumberOrTag::Latest};
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use eyre::{Result, WrapErr};
-use foundry_cli::utils::{self, LoadConfig};
+use foundry_cli::{
+    json::print_json_success,
+    utils::{self, LoadConfig},
+};
 use foundry_common::{
     abi::{get_error, get_event},
     fmt::{format_tokens, format_uint_exp, serialize_value_as_json},
@@ -62,53 +65,113 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
     match args.cmd {
         // Constants
         CastSubcommand::MaxInt { r#type } => {
-            sh_println!("{}", SimpleCast::max_int(&r#type)?)?;
+            let out = SimpleCast::max_int(&r#type)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::MinInt { r#type } => {
-            sh_println!("{}", SimpleCast::min_int(&r#type)?)?;
+            let out = SimpleCast::min_int(&r#type)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::MaxUint { r#type } => {
-            sh_println!("{}", SimpleCast::max_int(&r#type)?)?;
+            let out = SimpleCast::max_int(&r#type)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::AddressZero => {
-            sh_println!("{:?}", Address::ZERO)?;
+            let out = format!("{:?}", Address::ZERO);
+            if shell::is_json() {
+                print_json_success(&out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::HashZero => {
-            sh_println!("{:?}", B256::ZERO)?;
+            let out = format!("{:?}", B256::ZERO);
+            if shell::is_json() {
+                print_json_success(&out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
 
         // Conversions & transformations
         CastSubcommand::FromUtf8 { text } => {
             let value = stdin::unwrap(text, false)?;
-            sh_println!("{}", SimpleCast::from_utf8(&value))?
+            let out = SimpleCast::from_utf8(&value);
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToAscii { hexdata } => {
             let value = stdin::unwrap(hexdata, false)?;
-            sh_println!("{}", SimpleCast::to_ascii(value.trim())?)?
+            let out = SimpleCast::to_ascii(value.trim())?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToUtf8 { hexdata } => {
             let value = stdin::unwrap(hexdata, false)?;
-            sh_println!("{}", SimpleCast::to_utf8(&value)?)?
+            let out = SimpleCast::to_utf8(&value)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::FromFixedPoint { value, decimals } => {
             let (value, decimals) = stdin::unwrap2(value, decimals)?;
-            sh_println!("{}", SimpleCast::from_fixed_point(&value, &decimals)?)?
+            let out = SimpleCast::from_fixed_point(&value, &decimals)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToFixedPoint { value, decimals } => {
             let (value, decimals) = stdin::unwrap2(value, decimals)?;
-            sh_println!("{}", SimpleCast::to_fixed_point(&value, &decimals)?)?
+            let out = SimpleCast::to_fixed_point(&value, &decimals)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ConcatHex { data } => {
-            if data.is_empty() {
+            let out = if data.is_empty() {
                 let s = stdin::read(true)?;
-                sh_println!("{}", SimpleCast::concat_hex(s.split_whitespace()))?
+                SimpleCast::concat_hex(s.split_whitespace())
             } else {
-                sh_println!("{}", SimpleCast::concat_hex(data))?
+                SimpleCast::concat_hex(data)
+            };
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
             }
         }
         CastSubcommand::FromBin => {
             let hex = stdin::read_bytes(false)?;
-            sh_println!("{}", hex::encode_prefixed(hex))?
+            let out = hex::encode_prefixed(hex);
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToHexdata { input } => {
             let value = stdin::unwrap_line(input)?;
@@ -121,75 +184,165 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::ToCheckSumAddress { address, chain_id } => {
             let value = stdin::unwrap_line(address)?;
-            sh_println!("{}", value.to_checksum(chain_id))?
+            let out = value.to_checksum(chain_id);
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToUint256 { value } => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_uint256(&value)?)?
+            let out = SimpleCast::to_uint256(&value)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToInt256 { value } => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_int256(&value)?)?
+            let out = SimpleCast::to_int256(&value)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToUnit { value, unit } => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_unit(&value, &unit)?)?
+            let out = SimpleCast::to_unit(&value, &unit)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ParseUnits { value, unit } => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::parse_units(&value, unit)?)?;
+            let out = SimpleCast::parse_units(&value, unit)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::FormatUnits { value, unit } => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::format_units(&value, unit)?)?;
+            let out = SimpleCast::format_units(&value, unit)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::FromWei { value, unit } => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::from_wei(&value, &unit)?)?
+            let out = SimpleCast::from_wei(&value, &unit)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToWei { value, unit } => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_wei(&value, &unit)?)?
+            let out = SimpleCast::to_wei(&value, &unit)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::FromRlp { value, as_int } => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::from_rlp(value, as_int)?)?
+            let out = SimpleCast::from_rlp(value, as_int)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToRlp { value } => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_rlp(&value)?)?
+            let out = SimpleCast::to_rlp(&value)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToHex(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "hex")?)?
+            let out = SimpleCast::to_base(&value, base_in.as_deref(), "hex")?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToDec(ToBaseArgs { value, base_in }) => {
             let value = stdin::unwrap_line(value)?;
-            sh_println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), "dec")?)?
+            let out = SimpleCast::to_base(&value, base_in.as_deref(), "dec")?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToBase { base: ToBaseArgs { value, base_in }, base_out } => {
             let (value, base_out) = stdin::unwrap2(value, base_out)?;
-            sh_println!("{}", SimpleCast::to_base(&value, base_in.as_deref(), &base_out)?)?
+            let out = SimpleCast::to_base(&value, base_in.as_deref(), &base_out)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ToBytes32 { bytes } => {
             let value = stdin::unwrap_line(bytes)?;
-            sh_println!("{}", SimpleCast::to_bytes32(&value)?)?
+            let out = SimpleCast::to_bytes32(&value)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::Pad { data, right, left: _, len } => {
             let value = stdin::unwrap_line(data)?;
-            sh_println!("{}", SimpleCast::pad(&value, right, len)?)?
+            let out = SimpleCast::pad(&value, right, len)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::FormatBytes32String { string } => {
             let value = stdin::unwrap_line(string)?;
-            sh_println!("{}", SimpleCast::format_bytes32_string(&value)?)?
+            let out = SimpleCast::format_bytes32_string(&value)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ParseBytes32String { bytes } => {
             let value = stdin::unwrap_line(bytes)?;
-            sh_println!("{}", SimpleCast::parse_bytes32_string(&value)?)?
+            let out = SimpleCast::parse_bytes32_string(&value)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ParseBytes32Address { bytes } => {
             let value = stdin::unwrap_line(bytes)?;
-            sh_println!("{}", SimpleCast::parse_bytes32_address(&value)?)?
+            let out = SimpleCast::parse_bytes32_address(&value)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
 
         // ABI encoding & decoding
@@ -198,10 +351,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             print_tokens(&tokens);
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
-            if packed {
-                sh_println!("{}", SimpleCast::abi_encode_packed(&sig, &args)?)?
+            let out = if packed {
+                SimpleCast::abi_encode_packed(&sig, &args)?
             } else {
-                sh_println!("{}", SimpleCast::abi_encode(&sig, &args)?)?
+                SimpleCast::abi_encode(&sig, &args)?
+            };
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
             }
         }
         CastSubcommand::AbiEncodeEvent { sig, args } => {
@@ -236,7 +394,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             } else {
                 args
             };
-            sh_println!("{}", SimpleCast::calldata_encode(sig, &final_args)?)?;
+            let out = SimpleCast::calldata_encode(sig, &final_args)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::DecodeString { data } => {
             let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
@@ -330,14 +493,24 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         .await?;
 
                     sh_warn!("--erc20 flag is deprecated, use `cast erc20 balance` instead")?;
-                    sh_println!("{}", format_uint_exp(balance))?
+                    let out = format_uint_exp(balance);
+                    if shell::is_json() {
+                        print_json_success(out)?;
+                    } else {
+                        sh_println!("{out}")?;
+                    }
                 }
                 None => {
                     let value = Cast::new(&provider).balance(account_addr, block).await?;
-                    if ether {
-                        sh_println!("{}", SimpleCast::from_wei(&value.to_string(), "eth")?)?
+                    let out = if ether {
+                        SimpleCast::from_wei(&value.to_string(), "eth")?
                     } else {
-                        sh_println!("{value}")?
+                        value.to_string()
+                    };
+                    if shell::is_json() {
+                        print_json_success(out)?;
+                    } else {
+                        sh_println!("{out}")?;
                     }
                 }
             }
@@ -345,10 +518,15 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::BaseFee { block, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
-            sh_println!(
-                "{}",
-                Cast::new(provider).base_fee(block.unwrap_or(BlockId::Number(Latest))).await?
-            )?
+            let out = Cast::new(provider)
+                .base_fee(block.unwrap_or(BlockId::Number(Latest)))
+                .await?
+                .to_string();
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::Block { block, full, fields, raw, rpc, network } => {
             let config = rpc.load_config()?;
@@ -402,34 +580,63 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 }
                 None => Cast::new(provider).block_number().await?,
             };
-            sh_println!("{number}")?
+            if shell::is_json() {
+                print_json_success(number)?;
+            } else {
+                sh_println!("{number}")?;
+            }
         }
         CastSubcommand::Chain { rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
-            sh_println!("{}", Cast::new(provider).chain().await?)?
+            let out = Cast::new(provider).chain().await?.to_string();
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ChainId { rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
-            sh_println!("{}", Cast::new(provider).chain_id().await?)?
+            let out = Cast::new(provider).chain_id().await?.to_string();
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::Client { rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
-            sh_println!("{}", provider.get_client_version().await?)?
+            let out = provider.get_client_version().await?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::Code { block, who, disassemble, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            sh_println!("{}", Cast::new(provider).code(who, block, disassemble).await?)?
+            let out = Cast::new(provider).code(who, block, disassemble).await?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::Codesize { block, who, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            sh_println!("{}", Cast::new(provider).codesize(who, block).await?)?
+            let out = Cast::new(provider).codesize(who, block).await?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::ComputeAddress { address, nonce, salt, init_code, init_code_hash, rpc } => {
             let address = stdin::unwrap_line(address)?;
@@ -484,45 +691,85 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::GasPrice { rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
-            sh_println!("{}", Cast::new(provider).gas_price().await?)?;
+            let out = Cast::new(provider).gas_price().await?.to_string();
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::Index { key_type, key, slot_number } => {
-            sh_println!("{}", SimpleCast::index(&key_type, &key, &slot_number)?)?;
+            let out = SimpleCast::index(&key_type, &key, &slot_number)?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::IndexErc7201 { id, formula_id } => {
             eyre::ensure!(formula_id == "erc7201", "unsupported formula ID: {formula_id}");
             let id = stdin::unwrap_line(id)?;
-            sh_println!("{}", foundry_common::erc7201(&id))?;
+            let out = foundry_common::erc7201(&id).to_string();
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::Implementation { block, beacon, who, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            sh_println!("{}", Cast::new(provider).implementation(who, beacon, block).await?)?;
+            let out = Cast::new(provider).implementation(who, beacon, block).await?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::Admin { block, who, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            sh_println!("{}", Cast::new(provider).admin(who, block).await?)?;
+            let out = Cast::new(provider).admin(who, block).await?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::Nonce { block, who, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            sh_println!("{}", Cast::new(provider).nonce(who, block).await?)?;
+            let out = Cast::new(provider).nonce(who, block).await?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::Codehash { block, who, slots, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            sh_println!("{}", Cast::new(provider).codehash(who, slots, block).await?)?;
+            let out = Cast::new(provider).codehash(who, slots, block).await?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::StorageRoot { block, who, slots, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
             let who = who.resolve(&provider).await?;
-            sh_println!("{}", Cast::new(provider).storage_root(who, slots, block).await?)?;
+            let out = Cast::new(provider).storage_root(who, slots, block).await?;
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = rpc.load_config()?;
@@ -668,7 +915,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         // ENS
         CastSubcommand::Namehash { name } => {
             let name = stdin::unwrap_line(name)?;
-            sh_println!("{}", namehash(&name))?
+            let out = namehash(&name).to_string();
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::LookupAddress { who, rpc, verify } => {
             let config = rpc.load_config()?;
@@ -683,7 +935,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     "Reverse lookup verification failed: got `{address}`, expected `{who}`"
                 );
             }
-            sh_println!("{name}")?
+            if shell::is_json() {
+                print_json_success(&name)?;
+            } else {
+                sh_println!("{name}")?;
+            }
         }
         CastSubcommand::ResolveName { who, rpc, verify } => {
             let config = rpc.load_config()?;
@@ -701,7 +957,11 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     "Forward lookup verification failed: got `{name}`, expected `{who}`"
                 );
             }
-            sh_println!("{address}")?
+            if shell::is_json() {
+                print_json_success(address.to_string())?;
+            } else {
+                sh_println!("{address}")?;
+            }
         }
 
         // Misc
@@ -710,21 +970,24 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 Some(data) => data.into_bytes(),
                 None => stdin::read_bytes(false)?,
             };
-            match String::from_utf8(bytes) {
-                Ok(s) => {
-                    let s = SimpleCast::keccak(&s)?;
-                    sh_println!("{s}")?
-                }
-                Err(e) => {
-                    let hash = keccak256(e.as_bytes());
-                    let s = hex::encode(hash);
-                    sh_println!("0x{s}")?
-                }
+            let out = match String::from_utf8(bytes) {
+                Ok(s) => SimpleCast::keccak(&s)?,
+                Err(e) => format!("0x{}", hex::encode(keccak256(e.as_bytes()))),
             };
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::HashMessage { message } => {
             let message = stdin::unwrap(message, false)?;
-            sh_println!("{}", eip191_hash_message(message))?
+            let out = eip191_hash_message(message).to_string();
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::SigEvent { event_string } => {
             let event_string = stdin::unwrap_line(event_string)?;
@@ -810,7 +1073,12 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
         CastSubcommand::RecoverAuthority { auth } => {
             let auth: SignedAuthorization = serde_json::from_str(&auth)?;
-            sh_println!("{}", auth.recover_authority()?)?;
+            let out = auth.recover_authority()?.to_string();
+            if shell::is_json() {
+                print_json_success(out)?;
+            } else {
+                sh_println!("{out}")?;
+            }
         }
         CastSubcommand::TxPool { command } => command.run().await?,
         CastSubcommand::Erc20Token { command } => command.run().await?,
