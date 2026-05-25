@@ -2,7 +2,6 @@ use crate::{
     opts::{Chisel, ChiselSubcommand},
     prelude::{ChiselCommand, ChiselDispatcher, SolidityHelper},
 };
-use clap::Parser;
 use eyre::{Context, Result};
 use foundry_cli::utils::{self, LoadConfig};
 use foundry_common::fs;
@@ -21,12 +20,13 @@ use yansi::Paint;
 pub fn run() -> Result<()> {
     // Pre-parse discovery flags run before `setup()` so they cannot be blocked
     // by panic-handler / tracing init failures and avoid that init's cost.
+    foundry_cli::machine::check_machine();
     foundry_cli::opts::GlobalArgs::check_introspect::<Chisel>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Chisel>();
 
     setup()?;
 
-    let args = Chisel::parse();
+    let args = foundry_cli::parse_or_exit::<Chisel>();
     args.global.init()?;
     args.global.tokio_runtime().block_on(run_command(args))
 }
@@ -239,5 +239,15 @@ mod tests {
         let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
         assert_eq!(doc.binary.name, "chisel");
+    }
+
+    /// Capability self-consistency for every `chisel` command.
+    #[test]
+    fn introspect_capabilities_are_consistent() {
+        use foundry_cli::introspect::{CommandRegistry, build_document, capability_violations};
+        let cmd = Chisel::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let v = capability_violations(&doc);
+        assert!(v.is_empty(), "chisel capability violations: {v:?}");
     }
 }
