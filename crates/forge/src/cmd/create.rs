@@ -460,15 +460,6 @@ impl CreateArgs {
                 .await?;
         }
 
-        // set access list if specified
-        if let Some(access_list) = match self.tx.access_list {
-            None => None,
-            Some(None) => Some(provider.create_access_list(&deployer.tx).await?.access_list),
-            Some(Some(ref access_list)) => Some(access_list.clone()),
-        } {
-            deployer.tx.set_access_list(access_list);
-        }
-
         if is_legacy {
             if self.tx.gas_price.is_none() {
                 deployer.tx.set_gas_price(provider.get_gas_price().await?);
@@ -499,6 +490,15 @@ impl CreateArgs {
                     "max priority fee per gas ({priority}) cannot exceed max fee per gas ({max_fee})"
                 );
             }
+        }
+
+        // set access list if specified
+        if let Some(access_list) = match self.tx.access_list {
+            None => None,
+            Some(None) => Some(provider.create_access_list(&deployer.tx).await?.access_list),
+            Some(Some(ref access_list)) => Some(access_list.clone()),
+        } {
+            deployer.tx.set_access_list(access_list);
         }
 
         if self.tx.gas_limit.is_none() {

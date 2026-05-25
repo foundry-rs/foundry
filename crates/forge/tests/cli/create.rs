@@ -278,7 +278,7 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 "#]]);
 });
 
-forgetest_async!(create_rejects_invalid_eip1559_fees_before_gas_estimation, |prj, cmd| {
+forgetest_async!(create_rejects_invalid_eip1559_fees_before_access_list, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());
     prj.initialize_default_contracts();
 
@@ -296,6 +296,7 @@ forgetest_async!(create_rejects_invalid_eip1559_fees_before_gas_estimation, |prj
             rpc.as_str(),
             "--private-key",
             pk.as_str(),
+            "--access-list",
             "--gas-price",
             "1",
             "--priority-gas-price",
