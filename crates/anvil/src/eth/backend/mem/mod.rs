@@ -1521,10 +1521,6 @@ impl<N: Network> Backend<N> {
                 tempo_tx.fee_token = fee_token;
 
                 if !nonce_key.is_zero() || valid_before.is_some() || valid_after.is_some() {
-                    // For gas estimation we don't have a signed tx, so generate a
-                    // unique hash for expiring-nonce replay protection.  The nonce
-                    // manager needs a non-zero hash; the actual value doesn't matter
-                    // because the state is discarded after estimation.
                     let estimation_hash = keccak256(base.data.as_ref());
                     // T1B+ uses `TempoTxEnv::unique_tx_identifier` (sender-scoped) as
                     // the expiring-nonce replay hash; pre-T1B uses `tx_hash`.
@@ -4211,9 +4207,15 @@ impl Backend<FoundryNetwork> {
     /// Sets the fee token for a user address (Tempo-only).
     pub async fn set_fee_token(&self, user: Address, token: Address) -> DatabaseResult<()> {
         let hardfork = self.hardfork();
-        let chain_id = self.evm_env.read().cfg_env.chain_id;
-        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
-        let block_number: u64 = self.evm_env.read().block_env.number.to();
+        let (chain_id, timestamp, block_number, amsterdam_eip8037_enabled) = {
+            let evm_env = self.evm_env.read();
+            (
+                evm_env.cfg_env.chain_id,
+                U256::from(evm_env.block_env.timestamp),
+                evm_env.block_env.number.to(),
+                evm_env.cfg_env.is_amsterdam_eip8037_enabled(),
+            )
+        };
         let mut db = self.db.write().await;
         let mut storage = AnvilStorageProvider::new(
             &mut **db,
@@ -4221,6 +4223,7 @@ impl Backend<FoundryNetwork> {
             timestamp,
             block_number,
             hardfork.into(),
+            amsterdam_eip8037_enabled,
         );
         StorageCtx::enter(&mut storage, || {
             let mut fee_manager = TipFeeManager::new();
@@ -4237,9 +4240,15 @@ impl Backend<FoundryNetwork> {
         token: Address,
     ) -> DatabaseResult<()> {
         let hardfork = self.hardfork();
-        let chain_id = self.evm_env.read().cfg_env.chain_id;
-        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
-        let block_number: u64 = self.evm_env.read().block_env.number.to();
+        let (chain_id, timestamp, block_number, amsterdam_eip8037_enabled) = {
+            let evm_env = self.evm_env.read();
+            (
+                evm_env.cfg_env.chain_id,
+                U256::from(evm_env.block_env.timestamp),
+                evm_env.block_env.number.to(),
+                evm_env.cfg_env.is_amsterdam_eip8037_enabled(),
+            )
+        };
         let mut db = self.db.write().await;
         let mut storage = AnvilStorageProvider::new(
             &mut **db,
@@ -4247,6 +4256,7 @@ impl Backend<FoundryNetwork> {
             timestamp,
             block_number,
             hardfork.into(),
+            amsterdam_eip8037_enabled,
         );
         StorageCtx::enter(&mut storage, || {
             let mut fee_manager = TipFeeManager::new();
@@ -4269,9 +4279,15 @@ impl Backend<FoundryNetwork> {
         amount: U256,
     ) -> DatabaseResult<()> {
         let hardfork = self.hardfork();
-        let chain_id = self.evm_env.read().cfg_env.chain_id;
-        let timestamp = U256::from(self.evm_env.read().block_env.timestamp);
-        let block_number: u64 = self.evm_env.read().block_env.number.to();
+        let (chain_id, timestamp, block_number, amsterdam_eip8037_enabled) = {
+            let evm_env = self.evm_env.read();
+            (
+                evm_env.cfg_env.chain_id,
+                U256::from(evm_env.block_env.timestamp),
+                evm_env.block_env.number.to(),
+                evm_env.cfg_env.is_amsterdam_eip8037_enabled(),
+            )
+        };
         let admin = Address::ZERO;
         let mut db = self.db.write().await;
         let mut storage = AnvilStorageProvider::new(
@@ -4280,6 +4296,7 @@ impl Backend<FoundryNetwork> {
             timestamp,
             block_number,
             hardfork.into(),
+            amsterdam_eip8037_enabled,
         );
         StorageCtx::enter(&mut storage, || {
             // Mint the required tokens to admin so it can provide liquidity.
