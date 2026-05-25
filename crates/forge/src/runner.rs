@@ -6,25 +6,27 @@ use crate::{
     fuzz::{BaseCounterExample, FuzzTestResult},
     multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
-    result::{InvariantFailure, SuiteResult, TestResult, TestSetup},
+    result::{
+        InvariantFailure, InvariantPredicateResult, SuiteResult, TestResult, TestSetup, TestStatus,
+    },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
 use alloy_json_abi::Function;
-use alloy_primitives::{Address, Bytes, U256, address, map::HashMap};
+use alloy_primitives::{Address, Bytes, Selector, U256, address, map::HashMap};
 use eyre::Result;
 use foundry_common::{TestFunctionExt, TestFunctionKind, contracts::ContractsByAddress};
 use foundry_compilers::utils::canonicalized;
-use foundry_config::{Config, FuzzCorpusConfig};
+use foundry_config::{Config, FuzzCorpusConfig, InvariantConfig};
 use foundry_evm::{
     constants::CALLER,
     core::evm::FoundryEvmNetwork,
-    decode::RevertDecoder,
+    decode::{RevertDecoder, SkipReason},
     executors::{
         CallResult, EvmError, Executor, ITest, RawCallResult,
         fuzz::FuzzedExecutor,
         invariant::{
-            CheckSequenceOptions, InvariantExecutor, InvariantFuzzError, check_sequence,
-            replay_error, replay_run,
+            CheckSequenceOptions, HandlerAssertionFailure, InvariantExecutor, InvariantFuzzError,
+            check_sequence, replay_error, replay_handler_failure_sequence, replay_run,
         },
     },
     fuzz::{
@@ -42,7 +44,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     cmp::min,
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
@@ -253,6 +255,22 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
         Ok(config)
     }
 
+    /// Returns true if all invariant functions share the same effective inline invariant config.
+    fn invariant_suite_configs_match(&self, funcs: &[&Function]) -> bool {
+        let Some((anchor, rest)) = funcs.split_first() else {
+            return true;
+        };
+        let anchor_config = match self.inline_config(Some(anchor)) {
+            Ok(config) => config.invariant,
+            Err(_) => return false,
+        };
+        rest.iter().all(|func| {
+            self.inline_config(Some(func))
+                .map(|config| config.invariant == anchor_config)
+                .unwrap_or(false)
+        })
+    }
+
     /// Collect fixtures from test contract.
     ///
     /// Fixtures can be defined:
@@ -368,7 +386,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             self.contract.abi.functions().filter(|func| func.is_invariant_test()).collect();
 
         // Validate signatures up front: invariant functions must take no parameters. Without
-        // this, parameterized `invariant_*` functions would slip into `assert_all` secondaries
+        // this, parameterized `invariant_*` functions would slip into contract-level campaigns
         // and fail with a confusing "selector not found" / decode error mid-campaign. Reject
         // here with a per-function result so the failure is obvious to the user.
         let invalid_invariants: Vec<_> = invariant_fns
@@ -460,11 +478,59 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
             });
         }
 
+        // Keep only boolean invariants; optimization invariants stay isolated per function.
+        let boolean_invariant_fns = invariant_fns
+            .iter()
+            .copied()
+            .filter(|func| !is_optimization_invariant(func))
+            .collect::<Vec<_>>();
+        let matched_boolean_invariant_fns = functions
+            .iter()
+            .copied()
+            .filter(|func| func.is_invariant_test() && !is_optimization_invariant(func))
+            .collect::<Vec<_>>();
+        // The boolean invariant campaign is contract-level. Test filters only select which
+        // predicates are evaluated/reported inside that campaign; they must not decide the
+        // corpus/failure namespace. Use the canonical anchor when it is part of the filtered
+        // set, but preserve `--mt`/`--nmt` isolation when the filter deliberately excludes it.
+        let canonical_boolean_anchor = boolean_invariant_fns.first().copied();
+        let merge_invariant_suite = !matched_boolean_invariant_fns.is_empty()
+            && self.invariant_suite_configs_match(&matched_boolean_invariant_fns);
+        let invariant_suite_anchor = merge_invariant_suite
+            .then(|| {
+                canonical_boolean_anchor
+                    .filter(|anchor| matched_boolean_invariant_fns.contains(anchor))
+                    .or_else(|| matched_boolean_invariant_fns.first().copied())
+            })
+            .flatten();
+
         let test_results = functions
             .par_iter()
             .filter_map(|&func| {
                 // Early exit if we're running with fail-fast and a test already failed.
                 if early_exit.should_stop() {
+                    return None;
+                }
+                // Invariant tests run either as a shared boolean suite or as a single
+                // optimization campaign; other test kinds keep their original invariant set.
+                let invariants: &[&Function] = if func.is_invariant_test() {
+                    if is_optimization_invariant(func) {
+                        std::slice::from_ref(&func)
+                    } else if merge_invariant_suite {
+                        // Only the suite anchor runs the merged boolean campaign.
+                        if invariant_suite_anchor != Some(func) {
+                            return None;
+                        }
+                        matched_boolean_invariant_fns.as_slice()
+                    } else {
+                        std::slice::from_ref(&func)
+                    }
+                } else {
+                    invariant_fns.as_slice()
+                };
+
+                // Skip invariant anchors that have no predicates to execute.
+                if func.is_invariant_test() && invariants.is_empty() {
                     return None;
                 }
 
@@ -490,7 +556,7 @@ impl<'a, FEN: FoundryEvmNetwork> ContractRunner<'a, FEN> {
 
                 let mut res = FunctionRunner::new(&self, &setup).run(
                     func,
-                    invariant_fns.clone(),
+                    invariants,
                     kind,
                     call_after_invariant,
                     identified_contracts.as_ref(),
@@ -568,22 +634,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
     fn run(
         mut self,
         func: &Function,
-        invariants: Vec<&Function>,
+        invariants: &[&Function],
         kind: TestFunctionKind,
         call_after_invariant: bool,
         identified_contracts: Option<&ContractsByAddress>,
     ) -> TestResult {
-        let fail_on_revert_for = |f: &Function| {
-            if self.inline_config.contains_function(self.cr.name, &f.name)
-                && let Ok(config) = self.cr.inline_config(Some(f))
-            {
-                return config.invariant.fail_on_revert;
-            }
-            self.config.invariant.fail_on_revert
-        };
-        let invariant_fns: Vec<_> =
-            invariants.into_iter().map(|f| (f, fail_on_revert_for(f))).collect();
-
         if let Err(e) = self.apply_function_inline_config(func) {
             self.result.single_fail(Some(e.to_string()));
             return self.result;
@@ -593,12 +648,24 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             TestFunctionKind::UnitTest { .. } => self.run_unit_test(func),
             TestFunctionKind::FuzzTest { .. } => self.run_fuzz_test(func),
             TestFunctionKind::TableTest => self.run_table_test(func),
-            TestFunctionKind::InvariantTest => self.run_invariant_test(
-                func,
-                invariant_fns,
-                call_after_invariant,
-                identified_contracts.unwrap(),
-            ),
+            TestFunctionKind::InvariantTest => {
+                let fail_on_revert_for = |f: &Function| {
+                    if self.inline_config.contains_function(self.cr.name, &f.name)
+                        && let Ok(config) = self.cr.inline_config(Some(f))
+                    {
+                        return config.invariant.fail_on_revert;
+                    }
+                    self.config.invariant.fail_on_revert
+                };
+                let invariant_fns: Vec<_> =
+                    invariants.iter().copied().map(|f| (f, fail_on_revert_for(f))).collect();
+                self.run_invariant_test(
+                    func,
+                    invariant_fns,
+                    call_after_invariant,
+                    identified_contracts.unwrap(),
+                )
+            }
             _ => unreachable!(),
         }
     }
@@ -781,22 +848,39 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         call_after_invariant: bool,
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
-        // First, run the test normally to see if it needs to be skipped.
-        if let Err(EvmError::Skip(reason)) = self.executor.call(
-            self.sender,
-            self.address,
-            func,
-            &[],
-            U256::ZERO,
-            Some(self.revert_decoder()),
-        ) {
-            self.result.invariant_skip(reason);
-            return self.result;
-        };
-
         let runner = self.invariant_runner();
         let invariant_config = self.config.invariant.clone();
         let invariant_config = &invariant_config;
+        let is_optimization = is_optimization_invariant(func);
+
+        let mut live_invariants = Vec::new();
+        let mut skipped_predicate_results = Vec::new();
+        for (invariant, fail_on_revert) in invariants {
+            if let Some(reason) = self.invariant_skip_reason(invariant) {
+                skipped_predicate_results.push(InvariantPredicateResult {
+                    name: invariant.name.clone(),
+                    status: TestStatus::Skipped,
+                    reason: reason.0,
+                });
+            } else {
+                live_invariants.push((invariant, fail_on_revert));
+            }
+        }
+
+        if live_invariants.is_empty() {
+            let skip_reason = skipped_predicate_results
+                .iter()
+                .find(|predicate| predicate.name == func.name)
+                .and_then(|predicate| predicate.reason.clone());
+            self.result
+                .invariant_skip_with_predicates(SkipReason(skip_reason), skipped_predicate_results);
+            return self.result;
+        }
+        let campaign_anchor = live_invariants
+            .iter()
+            .find(|(invariant_fn, _)| *invariant_fn == func)
+            .map(|(invariant_fn, _)| *invariant_fn)
+            .unwrap_or_else(|| live_invariants[0].0);
 
         let mut executor = self.clone_executor();
         // Enable edge coverage if running with coverage guided fuzzing or with edge coverage
@@ -804,6 +888,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor
             .inspector_mut()
             .collect_edge_coverage(invariant_config.corpus.collect_evm_edge_coverage());
+        executor.inspector_mut().collect_evm_cmp_log(invariant_config.corpus.collect_evm_cmp_log());
         executor
             .inspector_mut()
             .collect_sancov_edges(invariant_config.corpus.collect_sancov_edges());
@@ -811,11 +896,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .inspector_mut()
             .collect_sancov_trace_cmp(invariant_config.corpus.collect_sancov_trace_cmp());
         let mut config = invariant_config.clone();
-        let (failure_dir, failure_file) = test_paths(
+        let failure_dir = invariant_suite_paths(
             &mut config.corpus,
             invariant_config.failure_persist_dir.clone().unwrap(),
             self.cr.name,
-            &func.name,
+            func.name.as_str(),
+            is_optimization,
         );
 
         let mut evm = InvariantExecutor::new(
@@ -825,32 +911,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             identified_contracts,
             &self.cr.mcr.known_contracts,
         );
-        // Filter out additional invariants to test if we already have a persisted failure.
-        // Optimization mode only tracks the primary invariant's return value, so secondary
-        // boolean invariants are excluded to avoid silently skipping them.
-        let is_optimization = is_optimization_invariant(func);
-        // When the primary is an optimization invariant and the user has assert_all on, warn
-        // them once that secondary boolean invariants in the same contract are being skipped
-        // — assert_all has no effect under optimization mode, so silently dropping them would
-        // be a footgun.
-        if is_optimization && invariant_config.assert_all {
-            let dropped: Vec<&str> = invariants
-                .iter()
-                .filter(|(invariant_fn, _)| *invariant_fn != func)
-                .map(|(invariant_fn, _)| invariant_fn.name.as_str())
-                .collect();
-            if !dropped.is_empty() {
-                let _ = sh_warn!(
-                    "{}: assert_all is on but {} is an optimization invariant; \
-                     {} boolean invariant(s) skipped: {}. \
-                     Move them to a separate contract to run them.",
-                    self.cr.name,
-                    func.name,
-                    dropped.len(),
-                    dropped.join(", "),
-                );
-            }
-        }
         // Compute current invariant settings up front so secondary persisted-failure handling
         // can use the same compatibility check as the primary replay path below.
         let current_settings = match evm.compute_settings(self.address) {
@@ -860,24 +920,31 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 return self.result;
             }
         };
-        // A secondary's persisted failure is only honored when its embedded settings still
-        // match the current run; stale caches fall back to a fresh campaign.
-        let secondary_has_compatible_persisted = |invariant_fn: &Function| {
-            persisted_call_sequence(
-                canonicalized(failure_dir.join(invariant_fn.name.clone())).as_path(),
-                &current_settings,
-            )
-            .is_some()
+        // A non-anchor predicate's persisted failure is only honored when its embedded settings
+        // still match the current run; stale caches fall back to a fresh campaign.
+        let persisted_invariants = if is_optimization {
+            BTreeSet::new()
+        } else {
+            live_invariants
+                .iter()
+                .filter(|(invariant_fn, _)| *invariant_fn != campaign_anchor)
+                .filter_map(|(invariant_fn, _)| {
+                    persisted_invariant_failure(&failure_dir, invariant_fn, &current_settings)
+                        .is_some()
+                        .then_some(invariant_fn.name.as_str())
+                })
+                .collect::<BTreeSet<_>>()
         };
-        // Warn when secondaries are dropped because they already have persisted failures from a
+        // Warn when predicates are dropped because they already have persisted failures from a
         // previous campaign. Symmetric with the primary's persisted-replay warning so users
         // aren't surprised when fewer invariants appear in the report than their contract
         // defines (Echidna/Medusa never skip properties between runs).
-        if !is_optimization && invariant_config.assert_all {
-            let persisted_skipped: Vec<&str> = invariants
+        if !is_optimization {
+            let persisted_skipped: Vec<&str> = live_invariants
                 .iter()
                 .filter(|(invariant_fn, _)| {
-                    *invariant_fn != func && secondary_has_compatible_persisted(invariant_fn)
+                    *invariant_fn != campaign_anchor
+                        && persisted_invariants.contains(invariant_fn.name.as_str())
                 })
                 .map(|(invariant_fn, _)| invariant_fn.name.as_str())
                 .collect();
@@ -893,22 +960,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
         // Build the invariant list in source declaration order, retaining the anchor (`func`)
-        // and — under `assert_all` — every other invariant that doesn't already have a
-        // compatible persisted failure. Track the anchor's index so downstream consumers can
-        // resolve the campaign-anchor without searching by name.
-        let invariant_fns: Vec<(&Function, bool)> = invariants
+        // and every other selected predicate that doesn't already have a compatible persisted
+        // failure. Track the anchor's index so downstream consumers can resolve the campaign
+        // anchor without searching by name.
+        let invariant_fns: Vec<(&Function, bool)> = live_invariants
             .into_iter()
             .filter(|(invariant_fn, _)| {
-                *invariant_fn == func
+                *invariant_fn == campaign_anchor
                     || (!is_optimization
-                        && invariant_config.assert_all
-                        && !secondary_has_compatible_persisted(invariant_fn))
+                        && !persisted_invariants.contains(invariant_fn.name.as_str()))
             })
             .collect();
         let anchor_idx = invariant_fns
             .iter()
-            .position(|(invariant_fn, _)| *invariant_fn == func)
-            .expect("anchor must be present in invariant_fns");
+            .position(|(invariant_fn, _)| *invariant_fn == campaign_anchor)
+            .expect("campaign anchor must be present in invariant_fns");
         let invariant_contract = InvariantContract::new(
             self.address,
             self.cr.name,
@@ -922,53 +988,44 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let progress = start_fuzz_progress(
             self.cr.progress,
             self.cr.name,
-            &func.name,
+            &invariant_contract.anchor().name,
             invariant_config.timeout,
             invariant_config.runs,
         );
 
+        let replay_ctx = ReplayContext {
+            invariant_contract: &invariant_contract,
+            invariant_config,
+            revert_decoder: self.revert_decoder(),
+            show_solidity,
+        };
+
         // Try to replay recorded failure if any.
+        let primary_failure_file =
+            invariant_failure_file(&failure_dir, invariant_contract.anchor());
+        let persisted_primary = persisted_invariant_failure(
+            &failure_dir,
+            invariant_contract.anchor(),
+            &current_settings,
+        );
         if let Some(InvariantPersistedFailure { mut call_sequence, assertion_failure, .. }) =
-            persisted_call_sequence(failure_file.as_path(), &current_settings)
+            persisted_primary
         {
-            // Create calls from failed sequence and check if invariant still broken.
-            let txes = call_sequence
-                .iter_mut()
-                .map(|seq| {
-                    seq.show_solidity = show_solidity;
-                    BasicTxDetails {
-                        warp: seq.warp,
-                        roll: seq.roll,
-                        sender: seq.sender.unwrap_or_default(),
-                        call_details: CallDetails {
-                            target: seq.addr.unwrap_or_default(),
-                            calldata: seq.calldata.clone(),
-                        },
-                    }
-                })
-                .collect::<Vec<BasicTxDetails>>();
-            if let Ok((success, replayed_entirely, replay_reason)) = check_sequence(
+            let (txes, replay) = replay_persisted_call_sequence(
+                &replay_ctx,
                 self.clone_executor(),
-                &txes,
-                (0..min(txes.len(), invariant_config.depth as usize)).collect(),
-                invariant_contract.address,
-                invariant_contract.anchor().selector().to_vec().into(),
-                CheckSequenceOptions {
-                    accumulate_warp_roll: invariant_config.has_delay(),
-                    fail_on_revert: invariant_config.fail_on_revert,
-                    expect_assertion_failure: assertion_failure,
-                    call_after_invariant: invariant_contract.call_after_invariant,
-                    rd: Some(self.revert_decoder()),
-                },
-            ) && !success
+                &mut call_sequence,
+                assertion_failure,
+            );
+            if let Ok((success, replayed_entirely, replay_reason)) = replay
+                && !success
             {
-                let warn = format!(
-                    "Replayed invariant failure from {:?} file. \nRun `forge clean` or remove file to ignore failure and to continue invariant test campaign.",
-                    failure_file.as_path()
-                );
+                let warn =
+                    "Replayed invariant failure from persisted file. \nRun `forge clean` or remove file to ignore failure and to continue invariant test campaign."
+                        .to_string();
 
                 if let Some(ref progress) = progress {
-                    progress.set_prefix(format!("{}\n{warn}\n", func.name));
+                    progress.set_prefix(format!("{}\n{warn}\n", invariant_contract.anchor().name));
                 } else {
                     let _ = sh_warn!("{warn}");
                 }
@@ -999,7 +1056,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         // Persist error in invariant failure dir.
                         record_invariant_failure(
                             failure_dir.as_path(),
-                            failure_file.as_path(),
+                            primary_failure_file.as_path(),
                             &call_sequence,
                             &current_settings,
                             assertion_failure,
@@ -1021,12 +1078,22 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             }
         }
 
+        // Replay persisted handler bugs; feed still-reproducing ones into the campaign,
+        // delete stale files in place.
+        let persisted_handler_failures = replay_persisted_handler_failures(
+            &failure_dir.join("handlers"),
+            &current_settings,
+            self.clone_executor(),
+            &replay_ctx,
+        );
+
         let invariant_result = match evm.invariant_fuzz(
             invariant_contract.clone(),
             &self.setup.fuzz_fixtures,
             self.build_fuzz_state(true),
             progress.as_ref(),
             &self.tcfg.early_exit,
+            persisted_handler_failures,
         ) {
             Ok(x) => x,
             Err(e) => {
@@ -1038,7 +1105,9 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         self.result.merge_coverages(invariant_result.line_coverage);
 
         let mut counterexample = None;
-        let success = invariant_result.errors.is_empty();
+        // Success requires zero predicate breaks *and* zero handler-side assertion bugs.
+        let success =
+            invariant_result.errors.is_empty() && invariant_result.handler_errors.is_empty();
         let mut invariant_failures: Vec<InvariantFailure> = vec![];
         let mut any_failure_persisted = false;
 
@@ -1131,7 +1200,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             Ok(call_sequence) if !call_sequence.is_empty() => {
                                 record_invariant_failure(
                                     failure_dir.as_path(),
-                                    failure_file.as_path(),
+                                    primary_failure_file.as_path(),
                                     &call_sequence,
                                     &current_settings,
                                     case_data.assertion_failure,
@@ -1147,12 +1216,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         }
                     }
                     InvariantFuzzError::MaxAssumeRejects(_) => None,
+                    // Handler bugs live in `handler_errors`; defensive None here.
+                    InvariantFuzzError::HandlerAssertion(_) => None,
                 };
-                invariant_failures.push(InvariantFailure {
+                invariant_failures.push(InvariantFailure::Predicate {
                     name: invariant_contract.anchor().name.clone(),
                     reason: error.revert_reason().unwrap_or_default(),
                     counterexample: anchor_counterexample,
-                    persisted_path: failure_file,
+                    persisted_path: primary_failure_file,
                     is_anchor: true,
                 });
             }
@@ -1177,8 +1248,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 // them, but the dir check is a belt-and-braces safety net). Use the same
                 // settings-aware compatibility check as the filter so a stale persisted cache
                 // doesn't suppress a freshly-broken secondary.
-                let persisted_failure = canonicalized(failure_dir.join(invariant.name.clone()));
-                if !secondary_has_compatible_persisted(invariant)
+                let persisted_failure = invariant_failure_file(&failure_dir, invariant);
+                if !persisted_invariants.contains(invariant.name.as_str())
                     && let Some(error) = invariant_result.errors.get(&invariant.name)
                     && let InvariantFuzzError::BrokenInvariant(case_data)
                     | InvariantFuzzError::Revert(case_data) = error
@@ -1250,7 +1321,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             }
                         }
                     };
-                    invariant_failures.push(InvariantFailure {
+                    invariant_failures.push(InvariantFailure::Predicate {
                         name: invariant.name.clone(),
                         reason: error.revert_reason().unwrap_or_default(),
                         counterexample: secondary_counterexample,
@@ -1262,18 +1333,128 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         let invariant_failure_dir = any_failure_persisted.then(|| failure_dir.clone());
-        // Only attach a suite-level roll-up when `assert_all` actually exercised >1 invariant.
-        // Single-invariant runs (no assert_all, or filter-narrowed to one) get the legacy
-        // single-block render with no roll-up line.
-        let assert_all_invariant_count = (invariant_config.assert_all
-            && invariant_contract.invariant_fns.len() > 1)
-            .then_some(invariant_contract.invariant_fns.len());
+        // Only attach a campaign-level roll-up when this run actually exercised >1 predicate.
+        // Single-predicate runs keep the legacy single-block render with no roll-up line.
+        let invariant_count = (invariant_contract.invariant_fns.len()
+            + skipped_predicate_results.len()
+            > 1)
+        .then_some(invariant_contract.invariant_fns.len() + skipped_predicate_results.len());
+        let invariant_predicate_results = if invariant_count.is_some() {
+            let failures_by_name = invariant_failures
+                .iter()
+                .map(|failure| (failure.name(), failure))
+                .collect::<BTreeMap<_, _>>();
+            invariant_contract
+                .invariant_fns
+                .iter()
+                .map(|(invariant, _)| {
+                    if let Some(failure) = failures_by_name.get(invariant.name.as_str()) {
+                        InvariantPredicateResult {
+                            name: invariant.name.clone(),
+                            status: TestStatus::Failure,
+                            reason: Some(failure.reason().to_string()),
+                        }
+                    } else {
+                        InvariantPredicateResult {
+                            name: invariant.name.clone(),
+                            status: TestStatus::Success,
+                            reason: None,
+                        }
+                    }
+                })
+                .chain(skipped_predicate_results)
+                .sorted_by_key(|predicate| {
+                    self.cr
+                        .contract
+                        .abi
+                        .functions()
+                        .position(|func| func.name == predicate.name)
+                        .unwrap_or(usize::MAX)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // Convert handler-side assertion bugs into render-ready entries. The name is a
+        // best-effort `Contract::function` from `identified_contracts`, falling back to
+        // `0xreverter::0xselector`. Map is keyed by `(reverter, selector)` site so multiple
+        // code paths through the same function collapse to one entry, rendered in the
+        // dedicated handler assertions section.
+        let identified_contracts_ro = identified_contracts;
+        let invariant_handler_failures = invariant_result
+            .handler_errors
+            .iter()
+            .sorted_by(|(ka, _), (kb, _)| {
+                // Stable order across runs: sort by `(reverter, selector)` site directly.
+                ka.cmp(kb)
+            })
+            .filter_map(|(site, err)| err.as_handler_assertion().map(|f| (site, f)))
+            .map(|(_site, failure)| {
+                let reverter = failure.reverter;
+                let selector = failure.selector;
+                // Resolve `Contract::function` from identified contracts when possible.
+                let resolved_name = identified_contracts_ro
+                    .get(&reverter)
+                    .and_then(|(contract_name, abi)| {
+                        abi.functions()
+                            .find(|f| f.selector() == selector)
+                            .map(|f| format!("{contract_name}::{}", f.name))
+                    })
+                    .unwrap_or_else(|| format!("{reverter}::{selector}"));
+
+                let counterexample_calls = failure
+                    .call_sequence
+                    .iter()
+                    .map(|tx| {
+                        BaseCounterExample::from_invariant_call(
+                            tx,
+                            identified_contracts_ro,
+                            None,
+                            invariant_config.show_solidity,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                // Persist for next-run replay (skip if nothing to record).
+                if !counterexample_calls.is_empty() {
+                    record_handler_failure(
+                        failure_dir.as_path(),
+                        reverter,
+                        selector,
+                        &counterexample_calls,
+                        &current_settings,
+                    );
+                }
+
+                let counterexample = if counterexample_calls.is_empty() {
+                    None
+                } else {
+                    // Preserve pre-shrink length for `(original: N, shrunk: M)` rendering.
+                    Some(CounterExample::Sequence(
+                        failure.original_sequence_len,
+                        counterexample_calls,
+                    ))
+                };
+
+                InvariantFailure::Handler {
+                    name: resolved_name,
+                    reverter,
+                    selector,
+                    reason: failure.revert_reason.clone(),
+                    counterexample,
+                }
+            })
+            .collect::<Vec<_>>();
+
         self.result.invariant_result(
             invariant_result.gas_report_traces,
             success,
             invariant_failures,
+            invariant_predicate_results,
             invariant_failure_dir,
-            assert_all_invariant_count,
+            invariant_count,
+            invariant_handler_failures,
             counterexample,
             invariant_result.cases,
             invariant_result.reverts,
@@ -1282,6 +1463,20 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             invariant_result.optimization_best_value,
         );
         self.result
+    }
+
+    fn invariant_skip_reason(&self, func: &Function) -> Option<SkipReason> {
+        match self.executor.call(
+            self.sender,
+            self.address,
+            func,
+            &[],
+            U256::ZERO,
+            Some(self.revert_decoder()),
+        ) {
+            Err(EvmError::Skip(reason)) => Some(reason),
+            _ => None,
+        }
     }
 
     /// Runs a fuzzed test.
@@ -1323,6 +1518,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         executor
             .inspector_mut()
             .collect_edge_coverage(fuzz_config.corpus.collect_evm_edge_coverage());
+        executor.inspector_mut().collect_evm_cmp_log(fuzz_config.corpus.collect_evm_cmp_log());
         executor.inspector_mut().collect_sancov_edges(fuzz_config.corpus.collect_sancov_edges());
         executor
             .inspector_mut()
@@ -1483,6 +1679,17 @@ struct InvariantPersistedFailure {
     assertion_failure: bool,
 }
 
+/// Mirrors `check_sequence`'s return: `(success, replayed_entirely, optional_reason)`.
+type CheckSequenceResult = eyre::Result<(bool, bool, Option<String>)>;
+
+/// Borrowed context shared by primary-invariant and handler-side replay helpers.
+struct ReplayContext<'a> {
+    invariant_contract: &'a InvariantContract<'a>,
+    invariant_config: &'a InvariantConfig,
+    revert_decoder: &'a RevertDecoder,
+    show_solidity: bool,
+}
+
 /// Helper function to load failed call sequence from file.
 /// Ignores failure if generated with different invariant settings than the current ones.
 fn persisted_call_sequence(
@@ -1504,6 +1711,84 @@ fn persisted_call_sequence(
     )
 }
 
+/// Returns the current invariant failure cache path.
+fn invariant_failure_file(failure_dir: &Path, invariant: &Function) -> PathBuf {
+    canonicalized(failure_dir.join("invariants").join(&invariant.name))
+}
+
+/// Returns the legacy invariant failure cache path.
+fn legacy_invariant_failure_file(failure_dir: &Path, invariant: &Function) -> PathBuf {
+    canonicalized(failure_dir.join(&invariant.name))
+}
+
+/// Loads a persisted invariant failure from the new cache path, falling back to the legacy path.
+fn persisted_invariant_failure(
+    failure_dir: &Path,
+    invariant: &Function,
+    current_settings: &InvariantSettings,
+) -> Option<InvariantPersistedFailure> {
+    persisted_call_sequence(invariant_failure_file(failure_dir, invariant).as_path(), current_settings)
+        .or_else(|| {
+            let legacy_path = legacy_invariant_failure_file(failure_dir, invariant);
+            let persisted = persisted_call_sequence(legacy_path.as_path(), current_settings)?;
+            let _ = sh_warn!(
+                "Using legacy invariant failure cache at {}; new failures will be persisted under {}/invariants.",
+                legacy_path.display(),
+                failure_dir.display(),
+            );
+            Some(persisted)
+        })
+}
+
+/// Converts a persisted counterexample to `BasicTxDetails`, setting `show_solidity` in place.
+fn base_counterexamples_to_txes(
+    ctx: &ReplayContext<'_>,
+    call_sequence: &mut [BaseCounterExample],
+) -> Vec<BasicTxDetails> {
+    call_sequence
+        .iter_mut()
+        .map(|seq| {
+            seq.show_solidity = ctx.show_solidity;
+            BasicTxDetails {
+                warp: seq.warp,
+                roll: seq.roll,
+                sender: seq.sender.unwrap_or_default(),
+                call_details: CallDetails {
+                    target: seq.addr.unwrap_or_default(),
+                    calldata: seq.calldata.clone(),
+                    value: seq.value,
+                },
+            }
+        })
+        .collect()
+}
+
+/// Converts a persisted `BaseCounterExample` sequence into `BasicTxDetails` (applying
+/// `ctx.show_solidity` in place) and replays it via `check_sequence`.
+fn replay_persisted_call_sequence<FEN: FoundryEvmNetwork>(
+    ctx: &ReplayContext<'_>,
+    executor: Executor<FEN>,
+    call_sequence: &mut [BaseCounterExample],
+    expect_assertion_failure: bool,
+) -> (Vec<BasicTxDetails>, CheckSequenceResult) {
+    let txes = base_counterexamples_to_txes(ctx, call_sequence);
+    let result = check_sequence(
+        executor,
+        &txes,
+        (0..min(txes.len(), ctx.invariant_config.depth as usize)).collect(),
+        ctx.invariant_contract.address,
+        ctx.invariant_contract.anchor().selector().to_vec().into(),
+        CheckSequenceOptions {
+            accumulate_warp_roll: ctx.invariant_config.has_delay(),
+            fail_on_revert: ctx.invariant_config.fail_on_revert,
+            expect_assertion_failure,
+            call_after_invariant: ctx.invariant_contract.call_after_invariant,
+            rd: Some(ctx.revert_decoder),
+        },
+    );
+    (txes, result)
+}
+
 /// Helper function to set test corpus dir and to compose persisted failure paths.
 fn test_paths(
     corpus_config: &mut FuzzCorpusConfig,
@@ -1520,6 +1805,37 @@ fn test_paths(
     (failures_dir, failure_file)
 }
 
+/// Sets the invariant corpus directory and returns the contract-level failure directory.
+fn invariant_suite_paths(
+    corpus_config: &mut FuzzCorpusConfig,
+    persist_dir: PathBuf,
+    contract_name: &str,
+    invariant_name: &str,
+    is_optimization: bool,
+) -> PathBuf {
+    let failure_dir = invariant_failure_dir(persist_dir, contract_name);
+    let contract = invariant_contract_name(contract_name);
+    if let Some(corpus_dir) = &corpus_config.corpus_dir {
+        let mut corpus_dir = corpus_dir.join(contract);
+        if is_optimization {
+            corpus_dir = corpus_dir.join(invariant_name);
+        }
+        corpus_config.corpus_dir = Some(canonicalized(corpus_dir));
+    }
+
+    failure_dir
+}
+
+/// Returns the contract-level invariant failure directory.
+fn invariant_failure_dir(persist_dir: PathBuf, contract_name: &str) -> PathBuf {
+    canonicalized(persist_dir.join("failures").join(invariant_contract_name(contract_name)))
+}
+
+/// Returns the invariant test contract name without the file path prefix.
+fn invariant_contract_name(contract_name: &str) -> &str {
+    contract_name.split(':').next_back().unwrap()
+}
+
 /// Helper function to persist invariant failure.
 fn record_invariant_failure(
     failure_dir: &Path,
@@ -1530,6 +1846,12 @@ fn record_invariant_failure(
 ) {
     if let Err(err) = foundry_common::fs::create_dir_all(failure_dir) {
         error!(%err, "Failed to create invariant failure dir");
+        return;
+    }
+    if let Some(parent) = failure_file.parent()
+        && let Err(err) = foundry_common::fs::create_dir_all(parent)
+    {
+        error!(%err, "Failed to create invariant failure file parent dir");
         return;
     }
 
@@ -1543,4 +1865,111 @@ fn record_invariant_failure(
     ) {
         error!(%err, "Failed to record call sequence");
     }
+}
+
+/// Persists a handler-side assertion bug under `<failure_dir>/handlers/<site>.json`,
+/// where `<site>` is `keccak256(reverter || selector)`.
+fn record_handler_failure(
+    failure_dir: &Path,
+    reverter: Address,
+    selector: Selector,
+    call_sequence: &[BaseCounterExample],
+    settings: &InvariantSettings,
+) {
+    let handlers_dir = failure_dir.join("handlers");
+    if let Err(err) = foundry_common::fs::create_dir_all(&handlers_dir) {
+        error!(%err, "Failed to create handler failure dir");
+        return;
+    }
+    let mut buf = [0u8; 24];
+    buf[..20].copy_from_slice(reverter.as_slice());
+    buf[20..].copy_from_slice(selector.as_slice());
+    let site_hash = alloy_primitives::keccak256(buf);
+    let file = handlers_dir.join(format!("{site_hash:x}.json"));
+    record_invariant_failure(&handlers_dir, &file, call_sequence, settings, true);
+}
+
+/// Replays persisted handler-side assertion bugs. A file is kept only if the anchor still
+/// asserts at the same `(reverter, selector)` site; stale files (anchor no longer asserts,
+/// asserts at a different site, or earlier call asserts) are deleted in place.
+fn replay_persisted_handler_failures<FEN: FoundryEvmNetwork>(
+    handlers_dir: &Path,
+    current_settings: &InvariantSettings,
+    executor: Executor<FEN>,
+    ctx: &ReplayContext<'_>,
+) -> std::collections::HashMap<(Address, Selector), InvariantFuzzError> {
+    let mut replayed: std::collections::HashMap<(Address, Selector), InvariantFuzzError> =
+        std::collections::HashMap::new();
+    let entries = match std::fs::read_dir(handlers_dir) {
+        Ok(e) => e,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return replayed,
+        Err(err) => {
+            error!(%err, "Failed to read handler failure dir");
+            return replayed;
+        }
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(persisted) = persisted_call_sequence(&path, current_settings) else {
+            continue;
+        };
+        let mut call_sequence = persisted.call_sequence;
+        if call_sequence.is_empty() {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        }
+        let txes = base_counterexamples_to_txes(ctx, &mut call_sequence);
+        // Expected site = (target, selector) of the persisted reproducer's last call.
+        let Some(last) = txes.last() else {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        };
+        let expected_target = last.call_details.target;
+        let expected_selector_bytes: [u8; 4] =
+            last.call_details.calldata.get(..4).and_then(|s| s.try_into().ok()).unwrap_or_default();
+        let expected_site = (expected_target, Selector::from(expected_selector_bytes));
+        let sequence: Vec<usize> =
+            (0..min(txes.len(), ctx.invariant_config.depth as usize)).collect();
+        let outcome = replay_handler_failure_sequence(
+            executor.clone(),
+            &txes,
+            sequence,
+            ctx.invariant_config.has_delay(),
+            Some(ctx.revert_decoder),
+        );
+        match outcome {
+            Ok(outcome) if outcome.anchor_asserted => {
+                let _ = sh_warn!(
+                    "Replayed handler-side assertion bug from {path:?}. \nRun `forge clean` or remove file to ignore."
+                );
+                let failure = HandlerAssertionFailure::from_replayed_sequence(
+                    txes,
+                    outcome.anchor_fingerprint,
+                    outcome.revert_reason.unwrap_or_default(),
+                );
+                // On collision keep the shorter reproducer. Inlined: `replayed` uses the legacy
+                // `(reverter, selector)` key, not the unified `FailureKey`.
+                let already_shorter = replayed
+                    .get(&expected_site)
+                    .and_then(InvariantFuzzError::as_handler_assertion)
+                    .is_some_and(|existing| {
+                        existing.call_sequence.len() <= failure.call_sequence.len()
+                    });
+                if !already_shorter {
+                    replayed.insert(expected_site, InvariantFuzzError::HandlerAssertion(failure));
+                }
+            }
+            // Stale: anchor doesn't assert or earlier call asserts.
+            Ok(_) => {
+                let _ = std::fs::remove_file(&path);
+            }
+            Err(err) => {
+                error!(%err, "Failed to replay handler-side assertion bug");
+            }
+        }
+    }
+    replayed
 }
