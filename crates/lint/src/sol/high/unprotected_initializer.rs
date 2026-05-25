@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{ContractKind, FunctionKind, StateMutability, Visibility},
+    ast::{ContractKind, DataLocation, FunctionKind, StateMutability, Visibility},
     interface::{Symbol, kw, sym},
     sema::{
         builtins::Builtin,
@@ -36,8 +36,9 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
             .linearized_bases
             .iter()
             .any(|&base_id| hir.contract(base_id).name.as_str() == "Initializable");
+        let runtime_entries = effective_runtime_dispatch_surface(hir, contract.linearized_bases);
         if !upgradeable
-            && !contract.functions().any(|fid| has_initializer_modifier(hir, hir.function(fid)))
+            && !runtime_entries.iter().any(|&fid| has_initializer_modifier(hir, hir.function(fid)))
         {
             return;
         }
@@ -46,11 +47,11 @@ impl<'hir> LateLintPass<'hir> for UnprotectedInitializer {
             return;
         }
 
-        if !has_destructive_entrypoint(hir, contract) {
+        if !has_destructive_entrypoint(hir, contract, &runtime_entries) {
             return;
         }
 
-        for fid in contract.functions() {
+        for fid in runtime_entries {
             let func = hir.function(fid);
             if !is_public_initializer(hir, func) || has_modifier_named(hir, func, "onlyProxy") {
                 continue;
@@ -80,8 +81,12 @@ fn initializers_disabled_in_constructor(hir: &hir::Hir<'_>, contract: &hir::Cont
     })
 }
 
-fn has_destructive_entrypoint(hir: &hir::Hir<'_>, contract: &hir::Contract<'_>) -> bool {
-    effective_runtime_dispatch_surface(hir, contract.linearized_bases).into_iter().any(|fid| {
+fn has_destructive_entrypoint(
+    hir: &hir::Hir<'_>,
+    contract: &hir::Contract<'_>,
+    runtime_entries: &[FunctionId],
+) -> bool {
+    runtime_entries.iter().copied().any(|fid| {
         let func = hir.function(fid);
         if has_modifier_named(hir, func, "onlyProxy") {
             return false;
@@ -462,17 +467,15 @@ impl<'hir> StateWriteAnalyzer<'hir> {
     fn expr_writes_state(&mut self, expr: &'hir hir::Expr<'hir>) -> bool {
         match &expr.kind {
             ExprKind::Assign(lhs, _, rhs) => {
-                state_write_lhs_vars(self.hir, lhs).next().is_some()
+                lhs_writes_state(self.hir, lhs)
                     || self.expr_writes_state(lhs)
                     || self.expr_writes_state(rhs)
             }
             ExprKind::Delete(inner) => {
-                state_write_lhs_vars(self.hir, inner).next().is_some()
-                    || self.expr_writes_state(inner)
+                lhs_writes_state(self.hir, inner) || self.expr_writes_state(inner)
             }
             ExprKind::Unary(op, inner) => {
-                (op.kind.has_side_effects()
-                    && state_write_lhs_vars(self.hir, inner).next().is_some())
+                (op.kind.has_side_effects() && lhs_writes_state(self.hir, inner))
                     || self.expr_writes_state(inner)
             }
             ExprKind::Call(callee, args, opts) => {
@@ -540,43 +543,38 @@ impl<'hir> StateWriteAnalyzer<'hir> {
 
 fn member_call_writes_state(hir: &hir::Hir<'_>, callee: &hir::Expr<'_>) -> bool {
     let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
-    matches!(member.as_str(), "push" | "pop") && state_write_lhs_vars(hir, base).next().is_some()
+    matches!(member.as_str(), "push" | "pop") && lhs_writes_state(hir, base)
 }
 
-fn state_write_lhs_vars<'hir>(
-    hir: &'hir hir::Hir<'hir>,
-    expr: &'hir hir::Expr<'hir>,
-) -> impl Iterator<Item = VariableId> + 'hir {
-    let mut vars = HashSet::new();
-    collect_state_write_lhs_vars(hir, expr, &mut vars);
-    vars.into_iter()
-}
-
-fn collect_state_write_lhs_vars(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
-    vars: &mut HashSet<VariableId>,
-) {
+fn lhs_writes_state(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Ident(resolutions) => {
-            for res in *resolutions {
-                if let Res::Item(ItemId::Variable(var_id)) = res
-                    && hir.variable(*var_id).kind.is_state()
-                {
-                    vars.insert(*var_id);
-                }
-            }
+            resolutions.iter().any(|res| matches!(res, Res::Item(ItemId::Variable(var_id)) if hir.variable(*var_id).kind.is_state()))
         }
         ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
-            collect_state_write_lhs_vars(hir, base, vars);
+            expr_references_storage(hir, base)
         }
         ExprKind::Tuple(exprs) => {
-            for expr in exprs.iter().flatten() {
-                collect_state_write_lhs_vars(hir, expr, vars);
-            }
+            exprs.iter().flatten().any(|expr| lhs_writes_state(hir, expr))
         }
-        _ => {}
+        _ => false,
     }
+}
+
+fn expr_references_storage(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(resolutions) => resolutions.iter().any(|res| {
+            matches!(res, Res::Item(ItemId::Variable(var_id)) if variable_references_storage(hir.variable(*var_id)))
+        }),
+        ExprKind::Index(base, _) | ExprKind::Slice(base, _, _) | ExprKind::Member(base, _) => {
+            expr_references_storage(hir, base)
+        }
+        _ => false,
+    }
+}
+
+fn variable_references_storage(var: &hir::Variable<'_>) -> bool {
+    var.kind.is_state() || var.data_location == Some(DataLocation::Storage)
 }
 
 fn resolved_internal_function_ids(

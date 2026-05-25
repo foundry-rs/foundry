@@ -224,3 +224,43 @@ contract NonUpgradeableInitializeName {
         owner = owner_;
     }
 }
+
+contract InheritedInitializerBase is Initializable {
+    address public owner;
+
+    function initialize(address owner_) public initializer { //~WARN: upgradeable initializer is not protected against direct implementation calls
+        owner = owner_;
+    }
+}
+
+contract InheritedInitializerDerived is InheritedInitializerBase {
+    function execute(address target, bytes calldata data) external {
+        (bool ok,) = target.delegatecall(data);
+        require(ok);
+    }
+}
+
+contract StorageAliasInitializer is Initializable {
+    struct Layout {
+        address owner;
+    }
+
+    bytes32 private constant SLOT = keccak256("foundry.storage.alias.initializer");
+
+    function _getLayout() private pure returns (Layout storage s) {
+        bytes32 slot = SLOT;
+        assembly {
+            s.slot := slot
+        }
+    }
+
+    function initialize(address owner_) public initializer { //~WARN: upgradeable initializer is not protected against direct implementation calls
+        Layout storage s = _getLayout();
+        s.owner = owner_;
+    }
+
+    function execute(address target, bytes calldata data) external {
+        (bool ok,) = target.delegatecall(data);
+        require(ok);
+    }
+}
