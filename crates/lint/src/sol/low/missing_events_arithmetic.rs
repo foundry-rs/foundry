@@ -164,7 +164,7 @@ struct WriteAnalyzer<'a, 'hir> {
 }
 
 impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
-    fn new(hir: &'hir hir::Hir<'hir>, targets: &'a HashSet<VariableId>) -> Self {
+    const fn new(hir: &'hir hir::Hir<'hir>, targets: &'a HashSet<VariableId>) -> Self {
         Self { hir, targets, call_stack: Vec::new() }
     }
 
