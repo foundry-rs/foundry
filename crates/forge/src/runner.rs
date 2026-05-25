@@ -1222,19 +1222,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         call_after_invariant: bool,
         identified_contracts: &ContractsByAddress,
     ) -> TestResult {
-        // First, run the test normally to see if it needs to be skipped.
-        if let Err(EvmError::Skip(reason)) = self.executor.call(
-            self.sender,
-            self.address,
-            func,
-            &[],
-            U256::ZERO,
-            Some(self.revert_decoder()),
-        ) {
-            self.result.invariant_skip(reason);
-            return self.result;
-        };
-
         if self.config.symbolic.enabled {
             return self.run_symbolic_invariant_test(
                 func,
