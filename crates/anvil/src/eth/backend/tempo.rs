@@ -50,7 +50,6 @@ pub struct AnvilStorageProvider<'a> {
     reservoir: u64,
     transient: HashMap<(Address, U256), U256>,
     hardfork: TempoHardfork,
-    amsterdam_eip8037_enabled: bool,
 }
 
 impl<'a> AnvilStorageProvider<'a> {
@@ -60,7 +59,6 @@ impl<'a> AnvilStorageProvider<'a> {
         timestamp: U256,
         block_number: u64,
         hardfork: TempoHardfork,
-        amsterdam_eip8037_enabled: bool,
     ) -> Self {
         Self {
             db,
@@ -72,7 +70,6 @@ impl<'a> AnvilStorageProvider<'a> {
             reservoir: 0,
             transient: HashMap::new(),
             hardfork,
-            amsterdam_eip8037_enabled,
         }
     }
 }
@@ -80,10 +77,6 @@ impl<'a> AnvilStorageProvider<'a> {
 impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
     fn spec(&self) -> TempoHardfork {
         self.hardfork
-    }
-
-    fn amsterdam_eip8037_enabled(&self) -> bool {
-        self.amsterdam_eip8037_enabled
     }
 
     fn chain_id(&self) -> u64 {
@@ -210,6 +203,10 @@ impl PrecompileStorageProvider for AnvilStorageProvider<'_> {
     fn checkpoint_commit(&mut self, _checkpoint: JournalCheckpoint) {}
 
     fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {}
+
+    fn amsterdam_eip8037_enabled(&self) -> bool {
+        false
+    }
 }
 
 /// Initialize Tempo precompiles and fee tokens for Anvil.
@@ -228,7 +225,7 @@ pub fn initialize_tempo_precompiles(
 ) -> Result<(), TempoPrecompileError> {
     let timestamp = U256::from(timestamp);
 
-    let mut storage = AnvilStorageProvider::new(db, chain_id, timestamp, 0, hardfork, false);
+    let mut storage = AnvilStorageProvider::new(db, chain_id, timestamp, 0, hardfork);
 
     // Initialize base Tempo genesis (precompiles and tokens)
     initialize_tempo_genesis(&mut storage, ADMIN, SENDER)?;
