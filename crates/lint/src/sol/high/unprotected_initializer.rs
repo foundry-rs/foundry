@@ -429,7 +429,7 @@ impl<'hir> CallNameFinder<'_, 'hir> {
         self.hir
             .function(func_id)
             .contract
-            .is_some_and(|contract_id| self.bases.iter().any(|&base_id| base_id == contract_id))
+            .is_some_and(|contract_id| self.bases.contains(&contract_id))
     }
 }
 
