@@ -38,3 +38,43 @@ LL │         buyPrice = newBuyPrice;
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
 
+warning[missing-events-arithmetic]: `conditionallyEmittedValue` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │ …     conditionallyEmittedValue = newValue;
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `selfIncrementedValue` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         selfIncrementedValue += 1;
+   │         ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `selfIncrementedValue` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         selfIncrementedValue += stateDelta;
+   │         ━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `prefixIncrementedValue` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         ++prefixIncrementedValue;
+   │           ━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `postfixDecrementedValue` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         postfixDecrementedValue--;
+   │         ━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+

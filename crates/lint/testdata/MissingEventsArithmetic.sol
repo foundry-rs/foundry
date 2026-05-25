@@ -10,15 +10,22 @@ contract MissingEventsArithmetic {
     uint256 public sellFeeBps;
     uint256 public cap;
     uint256 public rewardRate;
+    uint256 public conditionallyEmittedValue;
+    uint256 public selfIncrementedValue;
+    uint256 public prefixIncrementedValue;
+    uint256 public postfixDecrementedValue;
+    uint256 public stateDelta;
     uint256 public plainValue;
     uint256 public fixedValue;
     uint256 public protectedOnlyValue;
     uint256 public senderObservedValue;
     uint256 public senderNonZeroValue;
+    uint256 public wrongPolarityValue;
     mapping(address => uint256) public balances;
 
     event BuyPriceUpdated(uint256 newBuyPrice);
     event CapUpdated(uint256 newCap);
+    event ConditionallyEmittedValueUpdated(uint256 newValue);
     event Touched();
 
     modifier onlyOwner() {
@@ -63,6 +70,31 @@ contract MissingEventsArithmetic {
         buyPrice = newBuyPrice; //~WARN: `buyPrice` is changed without an event but is used in arithmetic
     }
 
+    function setConditionallyEmittedValue(uint256 newValue, bool withEvent) external onlyOwner {
+        if (withEvent) {
+            conditionallyEmittedValue = newValue;
+            emit ConditionallyEmittedValueUpdated(newValue);
+        } else {
+            conditionallyEmittedValue = newValue; //~WARN: `conditionallyEmittedValue` is changed without an event but is used in arithmetic
+        }
+    }
+
+    function incrementSelf() external onlyOwner {
+        selfIncrementedValue += 1; //~WARN: `selfIncrementedValue` is changed without an event but is used in arithmetic
+    }
+
+    function incrementByStateDelta() external onlyOwner {
+        selfIncrementedValue += stateDelta; //~WARN: `selfIncrementedValue` is changed without an event but is used in arithmetic
+    }
+
+    function prefixIncrement() external onlyOwner {
+        ++prefixIncrementedValue; //~WARN: `prefixIncrementedValue` is changed without an event but is used in arithmetic
+    }
+
+    function postfixDecrement() external onlyOwner {
+        postfixDecrementedValue--; //~WARN: `postfixDecrementedValue` is changed without an event but is used in arithmetic
+    }
+
     // Arithmetic usage that makes the values critical.
 
     function buyQuote(uint256 amount) external view returns (uint256) {
@@ -80,6 +112,22 @@ contract MissingEventsArithmetic {
 
     function rewardQuote(uint256 amount) external view returns (uint256) {
         return _rewardQuote(amount, rewardRate);
+    }
+
+    function conditionallyEmittedQuote(uint256 amount) external view returns (uint256) {
+        return amount * conditionallyEmittedValue;
+    }
+
+    function selfIncrementedQuote(uint256 amount) external view returns (uint256) {
+        return amount + selfIncrementedValue;
+    }
+
+    function prefixIncrementedQuote(uint256 amount) external view returns (uint256) {
+        return amount * prefixIncrementedValue;
+    }
+
+    function postfixDecrementedQuote(uint256 amount) external view returns (uint256) {
+        return amount * postfixDecrementedValue;
     }
 
     function _rewardQuote(uint256 amount, uint256 rate) internal pure returns (uint256) {
@@ -157,6 +205,17 @@ contract MissingEventsArithmetic {
 
     function senderNonZeroQuote(uint256 amount) external view returns (uint256) {
         return amount * senderNonZeroValue;
+    }
+
+    // Returning on the authorized branch is not access control, so this setter stays out of scope.
+    function wrongPolaritySetWithEvent(uint256 newValue) external {
+        if (msg.sender == owner) return;
+        wrongPolarityValue = newValue;
+        emit ConditionallyEmittedValueUpdated(newValue);
+    }
+
+    function wrongPolarityQuote(uint256 amount) external view returns (uint256) {
+        return amount * wrongPolarityValue;
     }
 
     function setBalance(address account, uint256 amount) external onlyOwner {

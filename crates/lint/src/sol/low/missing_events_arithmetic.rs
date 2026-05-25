@@ -8,7 +8,7 @@ use solar::{
     interface::{Span, kw, sym},
     sema::hir::{
         self, BinOpKind, ElementaryType, ExprKind, FunctionId, ItemId, Res, StmtKind, TypeKind,
-        VariableId,
+        UnOpKind, VariableId,
     },
 };
 use std::collections::{HashMap, HashSet};
@@ -44,9 +44,7 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
 
         for func_id in contract.all_functions() {
             let func = hir.function(func_id);
-            if !is_protected_entry_point(hir, func_id, func)
-                || function_emits_event(hir, func_id, &mut HashSet::new())
-            {
+            if !is_protected_entry_point(hir, func_id, func) {
                 continue;
             }
 
@@ -139,31 +137,49 @@ struct StateWrite {
     span: Span,
 }
 
+#[derive(Clone, Default)]
+struct WriteState {
+    taint: HashMap<VariableId, HashSet<VariableId>>,
+    pending_writes: Vec<StateWrite>,
+    emitted_event: bool,
+}
+
+impl WriteState {
+    fn record_write(&mut self, write: StateWrite) {
+        if !self.emitted_event {
+            self.pending_writes.push(write);
+        }
+    }
+
+    fn record_event(&mut self) {
+        self.emitted_event = true;
+        self.pending_writes.clear();
+    }
+}
+
 struct WriteAnalyzer<'a, 'hir> {
     hir: &'hir hir::Hir<'hir>,
     targets: &'a HashSet<VariableId>,
-    taint: HashMap<VariableId, HashSet<VariableId>>,
-    writes: Vec<StateWrite>,
     call_stack: Vec<FunctionId>,
 }
 
 impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
     fn new(hir: &'hir hir::Hir<'hir>, targets: &'a HashSet<VariableId>) -> Self {
-        Self { hir, targets, taint: HashMap::new(), writes: Vec::new(), call_stack: Vec::new() }
+        Self { hir, targets, call_stack: Vec::new() }
     }
 
     fn analyze_entry_point(&mut self, func_id: FunctionId) -> Vec<StateWrite> {
+        let mut state = WriteState::default();
         let func = self.hir.function(func_id);
-        self.taint.clear();
         for &param in func.parameters {
-            self.taint.insert(param, HashSet::from([param]));
+            state.taint.insert(param, HashSet::from([param]));
         }
 
-        self.analyze_function(func_id);
-        std::mem::take(&mut self.writes)
+        self.analyze_function(func_id, &mut state);
+        state.pending_writes
     }
 
-    fn analyze_function(&mut self, func_id: FunctionId) {
+    fn analyze_function(&mut self, func_id: FunctionId, state: &mut WriteState) {
         if self.call_stack.contains(&func_id) {
             return;
         }
@@ -173,131 +189,165 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
 
         self.call_stack.push(func_id);
         for stmt in body.stmts {
-            self.analyze_stmt(stmt);
+            self.analyze_stmt(stmt, state);
         }
         self.call_stack.pop();
     }
 
-    fn analyze_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>) {
+    fn analyze_stmt(&mut self, stmt: &'hir hir::Stmt<'hir>, state: &mut WriteState) {
         match stmt.kind {
             StmtKind::DeclSingle(var_id) => {
                 let var = self.hir.variable(var_id);
                 if let Some(init) = var.initializer
                     && !var.kind.is_state()
                 {
-                    self.set_local_taint(var_id, self.taint_sources(init));
+                    self.analyze_expr(init, state);
+                    self.set_local_taint(state, var_id, self.taint_sources(state, init));
                 }
             }
             StmtKind::DeclMulti(vars, expr) => {
-                self.analyze_expr(expr);
-                let sources = self.taint_sources(expr);
+                self.analyze_expr(expr, state);
+                let sources = self.taint_sources(state, expr);
                 for var_id in vars.iter().flatten().copied() {
                     if !self.hir.variable(var_id).kind.is_state() {
-                        self.set_local_taint(var_id, sources.clone());
+                        self.set_local_taint(state, var_id, sources.clone());
                     }
                 }
             }
             StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
                 for stmt in block.stmts {
-                    self.analyze_stmt(stmt);
+                    self.analyze_stmt(stmt, state);
                 }
             }
             StmtKind::If(cond, then_stmt, else_stmt) => {
-                self.analyze_expr(cond);
-                self.analyze_stmt(then_stmt);
+                self.analyze_expr(cond, state);
+
+                let mut then_state = state.clone();
+                self.analyze_stmt(then_stmt, &mut then_state);
+
+                let mut else_state = state.clone();
                 if let Some(else_stmt) = else_stmt {
-                    self.analyze_stmt(else_stmt);
+                    self.analyze_stmt(else_stmt, &mut else_state);
                 }
+
+                state.taint = merge_taint(&then_state.taint, &else_state.taint);
+                state.pending_writes = then_state.pending_writes;
+                state.pending_writes.extend(else_state.pending_writes);
+                state.emitted_event = then_state.emitted_event && else_state.emitted_event;
             }
             StmtKind::Try(try_stmt) => {
-                self.analyze_expr(&try_stmt.expr);
+                self.analyze_expr(&try_stmt.expr, state);
                 for clause in try_stmt.clauses {
                     for stmt in clause.block.stmts {
-                        self.analyze_stmt(stmt);
+                        self.analyze_stmt(stmt, state);
                     }
                 }
             }
-            StmtKind::Expr(expr) | StmtKind::Emit(expr) | StmtKind::Revert(expr) => {
-                self.analyze_expr(expr);
+            StmtKind::Expr(expr) | StmtKind::Revert(expr) => {
+                self.analyze_expr(expr, state);
+            }
+            StmtKind::Emit(expr) => {
+                self.analyze_expr(expr, state);
+                state.record_event();
             }
             StmtKind::Return(expr) => {
                 if let Some(expr) = expr {
-                    self.analyze_expr(expr);
+                    self.analyze_expr(expr, state);
                 }
             }
             StmtKind::Break | StmtKind::Continue | StmtKind::Placeholder | StmtKind::Err(_) => {}
         }
     }
 
-    fn analyze_expr(&mut self, expr: &'hir hir::Expr<'hir>) {
+    fn analyze_expr(&mut self, expr: &'hir hir::Expr<'hir>, state: &mut WriteState) {
         match &expr.kind {
-            ExprKind::Assign(lhs, _op, rhs) => {
-                self.analyze_expr(rhs);
+            ExprKind::Assign(lhs, op, rhs) => {
+                self.analyze_expr(rhs, state);
 
-                let sources = self.taint_sources(rhs);
+                let sources = self.taint_sources(state, rhs);
+                let is_arithmetic_assignment = op.is_some_and(|op| is_arithmetic_op(op.kind));
                 for var_id in state_lhs_vars(self.hir, lhs) {
-                    if self.targets.contains(&var_id) && !sources.is_empty() {
-                        self.writes.push(StateWrite { var_id, span: lhs.span });
+                    if self.targets.contains(&var_id)
+                        && (is_arithmetic_assignment || !sources.is_empty())
+                    {
+                        state.record_write(StateWrite { var_id, span: lhs.span });
                     }
                 }
 
                 if let Some(local) = lhs_local_var(self.hir, lhs) {
-                    self.set_local_taint(local, sources);
+                    self.set_local_taint(state, local, sources);
                 } else {
-                    self.analyze_lhs_indices(lhs);
+                    self.analyze_lhs_indices(lhs, state);
                 }
             }
             ExprKind::Call(callee, args, opts) => {
-                self.analyze_expr(callee);
+                self.analyze_expr(callee, state);
                 if let Some(opts) = opts {
                     for opt in *opts {
-                        self.analyze_expr(&opt.value);
+                        self.analyze_expr(&opt.value, state);
                     }
                 }
                 for arg in args.exprs() {
-                    self.analyze_expr(arg);
+                    self.analyze_expr(arg, state);
                 }
 
                 for callee_id in resolved_function_ids(callee) {
-                    self.analyze_internal_call(callee_id, args);
+                    self.analyze_internal_call(callee_id, args, state);
                 }
             }
             ExprKind::Binary(lhs, _, rhs) => {
-                self.analyze_expr(lhs);
-                self.analyze_expr(rhs);
+                self.analyze_expr(lhs, state);
+                self.analyze_expr(rhs, state);
+            }
+            ExprKind::Unary(op, inner) if is_inc_dec_op(op.kind) => {
+                for var_id in state_lhs_vars(self.hir, inner) {
+                    if self.targets.contains(&var_id) {
+                        state.record_write(StateWrite { var_id, span: inner.span });
+                    }
+                }
+                self.analyze_lhs_indices(inner, state);
             }
             ExprKind::Unary(_, inner)
             | ExprKind::Delete(inner)
             | ExprKind::Member(inner, _)
-            | ExprKind::Payable(inner) => self.analyze_expr(inner),
+            | ExprKind::Payable(inner) => self.analyze_expr(inner, state),
             ExprKind::Index(base, index) => {
-                self.analyze_expr(base);
+                self.analyze_expr(base, state);
                 if let Some(index) = index {
-                    self.analyze_expr(index);
+                    self.analyze_expr(index, state);
                 }
             }
             ExprKind::Slice(base, start, end) => {
-                self.analyze_expr(base);
+                self.analyze_expr(base, state);
                 if let Some(start) = start {
-                    self.analyze_expr(start);
+                    self.analyze_expr(start, state);
                 }
                 if let Some(end) = end {
-                    self.analyze_expr(end);
+                    self.analyze_expr(end, state);
                 }
             }
             ExprKind::Ternary(cond, true_expr, false_expr) => {
-                self.analyze_expr(cond);
-                self.analyze_expr(true_expr);
-                self.analyze_expr(false_expr);
+                self.analyze_expr(cond, state);
+
+                let mut true_state = state.clone();
+                self.analyze_expr(true_expr, &mut true_state);
+
+                let mut false_state = state.clone();
+                self.analyze_expr(false_expr, &mut false_state);
+
+                state.taint = merge_taint(&true_state.taint, &false_state.taint);
+                state.pending_writes = true_state.pending_writes;
+                state.pending_writes.extend(false_state.pending_writes);
+                state.emitted_event = true_state.emitted_event && false_state.emitted_event;
             }
             ExprKind::Array(exprs) => {
                 for expr in *exprs {
-                    self.analyze_expr(expr);
+                    self.analyze_expr(expr, state);
                 }
             }
             ExprKind::Tuple(exprs) => {
                 for expr in exprs.iter().copied().flatten() {
-                    self.analyze_expr(expr);
+                    self.analyze_expr(expr, state);
                 }
             }
             ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
@@ -305,7 +355,12 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
         }
     }
 
-    fn analyze_internal_call(&mut self, callee_id: FunctionId, args: &hir::CallArgs<'hir>) {
+    fn analyze_internal_call(
+        &mut self,
+        callee_id: FunctionId,
+        args: &hir::CallArgs<'hir>,
+        state: &mut WriteState,
+    ) {
         if self.call_stack.contains(&callee_id) {
             return;
         }
@@ -313,56 +368,74 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
         let callee = self.hir.function(callee_id);
         let Some(_) = callee.body else { return };
 
-        let saved_taint = std::mem::take(&mut self.taint);
+        let saved_taint = std::mem::take(&mut state.taint);
         for (param, arg) in callee.parameters.iter().copied().zip(args.exprs()) {
             let sources = collect_input_taint_sources(&saved_taint, arg);
             if !sources.is_empty() {
-                self.taint.insert(param, sources);
+                state.taint.insert(param, sources);
             }
         }
 
-        self.analyze_function(callee_id);
-        self.taint = saved_taint;
+        self.analyze_function(callee_id, state);
+        state.taint = saved_taint;
     }
 
-    fn analyze_lhs_indices(&mut self, expr: &'hir hir::Expr<'hir>) {
+    fn analyze_lhs_indices(&mut self, expr: &'hir hir::Expr<'hir>, state: &mut WriteState) {
         match &expr.kind {
             ExprKind::Index(base, index) => {
-                self.analyze_lhs_indices(base);
+                self.analyze_lhs_indices(base, state);
                 if let Some(index) = index {
-                    self.analyze_expr(index);
+                    self.analyze_expr(index, state);
                 }
             }
             ExprKind::Slice(base, start, end) => {
-                self.analyze_lhs_indices(base);
+                self.analyze_lhs_indices(base, state);
                 if let Some(start) = start {
-                    self.analyze_expr(start);
+                    self.analyze_expr(start, state);
                 }
                 if let Some(end) = end {
-                    self.analyze_expr(end);
+                    self.analyze_expr(end, state);
                 }
             }
-            ExprKind::Member(base, _) | ExprKind::Payable(base) => self.analyze_lhs_indices(base),
+            ExprKind::Member(base, _) | ExprKind::Payable(base) => {
+                self.analyze_lhs_indices(base, state);
+            }
             ExprKind::Tuple(exprs) => {
                 for expr in exprs.iter().copied().flatten() {
-                    self.analyze_lhs_indices(expr);
+                    self.analyze_lhs_indices(expr, state);
                 }
             }
             _ => {}
         }
     }
 
-    fn taint_sources(&self, expr: &hir::Expr<'_>) -> HashSet<VariableId> {
-        collect_input_taint_sources(&self.taint, expr)
+    fn taint_sources(&self, state: &WriteState, expr: &hir::Expr<'_>) -> HashSet<VariableId> {
+        collect_input_taint_sources(&state.taint, expr)
     }
 
-    fn set_local_taint(&mut self, var_id: VariableId, sources: HashSet<VariableId>) {
+    fn set_local_taint(
+        &mut self,
+        state: &mut WriteState,
+        var_id: VariableId,
+        sources: HashSet<VariableId>,
+    ) {
         if sources.is_empty() {
-            self.taint.remove(&var_id);
+            state.taint.remove(&var_id);
         } else {
-            self.taint.insert(var_id, sources);
+            state.taint.insert(var_id, sources);
         }
     }
+}
+
+fn merge_taint(
+    lhs: &HashMap<VariableId, HashSet<VariableId>>,
+    rhs: &HashMap<VariableId, HashSet<VariableId>>,
+) -> HashMap<VariableId, HashSet<VariableId>> {
+    let mut merged = lhs.clone();
+    for (&var_id, sources) in rhs {
+        merged.entry(var_id).or_default().extend(sources.iter().copied());
+    }
+    merged
 }
 
 struct ArithmeticUseAnalyzer<'a, 'hir> {
@@ -809,6 +882,10 @@ const fn is_arithmetic_op(kind: BinOpKind) -> bool {
     )
 }
 
+const fn is_inc_dec_op(kind: UnOpKind) -> bool {
+    matches!(kind, UnOpKind::PreInc | UnOpKind::PostInc | UnOpKind::PreDec | UnOpKind::PostDec)
+}
+
 fn is_protected(hir: &hir::Hir<'_>, func_id: FunctionId, func: &hir::Function<'_>) -> bool {
     for modifier in func.modifiers {
         if let Some(modifier_id) = modifier.id.as_function()
@@ -864,9 +941,9 @@ fn stmt_has_access_guard(
 ) -> bool {
     match stmt.kind {
         StmtKind::If(cond, then_stmt, else_stmt) => {
-            (expr_looks_like_access_check(hir, cond)
-                && (stmt_exits_or_reverts(then_stmt)
-                    || else_stmt.is_some_and(stmt_exits_or_reverts)))
+            (expr_is_unauthorized_access_check(hir, cond) && stmt_exits_or_reverts(then_stmt))
+                || (expr_is_authorized_access_check(hir, cond)
+                    && else_stmt.is_some_and(stmt_exits_or_reverts))
                 || stmt_has_access_guard(hir, then_stmt, seen)
                 || else_stmt.is_some_and(|stmt| stmt_has_access_guard(hir, stmt, seen))
         }
@@ -913,7 +990,7 @@ fn expr_has_access_guard(
 ) -> bool {
     match &expr.peel_parens().kind {
         ExprKind::Call(callee, args, _) if is_require_or_assert(callee) => {
-            args.exprs().next().is_some_and(|cond| expr_looks_like_access_check(hir, cond))
+            args.exprs().next().is_some_and(|cond| expr_is_authorized_access_check(hir, cond))
         }
         ExprKind::Call(callee, args, opts) => {
             for callee_id in resolved_function_ids(callee) {
@@ -959,6 +1036,64 @@ fn expr_has_access_guard(
         ExprKind::Assign(_, _, rhs) => expr_has_access_guard(hir, rhs, seen),
         _ => false,
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AccessCheckPolarity {
+    Authorized,
+    Unauthorized,
+}
+
+fn expr_is_authorized_access_check(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+    expr_access_check_polarity(hir, expr)
+        .is_some_and(|polarity| matches!(polarity, AccessCheckPolarity::Authorized))
+}
+
+fn expr_is_unauthorized_access_check(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
+    expr_access_check_polarity(hir, expr)
+        .is_some_and(|polarity| matches!(polarity, AccessCheckPolarity::Unauthorized))
+}
+
+fn expr_access_check_polarity(
+    hir: &hir::Hir<'_>,
+    expr: &hir::Expr<'_>,
+) -> Option<AccessCheckPolarity> {
+    match &expr.peel_parens().kind {
+        ExprKind::Unary(op, inner) if op.kind == UnOpKind::Not => {
+            Some(match expr_access_check_polarity(hir, inner)? {
+                AccessCheckPolarity::Authorized => AccessCheckPolarity::Unauthorized,
+                AccessCheckPolarity::Unauthorized => AccessCheckPolarity::Authorized,
+            })
+        }
+        ExprKind::Binary(lhs, op, rhs)
+            if matches!(op.kind, BinOpKind::Eq | BinOpKind::Ne)
+                && expr_compares_sender_to_authority(hir, lhs, rhs) =>
+        {
+            Some(if op.kind == BinOpKind::Eq {
+                AccessCheckPolarity::Authorized
+            } else {
+                AccessCheckPolarity::Unauthorized
+            })
+        }
+        _ if expr_looks_like_access_check(hir, expr) => Some(AccessCheckPolarity::Authorized),
+        _ => None,
+    }
+}
+
+fn expr_compares_sender_to_authority(
+    hir: &hir::Hir<'_>,
+    lhs: &hir::Expr<'_>,
+    rhs: &hir::Expr<'_>,
+) -> bool {
+    let mut seen = HashSet::new();
+    (expr_reads_sender(hir, lhs, &mut seen)
+        && (expr_reads_state_variable(hir, rhs) || expr_calls_non_sender_user_function(hir, rhs)))
+        || {
+            let mut seen = HashSet::new();
+            expr_reads_sender(hir, rhs, &mut seen)
+                && (expr_reads_state_variable(hir, lhs)
+                    || expr_calls_non_sender_user_function(hir, lhs))
+        }
 }
 
 fn expr_looks_like_access_check(hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) -> bool {
@@ -1184,113 +1319,6 @@ fn name_looks_like_access_control(name: &str) -> bool {
 fn name_looks_like_sender_accessor(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower == "_msgsender" || lower == "msgsender" || lower == "sender"
-}
-
-fn function_emits_event(
-    hir: &hir::Hir<'_>,
-    func_id: FunctionId,
-    seen: &mut HashSet<FunctionId>,
-) -> bool {
-    if !seen.insert(func_id) {
-        return false;
-    }
-
-    let func = hir.function(func_id);
-    for modifier in func.modifiers {
-        if let Some(modifier_id) = modifier.id.as_function()
-            && function_emits_event(hir, modifier_id, seen)
-        {
-            return true;
-        }
-    }
-
-    let Some(body) = func.body else { return false };
-    body.stmts.iter().any(|stmt| stmt_emits_event(hir, stmt, seen))
-}
-
-fn stmt_emits_event(
-    hir: &hir::Hir<'_>,
-    stmt: &hir::Stmt<'_>,
-    seen: &mut HashSet<FunctionId>,
-) -> bool {
-    match stmt.kind {
-        StmtKind::Emit(_) => true,
-        StmtKind::DeclSingle(var_id) => {
-            hir.variable(var_id).initializer.is_some_and(|init| expr_emits_event(hir, init, seen))
-        }
-        StmtKind::DeclMulti(_, expr)
-        | StmtKind::Expr(expr)
-        | StmtKind::Revert(expr)
-        | StmtKind::Return(Some(expr)) => expr_emits_event(hir, expr, seen),
-        StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
-            block.stmts.iter().any(|stmt| stmt_emits_event(hir, stmt, seen))
-        }
-        StmtKind::If(cond, then_stmt, else_stmt) => {
-            expr_emits_event(hir, cond, seen)
-                || stmt_emits_event(hir, then_stmt, seen)
-                || else_stmt.is_some_and(|stmt| stmt_emits_event(hir, stmt, seen))
-        }
-        StmtKind::Try(try_stmt) => {
-            expr_emits_event(hir, &try_stmt.expr, seen)
-                || try_stmt.clauses.iter().any(|clause| {
-                    clause.block.stmts.iter().any(|stmt| stmt_emits_event(hir, stmt, seen))
-                })
-        }
-        StmtKind::Return(None)
-        | StmtKind::Break
-        | StmtKind::Continue
-        | StmtKind::Placeholder
-        | StmtKind::Err(_) => false,
-    }
-}
-
-fn expr_emits_event(
-    hir: &hir::Hir<'_>,
-    expr: &hir::Expr<'_>,
-    seen: &mut HashSet<FunctionId>,
-) -> bool {
-    match &expr.peel_parens().kind {
-        ExprKind::Call(callee, args, opts) => {
-            for callee_id in resolved_function_ids(callee) {
-                if function_emits_event(hir, callee_id, seen) {
-                    return true;
-                }
-            }
-
-            expr_emits_event(hir, callee, seen)
-                || opts.is_some_and(|opts| {
-                    opts.iter().any(|opt| expr_emits_event(hir, &opt.value, seen))
-                })
-                || args.exprs().any(|arg| expr_emits_event(hir, arg, seen))
-        }
-        ExprKind::Binary(lhs, _, rhs) => {
-            expr_emits_event(hir, lhs, seen) || expr_emits_event(hir, rhs, seen)
-        }
-        ExprKind::Unary(_, inner)
-        | ExprKind::Delete(inner)
-        | ExprKind::Member(inner, _)
-        | ExprKind::Payable(inner) => expr_emits_event(hir, inner, seen),
-        ExprKind::Index(base, index) => {
-            expr_emits_event(hir, base, seen)
-                || index.is_some_and(|index| expr_emits_event(hir, index, seen))
-        }
-        ExprKind::Slice(base, start, end) => {
-            expr_emits_event(hir, base, seen)
-                || start.is_some_and(|start| expr_emits_event(hir, start, seen))
-                || end.is_some_and(|end| expr_emits_event(hir, end, seen))
-        }
-        ExprKind::Ternary(cond, true_expr, false_expr) => {
-            expr_emits_event(hir, cond, seen)
-                || expr_emits_event(hir, true_expr, seen)
-                || expr_emits_event(hir, false_expr, seen)
-        }
-        ExprKind::Array(exprs) => exprs.iter().any(|expr| expr_emits_event(hir, expr, seen)),
-        ExprKind::Tuple(exprs) => {
-            exprs.iter().copied().flatten().any(|expr| expr_emits_event(hir, expr, seen))
-        }
-        ExprKind::Assign(_, _, rhs) => expr_emits_event(hir, rhs, seen),
-        _ => false,
-    }
 }
 
 fn resolved_function_ids<'hir>(
