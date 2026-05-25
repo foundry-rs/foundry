@@ -2168,7 +2168,8 @@ fn portfolio_scheduler_promotes_recent_sat_winner() {
             vec![
                 "/bin/sh".to_string(),
                 "-c".to_string(),
-                "printf started > \"$1\"; sleep 0.3; printf 'unknown\n'".to_string(),
+                "printf started > \"$1\"; cat >/dev/null; sleep 0.3; printf 'unknown\n'"
+                    .to_string(),
                 "sh".to_string(),
                 marker_arg,
             ],
@@ -2200,12 +2201,20 @@ fn portfolio_scheduler_promotes_recent_unsat_winner() {
             vec![
                 "/bin/sh".to_string(),
                 "-c".to_string(),
-                "sleep 0.3; printf 'unknown\n'".to_string(),
+                "cat >/dev/null; sleep 0.3; printf 'unknown\n'".to_string(),
             ],
             false,
         )
         .unwrap(),
-        SolverCommand::new(vec!["/bin/echo".to_string(), "unsat".to_string()], false).unwrap(),
+        SolverCommand::new(
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "cat >/dev/null; printf 'unsat\n'".to_string(),
+            ],
+            false,
+        )
+        .unwrap(),
     ];
     let mut solver = SmtLibSubprocessSolver::new(Ok(commands), Some(5), 2, true);
 
@@ -2218,7 +2227,7 @@ fn portfolio_scheduler_promotes_recent_unsat_winner() {
     let last_outcomes =
         diagnostics.rsplit("--- symbolic solver portfolio outcomes ---").next().unwrap_or_default();
     assert!(last_outcomes.contains("#1 scheduled +0.000ns"));
-    assert!(last_outcomes.contains("/bin/echo unsat: unsat"));
+    assert!(last_outcomes.contains("printf 'unsat"));
 }
 
 #[cfg(unix)]
@@ -2234,7 +2243,7 @@ fn portfolio_scheduler_penalizes_invalid_models() {
             vec![
                 "/bin/sh".to_string(),
                 "-c".to_string(),
-                format!("printf started > \"$1\"; printf '{}'", invalid_model),
+                format!("printf started > \"$1\"; cat >/dev/null; printf '{}'", invalid_model),
                 "sh".to_string(),
                 marker_arg,
             ],
@@ -2242,7 +2251,11 @@ fn portfolio_scheduler_penalizes_invalid_models() {
         )
         .unwrap(),
         SolverCommand::new(
-            vec!["/bin/sh".to_string(), "-c".to_string(), format!("printf '{}'", valid_model)],
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                format!("cat >/dev/null; printf '{}'", valid_model),
+            ],
             false,
         )
         .unwrap(),
@@ -2269,12 +2282,20 @@ fn portfolio_winner_skips_delayed_solver() {
     let marker = portfolio_test_marker("delayed-solver");
     let marker_arg = marker.display().to_string();
     let commands = vec![
-        SolverCommand::new(vec!["/bin/echo".to_string(), "sat".to_string()], false).unwrap(),
         SolverCommand::new(
             vec![
                 "/bin/sh".to_string(),
                 "-c".to_string(),
-                "printf started > \"$1\"; printf 'sat\n'".to_string(),
+                "cat >/dev/null; printf 'sat\n'".to_string(),
+            ],
+            false,
+        )
+        .unwrap(),
+        SolverCommand::new(
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "printf started > \"$1\"; cat >/dev/null; printf 'sat\n'".to_string(),
                 "sh".to_string(),
                 marker_arg,
             ],
@@ -2297,13 +2318,17 @@ fn portfolio_delayed_solver_can_rescue_stalled_leader() {
             vec![
                 "/bin/sh".to_string(),
                 "-c".to_string(),
-                "sleep 0.3; printf 'unknown\n'".to_string(),
+                "cat >/dev/null; sleep 0.3; printf 'unknown\n'".to_string(),
             ],
             false,
         )
         .unwrap(),
         SolverCommand::new(
-            vec!["/bin/sh".to_string(), "-c".to_string(), "printf 'sat\n'".to_string()],
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "cat >/dev/null; printf 'sat\n'".to_string(),
+            ],
             false,
         )
         .unwrap(),
@@ -2320,9 +2345,21 @@ fn portfolio_delayed_solver_can_rescue_stalled_leader() {
 /// Regression coverage for deferring SMT and portfolio diagnostics during progress rendering.
 fn solver_capture_diagnostics_buffers_dump_smt_output() {
     let commands = vec![
-        SolverCommand::new(vec!["/bin/echo".to_string(), "sat".to_string()], false).unwrap(),
         SolverCommand::new(
-            vec!["/bin/sh".to_string(), "-c".to_string(), "printf 'sat\n'".to_string()],
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "cat >/dev/null; printf 'sat\n'".to_string(),
+            ],
+            false,
+        )
+        .unwrap(),
+        SolverCommand::new(
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "cat >/dev/null; printf 'sat\n'".to_string(),
+            ],
             false,
         )
         .unwrap(),
