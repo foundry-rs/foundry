@@ -243,6 +243,13 @@ contract ArbitrarySendErc20 {
         assert(token.transferFrom(from, to, a) && from == msg.sender); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
     }
 
+    function badShortCircuitReassignKillsSafe(bool flag, address from, address to, uint256 a) public {
+        address x = msg.sender;
+        bool ok = flag && ((x = from) != address(0));
+        ok;
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
     // Modifier guard placed *after* `_;` cannot be hoisted.
     modifier lateCheck(address f) {
         _;
@@ -689,6 +696,16 @@ contract ArbitrarySendErc20 {
     function badDoWhileBreakSkipsSafe(address from, address to, uint256 a, bool flag) public {
         address x = from;
         do {
+            if (flag) break;
+            x = msg.sender;
+        } while (false);
+        token.transferFrom(x, to, a); //~WARN: `transferFrom` uses an arbitrary `from`; require it to equal `msg.sender` or `address(this)`
+    }
+
+    function badDoWhileBreakSkipsResafe(address from, address to, uint256 a, bool flag) public {
+        address x = msg.sender;
+        do {
+            x = from;
             if (flag) break;
             x = msg.sender;
         } while (false);

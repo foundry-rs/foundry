@@ -89,6 +89,35 @@ struct Analyzer<'hir> {
     hits: Vec<Span>,
 }
 
+#[derive(Clone)]
+struct FlowState {
+    safe_vars: HashSet<hir::VariableId>,
+    permits: HashSet<PermitRecord>,
+    repayments: HashSet<PendingRepayment>,
+}
+
+impl FlowState {
+    fn intersection(a: &Self, b: &Self) -> Self {
+        Self {
+            safe_vars: a.safe_vars.intersection(&b.safe_vars).copied().collect(),
+            permits: a.permits.intersection(&b.permits).copied().collect(),
+            repayments: a.repayments.intersection(&b.repayments).copied().collect(),
+        }
+    }
+
+    fn intersection_all(mut states: impl Iterator<Item = Self>) -> Self {
+        let mut out = states.next().unwrap_or_else(|| Self {
+            safe_vars: HashSet::new(),
+            permits: HashSet::new(),
+            repayments: HashSet::new(),
+        });
+        for state in states {
+            out = Self::intersection(&out, &state);
+        }
+        out
+    }
+}
+
 /// Recursion budget for `_msgSender()`-style helper chains.
 const HELPER_DEPTH: u8 = 3;
 
@@ -102,6 +131,20 @@ impl<'hir> Analyzer<'hir> {
             has_solady_lib,
             hits: Vec::new(),
         }
+    }
+
+    fn snapshot(&self) -> FlowState {
+        FlowState {
+            safe_vars: self.safe_vars.clone(),
+            permits: self.permits.clone(),
+            repayments: self.repayments.clone(),
+        }
+    }
+
+    fn restore(&mut self, state: FlowState) {
+        self.safe_vars = state.safe_vars;
+        self.permits = state.permits;
+        self.repayments = state.repayments;
     }
 
     fn is_safe(&self, expr: &hir::Expr<'_>) -> bool {
@@ -291,15 +334,79 @@ impl<'hir> Analyzer<'hir> {
     /// Visits a body that may execute zero times or out-of-line (loops, try clauses):
     /// in-body kills survive, in-body additions don't.
     fn visit_isolated(&mut self, stmts: &'hir [hir::Stmt<'hir>]) {
-        let baseline_safe = self.safe_vars.clone();
-        let baseline_permits = self.permits.clone();
-        let baseline_repayments = self.repayments.clone();
-        for s in stmts {
-            let _ = self.visit_stmt(s);
+        let mut exits = vec![self.snapshot()];
+        if let Some(fallthrough) = self.visit_stmts_until_loop_exit(stmts, &mut exits) {
+            exits.push(fallthrough);
         }
-        self.safe_vars.retain(|v| baseline_safe.contains(v));
-        self.permits.retain(|p| baseline_permits.contains(p));
-        self.repayments.retain(|r| baseline_repayments.contains(r));
+        self.restore(FlowState::intersection_all(exits.into_iter()));
+    }
+
+    fn visit_stmts_until_loop_exit(
+        &mut self,
+        stmts: &'hir [hir::Stmt<'hir>],
+        exits: &mut Vec<FlowState>,
+    ) -> Option<FlowState> {
+        for stmt in stmts {
+            self.visit_stmt_until_loop_exit(stmt, exits)?;
+        }
+        Some(self.snapshot())
+    }
+
+    fn visit_stmt_until_loop_exit(
+        &mut self,
+        stmt: &'hir hir::Stmt<'hir>,
+        exits: &mut Vec<FlowState>,
+    ) -> Option<()> {
+        match &stmt.kind {
+            StmtKind::Break | StmtKind::Continue => {
+                exits.push(self.snapshot());
+                None
+            }
+            StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
+                let state = self.visit_stmts_until_loop_exit(block.stmts, exits)?;
+                self.restore(state);
+                Some(())
+            }
+            StmtKind::If(cond, then, else_) => {
+                let _ = self.visit_expr(cond);
+                let baseline = self.snapshot();
+
+                self.add_facts(cond, false);
+                let then_fallthrough = self
+                    .visit_stmt_until_loop_exit(then, exits)
+                    .and_then(|_| (!branch_always_exits(then)).then(|| self.snapshot()));
+
+                self.restore(baseline);
+                self.add_facts(cond, true);
+                let else_fallthrough = match else_ {
+                    Some(else_stmt) => self
+                        .visit_stmt_until_loop_exit(else_stmt, exits)
+                        .and_then(|_| (!branch_always_exits(else_stmt)).then(|| self.snapshot())),
+                    None => Some(self.snapshot()),
+                };
+
+                match (then_fallthrough, else_fallthrough) {
+                    (Some(then_state), Some(else_state)) => {
+                        self.restore(FlowState::intersection(&then_state, &else_state));
+                        Some(())
+                    }
+                    (Some(state), None) | (None, Some(state)) => {
+                        self.restore(state);
+                        Some(())
+                    }
+                    (None, None) => None,
+                }
+            }
+            // Nested loops own their own `break` / `continue`; they do not exit this isolated body.
+            StmtKind::Loop(..) => {
+                let _ = self.visit_stmt(stmt);
+                Some(())
+            }
+            _ => {
+                let _ = self.visit_stmt(stmt);
+                (!branch_always_exits(stmt)).then_some(())
+            }
+        }
     }
 }
 
@@ -430,14 +537,11 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
         {
             let _ = self.visit_expr(lhs);
             let negate = matches!(op.kind, ast::BinOpKind::Or);
-            let saved_safe = self.safe_vars.clone();
-            let saved_permits = self.permits.clone();
-            let saved_repayments = self.repayments.clone();
+            let skipped_rhs = self.snapshot();
             self.add_facts(lhs, negate);
             let result = self.visit_expr(rhs);
-            self.safe_vars = saved_safe;
-            self.permits = saved_permits;
-            self.repayments = saved_repayments;
+            let ran_rhs = self.snapshot();
+            self.restore(FlowState::intersection(&skipped_rhs, &ran_rhs));
             return result;
         }
 
