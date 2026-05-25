@@ -1884,8 +1884,9 @@ Warning: Script contains a transaction to 0x000000000000000000000000000000000000
             "--non-interactive",
         ])
         .assert_success()
+        // `No files changed, compilation skipped` is a compile diagnostic; emitted
+        // on stderr (see `docs/dev/output-channels.md`).
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 ...
 Script ran successfully.
 
@@ -1917,6 +1918,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 
 "#]]).stderr_eq(str![[r#"
+No files changed, compilation skipped
 Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);

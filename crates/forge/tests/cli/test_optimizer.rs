@@ -16,7 +16,6 @@ Compiling 23 files with [..]
     // No files are rebuilt.
     cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-No files changed, compilation skipped
 ...
 
 "#]]);
@@ -50,7 +49,6 @@ Compiling 21 files with [..]
     // No files are rebuilt.
     cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-No files changed, compilation skipped
 ...
 
 "#]]);
@@ -680,7 +678,6 @@ Compiling 22 files with [..]
 "#]]);
     cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-No files changed, compilation skipped
 ...
 
 "#]]);
@@ -765,7 +762,6 @@ Compiling 21 files with [..]
 "#]]);
     cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
 ...
-No files changed, compilation skipped
 ...
 
 "#]]);

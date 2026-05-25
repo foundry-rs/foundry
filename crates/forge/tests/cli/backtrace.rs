@@ -508,7 +508,6 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
         ])
         .assert_failure()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 ...
 Ran 1 test for test/ForkBacktrace.t.sol:ForkBacktraceTest
 [FAIL: ERC20: transfer amount exceeds allowance] testTransferFromWithoutApproval() ([GAS])
@@ -611,7 +610,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         .args(["test", "--mc", "BacktraceVerbosityTest", "-vvv"])
         .assert_failure()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/BacktraceVerbosity.t.sol:BacktraceVerbosityTest
 [FAIL: Simple revert message] testRevert() ([GAS])
@@ -634,7 +632,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         .args(["test", "--mc", "BacktraceVerbosityTest", "-vvvv"])
         .assert_failure()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/BacktraceVerbosity.t.sol:BacktraceVerbosityTest
 [FAIL: Simple revert message] testRevert() ([GAS])
@@ -663,7 +660,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         .args(["test", "--mc", "BacktraceVerbosityTest", "-vvvvv"])
         .assert_failure()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/BacktraceVerbosity.t.sol:BacktraceVerbosityTest
 [FAIL: Simple revert message] testRevert() ([GAS])

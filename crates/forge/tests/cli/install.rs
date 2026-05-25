@@ -47,7 +47,6 @@ Compiler run successful!
 
     // Expect compilation to be skipped as no files have changed
     cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 "#]]);
 });

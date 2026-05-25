@@ -973,7 +973,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
     cmd.forge_fuse().args(["test", "--mt", "invariant_exclude"]).assert_success().stdout_eq(str![
         [r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
 [PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
@@ -997,7 +996,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         .args(["test", "--mt", "invariant_include", "--md"])
         .assert_success()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
 [PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
@@ -1017,7 +1015,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         .args(["test", "--mt", "invariant_exclude", "--md"])
         .assert_success()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
 [PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
@@ -1670,7 +1667,6 @@ Invariant/Property Tests: 3/4 invariants broken
     // the other selected predicate with a persisted failure if it would otherwise be included.
     cmd.forge_fuse().args(["test", "--mt", "invariant_cond3"]).assert_failure().stdout_eq(str![[
         r#"
-No files changed, compilation skipped
 ...
 Ran 1 test for test/CounterTest.t.sol:CounterTest
 [FAIL: condition 3 met]
@@ -2093,7 +2089,6 @@ contract StaleSecondaryTest is Test {
     // bug, the bare `.exists()` check filtered the secondary out and only the primary block
     // would render (no roll-up).
     cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/StaleSecondaryTest.t.sol:StaleSecondaryTest
 [FAIL: first broken] invariant_first

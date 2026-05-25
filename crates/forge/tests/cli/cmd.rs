@@ -1434,7 +1434,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 
     cmd.arg("--check").assert_success().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for src/ATest.t.sol:ATest
 [PASS] testExample() ([GAS])
@@ -3388,7 +3387,6 @@ Compiler run successful!
 
     // Expect compilation to be skipped as no files have changed
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 "#]]);
 });

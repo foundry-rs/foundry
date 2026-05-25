@@ -425,7 +425,6 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
     for _ in 0..5 {
         cmd.assert_success().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
@@ -1059,7 +1058,6 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
     // Perform only the 2 failing tests from last run.
     cmd.forge_fuse().args(["test", "--rerun"]).assert_failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 2 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
 [FAIL: testB failed] testB() ([GAS])
@@ -3201,7 +3199,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
         .args(["test", "--mc", "SuppressTracesTest", "-vvvv"])
         .assert_failure()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 2 tests for test/SuppressTracesTest.t.sol:SuppressTracesTest
 [FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])

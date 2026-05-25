@@ -158,7 +158,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     });
 
     assert_invariant(&mut cmd).failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/InvariantAssume.t.sol:InvariantAssume
 [FAIL: `vm.assume` rejected too many inputs (1 allowed)] invariant_dummy() ([RUNS])
@@ -813,7 +812,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
             );
         });
         cmd.assert_failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/InvariantInnerContract.t.sol:InvariantInnerContract
 [FAIL: jesus betrayed]
@@ -2063,7 +2061,6 @@ Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantR
 "#]]);
 
     assert_invariant(&mut cmd).failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantReplayKeepsAfterInvariantAssertion
 [FAIL: afterInvariant assertion]

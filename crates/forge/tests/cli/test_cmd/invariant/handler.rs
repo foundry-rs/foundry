@@ -528,7 +528,6 @@ contract ShrinkReplayTest is Test {
         config.invariant.runs = 0;
     });
     cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/ShrinkReplayTest.t.sol:ShrinkReplayTest
 Assertion Tests: 1 assertion bug(s) found

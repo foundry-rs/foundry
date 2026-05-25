@@ -68,7 +68,7 @@ Suite result: FAILED. 0 passed; 7 failed; 0 skipped; [ELAPSED]
         .args(["test", "--mc", "ExpectRevertWithReverterFailureTest"])
         .assert_failure()
         .stdout_eq(
-            r#"No files changed, compilation skipped
+            r#"
 ...
 [FAIL: Reverter != expected reverter: [..] != 0x000000000000000000000000000000000000dEaD] testShouldFailExpectPartialRevertWrongReverterTopLevelCreate() ([GAS])
 [FAIL: Reverter != expected reverter: [..] != [..]] testShouldFailExpectRevertNestedCreateOuterAddress() ([GAS])
@@ -85,7 +85,7 @@ Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
         .args(["test", "--mc", "ExpectRevertCountFailureTest"])
         .assert_failure()
         .stdout_eq(
-            r#"No files changed, compilation skipped
+            r#"
 ...
 [FAIL: call reverted with 'my cool error' when it was expected not to revert] testShouldFailIfExpectRevertWrongString() ([GAS])
 [FAIL: call reverted when it was expected not to revert] testShouldFailNoRevert() ([GAS])
@@ -101,7 +101,7 @@ Suite result: FAILED. 0 passed; 6 failed; 0 skipped; [ELAPSED]
     cmd.forge_fuse()
         .args(["test", "--mc", "ExpectRevertCountWithReverterFailures"])
         .assert_failure()
-        .stdout_eq(r#"No files changed, compilation skipped
+        .stdout_eq(r#"
 ...
 [FAIL: call reverted with 'revert' from 0x2e234DAe75C793f67A35089C9d99245E1C58470b, but expected 0 reverts from 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testNoRevertWithWrongReverter() ([GAS])
 [FAIL: call reverted with 'revert2' from 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f, but expected 0 reverts with reason 'revert' from 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f] testNoReverterCountWithData() ([GAS])
@@ -144,7 +144,7 @@ Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
         .args(["test", "--mc", "ExpectCallCountFailureTest"])
         .assert_failure()
         .stdout_eq(
-            r#"No files changed, compilation skipped
+            r#"
 ...
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0xc290d6910000000000000000000000000000000000000000000000000000000000000002, value 1 to be called 1 time, but was called 0 times] testShouldFailExpectCallCountValue() ([GAS])
 [FAIL: expected call to 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f with data 0x771602f700000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001, value 0, gas 25000 to be called 2 times, but was called 0 times] testShouldFailExpectCallCountWithNoValueAndWrongGas() ([GAS])
@@ -160,7 +160,7 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
         .args(["test", "--mc", "ExpectCallMixedFailureTest"])
         .assert_failure()
         .stdout_eq(
-            r#"No files changed, compilation skipped
+            r#"
 ...
 [FAIL: vm.expectCall: counted expected calls can only bet set once] testShouldFailOverrideCountWithCount() ([GAS])
 [FAIL: vm.expectCall: cannot overwrite a counted expectCall with a non-counted expectCall] testShouldFailOverrideCountWithNoCount() ([GAS])
@@ -206,7 +206,7 @@ forgetest!(flaky_expect_emit_tests_should_fail, |prj, cmd| {
     cmd.forge_fuse().arg("build").assert_success();
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
-    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"No files changed, compilation skipped
+    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"
 ...
 [FAIL: E != expected A] testShouldFailCanMatchConsecutiveEvents() ([GAS])
 [FAIL: log != expected SomethingElse] testShouldFailDifferentIndexedParameters() ([GAS])
@@ -231,7 +231,7 @@ Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
         .args(["test", "--mc", "ExpectEmitCountFailureTest"])
         .assert_failure()
         .stdout_eq(
-            r#"No files changed, compilation skipped
+            r#"
 ...
 [FAIL: log != expected log] testShouldFailCountEmitsFromAddress() ([GAS])
 [FAIL: log != expected log] testShouldFailCountLessEmits() ([GAS])
@@ -260,7 +260,7 @@ forgetest!(flaky_expect_emit_params_tests_should_fail, |prj, cmd| {
     cmd.forge_fuse().arg("build").assert_success();
 
     cmd.forge_fuse().args(["test", "--mc", "ExpectEmitParamFailures"]).assert_failure().stdout_eq(
-        r#"No files changed, compilation skipped
+        r#"
 ...
 [PASS] testSelectiveChecks() ([GAS])
 Suite result: FAILED. 1 passed; 8 failed; 0 skipped; [ELAPSED]

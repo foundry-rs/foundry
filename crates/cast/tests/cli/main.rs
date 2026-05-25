@@ -3315,12 +3315,14 @@ contract LocalProjectScript is Script {
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-Nothing to compile
 
 "#]])
+        // `Nothing to compile` is a compile diagnostic; emitted on stderr
+        // (see `docs/dev/output-channels.md`).
         .stderr_eq(str![[r#"
 Executing previous transactions from the block.
 Compiling project to generate artifacts
+Nothing to compile
 
 "#]]);
 
@@ -3353,7 +3355,6 @@ Executing previous transactions from the block.
         .args(["run", "--la", format!("{tx_hash}").as_str(), "--rpc-url", &handle.http_endpoint()])
         .assert_success()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 Traces:
   [..] → new LocalProjectContract@0x5FbDB2315678afecb367f032d93F642f64180aa3
     ├─ emit LocalProjectContractCreated(owner: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
@@ -3364,9 +3365,12 @@ Transaction successfully executed.
 [GAS]
 
 "#]])
+        // `No files changed, compilation skipped` is a compile diagnostic; emitted
+        // on stderr (see `docs/dev/output-channels.md`).
         .stderr_eq(str![[r#"
 Executing previous transactions from the block.
 Compiling project to generate artifacts
+No files changed, compilation skipped
 
 "#]]);
 });

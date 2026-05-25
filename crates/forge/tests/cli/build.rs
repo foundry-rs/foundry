@@ -102,7 +102,6 @@ Compiler run successful!
     );
 
     cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |---------------|------------------|-------------------|--------------------|---------------------|
@@ -115,7 +114,6 @@ No files changed, compilation skipped
 
     cmd.forge_fuse().args(["build", "--sizes", "--ignore-eip-3860"]).assert_success().stdout_eq(
         str![[r#"
-No files changed, compilation skipped
 
 ╭---------------+------------------+-------------------+--------------------+---------------------╮
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
@@ -148,7 +146,6 @@ No files changed, compilation skipped
         .args(["build", "--sizes", "--ignore-eip-3860", "--md"])
         .assert_success()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |---------------|------------------|-------------------|--------------------|---------------------|

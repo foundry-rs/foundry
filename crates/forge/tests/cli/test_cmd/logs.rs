@@ -879,7 +879,6 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
             .args(["test", "--live-logs", "--threads", "1"])
             .assert_success()
             .stdout_eq(str![[r#"
-No files changed, compilation skipped
 Setup
 Test 1
 Test 2
