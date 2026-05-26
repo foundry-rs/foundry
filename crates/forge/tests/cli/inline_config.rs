@@ -16,7 +16,6 @@ forgetest!(runs, |prj, cmd| {
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/inline.sol:Inline
 [PASS] test1(bool) (runs: 2, [AVG_GAS])
@@ -31,7 +30,6 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
     cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Analysing contracts...
 Running tests...
 
@@ -63,6 +61,7 @@ forgetest!(invalid_profile, |prj, cmd| {
     );
 
     cmd.arg("test").assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
 Error: Inline config error at test/inline.sol:4:9: invalid profile `unknown.fuzz.runs = 2`; valid profiles: default
 
 "#]]);
@@ -144,10 +143,12 @@ forgetest!(invalid_value, |prj, cmd| {
     ",
     );
 
-    cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
+    cmd.arg("test").assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
+
+"#]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/inline.sol:Inline
 [FAIL: invalid type: found sequence, expected u32 for key "default.fuzz.runs" in inline config] setUp() ([GAS])
@@ -177,10 +178,12 @@ forgetest!(invalid_value_2, |prj, cmd| {
     ",
     );
 
-    cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
+    cmd.arg("test").assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
+
+"#]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/inline.sol:Inline
 [FAIL: invalid type: found string "2", expected u32 for key "default.fuzz.runs" in inline config] setUp() ([GAS])
@@ -258,7 +261,6 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
     cmd.args(["test", "-j1"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/inline.sol:ContractConfig
 [PASS] test_non_isolate() ([GAS])
@@ -507,22 +509,21 @@ forgetest!(per_test_network_routing, |prj, cmd| {
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
-Ran 1 test for test/inline.sol:[..]Network
-[PASS] test_fee_manager_absent_on_[..]() ([GAS])
+Ran 1 test for test/inline.sol:MixedNetwork
+[PASS] test_fee_manager_absent_on_ethereum() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/inline.sol:[..]Network
-[PASS] test_fee_manager_absent_on_[..]() ([GAS])
+Ran 1 test for test/inline.sol:DefaultNetwork
+[PASS] test_fee_manager_absent_on_ethereum() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/inline.sol:[..]Network
-[PASS] test_fee_manager_callable_on_[..]() ([GAS])
+Ran 1 test for test/inline.sol:MixedNetwork
+[PASS] test_fee_manager_callable_on_tempo() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
-Ran 1 test for test/inline.sol:[..]Network
-[PASS] test_fee_manager_callable_on_[..]() ([GAS])
+Ran 1 test for test/inline.sol:TempoNetwork
+[PASS] test_fee_manager_callable_on_tempo() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 3 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)

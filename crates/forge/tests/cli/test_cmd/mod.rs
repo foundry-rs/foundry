@@ -160,6 +160,7 @@ contract TestC {
 
     dummy_test_filter(&mut cmd);
     cmd.assert_success().stderr_eq(str![[r#"
+Compiler run successful!
 Warning: no tests match the provided pattern:
 	match-test: `testA.*`
 	no-match-test: `testB.*`
@@ -192,7 +193,6 @@ contract ATest is DSTest {
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/ATest.t.sol:ATest
 [PASS] testArray(uint64[2]) (runs: 256, [AVG_GAS])
@@ -222,8 +222,8 @@ contract ATest is DSTest {
     );
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-...
-Compiler run successful!
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 
 Ran 1 test for src/ATest.t.sol:ATest
 [PASS] testArray(uint64[2]) (runs: 256, [AVG_GAS])
@@ -265,7 +265,6 @@ contract FailTest is DSTest {
     cmd.args(["test", "--match-path", "*src/ATest.t.sol"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/ATest.t.sol:ATest
 [PASS] testPass() ([GAS])
@@ -310,7 +309,6 @@ contract FailTest is DSTest {
     cmd.args(["test", "--match-path", test_path.as_ref()]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/ATest.t.sol:ATest
 [PASS] testPass() ([GAS])
@@ -392,7 +390,6 @@ contract MyTest is DSTest {
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/nested/forge-tests/MyTest.t.sol:MyTest
 [PASS] testTrue() ([GAS])
@@ -412,7 +409,6 @@ forgetest_init!(can_test_repeatedly, |prj, cmd| {
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
@@ -466,7 +462,6 @@ contract ContractTest is DSTest {
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/Contract.t.sol:ContractTest
 [PASS] testExample() ([GAS])
@@ -484,7 +479,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/Contract.t.sol:ContractTest
 [PASS] testExample() ([GAS])
@@ -541,7 +535,6 @@ contract ContractTest is Test {
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Contract.t.sol:ContractTest
 [PASS] test() ([GAS])
@@ -565,9 +558,16 @@ contract FailingTest is Test {
 forgetest_init!(exit_code_error_on_fail_fast, |prj, cmd| {
     prj.add_source("failing_test", FAILING_TEST);
 
-    cmd.args(["test", "--fail-fast"]);
+    cmd.args(["test", "--fail-fast"]).assert_failure().stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:7:5:
+  |
+7 |     function testShouldFail() public {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
 
-    cmd.assert_empty_stderr();
+
+"#]]);
 });
 
 forgetest_init!(exit_code_error_on_fail_fast_with_json, |prj, cmd| {
@@ -680,13 +680,12 @@ contract USDTCallingTest is Test {
     cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Contract.t.sol:USDTCallingTest
 [PASS] test() ([GAS])
 Traces:
-  [..] USDTCallingTest::test()
-    ├─ [0] VM::createSelectFork("[..]")
+  [10107] USDTCallingTest::test()
+    ├─ [0] VM::createSelectFork("<rpc url>")
     │   └─ ← [Return] 0
     ├─ [3110] 0xdAC17F958D2ee523a2206206994597C13D831ec7::name() [staticcall]
     │   └─ ← [Return] "Tether USD"
@@ -750,7 +749,6 @@ contract CustomTypesTest is Test {
     cmd.args(["test", "-vvvvv"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/Contract.t.sol:CustomTypesTest
 [FAIL: PoolNotInitialized()] testErr() ([GAS])
@@ -759,7 +757,7 @@ Traces:
     └─ ← [Revert] PoolNotInitialized()
 
 Backtrace:
-  at CustomTypesTest.testErr (test/Contract.t.sol:[..]:[..])
+  at CustomTypesTest.testErr (test/Contract.t.sol:11:52)
 
 [PASS] testEvent() ([GAS])
 Traces:
@@ -920,17 +918,16 @@ contract CounterTest is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=[..] args=[..]] testAddOne(uint256) (runs: [..], [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 28, [AVG_GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=[..] args=[..]] testAddOne(uint256) (runs: [..], [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 28, [AVG_GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -974,7 +971,6 @@ contract CounterTest is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/CounterInvariant.t.sol:CounterTest
 [FAIL: wrong count] invariant_early_exit() (runs: 1, calls: 1, reverts: 0)
@@ -1031,7 +1027,6 @@ contract ReplayFailuresTest is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 4 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
 [PASS] testA() ([GAS])
@@ -1133,12 +1128,11 @@ contract PrecompileLabelsTest is Test {
     cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Contract.t.sol:PrecompileLabelsTest
 [PASS] testPrecompileLabels() ([GAS])
 Traces:
-  [..] PrecompileLabelsTest::testPrecompileLabels()
+  [13973] PrecompileLabelsTest::testPrecompileLabels()
     ├─ [0] VM::deal(VM: [0x7109709ECfa91a80626fF3989D68f67F5b1DD12D], 1000000000000000000 [1e18])
     │   └─ ← [Return]
     ├─ [0] VM::deal(console: [0x000000000000000000636F6e736F6c652e6c6f67], 1000000000000000000 [1e18])
@@ -1204,12 +1198,11 @@ contract ContractFuzz is Test {
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
 Logs:
-  inside fuzz test, x is: [..]
+  inside fuzz test, x is: 469613417501640132378
   inside fuzz test, x is: [..]
   inside fuzz test, x is: [..]
 
@@ -1246,12 +1239,11 @@ contract ContractFuzz is Test {
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
 Logs:
-  inside fuzz test, x is: [..]
+  inside fuzz test, x is: 44651772723433022631664459006465249023006694868989526415870
   inside fuzz test, x is: [..]
   inside fuzz test, x is: [..]
 
@@ -1289,12 +1281,11 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
 Logs:
-  inside fuzz test, x is: [..]
+  inside fuzz test, x is: 4692
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -1330,12 +1321,11 @@ contract ContractFuzz is Test {
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
 Logs:
-  inside fuzz test, x is: [..]
+  inside fuzz test, x is: 12966508005625482712504388645151
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -1390,12 +1380,11 @@ contract SimpleContractTest is Test {
     cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Simple.sol:SimpleContractTest
 [PASS] test() ([GAS])
 Traces:
-  [..] SimpleContractTest::test()
+  [244864] SimpleContractTest::test()
     ├─ [165406] → new SimpleContract@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 826 bytes of code
     ├─ [22630] SimpleContract::increment()
@@ -1611,7 +1600,6 @@ contract ATest is Test {
     cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/ATest.t.sol:ATest
 [PASS] testSelfMeteringRevert() ([GAS])
@@ -2174,7 +2162,6 @@ contract SkipCounterSetup is Test {
     cmd.args(["test", "--mc", "SkipCounterSetup"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:SkipCounterSetup
 [SKIP: skipped: skip counter test] setUp() ([GAS])
@@ -2338,19 +2325,37 @@ forgetest_init!(
         );
 
         // Tests deprecated cheatcode warning for unit tests.
-        cmd.args(["test", "--mc", "DeprecatedCheatcodeTest"]).assert_success().stderr_eq(str![[
-            r#"
+        cmd.args(["test", "--mc", "DeprecatedCheatcodeTest"]).assert_success().stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (5667): Unused function parameter. Remove or comment out the variable name to silence this warning.
+  [FILE]:13:48:
+   |
+13 |             function test_deprecated_cheatcode(uint256 a) public view {
+   |                                                ^^^^^^^^^
+
+Warning (2072): Unused local variable.
+  [FILE]:28:17:
+   |
+28 |                 Counter counter = new Counter();
+   |                 ^^^^^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to view
+  [FILE]:32:13:
+   |
+32 |             function invariant_deprecated_cheatcode() public {
+   |             ^ (Relevant source part starts here and spans across multiple lines).
+
 Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
   keyExists(string,string): replaced by `keyExistsJson`
 
-"#
-        ]]);
+"#]]);
 
         // Tests deprecated cheatcode warning for fuzz tests.
         cmd.forge_fuse()
             .args(["test", "--mc", "DeprecatedCheatcodeFuzzTest"])
             .assert_success()
             .stderr_eq(str![[r#"
+No files changed, compilation skipped
 Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
   keyExists(string,string): replaced by `keyExistsJson`
 
@@ -2361,6 +2366,7 @@ Warning: the following cheatcode(s) are deprecated and will be removed in future
             .args(["test", "--mc", "DeprecatedCheatcodeInvariantTest"])
             .assert_success()
             .stderr_eq(str![[r#"
+No files changed, compilation skipped
 Warning: the following cheatcode(s) are deprecated and will be removed in future versions:
   keyExists(string,string): replaced by `keyExistsJson`
 
@@ -2371,18 +2377,21 @@ Warning: the following cheatcode(s) are deprecated and will be removed in future
 forgetest_init!(requires_single_test, |prj, cmd| {
     prj.initialize_default_contracts();
     cmd.args(["test", "--debug"]).assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
 Error: 2 tests matched your criteria, but exactly 1 test must match in order to run the debugger.
 
 Use --match-contract and --match-path to further limit the search.
 
 "#]]);
     cmd.forge_fuse().args(["test", "--flamegraph"]).assert_failure().stderr_eq(str![[r#"
+No files changed, compilation skipped
 Error: 2 tests matched your criteria, but exactly 1 test must match in order to generate a flamegraph.
 
 Use --match-contract and --match-path to further limit the search.
 
 "#]]);
     cmd.forge_fuse().args(["test", "--flamechart"]).assert_failure().stderr_eq(str![[r#"
+No files changed, compilation skipped
 Error: 2 tests matched your criteria, but exactly 1 test must match in order to generate a flamechart.
 
 Use --match-contract and --match-path to further limit the search.
@@ -2432,7 +2441,6 @@ contract FooTest {
     cmd.args(["test", "--mt", "testWalletScript", "-vvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/Foo.sol:FooTest
 [PASS] testWalletScript() ([GAS])
@@ -2440,6 +2448,7 @@ Logs:
   0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
   0x70997970C51812dc3A010C7d01b50e0d17dc79C8
   0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+
 ...
 "#]]);
 });
@@ -2497,15 +2506,14 @@ contract MetadataTraceTest is Test {
     cmd.args(["test", "--mt", "test_proxy_trace", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
 [PASS] test_proxy_trace() ([GAS])
 Traces:
-  [..] MetadataTraceTest::test_proxy_trace()
-    ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [200309] MetadataTraceTest::test_proxy_trace()
+    ├─ [96345] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 481 bytes of code
-    ├─ [..] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    ├─ [38538] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop]
 
@@ -2522,15 +2530,14 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
 [PASS] test_proxy_trace() ([GAS])
 Traces:
-  [..] MetadataTraceTest::test_proxy_trace()
-    ├─ [..] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+  [178681] MetadataTraceTest::test_proxy_trace()
+    ├─ [85533] → new Counter@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 427 bytes of code
-    ├─ [..] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    ├─ [27735] → new Proxy@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 8 bytes of code
     └─ ← [Stop]
 
@@ -2735,17 +2742,17 @@ contract ReverterTest is Test {
     cmd.args(["test", "--mc", "ReverterTest"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 8 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
-[FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: [..] testAssumeThenExpectCountZeroFails(uint256) (runs: [..], [AVG_GAS])
-[FAIL: MyRevert(); counterexample: calldata=[..]] testAssumeWithReverter_fails(uint256) (runs: [..], [AVG_GAS])
-[FAIL: RevertWithData(2); counterexample: [..]] testAssume_wrongData_fails(uint256) (runs: [..], [AVG_GAS])
-[FAIL: MyRevert(); counterexample: [..]] testAssume_wrongSelector_fails(uint256) (runs: [..], [AVG_GAS])
-[FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: [..]] testExpectCountZeroThenAssumeFails(uint256) (runs: [..], [AVG_GAS])
-[FAIL: MyRevert(); counterexample: [..]] testMultipleAssumesClearAfterCall_fails(uint256) (runs: 0, [AVG_GAS])
-[FAIL: RevertWithData(3); counterexample: [..]] testMultipleAssumes_OneWrong_fails(uint256) (runs: [..], [AVG_GAS])
-[FAIL: vm.assumeNoRevert: you must make another external call prior to calling assumeNoRevert again; counterexample: [..]] testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: [..], [AVG_GAS])
+[FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: calldata=0xb8ea83020000000000000000000000000000000000000000000000000000000000000003 args=[3]] testAssumeThenExpectCountZeroFails(uint256) (runs: 16, [AVG_GAS])
+[FAIL: MyRevert(); counterexample: calldata=0xb973b5060000000000000000000000000000000000000000000000000000000000000002 args=[2]] testAssumeWithReverter_fails(uint256) (runs: 104, [AVG_GAS])
+[FAIL: RevertWithData(2); counterexample: calldata=0x76f9b9f90000000000000000000000000000000000000000000000000000000000000002 args=[2]] testAssume_wrongData_fails(uint256) (runs: 88, [AVG_GAS])
+[FAIL: MyRevert(); counterexample: calldata=0xb8ce2c1e0000000000000000000000000000000000000000000000000000000000000002 args=[2]] testAssume_wrongSelector_fails(uint256) (runs: 136, [AVG_GAS])
+[FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: calldata=0x41fd3ece0000000000000000000000000000000000000000000000000000000000000003 args=[3]] testExpectCountZeroThenAssumeFails(uint256) (runs: 20, [AVG_GAS])
+[FAIL: MyRevert(); counterexample: calldata=0x66ec43440000000000000000000000000000000000000000000000000000000000002612 args=[9746]] testMultipleAssumesClearAfterCall_fails(uint256) (runs: 0, [AVG_GAS])
+[FAIL: RevertWithData(3); counterexample: calldata=0xeef4b13d0000000000000000000000000000000000000000000000000000000000000003 args=[3]] testMultipleAssumes_OneWrong_fails(uint256) (runs: 20, [AVG_GAS])
+[FAIL: vm.assumeNoRevert: you must make another external call prior to calling assumeNoRevert again; counterexample: calldata=0x5ef213580000000000000000000000000000000000000000000000000000000000000000 args=[0x00000000]] testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: 0, [AVG_GAS])
+Suite result: FAILED. 0 passed; 8 failed; 0 skipped; [ELAPSED]
 ...
 
 "#]]);
@@ -3082,13 +3089,11 @@ contract DebugTraceRecordingTest is Test {
         str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/DebugTraceRecordingTest.t.sol:DebugTraceRecordingTest
 [PASS] test_start_stop_recording() ([GAS])
 Traces:
-  [..] DebugTraceRecordingTest::test_start_stop_recording()
-...
+  [837425] DebugTraceRecordingTest::test_start_stop_recording()
     └─ ← [Stop]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -3146,7 +3151,6 @@ contract SuppressTracesTest is Test {
         str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/SuppressTracesTest.t.sol:SuppressTracesTest
 [FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])
@@ -3176,7 +3180,7 @@ Traces:
 
 Backtrace:
   at VM.assertEq
-  at SuppressTracesTest.test_increment_failure (lib/forge-std/src/StdAssertions.sol:[..]:[..])
+  at SuppressTracesTest.test_increment_failure (lib/forge-std/src/StdAssertions.sol:121:42)
 
 [PASS] test_increment_success() ([GAS])
 Suite result: FAILED. 1 passed; 1 failed; 0 skipped; [ELAPSED]
@@ -3356,36 +3360,35 @@ contract SenderLogger {
     cmd.args(["test", "--mt", "test_stackPrank", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_stackPrank() ([GAS])
 Traces:
-  [..] CounterTest::test_stackPrank()
-    ├─ [..] VM::addr(<pk>) [staticcall]
+  [237166] CounterTest::test_stackPrank()
+    ├─ [0] VM::addr(<pk>) [staticcall]
     │   └─ ← [Return] player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C]
-    ├─ [..] VM::label(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], "player")
+    ├─ [0] VM::label(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], "player")
     │   └─ ← [Return]
-    ├─ [..] → new SenderLogger@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
+    ├─ [51097] → new SenderLogger@0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f
     │   └─ ← [Return] 255 bytes of code
-    ├─ [..] → new Contract@0x2e234DAe75C793f67A35089C9d99245E1C58470b
+    ├─ [108551] → new Contract@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   └─ ← [Return] 542 bytes of code
-    ├─ [..] SenderLogger::log()
+    ├─ [1761] SenderLogger::log()
     │   ├─ emit Log(: CounterTest: [0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496], : DefaultSender: [0x1804c8AB1F12E6bbf3894d4083f33e07309d1f38])
     │   └─ ← [Stop]
-    ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    ├─ [0] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   └─ ← [Return]
-    ├─ [..] SenderLogger::log()
+    ├─ [1761] SenderLogger::log()
     │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   └─ ← [Stop]
-    ├─ [..] Contract::f()
-    │   ├─ [..] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
+    ├─ [674] Contract::f()
+    │   ├─ [0] VM::startPrank(player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   │   └─ ← [Return]
     │   └─ ← [Stop]
-    ├─ [..] SenderLogger::log()
+    ├─ [1761] SenderLogger::log()
     │   ├─ emit Log(: player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C], : player: [0x44E97aF4418b7a17AABD8090bEA0A471a366305C])
     │   └─ ← [Stop]
-    ├─ [..] VM::stopPrank()
+    ├─ [0] VM::stopPrank()
     │   └─ ← [Return]
     └─ ← [Stop]
 
@@ -3885,7 +3888,6 @@ contract CounterTest is Test {
     cmd.args(["test", "--mc", "CounterTest"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [PASS] test_assert_storage() ([GAS])
@@ -3924,7 +3926,6 @@ contract CounterTest is Test {
     cmd.args(["test", "--mc", "CounterTest"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:CounterTest
 [FAIL: EvmError: Revert] testCoolPanic() ([GAS])
@@ -3990,7 +3991,6 @@ contract NonContractCallRevertTest is Test {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 3 tests for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
 [FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_call_failure() ([GAS])
@@ -4033,7 +4033,7 @@ Traces:
     └─ ← [Revert] call to non-contract address 0xdEADBEeF00000000000000000000000000000000
 
 Backtrace:
-  at NonContractCallRevertTest.test_non_contract_void_call_failure (test/NonContractCallRevertTest.t.sol:[..]:[..])
+  at NonContractCallRevertTest.test_non_contract_void_call_failure (test/NonContractCallRevertTest.t.sol:34:71)
 
 [FAIL: EvmError: Revert] test_non_supported_selector_call_failure() ([GAS])
 Logs:
@@ -4055,8 +4055,8 @@ Traces:
     └─ ← [Revert] EvmError: Revert
 
 Backtrace:
-  at Counter.random (src/Counter.sol:[..]:[..])
-  at NonContractCallRevertTest.test_non_supported_selector_call_failure (test/NonContractCallRevertTest.t.sol:[..]:[..])
+  at Counter.random (src/Counter.sol:4:2)
+  at NonContractCallRevertTest.test_non_supported_selector_call_failure (test/NonContractCallRevertTest.t.sol:24:77)
 
 Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 
@@ -4121,7 +4121,6 @@ contract NonContractDelegateCallRevertTest is Test {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/NonContractDelegateCallRevertTest.t.sol:NonContractDelegateCallRevertTest
 [FAIL: delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
@@ -4144,7 +4143,7 @@ Traces:
 
 Backtrace:
   at LibraryCaller.foobar
-  at NonContractDelegateCallRevertTest.test_unlinked_library_call_failure (test/NonContractDelegateCallRevertTest.t.sol:[..]:[..])
+  at NonContractDelegateCallRevertTest.test_unlinked_library_call_failure (test/NonContractDelegateCallRevertTest.t.sol:34:10)
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
@@ -4232,32 +4231,31 @@ contract PrankTest is Test {
     cmd.args(["test", "--mc", "PrankTest", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/PrankBug.t.sol:PrankTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [..] PrankTest::setUp()
+  [137218] PrankTest::setUp()
     ├─ [0] VM::startPrank(0x0000000000000000000000000000000000000123)
     │   └─ ← [Return]
-    ├─ [..] → new Counter@0x6cdBd1b486b8FBD4140e8cd6daAED05bE13eD914
+    ├─ [96345] → new Counter@0x6cdBd1b486b8FBD4140e8cd6daAED05bE13eD914
     │   └─ ← [Return] 481 bytes of code
     ├─ [0] VM::stopPrank()
     │   └─ ← [Return]
     └─ ← [Stop]
 
-  [..] PrankTest::test_Increment()
+  [161350] PrankTest::test_Increment()
     ├─ [0] VM::startPrank(0x0000000000000000000000000000000000000123)
     │   └─ ← [Return]
-    ├─ [..] → new Counter@0xc4B957Cd61beB9b9afD76204b30683EDAaaB51Ec
+    ├─ [96345] → new Counter@0xc4B957Cd61beB9b9afD76204b30683EDAaaB51Ec
     │   └─ ← [Return] 481 bytes of code
     ├─ [0] VM::stopPrank()
     │   └─ ← [Return]
-    ├─ [..] Counter::increment()
+    ├─ [22418] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
-    ├─ [..] Counter::number() [staticcall]
+    ├─ [424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
     ├─  storage changes:
     │   @ 31: 0x00000000000000000000006cdbd1b486b8fbd4140e8cd6daaed05be13ed91401 → 0x0000000000000000000000c4b957cd61beb9b9afd76204b30683edaaab51ec01
@@ -4335,7 +4333,6 @@ contract CounterTest is Test {
     cmd.args(["test", "--fork-url", &endpoint]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [FAIL: EvmError: Revert] test_roll_fork() ([GAS])

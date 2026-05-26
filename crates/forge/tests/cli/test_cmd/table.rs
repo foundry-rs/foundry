@@ -66,23 +66,22 @@ contract CounterTableTest is Test {
     cmd.args(["test", "--mc", "CounterTable", "-vvvvv"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 8 tests for test/CounterTable.t.sol:CounterTableTest
 [FAIL: 2 fixtures defined for diffSwap (expected 10)] tableMultipleParamsDifferentFixturesFail(uint256,bool) ([GAS])
 [FAIL: Cannot swap; counterexample: calldata=0x717892ca00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000001 args=[1, true]] tableMultipleParamsFail(uint256,bool) (runs: 1, [AVG_GAS])
 Traces:
-  [..] CounterTableTest::tableMultipleParamsFail(1, true)
+  [1033] CounterTableTest::tableMultipleParamsFail(1, true)
     └─ ← [Revert] Cannot swap
 
 Backtrace:
-  at CounterTableTest.tableMultipleParamsFail (test/CounterTable.t.sol:[..]:[..])
+  at CounterTableTest.tableMultipleParamsFail (test/CounterTable.t.sol:46:82)
 
 [FAIL: No fixture defined for param noSwap] tableMultipleParamsNoParamFail(uint256,bool) ([GAS])
 [PASS] tableMultipleParamsPass(uint256,bool) (runs: 10, [AVG_GAS])
 Traces:
-  [..] CounterTableTest::tableMultipleParamsPass(10, true)
-    ├─ [..] Counter::increment()
+  [28153] CounterTableTest::tableMultipleParamsPass(10, true)
+    ├─ [22418] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
@@ -90,16 +89,16 @@ Traces:
 
 [FAIL: Amount cannot be 10; counterexample: calldata=0x44fa2375000000000000000000000000000000000000000000000000000000000000000a args=[10]] tableSingleParamFail(uint256) (runs: 10, [AVG_GAS])
 Traces:
-  [..] CounterTableTest::tableSingleParamFail(10)
+  [751] CounterTableTest::tableSingleParamFail(10)
     └─ ← [Revert] Amount cannot be 10
 
 Backtrace:
-  at CounterTableTest.tableSingleParamFail (test/CounterTable.t.sol:[..]:[..])
+  at CounterTableTest.tableSingleParamFail (test/CounterTable.t.sol:31:68)
 
 [PASS] tableSingleParamPass(uint256) (runs: 10, [AVG_GAS])
 Traces:
-  [..] CounterTableTest::tableSingleParamPass(10)
-    ├─ [..] Counter::increment()
+  [27911] CounterTableTest::tableSingleParamPass(10)
+    ├─ [22418] Counter::increment()
     │   ├─  storage changes:
     │   │   @ 0: 0 → 1
     │   └─ ← [Stop]
@@ -190,7 +189,6 @@ contract CounterTest is Test {
     cmd.args(["test", "-vvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/CounterTest.t.sol:CounterTest
 [PASS] tableSetNumberTest((uint256,uint256,uint256)) (runs: 4, [AVG_GAS])
@@ -209,7 +207,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
     cmd.forge_fuse().args(["coverage"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Analysing contracts...
 Running tests...
 

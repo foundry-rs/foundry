@@ -221,8 +221,7 @@ impl ProjectCompiler {
                 if output.is_unchanged() {
                     sh_status!("No files changed, compilation skipped")?;
                 } else {
-                    // print the compiler output / warnings
-                    sh_println!("{output}")?;
+                    sh_status!("{output}")?;
                 }
             }
 

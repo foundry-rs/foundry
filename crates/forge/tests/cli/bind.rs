@@ -19,8 +19,8 @@ contract SomeLibContract {
     cmd.args(["bind", "--select", "SomeLibContract"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Generating bindings for 1 contracts
-Bindings have been generated to [..]
+Bindings have been generated to /private/var/folders/lk/7h1qyx951b3f4btb58rvwbdm0000gp/T/bind_unlinked_bytecode-10sxvac3/out/bindings
+
 "#]]);
 });

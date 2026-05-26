@@ -101,10 +101,9 @@ contract FuzzTimeoutTest is Test {
     cmd.args(["test", "-j2"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Contract.t.sol:FuzzTimeoutTest
-[PASS] test_fuzz_bound(uint256) (runs: [..], [AVG_GAS])
+[PASS] test_fuzz_bound(uint256) (runs: 256, [AVG_GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
@@ -161,7 +160,6 @@ contract CounterTest is Test {
     cmd.args(["test", "--mc", "CounterTest"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/CounterTest.t.sol:CounterTest
 [PASS] testFuzz_SetNumberAssert(uint256) (runs: 256, [AVG_GAS])
@@ -190,12 +188,12 @@ contract Counter {
     cmd.args(["-j1"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/CounterTest.t.sol:CounterTest
-[FAIL: assertion failed: [..]] testFuzz_SetNumberAssert(uint256) (runs: 0, [AVG_GAS])
-[FAIL: EvmError: Revert; [..]] testFuzz_SetNumberRequire(uint256) (runs: 0, [AVG_GAS])
+[FAIL: assertion failed: 15562693600374117595923080320334822423947663836574505280562432331744426 != 1; counterexample: calldata=0x91f18df500000241409c83fae0f5e3f26a2bdcee8eab3de9eb64e1583fc541496f7804aa args=[15562693600374117595923080320334822423947663836574505280562432331744426 [1.556e70]]] testFuzz_SetNumberAssert(uint256) (runs: 0, [AVG_GAS])
+[FAIL: EvmError: Revert; counterexample: calldata=0x9ea92ee200000241409c83fae0f5e3f26a2bdcee8eab3de9eb64e1583fc541496f7804aa args=[15562693600374117595923080320334822423947663836574505280562432331744426 [1.556e70]]] testFuzz_SetNumberRequire(uint256) (runs: 0, [AVG_GAS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
+
 ...
 
 "#]]);
@@ -221,7 +219,6 @@ contract FuzzWithRejectsTest is Test {
     cmd.args(["test", "--mc", "FuzzWithRejectsTest"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/FuzzWithRejectsTest.t.sol:FuzzWithRejectsTest
 [PASS] testFuzzWithRejects(uint256) (runs: 256, [AVG_GAS])
@@ -275,7 +272,6 @@ contract CounterTest is Test {
     cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
@@ -301,7 +297,6 @@ contract CounterTest is Test {
     cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint8) (runs: 256, [AVG_GAS])

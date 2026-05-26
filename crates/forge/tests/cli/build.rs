@@ -11,7 +11,6 @@ forgetest_init!(can_parse_build_filters, |prj, cmd| {
         [r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
   compiler version: [..]
     - Counter
 
@@ -76,7 +75,6 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
     cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 ╭---------------+------------------+-------------------+--------------------+---------------------╮
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
@@ -182,7 +180,6 @@ forgetest_init!(exact_build_output, |prj, cmd| {
     cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 "#]]);
 });
@@ -457,20 +454,20 @@ contract ContractB {
 
     cmd.args(["build", "src/ContractWithInvalidNatspec.sol"]).assert_success().stderr_eq(str![[
         r#"
+Compiler run successful!
 warning: invalid natspec tag '@deprecated', custom tags must use format '@custom:name'
   [FILE]:5:5
   │
 5 │     /// @deprecated quoteExactOutputSingle and exactOutput. Use QuoterV2 instead.
-  │     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  │
+  ╰╴    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ...
 
 warning: invalid natspec tag '@note', custom tags must use format '@custom:name'
   [FILE]:9:1
   │
 9 │ /// @note foo bar
-  │ ━━━━━━━━━━━━━━━━━
-  │
+  ╰╴━━━━━━━━━━━━━━━━━
+
 ...
 
 "#
@@ -484,6 +481,8 @@ forgetest_init!(build_no_warning_without_soldeer_lock, |prj, cmd| {
     assert!(!soldeer_lock.exists());
 
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Nothing to compile
+
 "#]]);
 });
 
@@ -505,6 +504,8 @@ forgetest_init!(build_no_warning_without_foundry_lock, |prj, cmd| {
     let _ = fs::remove_file(&foundry_lock);
 
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
+Nothing to compile
+
 "#]]);
 });
 
@@ -525,6 +526,7 @@ forgetest_init!(build_warns_on_foundry_lock_revision_mismatch, |prj, cmd| {
 
     cmd.args(["build"]).assert_success().stderr_eq(str![[r#"
 Warning: Dependency 'lib/forge-std' revision mismatch: expected '0000000000000000000000000000000000000000', found '[..]'
+Nothing to compile
 
 "#]]);
 });

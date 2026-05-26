@@ -52,12 +52,11 @@ contract TestEvmVersion is Test {
     cmd.args(["test", "--mc", "TestEvmVersion", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/TestEvmVersion.t.sol:TestEvmVersion
 [PASS] test_evm_version() ([GAS])
 Traces:
-  [..] TestEvmVersion::test_evm_version()
+  [12496] TestEvmVersion::test_evm_version()
     ├─ [0] VM::createSelectFork("<rpc url>")
     │   └─ ← [Return] 0
     ├─ [0] VM::setEvmVersion("istanbul")
@@ -66,19 +65,19 @@ Traces:
     │   └─ ← [Return] "istanbul"
     ├─ [0] VM::expectRevert(custom error 0xf4844814)
     │   └─ ← [Return]
-    ├─ [..] 0x35Da41c476fA5c6De066f20556069096A1F39364::computeAddress(0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000) [staticcall]
+    ├─ [41] 0x35Da41c476fA5c6De066f20556069096A1F39364::computeAddress(0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000) [staticcall]
     │   └─ ← [NotActivated] EvmError: NotActivated
     ├─ [0] VM::setEvmVersion("shanghai")
     │   └─ ← [Return]
     ├─ [0] VM::getEvmVersion() [staticcall]
     │   └─ ← [Return] "shanghai"
-    ├─ [..] 0x35Da41c476fA5c6De066f20556069096A1F39364::computeAddress(0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000) [staticcall]
+    ├─ [1079] 0x35Da41c476fA5c6De066f20556069096A1F39364::computeAddress(0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000) [staticcall]
     │   └─ ← [Return] 0x0f40d7B7669e3a6683EaB25358318fd42a9F2342
     ├─ [0] VM::setEvmVersion("paris")
     │   └─ ← [Return]
     ├─ [0] VM::expectRevert(custom error 0xf4844814)
     │   └─ ← [Return]
-    ├─ [..] 0x35Da41c476fA5c6De066f20556069096A1F39364::computeAddress(0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000) [staticcall]
+    ├─ [41] 0x35Da41c476fA5c6De066f20556069096A1F39364::computeAddress(0x0000000000000000000000000000000000000000000000000000000000000000, 0x0000000000000000000000000000000000000000000000000000000000000000) [staticcall]
     │   └─ ← [NotActivated] EvmError: NotActivated
     └─ ← [Stop]
 

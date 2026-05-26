@@ -60,7 +60,6 @@ contract Demo {
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -115,7 +114,6 @@ contract Demo {
         str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -161,6 +159,13 @@ forgetest_async!(assert_exit_code_error_on_failure_script, |prj, cmd| {
 
     // run command and assert error exit code
     cmd.assert_failure().stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:7:5:
+  |
+7 |     function run() external {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
+
 Error: script failed: failed
 
 "#]]);
@@ -192,6 +197,13 @@ forgetest_async!(assert_exit_code_error_on_out_of_gas_script, |prj, cmd| {
     cmd.arg("script").arg(script).args(["--block-gas-limit", "1000000"]);
 
     cmd.assert_failure().stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:7:5:
+  |
+7 |     function run() external {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
+
 Error: script failed: EvmError: OutOfGas
 
 "#]]);
@@ -260,14 +272,13 @@ contract DeployScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
-  [..] DeployScript::run()
+  [119321] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [..] → new GasWaster@[..]
+    ├─ [83127] → new GasWaster@0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
     │   └─ ← [Return] 415 bytes of code
-    ├─ [..] GasWaster::wasteGas(200000 [2e5])
+    ├─ [404] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop]
     └─ ← [Stop]
 
@@ -278,10 +289,10 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [..] → new GasWaster@[..]
+  [83127] → new GasWaster@0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
     └─ ← [Return] 415 bytes of code
 
-  [..] GasWaster::wasteGas(200000 [2e5])
+  [404] GasWaster::wasteGas(200000 [2e5])
     └─ ← [Stop]
 
 
@@ -358,20 +369,13 @@ contract DeployScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to view
- [FILE]:7:5:
-  |
-7 |     function wasteGas(uint256 minGas) public {
-  |     ^ (Relevant source part starts here and spans across multiple lines).
-
 Traces:
-  [..] DeployScript::run()
+  [119321] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [..] → new GasWaster@[..]
+    ├─ [83127] → new GasWaster@0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
     │   └─ ← [Return] 415 bytes of code
-    ├─ [..] GasWaster::wasteGas(200000 [2e5])
+    ├─ [404] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop]
     └─ ← [Stop]
 
@@ -382,10 +386,10 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [..] → new GasWaster@[..]
+  [83127] → new GasWaster@0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
     └─ ← [Return] 415 bytes of code
 
-  [..] GasWaster::wasteGas(200000 [2e5])
+  [404] GasWaster::wasteGas(200000 [2e5])
     └─ ← [Stop]
 
 
@@ -441,7 +445,6 @@ contract Demo {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -474,7 +477,6 @@ contract Demo {
     cmd.arg("script").arg(script).arg("1").arg("2").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -503,7 +505,6 @@ contract Demo {
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -575,12 +576,11 @@ contract DeployScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
-  [..] DeployScript::run()
+  [184174] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [..] → new HashChecker@[..]
+    ├─ [143788] → new HashChecker@0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
     │   └─ ← [Return] 718 bytes of code
     └─ ← [Stop]
 
@@ -655,60 +655,59 @@ contract RunScript is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
-  [..] RunScript::run()
+  [54134] RunScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [0] VM::roll([..])
+    ├─ [0] VM::roll(25175983 [2.517e7])
     │   └─ ← [Return]
-    ├─ [0] VM::roll([..])
+    ├─ [0] VM::roll(25175984 [2.517e7])
     │   └─ ← [Return]
-    ├─ [..] [..]::update()
+    ├─ [22516] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
     │   └─ ← [Stop]
-    ├─ [..] [..]::checkLastHash() [staticcall]
+    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
     │   └─ ← [Stop]
-    ├─ [0] VM::roll([..])
+    ├─ [0] VM::roll(25175985 [2.517e7])
     │   └─ ← [Return]
-    ├─ [..] [..]::update()
+    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
     │   └─ ← [Stop]
-    ├─ [..] [..]::checkLastHash() [staticcall]
+    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
     │   └─ ← [Stop]
-    ├─ [0] VM::roll([..])
+    ├─ [0] VM::roll(25175986 [2.517e7])
     │   └─ ← [Return]
-    ├─ [..] [..]::update()
+    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
     │   └─ ← [Stop]
-    ├─ [..] [..]::checkLastHash() [staticcall]
+    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
     │   └─ ← [Stop]
-    ├─ [0] VM::roll([..])
+    ├─ [0] VM::roll(25175987 [2.517e7])
     │   └─ ← [Return]
-    ├─ [..] [..]::update()
+    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
     │   └─ ← [Stop]
-    ├─ [..] [..]::checkLastHash() [staticcall]
+    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
     │   └─ ← [Stop]
-    ├─ [0] VM::roll([..])
+    ├─ [0] VM::roll(25175988 [2.517e7])
     │   └─ ← [Return]
-    ├─ [..] [..]::update()
+    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
     │   └─ ← [Stop]
-    ├─ [..] [..]::checkLastHash() [staticcall]
+    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
     │   └─ ← [Stop]
-    ├─ [0] VM::roll([..])
+    ├─ [0] VM::roll(25175989 [2.517e7])
     │   └─ ← [Return]
-    ├─ [..] [..]::update()
+    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
     │   └─ ← [Stop]
-    ├─ [..] [..]::checkLastHash() [staticcall]
+    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
     │   └─ ← [Stop]
-    ├─ [0] VM::roll([..])
+    ├─ [0] VM::roll(25175990 [2.517e7])
     │   └─ ← [Return]
-    ├─ [..] [..]::update()
+    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
     │   └─ ← [Stop]
-    ├─ [..] [..]::checkLastHash() [staticcall]
+    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
     │   └─ ← [Stop]
-    ├─ [0] VM::roll([..])
+    ├─ [0] VM::roll(25175991 [2.517e7])
     │   └─ ← [Return]
-    ├─ [..] [..]::update()
+    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
     │   └─ ← [Stop]
-    ├─ [..] [..]::checkLastHash() [staticcall]
+    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     └─ ← [Stop]
 
@@ -1208,8 +1207,6 @@ contract Script0 is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-...
 Script ran successfully.
 
 ## Setting up 1 EVM.
@@ -1334,8 +1331,6 @@ contract Script0 is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-...
 Script ran successfully.
 
 ## Setting up 1 EVM.
@@ -1404,7 +1399,6 @@ contract Demo {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -1507,7 +1501,6 @@ contract ContractC {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -1578,7 +1571,6 @@ contract NestedCreate is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -1607,7 +1599,6 @@ interface Interface {}
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -1633,7 +1624,6 @@ contract Script {
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -1740,6 +1730,7 @@ contract Script {
 
     cmd.arg("script").args([&script.to_string_lossy(), "--sig", "run"]);
     cmd.assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
 Error: Multiple functions with the same name `run` found in the ABI
 
 "#]]);
@@ -1787,6 +1778,7 @@ contract CustomErrorScript is Script {
 
     cmd.forge_fuse().arg("script").arg(script).args(["--tc", "CustomErrorScript"]);
     cmd.assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
 Error: script failed: CustomError()
 
 "#]]);
@@ -1834,8 +1826,6 @@ contract SimpleScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-...
 Script ran successfully.
 
 == Return ==
@@ -1866,6 +1856,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 
 "#]]).stderr_eq(str![[r#"
+Compiler run successful!
 Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
@@ -2031,8 +2022,6 @@ contract SimpleScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
-...
 Script ran successfully.
 
 == Return ==
@@ -2063,6 +2052,7 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 
 "#]]).stderr_eq(str![[r#"
+Compiler run successful!
 Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
@@ -2100,6 +2090,7 @@ contract SimpleScript is Script {
     ]);
 
     cmd.assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
 Error: script failed: missing CREATE2 deployer: 0x4e59b44847b379578588920cA78FbF26c0B4956C
 
 "#]]);
@@ -2144,13 +2135,6 @@ contract SimpleScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to view
-  [FILE]:13:5:
-   |
-13 |     function run() external {
-   |     ^ (Relevant source part starts here and spans across multiple lines).
-
 Script ran successfully.
 
 "#]]);
@@ -2250,7 +2234,6 @@ contract SimpleScript is Script {
     cmd.assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 
 ## Setting up 1 EVM.
@@ -2315,7 +2298,6 @@ contract WalletScript is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -2350,7 +2332,6 @@ contract WalletScript is Script {
     cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -2394,15 +2375,14 @@ contract SimpleScript is Script {
     cmd.assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
-  [..] SimpleScript::run()
+  [116480] SimpleScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+    ├─ [35085] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
     │   └─ ← [Return] 175 bytes of code
-    ├─ [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    │   ├─ [..] A::getValue() [staticcall]
+    ├─ [13686] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    │   ├─ [310] A::getValue() [staticcall]
     │   │   └─ ← [Return] 100
     │   └─ ← [Return] 62 bytes of code
     └─ ← [Stop]
@@ -2414,13 +2394,14 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [..] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+  [35085] → new A@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
     └─ ← [Return] 175 bytes of code
 
-  [..] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
-    ├─ [..] A::getValue() [staticcall]
+  [16186] → new B@0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496
+    ├─ [310] A::getValue() [staticcall]
     │   └─ ← [Return] 100
     └─ ← [Return] 62 bytes of code
+
 ...
 "#]]);
 });
@@ -2554,14 +2535,13 @@ contract DryRunTest is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
-  [..] DryRunTest::run()
+  [196202] DryRunTest::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [..] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    ├─ [113557] → new Called@0x5FbDB2315678afecb367f032d93F642f64180aa3
     │   └─ ← [Return] 567 bytes of code
-    ├─ [..] Called::run(123, 456)
+    ├─ [46595] Called::run(123, 456)
     │   ├─ emit log_string(val: "script ran")
     │   └─ ← [Stop]
     └─ ← [Stop]
@@ -2605,9 +2585,9 @@ Chain 31337
 
 accessList           []
 chainId              31337
-gasLimit             [..]
+gasLimit             228247
 gasPrice             
-input                [..]
+input                0x6080604052348015600e575f5ffd5b506102378061001c5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c80630c55699c146100435780637357f5d214610061578063a56dfe4a1461007d575b5f5ffd5b61004b61009b565b6040516100589190610104565b60405180910390f35b61007b6004803603810190610076919061014b565b6100a0565b005b6100856100e6565b6040516100929190610104565b60405180910390f35b5f5481565b815f81905550806001819055507f0b2e13ff20ac7b474198655583edf70dedd2c1dc980e329c4fbb2fc0748b796b6040516100da906101e3565b60405180910390a15050565b60015481565b5f819050919050565b6100fe816100ec565b82525050565b5f6020820190506101175f8301846100f5565b92915050565b5f5ffd5b61012a816100ec565b8114610134575f5ffd5b50565b5f8135905061014581610121565b92915050565b5f5f604083850312156101615761016061011d565b5b5f61016e85828601610137565b925050602061017f85828601610137565b9150509250929050565b5f82825260208201905092915050565b7f7363726970742072616e000000000000000000000000000000000000000000005f82015250565b5f6101cd600a83610189565b91506101d882610199565b602082019050919050565b5f6020820190508181035f8301526101fa816101c1565b905091905056fea26469706673582212203c41c2b12882648670c15c0c2111f0ff9baf0cd6e6bfcf26f094adbc9b63fdfb64736f6c63430008230033
 maxFeePerBlobGas     
 maxFeePerGas         
 maxPriorityFeePerGas 
@@ -2693,6 +2673,7 @@ forgetest_init!(should_revert_on_address_opcode, |prj, cmd| {
     );
 
     cmd.arg("script").arg("ScriptWithAddress").assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
 Error: script failed: Usage of `address(this)` detected in script contract. Script contracts are ephemeral and their addresses should not be relied upon.
 
 "#]]);
@@ -2741,6 +2722,7 @@ forgetest_async!(warns_if_no_transactions_to_broadcast, |prj, cmd| {
     .assert_success()
     .stderr_eq(str![
         r#"
+Compiler run successful!
 Warning: No transactions to broadcast.
 
 "#
@@ -2798,33 +2780,32 @@ contract EIP7702Script is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
-  [..] EIP7702Script::setUp()
+  [121] EIP7702Script::setUp()
     └─ ← [Stop]
 
-  [..] EIP7702Script::run()
+  [420978] EIP7702Script::run()
     ├─ [0] VM::startBroadcast(<pk>)
     │   └─ ← [Return]
-    ├─ [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    ├─ [96345] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
     │   └─ ← [Return] 481 bytes of code
-    ├─ [..] → new Counter@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+    ├─ [96345] → new Counter@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
     │   └─ ← [Return] 481 bytes of code
-    ├─ [..] → new Counter@0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+    ├─ [96345] → new Counter@0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
     │   └─ ← [Return] 481 bytes of code
     ├─ [0] VM::signAndAttachDelegation(0x5FbDB2315678afecb367f032d93F642f64180aa3, "<pk>")
     │   └─ ← [Return] (0, 0xd4301eb9f82f747137a5f2c3dc3a5c2d253917cf99ecdc0d49f7bb85313c3159, 0x786d354f0bbd456f44116ddd3aa50475e989d72d8396005e5b3a12cede83fb68, 4, 0x5FbDB2315678afecb367f032d93F642f64180aa3)
-    ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    ├─ [22418] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
     │   └─ ← [Stop]
-    ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+    ├─ [518] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
     │   └─ ← [Stop]
     ├─ [0] VM::signAndAttachDelegation(0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512, "<pk>")
     │   └─ ← [Return] (0, 0xaba9128338f7ff036a0d2ecb96d4f4376389005cd565f87aba33b312570af962, 0x69acbe0831fb8ca95338bc4b908dcfebaf7b81b0f770a12c073ceb07b89fbdf3, 7, 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512)
-    ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+    ├─ [492] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
     │   └─ ← [Stop]
     ├─ [0] VM::signAndAttachDelegation(0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0, "<pk>")
     │   └─ ← [Return] (1, 0x3a3427b66e589338ce7ea06135650708f9152e93e257b4a5ec6eb86a3e09a2ce, 0x444651c354c89fd3312aafb05948e12c0a16220827a5e467705253ab4d8aa8d3, 9, 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0)
-    ├─ [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+    ├─ [492] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
     │   └─ ← [Stop]
     ├─ [0] VM::stopBroadcast()
     │   └─ ← [Return]
@@ -2837,25 +2818,25 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
+  [96345] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
     └─ ← [Return] 481 bytes of code
 
-  [..] → new Counter@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+  [96345] → new Counter@0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
     └─ ← [Return] 481 bytes of code
 
-  [..] → new Counter@0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+  [96345] → new Counter@0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
     └─ ← [Return] 481 bytes of code
 
-  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+  [22418] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
     └─ ← [Stop]
 
-  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
+  [5318] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::increment()
     └─ ← [Stop]
 
-  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+  [5392] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
     └─ ← [Stop]
 
-  [..] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
+  [2592] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266::setNumber(0)
     └─ ← [Stop]
 
 
@@ -2976,7 +2957,6 @@ contract BatchCallDelegationScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 
 ## Setting up 1 EVM.
@@ -3188,34 +3168,35 @@ contract CounterScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
-  [..] → new CounterScript@[..]
+  [455349] → new CounterScript@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
     └─ ← [Return] 2162 bytes of code
 
-  [..] CounterScript::setUp()
+  [121] CounterScript::setUp()
     └─ ← [Stop]
 
-  [..] CounterScript::run()
-    ├─ [..] VM::createSelectFork("<rpc url>")
+  [141697] CounterScript::run()
+    ├─ [0] VM::createSelectFork("<rpc url>")
     │   └─ ← [Return] 1
-    ├─ [..] VM::startBroadcast()
+    ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [..] → new Counter@[..]
+    ├─ [96345] → new Counter@0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
     │   └─ ← [Return] 481 bytes of code
-    ├─ [..] VM::stopBroadcast()
+    ├─ [0] VM::stopBroadcast()
     │   └─ ← [Return]
-    ├─ [..] VM::createSelectFork("<rpc url>")
+    ├─ [0] VM::createSelectFork("<rpc url>")
     │   └─ ← [Return] 2
-    ├─ [..] VM::startBroadcast()
+    ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    └─ ← [Revert] call to non-contract address [..]
+    └─ ← [Revert] call to non-contract address 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
 
 
 
 "#]])
     .stderr_eq(str![[r#"
-Error: script failed: call to non-contract address [..]
+Compiler run successful!
+Error: script failed: call to non-contract address 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
+
 "#]]);
 });
 
@@ -3291,16 +3272,15 @@ contract CounterScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
-  [..] CounterScript::run()
+  [26836] CounterScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
     ├─ [0] VM::deployCode("src/Counter.sol:Counter")
-    │   ├─ [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
+    │   ├─ [96345] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
     │   │   └─ ← [Return] 481 bytes of code
     │   └─ ← [Return] Counter: [0x5FbDB2315678afecb367f032d93F642f64180aa3]
-    ├─ [..] Counter::increment()
+    ├─ [22418] Counter::increment()
     │   └─ ← [Stop]
     ├─ [0] VM::stopBroadcast()
     │   └─ ← [Return]
@@ -3313,10 +3293,10 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [..] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
+  [96345] → new Counter@0x5FbDB2315678afecb367f032d93F642f64180aa3
     └─ ← [Return] 481 bytes of code
 
-  [..] Counter::increment()
+  [22418] Counter::increment()
     └─ ← [Stop]
 
 
@@ -3499,7 +3479,6 @@ contract DeployScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
   [9882] DeployScript::run()
     ├─ [0] 0x0000000000000000000000000000000000000000::fallback{value: 1000000000000000000}()
@@ -3611,7 +3590,6 @@ contract Foo is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Setup
 Run 1
 Script ran successfully.
@@ -3646,7 +3624,6 @@ contract Foo is Script {
     cmd.forge_fuse().args(["script", "script/Foo.s.sol"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Setup
 Run 1
 Script ran successfully.

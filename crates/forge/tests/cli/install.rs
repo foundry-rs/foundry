@@ -37,7 +37,6 @@ Missing dependencies found. Installing now...
 [UPDATING_DEPENDENCIES]
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 "#]]);
 
@@ -66,7 +65,6 @@ Missing dependencies found. Installing now...
 [UPDATING_DEPENDENCIES]
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
@@ -440,7 +438,6 @@ contract CounterCopy is Counter {
         cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 "#]]);
     }

@@ -66,7 +66,6 @@ contract InvariantStorageTest is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/name.sol:InvariantStorageTest
 [FAIL: changedAddr] invariantChangeAddress

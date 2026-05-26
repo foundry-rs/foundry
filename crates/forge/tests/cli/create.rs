@@ -148,9 +148,11 @@ forgetest_async!(can_create_template_contract, |prj, cmd| {
         pk.as_str(),
     ]);
 
-    cmd.assert().stdout_eq(str![[r#""#]]).stderr_eq(str![[r#"
+    cmd.assert().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+
+"#]]).stderr_eq(str![[r#"
 Compiler run successful!
 Warning: Dry run enabled, not broadcasting transaction
 
@@ -161,7 +163,7 @@ Transaction: {
   "maxFeePerGas": "0x77359401",
   "maxPriorityFeePerGas": "0x1",
   "gas": "0x241e7",
-  "input": "[..]",
+  "input": "0x6080604052348015600e575f5ffd5b506101b88061001c5f395ff3fe608060405234801561000f575f5ffd5b506004361061003f575f3560e01c80633fb5c1cb146100435780638381f58a1461005f578063d09de08a1461007d575b5f5ffd5b61005d600480360381019061005891906100e4565b610087565b005b610067610090565b604051610074919061011e565b60405180910390f35b610085610095565b005b805f8190555050565b5f5481565b5f5f8154809291906100a690610164565b9190505550565b5f5ffd5b5f819050919050565b6100c3816100b1565b81146100cd575f5ffd5b50565b5f813590506100de816100ba565b92915050565b5f602082840312156100f9576100f86100ad565b5b5f610106848285016100d0565b91505092915050565b610118816100b1565b82525050565b5f6020820190506101315f83018461010f565b92915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b5f61016e826100b1565b91507fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82036101a05761019f610137565b5b60018201905091905056fea164736f6c6343000823000a",
   "nonce": "0x0",
   "chainId": "0x7a69"
 }
@@ -309,12 +311,12 @@ forgetest_async!(can_create_using_unlocked, |prj, cmd| {
 
     cmd.assert()
         .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 0x5FbDB2315678afecb367f032d93F642f64180aa3
 
 "#]])
         .stderr_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 [TX_HASH]
@@ -373,12 +375,12 @@ contract ConstructorContract {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 0x5FbDB2315678afecb367f032d93F642f64180aa3
 
 "#]])
         .stderr_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 [TX_HASH]
@@ -413,12 +415,12 @@ contract TupleArrayConstructorContract {
         ])
         .assert()
         .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
 
 "#]])
         .stderr_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 [TX_HASH]
@@ -463,12 +465,12 @@ contract UniswapV2Swap {
         ])
         .assert_success()
         .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 0x5FbDB2315678afecb367f032d93F642f64180aa3
 
 "#]])
         .stderr_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
 Warning (2018): Function state mutability can be restricted to pure
  [FILE]:6:5:
@@ -515,8 +517,6 @@ abstract contract AbstractCounter {
     ])
     .assert_failure()
     .stderr_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 Error: no bytecode found in bin object for AbstractCounter
 
@@ -557,10 +557,8 @@ contract RevertingContract {
     ])
     .assert_failure()
     .stderr_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
 Compiler run successful!
-Error: deployment transaction failed (receipt status 0): [..]
+Error: deployment transaction failed (receipt status 0): 0x7a5ba2215a7f395ae1e8bff5dae4ca8fe4725915b189bf53d9a629f240a1d7c7
 
 "#]]);
 });

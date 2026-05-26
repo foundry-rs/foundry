@@ -139,7 +139,6 @@ contract InvariantAssume is Test {
     assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/InvariantAssume.t.sol:InvariantAssume
 [PASS] invariant_dummy() ([RUNS])
@@ -419,7 +418,6 @@ contract InvariantExcludedSendersTest is Test {
     assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/InvariantExcludedSenders.t.sol:InvariantExcludedSendersTest
 [PASS] invariant_check_sender() ([RUNS])
@@ -1174,7 +1172,6 @@ contract InvariantRollForkStateTest is Test {
     assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
 [FAIL: too many blocks mined]
@@ -1989,10 +1986,10 @@ contract InvariantReplayKeepsInvariantAssertion is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/InvariantReplayKeepsInvariantAssertion.t.sol:InvariantReplayKeepsInvariantAssertion
 [FAIL: wrong counter assert]
+	[Sequence] (original: 2, shrunk: 2)
 ...
  invariant_with_assert() ([..])
 ...
@@ -2051,12 +2048,12 @@ contract InvariantReplayKeepsAfterInvariantAssertion is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantReplayKeepsAfterInvariantAssertion
 [FAIL: afterInvariant assertion]
 	[SEQUENCE]
  invariant_success() ([RUNS])
+
 ...
 "#]]);
 
@@ -2290,18 +2287,18 @@ contract HandlerWarpAndRoll {
     cmd.forge_fuse().args(["test", "--mt", "invariant_handler"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/HandlerWarpAndRoll.t.sol:HandlerWarpAndRoll
 [FAIL: max timestamp]
 	[Sequence] (original: 5, shrunk: 5)
-		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=6280 roll=21461 calldata=setNumber(uint256) args=[200000 [2e5]]
-		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=92060 roll=51816 calldata=setNumber(uint256) args=[0]
-		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=198040 roll=60259 calldata=increment() args=[]
-		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=20609 roll=27086 calldata=setNumber(uint256) args=[26717227324157985679793128079000084308648530834088529513797156275625002 [2.671e70]]
-		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=409368 roll=24864 calldata=increment() args=[]
+		sender=0x040Ae0e51495Bb2D712e30D41a6Ec57Af5dC71C9 addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=6280 roll=21461 calldata=setNumber(uint256) args=[200000 [2e5]]
+		sender=0x00000000000000000000000000000000000000c2 addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=92060 roll=51816 calldata=setNumber(uint256) args=[0]
+		sender=0x00000000000000000000000000000000D09DE089 addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=198040 roll=60259 calldata=increment() args=[]
+		sender=0x000000000000000000000000000000000000021c addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=20609 roll=27086 calldata=setNumber(uint256) args=[26717227324157985679793128079000084308648530834088529513797156275625002 [2.671e70]]
+		sender=0xe2b805669D412d4A7A32a24A5FC00942e6756fbe addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=409368 roll=24864 calldata=increment() args=[]
  invariant_handler() (runs: 1, calls: 5, reverts: 1)
 
+╭----------+-----------+-------+---------+----------╮
 ...
 
 "#]]);

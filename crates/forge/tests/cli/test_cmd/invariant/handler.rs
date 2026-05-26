@@ -125,13 +125,12 @@ contract MultiPathTest is Test {
         str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/MultiPathTest.t.sol:MultiPathTest
 Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
 	[Sequence] (original: 2, shrunk: 1)
-		sender=[..] addr=[src/MultiPathHandler.sol:MultiPathHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=maybeAssert(uint8) args=[2]
+		sender=0x0000000000000000000000000000000000001481 addr=[src/MultiPathHandler.sol:MultiPathHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=maybeAssert(uint8) args=[2]
  invariant_ok() (runs: 1, calls: 200, reverts: 102)
 
 ╭------------------+-------------+-------+---------+----------╮
@@ -151,7 +150,7 @@ Encountered 1 failing test in test/MultiPathTest.t.sol:MultiPathTest
 Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)] src/MultiPathHandler.sol:MultiPathHandler::maybeAssert
 	[Sequence] (original: 2, shrunk: 1)
-		sender=[..] addr=[src/MultiPathHandler.sol:MultiPathHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=maybeAssert(uint8) args=[2]
+		sender=0x0000000000000000000000000000000000001481 addr=[src/MultiPathHandler.sol:MultiPathHandler]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=maybeAssert(uint8) args=[2]
  invariant_ok() (runs: 1, calls: 200, reverts: 102)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
@@ -401,36 +400,23 @@ contract MultiHandlerTest is Test {
     cmd.args(["test", "--mt", "invariant_ok"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to pure
- [FILE]:5:5:
-  |
-5 |     function boomA() external { assert(false); }
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Warning (2018): Function state mutability can be restricted to pure
- [FILE]:5:5:
-  |
-5 |     function boomB() external { assert(false); }
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
 
 Ran 1 test for test/MultiHandlerTest.t.sol:MultiHandlerTest
 Assertion Tests: 2 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)] src/HandlerB.sol:HandlerB::boomB
 	[Sequence] (original: 1, shrunk: 1)
-		sender=[..] addr=[src/HandlerB.sol:HandlerB]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=boomB() args=[]
+		sender=0x00000000000000000000000000000000291e7Ba3 addr=[src/HandlerB.sol:HandlerB]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=boomB() args=[]
 [FAIL: panic: assertion failed (0x01)] src/HandlerA.sol:HandlerA::boomA
 	[Sequence] (original: 1, shrunk: 1)
-		sender=[..] addr=[src/HandlerA.sol:HandlerA]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=boomA() args=[]
+		sender=0x000000000000000000000000005B64736f6c6342 addr=[src/HandlerA.sol:HandlerA]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=boomA() args=[]
  invariant_ok() (runs: 1, calls: 20, reverts: 20)
 
 ╭----------+----------+-------+---------+----------╮
 | Contract | Selector | Calls | Reverts | Discards |
 +==================================================+
-| HandlerA | boomA    | [..]  | [..]    | 0        |
+| HandlerA | boomA    | 10    | 10      | 0        |
 |----------+----------+-------+---------+----------|
-| HandlerB | boomB    | [..]  | [..]    | 0        |
+| HandlerB | boomB    | 10    | 10      | 0        |
 ╰----------+----------+-------+---------+----------╯
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
@@ -442,10 +428,10 @@ Encountered 1 failing test in test/MultiHandlerTest.t.sol:MultiHandlerTest
 Assertion Tests: 2 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)] src/HandlerB.sol:HandlerB::boomB
 	[Sequence] (original: 1, shrunk: 1)
-		sender=[..] addr=[src/HandlerB.sol:HandlerB]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=boomB() args=[]
+		sender=0x00000000000000000000000000000000291e7Ba3 addr=[src/HandlerB.sol:HandlerB]0x2e234DAe75C793f67A35089C9d99245E1C58470b calldata=boomB() args=[]
 [FAIL: panic: assertion failed (0x01)] src/HandlerA.sol:HandlerA::boomA
 	[Sequence] (original: 1, shrunk: 1)
-		sender=[..] addr=[src/HandlerA.sol:HandlerA]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=boomA() args=[]
+		sender=0x000000000000000000000000005B64736f6c6342 addr=[src/HandlerA.sol:HandlerA]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=boomA() args=[]
  invariant_ok() (runs: 1, calls: 20, reverts: 20)
 
 Encountered a total of 1 failing tests, 0 tests succeeded

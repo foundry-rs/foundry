@@ -629,7 +629,6 @@ contract Greeter {}
     cmd.arg("build").assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 "#]]);
 });
@@ -647,7 +646,6 @@ contract Foo {}
     cmd.args(["build", "--use", OTHER_SOLC_VERSION]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 "#]]);
 
@@ -658,7 +656,6 @@ Compiler run successful!
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 "#]]);
 
@@ -679,7 +676,6 @@ Error: `solc` this/solc/does/not/exist does not exist
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 "#]]);
 });
@@ -1998,7 +1994,6 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
     cmd.args(["lint"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 "#]]);
 });
@@ -2133,13 +2128,6 @@ contract {name} {{
     cmd.forge_fuse().args(["build"]).assert_success().stdout_eq(
         r#"[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to pure
- [FILE]:5:5:
-  |
-5 |     function notIgnored() public returns (bool) { return true; }
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
 "#,
     );
 });

@@ -200,6 +200,37 @@ forgetest!(can_use_config, |prj, cmd| {
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (2072): Unused local variable.
+  [FILE]:13:9:
+   |
+13 |         uint256 result = 8 >> localValue;
+   |         ^^^^^^^^^^^^^^
+
+Warning (6133): Statement has no effect.
+  [FILE]:16:9:
+   |
+16 |         (1 / 2) * 3;
+   |         ^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:11:5:
+   |
+11 |     function incorrectShiftHigh() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:15:5:
+   |
+15 |     function divideBeforeMultiplyMedium() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:18:5:
+   |
+18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
 warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
    [FILE]:16:9
    │
@@ -227,6 +258,37 @@ forgetest!(can_use_config_ignore, |prj, cmd| {
         };
     });
     cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (2072): Unused local variable.
+  [FILE]:13:9:
+   |
+13 |         uint256 result = 8 >> localValue;
+   |         ^^^^^^^^^^^^^^
+
+Warning (6133): Statement has no effect.
+  [FILE]:16:9:
+   |
+16 |         (1 / 2) * 3;
+   |         ^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:11:5:
+   |
+11 |     function incorrectShiftHigh() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:15:5:
+   |
+15 |     function divideBeforeMultiplyMedium() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:18:5:
+   |
+18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
 note[mixed-case-function]: function names should use mixedCase
   [FILE]:9:14
   │
@@ -268,7 +330,40 @@ forgetest!(can_use_config_mixed_case_exception, |prj, cmd| {
             },
         };
     });
-    cmd.arg("lint").assert_success().stderr_eq(str![[""]]);
+    cmd.arg("lint").assert_success().stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (2072): Unused local variable.
+  [FILE]:13:9:
+   |
+13 |         uint256 result = 8 >> localValue;
+   |         ^^^^^^^^^^^^^^
+
+Warning (6133): Statement has no effect.
+  [FILE]:16:9:
+   |
+16 |         (1 / 2) * 3;
+   |         ^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:11:5:
+   |
+11 |     function incorrectShiftHigh() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:15:5:
+   |
+15 |     function divideBeforeMultiplyMedium() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:18:5:
+   |
+18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+
+"#]]);
 });
 
 forgetest!(multi_contract_file_no_exceptions, |prj, cmd| {
@@ -607,102 +702,6 @@ forgetest!(can_override_config_severity, |prj, cmd| {
         };
     });
     cmd.arg("lint").args(["--severity", "info"]).assert_success().stderr_eq(str![[r#"
-note[mixed-case-function]: function names should use mixedCase
-  [FILE]:9:14
-  │
-9 │     function functionMIXEDCaseInfo() public {}
-  │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
-  │
-  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
-
-
-"#]]);
-});
-
-forgetest!(can_override_config_path, |prj, cmd| {
-    prj.add_source("ContractWithLints", CONTRACT);
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
-
-    // Override excluded files
-    prj.update_config(|config| {
-        config.lint = LinterConfig {
-            severity: vec![LintSeverity::High, LintSeverity::Med],
-            exclude_lints: vec!["incorrect-shift".into()],
-            ignore: vec!["src/ContractWithLints.sol".into()],
-            lint_on_build: true,
-            ..Default::default()
-        };
-    });
-    cmd.arg("lint").arg("src/ContractWithLints.sol").assert_success().stderr_eq(str![[r#"
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
-   [FILE]:16:9
-   │
-16 │         (1 / 2) * 3;
-   │         ━━━━━━━━━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
-
-
-"#]]);
-});
-
-forgetest!(can_override_config_lint, |prj, cmd| {
-    prj.add_source("ContractWithLints", CONTRACT);
-    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
-
-    // Override excluded lints
-    prj.update_config(|config| {
-        config.lint = LinterConfig {
-            severity: vec![LintSeverity::High, LintSeverity::Med],
-            exclude_lints: vec!["incorrect-shift".into()],
-            ignore: vec![],
-            lint_on_build: true,
-            ..Default::default()
-        };
-    });
-    cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
-        r#"
-warning[incorrect-shift]: the order of args in a shift operation is incorrect
-   [FILE]:13:26
-   │
-13 │         uint256 result = 8 >> localValue;
-   │                          ━━━━━━━━━━━━━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
-
-
-"#
-    ]]);
-});
-
-forgetest!(build_runs_linter_by_default, |prj, cmd| {
-    prj.add_source("ContractWithLints", CONTRACT);
-
-    // Configure linter to show only medium severity lints
-    prj.update_config(|config| {
-        config.lint = LinterConfig {
-            severity: vec![LintSeverity::Med],
-            exclude_lints: vec!["incorrect-shift".into()],
-            ignore: vec![],
-            lint_on_build: true,
-            ..Default::default()
-        };
-    });
-
-    // Run forge build and expect linting output before compilation
-    cmd.arg("build").assert_success().stderr_eq(str![[r#"
-warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
-   [FILE]:16:9
-   │
-16 │         (1 / 2) * 3;
-   │         ━━━━━━━━━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
-
-
-"#]]).stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
 Warning (2072): Unused local variable.
   [FILE]:13:9:
@@ -734,6 +733,195 @@ Warning (2018): Function state mutability can be restricted to pure
 18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
    |     ^ (Relevant source part starts here and spans across multiple lines).
 
+note[mixed-case-function]: function names should use mixedCase
+  [FILE]:9:14
+  │
+9 │     function functionMIXEDCaseInfo() public {}
+  │              ━━━━━━━━━━━━━━━━━━━━━ help: consider using: `functionMixedCaseInfo`
+  │
+  ╰ help: https://getfoundry.sh/forge/linting/mixed-case-function
+
+
+"#]]);
+});
+
+forgetest!(can_override_config_path, |prj, cmd| {
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
+
+    // Override excluded files
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![LintSeverity::High, LintSeverity::Med],
+            exclude_lints: vec!["incorrect-shift".into()],
+            ignore: vec!["src/ContractWithLints.sol".into()],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    cmd.arg("lint").arg("src/ContractWithLints.sol").assert_success().stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (2072): Unused local variable.
+  [FILE]:13:9:
+   |
+13 |         uint256 result = 8 >> localValue;
+   |         ^^^^^^^^^^^^^^
+
+Warning (6133): Statement has no effect.
+  [FILE]:16:9:
+   |
+16 |         (1 / 2) * 3;
+   |         ^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:11:5:
+   |
+11 |     function incorrectShiftHigh() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:15:5:
+   |
+15 |     function divideBeforeMultiplyMedium() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:18:5:
+   |
+18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+   [FILE]:16:9
+   │
+16 │         (1 / 2) * 3;
+   │         ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
+
+
+"#]]);
+});
+
+forgetest!(can_override_config_lint, |prj, cmd| {
+    prj.add_source("ContractWithLints", CONTRACT);
+    prj.add_source("OtherContractWithLints", OTHER_CONTRACT);
+
+    // Override excluded lints
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![LintSeverity::High, LintSeverity::Med],
+            exclude_lints: vec!["incorrect-shift".into()],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+    cmd.arg("lint").args(["--only-lint", "incorrect-shift"]).assert_success().stderr_eq(str![[
+        r#"
+Compiler run successful with warnings:
+Warning (2072): Unused local variable.
+  [FILE]:13:9:
+   |
+13 |         uint256 result = 8 >> localValue;
+   |         ^^^^^^^^^^^^^^
+
+Warning (6133): Statement has no effect.
+  [FILE]:16:9:
+   |
+16 |         (1 / 2) * 3;
+   |         ^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:11:5:
+   |
+11 |     function incorrectShiftHigh() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:15:5:
+   |
+15 |     function divideBeforeMultiplyMedium() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:18:5:
+   |
+18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+warning[incorrect-shift]: the order of args in a shift operation is incorrect
+   [FILE]:13:26
+   │
+13 │         uint256 result = 8 >> localValue;
+   │                          ━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/incorrect-shift
+
+
+"#
+    ]]);
+});
+
+forgetest!(build_runs_linter_by_default, |prj, cmd| {
+    prj.add_source("ContractWithLints", CONTRACT);
+
+    // Configure linter to show only medium severity lints
+    prj.update_config(|config| {
+        config.lint = LinterConfig {
+            severity: vec![LintSeverity::Med],
+            exclude_lints: vec!["incorrect-shift".into()],
+            ignore: vec![],
+            lint_on_build: true,
+            ..Default::default()
+        };
+    });
+
+    // Run forge build and expect linting output before compilation
+    cmd.arg("build").assert_success().stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (2072): Unused local variable.
+  [FILE]:13:9:
+   |
+13 |         uint256 result = 8 >> localValue;
+   |         ^^^^^^^^^^^^^^
+
+Warning (6133): Statement has no effect.
+  [FILE]:16:9:
+   |
+16 |         (1 / 2) * 3;
+   |         ^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:11:5:
+   |
+11 |     function incorrectShiftHigh() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:15:5:
+   |
+15 |     function divideBeforeMultiplyMedium() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:18:5:
+   |
+18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+warning[divide-before-multiply]: multiplication should occur before division to avoid loss of precision
+   [FILE]:16:9
+   │
+16 │         (1 / 2) * 3;
+   │         ━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
+
+
+"#]]).stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 
 "#]]);
 });
@@ -799,9 +987,9 @@ forgetest!(build_respects_lint_on_build_false, |prj, cmd| {
     });
 
     // Run forge build - should NOT show linting output because lint_on_build is false
-    cmd.arg("build").assert_success().stderr_eq(str![[""]]).stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
+    cmd.arg("build")
+        .assert_success()
+        .stderr_eq(str![[r#"
 Compiler run successful with warnings:
 Warning (2072): Unused local variable.
   [FILE]:13:9:
@@ -834,6 +1022,11 @@ Warning (2018): Function state mutability can be restricted to pure
    |     ^ (Relevant source part starts here and spans across multiple lines).
 
 
+"#]])
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
 "#]]);
 });
 
@@ -847,6 +1040,7 @@ forgetest!(build_emits_lint_diagnostics, |prj, cmd| {
     });
 
     cmd.arg("build").assert_success().stderr_eq(str![[r#"
+Compiler run successful!
 note[mixed-case-variable]: mutable variables should use mixedCase
   [FILE]:6:20
   │
@@ -874,10 +1068,9 @@ forgetest!(build_no_lint_flag_skips_lint, |prj, cmd| {
         };
     });
 
-    cmd.args(["build", "--no-lint"]).assert_success().stderr_eq(str![[r#""#]]).stdout_eq(str![[
-        r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
+    cmd.args(["build", "--no-lint"])
+        .assert_success()
+        .stderr_eq(str![[r#"
 Compiler run successful with warnings:
 Warning (2072): Unused local variable.
   [FILE]:13:9:
@@ -910,8 +1103,12 @@ Warning (2018): Function state mutability can be restricted to pure
    |     ^ (Relevant source part starts here and spans across multiple lines).
 
 
-"#
-    ]]);
+"#]])
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+
+"#]]);
 });
 
 // `deny = notes` + an info-level lint forces the linter to return Err, exercising the same
@@ -925,6 +1122,7 @@ forgetest!(build_emits_lint_failure_notice_on_failure, |prj, cmd| {
     });
 
     cmd.arg("build").assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
 note[mixed-case-variable]: mutable variables should use mixedCase
   [FILE]:6:20
   │
@@ -959,7 +1157,10 @@ forgetest!(build_no_lint_flag_does_not_emit_lint_failure_notice, |prj, cmd| {
         config.deny = DenyLevel::Notes;
     });
 
-    cmd.args(["build", "--no-lint"]).assert_success().stderr_eq(str![[r#""#]]);
+    cmd.args(["build", "--no-lint"]).assert_success().stderr_eq(str![[r#"
+Compiler run successful!
+
+"#]]);
 });
 
 forgetest!(can_process_inline_config_regardless_of_input_order, |prj, cmd| {
@@ -977,6 +1178,37 @@ forgetest!(can_use_only_lint_with_multilint_passes, |prj, cmd| {
     prj.add_source("ContractWithLints", CONTRACT);
     prj.add_source("OnlyImports", ONLY_IMPORTS);
     cmd.arg("lint").args(["--only-lint", "unused-import"]).assert_success().stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (2072): Unused local variable.
+  [FILE]:13:9:
+   |
+13 |         uint256 result = 8 >> localValue;
+   |         ^^^^^^^^^^^^^^
+
+Warning (6133): Statement has no effect.
+  [FILE]:16:9:
+   |
+16 |         (1 / 2) * 3;
+   |         ^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:11:5:
+   |
+11 |     function incorrectShiftHigh() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:15:5:
+   |
+15 |     function divideBeforeMultiplyMedium() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:18:5:
+   |
+18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
 note[unused-import]: unused imports should be removed
   [FILE]:8:10
   │
@@ -1000,7 +1232,7 @@ forgetest!(can_lint_only_built_files, |prj, cmd| {
 
     // Both contracts should be linted on build. Redact contract as order is not guaranteed.
     cmd.forge_fuse().args(["build"]).assert_success().stderr_eq(str![[r#"
-note[mixed-case-variable]: mutable variables should use mixedCase
+Compiler run successful!
 ...
 note[mixed-case-variable]: mutable variables should use mixedCase
 ...
@@ -1009,6 +1241,7 @@ note[mixed-case-variable]: mutable variables should use mixedCase
     // Only contract CounterBWithLints that we build should be linted.
     let args = ["build", "src/CounterBWithLints.sol"];
     cmd.forge_fuse().args(args).assert_success().stderr_eq(str![[r#"
+No files changed, compilation skipped
 note[mixed-case-variable]: mutable variables should use mixedCase
   [FILE]:6:20
   │
@@ -1029,7 +1262,6 @@ forgetest!(can_lint_param_constants, |prj, cmd| {
     cmd.forge_fuse().args(["build"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 "#]]);
 });
@@ -1390,15 +1622,16 @@ contract OldContract {
     });
 
     // Run forge build - should SUCCEED without linting
-    cmd.arg("build").assert_success().stderr_eq(str![[
-        r#"Warning: unable to lint. Solar only supports Solidity versions >=0.8.0
+    cmd.arg("build").assert_success().stderr_eq(str![[r#"
+Compiler run successful!
+Warning: unable to lint. Solar only supports Solidity versions >=0.8.0
 
-"#
-    ]]);
+"#]]);
 
     // Run forge lint - should FAIL
     cmd.forge_fuse().arg("lint").assert_failure().stderr_eq(str![[
-        r#"Error: unable to lint. Solar only supports Solidity versions >=0.8.0
+        r#"No files changed, compilation skipped
+Error: unable to lint. Solar only supports Solidity versions >=0.8.0
 
 "#
     ]]);
@@ -1424,6 +1657,7 @@ forgetest!(pragma_inconsistent_cross_file, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
+Compiler run successful!
 note[pragma-inconsistent]: 'pragma solidity ^0.8.20;' conflicts with other version requirements in the project: 0.8.20
   [FILE]:3:1
   │
@@ -1499,10 +1733,12 @@ forgetest!(pragma_inconsistent_consistent_exact_no_warning, |prj, cmd| {
     prj.add_source("B", PRAGMA_EXACT_B);
     prj.add_source("C", PRAGMA_EXACT_C);
 
-    cmd.arg("lint")
-        .args(["--only-lint", "pragma-inconsistent"])
-        .assert_success()
-        .stderr_eq(str![[r#""#]]);
+    cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
+        [r#"
+Compiler run successful!
+
+"#]
+    ]);
 });
 
 // Multiple files all using the exact same caret pragma must NOT warn.
@@ -1510,20 +1746,24 @@ forgetest!(pragma_inconsistent_consistent_caret_no_warning, |prj, cmd| {
     prj.add_source("A", PRAGMA_CARET_A);
     prj.add_source("B", PRAGMA_CARET_B);
 
-    cmd.arg("lint")
-        .args(["--only-lint", "pragma-inconsistent"])
-        .assert_success()
-        .stderr_eq(str![[r#""#]]);
+    cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
+        [r#"
+Compiler run successful!
+
+"#]
+    ]);
 });
 
 // A single file in the project cannot conflict with itself.
 forgetest!(pragma_inconsistent_single_file_no_warning, |prj, cmd| {
     prj.add_source("A", PRAGMA_CARET_A);
 
-    cmd.arg("lint")
-        .args(["--only-lint", "pragma-inconsistent"])
-        .assert_success()
-        .stderr_eq(str![[r#""#]]);
+    cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
+        [r#"
+Compiler run successful!
+
+"#]
+    ]);
 });
 
 // Even files that share a requirement still emit when ANY other variant exists.
@@ -1535,6 +1775,7 @@ forgetest!(pragma_inconsistent_duplicates_among_conflict, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
+Compiler run successful!
 note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
   [FILE]:3:1
   │
@@ -1575,6 +1816,10 @@ forgetest!(pragma_inconsistent_files_without_pragma, |prj, cmd| {
 
     cmd.arg("lint").args(["--only-lint", "pragma-inconsistent"]).assert_success().stderr_eq(str![
         [r#"
+Compiler run successful with warnings:
+Warning (3420): Source file does not specify required compiler version! Consider adding "pragma solidity ^0.8.20;"
+[FILE]
+
 note[pragma-inconsistent]: 'pragma solidity 0.8.20;' conflicts with other version requirements in the project: ^0.8.20
   [FILE]:3:1
   │

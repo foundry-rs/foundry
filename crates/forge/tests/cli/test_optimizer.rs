@@ -14,9 +14,8 @@ Compiling 23 files with [..]
 
 "#]]);
     // No files are rebuilt.
-    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
-...
-...
+    cmd.with_no_redact().assert_success().stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
 
@@ -47,9 +46,8 @@ Compiling 21 files with [..]
 
 "#]]);
     // No files are rebuilt.
-    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
-...
-...
+    cmd.with_no_redact().assert_success().stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
 
@@ -676,9 +674,8 @@ Compiling 22 files with [..]
 ...
 
 "#]]);
-    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
-...
-...
+    cmd.with_no_redact().assert_success().stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
 
@@ -760,9 +757,8 @@ Compiling 21 files with [..]
 ...
 
 "#]]);
-    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
-...
-...
+    cmd.with_no_redact().assert_success().stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
 
@@ -1407,23 +1403,22 @@ contract CounterTest is Test {
     cmd.args(["test", "--decode-internal", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
 Traces:
-  [..] CounterTest::test_Increment()
+  [33994] CounterTest::test_Increment()
     ├─ [0] VM::deployCode("src/Counter.sol:Counter")
     │   ├─ [96345] → new Counter@0x2e234DAe75C793f67A35089C9d99245E1C58470b
     │   │   └─ ← [Return] 481 bytes of code
     │   └─ ← [Return] Counter: [0x2e234DAe75C793f67A35089C9d99245E1C58470b]
-    ├─ [..] Counter::setNumber(0)
+    ├─ [2592] Counter::setNumber(0)
     │   └─ ← [Stop]
-    ├─ [..] Counter::increment()
+    ├─ [20418] Counter::increment()
     │   └─ ← [Stop]
-    ├─ [..] Counter::number() [staticcall]
+    ├─ [424] Counter::number() [staticcall]
     │   └─ ← [Return] 1
-    ├─ [..] StdAssertions::assertEq(1, 1)
+    ├─ [44] StdAssertions::assertEq(1, 1)
     │   └─ ← 
     └─ ← [Stop]
 
@@ -1644,7 +1639,6 @@ contract CounterTest is Test {
     cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_deployer() ([GAS])

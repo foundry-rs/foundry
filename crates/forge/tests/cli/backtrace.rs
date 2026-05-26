@@ -17,7 +17,7 @@ forgetest!(test_backtraces, |prj, cmd| {
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
+
 ...
 Ran 11 tests for test/Backtrace.t.sol:BacktraceTest
 [FAIL: panic: assertion failed (0x01)] testAssertFail() ([GAS])
@@ -300,10 +300,10 @@ forgetest!(test_library_backtrace, |prj, cmd| {
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 9 tests for test/LibraryBacktrace.t.sol:LibraryBacktraceTest
 [FAIL: DivisionByZero()] testExternalDivisionByZero() ([GAS])
+Traces:
 ...
 Backtrace:
   at ExternalMathLib.div
@@ -395,10 +395,10 @@ forgetest!(test_multiple_libraries_same_file, |prj, cmd| {
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 4 tests for test/MultipleLibraryBacktrace.t.sol:MultipleLibraryBacktraceTest
 [FAIL: FirstLibError()] testAllLibrariesFirstFails() ([GAS])
+Traces:
 ...
 Backtrace:
   at MultipleLibraryConsumer.useAllLibraries (src/libraries/MultipleLibraries.sol:10:42)

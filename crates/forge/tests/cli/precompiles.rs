@@ -218,7 +218,6 @@ contract CeloTransferTest is Test {
     cmd.args(["test", "--mt", "testCeloBalance", "-vvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/CeloTransfer.t.sol:CeloTransferTest
 [PASS] testCeloBalance() ([GAS])

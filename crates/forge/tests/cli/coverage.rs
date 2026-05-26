@@ -15,7 +15,6 @@ fn basic_base(prj: TestProject, mut cmd: TestCommand) {
         r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Analysing contracts...
 Running tests...
 

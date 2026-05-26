@@ -119,7 +119,6 @@ contract PaymentFailureTest is Test {
     cmd.arg("test").assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/PaymentFailure.t.sol:PaymentFailureTest
 [FAIL: EvmError: Revert] testCantPay() ([GAS])

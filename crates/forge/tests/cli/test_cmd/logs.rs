@@ -112,7 +112,6 @@ contract Fails is Test {
     cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 19 tests for test/DebugLogs.t.sol:DebugLogsTest
 [PASS] test1() ([GAS])
@@ -777,7 +776,6 @@ contract Foo is Test {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Setup
 Test 1
 
@@ -816,7 +814,6 @@ contract Foo is Test {
         r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Setup
 Test 1
 
@@ -857,9 +854,8 @@ contract Foo is Test {
         str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Setup
-Test [..]
+Test 1
 Test [..]
 
 Ran 2 tests for test/Foo.t.sol:Foo

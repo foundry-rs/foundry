@@ -43,12 +43,11 @@ contract Issue3055Test is Test {
     cmd.arg("test").assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 3 tests for test/Issue3055.t.sol:Issue3055Test
 [FAIL] test_snapshot() ([GAS])
 [FAIL] test_snapshot2() ([GAS])
-[FAIL: next call did not revert as expected; counterexample: calldata=[..] args=[..] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
+[FAIL: next call did not revert as expected; counterexample: calldata=0xc424c553000000000000000000000000000000000000000000000000000000859d3cf9df args=[573868669407 [5.738e11]]] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
 Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 3 failed, 0 skipped (3 total tests)
@@ -57,7 +56,7 @@ Failing tests:
 Encountered 3 failing tests in test/Issue3055.t.sol:Issue3055Test
 [FAIL] test_snapshot() ([GAS])
 [FAIL] test_snapshot2() ([GAS])
-[FAIL: next call did not revert as expected; counterexample: calldata=[..] args=[..] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
+[FAIL: next call did not revert as expected; counterexample: calldata=0xc424c553000000000000000000000000000000000000000000000000000000859d3cf9df args=[573868669407 [5.738e11]]] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
 
 Encountered a total of 3 failing tests, 0 tests succeeded
 
@@ -252,7 +251,6 @@ contract Issue6170Test is Test {
     cmd.arg("test").assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Issue6170.t.sol:Issue6170Test
 [FAIL: log != expected log] test() ([GAS])
@@ -354,12 +352,11 @@ contract Issue3347Test is Test {
     cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Issue3347.t.sol:Issue3347Test
 [PASS] test() ([GAS])
 Traces:
-  [..] Issue3347Test::test()
+  [2007] Issue3347Test::test()
     ├─ emit log2(: 1, : 2)
     └─ ← [Stop]
 
@@ -1020,7 +1017,6 @@ contract BlobhashesPreOverrideSnapshotTest is Test {
     cmd.args(["test", "--evm-version=cancun"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/BlobhashesPreOverride.t.sol:BlobhashesPreOverrideSnapshotTest
 [PASS] test_blobhashes_none_arm_revertToState() ([GAS])
@@ -1074,7 +1070,6 @@ contract TxGasPricePreOverrideSnapshotTest is Test {
     cmd.args(["test", "--evm-version=cancun"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/TxGasPricePreOverride.t.sol:TxGasPricePreOverrideSnapshotTest
 [PASS] test_pre_override_gas_price_restored_after_revert() ([GAS])
