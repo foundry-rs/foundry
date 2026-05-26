@@ -722,14 +722,8 @@ async fn test_tempo_txpool_keeps_nonzero_nonce_lanes_separate() {
                 value: U256::ZERO,
                 input: calldata.clone(),
             }],
-            access_list: Default::default(),
             nonce_key,
-            nonce: 0,
-            fee_payer_signature: None,
-            valid_before: None,
-            valid_after: None,
-            key_authorization: None,
-            tempo_authorization_list: vec![],
+            ..Default::default()
         };
 
         let sig_hash = tempo_tx.signature_hash();
