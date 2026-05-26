@@ -1,7 +1,7 @@
 use super::{
     Cheatcodes, CheatsConfig, ChiselState, CmpOperands, CustomPrintTracer, EdgeCovConfig,
-    EdgeCovInspector, EdgeCovKind, EdgeCoverage, Fuzzer, LineCoverageCollector, LogCollector,
-    RevertDiagnostic, ScriptExecutionInspector, TempoLabels, TracingInspector,
+    EdgeCovInspector, EdgeCoverage, Fuzzer, LineCoverageCollector, LogCollector, RevertDiagnostic,
+    ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256,
@@ -10,6 +10,7 @@ use alloy_primitives::{
 
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, NestedEvmClosure, Wallets};
 use foundry_common::compile::Analysis;
+use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
     backend::{DatabaseError, DatabaseExt, JournaledState},
@@ -540,29 +541,22 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.line_coverage = yes.then(Default::default);
     }
 
-    /// Set whether to enable the edge coverage collector.
+    /// Set whether to enable the edge coverage collector with default config.
     #[inline]
     pub fn collect_edge_coverage(&mut self, yes: bool) {
-        self.collect_edge_coverage_with_config(yes, EdgeCovConfig::default());
-    }
-
-    /// Set whether to enable the edge coverage collector with the given configuration.
-    #[inline]
-    pub fn collect_edge_coverage_with_config(&mut self, yes: bool, config: EdgeCovConfig) {
         // TODO: configurable edge size?
-        self.edge_coverage = yes.then(|| EdgeCovInspector::with_config(config)).map(Into::into);
+        self.edge_coverage =
+            yes.then(|| EdgeCovInspector::with_config(EdgeCovConfig::default()).into());
     }
 
-    /// Set whether to enable the edge coverage collector with Foundry config options.
+    /// Configure the edge coverage collector from a [`FuzzCorpusConfig`].
+    ///
+    /// Derives both the on/off gate and [`EdgeCovConfig`] from `corpus`.
     #[inline]
-    pub fn collect_edge_coverage_with_options(
-        &mut self,
-        yes: bool,
-        collision_free: bool,
-        include_call_depth: bool,
-    ) {
-        let kind = if collision_free { EdgeCovKind::CollisionFree } else { EdgeCovKind::Hash };
-        self.collect_edge_coverage_with_config(yes, EdgeCovConfig::new(kind, include_call_depth));
+    pub fn collect_edge_coverage_with_config(&mut self, corpus: &FuzzCorpusConfig) {
+        self.edge_coverage = corpus
+            .collect_evm_edge_coverage()
+            .then(|| EdgeCovInspector::with_config(corpus.into()).into());
     }
 
     /// Set whether to collect EVM comparison operands.

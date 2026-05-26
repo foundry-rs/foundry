@@ -63,6 +63,17 @@ impl Default for EdgeCovConfig {
     }
 }
 
+impl From<&foundry_config::FuzzCorpusConfig> for EdgeCovConfig {
+    fn from(corpus: &foundry_config::FuzzCorpusConfig) -> Self {
+        let kind = if corpus.evm_edge_coverage_collision_free() {
+            EdgeCovKind::CollisionFree
+        } else {
+            EdgeCovKind::Hash
+        };
+        Self::new(kind, corpus.evm_edge_coverage_include_call_depth())
+    }
+}
+
 /// A comparison operand pair captured during execution.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CmpOperands {
