@@ -13,11 +13,6 @@ impl InvariantCampaignSpec {
         Self { total_runs }
     }
 
-    /// Unsharded execution plan: one worker owns the full logical campaign.
-    pub const fn single_worker_plan(self) -> InvariantWorkerPlan {
-        InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: self.total_runs }
-    }
-
     /// Partitions the logical campaign into contiguous worker run ranges.
     ///
     /// This only describes work assignment. It does not start worker execution and does not
@@ -26,7 +21,7 @@ impl InvariantCampaignSpec {
         ensure!(workers > 0, "invariant campaign requires at least one worker");
 
         if self.total_runs == 0 {
-            return Ok(vec![self.single_worker_plan()]);
+            return Ok(vec![InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 0 }]);
         }
 
         let worker_count = workers.min(self.total_runs as usize);
@@ -89,7 +84,7 @@ impl InvariantCampaignAggregator {
             "single-worker invariant aggregator received multiple outputs"
         );
         ensure!(
-            output.plan == self.spec.single_worker_plan(),
+            self.spec.worker_plans(1)?.first().is_some_and(|plan| *plan == output.plan),
             "single-worker invariant output does not cover the logical campaign"
         );
         self.output = Some(output);
@@ -123,21 +118,17 @@ mod tests {
         )
     }
 
+    fn one_worker_plan(spec: InvariantCampaignSpec) -> InvariantWorkerPlan {
+        spec.worker_plans(1).unwrap().pop().unwrap()
+    }
+
     #[test]
-    fn single_worker_plan_covers_logical_campaign() {
-        let spec = InvariantCampaignSpec::new(3);
-        let plan = spec.single_worker_plan();
+    fn worker_plans_cover_logical_campaign_with_one_worker() {
+        let plan = one_worker_plan(InvariantCampaignSpec::new(3));
 
         assert_eq!(plan.worker_id, 0);
         assert_eq!(plan.first_global_run, 0);
         assert_eq!(plan.runs, 3);
-    }
-
-    #[test]
-    fn worker_plans_match_single_worker_plan_for_one_worker() {
-        let spec = InvariantCampaignSpec::new(3);
-
-        assert_eq!(spec.worker_plans(1).unwrap(), vec![spec.single_worker_plan()]);
     }
 
     #[test]
@@ -186,7 +177,7 @@ mod tests {
     fn worker_plans_keep_zero_run_campaign_as_single_empty_plan() {
         let plans = InvariantCampaignSpec::new(0).worker_plans(4).unwrap();
 
-        assert_eq!(plans, vec![InvariantCampaignSpec::new(0).single_worker_plan()]);
+        assert_eq!(plans, vec![InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 0 }]);
     }
 
     #[test]
@@ -199,7 +190,7 @@ mod tests {
     #[test]
     fn aggregator_returns_single_worker_result_without_rewriting() {
         let spec = InvariantCampaignSpec::new(1);
-        let worker = InvariantWorkerOutput::new(spec.single_worker_plan(), empty_result(2, 3));
+        let worker = InvariantWorkerOutput::new(one_worker_plan(spec), empty_result(2, 3));
 
         let mut aggregator = InvariantCampaignAggregator::new(spec);
         aggregator.push(worker).unwrap();
@@ -215,10 +206,10 @@ mod tests {
         let mut aggregator = InvariantCampaignAggregator::new(spec);
 
         aggregator
-            .push(InvariantWorkerOutput::new(spec.single_worker_plan(), empty_result(0, 0)))
+            .push(InvariantWorkerOutput::new(one_worker_plan(spec), empty_result(0, 0)))
             .unwrap();
         let err = aggregator
-            .push(InvariantWorkerOutput::new(spec.single_worker_plan(), empty_result(0, 0)))
+            .push(InvariantWorkerOutput::new(one_worker_plan(spec), empty_result(0, 0)))
             .unwrap_err();
 
         assert!(err.to_string().contains("received multiple outputs"));
