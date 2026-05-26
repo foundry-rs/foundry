@@ -260,12 +260,18 @@ Successfully created new keypair.
 casttest!(new_wallet_json, |_prj, cmd| {
     cmd.args(["wallet", "new", "--json"]).assert_success().stdout_eq(
         str![[r#"
-[
-  {
-    "address": "{...}",
-    "private_key": "{...}"
-  }
-]
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [
+    {
+      "address": "{...}",
+      "private_key": "{...}"
+    }
+  ],
+  "errors": [],
+  "warnings": []
+}
 
 "#]]
         .is_json(),
@@ -276,17 +282,74 @@ casttest!(new_wallet_json, |_prj, cmd| {
 casttest!(new_wallet_json_verbose, |_prj, cmd| {
     cmd.args(["wallet", "new", "--json", "-v"]).assert_success().stdout_eq(
         str![[r#"
-[
-  {
-    "address": "{...}",
-    "public_key": "{...}",
-    "private_key": "{...}"
-  }
-]
+{
+  "schema_version": 1,
+  "success": true,
+  "data": [
+    {
+      "address": "{...}",
+      "public_key": "{...}",
+      "private_key": "{...}"
+    }
+  ],
+  "errors": [],
+  "warnings": []
+}
 
 "#]]
         .is_json(),
     );
+});
+
+// tests that `cast wallet address --json` wraps output in envelope
+casttest!(wallet_address_json, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "address",
+        "--json",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":"0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf","errors":[],"warnings":[]}
+
+"#]]);
+});
+
+// tests that `cast wallet sign --json` wraps signature in envelope
+casttest!(wallet_sign_json, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--json",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "test",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":"0xfe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c","errors":[],"warnings":[]}
+
+"#]]);
+});
+
+// tests that `cast wallet sign -v --json` wraps verbose output in envelope
+casttest!(wallet_sign_json_verbose, |_prj, cmd| {
+    cmd.args([
+        "wallet",
+        "sign",
+        "--json",
+        "-v",
+        "--private-key",
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "test",
+    ])
+    .assert_success()
+    .stdout_eq(str![[r#"
+{"schema_version":1,"success":true,"data":{"message":"test","address":"0x7e5f4552091a69125d5dfcb7b8c2659029395bdf","signature":"fe28833983d6faa0715c7e8c3873c725ddab6fa5bf84d40e780676e463e6bea20fc6aea97dc273a98eb26b0914e224c8dd5c615ceaab69ddddcf9b0ae3de0e371c"},"errors":[],"warnings":[]}
+
+"#]]);
 });
 
 // tests that we can create a new wallet with keystore
