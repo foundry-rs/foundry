@@ -2494,12 +2494,20 @@ fn portfolio_test_marker(name: &str) -> std::path::PathBuf {
 fn portfolio_sat_beats_early_unsat() {
     let commands = vec![
         SolverCommand::new(
-            vec!["/bin/sh".to_string(), "-c".to_string(), "printf 'unsat\n'".to_string()],
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "cat >/dev/null; printf 'unsat\n'".to_string(),
+            ],
             false,
         )
         .unwrap(),
         SolverCommand::new(
-            vec!["/bin/sh".to_string(), "-c".to_string(), "sleep 0.1; printf 'sat\n'".to_string()],
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "cat >/dev/null; sleep 0.1; printf 'sat\n'".to_string(),
+            ],
             false,
         )
         .unwrap(),
@@ -2530,7 +2538,11 @@ fn portfolio_scheduler_promotes_recent_sat_winner() {
         )
         .unwrap(),
         SolverCommand::new(
-            vec!["/bin/sh".to_string(), "-c".to_string(), "printf 'sat\n'".to_string()],
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "cat >/dev/null; printf 'sat\n'".to_string(),
+            ],
             false,
         )
         .unwrap(),
