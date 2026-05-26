@@ -493,7 +493,7 @@ use() {
       # symlink and overwrites the local build artifact, which corrupts the
       # workspace and silently makes the next `--path` activation use the
       # downloaded release binary instead of a fresh local build.
-      rm -f "$bin_path"
+      ensure rm -f "$bin_path"
       ensure cp "$FOUNDRY_VERSION_DIR/$bin" "$bin_path"
       # Print usage msg
       say "use - $(ensure "$bin_path" -V)"
