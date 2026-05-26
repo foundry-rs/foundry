@@ -20,7 +20,7 @@ use foundry_compilers::{
     utils::source_files_iter,
 };
 use foundry_config::{
-    Config, SkipBuildFilters,
+    Config, DenyLevel, SkipBuildFilters,
     figment::{
         self, Metadata, Profile, Provider,
         error::Kind::InvalidType,
@@ -121,6 +121,21 @@ impl BuildArgs {
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
+        }
+
+        // Lint output isn't modeled in the v1 envelope; refuse configs that would diverge
+        // human and machine success/failure outcomes.
+        if machine_mode
+            && !self.no_lint
+            && config.lint.lint_on_build
+            && config.deny != DenyLevel::Never
+        {
+            foundry_cli::machine::bail_machine_usage(
+                "`forge build` under `--machine` does not model lint diagnostics in the v1 \
+                 envelope; configs with `lint_on_build = true` and `deny != never` would \
+                 produce a false success. Pass `--no-lint` or disable lint-on-build / set \
+                 `deny = never` in foundry.toml.",
+            );
         }
 
         self.check_soldeer_lock_consistency(&config).await;

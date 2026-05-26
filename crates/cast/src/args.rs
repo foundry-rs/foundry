@@ -43,7 +43,7 @@ pub fn run() -> Result<()> {
     // Pre-parse discovery flags run before `setup()` so they cannot be blocked
     // by panic-handler / tracing init failures and avoid that init's cost.
     foundry_cli::machine::check_machine();
-    foundry_cli::opts::GlobalArgs::check_introspect_with(CastArgs::command(), &REGISTRY);
+    foundry_cli::opts::GlobalArgs::check_introspect_with(CastArgs::command, &REGISTRY);
     foundry_cli::opts::GlobalArgs::check_markdown_help::<CastArgs>();
 
     setup()?;

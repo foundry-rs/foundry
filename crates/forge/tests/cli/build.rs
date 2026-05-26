@@ -546,6 +546,38 @@ forgetest_init!(machine_mode_rejects_unsupported_flags, |prj, cmd| {
     assert!(msg.contains("--names"), "missing --names mention: {envelope}");
 });
 
+// `--quiet` must not suppress the machine envelope.
+forgetest_init!(machine_mode_envelope_survives_quiet, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let assert = cmd.args(["--machine", "--quiet", "build", "--force"]).assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value = serde_json::from_str(stdout.trim())
+        .expect("stdout is exactly one JSON envelope, even under --quiet");
+
+    assert_eq!(envelope["schema_version"], 1);
+    assert_eq!(envelope["success"], true);
+});
+
+// `--machine` refuses configs where lint-on-build + non-`Never` deny would diverge
+// human and machine success outcomes.
+forgetest_init!(machine_mode_rejects_lint_deny_divergence, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let toml = "\
+[profile.default]\n\
+deny = \"warnings\"\n\
+[lint]\n\
+lint_on_build = true\n\
+";
+    std::fs::write(prj.root().join("foundry.toml"), toml).unwrap();
+    let assert = cmd.args(["--machine", "build", "--force"]).assert_failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value = serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
+
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+    assert_eq!(assert.get_output().status.code(), Some(2));
+});
+
 // `--machine` rejects `--watch` even though the watch path normally short-circuits before
 // `BuildArgs::run`.
 forgetest_init!(machine_mode_rejects_watch, |prj, cmd| {

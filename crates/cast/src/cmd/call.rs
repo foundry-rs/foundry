@@ -266,18 +266,6 @@ impl CallArgs {
             return self.run_curl().await;
         }
 
-        // Under `--machine`, any failure past the flag-rejection check is an RPC
-        // interaction failure for `cast call@v1`. Funnel through one typed envelope.
-        let machine_mode = foundry_cli::is_machine();
-        let result = self.run_dispatch().await;
-        match result {
-            Ok(()) => Ok(()),
-            Err(err) if machine_mode => rpc_failure(&err),
-            Err(err) => Err(err),
-        }
-    }
-
-    async fn run_dispatch(self) -> Result<()> {
         if self.tx.tempo.is_tempo() {
             return self.run_with_network::<TempoEvmNetwork>().await;
         }
@@ -478,17 +466,25 @@ impl CallArgs {
         }
 
         // Bypass the ABI decoder under `--machine`; the envelope carries raw hex only.
+        // Only the eth_call itself maps to `network.rpc.error`; setup/local errors fall through.
         let machine_mode = foundry_cli::is_machine();
         let decode_func = (!machine_mode).then_some(func.as_ref()).flatten();
-        let response = Cast::new(&provider)
+        let response = match Cast::new(&provider)
             .call(&tx, decode_func, block, state_overrides, block_overrides)
-            .await?;
+            .await
+        {
+            Ok(r) => r,
+            Err(err) if machine_mode => return rpc_failure(&err),
+            Err(err) => return Err(err),
+        };
 
-        if response == "0x"
+        // Skip the empty-code lookup under `--machine`: it exists only for the human warning.
+        if !machine_mode
+            && response == "0x"
             && let Some(contract_address) = tx.to()
         {
             let code = provider.get_code_at(contract_address).await?;
-            if !machine_mode && code.is_empty() {
+            if code.is_empty() {
                 sh_warn!("Contract code is empty")?;
             }
         }

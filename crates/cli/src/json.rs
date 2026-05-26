@@ -3,6 +3,7 @@
 use eyre::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, to_string};
+use std::io::Write as _;
 
 /// The current version of Foundry's top-level JSON output envelope.
 pub const JSON_SCHEMA_VERSION: u32 = 1;
@@ -131,10 +132,11 @@ impl JsonMessage {
 
 /// Prints a value as compact, single-line JSON to stdout.
 ///
-/// The trailing newline makes this suitable for NDJSON streams when each call
-/// emits one self-contained JSON record.
+/// Bypasses the shell verbosity layer so `--quiet` cannot suppress structured
+/// output the caller explicitly asked for.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
-    sh_println!("{}", to_string(value)?)?;
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "{}", to_string(value)?)?;
     Ok(())
 }
 
