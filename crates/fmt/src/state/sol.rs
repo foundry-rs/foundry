@@ -2527,13 +2527,16 @@ impl<'ast> State<'_, 'ast> {
     }
 
     /// Returns true if `then` is a block whose single statement, when printed without
-    /// the surrounding braces, would leave an inner `if` exposed to capture a trailing
-    /// `else`. Conservatively covers `if` and `while`, whose bodies may themselves be
-    /// inlined without braces.
+    /// the surrounding braces, could leave an inner `if` exposed to capture a trailing
+    /// `else`. Conservatively covers `if`, `while`, and `for`, whose bodies may carry
+    /// or expose a dangling inner `if`.
     fn then_block_can_capture_trailing_else(then: &'ast ast::Stmt<'ast>) -> bool {
         if let ast::StmtKind::Block(block) = &then.kind
             && block.stmts.len() == 1
-            && matches!(block.stmts[0].kind, ast::StmtKind::If(..) | ast::StmtKind::While(..))
+            && matches!(
+                block.stmts[0].kind,
+                ast::StmtKind::If(..) | ast::StmtKind::While(..) | ast::StmtKind::For { .. }
+            )
         {
             return true;
         }
