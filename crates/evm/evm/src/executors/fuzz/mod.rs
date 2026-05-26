@@ -469,6 +469,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             (worker_id == 0).then_some(&self.executor_f),
             Some(func),
             None, // fuzzed_contracts for invariant tests
+            None, // dynamic target ctx (invariant-only)
         )?;
         let mut executor = self.executor_f.clone();
 
@@ -548,6 +549,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                         self.num_workers,
                         &executor,
                         Some(func),
+                        None,
                         None,
                         &shared_state.global_corpus_metrics,
                     )?;

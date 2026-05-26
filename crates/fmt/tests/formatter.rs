@@ -189,6 +189,7 @@ fmt_tests! {
     HexUnderscore,
     IfStatement,
     IfStatement2,
+    IfStatement3,
     ImportDirective,
     InlineDisable,
     IntTypes,
