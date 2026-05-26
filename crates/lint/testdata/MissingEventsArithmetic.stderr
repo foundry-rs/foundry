@@ -78,3 +78,59 @@ LL │         postfixDecrementedValue--;
    │
    ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
 
+warning[missing-events-arithmetic]: `buyPrice` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         buyPrice = newBuyPrice;
+   │         ━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `price` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         price = newPrice;
+   │         ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `price` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         price = newPrice;
+   │         ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `price` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │             price = fallbackPrice;
+   │             ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `price` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         price = referencePrice;
+   │         ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `price` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         price = block.timestamp;
+   │         ━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+
+warning[missing-events-arithmetic]: `rate` is changed without an event but is used in arithmetic
+   ╭▸ ROOT/testdata/MissingEventsArithmetic.sol:LL:CC
+   │
+LL │         rate = newRate;
+   │         ━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/missing-events-arithmetic
+

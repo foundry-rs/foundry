@@ -152,7 +152,7 @@ contract MissingEventsArithmetic {
 
     function setWithUnrelatedEvent(uint256 newBuyPrice) external onlyOwner {
         emit Touched();
-        buyPrice = newBuyPrice;
+        buyPrice = newBuyPrice; //~WARN: `buyPrice` is changed without an event but is used in arithmetic
     }
 
     function unprotectedSetBuyPrice(uint256 newBuyPrice) external {
@@ -236,5 +236,218 @@ contract MissingEventsArithmetic {
 
     function _msgSender() internal view returns (address) {
         return msg.sender;
+    }
+}
+
+// Reproduction cases for oracle findings.
+
+contract ReproEmittedEventIsSticky {
+    address public owner = msg.sender;
+    uint256 public price;
+    event Touched();
+    event PriceUpdated(uint256);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner);
+        _;
+    }
+
+    function buyQuote(uint256 amount) external view returns (uint256) {
+        return amount / price;
+    }
+
+    function setWithUnrelatedEmitBefore(uint256 newPrice) external onlyOwner {
+        emit Touched();
+        price = newPrice; //~WARN: `price` is changed without an event but is used in arithmetic
+    }
+
+    function setPriceWithEvent(uint256 newPrice) external onlyOwner {
+        price = newPrice;
+        emit PriceUpdated(newPrice);
+    }
+}
+
+contract ReproReturnNotTerminator {
+    address public owner = msg.sender;
+    uint256 public price;
+    event PriceUpdated(uint256);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner);
+        _;
+    }
+
+    function buyQuote(uint256 amount) external view returns (uint256) {
+        return amount / price;
+    }
+
+    function setWithReturnBeforeEmit(uint256 newPrice, bool skip) external onlyOwner {
+        price = newPrice; //~WARN: `price` is changed without an event but is used in arithmetic
+        if (skip) return;
+        emit PriceUpdated(newPrice);
+    }
+}
+
+interface IOracle {
+    function getPrice() external view returns (uint256);
+}
+
+contract ReproTryClausesShareState {
+    address public owner = msg.sender;
+    uint256 public price;
+    address public oracle;
+    event PriceUpdated(uint256);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner);
+        _;
+    }
+
+    function buyQuote(uint256 amount) external view returns (uint256) {
+        return amount / price;
+    }
+
+    function setViaOracle(uint256 fallbackPrice) external onlyOwner {
+        try IOracle(oracle).getPrice() returns (uint256 p) {
+            price = p;
+            emit PriceUpdated(p);
+        } catch {
+            price = fallbackPrice; //~WARN: `price` is changed without an event but is used in arithmetic
+        }
+    }
+}
+
+contract ReproUntaintedAssigns {
+    address public owner = msg.sender;
+    uint256 public price;
+    uint256 public referencePrice;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner);
+        _;
+    }
+
+    function buyQuote(uint256 amount) external view returns (uint256) {
+        return amount / price;
+    }
+
+    function setPriceFromStateVar() external onlyOwner {
+        price = referencePrice; //~WARN: `price` is changed without an event but is used in arithmetic
+    }
+
+    function setPriceFromTimestamp() external onlyOwner {
+        price = block.timestamp; //~WARN: `price` is changed without an event but is used in arithmetic
+    }
+}
+
+contract ReproHelperReturnArithmetic {
+    address public owner = msg.sender;
+    uint256 public rate;
+
+    modifier onlyOwner() {
+        require(msg.sender == owner);
+        _;
+    }
+
+    function _getRate() internal view returns (uint256) {
+        return rate;
+    }
+
+    function rateQuote(uint256 amount) external view returns (uint256) {
+        return amount * _getRate();
+    }
+
+    function setRate(uint256 newRate) external onlyOwner {
+        rate = newRate; //~WARN: `rate` is changed without an event but is used in arithmetic
+    }
+}
+
+contract ReproAccessGuardTooLoose {
+    address public owner = msg.sender;
+    uint256 public price;
+    bool public flag;
+
+    function buyQuote(uint256 amount) external view returns (uint256) {
+        return amount / price;
+    }
+
+    function setWithNonDominatingGuard(uint256 newPrice) external {
+        if (flag) require(msg.sender == owner, "not owner");
+        price = newPrice;
+    }
+}
+
+contract ReproMayExitNotMustExit {
+    error NotOwner();
+
+    address public owner = msg.sender;
+    uint256 public price;
+    bool public flag;
+
+    function buyQuote(uint256 amount) external view returns (uint256) {
+        return amount / price;
+    }
+
+    function setWithWeakGuard(uint256 newPrice) external {
+        if (msg.sender != owner) {
+            if (flag) revert NotOwner();
+        }
+        price = newPrice;
+    }
+}
+
+contract ReproModifierBodyNotAnalyzed {
+    address public owner = msg.sender;
+    uint256 public price;
+    event PriceUpdated(uint256);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner);
+        _;
+    }
+
+    modifier emitAfter() {
+        _;
+        emit PriceUpdated(price);
+    }
+
+    function buyQuote(uint256 amount) external view returns (uint256) {
+        return amount / price;
+    }
+
+    function setPriceWithModifierEvent(uint256 newPrice) external onlyOwner emitAfter {
+        price = newPrice;
+    }
+}
+
+contract ReproAccessCheckTooBroad {
+    address public owner = msg.sender;
+    uint256 public price;
+
+    function buyQuote(uint256 amount) external view returns (uint256) {
+        return amount / price;
+    }
+
+    function setWithOrCondition(uint256 newPrice, uint256 amount) external {
+        require(msg.sender == owner || amount > 0, "no access");
+        price = newPrice;
+    }
+}
+
+contract ReproAccessNameCalleeResultIgnored {
+    address public owner = msg.sender;
+    uint256 public price;
+
+    function buyQuote(uint256 amount) external view returns (uint256) {
+        return amount / price;
+    }
+
+    function _checkOwner() internal view returns (bool) {
+        return msg.sender == owner;
+    }
+
+    function setPrice(uint256 newPrice) external {
+        _checkOwner();
+        price = newPrice;
     }
 }
