@@ -541,7 +541,7 @@ impl CreateArgs {
         }
 
         if let Some(ts) = expires_at {
-            sh_println!("Transaction expires at unix timestamp {ts}")?;
+            sh_status!("Transaction expires at unix timestamp {ts}")?;
         }
 
         let tempo_sponsor = self.tx.tempo.sponsor_config().await?;

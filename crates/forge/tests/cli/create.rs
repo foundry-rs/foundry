@@ -313,13 +313,20 @@ forgetest_async!(create_resolves_tempo_expires_before_broadcast, |prj, cmd| {
         ])
         .assert_success()
         .get_output()
-        .stdout_lossy();
+        .clone();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
+    // Resolved tempo expiry is a diagnostic prose line and lives on stderr per the
+    // output-channel contract; the deployed address is the only stdout payload.
     assert!(
-        output.contains("Transaction expires at unix timestamp "),
-        "expected create to print resolved tempo expiry, got:\n{output}",
+        stderr.contains("Transaction expires at unix timestamp "),
+        "expected create to print resolved tempo expiry on stderr, got stderr:\n{stderr}\nstdout:\n{stdout}",
     );
-    assert!(output.contains("Deployed to:"), "{output}");
+    assert!(
+        stdout.lines().any(|l| l.trim().starts_with("0x")),
+        "expected deployed address on stdout, got:\n{stdout}",
+    );
 });
 
 // tests that we can deploy the template contract
