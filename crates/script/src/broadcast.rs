@@ -19,6 +19,7 @@ use alloy_provider::{Provider, RootProvider, utils::Eip1559Estimation};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::Signature;
 use eyre::{Context, Result, bail};
+use forge_script_sequence::ScriptSequence;
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
@@ -270,6 +271,11 @@ struct ScriptSessionSigner {
 }
 
 impl ScriptSessionSigner {
+    /// Resolves the active Tempo session into the access-key signer used by script broadcast.
+    ///
+    /// The returned entry is keyed by the root account because script transactions still use the
+    /// root account as `from`; the temporary session key only changes how the transaction is
+    /// authorized and signed.
     fn resolve<FEN: FoundryEvmNetwork>(
         script_config: &ScriptConfig<FEN>,
         wallets: &foundry_wallets::MultiWalletOpts,
@@ -292,17 +298,41 @@ impl ScriptSessionSigner {
         }))
     }
 
+    /// Converts the resolved session into the same representation used by persistent Tempo keys.
     fn into_access_key_entry(self) -> (WalletSigner, TempoAccessKeyConfig) {
         (self.signer, self.access_key)
     }
 }
 
+/// Returns the single sender a Tempo session is allowed to cover for this broadcast.
+///
+/// Session signing is intentionally fail-closed: a single session access key represents one root
+/// account, so scripts with multiple pending senders must use explicit signer configuration
+/// instead of silently mixing a session key with other wallets.
 fn script_session_expected_sender(required_addresses: &AddressHashSet) -> Result<Option<Address>> {
     required_addresses
         .iter()
         .copied()
         .at_most_one()
         .map_err(|_| eyre::eyre!("Tempo sessions require a single script sender"))
+}
+
+pub(crate) struct RemainingScriptTransaction {
+    pub(crate) chain: u64,
+    pub(crate) from: Address,
+}
+
+pub(crate) fn remaining_unsigned_transactions<N: Network>(
+    sequences: &[ScriptSequence<N>],
+) -> impl Iterator<Item = RemainingScriptTransaction> + '_ {
+    sequences.iter().flat_map(|sequence| {
+        sequence.transactions().skip(sequence.receipts.len()).filter(|tx| tx.is_unsigned()).map(
+            |tx| RemainingScriptTransaction {
+                chain: sequence.chain,
+                from: tx.from().expect("missing from"),
+            },
+        )
+    })
 }
 
 /// Represents how to send _all_ transactions
@@ -398,17 +428,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
     /// Broadcasts transactions from all sequences.
     pub async fn broadcast(mut self) -> Result<BroadcastedState<FEN>> {
-        let required_addresses = self
-            .sequence
-            .sequences()
-            .iter()
-            .flat_map(|sequence| {
-                sequence
-                    .transactions()
-                    .filter(|tx| tx.is_unsigned())
-                    .map(|tx| tx.from().expect("missing from"))
-            })
-            .collect::<AddressHashSet>();
+        let remaining_transactions =
+            remaining_unsigned_transactions(self.sequence.sequences()).collect::<Vec<_>>();
+        let required_addresses =
+            remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
 
         if required_addresses.contains(&Config::DEFAULT_SENDER) {
             eyre::bail!(
@@ -428,12 +451,12 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let mut session_signers: AddressHashMap<ScriptSessionSigner> =
                 AddressHashMap::default();
             if has_session {
-                for sequence in self.sequence.sequences() {
+                for chain in remaining_transactions.iter().map(|tx| tx.chain).unique() {
                     if let Some(session_signer) = ScriptSessionSigner::resolve(
                         &self.script_config,
                         &self.args.wallets,
                         expected_session_sender,
-                        sequence.chain,
+                        chain,
                     )? {
                         session_signers.insert(session_signer.root_account, session_signer);
                     }
@@ -1122,9 +1145,12 @@ impl BundledState<TempoEvmNetwork> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_network::Ethereum;
-    use alloy_primitives::address;
+    use alloy_primitives::{Bloom, address};
+    use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
+    use forge_script_sequence::TransactionWithMetadata;
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -1179,6 +1205,46 @@ mod tests {
     }
 
     #[test]
+    fn remaining_unsigned_transactions_skip_completed_transactions() {
+        let completed = address!("0x1111111111111111111111111111111111111111");
+        let remaining = address!("0x2222222222222222222222222222222222222222");
+        let mut sequence = ScriptSequence::<Ethereum> {
+            chain: 4217,
+            transactions: [script_tx(completed), script_tx(remaining)].into(),
+            receipts: vec![receipt()],
+            ..Default::default()
+        };
+
+        let remaining =
+            remaining_unsigned_transactions(std::slice::from_ref(&sequence)).collect::<Vec<_>>();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].from, remaining_addr());
+        assert_eq!(remaining[0].chain, 4217);
+
+        sequence.receipts.push(receipt());
+        let remaining =
+            remaining_unsigned_transactions(std::slice::from_ref(&sequence)).collect::<Vec<_>>();
+        assert!(remaining.is_empty());
+
+        let completed_sequence = ScriptSequence::<Ethereum> {
+            chain: 1,
+            transactions: [script_tx(completed)].into(),
+            receipts: vec![receipt()],
+            ..Default::default()
+        };
+        let remaining_sequence = ScriptSequence::<Ethereum> {
+            chain: 4217,
+            transactions: [script_tx(remaining_addr())].into(),
+            ..Default::default()
+        };
+
+        let remaining = remaining_unsigned_transactions(&[completed_sequence, remaining_sequence])
+            .collect::<Vec<_>>();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].chain, 4217);
+    }
+
+    #[test]
     fn access_key_sets_key_id_before_estimation() {
         let root_address = address!("0x1111111111111111111111111111111111111111");
         let access_key =
@@ -1205,6 +1271,41 @@ mod tests {
                 assert_eq!(tx.key_id, Some(access_key_address));
             }
             _ => panic!("expected access key transaction"),
+        }
+    }
+
+    fn script_tx(from: Address) -> TransactionWithMetadata<Ethereum> {
+        TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::new(TransactionRequest {
+            from: Some(from),
+            ..Default::default()
+        }))
+    }
+
+    fn remaining_addr() -> Address {
+        address!("0x2222222222222222222222222222222222222222")
+    }
+
+    fn receipt() -> TransactionReceipt {
+        TransactionReceipt {
+            inner: ReceiptEnvelope::Legacy(ReceiptWithBloom {
+                receipt: Receipt {
+                    status: Eip658Value::success(),
+                    cumulative_gas_used: 0,
+                    logs: vec![],
+                },
+                logs_bloom: Bloom::ZERO,
+            }),
+            transaction_hash: Default::default(),
+            transaction_index: None,
+            block_hash: None,
+            block_number: None,
+            gas_used: 0,
+            effective_gas_price: 0,
+            blob_gas_used: None,
+            blob_gas_price: None,
+            from: Address::ZERO,
+            to: None,
+            contract_address: None,
         }
     }
 }

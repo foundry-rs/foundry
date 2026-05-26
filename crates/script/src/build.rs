@@ -1,6 +1,9 @@
 use crate::{
-    ScriptArgs, ScriptConfig, broadcast::BundledState, execute::LinkedState,
-    multi_sequence::MultiChainSequence, sequence::ScriptSequenceKind,
+    ScriptArgs, ScriptConfig,
+    broadcast::{BundledState, remaining_unsigned_transactions},
+    execute::LinkedState,
+    multi_sequence::MultiChainSequence,
+    sequence::ScriptSequenceKind,
 };
 use alloy_network::AnyNetwork;
 use alloy_primitives::{Address, B256, Bytes, map::AddressHashSet};
@@ -23,6 +26,11 @@ use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
+/// Returns the signer addresses that can satisfy a resumed broadcast.
+///
+/// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
+/// session signer lives in the session registry instead, so resume needs to treat the session
+/// root account as available without mutating the script wallet set.
 fn available_script_signers<FEN: FoundryEvmNetwork>(
     script_config: &ScriptConfig<FEN>,
     wallets: &MultiWalletOpts,
@@ -46,6 +54,11 @@ fn available_script_signers<FEN: FoundryEvmNetwork>(
     Ok(signers)
 }
 
+/// Returns the single sender a Tempo session may cover during resume.
+///
+/// This mirrors broadcast-time session validation: one session access key represents one root
+/// account, so a resumed sequence with multiple remaining senders must not silently combine the
+/// session signer with other wallets.
 fn tempo_session_expected_sender(required_addresses: &[Address]) -> Result<Option<Address>> {
     let required_addresses = required_addresses.iter().copied().collect::<AddressHashSet>();
     if required_addresses.len() > 1 {
@@ -332,17 +345,12 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     self.script_config,
                 )
             } else {
-                let remaining_froms = sequence
-                    .sequences()
-                    .iter()
-                    .flat_map(|s| {
-                        s.transactions.iter().skip(s.receipts.len()).map(|t| {
-                            t.transaction.from().expect("from is missing in script artifact")
-                        })
-                    })
-                    .collect::<Vec<_>>();
+                let remaining_transactions =
+                    remaining_unsigned_transactions(sequence.sequences()).collect::<Vec<_>>();
+                let remaining_froms =
+                    remaining_transactions.iter().map(|tx| tx.from).collect::<Vec<_>>();
                 let remaining_chains =
-                    sequence.sequences().iter().map(|s| s.chain).collect::<Vec<_>>();
+                    remaining_transactions.iter().map(|tx| tx.chain).collect::<Vec<_>>();
                 let expected_session_sender = if self.script_config.tempo.session_id()?.is_some() {
                     tempo_session_expected_sender(&remaining_froms)?
                 } else {

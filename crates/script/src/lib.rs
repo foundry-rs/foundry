@@ -270,7 +270,8 @@ impl ScriptArgs {
         config: Config,
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
-        let session_sender = if self.tempo.session_id()?.is_some() {
+        let has_session = self.tempo.session_id()?.is_some();
+        let session_sender = if has_session && !self.resume {
             let expected_chain_id = Self::tempo_session_chain_id(&evm_opts).await;
             self.tempo
                 .session_signer_for_multi_wallet(&self.wallets, self.evm.sender, expected_chain_id)?
@@ -1008,6 +1009,30 @@ mod tests {
 
         let state = args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await.unwrap();
         assert_eq!(state.script_config.evm_opts.sender, root);
+    }
+
+    #[tokio::test]
+    async fn tempo_session_resume_multi_defers_chain_validation_until_sequence_load() {
+        let temp = tempdir().unwrap();
+        let session_id = B256::from([0x55; 32]);
+        let root = address!("0x1111111111111111111111111111111111111111");
+        let chain_id = 4217;
+
+        let _guard = TempoHomeGuard::set(temp.path()).await;
+        upsert_session_entry(active_session_entry(session_id, root, chain_id)).unwrap();
+
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--resume",
+            "--multi",
+            "--tempo.session",
+            &format!("{session_id:?}"),
+        ]);
+        let evm_opts = EvmOpts { networks: NetworkConfigs::with_tempo(), ..Default::default() };
+
+        let state = args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await.unwrap();
+        assert_ne!(state.script_config.evm_opts.sender, root);
     }
 
     #[tokio::test]
