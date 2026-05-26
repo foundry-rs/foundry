@@ -8,7 +8,7 @@ use crate::FoundryBlock;
 use alloy_evm::EvmEnv;
 use alloy_network::{AnyNetwork, Network};
 use alloy_primitives::{U256, map::HashMap};
-use foundry_config::Config;
+use foundry_config::{Config, ExecutionSpec, evm_spec_id_from_str};
 use foundry_fork_db::{
     BackendHandler, BlockchainDb, ForkBlockEnv, SharedBackend, cache::BlockchainDbMeta,
 };
@@ -37,12 +37,15 @@ pub struct ForkId(pub String);
 
 impl ForkId {
     /// Returns the identifier for a Fork from a URL and block number.
-    pub fn new(url: &str, num: Option<u64>) -> Self {
+    pub fn new(url: &str, num: Option<u64>, evm_version: Option<&str>) -> Self {
         let mut id = url.to_string();
         id.push('@');
         match num {
             Some(n) => write!(id, "{n:#x}").unwrap(),
             None => id.push_str("latest"),
+        }
+        if let Some(evm_version) = evm_version {
+            write!(id, "#{evm_version}").unwrap();
         }
         Self(id)
     }
@@ -78,7 +81,7 @@ pub struct MultiFork<N: Network, SPEC, BLOCK: ForkBlockEnv> {
 
 impl<
     N: Network,
-    SPEC: Into<SpecId> + Default + Copy + Unpin + Send + 'static,
+    SPEC: Into<SpecId> + ExecutionSpec + Default + Copy + Unpin + Send + 'static,
     BLOCK: FoundryBlock + ForkBlockEnv + Default + Unpin,
 > MultiFork<N, SPEC, BLOCK>
 {
@@ -288,7 +291,7 @@ pub struct MultiForkHandler<N: Network, SPEC, BLOCK: ForkBlockEnv> {
 
 impl<
     N: Network,
-    SPEC: Into<SpecId> + Default + Copy + 'static,
+    SPEC: Into<SpecId> + ExecutionSpec + Default + Copy + 'static,
     BLOCK: FoundryBlock + ForkBlockEnv + Default,
 > MultiForkHandler<N, SPEC, BLOCK>
 {
@@ -323,7 +326,8 @@ impl<
     }
 
     fn create_fork(&mut self, fork: CreateFork, sender: CreateSender<N, SPEC, BLOCK>) {
-        let fork_id = ForkId::new(&fork.url, fork.evm_opts.fork_block_number);
+        let fork_id =
+            ForkId::new(&fork.url, fork.evm_opts.fork_block_number, fork.evm_version.as_deref());
         trace!(?fork_id, "created new forkId");
 
         // There could already be a task for the requested fork in progress.
@@ -416,7 +420,7 @@ impl<
 // This future will finish once all underlying BackendHandler are completed.
 impl<
     N: Network,
-    SPEC: Into<SpecId> + Default + Copy + Unpin + 'static,
+    SPEC: Into<SpecId> + ExecutionSpec + Default + Copy + Unpin + 'static,
     BLOCK: FoundryBlock + ForkBlockEnv + Default + Unpin,
 > Future for MultiForkHandler<N, SPEC, BLOCK>
 {
@@ -584,7 +588,7 @@ impl<N: Network, SPEC, BLOCK: ForkBlockEnv> Drop for ShutDownMultiFork<N, SPEC, 
 /// This will establish a new `Provider` to the endpoint and return the Fork Backend.
 async fn create_fork<
     N: Network,
-    SPEC: Into<SpecId> + Default + Copy,
+    SPEC: Into<SpecId> + ExecutionSpec + Default + Copy,
     BLOCK: FoundryBlock + ForkBlockEnv + Default,
 >(
     mut fork: CreateFork,
@@ -597,7 +601,12 @@ async fn create_fork<
     // Here we use [`AnyNetwork`] to maximize compatibility with custom chains, aligned with
     // `EvmOpts::env` impl.
     let any_provider = fork.evm_opts.fork_provider_with_url::<AnyNetwork>(&fork.url)?;
-    let (evm_env, number) = fork.evm_opts.fork_evm_env::<_, BLOCK, _, _>(&any_provider).await?;
+    let (mut evm_env, number) = fork.evm_opts.fork_evm_env::<_, BLOCK, _, _>(&any_provider).await?;
+    if let Some(evm_version) = fork.evm_version.as_deref() {
+        let spec = evm_spec_id_from_str(evm_version)
+            .ok_or_else(|| eyre::eyre!("invalid EVM version `{evm_version}` for fork"))?;
+        evm_env.cfg_env.set_spec_and_mainnet_gas_params(spec);
+    }
     let meta = BlockchainDbMeta::new(evm_env.block_env.clone(), fork.url.clone());
 
     // Determine the cache path if caching is enabled.
@@ -610,7 +619,7 @@ async fn create_fork<
     let provider = fork.evm_opts.fork_provider_with_url::<N>(&fork.url)?;
     let db = BlockchainDb::new(meta, cache_path);
     let (backend, handler) = SharedBackend::new(provider, db, Some(number.into()));
-    let fork_id = ForkId::new(&fork.url, Some(number));
+    let fork_id = ForkId::new(&fork.url, Some(number), fork.evm_version.as_deref());
     let fork = CreatedFork::new(fork, evm_env, backend);
 
     Ok((fork_id, fork, handler))

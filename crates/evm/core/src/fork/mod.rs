@@ -12,6 +12,8 @@ pub struct CreateFork {
     pub enable_caching: bool,
     /// The URL to a node for fetching remote state
     pub url: String,
+    /// The EVM version to use for this fork's execution environment.
+    pub evm_version: Option<String>,
     /// All env settings as configured by the user
     pub evm_opts: EvmOpts,
 }

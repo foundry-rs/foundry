@@ -10,6 +10,7 @@ use alloy_provider::Provider;
 use alloy_rpc_types::Filter;
 use alloy_sol_types::SolValue;
 use foundry_common::provider::ProviderBuilder;
+use foundry_config::ExecutionSpec;
 use foundry_evm_core::{
     FoundryContextExt, backend::JournaledState, evm::FoundryEvmNetwork, fork::CreateFork,
 };
@@ -363,6 +364,7 @@ fn create_fork_request<FEN: FoundryEvmNetwork>(
         enable_caching: !ccx.state.config.no_storage_caching
             && ccx.state.config.rpc_storage_caching.enable_for_endpoint(&url),
         url,
+        evm_version: Some(ccx.ecx.cfg().spec.evm_version_name()),
         evm_opts,
     };
     Ok(fork)

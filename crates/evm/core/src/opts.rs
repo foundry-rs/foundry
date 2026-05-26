@@ -353,7 +353,11 @@ impl EvmOpts {
         let mut evm_opts = self.clone();
         evm_opts.fork_block_number = evm_opts.fork_block_number.or(fork_block_number);
 
-        Some(CreateFork { url, enable_caching, evm_opts })
+        let evm_version = Some(
+            config.hardfork.map(String::from).unwrap_or_else(|| config.evm_version.to_string()),
+        );
+
+        Some(CreateFork { url, enable_caching, evm_version, evm_opts })
     }
 
     /// Returns the gas limit to use

@@ -179,6 +179,34 @@ Traces:
 "#]]);
 });
 
+forgetest_init!(test_fork_keeps_configured_evm_version, |prj, cmd| {
+    let endpoint = rpc::next_http_archive_rpc_url();
+    prj.add_test(
+        "ForkKeepsConfiguredEvmVersion.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+interface EvmVm {
+    function getEvmVersion() external pure returns (string memory evm);
+}
+
+contract ForkKeepsConfiguredEvmVersionTest is Test {
+    EvmVm constant evm = EvmVm(address(bytes20(uint160(uint256(keccak256("hevm cheat code"))))));
+
+    /// forge-config: default.evm_version = "cancun"
+    function test_fork_keeps_configured_evm_version() public {
+        assertEq(evm.getEvmVersion(), "cancun");
+        vm.createSelectFork("<rpc>");
+        assertEq(evm.getEvmVersion(), "cancun");
+    }
+}
+   "#
+        .replace("<rpc>", &endpoint),
+    );
+
+    cmd.args(["test", "--mc", "ForkKeepsConfiguredEvmVersionTest"]).assert_success();
+});
+
 forgetest_init!(test_set_evm_version_tempo_hardfork, |prj, cmd| {
     prj.update_config(|config| {
         config.solc = Some(OTHER_SOLC_VERSION.into());
