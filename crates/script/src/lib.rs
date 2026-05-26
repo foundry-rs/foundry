@@ -311,6 +311,11 @@ impl ScriptArgs {
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
 
+    /// Infers the command chain early enough to resolve a Tempo session during preprocessing.
+    ///
+    /// This is only used before normal script execution, where a single command-level chain is
+    /// expected. Resume flows may need to load the saved broadcast sequence first, so they defer
+    /// session chain validation until the remaining transaction chains are known.
     async fn tempo_session_chain_id(evm_opts: &EvmOpts) -> u64 {
         if let Some(chain_id) = evm_opts.env.chain_id {
             return chain_id;
