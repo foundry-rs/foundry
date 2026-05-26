@@ -152,6 +152,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     portfolio_diagnostics: PortfolioDiagnostics,
     captured_diagnostics: Option<String>,
     heuristic_witnesses: usize,
+    sat_cache: BTreeMap<Vec<BoolExpr>, bool>,
 }
 
 impl SmtLibSubprocessSolver {
@@ -173,6 +174,7 @@ impl SmtLibSubprocessSolver {
             portfolio_diagnostics: PortfolioDiagnostics::default(),
             captured_diagnostics: None,
             heuristic_witnesses: 0,
+            sat_cache: BTreeMap::new(),
         }
     }
 
@@ -240,6 +242,13 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
 
     /// Returns whether `is_sat` holds.
     fn is_sat(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError> {
+        let smt_constraints = normalize_constraints_for_solver(constraints);
+        let cache_key = sat_cache_key(&smt_constraints);
+        if let Some(result) = self.sat_cache.get(&cache_key) {
+            trace!(result, "is_sat: normalized cache hit");
+            return Ok(*result);
+        }
+
         self.reserve_query()?;
         self.record_query();
         let _span = trace_span!(
@@ -250,9 +259,9 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         )
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver is_sat");
-        let smt_constraints = normalize_constraints_for_solver(constraints);
         if product_monotonic_unsat_normalized(&smt_constraints) {
             trace!("is_sat: monotonic product contradiction");
+            self.cache_sat_result(cache_key, false);
             return Ok(false);
         }
         let output = match self.query_normalized(&smt_constraints, false, constraints) {
@@ -268,8 +277,14 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
             Err(err) => return Err(err),
         };
         match output.lines().next().unwrap_or_default().trim() {
-            "sat" => Ok(true),
-            "unsat" => Ok(false),
+            "sat" => {
+                self.cache_sat_result(cache_key, true);
+                Ok(true)
+            }
+            "unsat" => {
+                self.cache_sat_result(cache_key, false);
+                Ok(false)
+            }
             "unknown" => {
                 if hard_arith_fallback_model(&smt_constraints).is_some() {
                     self.heuristic_witnesses += 1;
@@ -366,6 +381,13 @@ impl SmtLibSubprocessSolver {
         }
     }
 
+    /// Caches a definitive normalized satisfiability result if the cache has room.
+    fn cache_sat_result(&mut self, key: Vec<BoolExpr>, result: bool) {
+        if self.sat_cache.len() < SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES {
+            self.sat_cache.insert(key, result);
+        }
+    }
+
     /// Sends already-normalized constraints to the configured solver portfolio.
     pub(crate) fn query_normalized(
         &mut self,
@@ -419,6 +441,17 @@ impl SmtLibSubprocessSolver {
         }
         result.output
     }
+}
+
+/// Returns a structural key for normalized satisfiability cache lookups.
+fn sat_cache_key(constraints: &[BoolExpr]) -> Vec<BoolExpr> {
+    let mut key = constraints
+        .iter()
+        .filter(|constraint| !matches!(constraint, BoolExpr::Const(true)))
+        .cloned()
+        .collect::<Vec<_>>();
+    key.sort();
+    key
 }
 
 #[derive(Clone, Debug, Default)]
