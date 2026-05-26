@@ -139,10 +139,7 @@ casttest!(event_decode_with_sig, |_prj, cmd| {
 "#]]);
 
     cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
-[
-  78,
-  "0x0000000000000000000000000000000000D0004F"
-]
+{"schema_version":1,"success":true,"data":[78,"0x0000000000000000000000000000000000D0004F"],"errors":[],"warnings":[]}
 
 "#]]);
 });
@@ -167,10 +164,7 @@ casttest!(error_decode_with_sig, |_prj, cmd| {
 "#]]);
 
     cmd.args(["--json"]).assert_success().stdout_eq(str![[r#"
-[
-  101,
-  "0x0000000000000000000000000000000000D0004F"
-]
+{"schema_version":1,"success":true,"data":[101,"0x0000000000000000000000000000000000D0004F"],"errors":[],"warnings":[]}
 
 "#]]);
 });

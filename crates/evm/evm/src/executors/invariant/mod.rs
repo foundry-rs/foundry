@@ -53,6 +53,9 @@ pub use error::{
 };
 use foundry_evm_coverage::HitMaps;
 
+mod campaign;
+use campaign::{InvariantCampaignAggregator, InvariantCampaignSpec, InvariantWorkerOutput};
+
 mod replay;
 pub use replay::{replay_error, replay_run};
 
@@ -489,6 +492,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // suite runner so parameterized `invariant_*` functions are rejected with a per-test
         // failure entry before any campaign runs.
 
+        let mut planned_runs = self.config.runs;
+
         let (mut invariant_test, mut corpus_manager) = self.prepare_test(
             &invariant_contract,
             fuzz_fixtures,
@@ -515,6 +520,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let edge_coverage_enabled = self.config.corpus.collect_edge_coverage();
 
         'stop: while continue_campaign(runs) {
+            planned_runs = planned_runs.max(runs.saturating_add(1));
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
             let mut stop_after_run = false;
@@ -733,7 +739,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 call_result,
                                 &[],
                             );
-                            invariant_test.set_error(anchor, InvariantFuzzError::Revert(case_data));
+                            invariant_test
+                                .test_data
+                                .failures
+                                .record_failure(anchor, InvariantFuzzError::Revert(case_data));
                             (false, Some(anchor))
                         } else if call_result.reverted
                             && !invariant_contract.is_optimization()
@@ -928,19 +937,25 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         let reverts = result.failures.reverts;
         let (errors, handler_errors) = result.failures.partition();
-        Ok(InvariantFuzzTestResult {
+        let worker_result = InvariantFuzzTestResult::new(
             errors,
             handler_errors,
-            cases: result.fuzz_cases,
+            result.fuzz_cases,
             reverts,
-            last_run_inputs: result.last_run_inputs,
-            gas_report_traces: result.gas_report_traces,
-            line_coverage: result.line_coverage,
-            metrics: result.metrics,
-            failed_corpus_replays: corpus_manager.failed_replays,
-            optimization_best_value: result.optimization_best_value,
-            optimization_best_sequence: result.optimization_best_sequence,
-        })
+            result.last_run_inputs,
+            result.gas_report_traces,
+            result.line_coverage,
+            result.metrics,
+            corpus_manager.failed_replays,
+            result.optimization_best_value,
+            result.optimization_best_sequence,
+        );
+        let campaign_spec = InvariantCampaignSpec::new(planned_runs);
+        let worker_plan = campaign_spec.worker_plans(1)?.pop().expect("one worker plan requested");
+        let worker_output = InvariantWorkerOutput::new(worker_plan, worker_result);
+        let mut aggregator = InvariantCampaignAggregator::new(campaign_spec);
+        aggregator.push(worker_output)?;
+        aggregator.finish()
     }
 
     /// Prepares certain structures to execute the invariant tests:
