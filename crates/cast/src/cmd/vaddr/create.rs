@@ -98,7 +98,8 @@ pub(super) async fn run(
     // When registering, the transaction result owns stdout. Derived-address output is
     // emitted on stderr so the command produces a single stdout payload (the tx hash or
     // receipt JSON from `cast_send`). When `--no-register` is set, stdout carries the
-    // derived address data.
+    // derived address data in both text and JSON modes so consumers get the same data
+    // on stdout regardless of format.
     if shell::is_json() {
         let json = serde_json::to_string_pretty(&json!({
             "salt": format!("{}", output.salt),
@@ -114,6 +115,19 @@ pub(super) async fn run(
         } else {
             sh_eprintln!("{json}")?;
         }
+    } else if no_register {
+        sh_println!(
+            "Salt:              {}
+Registration hash: {}
+Master ID:         {}",
+            output.salt,
+            output.registration_hash,
+            output.master_id,
+        )?;
+        sh_println!("\nVirtual addresses:")?;
+        for (tag, vaddr) in &virtual_addresses {
+            sh_println!("  tag={tag}  {vaddr}")?;
+        }
     } else {
         sh_status!(
             "Salt:              {}
@@ -125,11 +139,7 @@ Master ID:         {}",
         )?;
         sh_status!("\nVirtual addresses:")?;
         for (tag, vaddr) in &virtual_addresses {
-            if no_register {
-                sh_println!("  tag={tag}  {vaddr}")?;
-            } else {
-                sh_eprintln!("  tag={tag}  {vaddr}")?;
-            }
+            sh_eprintln!("  tag={tag}  {vaddr}")?;
         }
     }
 

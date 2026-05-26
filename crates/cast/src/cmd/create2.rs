@@ -211,8 +211,9 @@ impl Create2Args {
         })
         .ok_or_else(|| eyre::eyre!("create2 salt mining failed: all threads panicked"))?;
         sh_status!("Successfully found contract address in {:?}", timer.elapsed())?;
-        sh_status!("Salt: {salt} ({})", U256::from_be_bytes(salt.0))?;
+        sh_status!("Salt ({}):", U256::from_be_bytes(salt.0))?;
         sh_println!("{address}")?;
+        sh_println!("{salt}")?;
 
         Ok(Create2Output { address, salt })
     }

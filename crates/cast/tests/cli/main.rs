@@ -5322,17 +5322,15 @@ casttest!(vaddr_create_plain_output, |_prj, cmd| {
     ])
     .assert_success()
     .stdout_eq(str![[r#"
-  tag=0x000000000000  [..]
-
-"#]])
-    .stderr_eq(str![[r#"
 Salt:              0x0000000000000000000000000000000000000000000000003ee0a78d00000000
 Registration hash: 0x000000002f51c0c4f66f3910f799c6b98e2123ef43a401a062eb8ee07498c396
 Master ID:         0x2f51c0c4
 
 Virtual addresses:
+  tag=0x000000000000  [..]
 
-"#]]);
+"#]])
+    .stderr_eq(str![[""]]);
 });
 
 // End-to-end `cast vaddr` tests against a local Anvil Tempo node.
