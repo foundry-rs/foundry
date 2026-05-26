@@ -197,7 +197,7 @@ impl EdgeCovInspector {
 
     /// Create a new `EdgeCovInspector` with the given configuration.
     ///
-    /// [`EdgeCovKind::Hash`] preallocates a fixed [`MAX_EDGE_COUNT`] bitmap;
+    /// [`EdgeCovKind::Hash`] preallocates a fixed-size bitmap;
     /// [`EdgeCovKind::CollisionFree`] grows its dense map on demand.
     pub fn with_config(config: EdgeCovConfig) -> Self {
         let hitcount = match config.kind {
