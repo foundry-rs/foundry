@@ -273,12 +273,12 @@ contract DeployScript is Script {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Traces:
-  [119321] DeployScript::run()
+  [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [83127] → new GasWaster@0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
+    ├─ [..] → new GasWaster@[..]
     │   └─ ← [Return] 415 bytes of code
-    ├─ [404] GasWaster::wasteGas(200000 [2e5])
+    ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop]
     └─ ← [Stop]
 
@@ -289,10 +289,10 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [83127] → new GasWaster@0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
+  [..] → new GasWaster@[..]
     └─ ← [Return] 415 bytes of code
 
-  [404] GasWaster::wasteGas(200000 [2e5])
+  [..] GasWaster::wasteGas(200000 [2e5])
     └─ ← [Stop]
 
 
@@ -370,12 +370,12 @@ contract DeployScript is Script {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Traces:
-  [119321] DeployScript::run()
+  [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [83127] → new GasWaster@0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
+    ├─ [..] → new GasWaster@[..]
     │   └─ ← [Return] 415 bytes of code
-    ├─ [404] GasWaster::wasteGas(200000 [2e5])
+    ├─ [..] GasWaster::wasteGas(200000 [2e5])
     │   └─ ← [Stop]
     └─ ← [Stop]
 
@@ -386,10 +386,10 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [83127] → new GasWaster@0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
+  [..] → new GasWaster@[..]
     └─ ← [Return] 415 bytes of code
 
-  [404] GasWaster::wasteGas(200000 [2e5])
+  [..] GasWaster::wasteGas(200000 [2e5])
     └─ ← [Stop]
 
 
@@ -577,10 +577,10 @@ contract DeployScript is Script {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Traces:
-  [184174] DeployScript::run()
+  [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [143788] → new HashChecker@0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
+    ├─ [..] → new HashChecker@[..]
     │   └─ ← [Return] 718 bytes of code
     └─ ← [Stop]
 
@@ -656,58 +656,58 @@ contract RunScript is Script {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Traces:
-  [54134] RunScript::run()
+  [..] RunScript::run()
     ├─ [0] VM::startBroadcast()
     │   └─ ← [Return]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
-    ├─ [22516] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop]
-    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
-    │   └─ ← [Stop]
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return]
-    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
-    │   └─ ← [Stop]
-    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
-    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop]
-    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
-    │   └─ ← [Stop]
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return]
-    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
-    │   └─ ← [Stop]
-    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
-    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop]
-    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
-    │   └─ ← [Stop]
-    ├─ [0] VM::roll([..])
-    │   └─ ← [Return]
-    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
-    │   └─ ← [Stop]
-    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
-    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop]
-    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     ├─ [0] VM::roll([..])
     │   └─ ← [Return]
-    ├─ [616] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::update()
+    ├─ [..] [..]::update()
     │   └─ ← [Stop]
-    ├─ [247] 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9::checkLastHash() [staticcall]
+    ├─ [..] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop]
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return]
+    ├─ [..] [..]::update()
+    │   └─ ← [Stop]
+    ├─ [..] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop]
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return]
+    ├─ [..] [..]::update()
+    │   └─ ← [Stop]
+    ├─ [..] [..]::checkLastHash() [staticcall]
+    │   └─ ← [Stop]
+    ├─ [0] VM::roll([..])
+    │   └─ ← [Return]
+    ├─ [..] [..]::update()
+    │   └─ ← [Stop]
+    ├─ [..] [..]::checkLastHash() [staticcall]
     │   └─ ← [Stop]
     └─ ← [Stop]
 
@@ -3169,33 +3169,33 @@ contract CounterScript is Script {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Traces:
-  [455349] → new CounterScript@0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519
+  [..] → new CounterScript@[..]
     └─ ← [Return] 2162 bytes of code
 
-  [121] CounterScript::setUp()
+  [..] CounterScript::setUp()
     └─ ← [Stop]
 
-  [141697] CounterScript::run()
-    ├─ [0] VM::createSelectFork("<rpc url>")
+  [..] CounterScript::run()
+    ├─ [..] VM::createSelectFork("<rpc url>")
     │   └─ ← [Return] 1
-    ├─ [0] VM::startBroadcast()
+    ├─ [..] VM::startBroadcast()
     │   └─ ← [Return]
-    ├─ [96345] → new Counter@0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
+    ├─ [..] → new Counter@[..]
     │   └─ ← [Return] 481 bytes of code
-    ├─ [0] VM::stopBroadcast()
+    ├─ [..] VM::stopBroadcast()
     │   └─ ← [Return]
-    ├─ [0] VM::createSelectFork("<rpc url>")
+    ├─ [..] VM::createSelectFork("<rpc url>")
     │   └─ ← [Return] 2
-    ├─ [0] VM::startBroadcast()
+    ├─ [..] VM::startBroadcast()
     │   └─ ← [Return]
-    └─ ← [Revert] call to non-contract address 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
+    └─ ← [Revert] call to non-contract address [..]
 
 
 
 "#]])
     .stderr_eq(str![[r#"
 Compiler run successful!
-Error: script failed: call to non-contract address 0x5A02DD0Fa0B44f434EA95b1fF5848Cd27861dBe9
+Error: script failed: call to non-contract address [..]
 
 "#]]);
 });
