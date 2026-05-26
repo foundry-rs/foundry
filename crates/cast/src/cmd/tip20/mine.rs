@@ -34,6 +34,7 @@ pub(super) fn run(
     threads: Option<usize>,
     seed: Option<B256>,
     no_random: bool,
+    register: bool,
 ) -> Result<Output> {
     if !master.is_valid_master() {
         eyre::bail!(
@@ -49,7 +50,7 @@ pub(super) fn run(
                 output.registration_hash
             );
         }
-        print_output(&output, None)?;
+        print_output(&output, None, register)?;
         return Ok(output);
     }
 
@@ -71,7 +72,7 @@ pub(super) fn run(
 
     let timer = Instant::now();
     let output = mine(master, salt, n_threads, POW_BYTES)?;
-    print_output(&output, Some(timer.elapsed()))?;
+    print_output(&output, Some(timer.elapsed()), register)?;
     Ok(output)
 }
 
@@ -171,7 +172,7 @@ pub(crate) fn has_pow(registration_hash: &B256, pow_bytes: usize) -> bool {
     registration_hash[..pow_bytes].iter().all(|byte| *byte == 0)
 }
 
-fn print_output(output: &Output, elapsed: Option<Duration>) -> Result<()> {
+fn print_output(output: &Output, elapsed: Option<Duration>, register: bool) -> Result<()> {
     let header = if let Some(elapsed) = elapsed {
         format!("Found salt in {elapsed:?}\n")
     } else {
@@ -188,7 +189,13 @@ Zero-tag address:  {}"#,
         output.master_id,
         output.zero_tag_virtual_address,
     )?;
-    sh_println!("{}", output.zero_tag_virtual_address)?;
+    // When registering, the transaction result owns stdout; emit the zero-tag address on
+    // stderr so the command produces a single stdout payload (the tx hash from `cast_send`).
+    if register {
+        sh_eprintln!("{}", output.zero_tag_virtual_address)?;
+    } else {
+        sh_println!("{}", output.zero_tag_virtual_address)?;
+    }
     Ok(())
 }
 

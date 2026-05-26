@@ -100,7 +100,7 @@ impl Tip20Subcommand {
                     .await?;
             }
             Self::Mine { master, salt, threads, seed, no_random, register, send_tx, tx } => {
-                let output = mine::run(master, salt, threads, seed, no_random)?;
+                let output = mine::run(master, salt, threads, seed, no_random, register)?;
                 if register {
                     mine::register(master, output.salt, send_tx, tx).await?;
                 }

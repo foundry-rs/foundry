@@ -5362,7 +5362,8 @@ mod vaddr_e2e {
     }
 
     /// Run `cast vaddr create` (mine + register) and parse the user-tag-zero virtual
-    /// address from the plain-text output.
+    /// address from stderr. When registration is enabled the transaction hash owns stdout,
+    /// so derived-address rows are emitted on stderr (see `vaddr::create::run`).
     fn create_and_register_vaddr(
         cmd: &mut foundry_test_utils::TestCommand,
         rpc: &str,
@@ -5370,7 +5371,7 @@ mod vaddr_e2e {
     ) -> String {
         let owner_pk = format!("0x{}", hex::encode(owner.credential().to_bytes()));
         let owner_addr = format!("{:#x}", owner.address());
-        let out = cmd
+        let output = cmd
             .cast_fuse()
             .args([
                 "vaddr",
@@ -5384,16 +5385,16 @@ mod vaddr_e2e {
                 "--rpc-url",
                 rpc,
             ])
-            .assert_success()
-            .get_output()
-            .stdout_lossy();
+            .assert_success();
+        let stderr = String::from_utf8_lossy(&output.get_output().stderr).into_owned();
 
-        out.lines()
+        stderr
+            .lines()
             .find_map(|line| {
                 let rest = line.trim_start().strip_prefix("tag=0x000000000000")?;
                 rest.split_whitespace().next().map(str::to_string)
             })
-            .unwrap_or_else(|| panic!("could not parse vaddr from create output:\n{out}"))
+            .unwrap_or_else(|| panic!("could not parse vaddr from create stderr:\n{stderr}"))
     }
 
     // `cast vaddr create` mines a PoW salt, registers a virtual master on-chain,

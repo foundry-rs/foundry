@@ -95,19 +95,25 @@ pub(super) async fn run(
         virtual_addresses.push((user_tag, vaddr));
     }
 
+    // When registering, the transaction result owns stdout. Derived-address output is
+    // emitted on stderr so the command produces a single stdout payload (the tx hash or
+    // receipt JSON from `cast_send`). When `--no-register` is set, stdout carries the
+    // derived address data.
     if shell::is_json() {
-        sh_println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "salt": format!("{}", output.salt),
-                "registration_hash": format!("{}", output.registration_hash),
-                "master_id": format!("{}", output.master_id),
-                "virtual_addresses": virtual_addresses.iter().map(|(tag, addr)| json!({
-                    "tag": format!("{tag}"),
-                    "address": format!("{addr}"),
-                })).collect::<Vec<_>>(),
-            }))?
-        )?;
+        let json = serde_json::to_string_pretty(&json!({
+            "salt": format!("{}", output.salt),
+            "registration_hash": format!("{}", output.registration_hash),
+            "master_id": format!("{}", output.master_id),
+            "virtual_addresses": virtual_addresses.iter().map(|(tag, addr)| json!({
+                "tag": format!("{tag}"),
+                "address": format!("{addr}"),
+            })).collect::<Vec<_>>(),
+        }))?;
+        if no_register {
+            sh_println!("{json}")?;
+        } else {
+            sh_eprintln!("{json}")?;
+        }
     } else {
         sh_status!(
             "Salt:              {}
@@ -119,7 +125,11 @@ Master ID:         {}",
         )?;
         sh_status!("\nVirtual addresses:")?;
         for (tag, vaddr) in &virtual_addresses {
-            sh_println!("  tag={tag}  {vaddr}")?;
+            if no_register {
+                sh_println!("  tag={tag}  {vaddr}")?;
+            } else {
+                sh_eprintln!("  tag={tag}  {vaddr}")?;
+            }
         }
     }
 
