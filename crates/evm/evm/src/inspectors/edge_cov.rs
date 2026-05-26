@@ -412,14 +412,16 @@ impl From<EdgeCovInspector> for EdgeCoverage {
     fn from(inspector: EdgeCovInspector) -> Self {
         let EdgeCovInspector { hitcount, config, dense_hitcount, .. } = inspector;
         match config.kind {
-            EdgeCovKind::CollisionFree => {
-                let mut hits = dense_hitcount
+            // Hits are deliberately not sorted here — this is the per-call drain
+            // path and `merge_edge_coverage` doesn't care about order. Consumers
+            // that need a deterministic order (e.g. `snapshot_edge_fingerprint`)
+            // sort locally.
+            EdgeCovKind::CollisionFree => Self::CollisionFree(
+                dense_hitcount
                     .into_iter()
                     .map(|(edge, count)| EdgeCovHit { edge, count })
-                    .collect::<Vec<_>>();
-                hits.sort_by_key(|hit| hit.edge);
-                Self::CollisionFree(hits)
-            }
+                    .collect(),
+            ),
             EdgeCovKind::Hash => Self::Hash(hitcount),
         }
     }

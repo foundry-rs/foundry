@@ -1,5 +1,8 @@
 use super::InvariantContract;
-use crate::{executors::RawCallResult, inspectors::EdgeCoverage};
+use crate::{
+    executors::RawCallResult,
+    inspectors::{EdgeCovHit, EdgeCoverage},
+};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, Selector, keccak256};
 use foundry_config::InvariantConfig;
@@ -211,8 +214,15 @@ pub fn snapshot_edge_fingerprint<FEN: FoundryEvmNetwork>(
     match edges {
         EdgeCoverage::Hash(edges) => Some(keccak256(edges)),
         EdgeCoverage::CollisionFree(hits) => {
-            let mut bytes = Vec::with_capacity(hits.len() * (20 + 8 + 32 + 8 + 1));
-            for hit in hits {
+            // `From<EdgeCovInspector>` does not sort on the per-call drain path,
+            // so sort here for a deterministic fingerprint across runs regardless
+            // of HashMap iteration order. Cold path — only invoked on handler
+            // assertion failure.
+            let mut sorted: Vec<&EdgeCovHit> = hits.iter().collect();
+            sorted.sort_unstable_by_key(|hit| hit.edge);
+
+            let mut bytes = Vec::with_capacity(sorted.len() * (20 + 8 + 32 + 8 + 1));
+            for hit in sorted {
                 bytes.extend_from_slice(hit.edge.address.as_slice());
                 bytes.extend_from_slice(&hit.edge.pc.to_le_bytes());
                 bytes.extend_from_slice(&hit.edge.jump_dest.to_be_bytes::<32>());
