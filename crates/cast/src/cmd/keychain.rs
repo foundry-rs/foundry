@@ -3334,7 +3334,7 @@ fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
 }
 
 fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
-    let is_direct = entry.key_address.is_none() || entry.key_address == Some(entry.wallet_address);
+    let is_direct = entry.key_address.is_none_or(|key_address| key_address == entry.wallet_address);
 
     let limits: Vec<_> = entry
         .limits
