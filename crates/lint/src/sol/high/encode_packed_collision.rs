@@ -4,8 +4,11 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
+    ast,
     interface::sym,
-    sema::hir::{ElementaryType, Expr, ExprKind, Hir, ItemId, Res, Type, TypeKind, VariableId},
+    sema::hir::{
+        ContractId, ElementaryType, Expr, ExprKind, Hir, ItemId, Res, Type, TypeKind, VariableId,
+    },
 };
 
 declare_forge_lint!(
@@ -38,6 +41,11 @@ fn is_abi_builtin(expr: &Expr<'_>) -> bool {
 }
 
 fn is_dynamic_arg(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
+    // String literals are always dynamic `string` type.
+    if matches!(&expr.peel_parens().kind, ExprKind::Lit(lit) if matches!(lit.kind, ast::LitKind::Str(..)))
+    {
+        return true;
+    }
     let Some(ty) = expr_type(hir, expr) else { return false };
     is_dynamic_type(&ty.kind)
 }
@@ -90,6 +98,20 @@ fn call_return_type<'hir>(
             let [ret] = hir.function(fid).returns else { return None };
             Some(&hir.variable(*ret).ty)
         }
+        // Member call: token.name(), token.symbol(), etc.
+        ExprKind::Member(recv, method) => {
+            let cid = contract_id_of(hir, recv)?;
+            hir.contract_item_ids(cid).find_map(|item| {
+                let fid = item.as_function()?;
+                let f = hir.function(fid);
+                if f.name.is_some_and(|n| n.name == method.name) {
+                    let [ret] = f.returns else { return None };
+                    Some(&hir.variable(*ret).ty)
+                } else {
+                    None
+                }
+            })
+        }
         // Indirect call via a function-typed value
         _ => match &expr_type(hir, callee)?.kind {
             TypeKind::Function(f) => {
@@ -98,6 +120,20 @@ fn call_return_type<'hir>(
             }
             _ => None,
         },
+    }
+}
+
+fn contract_id_of(hir: &Hir<'_>, expr: &Expr<'_>) -> Option<ContractId> {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(reses) => reses.iter().find_map(|r| match r {
+            Res::Item(ItemId::Variable(vid)) => match hir.variable(*vid).ty.kind {
+                TypeKind::Custom(ItemId::Contract(cid)) => Some(cid),
+                _ => None,
+            },
+            Res::Item(ItemId::Contract(cid)) => Some(*cid),
+            _ => None,
+        }),
+        _ => None,
     }
 }
 

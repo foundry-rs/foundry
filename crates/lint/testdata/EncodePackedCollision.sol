@@ -71,4 +71,31 @@ contract EncodePackedCollision {
     function typeCasts(bytes32 a, bytes32 b) public pure returns (bytes32) {
         return keccak256(abi.encodePacked(bytes(abi.encode(a)), bytes(abi.encode(b)))); //~WARN: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
     }
+
+    // SHOULD WARN: string literals
+    function stringLiterals() public pure returns (bytes32) {
+        return keccak256(abi.encodePacked("a", "bc")); //~WARN: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+    }
+
+    // SHOULD PASS: single string literal
+    function singleLiteral() public pure returns (bytes32) {
+        return keccak256(abi.encodePacked("abc"));
+    }
+}
+
+interface IERC20Metadata {
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+}
+
+contract MemberCalls {
+    // SHOULD WARN: external member calls returning string
+    function tokenCollision(IERC20Metadata token) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(token.name(), token.symbol())); //~WARN: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+    }
+
+    // SHOULD PASS: single external member call
+    function singleMemberCall(IERC20Metadata token) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(token.name()));
+    }
 }
