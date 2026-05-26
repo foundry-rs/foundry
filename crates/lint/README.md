@@ -12,6 +12,7 @@ It helps enforce best practices and improve code quality within Foundry projects
   - `unchecked-call`: Low-level calls should check the success return value.
   - `erc20-unchecked-transfer`: ERC20 `transfer` and `transferFrom` calls should check the return value.
   - `arbitrary-send-erc20`: Flags `transferFrom`/`safeTransferFrom` calls whose `from` argument is not provably `msg.sender` or `address(this)`.
+  - `encode-packed-collision`: Flags `abi.encodePacked()` calls with multiple dynamic-type arguments (`string`, `bytes`, dynamic arrays) that can produce hash collisions.
   - `rtlo`: Flags Unicode bidirectional override characters ("Trojan Source", CVE-2021-42574) that can hide malicious code.
   - `reentrancy-unlimited-gas`: Flags uncapped ETH-transferring low-level calls followed by writes to state that was read before the call.
   - `unprotected-initializer`: Upgradeable initializers should not be callable on the implementation contract.
