@@ -1266,6 +1266,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: true,
                         precompile_call_logs: vec![],
+                        charged_new_account_state_gas: false,
                     });
                 }
                 // Mark accounts and storage cold before STATICCALLs

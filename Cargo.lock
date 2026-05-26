@@ -5804,8 +5804,7 @@ dependencies = [
 [[package]]
 name = "foundry-fork-db"
 version = "0.26.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2ce9e91abb900e4ab5346d06b97c3784ae6ed4fc44b9fa22d3dc712b7e21be9"
+source = "git+https://github.com/foundry-rs/foundry-core?rev=d7c6c1376cb32f9afa1f99652b56530b47e8e2a1#d7c6c1376cb32f9afa1f99652b56530b47e8e2a1"
 dependencies = [
  "alloy-chains",
  "alloy-primitives",
@@ -5814,7 +5813,7 @@ dependencies = [
  "eyre",
  "futures",
  "parking_lot",
- "revm 38.0.0",
+ "revm 40.0.3",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -10463,7 +10462,6 @@ dependencies = [
  "ark-serialize 0.5.0",
  "arrayref",
  "aurora-engine-modexp",
- "blst",
  "c-kzg",
  "cfg-if",
  "k256",

@@ -262,10 +262,9 @@ pub fn eth_spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> SpecId {
     match hardfork {
         OpHardfork::Bedrock | OpHardfork::Regolith => SpecId::MERGE,
         OpHardfork::Canyon => SpecId::SHANGHAI,
-        OpHardfork::Ecotone
-        | OpHardfork::Fjord
-        | OpHardfork::Granite
-        | OpHardfork::Holocene => SpecId::CANCUN,
+        OpHardfork::Ecotone | OpHardfork::Fjord | OpHardfork::Granite | OpHardfork::Holocene => {
+            SpecId::CANCUN
+        }
         OpHardfork::Isthmus | OpHardfork::Jovian | OpHardfork::Interop => SpecId::PRAGUE,
         OpHardfork::Karst => SpecId::OSAKA,
         f => unreachable!("unimplemented {}", f),

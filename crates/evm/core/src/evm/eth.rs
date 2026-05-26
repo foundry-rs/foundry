@@ -74,6 +74,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = EthEvmHandler::<I>::default();
+        let reservoir = frame.reservoir();
 
         // Create first frame
         let memory =
@@ -84,7 +85,7 @@ impl<'db, I: FoundryInspectorExt<EthEvmContext<&'db mut dyn DatabaseExt<EthEvmFa
         let mut frame_result = handler.inspect_run_exec_loop(self, first_frame_input)?;
 
         // Handle last frame result
-        handler.last_frame_result(self, &mut frame_result)?;
+        handler.last_frame_result(self, reservoir, &mut frame_result)?;
 
         Ok(frame_result)
     }
