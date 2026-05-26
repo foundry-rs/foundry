@@ -252,11 +252,6 @@ impl EdgeCovInspector {
         }
     }
 
-    /// Consume the inspector and take ownership of the hitcount.
-    pub fn into_hitcount(self) -> EdgeCoverage {
-        self.into()
-    }
-
     /// Consume the inspector and take ownership of both the hitcount and comparison log.
     pub fn into_parts(mut self) -> (EdgeCoverage, Vec<CmpOperands>) {
         let cmp_log = self.cmp_log.take().unwrap_or_default();
