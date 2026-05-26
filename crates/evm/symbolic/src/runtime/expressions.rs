@@ -543,22 +543,35 @@ pub(crate) fn word_from_extracted_bytes(bytes: &[SymWord]) -> Option<Expr> {
         return None;
     }
 
-    let mut source = None;
+    let source = bytes
+        .iter()
+        .take(32)
+        .enumerate()
+        .find_map(|(idx, byte)| extracted_byte_source(byte, idx))?;
+
     for (idx, byte) in bytes.iter().take(32).enumerate() {
-        let byte_source = extracted_byte_source(byte, idx)?;
-        match &source {
-            Some(source) if source != &byte_source => return None,
-            Some(_) => {}
-            None => source = Some(byte_source),
+        if let Some(byte_source) = extracted_byte_source(byte, idx) {
+            if byte_source != source {
+                return None;
+            }
+            continue;
+        }
+
+        let SymWord::Concrete(byte) = byte else { return None };
+        if expr_known_byte(&source, idx) != Some(byte.to::<u8>()) {
+            return None;
         }
     }
-    source
+    Some(source)
 }
 
 /// Implements the `extracted_byte_source` symbolic expression helper.
 pub(crate) fn extracted_byte_source(byte: &SymWord, index: usize) -> Option<Expr> {
     let SymWord::Expr(expr) = byte else { return None };
     let expr = strip_low_byte_mask(expr)?;
+    if index == 31 {
+        return Some(expr.clone());
+    }
     let Expr::Op(ExprOp::Shr, source, shift) = expr else { return None };
     let Expr::Const(shift) = shift.as_ref() else { return None };
     (*shift == U256::from((31 - index) * 8)).then(|| *source.clone())
@@ -880,7 +893,64 @@ pub(crate) enum Expr {
 impl Expr {
     /// Implements the `op` symbolic expression helper.
     pub(crate) fn op(op: ExprOp, left: Self, right: Self) -> Self {
-        Self::Op(op, Box::new(left), Box::new(right))
+        if let (Self::Const(left), Self::Const(right)) = (&left, &right) {
+            return Self::Const(eval_expr_op(op, *left, *right));
+        }
+
+        match (op, left, right) {
+            (ExprOp::Add, Self::Const(value), expr) | (ExprOp::Add, expr, Self::Const(value))
+                if value.is_zero() =>
+            {
+                expr
+            }
+            (ExprOp::Sub, expr, Self::Const(value)) if value.is_zero() => expr,
+            (ExprOp::Mul, Self::Const(value), _) | (ExprOp::Mul, _, Self::Const(value))
+                if value.is_zero() =>
+            {
+                Self::Const(U256::ZERO)
+            }
+            (ExprOp::Mul, Self::Const(value), expr) | (ExprOp::Mul, expr, Self::Const(value))
+                if value == U256::from(1) =>
+            {
+                expr
+            }
+            (ExprOp::UDiv | ExprOp::URem | ExprOp::SDiv | ExprOp::SRem, _, Self::Const(value))
+                if value.is_zero() =>
+            {
+                Self::Const(U256::ZERO)
+            }
+            (ExprOp::UDiv | ExprOp::SDiv, expr, Self::Const(value)) if value == U256::from(1) => {
+                expr
+            }
+            (ExprOp::URem | ExprOp::SRem, _, Self::Const(value)) if value == U256::from(1) => {
+                Self::Const(U256::ZERO)
+            }
+            (ExprOp::And, Self::Const(value), _) | (ExprOp::And, _, Self::Const(value))
+                if value.is_zero() =>
+            {
+                Self::Const(U256::ZERO)
+            }
+            (ExprOp::And, Self::Const(value), expr) | (ExprOp::And, expr, Self::Const(value))
+                if value == U256::MAX =>
+            {
+                expr
+            }
+            (ExprOp::Or | ExprOp::Xor, Self::Const(value), expr)
+            | (ExprOp::Or | ExprOp::Xor, expr, Self::Const(value))
+                if value.is_zero() =>
+            {
+                expr
+            }
+            (ExprOp::Shl | ExprOp::Shr | ExprOp::Sar, expr, Self::Const(value))
+                if value.is_zero() =>
+            {
+                expr
+            }
+            (ExprOp::Shl | ExprOp::Shr, Self::Const(value), _) if value.is_zero() => {
+                Self::Const(U256::ZERO)
+            }
+            (op, left, right) => Self::Op(op, Box::new(left), Box::new(right)),
+        }
     }
 
     /// Implements the `collect_vars` symbolic expression helper.

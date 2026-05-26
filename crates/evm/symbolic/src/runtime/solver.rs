@@ -1,5 +1,20 @@
 use super::*;
 
+mod hard_arith_fallback;
+mod monotonic_product;
+mod normalize;
+
+use hard_arith_fallback::constraints_prefer_hard_arith_fallback_first;
+pub(crate) use hard_arith_fallback::hard_arith_fallback_model;
+#[cfg(test)]
+pub(crate) use hard_arith_fallback::{expr_contains_hard_arith, fallback_single_var_model};
+#[cfg(test)]
+pub(crate) use monotonic_product::product_monotonic_unsat;
+use monotonic_product::product_monotonic_unsat_normalized;
+pub(crate) use normalize::normalize_constraints_for_solver;
+#[cfg(test)]
+pub(crate) use normalize::{normalize_bool_for_solver, normalize_expr_for_solver};
+
 /// Errors that arise when parsing or constructing solver commands from configuration.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SolverConfigError {
@@ -77,6 +92,11 @@ pub(crate) trait SymbolicSolver {
     /// Takes any captured verbose diagnostics collected by this backend.
     fn take_diagnostics(&mut self) -> Option<String>;
 
+    /// Returns the number of satisfiable witnesses produced by local hard-arithmetic search.
+    fn heuristic_witnesses(&self) -> usize {
+        0
+    }
+
     /// Verifies that the configured solver can be invoked before exploration starts.
     ///
     /// Backends should keep this check lightweight and return a [`SymbolicError`] with
@@ -131,6 +151,7 @@ pub(crate) struct SmtLibSubprocessSolver {
     portfolio_scheduler: PortfolioScheduler,
     portfolio_diagnostics: PortfolioDiagnostics,
     captured_diagnostics: Option<String>,
+    heuristic_witnesses: usize,
 }
 
 impl SmtLibSubprocessSolver {
@@ -151,6 +172,7 @@ impl SmtLibSubprocessSolver {
             portfolio_scheduler: PortfolioScheduler::default(),
             portfolio_diagnostics: PortfolioDiagnostics::default(),
             captured_diagnostics: None,
+            heuristic_witnesses: 0,
         }
     }
 
@@ -191,6 +213,11 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         self.captured_diagnostics.take().filter(|diagnostics| !diagnostics.is_empty())
     }
 
+    /// Returns how many validated local hard-arithmetic witnesses this solver used.
+    fn heuristic_witnesses(&self) -> usize {
+        self.heuristic_witnesses
+    }
+
     /// Validates the `check_available` solver helper.
     fn check_available(&self) -> Result<(), SymbolicError> {
         let commands = self.commands()?;
@@ -223,19 +250,34 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         )
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver is_sat");
-        if constraints_prefer_fallback_first(constraints)
-            && fallback_single_var_model(constraints).is_some()
-        {
-            trace!("is_sat: fallback single-var model");
-            return Ok(true);
+        let smt_constraints = normalize_constraints_for_solver(constraints);
+        if product_monotonic_unsat_normalized(&smt_constraints) {
+            trace!("is_sat: monotonic product contradiction");
+            return Ok(false);
         }
-        let output = self.query(constraints, false)?;
+        let output = match self.query_normalized(&smt_constraints, false, constraints) {
+            Ok(output) => output,
+            Err(SymbolicError::SolverUnknown) => {
+                if hard_arith_fallback_model(&smt_constraints).is_some() {
+                    self.heuristic_witnesses += 1;
+                    trace!("is_sat: hard arithmetic fallback model after solver unknown");
+                    return Ok(true);
+                }
+                return Err(SymbolicError::SolverUnknown);
+            }
+            Err(err) => return Err(err),
+        };
         match output.lines().next().unwrap_or_default().trim() {
             "sat" => Ok(true),
             "unsat" => Ok(false),
-            "unknown" => fallback_single_var_model(constraints)
-                .map(|_| true)
-                .ok_or(SymbolicError::SolverUnknown),
+            "unknown" => {
+                if hard_arith_fallback_model(&smt_constraints).is_some() {
+                    self.heuristic_witnesses += 1;
+                    Ok(true)
+                } else {
+                    Err(SymbolicError::SolverUnknown)
+                }
+            }
             other => Err(SymbolicError::Solver(format!("unexpected solver response `{other}`"))),
         }
     }
@@ -252,18 +294,38 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
         )
         .entered();
         trace!(query_id = self.queries, constraint_count = constraints.len(), "solver model");
-        if constraints_prefer_fallback_first(constraints)
-            && let Some(model) = fallback_single_var_model(constraints)
+        let smt_constraints = normalize_constraints_for_solver(constraints);
+        if constraints_prefer_hard_arith_fallback_first(&smt_constraints)
+            && let Some(model) = hard_arith_fallback_model(&smt_constraints)
         {
-            trace!("model: fallback single-var model");
+            self.heuristic_witnesses += 1;
+            trace!("model: hard arithmetic fallback model before solver");
             return Ok(model);
         }
-        let output = self.query(constraints, true)?;
+        let output = match self.query_normalized(&smt_constraints, true, constraints) {
+            Ok(output) => output,
+            Err(SymbolicError::SolverUnknown) => {
+                if let Some(model) = hard_arith_fallback_model(&smt_constraints) {
+                    self.heuristic_witnesses += 1;
+                    trace!("model: hard arithmetic fallback model after solver unknown");
+                    return Ok(model);
+                }
+                return Err(SymbolicError::SolverUnknown);
+            }
+            Err(err) => return Err(err),
+        };
         let mut lines = output.lines();
         match lines.next().unwrap_or_default().trim() {
             "sat" => parse_and_validate_model(&output, constraints),
             "unsat" => Err(SymbolicError::Solver("counterexample path became unsat".to_string())),
-            "unknown" => fallback_single_var_model(constraints).ok_or(SymbolicError::SolverUnknown),
+            "unknown" => {
+                if let Some(model) = hard_arith_fallback_model(&smt_constraints) {
+                    self.heuristic_witnesses += 1;
+                    Ok(model)
+                } else {
+                    Err(SymbolicError::SolverUnknown)
+                }
+            }
             other => Err(SymbolicError::Solver(format!("unexpected solver response `{other}`"))),
         }
     }
@@ -304,14 +366,15 @@ impl SmtLibSubprocessSolver {
         }
     }
 
-    /// Implements the `query` solver helper.
-    pub(crate) fn query(
+    /// Sends already-normalized constraints to the configured solver portfolio.
+    pub(crate) fn query_normalized(
         &mut self,
-        constraints: &[BoolExpr],
+        smt_constraints: &[BoolExpr],
         model: bool,
+        model_constraints: &[BoolExpr],
     ) -> Result<String, SymbolicError> {
         let mut vars = BTreeSet::new();
-        for constraint in constraints {
+        for constraint in smt_constraints {
             constraint.collect_vars(&mut vars);
         }
 
@@ -330,7 +393,7 @@ impl SmtLibSubprocessSolver {
         for var in vars {
             let _ = writeln!(smt, "(declare-fun {var} () (_ BitVec 256))");
         }
-        for constraint in constraints {
+        for constraint in smt_constraints {
             let _ = writeln!(smt, "(assert {})", constraint.smt());
         }
         smt.push_str("(check-sat)\n");
@@ -343,7 +406,7 @@ impl SmtLibSubprocessSolver {
         }
 
         let result =
-            run_solver_commands(&commands, &smt, self.timeout, model.then_some(constraints));
+            run_solver_commands(&commands, &smt, self.timeout, model.then_some(model_constraints));
         self.portfolio_scheduler.record(&ordered_commands, &result.summaries);
         if self.dump_smt {
             self.portfolio_diagnostics.record(&result.summaries);
@@ -1255,229 +1318,6 @@ pub(crate) fn validate_solver_model_output(
     constraints: &[BoolExpr],
 ) -> Result<(), SymbolicError> {
     parse_and_validate_model(output, constraints).map(|_| ())
-}
-
-/// Implements the `constraints_prefer_fallback_first` solver helper.
-pub(crate) fn constraints_prefer_fallback_first(constraints: &[BoolExpr]) -> bool {
-    constraints.iter().any(bool_contains_symbolic_mul)
-}
-
-/// Returns the `bool_contains_symbolic_mul` solver helper result.
-pub(crate) fn bool_contains_symbolic_mul(expr: &BoolExpr) -> bool {
-    match expr {
-        BoolExpr::Const(_) => false,
-        BoolExpr::Not(value) => bool_contains_symbolic_mul(value),
-        BoolExpr::And(values) => values.iter().any(bool_contains_symbolic_mul),
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            expr_contains_symbolic_mul(left) || expr_contains_symbolic_mul(right)
-        }
-    }
-}
-
-/// Returns the `expr_contains_symbolic_mul` solver helper result.
-pub(crate) fn expr_contains_symbolic_mul(expr: &Expr) -> bool {
-    match expr {
-        Expr::Const(_) | Expr::Var(_) | Expr::Keccak { .. } | Expr::Hash { .. } => false,
-        Expr::Not(value) => expr_contains_symbolic_mul(value),
-        Expr::Op(ExprOp::Mul, left, right) => expr_contains_var(left) && expr_contains_var(right),
-        Expr::Op(_, left, right) => {
-            expr_contains_symbolic_mul(left) || expr_contains_symbolic_mul(right)
-        }
-        Expr::Ite(cond, left, right) => {
-            bool_contains_symbolic_mul(cond)
-                || expr_contains_symbolic_mul(left)
-                || expr_contains_symbolic_mul(right)
-        }
-    }
-}
-
-/// Returns the `expr_contains_var` solver helper result.
-pub(crate) fn expr_contains_var(expr: &Expr) -> bool {
-    match expr {
-        Expr::Const(_) => false,
-        Expr::Var(_) | Expr::Keccak { .. } | Expr::Hash { .. } => true,
-        Expr::Not(value) => expr_contains_var(value),
-        Expr::Op(_, left, right) => expr_contains_var(left) || expr_contains_var(right),
-        Expr::Ite(cond, left, right) => {
-            bool_contains_var(cond) || expr_contains_var(left) || expr_contains_var(right)
-        }
-    }
-}
-
-/// Returns the `bool_contains_var` solver helper result.
-pub(crate) fn bool_contains_var(expr: &BoolExpr) -> bool {
-    match expr {
-        BoolExpr::Const(_) => false,
-        BoolExpr::Not(value) => bool_contains_var(value),
-        BoolExpr::And(values) => values.iter().any(bool_contains_var),
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            expr_contains_var(left) || expr_contains_var(right)
-        }
-    }
-}
-
-/// Implements the `fallback_single_var_model` solver helper.
-pub(crate) fn fallback_single_var_model(
-    constraints: &[BoolExpr],
-) -> Option<BTreeMap<String, U256>> {
-    let mut vars = BTreeSet::new();
-    let mut constants = BTreeSet::new();
-    for constraint in constraints {
-        constraint.collect_vars(&mut vars);
-        collect_bool_constants(constraint, &mut constants);
-    }
-
-    let var = if vars.len() == 1 { vars.iter().next()?.clone() } else { return None };
-    let hints = MaskHints::for_var(&var, constraints);
-    if (hints.one & hints.zero) != U256::ZERO {
-        return None;
-    }
-
-    let mut candidates = BTreeSet::new();
-    for candidate in [
-        U256::ZERO,
-        U256::from(1),
-        U256::from(2),
-        U256::MAX,
-        U256::MAX - U256::from(1),
-        U256::MAX - U256::from(2),
-    ] {
-        push_fallback_candidate(&mut candidates, candidate, hints);
-    }
-
-    for constant in constants.iter().copied() {
-        push_fallback_candidate(&mut candidates, constant, hints);
-        push_fallback_candidate(&mut candidates, constant.wrapping_add(U256::from(1)), hints);
-        push_fallback_candidate(&mut candidates, constant.wrapping_sub(U256::from(1)), hints);
-    }
-
-    for bit in 0..256 {
-        let power = U256::from(1) << bit;
-        push_fallback_candidate(&mut candidates, power, hints);
-        for constant in constants.iter().copied().take(64) {
-            push_fallback_candidate(&mut candidates, power | constant, hints);
-            push_fallback_candidate(&mut candidates, power.wrapping_add(constant), hints);
-        }
-    }
-
-    for candidate in candidates {
-        let model = BTreeMap::from([(var.clone(), candidate)]);
-        if constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap_or(false))
-        {
-            return Some(model);
-        }
-    }
-
-    None
-}
-
-/// Applies the `push_fallback_candidate` solver helper.
-pub(crate) fn push_fallback_candidate(
-    candidates: &mut BTreeSet<U256>,
-    candidate: U256,
-    hints: MaskHints,
-) {
-    candidates.insert((candidate | hints.one) & !hints.zero);
-}
-
-/// Implements the `collect_bool_constants` solver helper.
-pub(crate) fn collect_bool_constants(expr: &BoolExpr, constants: &mut BTreeSet<U256>) {
-    match expr {
-        BoolExpr::Const(_) => {}
-        BoolExpr::Not(value) => collect_bool_constants(value, constants),
-        BoolExpr::And(values) => {
-            for value in values {
-                collect_bool_constants(value, constants);
-            }
-        }
-        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
-            collect_expr_constants(left, constants);
-            collect_expr_constants(right, constants);
-        }
-    }
-}
-
-/// Implements the `collect_expr_constants` solver helper.
-pub(crate) fn collect_expr_constants(expr: &Expr, constants: &mut BTreeSet<U256>) {
-    match expr {
-        Expr::Const(value) => {
-            constants.insert(*value);
-        }
-        Expr::Var(_) | Expr::Keccak { .. } | Expr::Hash { .. } => {}
-        Expr::Not(value) => collect_expr_constants(value, constants),
-        Expr::Op(_, left, right) => {
-            collect_expr_constants(left, constants);
-            collect_expr_constants(right, constants);
-        }
-        Expr::Ite(cond, left, right) => {
-            collect_bool_constants(cond, constants);
-            collect_expr_constants(left, constants);
-            collect_expr_constants(right, constants);
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct MaskHints {
-    pub(crate) one: U256,
-    pub(crate) zero: U256,
-}
-
-impl MaskHints {
-    /// Implements the `for_var` solver helper.
-    pub(crate) fn for_var(var: &str, constraints: &[BoolExpr]) -> Self {
-        let mut hints = Self::default();
-        for constraint in constraints {
-            hints.apply_bool(var, constraint, false);
-        }
-        hints
-    }
-
-    /// Applies the `apply_bool` solver helper.
-    pub(crate) fn apply_bool(&mut self, var: &str, expr: &BoolExpr, inverted: bool) {
-        match expr {
-            BoolExpr::Const(_) => {}
-            BoolExpr::Not(value) => self.apply_bool(var, value, !inverted),
-            BoolExpr::And(values) if !inverted => {
-                for value in values {
-                    self.apply_bool(var, value, false);
-                }
-            }
-            BoolExpr::Eq(left, right) => self.apply_equality(var, left, right, inverted),
-            BoolExpr::Cmp(_, _, _) | BoolExpr::And(_) => {}
-        }
-    }
-
-    /// Applies the `apply_equality` solver helper.
-    pub(crate) fn apply_equality(&mut self, var: &str, left: &Expr, right: &Expr, inverted: bool) {
-        if let Some(mask) =
-            zero_mask_equality(var, left, right).or_else(|| zero_mask_equality(var, right, left))
-        {
-            if inverted {
-                self.one |= mask;
-            } else {
-                self.zero |= mask;
-            }
-        }
-    }
-}
-
-/// Implements the `zero_mask_equality` solver helper.
-pub(crate) fn zero_mask_equality(var: &str, masked: &Expr, zero: &Expr) -> Option<U256> {
-    if !matches!(zero, Expr::Const(value) if value.is_zero()) {
-        return None;
-    }
-    match masked {
-        Expr::Op(ExprOp::And, left, right) => match (left.as_ref(), right.as_ref()) {
-            (Expr::Var(name), Expr::Const(mask)) | (Expr::Const(mask), Expr::Var(name))
-                if name == var =>
-            {
-                Some(*mask)
-            }
-            _ => None,
-        },
-        _ => None,
-    }
 }
 
 /// Returns the `parse_model` solver helper result.

@@ -63,7 +63,7 @@ contract Erc4626Inflation is Test {
 ...
 Failing tests:
 Encountered 1 failing test in test/Erc4626Inflation.t.sol:Erc4626Inflation
-[FAIL: incomplete symbolic execution (Timeout): solver returned unknown] checkDepositReturnsShares(uint64,uint128,uint64) ([METRICS])
+[FAIL: panic: assertion failed (0x01); counterexample: [CALLDATA] [ARGS]] checkDepositReturnsShares(uint64,uint128,uint64) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

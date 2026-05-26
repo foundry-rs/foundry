@@ -75,10 +75,10 @@ Ran 1 test for test/MiniVatLinear.t.sol:MiniVatLinear
 // `frob(dart)` adds `dart * rate` to debt, `fold(delta)` mutates `rate` and
 // adds `Art * delta` to debt.
 //
-// Currently `#[ignore]`: the symbolic engine returns `solver returned unknown`
-// (Z3 timeout on `bv-mul` between two free symbolic uint256 values) — same
-// nonlinear arithmetic gap as `erc4626_inflation_attack`. Re-enable when
-// nonlinear invariant proofs are supported.
+// Currently `#[ignore]`: this is a nonlinear invariant proof over symbolic
+// products. The hard-arithmetic fallback can find concrete counterexamples,
+// but it cannot certify that every path is safe. Re-enable when nonlinear
+// invariant proofs are supported.
 forgetest_init!(
     #[ignore = "engine gap: nonlinear bv-mul (Art * rate, symbolic*symbolic) returns solver unknown"]
     minivat_fundamental_equation_parity,
