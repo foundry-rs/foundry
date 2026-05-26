@@ -123,23 +123,12 @@ impl BuildArgs {
             config = self.load_config()?;
         }
 
-        // Lint output isn't modeled in the v1 envelope; refuse configs that would diverge
-        // human and machine success/failure outcomes.
-        if machine_mode
-            && !self.no_lint
-            && config.lint.lint_on_build
-            && config.deny != DenyLevel::Never
-        {
-            foundry_cli::machine::bail_machine_usage(
-                "`forge build` under `--machine` does not model lint diagnostics in the v1 \
-                 envelope; configs with `lint_on_build = true` and `deny != never` would \
-                 produce a false success. Pass `--no-lint` or disable lint-on-build / set \
-                 `deny = never` in foundry.toml.",
-            );
+        // Lock-consistency checks emit `sh_warn!` to stderr; skip under `--machine` to keep
+        // the agent channel quiet.
+        if !machine_mode {
+            self.check_soldeer_lock_consistency(&config).await;
+            self.check_foundry_lock_consistency(&config);
         }
-
-        self.check_soldeer_lock_consistency(&config).await;
-        self.check_foundry_lock_consistency(&config);
 
         let project = config.project()?;
 
@@ -188,6 +177,20 @@ impl BuildArgs {
 
         let mut output = compiler.compile(&project)?;
 
+        // Under `--machine`, emit the typed envelope *before* `cache_local_signatures` so a
+        // cache-write failure can never mask a compile-error envelope as `cli.unknown`.
+        if machine_mode && output.has_compiler_errors() {
+            let errors: Vec<JsonMessage> = output
+                .output()
+                .errors
+                .iter()
+                .filter(|e| e.is_error())
+                .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
+                .collect();
+            print_json(&JsonEnvelope::<()>::failure(errors))?;
+            std::process::exit(ExitCode::Build.to_i32());
+        }
+
         // Cache project selectors.
         cache_local_signatures(&output)?;
 
@@ -196,16 +199,15 @@ impl BuildArgs {
         }
 
         if machine_mode {
-            if output.has_compiler_errors() {
-                let errors: Vec<JsonMessage> = output
-                    .output()
-                    .errors
-                    .iter()
-                    .filter(|e| e.is_error())
-                    .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
-                    .collect();
-                print_json(&JsonEnvelope::<()>::failure(errors))?;
-                std::process::exit(ExitCode::Build.to_i32());
+            // Lint output isn't modeled in the v1 envelope; refuse configs that would otherwise
+            // diverge human and machine outcomes (deferred until after compile so a failed
+            // build still emits `compiler.solc.error` + `Build (4)`).
+            if !self.no_lint && config.lint.lint_on_build && config.deny != DenyLevel::Never {
+                foundry_cli::machine::bail_machine_usage(
+                    "`forge build --machine` does not model lint diagnostics in v1; \
+                     `lint_on_build = true` with `deny != never` would diverge human and \
+                     machine outcomes. Pass `--no-lint` or set `deny = never`.",
+                );
             }
 
             let payload = BuildData::from_output(&output);

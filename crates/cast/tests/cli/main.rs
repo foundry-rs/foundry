@@ -3519,9 +3519,9 @@ forgetest_async!(cast_call_machine_mode_rejects_unsupported_flags, |_prj, cmd| {
     assert!(msg.contains("--trace"), "missing --trace mention: {envelope}");
 });
 
-// Setup-time RPC failures fall through to the generic fallback; only the actual
-// `eth_call` is classified as `network.rpc.error`.
-forgetest_async!(cast_call_machine_mode_setup_failure_falls_through, |_prj, cmd| {
+// Transport/connectivity failures (here: unreachable RPC URL) emit a typed
+// `network.rpc.error` envelope and exit `Network (6)`.
+forgetest_async!(cast_call_machine_mode_rpc_failure_emits_network_envelope, |_prj, cmd| {
     let assert = cmd
         .cast_fuse()
         .args([
@@ -3538,8 +3538,8 @@ forgetest_async!(cast_call_machine_mode_setup_failure_falls_through, |_prj, cmd|
         serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
 
     assert_eq!(envelope["success"], false);
-    assert_eq!(envelope["errors"][0]["code"], "cli.unknown");
-    assert_eq!(assert.get_output().status.code(), Some(1));
+    assert_eq!(envelope["errors"][0]["code"], "network.rpc.error");
+    assert_eq!(assert.get_output().status.code(), Some(6));
 });
 
 // https://github.com/foundry-rs/foundry/issues/10848

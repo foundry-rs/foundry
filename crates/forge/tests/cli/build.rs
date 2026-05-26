@@ -512,12 +512,13 @@ forgetest_init!(build_no_warning_without_foundry_lock, |prj, cmd| {
 "#]]);
 });
 
-// `forge --machine build` emits a single envelope on stdout. Asserts the
-// contract surface, not artifact counts (those drift with templates).
+// `forge --machine build` emits a single envelope on stdout and nothing on stderr.
 forgetest_init!(machine_mode_emits_envelope, |prj, cmd| {
     prj.initialize_default_contracts();
     let assert = cmd.args(["--machine", "build", "--force"]).assert_success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.is_empty(), "expected empty stderr under --machine, got: {stderr}");
     let envelope: Value =
         serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
 

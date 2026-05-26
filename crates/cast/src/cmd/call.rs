@@ -241,13 +241,14 @@ pub enum CallSubcommands {
 
 impl CallArgs {
     pub async fn run(self) -> Result<()> {
-        // Reject flags whose stdout shape conflicts with the envelope contract.
+        // Reject flags whose stdout shape or interactivity conflicts with the envelope contract.
         if foundry_cli::is_machine() {
             let unsupported = [
                 ("--trace", self.trace),
                 ("--debug", self.debug),
                 ("--decode-internal", self.decode_internal),
                 ("--curl", self.rpc.curl),
+                ("--interactive", self.wallet.raw.interactive),
             ]
             .into_iter()
             .filter_map(|(name, on)| on.then_some(name))
@@ -322,7 +323,15 @@ impl CallArgs {
             sig = Some(data);
         }
 
-        let provider = ProviderBuilder::<FEN::Network>::from_config(&config)?.build()?;
+        // Provider construction (transport setup) is a network operation, so connection /
+        // DNS / TCP failures here are typed `network.rpc.error` under `--machine`.
+        let machine_mode_provider = foundry_cli::is_machine();
+        let provider =
+            match ProviderBuilder::<FEN::Network>::from_config(&config).and_then(|b| b.build()) {
+                Ok(p) => p,
+                Err(err) if machine_mode_provider => return rpc_failure(&err),
+                Err(err) => return Err(err),
+            };
         let sender = SenderKind::from_wallet_opts(wallet).await?;
         let from = sender.address();
 
@@ -343,15 +352,25 @@ impl CallArgs {
             None
         };
 
-        let (tx, func) = CastTxBuilder::new(&provider, tx, &config)
-            .await?
-            .with_to(to)
-            .await?
-            .with_code_sig_and_args(code, sig, args)
-            .await?
-            .raw()
-            .build(sender)
-            .await?;
+        // `CastTxBuilder` performs the first RPC pings (chain_id, gas estimation, ENS
+        // resolution); transport/connectivity failures here are typed `network.rpc.error`.
+        let builder_result: Result<_> = async {
+            CastTxBuilder::new(&provider, tx, &config)
+                .await?
+                .with_to(to)
+                .await?
+                .with_code_sig_and_args(code, sig, args)
+                .await?
+                .raw()
+                .build(sender)
+                .await
+        }
+        .await;
+        let (tx, func) = match builder_result {
+            Ok(v) => v,
+            Err(err) if machine_mode_provider => return rpc_failure(&err),
+            Err(err) => return Err(err),
+        };
 
         if trace {
             if let Some(BlockId::Number(BlockNumberOrTag::Number(block_number))) = self.block {

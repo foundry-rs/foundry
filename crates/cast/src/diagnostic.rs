@@ -6,9 +6,9 @@
 
 /// Diagnostic codes for read-only RPC commands like `cast call`, `cast tx`.
 pub mod rpc {
-    pub use foundry_cli::diagnostic::network::{RPC_TIMEOUT, RPC_UNAUTHORIZED};
+    pub use foundry_cli::diagnostic::network::{RPC_ERROR, RPC_TIMEOUT, RPC_UNAUTHORIZED};
 
-    pub(crate) const ALL: &[&str] = &[RPC_TIMEOUT, RPC_UNAUTHORIZED];
+    pub(crate) const ALL: &[&str] = &[RPC_ERROR, RPC_TIMEOUT, RPC_UNAUTHORIZED];
 }
 
 /// All diagnostic codes declared by `cast`.
