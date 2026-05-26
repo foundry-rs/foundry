@@ -1125,8 +1125,8 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
                         let edge_index = edge_indices.edge_index(hit.edge);
                         if history_map.len() <= edge_index {
                             debug_assert_eq!(history_map.len(), edge_index);
-                            // Reserve more space to speculatively avoid reallocations
-                            history_map.reserve(1);
+                            // `Vec::push` already amortizes geometric growth; no need
+                            // to pre-reserve a single slot.
                             history_map.push(0);
                         }
                         Self::merge_edge_count(
