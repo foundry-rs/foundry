@@ -66,7 +66,7 @@ impl InvariantWorkerOutput {
 
 /// Merges worker outputs back into one logical invariant campaign result.
 ///
-/// PR1 keeps the execution model single-worker while making the campaign/result boundary explicit.
+/// TODO: extend this to merge multiple worker outputs once invariant execution is parallelized.
 #[derive(Debug)]
 pub struct InvariantCampaignAggregator {
     spec: InvariantCampaignSpec,
