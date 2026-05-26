@@ -20,8 +20,20 @@ CONTENT=$(cat "$RESULTS_FILE")
 BEFORE_TABLES=$(echo "$CONTENT" | awk '/^## Forge / {exit} {print}')
 FROM_TABLES=$(echo "$CONTENT" | awk '/^## Forge / {found=1} found {print}')
 
-# Output the formatted comment with dropdown
-cat << EOF
+# Count distinct "## Forge " sections to decide whether to collapse.
+# Fuzz-only reports have a single compact table — no need for a dropdown.
+FORGE_SECTION_COUNT=$(echo "$CONTENT" | grep -c '^## Forge ' || true)
+
+if [ "$FORGE_SECTION_COUNT" -le 1 ]; then
+    # Compact report: render inline, no dropdown.
+    cat << EOF
+${BEFORE_TABLES}
+
+${FROM_TABLES}
+EOF
+else
+    # Multiple sections (perf or combined): collapse into a dropdown.
+    cat << EOF
 ${BEFORE_TABLES}
 
 <details>
@@ -31,3 +43,4 @@ ${FROM_TABLES}
 
 </details>
 EOF
+fi

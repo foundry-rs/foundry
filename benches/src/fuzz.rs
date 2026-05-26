@@ -11,7 +11,7 @@ use foundry_common::sh_println;
 use std::{path::Path, process::Command, str::FromStr};
 
 /// Per-campaign invariant timeout (seconds). Matches the reference run.
-pub const FUZZ_TIMEOUT_SECS: u64 = 30; // tmp change
+pub const FUZZ_TIMEOUT_SECS: u64 = 3600;
 
 /// Fuzz seed pinned across runs so results are reproducible.
 pub const FUZZ_SEED: &str = "42";
