@@ -10,7 +10,10 @@ use crate::{
 use alloy_primitives::{Address, B256};
 use alloy_signer::Signer;
 use eyre::Result;
-use foundry_cli::utils::{LoadConfig, get_chain};
+use foundry_cli::{
+    json::print_json_object,
+    utils::{LoadConfig, get_chain},
+};
 use foundry_common::{provider::ProviderBuilder, shell};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 use serde_json::json;
@@ -96,18 +99,15 @@ pub(super) async fn run(
     }
 
     if shell::is_json() {
-        sh_println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "salt": format!("{}", output.salt),
-                "registration_hash": format!("{}", output.registration_hash),
-                "master_id": format!("{}", output.master_id),
-                "virtual_addresses": virtual_addresses.iter().map(|(tag, addr)| json!({
-                    "tag": format!("{tag}"),
-                    "address": format!("{addr}"),
-                })).collect::<Vec<_>>(),
-            }))?
-        )?;
+        print_json_object(json!({
+            "salt": format!("{}", output.salt),
+            "registration_hash": format!("{}", output.registration_hash),
+            "master_id": format!("{}", output.master_id),
+            "virtual_addresses": virtual_addresses.iter().map(|(tag, addr)| json!({
+                "tag": format!("{tag}"),
+                "address": format!("{addr}"),
+            })).collect::<Vec<_>>(),
+        }))?;
     } else {
         sh_println!(
             "Salt:              {}

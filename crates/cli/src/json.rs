@@ -1,6 +1,11 @@
 //! Shared JSON output primitives for Foundry CLIs.
 
+use alloy_dyn_abi::DynSolValue;
 use eyre::Result;
+use foundry_common::{
+    fmt::{format_tokens, serialize_value_as_json},
+    sh_println, shell,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, to_string};
 
@@ -129,6 +134,19 @@ impl JsonMessage {
     }
 }
 
+/// Prints a serializable object: envelope-wrapped in `--json` mode, pretty-printed otherwise.
+///
+/// Use this for objects that have no human-readable `Display` format (block data, RPC responses,
+/// etc.).
+pub fn print_json_object<T: Serialize>(value: T) -> Result<()> {
+    if foundry_common::shell::is_json() {
+        print_json_success(value)
+    } else {
+        sh_println!("{}", serde_json::to_string_pretty(&value)?)?;
+        Ok(())
+    }
+}
+
 /// Prints a value as compact, single-line JSON to stdout.
 ///
 /// The trailing newline makes this suitable for NDJSON streams when each call
@@ -149,6 +167,44 @@ pub fn print_json_success_with_warnings<T: Serialize>(
     warnings: Vec<JsonMessage>,
 ) -> Result<()> {
     print_json(&JsonEnvelope::success_with_warnings(data, warnings))
+}
+
+/// Prints a scalar value: JSON envelope in `--json` mode, plain text otherwise.
+pub fn print_scalar(value: impl Serialize + std::fmt::Display) -> Result<()> {
+    if shell::is_json() {
+        print_json_success(value)
+    } else {
+        sh_println!("{value}")?;
+        Ok(())
+    }
+}
+
+/// Prints a list of serializable items: JSON envelope wrapping an array in `--json` mode,
+/// one item per line otherwise.
+pub fn print_list<T: Serialize + std::fmt::Display>(items: &[T]) -> Result<()> {
+    if shell::is_json() {
+        print_json_success(items)
+    } else {
+        for item in items {
+            sh_println!("{item}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Prints ABI-decoded tokens: JSON envelope wrapping a value array in `--json` mode,
+/// one formatted token per line otherwise.
+pub fn print_tokens(tokens: &[DynSolValue]) -> Result<()> {
+    if shell::is_json() {
+        let values = tokens
+            .iter()
+            .cloned()
+            .map(|t| serialize_value_as_json(t, None))
+            .collect::<Result<Vec<Value>>>()?;
+        print_json_success(values)
+    } else {
+        format_tokens(tokens).try_for_each(|t| sh_println!("{t}"))
+    }
 }
 
 #[cfg(test)]

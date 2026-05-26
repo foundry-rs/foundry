@@ -453,7 +453,8 @@ where
     let cast = CastTxSender::new(provider);
 
     if sync {
-        // Send transaction and wait for receipt synchronously
+        // JSON envelope not supported: N::ReceiptResponse is generic over Display but not
+        // Serialize; adding Serialize would ripple across all network-generic callers.
         let receipt = cast.send_sync(tx).await?;
         sh_println!("{receipt}")?;
     } else {
