@@ -18,7 +18,7 @@ use foundry_evm::{
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
-use foundry_evm_symbolic::PortfolioDiagnostics;
+use foundry_evm_symbolic::{PortfolioDiagnostics, SymbolicStats};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -1112,10 +1112,17 @@ impl TestResult {
         success: bool,
         reason: Option<String>,
         counterexample: Option<CounterExample>,
-        paths: usize,
-        solver_queries: usize,
+        stats: SymbolicStats,
     ) {
-        self.kind = TestKind::Symbolic { paths, solver_queries };
+        self.kind = TestKind::Symbolic {
+            paths: stats.paths,
+            solver_queries: stats.solver_queries,
+            sat_queries: stats.sat_queries,
+            model_queries: stats.model_queries,
+            sat_cache_hits: stats.sat_cache_hits,
+            model_cache_hits: stats.model_cache_hits,
+            solver_time_ms: stats.solver_time_ms,
+        };
         self.status = if success { TestStatus::Success } else { TestStatus::Failure };
         self.reason = reason;
         self.counterexample = counterexample;
@@ -1217,6 +1224,11 @@ pub enum TestKindReport {
     Symbolic {
         paths: usize,
         solver_queries: usize,
+        sat_queries: usize,
+        model_queries: usize,
+        sat_cache_hits: usize,
+        model_cache_hits: usize,
+        solver_time_ms: u64,
     },
 }
 
@@ -1259,8 +1271,19 @@ impl fmt::Display for TestKindReport {
             Self::Table { runs, mean_gas, median_gas } => {
                 write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
             }
-            Self::Symbolic { paths, solver_queries } => {
-                write!(f, "(paths: {paths}, queries: {solver_queries})")
+            Self::Symbolic {
+                paths,
+                solver_queries,
+                sat_queries,
+                model_queries,
+                sat_cache_hits,
+                model_cache_hits,
+                solver_time_ms,
+            } => {
+                write!(
+                    f,
+                    "(paths: {paths}, queries: {solver_queries}, sat: {sat_queries} ({sat_cache_hits} cached), models: {model_queries} ({model_cache_hits} cached), solver: {solver_time_ms}ms)"
+                )
             }
         }
     }
@@ -1306,7 +1329,20 @@ pub enum TestKind {
     /// A table test.
     Table { runs: usize, mean_gas: u64, median_gas: u64 },
     /// A symbolic test.
-    Symbolic { paths: usize, solver_queries: usize },
+    Symbolic {
+        paths: usize,
+        solver_queries: usize,
+        #[serde(default)]
+        sat_queries: usize,
+        #[serde(default)]
+        model_queries: usize,
+        #[serde(default)]
+        sat_cache_hits: usize,
+        #[serde(default)]
+        model_cache_hits: usize,
+        #[serde(default)]
+        solver_time_ms: u64,
+    },
 }
 
 impl Default for TestKind {
@@ -1356,9 +1392,23 @@ impl TestKind {
             Self::Table { runs, mean_gas, median_gas } => {
                 TestKindReport::Table { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
             }
-            Self::Symbolic { paths, solver_queries } => {
-                TestKindReport::Symbolic { paths: *paths, solver_queries: *solver_queries }
-            }
+            Self::Symbolic {
+                paths,
+                solver_queries,
+                sat_queries,
+                model_queries,
+                sat_cache_hits,
+                model_cache_hits,
+                solver_time_ms,
+            } => TestKindReport::Symbolic {
+                paths: *paths,
+                solver_queries: *solver_queries,
+                sat_queries: *sat_queries,
+                model_queries: *model_queries,
+                sat_cache_hits: *sat_cache_hits,
+                model_cache_hits: *model_cache_hits,
+                solver_time_ms: *solver_time_ms,
+            },
         }
     }
 }
