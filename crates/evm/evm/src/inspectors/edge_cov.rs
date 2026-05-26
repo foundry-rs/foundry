@@ -254,24 +254,13 @@ impl EdgeCovInspector {
 
     /// Consume the inspector and take ownership of the hitcount.
     pub fn into_hitcount(self) -> EdgeCoverage {
-        self.into_coverage()
+        self.into()
     }
 
     /// Consume the inspector and take ownership of both the hitcount and comparison log.
-    pub fn into_parts(self) -> (EdgeCoverage, Vec<CmpOperands>) {
-        let Self { hitcount, config, dense_hitcount, cmp_log, .. } = self;
-        let coverage = match config.kind {
-            EdgeCovKind::CollisionFree => {
-                let mut hits = dense_hitcount
-                    .into_iter()
-                    .map(|(edge, count)| EdgeCovHit { edge, count })
-                    .collect::<Vec<_>>();
-                hits.sort_by_key(|hit| hit.edge);
-                EdgeCoverage::CollisionFree(hits)
-            }
-            EdgeCovKind::Hash => EdgeCoverage::Hash(hitcount),
-        };
-        (coverage, cmp_log.unwrap_or_default())
+    pub fn into_parts(mut self) -> (EdgeCoverage, Vec<CmpOperands>) {
+        let cmp_log = self.cmp_log.take().unwrap_or_default();
+        (self.into(), cmp_log)
     }
 
     /// Number of unique collision-free edges discovered so far.
@@ -324,13 +313,6 @@ impl EdgeCovInspector {
             .collect::<Vec<_>>();
         hits.sort_by_key(|hit| hit.edge);
         hits
-    }
-
-    fn into_coverage(self) -> EdgeCoverage {
-        match self.config.kind {
-            EdgeCovKind::CollisionFree => EdgeCoverage::CollisionFree(self.dense_hits()),
-            EdgeCovKind::Hash => EdgeCoverage::Hash(self.hitcount),
-        }
     }
 
     /// Store comparison operands for CmpLog-style guided fuzzing.
@@ -423,6 +405,23 @@ impl EdgeCovInspector {
 impl Default for EdgeCovInspector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl From<EdgeCovInspector> for EdgeCoverage {
+    fn from(inspector: EdgeCovInspector) -> Self {
+        let EdgeCovInspector { hitcount, config, dense_hitcount, .. } = inspector;
+        match config.kind {
+            EdgeCovKind::CollisionFree => {
+                let mut hits = dense_hitcount
+                    .into_iter()
+                    .map(|(edge, count)| EdgeCovHit { edge, count })
+                    .collect::<Vec<_>>();
+                hits.sort_by_key(|hit| hit.edge);
+                Self::CollisionFree(hits)
+            }
+            EdgeCovKind::Hash => Self::Hash(hitcount),
+        }
     }
 }
 
