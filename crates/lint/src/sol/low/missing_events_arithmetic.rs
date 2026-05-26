@@ -47,7 +47,10 @@ impl<'hir> LateLintPass<'hir> for MissingEventsArithmetic {
 
         for func_id in contract.all_functions() {
             let func = hir.function(func_id);
-            if !is_protected_entry_point(hir, func_id, func) {
+            if !is_external_function(func)
+                || matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
+                || !is_protected(hir, func_id, func)
+            {
                 continue;
             }
 
@@ -93,27 +96,6 @@ fn is_external_function(func: &hir::Function<'_>) -> bool {
         && !func.is_special()
 }
 
-fn is_state_mutating_entry_point(func: &hir::Function<'_>) -> bool {
-    is_external_function(func)
-        && !matches!(func.state_mutability, StateMutability::Pure | StateMutability::View)
-}
-
-fn is_protected_entry_point(
-    hir: &hir::Hir<'_>,
-    func_id: FunctionId,
-    func: &hir::Function<'_>,
-) -> bool {
-    is_state_mutating_entry_point(func) && is_protected(hir, func_id, func)
-}
-
-fn is_unprotected_user_function(
-    hir: &hir::Hir<'_>,
-    func_id: FunctionId,
-    func: &hir::Function<'_>,
-) -> bool {
-    is_external_function(func) && !is_protected(hir, func_id, func)
-}
-
 fn vars_used_in_unprotected_arithmetic(
     hir: &hir::Hir<'_>,
     contract: &hir::Contract<'_>,
@@ -123,7 +105,7 @@ fn vars_used_in_unprotected_arithmetic(
 
     for func_id in contract.all_functions() {
         let func = hir.function(func_id);
-        if !is_unprotected_user_function(hir, func_id, func) {
+        if !is_external_function(func) || is_protected(hir, func_id, func) {
             continue;
         }
 
