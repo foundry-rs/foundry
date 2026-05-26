@@ -297,19 +297,16 @@ impl ScriptSessionSigner {
             access_key: resolved.access_key,
         }))
     }
-
-    /// Converts the resolved session into the same representation used by persistent Tempo keys.
-    fn into_access_key_entry(self) -> (WalletSigner, TempoAccessKeyConfig) {
-        (self.signer, self.access_key)
-    }
 }
 
-/// Returns the single sender a Tempo session is allowed to cover for this broadcast.
+/// Returns the single sender a Tempo session is allowed to cover.
 ///
 /// Session signing is intentionally fail-closed: a single session access key represents one root
-/// account, so scripts with multiple pending senders must use explicit signer configuration
-/// instead of silently mixing a session key with other wallets.
-fn script_session_expected_sender(required_addresses: &AddressHashSet) -> Result<Option<Address>> {
+/// account, so scripts with multiple pending senders must not silently mix the session key with
+/// other wallets.
+pub(crate) fn script_session_expected_sender(
+    required_addresses: &AddressHashSet,
+) -> Result<Option<Address>> {
     required_addresses
         .iter()
         .copied()
@@ -448,7 +445,9 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             } else {
                 None
             };
-            let mut session_signers: AddressHashMap<ScriptSessionSigner> =
+
+            // For addresses without an explicit signer, try Tempo keys.toml fallback.
+            let mut access_keys: AddressHashMap<(WalletSigner, TempoAccessKeyConfig)> =
                 AddressHashMap::default();
             if has_session {
                 for chain in remaining_transactions.iter().map(|tx| tx.chain).unique() {
@@ -458,7 +457,10 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                         expected_session_sender,
                         chain,
                     )? {
-                        session_signers.insert(session_signer.root_account, session_signer);
+                        access_keys.insert(
+                            session_signer.root_account,
+                            (session_signer.signer, session_signer.access_key),
+                        );
                     }
                 }
             }
@@ -471,12 +473,6 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                 .chain(self.browser_wallet.as_ref().map(|b| b.address()))
                 .collect();
 
-            // For addresses without an explicit signer, try Tempo keys.toml fallback.
-            let mut access_keys: AddressHashMap<(WalletSigner, TempoAccessKeyConfig)> =
-                session_signers
-                    .into_iter()
-                    .map(|(addr, signer)| (addr, signer.into_access_key_entry()))
-                    .collect();
             let mut direct_signers: AddressHashMap<WalletSigner> = AddressHashMap::default();
             let mut missing_addresses = Vec::new();
 

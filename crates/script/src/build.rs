@@ -1,6 +1,6 @@
 use crate::{
     ScriptArgs, ScriptConfig,
-    broadcast::{BundledState, remaining_unsigned_transactions},
+    broadcast::{BundledState, remaining_unsigned_transactions, script_session_expected_sender},
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     sequence::ScriptSequenceKind,
@@ -52,19 +52,6 @@ fn available_script_signers<FEN: FoundryEvmNetwork>(
     }
 
     Ok(signers)
-}
-
-/// Returns the single sender a Tempo session may cover during resume.
-///
-/// This mirrors broadcast-time session validation: one session access key represents one root
-/// account, so a resumed sequence with multiple remaining senders must not silently combine the
-/// session signer with other wallets.
-fn tempo_session_expected_sender(required_addresses: &[Address]) -> Result<Option<Address>> {
-    let required_addresses = required_addresses.iter().copied().collect::<AddressHashSet>();
-    if required_addresses.len() > 1 {
-        eyre::bail!("Tempo sessions require a single script sender");
-    }
-    Ok(required_addresses.into_iter().next())
 }
 
 /// Container for the compiled contracts.
@@ -354,7 +341,9 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 remaining_chains.sort_unstable();
                 remaining_chains.dedup();
                 let expected_session_sender = if self.script_config.tempo.session_id()?.is_some() {
-                    tempo_session_expected_sender(&remaining_froms)?
+                    let remaining_from_set =
+                        remaining_froms.iter().copied().collect::<AddressHashSet>();
+                    script_session_expected_sender(&remaining_from_set)?
                 } else {
                     None
                 };
