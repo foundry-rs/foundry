@@ -1,9 +1,11 @@
 use super::{install, watch::WatchArgs};
+use crate::diagnostic::build::SOLC_ERROR;
 use clap::Parser;
 use eyre::Result;
 use forge_lint::{linter::Linter, sol::SolidityLinter};
 use foundry_cli::{
-    json::{JsonEnvelope, print_json},
+    ExitCode,
+    json::{JsonEnvelope, JsonMessage, print_json},
     opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
     utils::{Git, LoadConfig, cache_local_signatures},
 };
@@ -84,26 +86,38 @@ pub struct BuildArgs {
 }
 
 impl BuildArgs {
-    pub async fn run(self) -> Result<ProjectCompileOutput> {
-        // Reject flags whose stdout shape conflicts with the envelope contract.
-        if foundry_cli::is_machine() {
-            let unsupported =
-                [("--watch", self.is_watch()), ("--names", self.names), ("--sizes", self.sizes)]
-                    .into_iter()
-                    .filter_map(|(name, on)| on.then_some(name))
-                    .collect::<Vec<_>>();
-            if !unsupported.is_empty() {
-                foundry_cli::machine::bail_machine_usage(format!(
-                    "`forge build` under `--machine` does not yet support {}; \
-                     run without `--machine` or omit those flags.",
-                    unsupported.join(", ")
-                ));
-            }
+    /// Reject flags whose stdout shape conflicts with the envelope contract.
+    /// Must be called before dispatch so `--watch` is caught before the watch
+    /// loop short-circuits past `BuildArgs::run`.
+    pub fn ensure_machine_compatible(&self) {
+        if !foundry_cli::is_machine() {
+            return;
         }
+        let unsupported =
+            [("--watch", self.is_watch()), ("--names", self.names), ("--sizes", self.sizes)]
+                .into_iter()
+                .filter_map(|(name, on)| on.then_some(name))
+                .collect::<Vec<_>>();
+        if !unsupported.is_empty() {
+            foundry_cli::machine::bail_machine_usage(format!(
+                "`forge build` under `--machine` does not yet support {}; \
+                 run without `--machine` or omit those flags.",
+                unsupported.join(", ")
+            ));
+        }
+    }
 
+    pub async fn run(self) -> Result<ProjectCompileOutput> {
+        self.ensure_machine_compatible();
+
+        let machine_mode = foundry_cli::is_machine();
         let mut config = self.load_config()?;
 
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        // Skip implicit dep install under `--machine`: it writes to stdout and mutates the project
+        // behind the agent's back. Missing deps will surface as a typed compile-error envelope.
+        if !machine_mode
+            && install::install_missing_dependencies(&mut config).await
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
@@ -127,12 +141,19 @@ impl BuildArgs {
             }
         }
 
-        let machine_mode = foundry_cli::is_machine();
         let format_json = shell::is_json();
-        // Under `--machine`, only the terminal envelope is allowed on
-        // stdout. Force the compile reporter quiet without overriding the
-        // `--quiet` default in the human path (the builder's default
-        // already picks up `shell::is_quiet()`).
+
+        // Pre-empt the inner `"Nothing to compile" + exit(0)` path so it can't break the
+        // envelope-only stdout contract.
+        if machine_mode && !project.paths.has_input_files() && self.paths.is_none() {
+            let payload = BuildData { artifacts: 0, errors: 0, warnings: 0, unchanged: false };
+            print_json(&JsonEnvelope::success(payload))?;
+            std::process::exit(ExitCode::Success.to_i32());
+        }
+
+        // Under `--machine`: force quiet (envelope-only stdout) and disable `bail` so we can
+        // emit a typed failure envelope instead of a generic eyre error. v1 skips post-build
+        // lint (not yet modeled in the envelope schema).
         let mut compiler = ProjectCompiler::new()
             .files(files)
             .dynamic_test_linking(config.dynamic_test_linking)
@@ -145,7 +166,7 @@ impl BuildArgs {
                     .map(ContractSizeLimits::with_runtime_limit)
                     .unwrap_or_default(),
             )
-            .bail(!format_json);
+            .bail(!format_json && !machine_mode);
         if machine_mode {
             compiler = compiler.quiet(true);
         }
@@ -160,13 +181,25 @@ impl BuildArgs {
         }
 
         if machine_mode {
+            if output.has_compiler_errors() {
+                let errors: Vec<JsonMessage> = output
+                    .output()
+                    .errors
+                    .iter()
+                    .filter(|e| e.is_error())
+                    .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
+                    .collect();
+                print_json(&JsonEnvelope::<()>::failure(errors))?;
+                std::process::exit(ExitCode::Build.to_i32());
+            }
+
             let payload = BuildData::from_output(&output);
             print_json(&JsonEnvelope::success(payload))?;
+            return Ok(output);
         }
 
         // Only run the `SolidityLinter` if lint on build and no compilation errors.
-        if !machine_mode
-            && !self.no_lint
+        if !self.no_lint
             && config.lint.lint_on_build
             && !output.output().errors.iter().any(|e| e.is_error())
             && let Err(err) = self.lint(&project, &config, self.paths.as_deref(), &mut output)
@@ -383,8 +416,9 @@ pub struct BuildData {
     pub errors: usize,
     /// Number of compiler warnings in the output.
     pub warnings: usize,
-    /// Whether the build was a no-op cache hit.
-    pub cache_hit: bool,
+    /// Whether the build was a no-op (no input files changed since the last
+    /// compile). Mirrors `ProjectCompileOutput::is_unchanged`.
+    pub unchanged: bool,
 }
 
 impl BuildData {
@@ -399,7 +433,7 @@ impl BuildData {
                 warnings += 1;
             }
         }
-        Self { artifacts, errors, warnings, cache_hit: output.is_unchanged() }
+        Self { artifacts, errors, warnings, unchanged: output.is_unchanged() }
     }
 }
 

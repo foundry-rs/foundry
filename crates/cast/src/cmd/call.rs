@@ -16,7 +16,8 @@ use alloy_rpc_types::{
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    json::{JsonEnvelope, print_json},
+    ExitCode, diagnostic,
+    json::{JsonEnvelope, JsonMessage, print_json},
     opts::{ChainValueParser, RpcOpts, TransactionOpts},
     utils::{LoadConfig, TraceResult, parse_ether_value},
 };
@@ -53,10 +54,20 @@ use std::{str::FromStr, sync::LazyLock};
 /// Stable payload emitted in the `cast call` envelope under `--machine`.
 #[derive(Clone, Debug, Serialize)]
 pub struct CallData {
-    /// Display string for the call's return value: raw hex when no
-    /// signature was supplied, otherwise the decoded value formatted as
-    /// `cast` would print it. Opaque-by-design at `@v1`.
-    pub result: String,
+    /// Raw `0x`-prefixed hex return data from `eth_call`.
+    pub raw: String,
+}
+
+/// Emit a typed `network.rpc.error` envelope and exit `Network (6)`.
+fn rpc_failure(err: &eyre::Report) -> Result<()> {
+    let cause_chain: Vec<String> = err.chain().map(ToString::to_string).collect();
+    let message = cause_chain.first().cloned().unwrap_or_else(|| err.to_string());
+    let envelope = JsonEnvelope::error(
+        JsonMessage::error(diagnostic::network::RPC_ERROR, message)
+            .with_details(serde_json::json!({ "cause_chain": cause_chain })),
+    );
+    let _ = print_json(&envelope);
+    std::process::exit(ExitCode::Network.to_i32());
 }
 
 // matches override pattern <address>:<slot>:<value>
@@ -254,6 +265,19 @@ impl CallArgs {
         if self.rpc.curl {
             return self.run_curl().await;
         }
+
+        // Under `--machine`, any failure past the flag-rejection check is an RPC
+        // interaction failure for `cast call@v1`. Funnel through one typed envelope.
+        let machine_mode = foundry_cli::is_machine();
+        let result = self.run_dispatch().await;
+        match result {
+            Ok(()) => Ok(()),
+            Err(err) if machine_mode => rpc_failure(&err),
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn run_dispatch(self) -> Result<()> {
         if self.tx.tempo.is_tempo() {
             return self.run_with_network::<TempoEvmNetwork>().await;
         }
@@ -453,21 +477,24 @@ impl CallArgs {
             return Ok(());
         }
 
+        // Bypass the ABI decoder under `--machine`; the envelope carries raw hex only.
+        let machine_mode = foundry_cli::is_machine();
+        let decode_func = (!machine_mode).then_some(func.as_ref()).flatten();
         let response = Cast::new(&provider)
-            .call(&tx, func.as_ref(), block, state_overrides, block_overrides)
+            .call(&tx, decode_func, block, state_overrides, block_overrides)
             .await?;
 
         if response == "0x"
             && let Some(contract_address) = tx.to()
         {
             let code = provider.get_code_at(contract_address).await?;
-            if code.is_empty() {
+            if !machine_mode && code.is_empty() {
                 sh_warn!("Contract code is empty")?;
             }
         }
 
-        if foundry_cli::is_machine() {
-            print_json(&JsonEnvelope::success(CallData { result: response }))?;
+        if machine_mode {
+            print_json(&JsonEnvelope::success(CallData { raw: response }))?;
         } else {
             sh_println!("{}", response)?;
         }

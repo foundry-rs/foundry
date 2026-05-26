@@ -26,10 +26,7 @@ use crate::{
 };
 use clap::{CommandFactory, Parser, error::ErrorKind};
 use serde_json::json;
-use std::{
-    fmt::Write,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 static MACHINE_MODE: AtomicBool = AtomicBool::new(false);
 
@@ -144,47 +141,17 @@ pub fn bail_machine_usage(message: impl Into<String>) -> ! {
     std::process::exit(ExitCode::Usage.to_i32());
 }
 
-/// Emit a structured error envelope on stdout for an `eyre::Report`.
-///
-/// Used by binary entry points to wrap an uncaught command failure as a
-/// terminal envelope. The diagnostic code is best-effort, classified from
-/// the report's cause chain via [`diagnostic_code_for_report`]; the process
-/// exit code is the caller's responsibility (typically [`ExitCode::GenericError`]).
+/// Fallback envelope emitter for an untyped `eyre::Report`. Always tags
+/// `cli.unknown` and preserves the eyre cause chain in `details.cause_chain`.
+/// The process exit code is the caller's responsibility.
 pub fn report_machine_error(report: &eyre::Report) {
-    let message = format!("{report}");
-    let envelope =
-        JsonEnvelope::error(JsonMessage::error(diagnostic_code_for_report(report), message));
+    let cause_chain: Vec<String> = report.chain().map(ToString::to_string).collect();
+    let message = cause_chain.first().cloned().unwrap_or_else(|| report.to_string());
+    let envelope = JsonEnvelope::error(
+        JsonMessage::error(diagnostic::cli::UNKNOWN, message)
+            .with_details(json!({ "cause_chain": cause_chain })),
+    );
     let _ = print_json(&envelope);
-}
-
-/// Conservative classification of an `eyre::Report` into a stable diagnostic
-/// code.
-///
-/// Stable codes are part of the agent contract; over-specific
-/// misclassification is worse than the catch-all. Only a small set of
-/// high-confidence keyword matches escape the [`diagnostic::cli::UNKNOWN`]
-/// fallback. Typed call sites should emit specific codes directly rather
-/// than relying on this helper.
-pub fn diagnostic_code_for_report(report: &eyre::Report) -> &'static str {
-    let mut buf = String::new();
-    for cause in report.chain() {
-        let _ = writeln!(buf, "{cause}");
-    }
-    let lower = buf.to_lowercase();
-
-    if lower.contains("interrupted") || lower.contains("sigint") || lower.contains("sigterm") {
-        return diagnostic::cli::INTERRUPTED;
-    }
-    if lower.contains("foundry.toml") {
-        return diagnostic::config::INVALID;
-    }
-    if lower.contains("solc") {
-        return diagnostic::compiler::SOLC_ERROR;
-    }
-    if lower.contains("vyper") {
-        return diagnostic::compiler::VYPER_ERROR;
-    }
-    diagnostic::cli::UNKNOWN
 }
 
 #[cfg(test)]
@@ -240,25 +207,33 @@ mod tests {
         Run,
     }
 
+    /// `report_machine_error` always tags `cli.unknown` and preserves the
+    /// full eyre cause chain in `errors[0].details.cause_chain`.
     #[test]
-    fn diagnostic_classifier_picks_compiler_for_solc_errors() {
-        let r: eyre::Report = eyre::eyre!("solc compilation failed");
-        assert_eq!(diagnostic_code_for_report(&r), diagnostic::compiler::SOLC_ERROR);
-    }
+    fn report_machine_error_uses_cli_unknown_and_preserves_cause_chain() {
+        use eyre::WrapErr as _;
+        let leaf: eyre::Report = eyre::eyre!("solc: missing semicolon");
+        let report: eyre::Report = Result::<(), _>::Err(leaf)
+            .wrap_err("compile failed")
+            .wrap_err("build failed")
+            .unwrap_err();
 
-    #[test]
-    fn diagnostic_classifier_falls_back_to_cli_unknown_for_rpc_failures() {
-        // Generic RPC errors stay `cli.unknown` — typed call sites should
-        // emit `network.rpc.*` codes themselves when they have the context
-        // to classify accurately.
-        let r: eyre::Report = eyre::eyre!("RPC connection timeout");
-        assert_eq!(diagnostic_code_for_report(&r), diagnostic::cli::UNKNOWN);
-    }
+        let cause_chain: Vec<String> = report.chain().map(ToString::to_string).collect();
+        let message = cause_chain.first().cloned().unwrap();
+        let envelope = JsonEnvelope::error(
+            JsonMessage::error(diagnostic::cli::UNKNOWN, message)
+                .with_details(json!({ "cause_chain": cause_chain })),
+        );
 
-    #[test]
-    fn diagnostic_classifier_falls_back_to_cli_unknown() {
-        let r: eyre::Report = eyre::eyre!("something unexpected went wrong");
-        assert_eq!(diagnostic_code_for_report(&r), diagnostic::cli::UNKNOWN);
+        assert!(!envelope.success);
+        assert_eq!(envelope.errors.len(), 1);
+        assert_eq!(envelope.errors[0].code, diagnostic::cli::UNKNOWN);
+        assert_eq!(envelope.errors[0].message, "build failed");
+        let details = envelope.errors[0].details.as_ref().expect("details");
+        let chain = details.get("cause_chain").and_then(|v| v.as_array()).expect("chain");
+        assert_eq!(chain.len(), 3);
+        assert_eq!(chain[0], "build failed");
+        assert_eq!(chain[2], "solc: missing semicolon");
     }
 
     #[test]

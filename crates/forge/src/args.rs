@@ -77,6 +77,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         }
         ForgeSubcommand::Bind(cmd) => cmd.run(),
         ForgeSubcommand::Build(cmd) => {
+            cmd.ensure_machine_compatible();
             if cmd.is_watch() {
                 global.block_on(watch::watch_build(cmd))
             } else {

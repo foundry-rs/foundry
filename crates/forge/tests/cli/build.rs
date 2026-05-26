@@ -526,7 +526,7 @@ forgetest_init!(machine_mode_emits_envelope, |prj, cmd| {
     assert!(envelope["data"]["artifacts"].as_u64().is_some(), "missing artifacts: {envelope}");
     assert!(envelope["data"]["errors"].as_u64().is_some(), "missing errors: {envelope}");
     assert!(envelope["data"]["warnings"].as_u64().is_some(), "missing warnings: {envelope}");
-    assert!(envelope["data"]["cache_hit"].as_bool().is_some(), "missing cache_hit: {envelope}");
+    assert!(envelope["data"]["unchanged"].as_bool().is_some(), "missing unchanged: {envelope}");
     assert_eq!(envelope["errors"], serde_json::json!([]));
     assert_eq!(envelope["warnings"], serde_json::json!([]));
 });
@@ -544,6 +544,66 @@ forgetest_init!(machine_mode_rejects_unsupported_flags, |prj, cmd| {
     assert_eq!(assert.get_output().status.code(), Some(2));
     let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
     assert!(msg.contains("--names"), "missing --names mention: {envelope}");
+});
+
+// `--machine` rejects `--watch` even though the watch path normally short-circuits before
+// `BuildArgs::run`.
+forgetest_init!(machine_mode_rejects_watch, |prj, cmd| {
+    prj.initialize_default_contracts();
+    let assert = cmd.args(["--machine", "build", "--watch"]).assert_failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value = serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
+
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("--watch"), "missing --watch mention: {envelope}");
+});
+
+// Compile failures under `--machine` emit a typed `compiler.solc.error` envelope and exit `Build
+// (4)`.
+forgetest!(machine_mode_compile_failure_emits_typed_envelope, |prj, cmd| {
+    prj.add_source(
+        "BadSyntax",
+        r"
+contract Dummy {
+    uint256 public number;
+    function something(uint256 newNumber) public {
+        number = newnumber;
+    }
+}
+",
+    );
+
+    let assert = cmd.args(["--machine", "build", "--force"]).assert_failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value = serde_json::from_str(stdout.trim()).expect("failure envelope on stdout");
+
+    assert_eq!(envelope["schema_version"], 1);
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["data"], serde_json::Value::Null);
+    let errors = envelope["errors"].as_array().expect("errors array");
+    assert!(!errors.is_empty(), "expected at least one error: {envelope}");
+    assert_eq!(errors[0]["code"], "compiler.solc.error");
+    assert_eq!(assert.get_output().status.code(), Some(4));
+});
+
+// Empty project under `--machine` emits a success envelope (artifacts=0), not "Nothing to compile".
+forgetest!(machine_mode_empty_project_emits_envelope, |_prj, cmd| {
+    let assert = cmd.args(["--machine", "build"]).assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value =
+        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
+
+    assert_eq!(envelope["schema_version"], 1);
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"]["artifacts"], 0);
+    assert_eq!(envelope["data"]["errors"], 0);
+    assert_eq!(envelope["data"]["warnings"], 0);
+    assert_eq!(envelope["errors"], serde_json::json!([]));
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
+    assert_eq!(assert.get_output().status.code(), Some(0));
 });
 
 // tests that build warns when foundry.lock revision differs from actual submodule revision
