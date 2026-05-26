@@ -2489,6 +2489,76 @@ fn portfolio_test_marker(name: &str) -> std::path::PathBuf {
 }
 
 #[cfg(unix)]
+/// Returns a fake solver command that counts invocations before emitting `response`.
+fn counted_solver_command(marker: &Path, response: &'static str) -> SolverCommand {
+    SolverCommand::new(
+        vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            format!(
+                "count=$(cat \"$1\" 2>/dev/null || printf 0); \
+                 count=$((count + 1)); printf '%s' \"$count\" > \"$1\"; \
+                 cat >/dev/null; printf '{response}\\n'"
+            ),
+            "sh".to_string(),
+            marker.display().to_string(),
+        ],
+        false,
+    )
+    .unwrap()
+}
+
+#[cfg(unix)]
+/// Returns how many times a counted fake solver command was invoked.
+fn counted_solver_invocations(marker: &Path) -> usize {
+    std::fs::read_to_string(marker).ok().and_then(|count| count.parse().ok()).unwrap_or_default()
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for normalized satisfiability query cache hits.
+fn sat_cache_reuses_normalized_is_sat_results() {
+    let marker = portfolio_test_marker("sat-cache");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x = Expr::Var("x".to_string());
+    let y = Expr::Var("y".to_string());
+    let constraints = vec![
+        BoolExpr::Const(true),
+        BoolExpr::eq(x.clone(), Expr::Const(U256::from(1))),
+        BoolExpr::eq(y.clone(), Expr::Const(U256::from(2))),
+    ];
+    let reordered_constraints = vec![
+        BoolExpr::eq(y, Expr::Const(U256::from(2))),
+        BoolExpr::eq(x, Expr::Const(U256::from(1))),
+    ];
+
+    assert!(solver.is_sat(&constraints).unwrap());
+    assert!(solver.is_sat(&reordered_constraints).unwrap());
+
+    assert_eq!(solver.stats().solver_queries, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for leaving unknown satisfiability results uncached.
+fn sat_cache_does_not_cache_unknown_results() {
+    let marker = portfolio_test_marker("sat-cache-unknown");
+    let commands = vec![counted_solver_command(&marker, "unknown")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 4, false);
+    let constraints = vec![BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)))];
+
+    assert!(matches!(solver.is_sat(&constraints), Err(SymbolicError::SolverUnknown)));
+    assert!(matches!(solver.is_sat(&constraints), Err(SymbolicError::SolverUnknown)));
+
+    assert_eq!(solver.stats().solver_queries, 2);
+    assert_eq!(counted_solver_invocations(&marker), 2);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
 #[test]
 /// Regression coverage for `portfolio_sat_beats_early_unsat`.
 fn portfolio_sat_beats_early_unsat() {

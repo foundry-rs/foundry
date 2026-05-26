@@ -40,6 +40,9 @@ pub(crate) const PORTFOLIO_SCHEDULER_MIN_RECENCY_WEIGHT: i64 = 1;
 pub(crate) const PORTFOLIO_SCHEDULER_SPEED_BONUS_CAP_MS: u128 = 100;
 pub(crate) const PORTFOLIO_SCHEDULER_MAX_SPEED_BONUS: i64 = 100;
 
+// Solver query cache limits
+pub(crate) const SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES: usize = 4096;
+
 // Hard arithmetic witness search limits
 pub(crate) const HARD_ARITH_FALLBACK_MAX_VARS: usize = 4;
 pub(crate) const HARD_ARITH_FALLBACK_MAX_CANDIDATES_PER_VAR: usize = 24;
