@@ -254,8 +254,8 @@ impl ScriptArgs {
     async fn resolved_evm_opts(&self) -> Result<(Config, EvmOpts)> {
         let (config, mut evm_opts) = self.load_config_and_evm_opts()?;
 
-        if self.tempo.is_tempo() {
-            // If fee token or expiry is set directly select tempo
+        if self.tempo.is_tempo() || self.tempo.session_id()?.is_some() {
+            // If Tempo tx options or a session are set, select the Tempo network.
             evm_opts.networks = NetworkConfigs::with_tempo();
         } else {
             // Auto-detect network from fork chain ID when not explicitly configured.
@@ -270,10 +270,21 @@ impl ScriptArgs {
         config: Config,
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
+        let session_sender = if self.tempo.session_id()?.is_some() {
+            let expected_chain_id = Self::tempo_session_chain_id(&evm_opts).await;
+            self.tempo
+                .session_signer_for_multi_wallet(&self.wallets, self.evm.sender, expected_chain_id)?
+                .map(|session| session.access_key.wallet_address)
+        } else {
+            None
+        };
+
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
         let browser_wallet = self.wallets.browser_signer::<FEN::Network>().await?;
 
-        if let Some(sender) = self.maybe_load_private_key()? {
+        if let Some(sender) = session_sender {
+            evm_opts.sender = sender;
+        } else if let Some(sender) = self.maybe_load_private_key()? {
             evm_opts.sender = sender;
         } else if self.evm.sender.is_none() {
             // If no sender was explicitly set via --sender, auto-detect it from available signers:
@@ -299,6 +310,17 @@ impl ScriptArgs {
         Ok(PreprocessedState { args: self, script_config, script_wallets, browser_wallet })
     }
 
+    async fn tempo_session_chain_id(evm_opts: &EvmOpts) -> u64 {
+        if let Some(chain_id) = evm_opts.env.chain_id {
+            return chain_id;
+        }
+        evm_opts
+            .get_remote_chain_id()
+            .await
+            .map(|chain| chain.id())
+            .unwrap_or(foundry_common::DEV_CHAIN_ID)
+    }
+
     /// Executes the script
     #[allow(clippy::large_stack_frames)]
     pub async fn run_script(self) -> Result<()> {
@@ -310,6 +332,10 @@ impl ScriptArgs {
 
         if self.batch && !is_tempo {
             eyre::bail!("--batch mode is only supported on Tempo networks");
+        }
+
+        if self.unlocked && self.tempo.session_id()?.is_some() {
+            eyre::bail!("--tempo.session/TEMPO_SESSION_ID cannot be combined with --unlocked");
         }
 
         if is_tempo {
@@ -831,10 +857,69 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
 mod tests {
     use super::*;
     use alloy_network::Ethereum;
-    use alloy_primitives::address;
+    use alloy_primitives::{B256, address};
+    use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
+    use foundry_common::tempo::{
+        KeyType, SessionEntry, SessionKeyMaterial, SessionStatus, TEMPO_HOME_ENV,
+        upsert_session_entry,
+    };
     use foundry_config::{NamedChain, UnresolvedEnvVarError};
-    use std::fs;
+    use std::{fs, sync::LazyLock};
     use tempfile::tempdir;
+    use tokio::sync::{Mutex, MutexGuard};
+
+    const SESSION_PRIVATE_KEY: &str =
+        "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+    static TEMPO_HOME_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    fn active_session_entry(
+        session_id: B256,
+        root_account: Address,
+        chain_id: u64,
+    ) -> SessionEntry {
+        let key = foundry_wallets::utils::create_private_key_signer(SESSION_PRIVATE_KEY).unwrap();
+        SessionEntry {
+            session_id,
+            root_account,
+            chain_id,
+            key_address: key.address(),
+            expiry: u64::MAX,
+            scope: None,
+            limits: None,
+            status: SessionStatus::Active,
+            key: Some(SessionKeyMaterial {
+                key_type: KeyType::Secp256k1,
+                key: SESSION_PRIVATE_KEY.to_string(),
+                key_authorization: None,
+            }),
+        }
+    }
+
+    struct TempoHomeGuard {
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    impl TempoHomeGuard {
+        async fn set(path: &std::path::Path) -> Self {
+            let guard = TEMPO_HOME_LOCK.lock().await;
+            // SAFETY: test-only environment override for Tempo local state.
+            unsafe {
+                std::env::remove_var(TEMPO_SESSION_ID_ENV);
+                std::env::set_var(TEMPO_HOME_ENV, path);
+            }
+            Self { _guard: guard }
+        }
+    }
+
+    impl Drop for TempoHomeGuard {
+        fn drop(&mut self) {
+            // SAFETY: restore process environment after the critical section.
+            unsafe {
+                std::env::remove_var(TEMPO_HOME_ENV);
+                std::env::remove_var(TEMPO_SESSION_ID_ENV);
+            }
+        }
+    }
 
     #[test]
     fn can_parse_sig() {
@@ -885,6 +970,89 @@ mod tests {
             ScriptArgs::parse_from(["foundry-cli", "Contract.sol", "--tempo.nonce-key", "1"]);
 
         assert_eq!(args.tempo.nonce_key, Some(U256::from(1)));
+    }
+
+    #[test]
+    fn can_parse_tempo_session_opt() {
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--tempo.session",
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+        ]);
+
+        assert_eq!(args.tempo.session, Some(B256::from([0x11; 32])),);
+    }
+
+    #[tokio::test]
+    async fn tempo_session_sets_script_sender_to_root_account() {
+        let temp = tempdir().unwrap();
+        let session_id = B256::from([0x22; 32]);
+        let root = address!("0x1111111111111111111111111111111111111111");
+        let chain_id = foundry_common::DEV_CHAIN_ID;
+
+        let _guard = TempoHomeGuard::set(temp.path()).await;
+        upsert_session_entry(active_session_entry(session_id, root, chain_id)).unwrap();
+
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--tempo.session",
+            &format!("{session_id:?}"),
+        ]);
+        let evm_opts = EvmOpts {
+            networks: NetworkConfigs::with_tempo(),
+            env: foundry_evm::opts::Env { chain_id: Some(chain_id), ..Default::default() },
+            ..Default::default()
+        };
+
+        let state = args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await.unwrap();
+        assert_eq!(state.script_config.evm_opts.sender, root);
+    }
+
+    #[tokio::test]
+    async fn tempo_session_env_selects_tempo_network() {
+        let temp = tempdir().unwrap();
+        let _guard = TempoHomeGuard::set(temp.path()).await;
+        let session_id = B256::from([0x44; 32]);
+        // SAFETY: serialized by TempoHomeGuard.
+        unsafe { std::env::set_var(TEMPO_SESSION_ID_ENV, format!("{session_id:?}")) };
+
+        let args = ScriptArgs::parse_from(["foundry-cli", "Contract.sol"]);
+        let (_, evm_opts) = args.resolved_evm_opts().await.unwrap();
+
+        assert!(evm_opts.networks.is_tempo());
+    }
+
+    #[tokio::test]
+    async fn tempo_session_rejects_explicit_script_wallet_signer() {
+        let temp = tempdir().unwrap();
+        let session_id = B256::from([0x33; 32]);
+        let root = address!("0x1111111111111111111111111111111111111111");
+        let chain_id = foundry_common::DEV_CHAIN_ID;
+
+        let _guard = TempoHomeGuard::set(temp.path()).await;
+        upsert_session_entry(active_session_entry(session_id, root, chain_id)).unwrap();
+
+        let args = ScriptArgs::parse_from([
+            "foundry-cli",
+            "Contract.sol",
+            "--tempo.session",
+            &format!("{session_id:?}"),
+            "--private-key",
+            SESSION_PRIVATE_KEY,
+        ]);
+        let evm_opts = EvmOpts {
+            networks: NetworkConfigs::with_tempo(),
+            env: foundry_evm::opts::Env { chain_id: Some(chain_id), ..Default::default() },
+            ..Default::default()
+        };
+
+        let err = match args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await {
+            Ok(_) => panic!("expected --tempo.session with --private-key to fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("explicit wallet signer"), "{err}");
     }
 
     #[test]

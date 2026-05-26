@@ -255,6 +255,48 @@ where
     }
 }
 
+struct ScriptSessionSigner {
+    root_account: Address,
+    signer: WalletSigner,
+    access_key: TempoAccessKeyConfig,
+}
+
+impl ScriptSessionSigner {
+    fn resolve<FEN: FoundryEvmNetwork>(
+        script_config: &ScriptConfig<FEN>,
+        wallets: &foundry_wallets::MultiWalletOpts,
+        expected_sender: Option<Address>,
+        expected_chain_id: u64,
+    ) -> Result<Option<Self>> {
+        let Some(resolved) = script_config.tempo.session_signer_for_multi_wallet(
+            wallets,
+            expected_sender,
+            expected_chain_id,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(Self {
+            root_account: resolved.session.root_account,
+            signer: resolved.signer,
+            access_key: resolved.access_key,
+        }))
+    }
+
+    fn into_access_key_entry(self) -> (WalletSigner, TempoAccessKeyConfig) {
+        (self.signer, self.access_key)
+    }
+}
+
+fn script_session_expected_sender(required_addresses: &AddressHashSet) -> Result<Option<Address>> {
+    required_addresses
+        .iter()
+        .copied()
+        .at_most_one()
+        .map_err(|_| eyre::eyre!("Tempo sessions require a single script sender"))
+}
+
 /// Represents how to send _all_ transactions
 pub enum SendTransactionsKind<N: Network> {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
@@ -369,6 +411,27 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let send_kind = if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses.clone())
         } else {
+            let has_session = self.script_config.tempo.session_id()?.is_some();
+            let expected_session_sender = if has_session {
+                script_session_expected_sender(&required_addresses)?
+            } else {
+                None
+            };
+            let mut session_signers: AddressHashMap<ScriptSessionSigner> =
+                AddressHashMap::default();
+            if has_session {
+                for sequence in self.sequence.sequences() {
+                    if let Some(session_signer) = ScriptSessionSigner::resolve(
+                        &self.script_config,
+                        &self.args.wallets,
+                        expected_session_sender,
+                        sequence.chain,
+                    )? {
+                        session_signers.insert(session_signer.root_account, session_signer);
+                    }
+                }
+            }
+
             let signers: Vec<Address> = self
                 .script_wallets
                 .signers()
@@ -384,16 +447,20 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let mut missing_addresses = Vec::new();
 
             for addr in &required_addresses {
-                if !signers.contains(addr) {
-                    match lookup_signer(*addr) {
-                        Ok(TempoLookup::Direct(signer)) => {
-                            direct_signers.insert(*addr, signer);
-                        }
-                        Ok(TempoLookup::Keychain(signer, config)) => {
-                            access_keys.insert(*addr, (signer, *config));
-                        }
-                        _ => {
-                            missing_addresses.push(addr);
+                if !signers.contains(addr) && !access_keys.contains_key(addr) {
+                    if let Some(session_signer) = session_signers.remove(addr) {
+                        access_keys.insert(*addr, session_signer.into_access_key_entry());
+                    } else {
+                        match lookup_signer(*addr) {
+                            Ok(TempoLookup::Direct(signer)) => {
+                                direct_signers.insert(*addr, signer);
+                            }
+                            Ok(TempoLookup::Keychain(signer, config)) => {
+                                access_keys.insert(*addr, (signer, *config));
+                            }
+                            _ => {
+                                missing_addresses.push(addr);
+                            }
                         }
                     }
                 }
@@ -783,6 +850,7 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         let sender = *senders.iter().next().unwrap();
+        let chain_id = sequence.chain;
 
         if sender == Config::DEFAULT_SENDER {
             bail!(
@@ -799,6 +867,16 @@ impl BundledState<TempoEvmNetwork> {
 
         let batch_signer = if self.args.unlocked {
             BatchSigner::Unlocked
+        } else if let Some(session_signer) = ScriptSessionSigner::resolve(
+            &self.script_config,
+            &self.args.wallets,
+            Some(sender),
+            chain_id,
+        )? {
+            BatchSigner::TempoKeychain(
+                Box::new(session_signer.signer),
+                Box::new(session_signer.access_key),
+            )
         } else {
             let mut signers = self.script_wallets.into_multi_wallet().into_signers()?;
             if let Some(signer) = signers.remove(&sender) {
@@ -863,7 +941,6 @@ impl BundledState<TempoEvmNetwork> {
 
         // Build the batch transaction request
         let nonce = provider.get_transaction_count(sender).await?;
-        let chain_id = sequence.chain;
 
         // Get gas prices - batch transactions are Tempo-only, always use EIP-1559 style fees
         let fees = provider.estimate_eip1559_fees().await?;
