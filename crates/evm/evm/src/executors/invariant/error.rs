@@ -221,11 +221,15 @@ pub fn snapshot_edge_fingerprint<FEN: FoundryEvmNetwork>(
             let mut sorted: Vec<&EdgeCovHit> = hits.iter().collect();
             sorted.sort_unstable_by_key(|hit| hit.edge);
 
-            let mut bytes = Vec::with_capacity(sorted.len() * (20 + 8 + 32 + 8 + 1));
+            // address(20) + pc(8) + jump_dest(32) + depth_tag(1) + depth(8) + count(1)
+            let mut bytes = Vec::with_capacity(sorted.len() * (20 + 8 + 32 + 1 + 8 + 1));
             for hit in sorted {
                 bytes.extend_from_slice(hit.edge.address.as_slice());
                 bytes.extend_from_slice(&hit.edge.pc.to_le_bytes());
                 bytes.extend_from_slice(&hit.edge.jump_dest.to_be_bytes::<32>());
+                // Tag byte disambiguates `None` from `Some(0)` so configs with
+                // `include_call_depth` toggled don't collide in the fingerprint.
+                bytes.push(u8::from(hit.edge.depth.is_some()));
                 bytes.extend_from_slice(&hit.edge.depth.unwrap_or(0).to_le_bytes());
                 bytes.push(hit.count);
             }
