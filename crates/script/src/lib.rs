@@ -271,7 +271,9 @@ impl ScriptArgs {
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
         let has_session = self.tempo.session_id()?.is_some();
-        let session_sender = if has_session && !self.resume && !self.multi {
+        let session_sender = if has_session && !self.resume && self.multi {
+            self.tempo.session_sender_for_multi_wallet(&self.wallets, self.evm.sender)?
+        } else if has_session && !self.resume {
             let expected_chain_id = Self::tempo_session_chain_id(&evm_opts).await;
             self.tempo
                 .session_signer_for_multi_wallet(&self.wallets, self.evm.sender, expected_chain_id)?
@@ -313,8 +315,8 @@ impl ScriptArgs {
 
     /// Infers the command chain early enough to resolve a Tempo session during preprocessing.
     ///
-    /// This is only used before normal script execution, where a single command-level chain is
-    /// expected. Resume and multi-chain flows need to load or build their broadcast sequences
+    /// This is only used before normal single-chain script execution, where a command-level chain
+    /// is expected. Resume and multi-chain flows need to load or build their broadcast sequences
     /// first, so they defer session chain validation until the transaction chains are known.
     async fn tempo_session_chain_id(evm_opts: &EvmOpts) -> u64 {
         if let Some(chain_id) = evm_opts.env.chain_id {
@@ -1041,7 +1043,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tempo_session_non_resume_multi_defers_chain_validation_until_broadcast() {
+    async fn tempo_session_non_resume_multi_sets_sender_without_chain_validation() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x66; 32]);
         let root = address!("0x1111111111111111111111111111111111111111");
@@ -1060,7 +1062,7 @@ mod tests {
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_tempo(), ..Default::default() };
 
         let state = args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await.unwrap();
-        assert_ne!(state.script_config.evm_opts.sender, root);
+        assert_eq!(state.script_config.evm_opts.sender, root);
     }
 
     #[tokio::test]

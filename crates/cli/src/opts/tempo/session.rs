@@ -65,6 +65,25 @@ impl TempoOpts {
         ensure_no_explicit_multi_wallet_signer(wallets)?;
         Ok(Some(resolve_session_signer(session_id, expected_sender, expected_chain_id)?))
     }
+
+    /// Resolves only the root sender for a configured Tempo wallet session.
+    ///
+    /// Multi-chain scripts need the sender before execution so `vm.startBroadcast()` records the
+    /// session root, but their chain validation must wait until broadcast sequences reveal the real
+    /// transaction chains.
+    pub fn session_sender_for_multi_wallet(
+        &self,
+        wallets: &MultiWalletOpts,
+        expected_sender: Option<Address>,
+    ) -> Result<Option<Address>> {
+        let Some(session_id) = self.session_id()? else {
+            return Ok(None);
+        };
+        ensure_no_explicit_multi_wallet_signer(wallets)?;
+        let resolved = resolve_session(session_id)?;
+        ensure_expected_sender(expected_sender, resolved.access_key.wallet_address)?;
+        Ok(Some(resolved.access_key.wallet_address))
+    }
 }
 
 /// Loads the live session signer and validates it against the command context.
@@ -76,10 +95,7 @@ fn resolve_session_signer(
     expected_sender: Option<Address>,
     expected_chain_id: u64,
 ) -> Result<ResolvedSessionSigner> {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
-    let resolved = resolve_live_session_signer(session_id, now.as_secs())?.ok_or_else(|| {
-        eyre::eyre!("Tempo session {session_id:?} is not active or has no live key")
-    })?;
+    let resolved = resolve_session(session_id)?;
 
     if resolved.session.chain_id != expected_chain_id {
         eyre::bail!(
@@ -89,16 +105,24 @@ fn resolve_session_signer(
         );
     }
 
+    ensure_expected_sender(expected_sender, resolved.access_key.wallet_address)?;
+    Ok(resolved)
+}
+
+fn resolve_session(session_id: B256) -> Result<ResolvedSessionSigner> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("time went backwards");
+    resolve_live_session_signer(session_id, now.as_secs())?
+        .ok_or_else(|| eyre::eyre!("Tempo session {session_id:?} is not active or has no live key"))
+}
+
+fn ensure_expected_sender(expected_sender: Option<Address>, session_sender: Address) -> Result<()> {
     if let Some(from) = expected_sender
-        && from != resolved.access_key.wallet_address
+        && from != session_sender
     {
-        eyre::bail!(
-            "sender {from} does not match Tempo session root account {}",
-            resolved.access_key.wallet_address
-        );
+        eyre::bail!("sender {from} does not match Tempo session root account {session_sender}");
     }
 
-    Ok(resolved)
+    Ok(())
 }
 
 /// Rejects single-wallet signer options when a Tempo session is already selected.
@@ -357,6 +381,20 @@ mod tests {
             let err = opts.session_signer_for_wallet(&WalletOpts::default(), 1).unwrap_err();
 
             assert!(err.to_string().contains("is for chain 4217"), "{err}");
+        });
+    }
+
+    #[test]
+    fn tempo_session_sender_does_not_validate_chain() {
+        with_clean_session_home(|| {
+            let id = session_id(0x99);
+            upsert_session_entry(active_session_entry(id)).unwrap();
+            let opts = TempoOpts { session: Some(id), ..Default::default() };
+            let wallets = MultiWalletOpts::default();
+
+            let sender = opts.session_sender_for_multi_wallet(&wallets, None).unwrap();
+
+            assert_eq!(sender, Some(Address::from([0x11; 20])));
         });
     }
 
