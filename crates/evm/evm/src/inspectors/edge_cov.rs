@@ -195,9 +195,16 @@ impl EdgeCovInspector {
     }
 
     /// Create a new `EdgeCovInspector` with the given capacity and configuration.
+    ///
+    /// `capacity` sizes the fixed hash bitmap used by [`EdgeCovKind::Hash`]; it is
+    /// ignored for [`EdgeCovKind::CollisionFree`], which grows its dense map on demand.
     pub fn with_capacity_and_config(capacity: usize, config: EdgeCovConfig) -> Self {
+        let hitcount = match config.kind {
+            EdgeCovKind::Hash => vec![0; capacity.max(1)],
+            EdgeCovKind::CollisionFree => Vec::new(),
+        };
         Self {
-            hitcount: vec![0; capacity.max(1)],
+            hitcount,
             config,
             dense_hitcount: HashMap::default(),
             hash_builder: DefaultHashBuilder::default(),
