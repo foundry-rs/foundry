@@ -315,17 +315,25 @@ impl ProjectCompiler {
 
             sh_println!("{size_report}")?;
 
+            let runtime_eip = if size_report.limits.runtime == CONTRACT_RUNTIME_SIZE_LIMIT {
+                "EIP-170: "
+            } else {
+                ""
+            };
             eyre::ensure!(
                 !size_report.exceeds_runtime_size_limit(),
-                "some contracts exceed the runtime size limit \
-                 ({} bytes)",
+                "some contracts exceed the runtime size limit ({runtime_eip}{} bytes)",
                 size_report.limits.runtime
             );
             // Check size limits only if not ignoring EIP-3860
+            let initcode_eip = if size_report.limits.initcode == CONTRACT_INITCODE_SIZE_LIMIT {
+                "EIP-3860: "
+            } else {
+                ""
+            };
             eyre::ensure!(
                 self.ignore_eip_3860 || !size_report.exceeds_initcode_size_limit(),
-                "some contracts exceed the initcode size limit \
-                 ({} bytes)",
+                "some contracts exceed the initcode size limit ({initcode_eip}{} bytes)",
                 size_report.limits.initcode
             );
         }
