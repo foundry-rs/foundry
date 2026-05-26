@@ -776,7 +776,6 @@ forgetest_init!(should_fuzz_literals, |prj, cmd| {
     let expected_fail = |test_name: &str, type_sig: &str, value: &str| -> String {
         format!(
             r#"
-
 Ran 1 test for test/MagicFuzz.t.sol:MagicTest
 [FAIL: panic: assertion failed (0x01); counterexample: calldata=[..] args=[{value}]] {test_name}({type_sig}) (runs: [..], [AVG_GAS])
 [..]

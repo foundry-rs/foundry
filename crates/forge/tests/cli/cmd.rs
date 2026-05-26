@@ -3306,7 +3306,7 @@ forgetest_init!(can_bind, |prj, cmd| {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Generating bindings for 2 contracts
-Bindings have been generated to /private/var/folders/lk/7h1qyx951b3f4btb58rvwbdm0000gp/T/can_bind-29Sq9egf/out/bindings
+Bindings have been generated to [..]
 
 "#]]);
 });
@@ -4080,7 +4080,7 @@ forgetest_init!(can_bind_enum_modules, |prj, cmd| {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Generating bindings for 1 contracts
-Bindings have been generated to /private/var/folders/lk/7h1qyx951b3f4btb58rvwbdm0000gp/T/can_bind_enum_modules-31UvnxPN/out/bindings
+Bindings have been generated to [..]
 
 "#]]);
 });
@@ -4092,7 +4092,7 @@ forgetest_init!(can_bind_e2e, |prj, cmd| {
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Generating bindings for 2 contracts
-Bindings have been generated to /private/var/folders/lk/7h1qyx951b3f4btb58rvwbdm0000gp/T/can_bind_e2e-30mfrcUJ/out/bindings
+Bindings have been generated to [..]
 
 "#]]);
 

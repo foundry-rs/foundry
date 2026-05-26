@@ -222,9 +222,7 @@ contract ATest is DSTest {
     );
 
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
-
+...
 Ran 1 test for src/ATest.t.sol:ATest
 [PASS] testArray(uint64[2]) (runs: 256, [AVG_GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -920,14 +918,14 @@ contract CounterTest is Test {
 [SOLC_VERSION] [ELAPSED]
 
 Ran 1 test for test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 28, [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: [..], [AVG_GAS])
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/CounterFuzz.t.sol:CounterTest
-[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: 28, [AVG_GAS])
+[FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=0xa76d58f5ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff args=[115792089237316195423570985008687907853269984665640564039457584007913129639935 [1.157e77]]] testAddOne(uint256) (runs: [..], [AVG_GAS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -1202,7 +1200,7 @@ contract ContractFuzz is Test {
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
 Logs:
-  inside fuzz test, x is: 469613417501640132378
+  inside fuzz test, x is: [..]
   inside fuzz test, x is: [..]
   inside fuzz test, x is: [..]
 
@@ -1243,7 +1241,7 @@ contract ContractFuzz is Test {
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
 Logs:
-  inside fuzz test, x is: 44651772723433022631664459006465249023006694868989526415870
+  inside fuzz test, x is: [..]
   inside fuzz test, x is: [..]
   inside fuzz test, x is: [..]
 
@@ -1285,7 +1283,7 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
 Logs:
-  inside fuzz test, x is: 4692
+  inside fuzz test, x is: [..]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -1325,7 +1323,7 @@ contract ContractFuzz is Test {
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
 Logs:
-  inside fuzz test, x is: 12966508005625482712504388645151
+  inside fuzz test, x is: [..]
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
@@ -2744,13 +2742,13 @@ contract ReverterTest is Test {
 [SOLC_VERSION] [ELAPSED]
 
 Ran 8 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
-[FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: calldata=0xb8ea83020000000000000000000000000000000000000000000000000000000000000003 args=[3]] testAssumeThenExpectCountZeroFails(uint256) (runs: 16, [AVG_GAS])
-[FAIL: MyRevert(); counterexample: calldata=0xb973b5060000000000000000000000000000000000000000000000000000000000000002 args=[2]] testAssumeWithReverter_fails(uint256) (runs: 104, [AVG_GAS])
-[FAIL: RevertWithData(2); counterexample: calldata=0x76f9b9f90000000000000000000000000000000000000000000000000000000000000002 args=[2]] testAssume_wrongData_fails(uint256) (runs: 88, [AVG_GAS])
-[FAIL: MyRevert(); counterexample: calldata=0xb8ce2c1e0000000000000000000000000000000000000000000000000000000000000002 args=[2]] testAssume_wrongSelector_fails(uint256) (runs: 136, [AVG_GAS])
-[FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: calldata=0x41fd3ece0000000000000000000000000000000000000000000000000000000000000003 args=[3]] testExpectCountZeroThenAssumeFails(uint256) (runs: 20, [AVG_GAS])
+[FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: calldata=0xb8ea83020000000000000000000000000000000000000000000000000000000000000003 args=[3]] testAssumeThenExpectCountZeroFails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: calldata=0xb973b5060000000000000000000000000000000000000000000000000000000000000002 args=[2]] testAssumeWithReverter_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: RevertWithData(2); counterexample: calldata=0x76f9b9f90000000000000000000000000000000000000000000000000000000000000002 args=[2]] testAssume_wrongData_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: MyRevert(); counterexample: calldata=0xb8ce2c1e0000000000000000000000000000000000000000000000000000000000000002 args=[2]] testAssume_wrongSelector_fails(uint256) (runs: [..], [AVG_GAS])
+[FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: calldata=0x41fd3ece0000000000000000000000000000000000000000000000000000000000000003 args=[3]] testExpectCountZeroThenAssumeFails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: MyRevert(); counterexample: calldata=0x66ec43440000000000000000000000000000000000000000000000000000000000002612 args=[9746]] testMultipleAssumesClearAfterCall_fails(uint256) (runs: 0, [AVG_GAS])
-[FAIL: RevertWithData(3); counterexample: calldata=0xeef4b13d0000000000000000000000000000000000000000000000000000000000000003 args=[3]] testMultipleAssumes_OneWrong_fails(uint256) (runs: 20, [AVG_GAS])
+[FAIL: RevertWithData(3); counterexample: calldata=0xeef4b13d0000000000000000000000000000000000000000000000000000000000000003 args=[3]] testMultipleAssumes_OneWrong_fails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: vm.assumeNoRevert: you must make another external call prior to calling assumeNoRevert again; counterexample: calldata=0x5ef213580000000000000000000000000000000000000000000000000000000000000000 args=[0x00000000]] testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: 0, [AVG_GAS])
 Suite result: FAILED. 0 passed; 8 failed; 0 skipped; [ELAPSED]
 ...

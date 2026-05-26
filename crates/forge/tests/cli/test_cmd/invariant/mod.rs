@@ -273,7 +273,6 @@ contract TimeoutTest is Test {
     cmd.args(["test", "--mt", "invariant_counter_timeout"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/TimeoutTest.t.sol:TimeoutTest
 [PASS] invariant_counter_timeout() (runs: 0, calls: 0, reverts: 0)
@@ -971,9 +970,9 @@ Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
 ╭----------------------------+----------------+-------+---------+----------╮
 | Contract                   | Selector       | Calls | Reverts | Discards |
 +==========================================================================+
-| InvariantTargetIncludeTest | shouldInclude1 | 522   | 0       | 0        |
+| InvariantTargetIncludeTest | shouldInclude1 | [..]   | 0       | 0        |
 |----------------------------+----------------+-------+---------+----------|
-| InvariantTargetIncludeTest | shouldInclude2 | 478   | 0       | 0        |
+| InvariantTargetIncludeTest | shouldInclude2 | [..]   | 0       | 0        |
 ╰----------------------------+----------------+-------+---------+----------╯
 
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
@@ -1657,7 +1656,7 @@ contract CounterTest is Test {
 Ran 1 test for test/CounterTest.t.sol:CounterTest
 [FAIL: condition 1 met] invariant_cond1
 	[Sequence] (original: 10, shrunk: 10)
-		sender=0x00000000000000000000000000000000000019B0 addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=work(uint256) args=[15]
+		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=work(uint256) args=[..]
 ...
 
 [FAIL: condition 2 met] invariant_cond2

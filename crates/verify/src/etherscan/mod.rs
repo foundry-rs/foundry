@@ -628,7 +628,6 @@ mod tests {
 [COMPILING_FILES] with [SOLC_VERSION]
 ...
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 "#]]);
 

@@ -47,7 +47,7 @@ contract Issue3055Test is Test {
 Ran 3 tests for test/Issue3055.t.sol:Issue3055Test
 [FAIL] test_snapshot() ([GAS])
 [FAIL] test_snapshot2() ([GAS])
-[FAIL: next call did not revert as expected; counterexample: calldata=0xc424c553000000000000000000000000000000000000000000000000000000859d3cf9df args=[573868669407 [5.738e11]]] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
+[FAIL: next call did not revert as expected; counterexample: calldata=[..] args=[..]]] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
 Suite result: FAILED. 0 passed; 3 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 3 failed, 0 skipped (3 total tests)
@@ -56,7 +56,7 @@ Failing tests:
 Encountered 3 failing tests in test/Issue3055.t.sol:Issue3055Test
 [FAIL] test_snapshot() ([GAS])
 [FAIL] test_snapshot2() ([GAS])
-[FAIL: next call did not revert as expected; counterexample: calldata=0xc424c553000000000000000000000000000000000000000000000000000000859d3cf9df args=[573868669407 [5.738e11]]] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
+[FAIL: next call did not revert as expected; counterexample: calldata=[..] args=[..]]] test_snapshot3(uint256) (runs: 0, [AVG_GAS])
 
 Encountered a total of 3 failing tests, 0 tests succeeded
 
