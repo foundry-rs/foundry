@@ -2423,6 +2423,12 @@ impl<'ast> State<'_, 'ast> {
         then: &'ast ast::Stmt<'ast>,
         els_opt: Option<&'ast &'ast mut ast::Stmt<'ast>>,
     ) -> Decision {
+        // Dangling-else guard runs before the cache check so an inlined parent can't
+        // coerce this `if` into dropping braces and rebinding its `else`.
+        if Self::then_block_can_capture_trailing_else(then, els_opt.is_some()) {
+            return Decision { outcome: false, is_cached: false };
+        }
+
         // If a decision is already cached from a parent, use it directly.
         if let Some(cached_decision) = self.single_line_stmt {
             return Decision { outcome: cached_decision, is_cached: true };
@@ -2430,13 +2436,6 @@ impl<'ast> State<'_, 'ast> {
 
         // Empty statements are always printed as blocks.
         if std::slice::from_ref(then).is_empty() {
-            return Decision { outcome: false, is_cached: false };
-        }
-
-        // Keep braces when `then` is a block wrapping a single statement that could
-        // expose a trailing `if` after brace elision; otherwise the surrounding `else`
-        // would rebind to that inner `if`.
-        if els_opt.is_some() && Self::then_block_can_capture_trailing_else(then) {
             return Decision { outcome: false, is_cached: false };
         }
 
@@ -2526,21 +2525,21 @@ impl<'ast> State<'_, 'ast> {
         false
     }
 
-    /// Returns true if `then` is a block whose single statement, when printed without
-    /// the surrounding braces, could leave an inner `if` exposed to capture a trailing
-    /// `else`. Conservatively covers `if`, `while`, and `for`, whose bodies may carry
-    /// or expose a dangling inner `if`.
-    fn then_block_can_capture_trailing_else(then: &'ast ast::Stmt<'ast>) -> bool {
-        if let ast::StmtKind::Block(block) = &then.kind
-            && block.stmts.len() == 1
-            && matches!(
-                block.stmts[0].kind,
-                ast::StmtKind::If(..) | ast::StmtKind::While(..) | ast::StmtKind::For { .. }
-            )
-        {
-            return true;
+    /// Returns true if eliding the braces of `then` would expose an inner `if` to a
+    /// trailing `else` or change the AST shape on round-trip.
+    fn then_block_can_capture_trailing_else(
+        then: &'ast ast::Stmt<'ast>,
+        has_outer_else: bool,
+    ) -> bool {
+        let ast::StmtKind::Block(block) = &then.kind else { return false };
+        if block.stmts.len() != 1 {
+            return false;
         }
-        false
+        match &block.stmts[0].kind {
+            ast::StmtKind::If(_, _, inner_else) => has_outer_else || inner_else.is_some(),
+            ast::StmtKind::While(..) | ast::StmtKind::For { .. } => has_outer_else,
+            _ => false,
+        }
     }
 
     /// Checks if a block statement `{ ... }` contains more than one line of actual code.

@@ -31,6 +31,11 @@ contract DanglingElse {
         return 0;
     }
 
+    function nested(bool x, bool a, bool b) external pure returns (uint256) {
+        if (x) { if (a) { if (b) return 1; } else return 2; }
+        return 0;
+    }
+
     function cIso(bool a, bool b) external pure returns (uint256) {
         // isolated comment
         if (a) { if (b) return 1; } else return 2;
