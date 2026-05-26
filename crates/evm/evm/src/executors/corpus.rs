@@ -37,7 +37,7 @@
 use super::corpus_io::{CorpusDirEntry, read_corpus_dir};
 use crate::{
     executors::{Executor, RawCallResult, invariant::execute_tx},
-    inspectors::{CmpOperands, EdgeIndexMap},
+    inspectors::{CmpOperands, EdgeIndexMap, MAX_EDGE_COUNT},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -77,7 +77,6 @@ const SYNC_DIR: &str = "sync";
 const OPTIMIZATION_BEST_FILE: &str = "optimization_best.json";
 
 const FAVORABILITY_THRESHOLD: f64 = 0.3;
-const COVERAGE_MAP_SIZE: usize = 65536;
 
 /// Threshold for compressing corpus entries.
 /// 4KiB is usually the minimum file size on popular file systems.
@@ -375,9 +374,17 @@ impl WorkerCorpus {
         });
 
         let mut in_memory_corpus = vec![];
-        let mut history_map = vec![0u8; COVERAGE_MAP_SIZE];
+        // Hash mode always merges a fixed `MAX_EDGE_COUNT` bitmap, so preallocate to
+        // avoid moving the one-time 64 KiB resize into the first merge. Collision-free
+        // and sancov maps grow on demand and start empty.
+        let mut history_map =
+            if config.collect_evm_edge_coverage() && !config.evm_edge_coverage_collision_free() {
+                vec![0u8; MAX_EDGE_COUNT]
+            } else {
+                Vec::new()
+            };
         let mut edge_indices = EdgeIndexMap::default();
-        let mut sancov_history_map = vec![0u8; COVERAGE_MAP_SIZE];
+        let mut sancov_history_map = Vec::new();
         let mut metrics = CorpusMetrics::default();
         let mut failed_replays = 0;
         let mut optimization_best_value = None;
@@ -1483,9 +1490,9 @@ mod tests {
             in_memory_corpus: vec![corpus],
             current_mutated: Some(seed_uuid),
             failed_replays: 0,
-            history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            history_map: Vec::new(),
             edge_indices: EdgeIndexMap::default(),
-            sancov_history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            sancov_history_map: Vec::new(),
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
@@ -1618,9 +1625,9 @@ mod tests {
             in_memory_corpus: vec![favored, non_favored],
             current_mutated: None,
             failed_replays: 0,
-            history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            history_map: Vec::new(),
             edge_indices: EdgeIndexMap::default(),
-            sancov_history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            sancov_history_map: Vec::new(),
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,

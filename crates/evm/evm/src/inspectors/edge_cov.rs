@@ -17,7 +17,7 @@ use revm::{
 };
 
 // Default capacity for the hitcount buffer.
-const MAX_EDGE_COUNT: usize = 65536;
+pub(crate) const MAX_EDGE_COUNT: usize = 65536;
 
 // Maximum number of unique comparison sites to track for CmpLog-style feedback.
 const MAX_CMP_LOG_SITES: usize = 1024;
@@ -196,22 +196,12 @@ impl EdgeCovInspector {
     }
 
     /// Create a new `EdgeCovInspector` with the given configuration.
-    pub fn with_config(config: EdgeCovConfig) -> Self {
-        Self::with_capacity_and_config(MAX_EDGE_COUNT, config)
-    }
-
-    /// Create a new `EdgeCovInspector` with the given hitcount buffer capacity.
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self::with_capacity_and_config(capacity, EdgeCovConfig::default())
-    }
-
-    /// Create a new `EdgeCovInspector` with the given capacity and configuration.
     ///
-    /// `capacity` sizes the fixed hash bitmap used by [`EdgeCovKind::Hash`]; it is
-    /// ignored for [`EdgeCovKind::CollisionFree`], which grows its dense map on demand.
-    pub fn with_capacity_and_config(capacity: usize, config: EdgeCovConfig) -> Self {
+    /// [`EdgeCovKind::Hash`] preallocates a fixed [`MAX_EDGE_COUNT`] bitmap;
+    /// [`EdgeCovKind::CollisionFree`] grows its dense map on demand.
+    pub fn with_config(config: EdgeCovConfig) -> Self {
         let hitcount = match config.kind {
-            EdgeCovKind::Hash => vec![0; capacity.max(1)],
+            EdgeCovKind::Hash => vec![0; MAX_EDGE_COUNT],
             EdgeCovKind::CollisionFree => Vec::new(),
         };
         Self {
@@ -244,15 +234,6 @@ impl EdgeCovInspector {
             cmp_log.clear();
         }
         self.cmp_site_counts.clear();
-    }
-
-    /// Get an immutable reference to the hitcount.
-    pub const fn get_hitcount(&self) -> &[u8] {
-        self.hitcount.as_slice()
-    }
-
-    pub fn get_dense_hits(&self) -> Vec<EdgeCovHit> {
-        self.dense_hits()
     }
 
     /// Get an immutable reference to the comparison operand log.
@@ -311,6 +292,7 @@ impl EdgeCovInspector {
         (hasher.finish() % self.hitcount.len() as u64) as usize
     }
 
+    #[cfg(test)]
     fn dense_hits(&self) -> Vec<EdgeCovHit> {
         let mut hits = self
             .dense_hitcount
@@ -472,7 +454,7 @@ mod tests {
     use super::*;
 
     fn dense_counts(inspector: &EdgeCovInspector) -> Vec<u8> {
-        inspector.get_dense_hits().into_iter().map(|hit| hit.count).collect()
+        inspector.dense_hits().into_iter().map(|hit| hit.count).collect()
     }
 
     #[test]
@@ -499,7 +481,6 @@ mod tests {
         let inspector = EdgeCovInspector::new();
 
         assert!(inspector.get_cmp_log().is_empty());
-        assert!(inspector.get_hitcount().iter().all(|&x| x == 0));
 
         let (coverage, cmp_log) = inspector.into_parts();
         assert_eq!(coverage, EdgeCoverage::CollisionFree(Vec::new()));
@@ -570,7 +551,7 @@ mod tests {
 
         inspector.reset();
         assert_eq!(inspector.edge_count(), 0);
-        assert!(inspector.get_dense_hits().is_empty());
+        assert!(inspector.dense_hits().is_empty());
 
         inspector.store_hit(addr, 0, 0, U256::from(1));
         assert_eq!(inspector.edge_count(), 1);
@@ -592,8 +573,8 @@ mod tests {
 
         inspector.store_hit(addr, 0, pc, jump_dest);
 
-        assert_eq!(inspector.get_hitcount()[expected_id], 1);
-        assert_eq!(inspector.get_hitcount().iter().filter(|&&count| count != 0).count(), 1);
+        assert_eq!(inspector.hitcount[expected_id], 1);
+        assert_eq!(inspector.hitcount.iter().filter(|&&count| count != 0).count(), 1);
     }
 
     #[test]
@@ -629,8 +610,7 @@ mod tests {
 
         inspector.reset();
 
-        assert!(inspector.get_hitcount().iter().all(|&x| x == 0));
-        assert!(inspector.get_dense_hits().is_empty());
+        assert!(inspector.dense_hits().is_empty());
         assert!(inspector.get_cmp_log().is_empty());
     }
 
