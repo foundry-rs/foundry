@@ -349,8 +349,10 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     remaining_unsigned_transactions(sequence.sequences()).collect::<Vec<_>>();
                 let remaining_froms =
                     remaining_transactions.iter().map(|tx| tx.from).collect::<Vec<_>>();
-                let remaining_chains =
+                let mut remaining_chains =
                     remaining_transactions.iter().map(|tx| tx.chain).collect::<Vec<_>>();
+                remaining_chains.sort_unstable();
+                remaining_chains.dedup();
                 let expected_session_sender = if self.script_config.tempo.session_id()?.is_some() {
                     tempo_session_expected_sender(&remaining_froms)?
                 } else {
