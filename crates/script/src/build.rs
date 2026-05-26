@@ -1,12 +1,18 @@
 use crate::{
     ScriptArgs, ScriptConfig,
-    broadcast::{BundledState, remaining_unsigned_transactions, script_session_expected_sender},
+    broadcast::{
+        BundledState, SignerScope, remaining_unsigned_transactions,
+        script_session_expected_sender_if_configured,
+    },
     execute::LinkedState,
     multi_sequence::MultiChainSequence,
     sequence::ScriptSequenceKind,
 };
 use alloy_network::AnyNetwork;
-use alloy_primitives::{Address, B256, Bytes};
+use alloy_primitives::{
+    Address, B256, Bytes,
+    map::{AddressHashSet, HashSet},
+};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
@@ -26,18 +32,6 @@ use foundry_linking::Linker;
 use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct SignerScope {
-    chain: u64,
-    sender: Address,
-}
-
-impl SignerScope {
-    const fn new(chain: u64, sender: Address) -> Self {
-        Self { chain, sender }
-    }
-}
-
 /// Returns the scoped signers that can satisfy a resumed broadcast.
 ///
 /// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
@@ -49,29 +43,27 @@ fn available_script_signers<FEN: FoundryEvmNetwork>(
     script_wallets: &Wallets,
     expected_sender: Option<Address>,
     remaining: impl IntoIterator<Item = SignerScope>,
-) -> Result<Vec<SignerScope>> {
+) -> Result<HashSet<SignerScope>> {
     let signers = script_wallets
         .signers()
         .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
-    let remaining = remaining.into_iter().collect::<Vec<_>>();
+    let remaining = remaining.into_iter().collect::<HashSet<_>>();
     let mut available = remaining
         .iter()
         .copied()
-        .filter(|scope| signers.contains(&scope.sender))
-        .collect::<Vec<_>>();
+        .filter(|scope| signers.contains(&scope.sender()))
+        .collect::<HashSet<_>>();
 
     if let Some(session) =
         script_config.tempo.session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
     {
         let session_scope =
             SignerScope::new(session.session.chain_id, session.access_key.wallet_address);
-        if remaining.contains(&session_scope) && !available.contains(&session_scope) {
-            available.push(session_scope);
+        if remaining.contains(&session_scope) {
+            available.insert(session_scope);
         }
     }
 
-    available.sort_unstable_by_key(|scope| (scope.chain, scope.sender));
-    available.dedup();
     Ok(available)
 }
 
@@ -356,18 +348,15 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 let remaining_transactions =
                     remaining_unsigned_transactions(sequence.sequences()).collect::<Vec<_>>();
                 let remaining_froms =
-                    remaining_transactions.iter().map(|tx| tx.from).collect::<Vec<_>>();
-                let has_session = self.script_config.tempo.session_id()?.is_some();
-                let expected_session_sender = if has_session {
-                    let remaining_froms = remaining_froms.iter().copied().collect();
-                    script_session_expected_sender(&remaining_froms)?
-                } else {
-                    None
-                };
+                    remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
+                let expected_session_sender = script_session_expected_sender_if_configured(
+                    &self.script_config,
+                    &remaining_froms,
+                )?;
                 let remaining_signers = remaining_transactions
                     .iter()
                     .map(|tx| SignerScope::new(tx.chain, tx.from))
-                    .collect::<Vec<_>>();
+                    .collect::<HashSet<_>>();
                 let available_signers = available_script_signers(
                     &self.script_config,
                     &self.args.wallets,
@@ -376,7 +365,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     remaining_signers.iter().copied(),
                 )?;
 
-                if remaining_signers.iter().all(|scope| available_signers.contains(scope)) {
+                if remaining_signers.is_subset(&available_signers) {
                     (
                         self.args,
                         self.build_data,

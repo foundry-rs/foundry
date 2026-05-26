@@ -27,7 +27,9 @@ use foundry_common::{
     FoundryTransactionBuilder, TransactionMaybeSigned,
     provider::{ProviderBuilder, try_get_http_provider},
     shell,
-    tempo::{TempoSponsor, WALLET_KEYS_PATH, decode_key_authorization, tempo_home},
+    tempo::{
+        ResolvedSessionSigner, TempoSponsor, WALLET_KEYS_PATH, decode_key_authorization, tempo_home,
+    },
 };
 use foundry_config::Config;
 use foundry_evm::core::evm::{FoundryEvmNetwork, TempoEvmNetwork};
@@ -270,14 +272,29 @@ struct ScriptSessionSigner {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct AccessKeyScope {
+pub(crate) struct SignerScope {
     chain: u64,
     sender: Address,
 }
 
-impl AccessKeyScope {
+impl SignerScope {
     pub(crate) const fn new(chain: u64, sender: Address) -> Self {
         Self { chain, sender }
+    }
+
+    pub(crate) const fn sender(&self) -> Address {
+        self.sender
+    }
+}
+
+impl From<ResolvedSessionSigner> for ScriptSessionSigner {
+    fn from(resolved: ResolvedSessionSigner) -> Self {
+        Self {
+            chain: resolved.session.chain_id,
+            root_account: resolved.session.root_account,
+            signer: resolved.signer,
+            access_key: resolved.access_key,
+        }
     }
 }
 
@@ -302,12 +319,7 @@ impl ScriptSessionSigner {
             return Ok(None);
         };
 
-        Ok(Some(Self {
-            chain: resolved.session.chain_id,
-            root_account: resolved.session.root_account,
-            signer: resolved.signer,
-            access_key: resolved.access_key,
-        }))
+        Ok(Some(resolved.into()))
     }
 
     /// Resolves the active Tempo session without imposing a command-level chain.
@@ -325,12 +337,7 @@ impl ScriptSessionSigner {
             return Ok(None);
         };
 
-        Ok(Some(Self {
-            chain: resolved.session.chain_id,
-            root_account: resolved.session.root_account,
-            signer: resolved.signer,
-            access_key: resolved.access_key,
-        }))
+        Ok(Some(resolved.into()))
     }
 }
 
@@ -394,6 +401,16 @@ pub(crate) fn script_session_expected_sender(
         .map_err(|_| eyre::eyre!("Tempo sessions require a single script sender"))
 }
 
+pub(crate) fn script_session_expected_sender_if_configured<FEN: FoundryEvmNetwork>(
+    script_config: &ScriptConfig<FEN>,
+    required_addresses: &AddressHashSet,
+) -> Result<Option<Address>> {
+    script_config
+        .tempo
+        .session_id()?
+        .map_or(Ok(None), |_| script_session_expected_sender(required_addresses))
+}
+
 pub(crate) struct RemainingScriptTransaction {
     pub(crate) chain: u64,
     pub(crate) from: Address,
@@ -420,7 +437,7 @@ pub enum SendTransactionsKind<N: Network> {
     Raw {
         eth_wallets: AddressHashMap<EthereumWallet>,
         browser: Option<BrowserSigner<N>>,
-        access_keys: HashMap<AccessKeyScope, (WalletSigner, TempoAccessKeyConfig)>,
+        access_keys: HashMap<SignerScope, (WalletSigner, TempoAccessKeyConfig)>,
     },
 }
 
@@ -442,8 +459,7 @@ impl<N: Network> SendTransactionsKind<N> {
                 Ok(SendTransactionKind::Unlocked(tx))
             }
             Self::Raw { eth_wallets, browser, access_keys } => {
-                if let Some((signer, config)) = access_keys.get(&AccessKeyScope::new(chain, *addr))
-                {
+                if let Some((signer, config)) = access_keys.get(&SignerScope::new(chain, *addr)) {
                     Ok(SendTransactionKind::AccessKey(tx, signer, config))
                 } else if let Some(wallet) = eth_wallets.get(addr) {
                     Ok(SendTransactionKind::Raw(tx, wallet))
@@ -521,25 +537,21 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         let send_kind = if self.args.unlocked {
             SendTransactionsKind::Unlocked(required_addresses.clone())
         } else {
-            let has_session = self.script_config.tempo.session_id()?.is_some();
-            let expected_session_sender = if has_session {
-                script_session_expected_sender(&required_addresses)?
-            } else {
-                None
-            };
+            let expected_session_sender = script_session_expected_sender_if_configured(
+                &self.script_config,
+                &required_addresses,
+            )?;
 
             // For addresses without an explicit signer, try Tempo keys.toml fallback.
-            let mut access_keys: HashMap<AccessKeyScope, (WalletSigner, TempoAccessKeyConfig)> =
+            let mut access_keys: HashMap<SignerScope, (WalletSigner, TempoAccessKeyConfig)> =
                 HashMap::default();
-            if has_session
-                && let Some(session_signer) = ScriptSessionSigner::resolve_any_chain(
-                    &self.script_config,
-                    &self.args.wallets,
-                    expected_session_sender,
-                )?
-            {
+            if let Some(session_signer) = ScriptSessionSigner::resolve_any_chain(
+                &self.script_config,
+                &self.args.wallets,
+                expected_session_sender,
+            )? {
                 access_keys.insert(
-                    AccessKeyScope::new(session_signer.chain, session_signer.root_account),
+                    SignerScope::new(session_signer.chain, session_signer.root_account),
                     (session_signer.signer, session_signer.access_key),
                 );
             }
@@ -556,7 +568,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let mut missing_addresses = Vec::new();
 
             for tx in &remaining_transactions {
-                let scope = AccessKeyScope::new(tx.chain, tx.from);
+                let scope = SignerScope::new(tx.chain, tx.from);
                 if !signers.contains(&tx.from) && !access_keys.contains_key(&scope) {
                     match lookup_signer_for_chain(tx.from, tx.chain) {
                         Ok(TempoLookup::Direct(signer)) => {
@@ -1247,7 +1259,7 @@ mod tests {
         eth_wallets.insert(root_address, EthereumWallet::new(root));
         let mut access_keys = HashMap::default();
         access_keys.insert(
-            AccessKeyScope::new(4217, root_address),
+            SignerScope::new(4217, root_address),
             (
                 access_key,
                 TempoAccessKeyConfig {
@@ -1294,7 +1306,7 @@ mod tests {
         eth_wallets.insert(root_address, EthereumWallet::new(root));
         let mut access_keys = HashMap::default();
         access_keys.insert(
-            AccessKeyScope::new(4217, root_address),
+            SignerScope::new(4217, root_address),
             (
                 access_key,
                 TempoAccessKeyConfig {
