@@ -1,7 +1,6 @@
 use super::{
     InvariantFailures, InvariantFuzzError, InvariantMetrics, InvariantTest, InvariantTestRun,
     call_after_invariant_function, call_invariant_function,
-    campaign::InvariantRunId,
     error::{InvariantRunCtx, record_handler_assertion_bug},
 };
 use crate::executors::{Executor, RawCallResult};
@@ -107,7 +106,6 @@ pub(crate) fn invariant_preflight_check<FEN: FoundryEvmNetwork>(
         executor,
         calldata,
         invariant_failures,
-        None,
     )?;
     Ok(())
 }
@@ -180,7 +178,6 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
     executor: &Executor<FEN>,
     calldata: &[BasicTxDetails],
     invariant_failures: &mut InvariantFailures,
-    run_id: Option<InvariantRunId>,
 ) -> Result<Option<&'a Function>> {
     let inner_sequence = invariant_inner_sequence(executor);
     let mut first_broken: Option<&'a Function> = None;
@@ -205,11 +202,7 @@ pub(crate) fn assert_invariants<'a, FEN: FoundryEvmNetwork>(
         if !success {
             let case =
                 ctx.failed_case(invariant, *fail_on_revert, false, call_result, &inner_sequence);
-            invariant_failures.record_failure_with_run(
-                invariant,
-                InvariantFuzzError::BrokenInvariant(case),
-                run_id,
-            );
+            invariant_failures.record_failure(invariant, InvariantFuzzError::BrokenInvariant(case));
             if first_broken.is_none() {
                 first_broken = Some(*invariant);
             }
@@ -261,7 +254,6 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
     handler_target: Address,
     handler_selector: Selector,
     pre_merge_edges_hash: Option<B256>,
-    run_id: InvariantRunId,
 ) -> Result<ContinueOutcome<'a>> {
     let is_optimization = invariant_contract.is_optimization();
     let mut broken: Option<&'a Function> = None;
@@ -313,7 +305,6 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 &invariant_run.executor,
                 &invariant_run.inputs,
                 &mut invariant_test.test_data.failures,
-                Some(run_id),
             )?;
         }
     } else {
@@ -339,7 +330,6 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 call_result,
                 reverted,
                 is_optimization,
-                Some(run_id),
             );
 
             // No invariant predicate broke; `broken = None`.
@@ -389,14 +379,13 @@ pub(crate) fn can_continue<'a, FEN: FoundryEvmNetwork>(
                 );
                 // Handler asserts go to `broken_handlers` above; `BrokenInvariant` arm kept
                 // for non-handler-routed assertion paths.
-                invariant_test.test_data.failures.record_failure_with_run(
+                invariant_test.test_data.failures.record_failure(
                     invariant,
                     if is_assert_failure {
                         InvariantFuzzError::BrokenInvariant(data)
                     } else {
                         InvariantFuzzError::Revert(data)
                     },
-                    Some(run_id),
                 );
             }
         }
@@ -423,7 +412,6 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
     invariant_test: &mut InvariantTest,
     invariant_run: &InvariantTestRun<FEN>,
     invariant_config: &InvariantConfig,
-    run_id: InvariantRunId,
 ) -> Result<Option<&'a Function>> {
     let (call_result, success) =
         call_after_invariant_function(&invariant_run.executor, invariant_contract.address)?;
@@ -441,11 +429,10 @@ pub(crate) fn assert_after_invariant<'a, FEN: FoundryEvmNetwork>(
         calldata: &invariant_run.inputs,
     }
     .failed_case(anchor, invariant_config.fail_on_revert, false, call_result, &[]);
-    invariant_test.test_data.failures.record_failure_with_run(
-        anchor,
-        InvariantFuzzError::BrokenInvariant(case_data),
-        Some(run_id),
-    );
+    invariant_test
+        .test_data
+        .failures
+        .record_failure(anchor, InvariantFuzzError::BrokenInvariant(case_data));
     Ok(Some(anchor))
 }
 

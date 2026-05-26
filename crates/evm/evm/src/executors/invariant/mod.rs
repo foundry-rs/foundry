@@ -54,8 +54,6 @@ use foundry_evm_coverage::HitMaps;
 
 mod campaign;
 use campaign::{InvariantCampaignAggregator, InvariantCampaignSpec, InvariantWorkerOutput};
-#[cfg(debug_assertions)]
-use campaign::{InvariantFailureKind, InvariantFailureOutput, InvariantRunOutput};
 
 mod replay;
 pub use replay::{replay_error, replay_run};
@@ -437,8 +435,6 @@ pub struct InvariantExecutor<'a, FEN: FoundryEvmNetwork> {
     project_contracts: &'a ContractsByArtifact,
     /// Filters contracts to be fuzzed through their artifact identifiers.
     artifact_filters: ArtifactFilters,
-    /// Base fuzz seed associated with this logical campaign, if configured by the runner.
-    campaign_seed: Option<U256>,
 }
 
 impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
@@ -457,13 +453,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             setup_contracts,
             project_contracts,
             artifact_filters: ArtifactFilters::default(),
-            campaign_seed: None,
         }
-    }
-
-    pub const fn with_campaign_seed(mut self, seed: Option<U256>) -> Self {
-        self.campaign_seed = seed;
-        self
     }
 
     pub fn config(self) -> InvariantConfig {
@@ -492,11 +482,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // suite runner so parameterized `invariant_*` functions are rejected with a per-test
         // failure entry before any campaign runs.
 
-        let campaign_spec = InvariantCampaignSpec::new(self.config.runs, self.campaign_seed);
-        let worker_plan = campaign_spec.single_worker_plan();
         let mut planned_runs = self.config.runs;
-        #[cfg(debug_assertions)]
-        let mut run_outputs = Vec::with_capacity(self.config.runs as usize);
 
         let (mut invariant_test, mut corpus_manager) = self.prepare_test(
             &invariant_contract,
@@ -524,12 +510,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let edge_coverage_enabled = self.config.corpus.collect_edge_coverage();
 
         'stop: while continue_campaign(runs) {
-            let run_id = worker_plan.run_id(runs);
-            planned_runs = planned_runs.max(run_id.worker_run.saturating_add(1));
+            planned_runs = planned_runs.max(runs.saturating_add(1));
             // Per-run failure count snapshot used to gate `afterInvariant` below.
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
-            #[cfg(debug_assertions)]
-            let reverts_before_run = invariant_test.test_data.failures.reverts;
             let mut stop_after_run = false;
 
             let initial_seq = corpus_manager.new_inputs(
@@ -704,7 +687,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             handler_target,
                             handler_selector,
                             pre_merge_edges_hash,
-                            run_id,
                         )
                         .map_err(|e| eyre!(e.to_string()))?;
                         (outcome.continues, outcome.broken)
@@ -729,7 +711,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 call_result,
                                 call_reverted,
                                 invariant_contract.is_optimization(),
-                                Some(run_id),
                             );
                             (true, None)
                         } else if call_result.reverted && self.config.fail_on_revert {
@@ -748,11 +729,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                                 call_result,
                                 &[],
                             );
-                            invariant_test.test_data.failures.record_failure_with_run(
-                                anchor,
-                                InvariantFuzzError::Revert(case_data),
-                                Some(run_id),
-                            );
+                            invariant_test
+                                .test_data
+                                .failures
+                                .record_failure(anchor, InvariantFuzzError::Revert(case_data));
                             (false, Some(anchor))
                         } else if call_result.reverted
                             && !invariant_contract.is_optimization()
@@ -830,7 +810,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     &mut invariant_test,
                     &current_run,
                     &self.config,
-                    run_id,
                 )
                 .map_err(|_| eyre!("Failed to call afterInvariant"))?;
                 if broken.is_some() {
@@ -844,14 +823,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             // End current invariant test run.
-            #[cfg(debug_assertions)]
-            let run_output = InvariantRunOutput::new(
-                run_id,
-                current_run.fuzz_runs.len(),
-                invariant_test.test_data.failures.reverts - reverts_before_run,
-                current_run.new_coverage,
-                current_run.optimization_value,
-            );
             invariant_test.end_run(current_run, self.config.gas_report_samples as usize);
             if let Some(progress) = progress {
                 // If running with progress then increment completed runs.
@@ -910,8 +881,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
 
             runs += 1;
-            #[cfg(debug_assertions)]
-            run_outputs.push(run_output);
             if stop_after_run {
                 break 'stop;
             }
@@ -956,20 +925,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
         }
 
-        #[cfg(debug_assertions)]
-        let failure_outputs = result
-            .failures
-            .failure_sources()
-            .map(|(key, run_id)| {
-                let kind = match key {
-                    FailureKey::Invariant(name) => InvariantFailureKind::Predicate(name.clone()),
-                    FailureKey::Handler(reverter, selector) => {
-                        InvariantFailureKind::Handler { reverter: *reverter, selector: *selector }
-                    }
-                };
-                InvariantFailureOutput::new(*run_id, kind)
-            })
-            .collect();
         let reverts = result.failures.reverts;
         let (errors, handler_errors) = result.failures.partition();
         let worker_result = InvariantFuzzTestResult::new(
@@ -985,16 +940,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
-        let campaign_spec = InvariantCampaignSpec::new(planned_runs, self.campaign_seed);
+        let campaign_spec = InvariantCampaignSpec::new(planned_runs);
         let worker_plan = campaign_spec.single_worker_plan();
-        #[cfg(debug_assertions)]
-        let worker_output =
-            InvariantWorkerOutput::new(worker_plan, run_outputs, failure_outputs, worker_result);
-        #[cfg(not(debug_assertions))]
         let worker_output = InvariantWorkerOutput::new(worker_plan, worker_result);
         let mut aggregator = InvariantCampaignAggregator::new(campaign_spec);
-        aggregator.push(worker_output);
-        Ok(aggregator.finish())
+        aggregator.push(worker_output)?;
+        aggregator.finish()
     }
 
     /// Prepares certain structures to execute the invariant tests:
