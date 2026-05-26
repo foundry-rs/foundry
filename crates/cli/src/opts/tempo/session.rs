@@ -66,6 +66,25 @@ impl TempoOpts {
         Ok(Some(resolve_session_signer(session_id, expected_sender, expected_chain_id)?))
     }
 
+    /// Resolves the configured Tempo wallet session for multi-chain commands.
+    ///
+    /// This validates the session and root sender without forcing a command-level chain. Callers
+    /// that select signers per transaction must scope the returned signer to
+    /// `session.chain_id`.
+    pub fn session_signer_for_multi_wallet_any_chain(
+        &self,
+        wallets: &MultiWalletOpts,
+        expected_sender: Option<Address>,
+    ) -> Result<Option<ResolvedSessionSigner>> {
+        let Some(session_id) = self.session_id()? else {
+            return Ok(None);
+        };
+        ensure_no_explicit_multi_wallet_signer(wallets)?;
+        let resolved = resolve_session(session_id)?;
+        ensure_expected_sender(expected_sender, resolved.access_key.wallet_address)?;
+        Ok(Some(resolved))
+    }
+
     /// Resolves only the root sender for a configured Tempo wallet session.
     ///
     /// Multi-chain scripts need the sender before execution so `vm.startBroadcast()` records the
@@ -395,6 +414,27 @@ mod tests {
             let sender = opts.session_sender_for_multi_wallet(&wallets, None).unwrap();
 
             assert_eq!(sender, Some(Address::from([0x11; 20])));
+        });
+    }
+
+    #[test]
+    fn tempo_session_signer_any_chain_returns_session_chain() {
+        with_clean_session_home(|| {
+            let id = session_id(0xaa);
+            upsert_session_entry(active_session_entry(id)).unwrap();
+            let opts = TempoOpts { session: Some(id), ..Default::default() };
+            let wallets = MultiWalletOpts::default();
+
+            let session = opts
+                .session_signer_for_multi_wallet_any_chain(
+                    &wallets,
+                    Some(Address::from([0x11; 20])),
+                )
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(session.session.chain_id, 4217);
+            assert_eq!(session.access_key.wallet_address, Address::from([0x11; 20]));
         });
     }
 
