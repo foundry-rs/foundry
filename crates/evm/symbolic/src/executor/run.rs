@@ -105,6 +105,7 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicRunInput<'_, FEN>,
     ) -> Result<SymbolicRunResult, SymbolicError> {
+        let heuristic_witness_baseline = self.solver.heuristic_witnesses();
         let account = input
             .executor
             .backend()
@@ -244,11 +245,10 @@ impl SymbolicExecutor {
             });
         }
 
-        if self.solver.heuristic_witnesses() > 0 {
+        if self.heuristic_witnesses_used_since(heuristic_witness_baseline) {
             return Ok(SymbolicRunResult::Incomplete {
                 kind: SymbolicStopReason::Timeout,
-                reason: "hard arithmetic heuristic witness used; no replayed counterexample found"
-                    .to_string(),
+                reason: Self::hard_arith_heuristic_incomplete_reason(),
                 stats: self.stats_with_paths(completed_paths),
             });
         }
@@ -279,6 +279,7 @@ impl SymbolicExecutor {
         &mut self,
         input: SymbolicInvariantRunInput<'_, FEN>,
     ) -> Result<SymbolicInvariantRunResult, SymbolicError> {
+        let heuristic_witness_baseline = self.solver.heuristic_witnesses();
         if input.targets.is_empty() {
             return Err(SymbolicError::Unsupported("symbolic invariant has no targets"));
         }
@@ -448,11 +449,10 @@ impl SymbolicExecutor {
             frontier = next_frontier;
         }
 
-        if self.solver.heuristic_witnesses() > 0 {
+        if self.heuristic_witnesses_used_since(heuristic_witness_baseline) {
             return Ok(SymbolicInvariantRunResult::Incomplete {
                 kind: SymbolicStopReason::Timeout,
-                reason: "hard arithmetic heuristic witness used; no replayed counterexample found"
-                    .to_string(),
+                reason: Self::hard_arith_heuristic_incomplete_reason(),
                 stats: self.stats_with_paths(completed_paths),
             });
         }
@@ -465,5 +465,15 @@ impl SymbolicExecutor {
         let mut stats = self.solver.stats();
         stats.paths = paths;
         stats
+    }
+
+    /// Returns whether this run used a hard-arithmetic heuristic witness.
+    fn heuristic_witnesses_used_since(&self, baseline: usize) -> bool {
+        self.solver.heuristic_witnesses() > baseline
+    }
+
+    /// Returns the incomplete reason used when heuristic witnesses cannot certify safety.
+    fn hard_arith_heuristic_incomplete_reason() -> String {
+        "hard arithmetic heuristic witness used; no replayed counterexample found".to_string()
     }
 }
