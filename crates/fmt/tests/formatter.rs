@@ -226,6 +226,50 @@ fmt_tests! {
 }
 
 #[test]
+fn test_dangling_else_keeps_braces() {
+    init_tracing();
+    let source = r#"contract C {
+    function f(bool a, bool b) external pure returns (uint256) {
+        if (a) { if (b) return 1; } else return 2;
+        return 0;
+    }
+
+    function g(bool a, bool b, bool c) external pure returns (uint256) {
+        if (a) { while (c) if (b) return 1; } else return 2;
+        return 0;
+    }
+}
+"#;
+
+    let expected = r#"contract C {
+    function f(bool a, bool b) external pure returns (uint256) {
+        if (a) {
+            if (b) return 1;
+        } else {
+            return 2;
+        }
+        return 0;
+    }
+
+    function g(bool a, bool b, bool c) external pure returns (uint256) {
+        if (a) {
+            while (c) if (b) return 1;
+        } else {
+            return 2;
+        }
+        return 0;
+    }
+}
+"#;
+
+    let fmt_config = Arc::new(FormatterConfig { line_length: 80, ..Default::default() });
+    let path = Path::new("test.sol");
+    let formatted = format(source, path, fmt_config);
+
+    assert_eq!(formatted, expected, "Formatting mismatch");
+}
+
+#[test]
 fn test_comment_empty_line_bug() {
     init_tracing();
     let source = r#"pragma solidity ^0.8.0;

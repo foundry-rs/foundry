@@ -2433,6 +2433,13 @@ impl<'ast> State<'_, 'ast> {
             return Decision { outcome: false, is_cached: false };
         }
 
+        // Keep braces when `then` is a block wrapping a single statement that could
+        // expose a trailing `if` after brace elision; otherwise the surrounding `else`
+        // would rebind to that inner `if`.
+        if els_opt.is_some() && Self::then_block_can_capture_trailing_else(then) {
+            return Decision { outcome: false, is_cached: false };
+        }
+
         // If possible, take an early decision based on the block style configuration.
         match self.config.single_line_statement_blocks {
             config::SingleLineBlockStyle::Preserve
@@ -2515,6 +2522,20 @@ impl<'ast> State<'_, 'ast> {
             if let Some((_, after_paren)) = snip.split_once(')') {
                 return after_paren.lines().count() > 1;
             }
+        }
+        false
+    }
+
+    /// Returns true if `then` is a block whose single statement, when printed without
+    /// the surrounding braces, would leave an inner `if` exposed to capture a trailing
+    /// `else`. Conservatively covers `if` and `while`, whose bodies may themselves be
+    /// inlined without braces.
+    fn then_block_can_capture_trailing_else(then: &'ast ast::Stmt<'ast>) -> bool {
+        if let ast::StmtKind::Block(block) = &then.kind
+            && block.stmts.len() == 1
+            && matches!(block.stmts[0].kind, ast::StmtKind::If(..) | ast::StmtKind::While(..))
+        {
+            return true;
         }
         false
     }
