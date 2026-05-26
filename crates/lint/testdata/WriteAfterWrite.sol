@@ -32,6 +32,13 @@ contract WriteAfterWrite {
         x = v;
     }
 
+    // bad: nested assignment used as initializer; LHS is still a write
+    function bad5_nested(uint256 v) public {
+        x = 1;
+        uint256 z = (x = v);
+        z;
+    }
+
     // bad: intra-branch write-after-write inside an if body
     function bad5(bool flag, uint256 v) public {
         if (flag) {
