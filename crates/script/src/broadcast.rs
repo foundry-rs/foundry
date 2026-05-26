@@ -545,15 +545,20 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             // For addresses without an explicit signer, try Tempo keys.toml fallback.
             let mut access_keys: HashMap<SignerScope, (WalletSigner, TempoAccessKeyConfig)> =
                 HashMap::default();
-            if let Some(session_signer) = ScriptSessionSigner::resolve_any_chain(
-                &self.script_config,
-                &self.args.wallets,
-                expected_session_sender,
-            )? {
-                access_keys.insert(
-                    SignerScope::new(session_signer.chain, session_signer.root_account),
-                    (session_signer.signer, session_signer.access_key),
-                );
+            if let Some(expected_session_sender) = expected_session_sender
+                && let Some(session_signer) = ScriptSessionSigner::resolve_any_chain(
+                    &self.script_config,
+                    &self.args.wallets,
+                    Some(expected_session_sender),
+                )?
+            {
+                let scope = SignerScope::new(session_signer.chain, session_signer.root_account);
+                if remaining_transactions
+                    .iter()
+                    .any(|tx| SignerScope::new(tx.chain, tx.from) == scope)
+                {
+                    access_keys.insert(scope, (session_signer.signer, session_signer.access_key));
+                }
             }
 
             let signers: Vec<Address> = self

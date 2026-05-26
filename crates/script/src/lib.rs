@@ -271,7 +271,7 @@ impl ScriptArgs {
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
         let has_session = self.tempo.session_id()?.is_some();
-        let session_sender = if has_session && (self.resume || self.multi) {
+        let session_sender = if has_session && !self.resume && self.multi {
             self.tempo.session_sender_for_multi_wallet(&self.wallets, self.evm.sender)?
         } else if has_session && !self.resume {
             let expected_chain_id = Self::tempo_session_chain_id(&evm_opts).await;
@@ -782,6 +782,19 @@ impl<FEN: FoundryEvmNetwork> ScriptConfig<FEN> {
         Ok(())
     }
 
+    pub(crate) async fn update_tempo_session_sender(
+        &mut self,
+        wallets: &MultiWalletOpts,
+        expected_sender: Option<Address>,
+    ) -> Result<()> {
+        if let Some(sender) =
+            self.tempo.session_sender_for_multi_wallet(wallets, expected_sender)?
+        {
+            self.update_sender(sender).await?;
+        }
+        Ok(())
+    }
+
     async fn get_runner(&mut self) -> Result<ScriptRunner<FEN>> {
         self._get_runner(None, false).await
     }
@@ -1019,7 +1032,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tempo_session_resume_multi_sets_sender_without_chain_validation() {
+    async fn tempo_session_resume_multi_defers_session_sender_until_reexecution() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x55; 32]);
         let root = address!("0x1111111111111111111111111111111111111111");
@@ -1039,11 +1052,11 @@ mod tests {
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_tempo(), ..Default::default() };
 
         let state = args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await.unwrap();
-        assert_eq!(state.script_config.evm_opts.sender, root);
+        assert_ne!(state.script_config.evm_opts.sender, root);
     }
 
     #[tokio::test]
-    async fn tempo_session_resume_sets_sender_without_chain_validation() {
+    async fn tempo_session_resume_defers_session_sender_until_reexecution() {
         let temp = tempdir().unwrap();
         let session_id = B256::from([0x77; 32]);
         let root = address!("0x1111111111111111111111111111111111111111");
@@ -1062,7 +1075,7 @@ mod tests {
         let evm_opts = EvmOpts { networks: NetworkConfigs::with_tempo(), ..Default::default() };
 
         let state = args.preprocess::<TempoEvmNetwork>(Config::default(), evm_opts).await.unwrap();
-        assert_eq!(state.script_config.evm_opts.sender, root);
+        assert_ne!(state.script_config.evm_opts.sender, root);
     }
 
     #[tokio::test]

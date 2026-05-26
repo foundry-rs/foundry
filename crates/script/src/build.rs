@@ -53,6 +53,9 @@ fn available_script_signers<FEN: FoundryEvmNetwork>(
         .copied()
         .filter(|scope| signers.contains(&scope.sender()))
         .collect::<HashSet<_>>();
+    if remaining.is_empty() {
+        return Ok(available);
+    }
 
     if let Some(session) =
         script_config.tempo.session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
@@ -376,7 +379,12 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 } else {
                     // IF we are missing required signers, execute script as we might need to
                     // collect private keys from the execution.
-                    let executed = self.link().await?.prepare_execution().await?.execute().await?;
+                    let mut state = self;
+                    state
+                        .script_config
+                        .update_tempo_session_sender(&state.args.wallets, state.args.evm.sender)
+                        .await?;
+                    let executed = state.link().await?.prepare_execution().await?.execute().await?;
                     (
                         executed.args,
                         executed.build_data.build_data,
@@ -429,5 +437,60 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             )?;
             Ok(ScriptSequenceKind::Multi(sequence))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
+    use foundry_evm::core::evm::TempoEvmNetwork;
+    use std::sync::LazyLock;
+    use tokio::sync::{Mutex, MutexGuard};
+
+    static SESSION_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    struct SessionEnvGuard {
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    impl SessionEnvGuard {
+        async fn set(session_id: B256) -> Self {
+            let guard = SESSION_ENV_LOCK.lock().await;
+            // SAFETY: test-only environment override guarded by a process-wide mutex.
+            unsafe { std::env::set_var(TEMPO_SESSION_ID_ENV, format!("{session_id:?}")) };
+            Self { _guard: guard }
+        }
+    }
+
+    impl Drop for SessionEnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: restore process environment after the guarded test section.
+            unsafe { std::env::remove_var(TEMPO_SESSION_ID_ENV) };
+        }
+    }
+
+    #[tokio::test]
+    async fn available_script_signers_skips_session_resolution_when_remaining_empty() {
+        let _guard = SessionEnvGuard::set(B256::from([0x99; 32])).await;
+        let script_config = ScriptConfig::<TempoEvmNetwork>::new(
+            Default::default(),
+            Default::default(),
+            false,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        let available = available_script_signers(
+            &script_config,
+            &MultiWalletOpts::default(),
+            &Wallets::new(Default::default(), None),
+            None,
+            [],
+        )
+        .unwrap();
+
+        assert!(available.is_empty());
     }
 }
