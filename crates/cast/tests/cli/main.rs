@@ -30,6 +30,7 @@ extern crate foundry_test_utils;
 mod erc20;
 mod keychain;
 mod selectors;
+mod tempo;
 
 casttest!(print_short_version, |_prj, cmd| {
     cmd.arg("-V").assert_success().stdout_eq(str![[r#"
@@ -81,6 +82,13 @@ Display options:
 
       --json
           Format log messages as JSON
+
+      --machine
+          Activate the agent contract: disables color and wraps CLI-runtime exits (parse / usage /
+          help / version) in a structured envelope. Per-command machine output (declared
+          `output_mode`, progress and prompt suppression, canonical exit codes) is adopted
+          incrementally — see `docs/agents/spec.md` §10. Mutually exclusive with `--json` and `--md`
+          to keep machine-mode output unambiguous
 
       --md
           Format log messages as Markdown

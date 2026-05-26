@@ -1,3 +1,4 @@
+use foundry_compilers::artifacts::EvmVersion;
 use foundry_test_utils::{rpc, util::OTHER_SOLC_VERSION};
 
 // Test evm version switch during tests / scripts.
@@ -244,4 +245,34 @@ contract TempoDefaultEvmVersionTest is Test {{
     );
 
     cmd.args(["test", "--network", "tempo", "--mc", "TempoDefaultEvmVersionTest"]).assert_success();
+});
+
+// Regression test for <https://github.com/foundry-rs/foundry/issues/13040>:
+// configured evm_version must be preserved after createSelectFork / rollFork.
+forgetest_init!(test_fork_preserves_evm_version, |prj, cmd| {
+    let endpoint = rpc::next_http_archive_rpc_url();
+
+    prj.update_config(|config| {
+        config.evm_version = EvmVersion::Cancun;
+    });
+
+    prj.add_test(
+        "ForkEvmVersion.t.sol",
+        &r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ForkEvmVersionTest is Test {
+    function test_evm_version_preserved_after_fork() public {
+        assertEq(vm.getEvmVersion(), "cancun", "before fork");
+        uint256 forkId = vm.createSelectFork("<rpc>", 21000000);
+        assertEq(vm.getEvmVersion(), "cancun", "after createSelectFork");
+        vm.rollFork(21000001);
+        assertEq(vm.getEvmVersion(), "cancun", "after rollFork");
+    }
+}
+   "#
+        .replace("<rpc>", &endpoint),
+    );
+
+    cmd.args(["test", "--mc", "ForkEvmVersionTest", "-vvvv"]).assert_success();
 });

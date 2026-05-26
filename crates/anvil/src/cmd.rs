@@ -1,6 +1,6 @@
 use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
-    config::{DEFAULT_MNEMONIC, ForkChoice},
+    config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
     eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
 };
 use alloy_genesis::Genesis;
@@ -94,7 +94,7 @@ pub struct NodeArgs {
     pub block_time: Option<Duration>,
 
     /// Slots in an epoch
-    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = 32)]
+    #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = DEFAULT_SLOTS_IN_AN_EPOCH)]
     pub slots_in_an_epoch: u64,
 
     /// Writes output of `anvil` as json to user-specified file.
@@ -293,7 +293,6 @@ impl NodeArgs {
             .with_host(self.host)
             .set_silent(shell::is_quiet())
             .set_config_out(self.config_out)
-            .with_chain_id(self.evm.chain_id)
             .with_transaction_order(self.order)
             .with_genesis(self.init)
             .with_steps_tracing(self.evm.steps_tracing)
@@ -309,6 +308,9 @@ impl NodeArgs {
             .with_max_transactions(self.max_transactions)
             .with_max_persisted_states(self.max_persisted_states)
             .with_networks(self.evm.networks)
+            // Apply chain-id after explicit network flags so auto-detection can fill in
+            // defaults when no network was set, without being overwritten afterward.
+            .with_chain_id(self.evm.chain_id)
             .with_disable_default_create2_deployer(self.evm.disable_default_create2_deployer)
             .with_disable_pool_balance_checks(self.evm.disable_pool_balance_checks)
             .with_slots_in_an_epoch(self.slots_in_an_epoch)
@@ -441,7 +443,16 @@ impl NodeArgs {
                 // cleaning up and shutting down
                 // this will make sure that the fork RPC cache is flushed if caching is configured
             }
-            std::process::exit(0);
+            // Triggered by SIGINT / SIGTERM after a clean cache flush. Under
+            // the agent contract this is `Interrupted` (8); legacy human
+            // invocations preserve the historical exit-0 contract for
+            // backward compatibility.
+            let code = if foundry_cli::is_machine() {
+                foundry_cli::ExitCode::Interrupted.to_i32()
+            } else {
+                0
+            };
+            std::process::exit(code);
         });
 
         ctrlc::set_handler(move || {
@@ -949,6 +960,15 @@ mod tests {
             NodeArgs::parse_from(["anvil", "--optimism", "--hardfork", "Regolith"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, Some(OpHardfork::Regolith.into()));
+    }
+
+    #[cfg(feature = "optimism")]
+    #[test]
+    fn chain_id_infers_optimism_network_in_node_config() {
+        let args: NodeArgs = NodeArgs::parse_from(["anvil", "--chain-id", "10"]);
+        let config = args.into_node_config().unwrap();
+
+        assert!(config.networks.is_optimism());
     }
 
     #[test]

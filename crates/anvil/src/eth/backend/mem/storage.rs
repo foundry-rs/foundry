@@ -235,11 +235,11 @@ impl InMemoryBlockStates {
             .collect::<Vec<_>>();
 
         // Get on-disk state snapshots
-        self.on_disk_states.iter().for_each(|(hash, _)| {
+        for hash in self.on_disk_states.keys() {
             if let Some(state_snapshot) = self.disk_cache.read(*hash) {
                 states.push((*hash, state_snapshot));
             }
-        });
+        }
 
         SerializableHistoricalStates::new(states)
     }
