@@ -3,7 +3,7 @@ use crate::{
     multi_sequence::MultiChainSequence, sequence::ScriptSequenceKind,
 };
 use alloy_network::AnyNetwork;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, map::AddressHashSet};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
@@ -20,8 +20,39 @@ use foundry_compilers::{
 };
 use foundry_evm::{core::evm::FoundryEvmNetwork, traces::debug::ContractSources};
 use foundry_linking::Linker;
-use foundry_wallets::wallet_browser::signer::BrowserSigner;
+use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
 use std::{path::PathBuf, str::FromStr, sync::Arc};
+
+fn available_script_signers<FEN: FoundryEvmNetwork>(
+    script_config: &ScriptConfig<FEN>,
+    wallets: &MultiWalletOpts,
+    script_wallets: &Wallets,
+    expected_sender: Option<Address>,
+    chains: impl IntoIterator<Item = u64>,
+) -> Result<Vec<Address>> {
+    let mut signers = script_wallets
+        .signers()
+        .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
+
+    for chain in chains {
+        if let Some(session) =
+            script_config.tempo.session_signer_for_multi_wallet(wallets, expected_sender, chain)?
+            && !signers.contains(&session.access_key.wallet_address)
+        {
+            signers.push(session.access_key.wallet_address);
+        }
+    }
+
+    Ok(signers)
+}
+
+fn tempo_session_expected_sender(required_addresses: &[Address]) -> Result<Option<Address>> {
+    let required_addresses = required_addresses.iter().copied().collect::<AddressHashSet>();
+    if required_addresses.len() > 1 {
+        eyre::bail!("Tempo sessions require a single script sender");
+    }
+    Ok(required_addresses.into_iter().next())
+}
 
 /// Container for the compiled contracts.
 #[derive(Debug)]
@@ -301,19 +332,31 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     self.script_config,
                 )
             } else {
-                let mut froms = sequence.sequences().iter().flat_map(|s| {
-                    s.transactions
-                        .iter()
-                        .skip(s.receipts.len())
-                        .map(|t| t.transaction.from().expect("from is missing in script artifact"))
-                });
+                let remaining_froms = sequence
+                    .sequences()
+                    .iter()
+                    .flat_map(|s| {
+                        s.transactions.iter().skip(s.receipts.len()).map(|t| {
+                            t.transaction.from().expect("from is missing in script artifact")
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let remaining_chains =
+                    sequence.sequences().iter().map(|s| s.chain).collect::<Vec<_>>();
+                let expected_session_sender = if self.script_config.tempo.session_id()?.is_some() {
+                    tempo_session_expected_sender(&remaining_froms)?
+                } else {
+                    None
+                };
+                let available_signers = available_script_signers(
+                    &self.script_config,
+                    &self.args.wallets,
+                    &self.script_wallets,
+                    expected_session_sender,
+                    remaining_chains,
+                )?;
 
-                let available_signers = self
-                    .script_wallets
-                    .signers()
-                    .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
-
-                if froms.all(|from| available_signers.contains(&from)) {
+                if remaining_froms.iter().all(|from| available_signers.contains(from)) {
                     (
                         self.args,
                         self.build_data,

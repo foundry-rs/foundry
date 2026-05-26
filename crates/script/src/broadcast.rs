@@ -442,25 +442,24 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
             // For addresses without an explicit signer, try Tempo keys.toml fallback.
             let mut access_keys: AddressHashMap<(WalletSigner, TempoAccessKeyConfig)> =
-                AddressHashMap::default();
+                session_signers
+                    .into_iter()
+                    .map(|(addr, signer)| (addr, signer.into_access_key_entry()))
+                    .collect();
             let mut direct_signers: AddressHashMap<WalletSigner> = AddressHashMap::default();
             let mut missing_addresses = Vec::new();
 
             for addr in &required_addresses {
                 if !signers.contains(addr) && !access_keys.contains_key(addr) {
-                    if let Some(session_signer) = session_signers.remove(addr) {
-                        access_keys.insert(*addr, session_signer.into_access_key_entry());
-                    } else {
-                        match lookup_signer(*addr) {
-                            Ok(TempoLookup::Direct(signer)) => {
-                                direct_signers.insert(*addr, signer);
-                            }
-                            Ok(TempoLookup::Keychain(signer, config)) => {
-                                access_keys.insert(*addr, (signer, *config));
-                            }
-                            _ => {
-                                missing_addresses.push(addr);
-                            }
+                    match lookup_signer(*addr) {
+                        Ok(TempoLookup::Direct(signer)) => {
+                            direct_signers.insert(*addr, signer);
+                        }
+                        Ok(TempoLookup::Keychain(signer, config)) => {
+                            access_keys.insert(*addr, (signer, *config));
+                        }
+                        _ => {
+                            missing_addresses.push(addr);
                         }
                     }
                 }
@@ -1109,5 +1108,65 @@ impl BundledState<TempoEvmNetwork> {
             build_data: self.build_data,
             sequence: self.sequence,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_network::Ethereum;
+    use alloy_primitives::address;
+    use alloy_signer::Signer;
+
+    const ROOT_PRIVATE_KEY: &str =
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const ACCESS_KEY_PRIVATE_KEY: &str =
+        "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
+
+    #[test]
+    fn access_key_signer_takes_precedence_over_same_sender_wallet() {
+        let root = foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap();
+        let root_address = root.address();
+        let access_key =
+            foundry_wallets::utils::create_private_key_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
+        let access_key_address = access_key.address();
+        let mut eth_wallets = AddressHashMap::default();
+        eth_wallets.insert(root_address, EthereumWallet::new(root));
+        let mut access_keys = AddressHashMap::default();
+        access_keys.insert(
+            root_address,
+            (
+                access_key,
+                TempoAccessKeyConfig {
+                    wallet_address: root_address,
+                    key_address: access_key_address,
+                    key_authorization: None,
+                },
+            ),
+        );
+        let send_kind =
+            SendTransactionsKind::<Ethereum>::Raw { eth_wallets, browser: None, access_keys };
+
+        let tx = TransactionRequest { from: Some(root_address), ..Default::default() };
+        let sender = send_kind.for_sender(&root_address, tx).unwrap();
+
+        match sender {
+            SendTransactionKind::AccessKey(_, signer, access_key) => {
+                assert_eq!(signer.address(), access_key_address);
+                assert_eq!(access_key.wallet_address, root_address);
+            }
+            _ => panic!("expected access key signer"),
+        }
+    }
+
+    #[test]
+    fn session_sender_requires_single_root_account() {
+        let one = address!("0x1111111111111111111111111111111111111111");
+        let two = address!("0x2222222222222222222222222222222222222222");
+        let single_sender = [one].into_iter().collect();
+        let multiple_senders = [one, two].into_iter().collect();
+
+        assert_eq!(script_session_expected_sender(&single_sender).unwrap(), Some(one));
+        assert!(script_session_expected_sender(&multiple_senders).is_err());
     }
 }
