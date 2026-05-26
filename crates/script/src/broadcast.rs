@@ -88,6 +88,12 @@ where
     N::UnsignedTx: SignableTransaction<Signature>,
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
+    fn set_access_key_id_for_estimation(&mut self) {
+        if let Self::AccessKey(tx, _, access_key) = self {
+            tx.set_key_id(access_key.key_address);
+        }
+    }
+
     /// Prepares the transaction for broadcasting by synchronizing nonce and estimating gas.
     ///
     /// This method performs two key operations:
@@ -111,6 +117,8 @@ where
             )),
             _ => None,
         };
+
+        self.set_access_key_id_for_estimation();
 
         if let Self::Raw(tx, _)
         | Self::Unlocked(tx)
@@ -1168,5 +1176,35 @@ mod tests {
 
         assert_eq!(script_session_expected_sender(&single_sender).unwrap(), Some(one));
         assert!(script_session_expected_sender(&multiple_senders).is_err());
+    }
+
+    #[test]
+    fn access_key_sets_key_id_before_estimation() {
+        let root_address = address!("0x1111111111111111111111111111111111111111");
+        let access_key =
+            foundry_wallets::utils::create_private_key_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
+        let access_key_address = access_key.address();
+        let access_key_config = TempoAccessKeyConfig {
+            wallet_address: root_address,
+            key_address: access_key_address,
+            key_authorization: None,
+        };
+        let mut sender = SendTransactionKind::<TempoNetwork>::AccessKey(
+            TempoTransactionRequest {
+                inner: TransactionRequest { from: Some(root_address), ..Default::default() },
+                ..Default::default()
+            },
+            &access_key,
+            &access_key_config,
+        );
+
+        sender.set_access_key_id_for_estimation();
+
+        match sender {
+            SendTransactionKind::AccessKey(tx, _, _) => {
+                assert_eq!(tx.key_id, Some(access_key_address));
+            }
+            _ => panic!("expected access key transaction"),
+        }
     }
 }
