@@ -37,7 +37,7 @@
 use super::corpus_io::{CorpusDirEntry, read_corpus_dir};
 use crate::{
     executors::{Executor, RawCallResult, invariant::execute_tx},
-    inspectors::CmpOperands,
+    inspectors::{CmpOperands, EdgeIndexMap, MAX_EDGE_COUNT},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -77,7 +77,6 @@ const SYNC_DIR: &str = "sync";
 const OPTIMIZATION_BEST_FILE: &str = "optimization_best.json";
 
 const FAVORABILITY_THRESHOLD: f64 = 0.3;
-const COVERAGE_MAP_SIZE: usize = 65536;
 
 /// Threshold for compressing corpus entries.
 /// 4KiB is usually the minimum file size on popular file systems.
@@ -266,6 +265,8 @@ pub struct WorkerCorpus {
     in_memory_corpus: Vec<CorpusEntry>,
     /// History of binned hitcount of edges seen during fuzzing
     history_map: Vec<u8>,
+    /// Stable dense EVM edge IDs for this worker's history map.
+    edge_indices: EdgeIndexMap,
     /// History of binned hitcount of sancov (native Rust) edges seen during fuzzing
     sancov_history_map: Vec<u8>,
     /// Number of failed replays from initial corpus
@@ -373,8 +374,17 @@ impl WorkerCorpus {
         });
 
         let mut in_memory_corpus = vec![];
-        let mut history_map = vec![0u8; COVERAGE_MAP_SIZE];
-        let mut sancov_history_map = vec![0u8; COVERAGE_MAP_SIZE];
+        // Hash mode always merges a fixed `MAX_EDGE_COUNT` bitmap, so preallocate to
+        // avoid moving the one-time 64 KiB resize into the first merge. Collision-free
+        // and sancov maps grow on demand and start empty.
+        let mut history_map =
+            if config.collect_evm_edge_coverage() && !config.evm_edge_coverage_collision_free() {
+                vec![0u8; MAX_EDGE_COUNT]
+            } else {
+                Vec::new()
+            };
+        let mut edge_indices = EdgeIndexMap::default();
+        let mut sancov_history_map = Vec::new();
         let mut metrics = CorpusMetrics::default();
         let mut failed_replays = 0;
         let mut optimization_best_value = None;
@@ -437,8 +447,11 @@ impl WorkerCorpus {
                     if Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                         let mut call_result = execute_tx(&mut executor, tx)?;
                         cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
-                        let (new_coverage, is_edge) = call_result
-                            .merge_all_coverage(&mut history_map, &mut sancov_history_map);
+                        let (new_coverage, is_edge) = call_result.merge_all_coverage(
+                            &mut history_map,
+                            &mut edge_indices,
+                            &mut sancov_history_map,
+                        );
                         if new_coverage {
                             metrics.update_seen(is_edge);
                         }
@@ -486,6 +499,7 @@ impl WorkerCorpus {
             id,
             in_memory_corpus,
             history_map,
+            edge_indices,
             sancov_history_map,
             failed_replays,
             metrics,
@@ -636,8 +650,11 @@ impl WorkerCorpus {
             return false;
         }
 
-        let (new_coverage, is_edge) =
-            call_result.merge_all_coverage(&mut self.history_map, &mut self.sancov_history_map);
+        let (new_coverage, is_edge) = call_result.merge_all_coverage(
+            &mut self.history_map,
+            &mut self.edge_indices,
+            &mut self.sancov_history_map,
+        );
         if new_coverage {
             self.metrics.update_seen(is_edge);
         }
@@ -1126,8 +1143,11 @@ impl WorkerCorpus {
                 cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
 
                 // Check if this provides new coverage.
-                let (new_coverage, is_edge) = call_result
-                    .merge_all_coverage(&mut self.history_map, &mut self.sancov_history_map);
+                let (new_coverage, is_edge) = call_result.merge_all_coverage(
+                    &mut self.history_map,
+                    &mut self.edge_indices,
+                    &mut self.sancov_history_map,
+                );
 
                 if new_coverage {
                     self.metrics.update_seen(is_edge);
@@ -1470,8 +1490,9 @@ mod tests {
             in_memory_corpus: vec![corpus],
             current_mutated: Some(seed_uuid),
             failed_replays: 0,
-            history_map: vec![0u8; COVERAGE_MAP_SIZE],
-            sancov_history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            history_map: Vec::new(),
+            edge_indices: EdgeIndexMap::default(),
+            sancov_history_map: Vec::new(),
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
@@ -1604,8 +1625,9 @@ mod tests {
             in_memory_corpus: vec![favored, non_favored],
             current_mutated: None,
             failed_replays: 0,
-            history_map: vec![0u8; COVERAGE_MAP_SIZE],
-            sancov_history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            history_map: Vec::new(),
+            edge_indices: EdgeIndexMap::default(),
+            sancov_history_map: Vec::new(),
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
