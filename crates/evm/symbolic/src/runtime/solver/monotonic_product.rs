@@ -1,5 +1,4 @@
-use super::normalize::mul_cannot_overflow_256;
-use super::*;
+use super::{normalize::mul_cannot_overflow_256, *};
 
 /// Returns whether monotonic product facts make these constraints unsatisfiable.
 #[cfg(test)]
