@@ -551,16 +551,7 @@ impl SymbolicExecutor {
                 state.stack.push(size)?;
                 Ok(StepOutcome::Continue)
             }
-            opcode::GAS => {
-                let gas = state.fresh_word("gasleft");
-                state.constraints.push(BoolExpr::cmp(
-                    BoolExprOp::Ule,
-                    gas.clone().into_expr(),
-                    Expr::Const(U256::from(executor.gas_limit())),
-                ));
-                state.stack.push(gas)?;
-                Ok(StepOutcome::Continue)
-            }
+            opcode::GAS => Err(SymbolicError::Unsupported("GAS/gasleft() not modeled")),
             opcode::JUMPDEST => Ok(StepOutcome::Continue),
             opcode::MCOPY => {
                 let dest = state.stack.pop()?;
