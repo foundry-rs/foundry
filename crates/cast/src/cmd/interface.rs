@@ -86,13 +86,16 @@ impl InterfaceArgs {
         let interfaces = get_interfaces(abis, config)?;
 
         if let Some(loc) = output_location {
-            // Write Solidity interface to file; JSON envelope doesn't apply to file output.
-            let res = format!(
-                "// SPDX-License-Identifier: UNLICENSED\n\
-                 pragma solidity {pragma};\n\n\
-                 {}",
-                interfaces.iter().map(|iface| &iface.source).format("\n")
-            );
+            let res = if shell::is_json() {
+                interfaces.iter().map(|iface| &iface.json_abi).format("\n").to_string()
+            } else {
+                format!(
+                    "// SPDX-License-Identifier: UNLICENSED\n\
+                     pragma solidity {pragma};\n\n\
+                     {}",
+                    interfaces.iter().map(|iface| &iface.source).format("\n")
+                )
+            };
             if let Some(parent) = loc.parent() {
                 fs::create_dir_all(parent)?;
             }

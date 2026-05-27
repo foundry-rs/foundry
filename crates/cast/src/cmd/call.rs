@@ -16,7 +16,7 @@ use alloy_rpc_types::{
 use clap::Parser;
 use eyre::Result;
 use foundry_cli::{
-    json::print_scalar,
+    json::print_json_success,
     opts::{ChainValueParser, RpcOpts, TransactionOpts},
     utils::{LoadConfig, TraceResult, parse_ether_value},
 };
@@ -435,7 +435,11 @@ impl CallArgs {
                 sh_warn!("Contract code is empty")?;
             }
         }
-        print_scalar(response)?;
+        if shell::is_json() {
+            print_json_success(serde_json::from_str::<serde_json::Value>(&response)?)?;
+        } else {
+            sh_println!("{response}")?;
+        }
 
         Ok(())
     }

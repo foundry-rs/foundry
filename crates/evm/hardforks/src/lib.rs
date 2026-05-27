@@ -190,7 +190,7 @@ impl From<FoundryHardfork> for SpecId {
         match fork {
             FoundryHardfork::Ethereum(hardfork) => spec_id_from_ethereum_hardfork(hardfork),
             #[cfg(feature = "optimism")]
-            FoundryHardfork::Optimism(hardfork) => spec_id_from_optimism_hardfork(hardfork).into(),
+            FoundryHardfork::Optimism(hardfork) => eth_spec_id_from_optimism_hardfork(hardfork),
             FoundryHardfork::Tempo(hardfork) => hardfork.into(),
         }
     }
@@ -211,18 +211,18 @@ pub fn spec_id_from_ethereum_hardfork(hardfork: EthereumHardfork) -> SpecId {
     match hardfork {
         EthereumHardfork::Frontier => SpecId::FRONTIER,
         EthereumHardfork::Homestead => SpecId::HOMESTEAD,
-        EthereumHardfork::Dao => SpecId::DAO_FORK,
+        EthereumHardfork::Dao => SpecId::HOMESTEAD,
         EthereumHardfork::Tangerine => SpecId::TANGERINE,
         EthereumHardfork::SpuriousDragon => SpecId::SPURIOUS_DRAGON,
         EthereumHardfork::Byzantium => SpecId::BYZANTIUM,
-        EthereumHardfork::Constantinople => SpecId::CONSTANTINOPLE,
+        EthereumHardfork::Constantinople => SpecId::PETERSBURG,
         EthereumHardfork::Petersburg => SpecId::PETERSBURG,
         EthereumHardfork::Istanbul => SpecId::ISTANBUL,
-        EthereumHardfork::MuirGlacier => SpecId::MUIR_GLACIER,
+        EthereumHardfork::MuirGlacier => SpecId::ISTANBUL,
         EthereumHardfork::Berlin => SpecId::BERLIN,
         EthereumHardfork::London => SpecId::LONDON,
-        EthereumHardfork::ArrowGlacier => SpecId::ARROW_GLACIER,
-        EthereumHardfork::GrayGlacier => SpecId::GRAY_GLACIER,
+        EthereumHardfork::ArrowGlacier => SpecId::LONDON,
+        EthereumHardfork::GrayGlacier => SpecId::LONDON,
         EthereumHardfork::Paris => SpecId::MERGE,
         EthereumHardfork::Shanghai => SpecId::SHANGHAI,
         EthereumHardfork::Cancun => SpecId::CANCUN,
@@ -256,6 +256,21 @@ pub fn spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> OpSpecId {
     }
 }
 
+/// Map an `OptimismHardfork` enum into its corresponding Ethereum `SpecId`.
+#[cfg(feature = "optimism")]
+pub fn eth_spec_id_from_optimism_hardfork(hardfork: OpHardfork) -> SpecId {
+    match hardfork {
+        OpHardfork::Bedrock | OpHardfork::Regolith => SpecId::MERGE,
+        OpHardfork::Canyon => SpecId::SHANGHAI,
+        OpHardfork::Ecotone | OpHardfork::Fjord | OpHardfork::Granite | OpHardfork::Holocene => {
+            SpecId::CANCUN
+        }
+        OpHardfork::Isthmus | OpHardfork::Jovian | OpHardfork::Interop => SpecId::PRAGUE,
+        OpHardfork::Karst => SpecId::OSAKA,
+        f => unreachable!("unimplemented {}", f),
+    }
+}
+
 /// Trait for converting an [`EvmVersion`] into a network-specific spec type.
 pub trait FromEvmVersion: From<FoundryHardfork> {
     fn from_evm_version(version: EvmVersion) -> Self;
@@ -282,7 +297,7 @@ impl FromEvmVersion for SpecId {
             EvmVersion::TangerineWhistle => Self::TANGERINE,
             EvmVersion::SpuriousDragon => Self::SPURIOUS_DRAGON,
             EvmVersion::Byzantium => Self::BYZANTIUM,
-            EvmVersion::Constantinople => Self::CONSTANTINOPLE,
+            EvmVersion::Constantinople => Self::PETERSBURG,
             EvmVersion::Petersburg => Self::PETERSBURG,
             EvmVersion::Istanbul => Self::ISTANBUL,
             EvmVersion::Berlin => Self::BERLIN,
