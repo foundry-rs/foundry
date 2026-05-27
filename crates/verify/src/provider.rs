@@ -203,7 +203,7 @@ impl VerificationProviderType {
         // 2. `--verifier etherscan` (explicit): check chain support and require key.
         if self.is_etherscan() {
             if let Some(chain) = chain
-                && chain.etherscan_urls().is_none()
+                && (chain.etherscan_urls().is_none() || chain.is_custom_sourcify())
                 && !has_url
             {
                 eyre::bail!(EtherscanConfigError::UnknownChain(
@@ -227,9 +227,11 @@ impl VerificationProviderType {
 
         // 4. No explicit `--verifier` but ETHERSCAN_API_KEY is set: prefer Etherscan when the chain
         //    is supported; otherwise warn and fall through to the Sourcify default. See <https://github.com/foundry-rs/foundry/issues/10774>.
+        //    Custom-Sourcify chains (e.g. Tempo) register Sourcify-compatible URLs under
+        //    etherscan_urls() and are excluded here even when a URL is present.
         if has_key {
             if let Some(chain) = chain
-                && chain.etherscan_urls().is_none()
+                && (chain.etherscan_urls().is_none() || chain.is_custom_sourcify())
                 && !has_url
             {
                 sh_warn!(
@@ -292,6 +294,32 @@ mod tests {
                 assert!(err.to_string().contains("No known Etherscan API URL"));
             }
         }
+    }
+
+    // Regression: explicit --verifier etherscan on a custom-Sourcify chain (e.g. Tempo) without
+    // --verifier-url must be rejected even though etherscan_urls() returns Some for the chain.
+    #[test]
+    fn explicit_etherscan_on_custom_sourcify_chain_without_url_bails() {
+        let tempo = Chain::from(4217u64); // NamedChain::Tempo
+        let res = VerificationProviderType::Etherscan.client(Some("key"), Some(tempo), false, true);
+        assert!(res.is_err(), "expected error for Etherscan on custom-Sourcify chain w/o URL");
+    }
+
+    // Custom-Sourcify chain with an explicit --verifier-url is allowed for Etherscan.
+    #[test]
+    fn explicit_etherscan_on_custom_sourcify_chain_with_url_is_ok() {
+        let tempo = Chain::from(4217u64);
+        let res = VerificationProviderType::Etherscan.client(Some("key"), Some(tempo), true, true);
+        assert!(res.is_ok());
+    }
+
+    // Implicit ETHERSCAN_API_KEY on a custom-Sourcify chain must fall back to Sourcify, not error.
+    #[test]
+    fn implicit_etherscan_on_custom_sourcify_chain_falls_back_to_sourcify() {
+        let tempo = Chain::from(4217u64);
+        let res =
+            VerificationProviderType::Sourcify.client(Some("mykey"), Some(tempo), false, false);
+        assert!(res.is_ok(), "expected fallback to Sourcify, got error");
     }
 
     // Regression test for <https://github.com/foundry-rs/foundry/issues/10774>:

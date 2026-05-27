@@ -82,12 +82,12 @@ impl VerifierArgs {
             return v;
         }
         let has_key = etherscan_key.is_some_and(|k| !k.is_empty());
-        if has_key {
-            // Exclude chains that register Sourcify-compatible endpoints under etherscan_urls
-            // (e.g. Tempo) — those are not real Etherscan chains.
-            let chain_supports_etherscan =
-                chain.is_none_or(|c| c.etherscan_urls().is_some() && !c.is_custom_sourcify());
-            if chain_supports_etherscan || self.verifier_url.is_some() {
+        // Custom-Sourcify chains (e.g. Tempo) register Sourcify-compatible URLs under
+        // etherscan_urls() but are NOT real Etherscan chains. Skip the implicit-Etherscan path
+        // entirely for them; the caller must use `--verifier etherscan` explicitly to override.
+        if has_key && !chain.is_some_and(|c| c.is_custom_sourcify()) {
+            let chain_has_etherscan_url = chain.is_none_or(|c| c.etherscan_urls().is_some());
+            if chain_has_etherscan_url || self.verifier_url.is_some() {
                 return VerificationProviderType::Etherscan;
             }
         }
@@ -291,9 +291,21 @@ impl VerifyArgs {
             .map(|c| c.key)
             .or_else(|| config.etherscan_api_key.clone());
 
-        // For chains with Sourcify-compatible APIs, use the chain's URL from etherscan_urls
-        if self.verifier.effective_type().is_sourcify()
-            && self.verifier.verifier_url.is_none()
+        // Capture whether the user explicitly provided a verifier URL *before* any auto-injection.
+        // This is passed to `client()` so that an auto-injected Sourcify URL does not look like a
+        // user-supplied Etherscan-compatible URL and cause the wrong provider to be selected.
+        let had_user_verifier_url = self.verifier.verifier_url.is_some();
+
+        // Resolve provider BEFORE URL injection so that the auto-injected Sourcify URL cannot
+        // influence routing. For custom-Sourcify chains (e.g. Tempo), etherscan_urls() returns
+        // Some but is_custom_sourcify() excludes them from the Etherscan path in resolve().
+        let etherscan_key = self.etherscan.key();
+        let resolved = self.verifier.resolve(etherscan_key.as_deref(), self.etherscan.chain);
+
+        // For chains with Sourcify-compatible APIs, inject their URL only when we've resolved to
+        // Sourcify and the user did not already supply a --verifier-url.
+        if resolved.is_sourcify()
+            && !had_user_verifier_url
             && let Some(url) = sourcify_api_url(chain)
         {
             self.verifier.verifier_url = Some(url);
@@ -323,16 +335,12 @@ impl VerifyArgs {
         {
             sh_println!("Constructor args: {args}")?
         }
-        // Use the centralized resolver so the URL hint reflects the provider that will actually
-        // be used (rather than re-encoding the routing rules here).
-        let etherscan_key = self.etherscan.key();
-        let resolved = self.verifier.resolve(etherscan_key.as_deref(), self.etherscan.chain);
         let using_etherscan = resolved.is_etherscan();
         resolved
             .client(
                 etherscan_key.as_deref(),
                 self.etherscan.chain,
-                self.verifier.verifier_url.is_some(),
+                had_user_verifier_url,
                 self.verifier.is_explicitly_set(),
             )?
             .verify(self, context)
@@ -681,5 +689,29 @@ mod tests {
     fn resolve_implicit_no_key_falls_back_to_sourcify() {
         let args = VerifierArgs { verifier: None, verifier_api_key: None, verifier_url: None };
         assert_eq!(args.resolve(None, Some(Chain::mainnet())), VerificationProviderType::Sourcify,);
+    }
+
+    // Regression: custom-Sourcify chains (e.g. Tempo) register Sourcify-compatible URLs under
+    // etherscan_urls(). An implicit ETHERSCAN_API_KEY must NOT route them to Etherscan.
+    #[test]
+    fn resolve_implicit_with_key_and_custom_sourcify_chain_falls_back_to_sourcify() {
+        let tempo = Chain::from(4217u64); // NamedChain::Tempo
+        assert!(tempo.is_custom_sourcify(), "sanity: Tempo should be is_custom_sourcify");
+        let args = VerifierArgs { verifier: None, verifier_api_key: None, verifier_url: None };
+        assert_eq!(args.resolve(Some("mykey"), Some(tempo)), VerificationProviderType::Sourcify,);
+    }
+
+    // Ensure the is_custom_sourcify() guard holds even when a URL is present (e.g. the URL was
+    // auto-injected by run()). A user-supplied --verifier-url on a custom-Sourcify chain with a
+    // key should still resolve to Sourcify, not Etherscan.
+    #[test]
+    fn resolve_custom_sourcify_chain_with_url_and_key_stays_sourcify() {
+        let tempo = Chain::from(4217u64);
+        let args = VerifierArgs {
+            verifier: None,
+            verifier_api_key: None,
+            verifier_url: Some("https://contracts.tempo.xyz/".to_string()),
+        };
+        assert_eq!(args.resolve(Some("mykey"), Some(tempo)), VerificationProviderType::Sourcify,);
     }
 }
