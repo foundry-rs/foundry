@@ -31,6 +31,9 @@ impl SymbolicExecutor {
             BoolExpr::Const(true) => Ok(CheatcodeOutcome::Continue(Vec::new())),
             BoolExpr::Const(false) => Ok(CheatcodeOutcome::AssumeRejected),
             condition => {
+                if bool_contains_gasleft(&condition) {
+                    return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+                }
                 state.constraints.push(condition);
                 if self.solver.is_sat(&state.constraints)? {
                     Ok(CheatcodeOutcome::Continue(Vec::new()))
@@ -49,6 +52,9 @@ impl SymbolicExecutor {
         max: usize,
         reason: &'static str,
     ) -> Result<usize, SymbolicError> {
+        if word.contains_gasleft() {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
         let expr = word.clone().into_expr();
         let mut above_max = state.constraints.clone();
         above_max.push(BoolExpr::cmp(BoolExprOp::Ugt, expr.clone(), Expr::Const(U256::from(max))));
@@ -82,6 +88,9 @@ impl SymbolicExecutor {
         word: &SymWord,
         min: usize,
     ) -> Result<bool, SymbolicError> {
+        if word.contains_gasleft() {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
         let condition =
             BoolExpr::cmp(BoolExprOp::Uge, word.clone().into_expr(), Expr::Const(U256::from(min)));
         match condition {

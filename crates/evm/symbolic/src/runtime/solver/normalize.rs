@@ -45,7 +45,11 @@ pub(crate) fn normalize_expr_for_solver(expr: Expr) -> Expr {
     }
 
     match expr {
-        Expr::Const(_) | Expr::Var(_) | Expr::Keccak { .. } | Expr::Hash { .. } => expr,
+        Expr::Const(_)
+        | Expr::Var(_)
+        | Expr::GasLeft(_)
+        | Expr::Keccak { .. }
+        | Expr::Hash { .. } => expr,
         Expr::Not(value) => Expr::Not(Box::new(normalize_expr_for_solver(*value))),
         Expr::Op(op, left, right) => {
             let left = normalize_expr_for_solver(*left);
@@ -233,7 +237,7 @@ pub(crate) fn bool_from_word_expr(expr: &Expr) -> Option<BoolExpr> {
 /// Returns whether a word expression syntactically contains unsigned division.
 pub(crate) fn expr_contains_udiv(expr: &Expr) -> bool {
     match expr {
-        Expr::Const(_) | Expr::Var(_) => false,
+        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) => false,
         Expr::Keccak { len, bytes, .. } => {
             expr_contains_udiv(len) || bytes.iter().any(expr_contains_udiv)
         }

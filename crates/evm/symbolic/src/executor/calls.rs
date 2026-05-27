@@ -13,7 +13,11 @@ impl SymbolicExecutor {
         let pre_call_state = state.clone();
         let call_pc = state.pc.saturating_sub(1);
         let gas = state.stack.pop()?;
+        if gas.contains_gasleft() && !gas.is_raw_gasleft() {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
         let target = state.stack.pop()?;
+        ensure_word_not_gasleft(&target)?;
         let target_address = state.world.resolve_address(&target);
         let value = match (kind, target_address) {
             (CallKind::Call, Some(to)) if is_known_cheatcode(to) => {
@@ -25,8 +29,11 @@ impl SymbolicExecutor {
             (CallKind::CallCode, _) => state.stack.pop()?,
             (CallKind::StaticCall | CallKind::DelegateCall, _) => SymWord::zero(),
         };
+        ensure_word_not_gasleft(&value)?;
         let in_offset = state.stack.pop()?;
+        ensure_word_not_gasleft(&in_offset)?;
         let in_size = state.stack.pop()?;
+        ensure_word_not_gasleft(&in_size)?;
         let in_size = match state.constrained_usize(&in_size) {
             Some(size) => BoundedCopySize::Concrete(size),
             None if state.constrained_word(&in_size).is_some() => {
@@ -50,7 +57,9 @@ impl SymbolicExecutor {
             }
         };
         let out_offset = state.stack.pop()?;
+        ensure_word_not_gasleft(&out_offset)?;
         let out_size = state.stack.pop()?;
+        ensure_word_not_gasleft(&out_size)?;
         let out_size = match state.constrained_usize(&out_size) {
             Some(size) => BoundedCopySize::Concrete(size),
             None if state.constrained_word(&out_size).is_some() => {
@@ -79,8 +88,12 @@ impl SymbolicExecutor {
             return Ok(StepOutcome::Revert);
         }
 
+        let call_input = call_input_from_memory(&state.memory, in_offset.clone(), &in_size);
+        if call_input.iter().any(SymWord::contains_gasleft) {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
+
         if let Some(to) = target_address {
-            let call_input = call_input_from_memory(&state.memory, in_offset.clone(), &in_size);
             if self.branch_symbolic_function_mock_if_needed(
                 state,
                 worklist,
@@ -660,6 +673,9 @@ impl SymbolicExecutor {
             BoolExpr::Const(true) => Ok((state.constraints.clone(), true)),
             BoolExpr::Const(false) => Ok((state.constraints.clone(), false)),
             condition => {
+                if bool_contains_gasleft(&condition) {
+                    return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+                }
                 let mut constraints = state.constraints.clone();
                 constraints.push(condition);
                 let sat = self.solver.is_sat(&constraints)?;
@@ -1387,5 +1403,13 @@ impl SymbolicExecutor {
         *state = first;
         spill_batch(parents, worklist, self.config.exploration_order);
         Ok(StepOutcome::Continue)
+    }
+}
+
+fn ensure_word_not_gasleft(word: &SymWord) -> Result<(), SymbolicError> {
+    if word.contains_gasleft() {
+        Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"))
+    } else {
+        Ok(())
     }
 }
