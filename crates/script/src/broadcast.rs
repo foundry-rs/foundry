@@ -310,16 +310,10 @@ impl ScriptSessionSigner {
         expected_sender: Option<Address>,
         expected_chain_id: u64,
     ) -> Result<Option<Self>> {
-        let Some(resolved) = script_config.tempo.session_signer_for_multi_wallet(
-            wallets,
-            expected_sender,
-            expected_chain_id,
-        )?
-        else {
-            return Ok(None);
-        };
-
-        Ok(Some(resolved.into()))
+        script_config
+            .tempo
+            .session_signer_for_multi_wallet(wallets, expected_sender, expected_chain_id)
+            .map(|session| session.map(Into::into))
     }
 
     /// Resolves the active Tempo session without imposing a command-level chain.
@@ -330,14 +324,10 @@ impl ScriptSessionSigner {
         wallets: &foundry_wallets::MultiWalletOpts,
         expected_sender: Option<Address>,
     ) -> Result<Option<Self>> {
-        let Some(resolved) = script_config
+        script_config
             .tempo
-            .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
-        else {
-            return Ok(None);
-        };
-
-        Ok(Some(resolved.into()))
+            .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)
+            .map(|session| session.map(Into::into))
     }
 }
 
@@ -439,6 +429,12 @@ pub(crate) fn script_session_expected_sender_if_configured<FEN: FoundryEvmNetwor
 pub(crate) struct RemainingScriptTransaction {
     pub(crate) chain: u64,
     pub(crate) from: Address,
+}
+
+impl RemainingScriptTransaction {
+    pub(crate) const fn scope(&self) -> SignerScope {
+        SignerScope::new(self.chain, self.from)
+    }
 }
 
 pub(crate) fn remaining_unsigned_transactions<N: Network>(
@@ -596,7 +592,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let mut missing_addresses = Vec::new();
 
             for tx in &remaining_transactions {
-                let scope = SignerScope::new(tx.chain, tx.from);
+                let scope = tx.scope();
                 if !signers.contains(&tx.from) && !access_keys.contains_key(&scope) {
                     match lookup_signer_for_chain(tx.from, tx.chain) {
                         Ok(TempoLookup::Direct(signer)) => {
@@ -635,19 +631,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
         let tempo_sponsor = self.script_config.tempo.sponsor_config().await?.map(Arc::new);
         if tempo_sponsor.is_some() && self.script_config.tempo.sponsor_sig.is_some() {
-            let remaining = self
-                .sequence
-                .sequences()
-                .iter()
-                .map(|sequence| {
-                    sequence
-                        .transactions()
-                        .skip(sequence.receipts.len())
-                        .filter(|tx| tx.is_unsigned())
-                        .count()
-                })
-                .sum::<usize>();
-            if remaining > 1 {
+            if remaining_transactions.len() > 1 {
                 eyre::bail!(
                     "--tempo.sponsor-sig can only sponsor one remaining script transaction; use --tempo.sponsor-signer for multi-transaction scripts"
                 );

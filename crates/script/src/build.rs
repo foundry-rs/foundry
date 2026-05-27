@@ -356,10 +356,8 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     &self.script_config,
                     &remaining_froms,
                 )?;
-                let remaining_signers = remaining_transactions
-                    .iter()
-                    .map(|tx| SignerScope::new(tx.chain, tx.from))
-                    .collect::<HashSet<_>>();
+                let remaining_signers =
+                    remaining_transactions.iter().map(|tx| tx.scope()).collect::<HashSet<_>>();
                 let available_signers = available_script_signers(
                     &self.script_config,
                     &self.args.wallets,
