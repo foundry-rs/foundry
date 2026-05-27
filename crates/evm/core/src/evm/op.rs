@@ -109,9 +109,7 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
         let mut frame_result =
             handler.inspect_run_exec_loop(self, first_frame_input).map_err(map_op_error)?;
 
-        handler
-            .last_frame_result(self, reservoir, &mut frame_result)
-            .map_err(map_op_error)?;
+        handler.last_frame_result(self, reservoir, &mut frame_result).map_err(map_op_error)?;
 
         Ok(frame_result)
     }
