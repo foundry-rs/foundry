@@ -341,6 +341,31 @@ impl ScriptSessionSigner {
     }
 }
 
+fn insert_session_access_key_for_remaining_transactions(
+    access_keys: &mut HashMap<SignerScope, (WalletSigner, TempoAccessKeyConfig)>,
+    session_signer: ScriptSessionSigner,
+    remaining_transactions: &[RemainingScriptTransaction],
+) -> Result<()> {
+    if let Some(tx) = remaining_transactions
+        .iter()
+        .find(|tx| tx.from == session_signer.root_account && tx.chain != session_signer.chain)
+    {
+        eyre::bail!(
+            "Tempo session is for chain {}, but a remaining transaction from session root {} is on chain {}",
+            session_signer.chain,
+            session_signer.root_account,
+            tx.chain
+        );
+    }
+
+    let scope = SignerScope::new(session_signer.chain, session_signer.root_account);
+    if remaining_transactions.iter().any(|tx| SignerScope::new(tx.chain, tx.from) == scope) {
+        access_keys.insert(scope, (session_signer.signer, session_signer.access_key));
+    }
+
+    Ok(())
+}
+
 /// Looks up a Tempo wallet signer scoped to the transaction chain.
 ///
 /// Tempo `keys.toml` entries are stored per `(wallet_address, chain_id)`, and access-key
@@ -552,13 +577,11 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
                     Some(expected_session_sender),
                 )?
             {
-                let scope = SignerScope::new(session_signer.chain, session_signer.root_account);
-                if remaining_transactions
-                    .iter()
-                    .any(|tx| SignerScope::new(tx.chain, tx.from) == scope)
-                {
-                    access_keys.insert(scope, (session_signer.signer, session_signer.access_key));
-                }
+                insert_session_access_key_for_remaining_transactions(
+                    &mut access_keys,
+                    session_signer,
+                    &remaining_transactions,
+                )?;
             }
 
             let signers: Vec<Address> = self
@@ -1333,6 +1356,74 @@ mod tests {
             }
             _ => panic!("expected root wallet signer for non-session chain"),
         }
+    }
+
+    #[test]
+    fn session_access_key_rejects_session_root_on_wrong_chain() {
+        let root = foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap();
+        let root_address = root.address();
+        let access_key =
+            foundry_wallets::utils::create_private_key_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
+        let access_key_address = access_key.address();
+        let session_signer = ScriptSessionSigner {
+            chain: 4217,
+            root_account: root_address,
+            signer: access_key,
+            access_key: TempoAccessKeyConfig {
+                wallet_address: root_address,
+                key_address: access_key_address,
+                key_authorization: None,
+            },
+        };
+        let remaining = [RemainingScriptTransaction { chain: 1, from: root_address }];
+        let mut access_keys = HashMap::default();
+
+        let err = insert_session_access_key_for_remaining_transactions(
+            &mut access_keys,
+            session_signer,
+            &remaining,
+        )
+        .unwrap_err();
+
+        assert!(access_keys.is_empty());
+        let message = err.to_string();
+        assert!(message.contains("Tempo session is for chain 4217"), "{message}");
+        assert!(message.contains("transaction from session root"), "{message}");
+        assert!(message.contains("chain 1"), "{message}");
+    }
+
+    #[test]
+    fn session_access_key_is_inserted_for_session_chain() {
+        let root = foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap();
+        let root_address = root.address();
+        let access_key =
+            foundry_wallets::utils::create_private_key_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
+        let access_key_address = access_key.address();
+        let session_signer = ScriptSessionSigner {
+            chain: 4217,
+            root_account: root_address,
+            signer: access_key,
+            access_key: TempoAccessKeyConfig {
+                wallet_address: root_address,
+                key_address: access_key_address,
+                key_authorization: None,
+            },
+        };
+        let remaining = [RemainingScriptTransaction { chain: 4217, from: root_address }];
+        let mut access_keys = HashMap::default();
+
+        insert_session_access_key_for_remaining_transactions(
+            &mut access_keys,
+            session_signer,
+            &remaining,
+        )
+        .unwrap();
+
+        let (signer, config) =
+            access_keys.get(&SignerScope::new(4217, root_address)).expect("session access key");
+        assert_eq!(signer.address(), access_key_address);
+        assert_eq!(config.wallet_address, root_address);
+        assert_eq!(config.key_address, access_key_address);
     }
 
     #[test]
