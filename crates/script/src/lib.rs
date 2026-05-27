@@ -270,8 +270,7 @@ impl ScriptArgs {
         config: Config,
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
-        let has_session = self.tempo.session_id()?.is_some();
-        let session_sender = if has_session && !self.resume {
+        let session_sender = if !self.resume {
             // Initial scripts may only reveal multi-chain transactions during execution. Use the
             // session root as the script sender here and validate chain scope during broadcast.
             self.tempo.session_sender_for_multi_wallet(&self.wallets, self.evm.sender)?

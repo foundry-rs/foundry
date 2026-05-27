@@ -76,7 +76,13 @@ impl TempoOpts {
         wallets: &MultiWalletOpts,
         expected_sender: Option<Address>,
     ) -> Result<Option<ResolvedSessionSigner>> {
-        self.resolve_multi_wallet_session(wallets, expected_sender)
+        let Some(session_id) = self.session_id()? else {
+            return Ok(None);
+        };
+        ensure_no_explicit_multi_wallet_signer(wallets)?;
+        let resolved = resolve_session(session_id)?;
+        ensure_expected_sender(expected_sender, resolved.access_key.wallet_address)?;
+        Ok(Some(resolved))
     }
 
     /// Resolves only the root sender for a configured Tempo wallet session.
@@ -90,22 +96,8 @@ impl TempoOpts {
         expected_sender: Option<Address>,
     ) -> Result<Option<Address>> {
         Ok(self
-            .resolve_multi_wallet_session(wallets, expected_sender)?
+            .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
             .map(|resolved| resolved.access_key.wallet_address))
-    }
-
-    fn resolve_multi_wallet_session(
-        &self,
-        wallets: &MultiWalletOpts,
-        expected_sender: Option<Address>,
-    ) -> Result<Option<ResolvedSessionSigner>> {
-        let Some(session_id) = self.session_id()? else {
-            return Ok(None);
-        };
-        ensure_no_explicit_multi_wallet_signer(wallets)?;
-        let resolved = resolve_session(session_id)?;
-        ensure_expected_sender(expected_sender, resolved.access_key.wallet_address)?;
-        Ok(Some(resolved))
     }
 }
 

@@ -287,11 +287,7 @@ fn insert_session_access_key_for_remaining_transactions(
 ) -> Result<()> {
     let session_scope = SignerScope::new(session.session.chain_id, session.session.root_account);
     let mut should_insert = false;
-    for tx in remaining_transactions {
-        if tx.from != session.session.root_account {
-            continue;
-        }
-
+    for tx in remaining_transactions.iter().filter(|tx| tx.from == session.session.root_account) {
         if tx.chain != session.session.chain_id {
             eyre::bail!(
                 "Tempo session is for chain {}, but a remaining transaction from session root {} is on chain {}",
