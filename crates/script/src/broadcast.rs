@@ -310,6 +310,31 @@ fn build_lookup(entry: &KeyEntry) -> Result<TempoLookup> {
     Ok(TempoLookup::Keychain(signer, Box::new(config)))
 }
 
+/// Like [`build_lookup`] but strips `key_authorization` since the entry is chain-0 and its
+/// authorization was not issued for the target chain.
+fn build_lookup_chain0_fallback(entry: &KeyEntry, chain: u64) -> Result<TempoLookup> {
+    let Some(ref key) = entry.key else {
+        return Ok(TempoLookup::NotFound);
+    };
+    let signer = foundry_wallets::utils::create_private_key_signer(key)?;
+    let Some(key_address) = entry.key_address.filter(|ka| *ka != entry.wallet_address) else {
+        return Ok(TempoLookup::Direct(signer));
+    };
+    if entry.key_authorization.is_some() {
+        warn!(
+            "keys.toml entry for {} has no chain_id — \
+             key_authorization ignored for chain {chain} broadcast",
+            entry.wallet_address
+        );
+    }
+    let config = TempoAccessKeyConfig {
+        wallet_address: entry.wallet_address,
+        key_address,
+        key_authorization: None,
+    };
+    Ok(TempoLookup::Keychain(signer, Box::new(config)))
+}
+
 /// Looks up a Tempo wallet signer scoped to the transaction chain.
 ///
 /// Prefers an entry whose `(wallet_address, chain_id)` both match. Falls back to an entry with
@@ -346,7 +371,7 @@ fn lookup_signer_in(from: Address, chain: u64, file: &KeysFile) -> Result<TempoL
             fallback = Some(entry);
         }
     }
-    fallback.map(build_lookup).unwrap_or(Ok(TempoLookup::NotFound))
+    fallback.map(|e| build_lookup_chain0_fallback(e, chain)).unwrap_or(Ok(TempoLookup::NotFound))
 }
 
 /// Returns the single sender a Tempo session is allowed to cover.
