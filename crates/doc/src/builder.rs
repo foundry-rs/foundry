@@ -88,7 +88,10 @@ impl DocBuilder {
         let pages_dir = out.join("src").join("pages");
         let render_started = Instant::now();
 
-        let ignored = expand_globs(&self.root, self.config.ignore.iter()).unwrap_or_default();
+        let ignored = expand_globs(&self.root, self.config.ignore.iter()).unwrap_or_else(|e| {
+            warn!("doc.ignore: failed to expand globs: {e}");
+            Default::default()
+        });
 
         let mut sources: Vec<(PathBuf, bool)> = source_files_iter(&self.sources, SOLC_EXTENSIONS)
             .filter(|p| !ignored.contains(p) && !ignored.contains(&self.root.join(p)))

@@ -63,11 +63,14 @@ pub fn write_site_files(
     } else {
         homepage_content
     };
+    let homepage_content = escape_mdx_outside_code_fences(&homepage_content);
     let index_path = out_dir.join("src").join("pages").join("index.mdx");
     if let Some(parent) = index_path.parent() {
         fs::create_dir_all(parent)?;
     }
-    write_if_absent(&index_path, &homepage_content)?;
+    // Always regenerate: unlike user-editable scaffold files, index.mdx is
+    // derived from README and must reflect the latest source on every run.
+    fs::write(&index_path, &homepage_content)?;
 
     Ok(())
 }
@@ -314,6 +317,45 @@ fn build_source_to_url(pages: &[PathBuf]) -> SourceToUrl {
     map
 }
 
+/// Escape MDX-sensitive characters (`{` and `<`) in plain-text regions of a
+/// Markdown document, leaving fenced code blocks (` ``` ` or `~~~`) untouched.
+///
+/// Without this, README content with template placeholders like `{FOO}` or
+/// HTML-like tokens like `<TOKEN>` would be interpreted as MDX expressions/JSX
+/// and break `vocs dev` / `vocs build`.
+fn escape_mdx_outside_code_fences(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_fence = false;
+    let mut fence_marker = "";
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if in_fence {
+            out.push_str(line);
+            if trimmed.starts_with(fence_marker) {
+                in_fence = false;
+            }
+        } else if trimmed.starts_with("```") {
+            in_fence = true;
+            fence_marker = "```";
+            out.push_str(line);
+        } else if trimmed.starts_with("~~~") {
+            in_fence = true;
+            fence_marker = "~~~";
+            out.push_str(line);
+        } else {
+            // Escape `{` and bare `<` (not already `&lt;` or a known entity).
+            for ch in line.chars() {
+                match ch {
+                    '{' => out.push_str(r"\{"),
+                    '<' => out.push_str("&lt;"),
+                    c => out.push(c),
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Rewrite inline `[text](url)` markdown links in the homepage:
 /// * `.sol` paths that resolve to a known page → vocs URL.
 /// * Any other relative path under `root` → `{repo}/blob/{commit}/...`.
@@ -498,5 +540,46 @@ mod tests {
         // Absolute URL and pure anchor untouched.
         assert!(out.contains("[ext](https://x.com)"));
         assert!(out.contains("[anchor](#section)"));
+    }
+
+    #[test]
+    fn escape_mdx_leaves_code_fences_alone() {
+        let input = "\
+# Title
+
+Plain text with {placeholder} and <TOKEN> here.
+
+```solidity
+contract Foo {
+    mapping(address => uint256) public balances;
+}
+```
+
+More text: {another} and <bar/>.
+
+~~~shell
+echo {not escaped}
+~~~
+
+End {brace}.
+";
+        let out = escape_mdx_outside_code_fences(input);
+
+        // Plain-text regions: { → \{ and < → &lt;  (} and > are left alone).
+        assert!(out.contains(r"\{placeholder}"), "{{ in plain text should be escaped");
+        assert!(out.contains("&lt;TOKEN>"), "< in plain text should be escaped");
+        assert!(out.contains(r"\{another}"));
+        assert!(out.contains("&lt;bar/>"));
+        assert!(out.contains(r"\{brace}"));
+
+        // Inside ``` fences: untouched.
+        assert!(
+            out.contains("mapping(address => uint256)"),
+            "code fence content must be unchanged"
+        );
+        assert!(!out.contains(r"mapping(address => uint256\)"), "no stray escaping inside fence");
+
+        // Inside ~~~ fences: untouched.
+        assert!(out.contains("echo {not escaped}"), "~~~ fence content must be unchanged");
     }
 }
