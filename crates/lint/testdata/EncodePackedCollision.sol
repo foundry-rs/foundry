@@ -83,6 +83,17 @@ contract EncodePackedCollision {
     }
 }
 
+// SHOULD NOT WARN: overloaded function, must pick the correct overload based on arg type
+contract OverloadFP {
+    function f(uint256) internal pure returns (string memory) { return ""; }
+    function f(bytes32) internal pure returns (uint256) { return 1; }
+
+    // f(x) resolves to f(bytes32) → returns uint256 (not dynamic); only s is dynamic → no warn
+    function g(bytes32 x, string memory s) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(f(x), s));
+    }
+}
+
 interface IERC20Metadata {
     function name() external view returns (string memory);
     function symbol() external view returns (string memory);

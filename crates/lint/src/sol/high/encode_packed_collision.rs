@@ -91,26 +91,39 @@ fn call_return_type<'hir>(
         // Type cast: bytes(x), string(x) — the result type is the cast target
         ExprKind::Type(ty) => Some(ty),
         // Direct function call: getString(), getBytes()
+        // If multiple function resolutions exist (overloads), we can't determine which was
+        // called without argument types, return None to avoid false positives.
         ExprKind::Ident(resolutions) => {
-            let fid = resolutions.iter().find_map(|r| {
-                if let Res::Item(ItemId::Function(fid)) = r { Some(*fid) } else { None }
-            })?;
-            let [ret] = hir.function(fid).returns else { return None };
+            let fids: Vec<_> = resolutions
+                .iter()
+                .filter_map(|r| {
+                    if let Res::Item(ItemId::Function(fid)) = r { Some(*fid) } else { None }
+                })
+                .collect();
+            let [fid] = fids.as_slice() else { return None };
+            let [ret] = hir.function(*fid).returns else { return None };
             Some(&hir.variable(*ret).ty)
         }
         // Member call: token.name(), token.symbol(), etc.
+        // If multiple functions share the method name (overloads), return None to avoid
+        // false positives from picking the wrong overload.
         ExprKind::Member(recv, method) => {
             let cid = contract_id_of(hir, recv)?;
-            hir.contract_item_ids(cid).find_map(|item| {
-                let fid = item.as_function()?;
-                let f = hir.function(fid);
-                if f.name.is_some_and(|n| n.name == method.name) {
-                    let [ret] = f.returns else { return None };
-                    Some(&hir.variable(*ret).ty)
-                } else {
-                    None
-                }
-            })
+            let matches: Vec<_> = hir
+                .contract_item_ids(cid)
+                .filter_map(|item| {
+                    let fid = item.as_function()?;
+                    let f = hir.function(fid);
+                    if f.name.is_some_and(|n| n.name == method.name) {
+                        let [ret] = f.returns else { return None };
+                        Some(&hir.variable(*ret).ty)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let [ty] = matches.as_slice() else { return None };
+            Some(*ty)
         }
         // Indirect call via a function-typed value
         _ => match &expr_type(hir, callee)?.kind {
