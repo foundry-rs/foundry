@@ -83,7 +83,10 @@ impl VerifierArgs {
         }
         let has_key = etherscan_key.is_some_and(|k| !k.is_empty());
         if has_key {
-            let chain_supports_etherscan = chain.is_none_or(|c| c.etherscan_urls().is_some());
+            // Exclude chains that register Sourcify-compatible endpoints under etherscan_urls
+            // (e.g. Tempo) — those are not real Etherscan chains.
+            let chain_supports_etherscan =
+                chain.is_none_or(|c| c.etherscan_urls().is_some() && !c.is_custom_sourcify());
             if chain_supports_etherscan || self.verifier_url.is_some() {
                 return VerificationProviderType::Etherscan;
             }
