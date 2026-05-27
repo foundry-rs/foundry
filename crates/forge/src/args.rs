@@ -2,7 +2,7 @@ use crate::{
     cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch},
     opts::{Forge, ForgeSubcommand},
 };
-use clap::{CommandFactory, Parser};
+use clap::CommandFactory;
 use clap_complete::generate;
 use eyre::Result;
 use foundry_cli::utils;
@@ -13,12 +13,13 @@ use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 pub fn run() -> Result<()> {
     // Pre-parse discovery flags run before `setup()` so they cannot be blocked
     // by panic-handler / tracing init failures and avoid that init's cost.
+    foundry_cli::machine::check_machine();
     foundry_cli::opts::GlobalArgs::check_introspect::<Forge>();
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Forge>();
 
     setup()?;
 
-    let args = Forge::parse();
+    let args = foundry_cli::parse_or_exit::<Forge>();
     args.global.init()?;
 
     run_command(args)
@@ -151,7 +152,7 @@ mod tests {
     use super::*;
     use foundry_cli::introspect::{
         CommandRegistry, INTROSPECT_SCHEMA_ID, IntrospectDocument, build_document,
-        duplicate_command_ids, render_introspect_document,
+        capability_violations, duplicate_command_ids, render_introspect_document,
     };
 
     /// Every `command_id` exposed by `forge --introspect` MUST be unique.
@@ -160,7 +161,7 @@ mod tests {
     /// downstream tooling.
     #[test]
     fn introspect_command_ids_are_unique() {
-        let cmd = <Forge as clap::CommandFactory>::command();
+        let cmd = Forge::command();
         let doc = build_document(&cmd, &CommandRegistry::EMPTY);
         let dups = duplicate_command_ids(&doc);
         assert!(dups.is_empty(), "duplicate forge command_ids: {dups:?}");
@@ -170,10 +171,21 @@ mod tests {
     /// the canonical `IntrospectDocument` shape.
     #[test]
     fn introspect_document_is_valid_json() {
-        let cmd = <Forge as clap::CommandFactory>::command();
+        let cmd = Forge::command();
         let json = render_introspect_document(&cmd, &CommandRegistry::EMPTY);
         let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
         assert_eq!(doc.binary.name, "forge");
+    }
+
+    /// Capability self-consistency: any command declaring an output mode
+    /// must wire the matching schema reference. See
+    /// [`capability_violations`].
+    #[test]
+    fn introspect_capabilities_are_consistent() {
+        let cmd = Forge::command();
+        let doc = build_document(&cmd, &CommandRegistry::EMPTY);
+        let v = capability_violations(&doc);
+        assert!(v.is_empty(), "forge capability violations: {v:?}");
     }
 }

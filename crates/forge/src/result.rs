@@ -186,6 +186,10 @@ impl TestOutcome {
     }
 
     /// Checks if there are any failures and failures are disallowed.
+    //
+    // Exit-code policy: under `--machine` we honor the agent contract
+    // ([`ExitCode::TestFailure`]); legacy invocations preserve the
+    // historical exit-1 contract that scripts and CIs already depend on.
     pub fn ensure_ok(&self, silent: bool) -> eyre::Result<()> {
         let outcome = self;
         let failures = outcome.failures().count();
@@ -194,7 +198,7 @@ impl TestOutcome {
         }
 
         if shell::is_quiet() || silent {
-            std::process::exit(1);
+            std::process::exit(test_failure_exit_code());
         }
 
         sh_println!("\nFailing tests:")?;
@@ -238,7 +242,7 @@ impl TestOutcome {
             )?;
         }
 
-        std::process::exit(1);
+        std::process::exit(test_failure_exit_code());
     }
 
     /// Removes first test result, if any.
@@ -252,6 +256,11 @@ impl TestOutcome {
             }
         })
     }
+}
+
+/// Process exit code emitted when at least one test failed.
+fn test_failure_exit_code() -> i32 {
+    if foundry_cli::is_machine() { foundry_cli::ExitCode::TestFailure.to_i32() } else { 1 }
 }
 
 /// A set of test results for a single test suite, which is all the tests in a single contract.
@@ -1129,6 +1138,27 @@ impl TestResult {
         self.duration = Duration::default();
     }
 
+    /// Records a successful showmap replay result.
+    pub fn replay_result(
+        &mut self,
+        corpus_entries: usize,
+        showmap_files: usize,
+        skipped_entries: usize,
+        duration: Duration,
+    ) {
+        self.kind = TestKind::Replay { corpus_entries, showmap_files, skipped_entries };
+        self.status = TestStatus::Success;
+        self.duration = duration;
+    }
+
+    /// Records a skipped showmap replay (e.g. unit test or no corpus available).
+    pub fn replay_skip(&mut self, reason: impl Into<String>) {
+        self.kind = TestKind::Replay { corpus_entries: 0, showmap_files: 0, skipped_entries: 0 };
+        self.status = TestStatus::Skipped;
+        self.reason = Some(reason.into());
+        self.duration = Duration::default();
+    }
+
     /// Returns `true` if this is the result of a fuzz test
     pub const fn is_fuzz(&self) -> bool {
         matches!(self.kind, TestKind::Fuzz { .. })
@@ -1230,6 +1260,12 @@ pub enum TestKindReport {
         model_cache_hits: usize,
         solver_time_ms: u64,
     },
+    /// Showmap corpus replay (no campaign performed).
+    Replay {
+        corpus_entries: usize,
+        showmap_files: usize,
+        skipped_entries: usize,
+    },
 }
 
 impl fmt::Display for TestKindReport {
@@ -1285,6 +1321,16 @@ impl fmt::Display for TestKindReport {
                     "(paths: {paths}, queries: {solver_queries}, sat: {sat_queries} ({sat_cache_hits} cached), models: {model_queries} ({model_cache_hits} cached), solver: {solver_time_ms}ms)"
                 )
             }
+            Self::Replay { corpus_entries, showmap_files, skipped_entries } => {
+                if *skipped_entries != 0 {
+                    write!(
+                        f,
+                        "(replay: {corpus_entries} entries, {showmap_files} files, {skipped_entries} skipped)"
+                    )
+                } else {
+                    write!(f, "(replay: {corpus_entries} entries, {showmap_files} files)")
+                }
+            }
         }
     }
 }
@@ -1297,7 +1343,7 @@ impl TestKindReport {
             // We use the median for comparisons
             Self::Fuzz { median_gas, .. } | Self::Table { median_gas, .. } => median_gas,
             // We return 0 since it's not applicable
-            Self::Invariant { .. } | Self::Symbolic { .. } => 0,
+            Self::Invariant { .. } | Self::Symbolic { .. } | Self::Replay { .. } => 0,
         }
     }
 }
@@ -1343,6 +1389,8 @@ pub enum TestKind {
         #[serde(default)]
         solver_time_ms: u64,
     },
+    /// Showmap corpus replay (no campaign performed).
+    Replay { corpus_entries: usize, showmap_files: usize, skipped_entries: usize },
 }
 
 impl Default for TestKind {
@@ -1409,6 +1457,13 @@ impl TestKind {
                 model_cache_hits: *model_cache_hits,
                 solver_time_ms: *solver_time_ms,
             },
+            Self::Replay { corpus_entries, showmap_files, skipped_entries } => {
+                TestKindReport::Replay {
+                    corpus_entries: *corpus_entries,
+                    showmap_files: *showmap_files,
+                    skipped_entries: *skipped_entries,
+                }
+            }
         }
     }
 }
