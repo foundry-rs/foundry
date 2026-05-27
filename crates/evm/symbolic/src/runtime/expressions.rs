@@ -313,11 +313,31 @@ pub(crate) fn sym_sub(left: SymWord, right: SymWord) -> SymWord {
 pub(crate) fn expr_contains_keccak(expr: &Expr) -> bool {
     match expr {
         Expr::Keccak { .. } => true,
-        Expr::Const(_) | Expr::Var(_) | Expr::Hash { .. } => false,
+        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) | Expr::Hash { .. } => false,
         Expr::Not(value) => expr_contains_keccak(value),
         Expr::Op(_, left, right) => expr_contains_keccak(left) || expr_contains_keccak(right),
         Expr::Ite(cond, left, right) => {
             bool_contains_keccak(cond) || expr_contains_keccak(left) || expr_contains_keccak(right)
+        }
+    }
+}
+
+/// Returns whether a word expression depends on the opaque `GAS` / `gasleft()` value.
+pub(crate) fn expr_contains_gasleft(expr: &Expr) -> bool {
+    match expr {
+        Expr::Const(_) => false,
+        Expr::Var(_) => false,
+        Expr::GasLeft(_) => true,
+        Expr::Keccak { len, bytes, .. } => {
+            expr_contains_gasleft(len) || bytes.iter().any(expr_contains_gasleft)
+        }
+        Expr::Hash { bytes, .. } => bytes.iter().any(expr_contains_gasleft),
+        Expr::Not(value) => expr_contains_gasleft(value),
+        Expr::Op(_, left, right) => expr_contains_gasleft(left) || expr_contains_gasleft(right),
+        Expr::Ite(cond, left, right) => {
+            bool_contains_gasleft(cond)
+                || expr_contains_gasleft(left)
+                || expr_contains_gasleft(right)
         }
     }
 }
@@ -376,9 +396,12 @@ pub(crate) fn expr_nonzero_forces_const(
     context: &[BoolExpr],
 ) -> Option<U256> {
     match expr {
-        Expr::Const(_) | Expr::Var(_) | Expr::Keccak { .. } | Expr::Hash { .. } | Expr::Not(_) => {
-            None
-        }
+        Expr::Const(_)
+        | Expr::Var(_)
+        | Expr::GasLeft(_)
+        | Expr::Keccak { .. }
+        | Expr::Hash { .. }
+        | Expr::Not(_) => None,
         Expr::Ite(cond, then_expr, else_expr) => {
             if expr_const_value(then_expr).is_some_and(|value| !value.is_zero())
                 && expr_const_value(else_expr).is_some_and(|value| value.is_zero())
@@ -440,7 +463,7 @@ pub(crate) fn context_forces_masked_expr(context: &[BoolExpr], target: &Expr, ma
 pub(crate) fn expr_const_value(expr: &Expr) -> Option<U256> {
     match expr {
         Expr::Const(value) => Some(*value),
-        Expr::Var(_) | Expr::Keccak { .. } | Expr::Hash { .. } => None,
+        Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak { .. } | Expr::Hash { .. } => None,
         Expr::Not(value) => Some(!expr_const_value(value)?),
         Expr::Op(op, left, right) => {
             Some(eval_expr_op(*op, expr_const_value(left)?, expr_const_value(right)?))
@@ -491,6 +514,18 @@ pub(crate) fn bool_contains_keccak(expr: &BoolExpr) -> bool {
         BoolExpr::And(values) => values.iter().any(bool_contains_keccak),
         BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
             expr_contains_keccak(left) || expr_contains_keccak(right)
+        }
+    }
+}
+
+/// Returns whether a boolean expression depends on the opaque `GAS` / `gasleft()` value.
+pub(crate) fn bool_contains_gasleft(expr: &BoolExpr) -> bool {
+    match expr {
+        BoolExpr::Const(_) => false,
+        BoolExpr::Not(value) => bool_contains_gasleft(value),
+        BoolExpr::And(values) => values.iter().any(bool_contains_gasleft),
+        BoolExpr::Eq(left, right) | BoolExpr::Cmp(_, left, right) => {
+            expr_contains_gasleft(left) || expr_contains_gasleft(right)
         }
     }
 }
@@ -676,6 +711,7 @@ pub(crate) fn eval_expr(
     Ok(match expr {
         Expr::Const(value) => *value,
         Expr::Var(var) => model.get(var).copied().unwrap_or_default(),
+        Expr::GasLeft(_) => return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled")),
         Expr::Keccak { len, bytes, .. } => eval_keccak_expr(len, bytes, model)?,
         Expr::Hash { name, .. } => model.get(name).copied().unwrap_or_default(),
         Expr::Not(value) => !eval_expr(value, model)?,
@@ -808,6 +844,19 @@ impl SymWord {
         Self::Concrete(U256::ZERO)
     }
 
+    /// Returns whether this word depends on the opaque `GAS` / `gasleft()` value.
+    pub(crate) fn contains_gasleft(&self) -> bool {
+        match self {
+            Self::Concrete(_) => false,
+            Self::Expr(expr) => expr_contains_gasleft(expr),
+        }
+    }
+
+    /// Returns whether this word is exactly the opaque `GAS` / `gasleft()` value.
+    pub(crate) const fn is_raw_gasleft(&self) -> bool {
+        matches!(self, Self::Expr(Expr::GasLeft(_)))
+    }
+
     /// Implements the `into_expr` symbolic expression helper.
     pub(crate) fn into_expr(self) -> Expr {
         match self {
@@ -883,6 +932,7 @@ impl SymWord {
 pub(crate) enum Expr {
     Const(U256),
     Var(String),
+    GasLeft(usize),
     Keccak { name: String, len: Box<Self>, bytes: Vec<Self> },
     Hash { name: String, algorithm: &'static str, bytes: Vec<Self> },
     Not(Box<Self>),
@@ -957,6 +1007,7 @@ impl Expr {
     pub(crate) fn collect_vars(&self, vars: &mut BTreeSet<String>) {
         match self {
             Self::Const(_) => {}
+            Self::GasLeft(_) => {}
             Self::Var(var) => {
                 vars.insert(var.clone());
             }
@@ -981,6 +1032,7 @@ impl Expr {
         match self {
             Self::Const(value) => format!("(_ bv{value} 256)"),
             Self::Var(var) => var.clone(),
+            Self::GasLeft(id) => format!("gasleft_{id}"),
             Self::Keccak { name, .. } | Self::Hash { name, .. } => name.clone(),
             Self::Not(value) => format!("(bvnot {})", value.smt()),
             Self::Op(op, left, right) => format!("({} {} {})", op.smt(), left.smt(), right.smt()),

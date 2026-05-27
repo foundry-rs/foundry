@@ -204,7 +204,7 @@ impl PathState {
         let constraint_bound = self.constraint_upper_bound_usize(expr);
         let structural_bound = match expr {
             Expr::Const(value) => u256_to_usize(*value),
-            Expr::Var(_) | Expr::Keccak { .. } | Expr::Hash { .. } => None,
+            Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak { .. } | Expr::Hash { .. } => None,
             Expr::Not(_) => None,
             Expr::Ite(_, left, right) => {
                 Some(self.expr_upper_bound_usize(left)?.max(self.expr_upper_bound_usize(right)?))
@@ -484,6 +484,13 @@ impl PathState {
         let id = self.next_symbol;
         self.next_symbol += 1;
         SymWord::Expr(Expr::Var(format!("{prefix}_{id}")))
+    }
+
+    /// Implements the `fresh_gasleft` symbolic state helper.
+    pub(crate) const fn fresh_gasleft(&mut self) -> SymWord {
+        let id = self.next_symbol;
+        self.next_symbol += 1;
+        SymWord::Expr(Expr::GasLeft(id))
     }
 
     /// Implements the `fresh_bounded_uint` symbolic state helper.
@@ -1601,6 +1608,7 @@ impl Default for SymbolicBlock {
 fn collect_eval_vars(expr: &Expr, vars: &mut BTreeSet<String>) {
     match expr {
         Expr::Const(_) => {}
+        Expr::GasLeft(_) => {}
         Expr::Var(var) | Expr::Hash { name: var, .. } => {
             vars.insert(var.clone());
         }

@@ -266,6 +266,229 @@ incomplete symbolic execution (Stuck): unsupported symbolic execution feature: G
     );
 });
 
+forgetest_init!(symbolic_gas_can_be_used_as_call_operand, |prj, cmd| {
+    skip_unless_z3!("symbolic_gas_can_be_used_as_call_operand");
+
+    prj.add_test(
+        "SymbolicGasCallOperand.t.sol",
+        r#"
+contract SymbolicGasCallOperandTarget {
+    function ping(uint256 value) external pure returns (uint256) {
+        return value + 1;
+    }
+}
+
+contract SymbolicGasCallOperand {
+    SymbolicGasCallOperandTarget target;
+
+    function setUp() public {
+        target = new SymbolicGasCallOperandTarget();
+    }
+
+    function checkGasOnlyFeedsCall(uint128 raw) public view {
+        uint256 value = uint256(raw);
+        bytes4 selector = SymbolicGasCallOperandTarget.ping.selector;
+        address targetAddress = address(target);
+        bool ok;
+        uint256 out;
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, selector)
+            mstore(add(ptr, 4), value)
+            ok := staticcall(gas(), targetAddress, ptr, 36, ptr, 32)
+            out := mload(ptr)
+        }
+
+        assert(ok);
+        assert(out == value + 1);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkGasOnlyFeedsCall"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkGasOnlyFeedsCall(uint128)
+"#]],
+    );
+    assert!(!stdout.contains("GAS/gasleft() not modeled"), "{stdout}");
+});
+
+forgetest_init!(symbolic_gas_derived_call_operand_reports_unsupported, |prj, cmd| {
+    skip_unless_z3!("symbolic_gas_derived_call_operand_reports_unsupported");
+
+    prj.add_test(
+        "SymbolicDerivedGasCallOperand.t.sol",
+        r#"
+contract SymbolicDerivedGasCallOperandTarget {
+    function ping() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract SymbolicDerivedGasCallOperand {
+    SymbolicDerivedGasCallOperandTarget target;
+
+    function setUp() public {
+        target = new SymbolicDerivedGasCallOperandTarget();
+    }
+
+    function checkDerivedGasCallOperand() public view {
+        bytes4 selector = SymbolicDerivedGasCallOperandTarget.ping.selector;
+        address targetAddress = address(target);
+        bool ok;
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, selector)
+            ok := staticcall(sub(gas(), 1), targetAddress, ptr, 4, ptr, 32)
+        }
+        assert(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkDerivedGasCallOperand"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_gas_in_call_calldata_reports_unsupported, |prj, cmd| {
+    skip_unless_z3!("symbolic_gas_in_call_calldata_reports_unsupported");
+
+    prj.add_test(
+        "SymbolicGasCallData.t.sol",
+        r#"
+contract SymbolicGasCallDataTarget {
+    fallback() external {}
+}
+
+contract SymbolicGasCallData {
+    SymbolicGasCallDataTarget target;
+
+    function setUp() public {
+        target = new SymbolicGasCallDataTarget();
+    }
+
+    function checkGasInCallData() public view {
+        address targetAddress = address(target);
+        bool ok;
+        assembly {
+            let ptr := mload(0x40)
+            mstore(ptr, gas())
+            ok := staticcall(gas(), targetAddress, ptr, 32, 0, 0)
+        }
+        assert(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkGasInCallData"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_gas_as_call_target_reports_unsupported, |prj, cmd| {
+    skip_unless_z3!("symbolic_gas_as_call_target_reports_unsupported");
+
+    prj.add_test(
+        "SymbolicGasCallTarget.t.sol",
+        r#"
+contract SymbolicGasCallTarget {
+    function checkGasAsCallTarget() public view {
+        bool ok;
+        assembly {
+            ok := staticcall(gas(), gas(), 0, 0, 0, 0)
+        }
+        assert(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkGasAsCallTarget"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_gas_as_call_input_bounds_reports_unsupported, |prj, cmd| {
+    skip_unless_z3!("symbolic_gas_as_call_input_bounds_reports_unsupported");
+
+    prj.add_test(
+        "SymbolicGasCallInputBounds.t.sol",
+        r#"
+contract SymbolicGasCallInputBoundsTarget {
+    fallback() external {}
+}
+
+contract SymbolicGasCallInputBounds {
+    SymbolicGasCallInputBoundsTarget target;
+
+    function setUp() public {
+        target = new SymbolicGasCallInputBoundsTarget();
+    }
+
+    function checkGasAsCallInputOffset() public view {
+        address targetAddress = address(target);
+        bool ok;
+        assembly {
+            ok := staticcall(gas(), targetAddress, gas(), 0, 0, 0)
+        }
+        assert(ok);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkGasAsCallInputOffset"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
+"#]],
+    );
+});
+
 // Plan-compliant target behavior for the `GAS` / `gasleft()` opcode: any
 // symbolic path that branches on `gasleft()` should taint the result as
 // Incomplete (Unsupported), because gas is not modeled symbolically and a

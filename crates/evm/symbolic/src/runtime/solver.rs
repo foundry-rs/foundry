@@ -263,6 +263,9 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     /// Returns whether `is_sat` holds.
     fn is_sat(&mut self, constraints: &[BoolExpr]) -> Result<bool, SymbolicError> {
         self.sat_queries += 1;
+        if constraints.iter().any(bool_contains_gasleft) {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
         let smt_constraints = normalize_constraints_for_solver(constraints);
         let cache_key = constraint_cache_key(&smt_constraints);
         if let Some(result) = self.sat_cache.get(&cache_key) {
@@ -322,6 +325,9 @@ impl SymbolicSolver for SmtLibSubprocessSolver {
     /// Implements the `model` solver helper.
     fn model(&mut self, constraints: &[BoolExpr]) -> Result<BTreeMap<String, U256>, SymbolicError> {
         self.model_queries += 1;
+        if constraints.iter().any(bool_contains_gasleft) {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
         let smt_constraints = normalize_constraints_for_solver(constraints);
         let cache_key = constraint_cache_key(&smt_constraints);
 
@@ -572,7 +578,7 @@ const fn cache_key_cmp(op: BoolExprOp, left: Expr, right: Expr) -> BoolExpr {
 /// Returns a conservative canonical word expression for cache-key equality.
 fn cache_key_expr(expr: Expr) -> Expr {
     match expr {
-        Expr::Const(_) | Expr::Var(_) => expr,
+        Expr::Const(_) | Expr::Var(_) | Expr::GasLeft(_) => expr,
         Expr::Keccak { name, len, bytes } => Expr::Keccak {
             name,
             len: Box::new(cache_key_expr(*len)),

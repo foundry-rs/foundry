@@ -167,7 +167,7 @@ pub(crate) fn expr_known_byte(expr: &Expr, index: usize) -> Option<u8> {
     debug_assert!(index < 32);
     match expr {
         Expr::Const(value) => Some(value.to_be_bytes::<32>()[index]),
-        Expr::Var(_) | Expr::Keccak { .. } | Expr::Hash { .. } => None,
+        Expr::Var(_) | Expr::GasLeft(_) | Expr::Keccak { .. } | Expr::Hash { .. } => None,
         Expr::Not(value) => expr_known_byte(value, index).map(|byte| !byte),
         Expr::Ite(_, then_expr, else_expr) => {
             let then_byte = expr_known_byte(then_expr, index)?;

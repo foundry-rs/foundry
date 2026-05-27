@@ -515,6 +515,9 @@ impl SymbolicExecutor {
                     }
                     Some(false) => Ok(StepOutcome::Continue),
                     None => {
+                        if cond.contains_gasleft() {
+                            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+                        }
                         let op_pc = state.pc.saturating_sub(1);
                         let _branch_span = trace_span!("jumpi_branch", pc = op_pc, dest).entered();
                         let true_cond = cond.nonzero_bool();
@@ -551,7 +554,11 @@ impl SymbolicExecutor {
                 state.stack.push(size)?;
                 Ok(StepOutcome::Continue)
             }
-            opcode::GAS => Err(SymbolicError::Unsupported("GAS/gasleft() not modeled")),
+            opcode::GAS => {
+                let gas = state.fresh_gasleft();
+                state.stack.push(gas)?;
+                Ok(StepOutcome::Continue)
+            }
             opcode::JUMPDEST => Ok(StepOutcome::Continue),
             opcode::MCOPY => {
                 let dest = state.stack.pop()?;
@@ -677,7 +684,13 @@ impl SymbolicExecutor {
                 }
                 let topics = (op - opcode::LOG0) as usize;
                 let offset = state.stack.pop()?;
+                if offset.contains_gasleft() {
+                    return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+                }
                 let size = state.stack.pop()?;
+                if size.contains_gasleft() {
+                    return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+                }
                 let (data_len, data) = match state.constrained_usize(&size) {
                     Some(size) => (
                         SymWord::Concrete(U256::from(size)),
@@ -707,7 +720,14 @@ impl SymbolicExecutor {
                 };
                 let mut log_topics = Vec::with_capacity(topics);
                 for _ in 0..topics {
-                    log_topics.push(state.stack.pop()?);
+                    let topic = state.stack.pop()?;
+                    if topic.contains_gasleft() {
+                        return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+                    }
+                    log_topics.push(topic);
+                }
+                if data.iter().any(SymWord::contains_gasleft) {
+                    return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
                 }
                 self.handle_log(
                     state,
@@ -725,6 +745,9 @@ impl SymbolicExecutor {
         offset: SymWord,
         size: SymWord,
     ) -> Result<bool, SymbolicError> {
+        if offset.contains_gasleft() || size.contains_gasleft() {
+            return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+        }
         let end = Expr::op(ExprOp::Add, offset.into_expr(), size.into_expr());
         let in_bounds = BoolExpr::cmp(BoolExprOp::Ule, end, state.return_data.len_expr());
         match in_bounds {
