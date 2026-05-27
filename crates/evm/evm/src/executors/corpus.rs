@@ -200,7 +200,7 @@ pub(crate) struct GlobalCorpusMetrics {
     cumulative_edges_seen: AtomicUsize,
     // Number of features (new hitcount bin of previously hit edge) seen during the invariant run.
     cumulative_features_seen: AtomicUsize,
-    // Number of corpus entries.
+    // Number of persisted corpus entries discovered or written on disk.
     corpus_count: AtomicUsize,
     // Number of corpus entries that are favored.
     favored_items: AtomicUsize,
@@ -229,7 +229,7 @@ pub(crate) struct CorpusMetrics {
     cumulative_edges_seen: usize,
     // Number of features (new hitcount bin of previously hit edge) seen during the invariant run.
     cumulative_features_seen: usize,
-    // Number of corpus entries.
+    // Number of persisted corpus entries discovered or written on disk.
     corpus_count: usize,
     // Number of corpus entries that are favored.
     favored_items: usize,
@@ -1025,38 +1025,52 @@ impl WorkerCorpus {
         Ok(sequence[depth].clone())
     }
 
-    /// Flush one non-favored corpus entry when the corpus size exceeds the minimum.
+    /// Flush non-favored entries from memory when the corpus size exceeds the minimum.
+    ///
+    /// Entries remain on disk and in `disk_corpus_entries` so they can still be used as crossover
+    /// donors. `metrics.corpus_count` intentionally tracks persisted on-disk entries, not live
+    /// in-memory entries.
     fn cull_corpus(&mut self) -> Result<()> {
-        if self.in_memory_corpus.len() > self.config.corpus_min_size.max(1)
-            && let Some(index) = self.in_memory_corpus.iter().position(|corpus| !corpus.is_favored)
-        {
-            let corpus = &self.in_memory_corpus[index];
-            let evicted_uuid = corpus.uuid;
+        let min_size = self.config.corpus_min_size;
+        if self.in_memory_corpus.len() <= min_size {
+            return Ok(());
+        }
 
-            trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus");
+        let mut remaining_removals = self.in_memory_corpus.len() - min_size;
+        let mut old_to_new = vec![None; self.in_memory_corpus.len()];
+        let mut retained = Vec::with_capacity(self.in_memory_corpus.len());
+        let mut evicted_uuids = HashSet::new();
 
-            // Remove corpus from memory.
-            self.in_memory_corpus.remove(index);
-
-            // Adjust the tracked indices.
-            self.new_entry_indices.retain_mut(|i| {
-                if *i > index {
-                    *i -= 1; // Shift indices down.
-                    true // Keep this index.
-                } else {
-                    *i != index // Remove if it's the deleted index, keep otherwise.
-                }
-            });
-            self.disk_corpus_entries.retain(|entry| entry.uuid != evicted_uuid);
-
-            let impacted_edges = self
-                .top_rated
-                .iter()
-                .filter_map(|(&edge_idx, &(uuid, _))| (uuid == evicted_uuid).then_some(edge_idx))
-                .collect::<Vec<_>>();
-            for edge_idx in impacted_edges {
-                self.recompute_top_rated_for_edge(edge_idx);
+        for (old_index, corpus) in self.in_memory_corpus.drain(..).enumerate() {
+            if !corpus.is_favored && remaining_removals > 0 {
+                trace!(target: "corpus", corpus=%serde_json::to_string(&corpus).unwrap(), "evict corpus from memory");
+                evicted_uuids.insert(corpus.uuid);
+                remaining_removals -= 1;
+            } else {
+                old_to_new[old_index] = Some(retained.len());
+                retained.push(corpus);
             }
+        }
+
+        if evicted_uuids.is_empty() {
+            self.in_memory_corpus = retained;
+            return Ok(());
+        }
+
+        self.in_memory_corpus = retained;
+        self.new_entry_indices = self
+            .new_entry_indices
+            .iter()
+            .filter_map(|&i| old_to_new.get(i).copied().flatten())
+            .collect();
+
+        let impacted_edges = self
+            .top_rated
+            .iter()
+            .filter_map(|(&edge_idx, &(uuid, _))| evicted_uuids.contains(&uuid).then_some(edge_idx))
+            .collect::<Vec<_>>();
+        for edge_idx in impacted_edges {
+            self.recompute_top_rated_for_edge(edge_idx);
         }
         Ok(())
     }
@@ -1785,5 +1799,85 @@ mod tests {
         assert_eq!(manager.in_memory_corpus.len(), 1, "favored corpus must not be evicted");
 
         assert!(manager.in_memory_corpus.iter().all(|c| c.uuid != non_favored_uuid));
+    }
+
+    #[test]
+    fn culling_flushes_all_non_favored_from_memory_but_keeps_disk_entries() {
+        let tx_gen = Just(basic_tx()).boxed();
+        let config = FuzzCorpusConfig {
+            corpus_dir: Some(temp_corpus_dir()),
+            corpus_min_size: 0,
+            ..Default::default()
+        };
+
+        let mut favored = CorpusEntry::new_with_cmp_and_edges(
+            vec![basic_tx()],
+            Vec::new(),
+            vec![1],
+            Uuid::new_v4(),
+        );
+        favored.is_favored = true;
+        let favored_uuid = favored.uuid;
+        let favored_cost = favored.tx_seq.len();
+        let non_favored = (0..3).map(|_| CorpusEntry::new(vec![basic_tx()])).collect::<Vec<_>>();
+        let non_favored_uuids =
+            non_favored.iter().map(|corpus| corpus.uuid).collect::<HashSet<_>>();
+
+        let corpus_root = temp_corpus_dir();
+        let worker_subdir = corpus_root.join("worker0");
+        fs::create_dir_all(&worker_subdir).unwrap();
+        let disk_corpus_entries = std::iter::once(favored_uuid)
+            .chain(non_favored_uuids.iter().copied())
+            .map(|uuid| CorpusDirEntry {
+                path: worker_subdir.join(format!("{uuid}-1.json")),
+                uuid,
+                timestamp: 1,
+            })
+            .collect::<Vec<_>>();
+
+        let mut in_memory_corpus = vec![favored];
+        in_memory_corpus.extend(non_favored);
+        let mut manager = WorkerCorpus {
+            id: 0,
+            tx_generator: tx_gen,
+            mutation_generator: Just(MutationType::Repeat).boxed(),
+            config: config.into(),
+            in_memory_corpus,
+            current_mutated: None,
+            failed_replays: 0,
+            history_map: Vec::new(),
+            edge_indices: EdgeIndexMap::default(),
+            sancov_history_map: Vec::new(),
+            top_rated: HashMap::from([(1, (favored_uuid, favored_cost))]),
+            disk_corpus_entries,
+            metrics: CorpusMetrics { corpus_count: 4, ..Default::default() },
+            new_entry_indices: vec![0, 1, 2, 3],
+            last_sync_timestamp: 0,
+            worker_dir: Some(corpus_root),
+            last_sync_metrics: CorpusMetrics::default(),
+            optimization_best_value: None,
+            optimization_best_sequence: vec![],
+        };
+
+        manager.cull_corpus().unwrap();
+
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert_eq!(manager.in_memory_corpus[0].uuid, favored_uuid);
+        assert_eq!(manager.disk_corpus_entries.len(), 4, "on-disk crossover donors stay cached");
+        assert_eq!(manager.metrics.corpus_count, 4, "corpus_count tracks persisted entries");
+        assert_eq!(manager.new_entry_indices, vec![0]);
+        assert!(
+            manager.in_memory_corpus.iter().all(|corpus| !non_favored_uuids.contains(&corpus.uuid))
+        );
+    }
+
+    #[test]
+    fn culling_can_empty_memory_when_no_entries_are_favored() {
+        let (mut manager, _) = new_manager_with_single_corpus();
+
+        manager.cull_corpus().unwrap();
+
+        assert!(manager.in_memory_corpus.is_empty());
+        assert!(manager.new_entry_indices.is_empty());
     }
 }

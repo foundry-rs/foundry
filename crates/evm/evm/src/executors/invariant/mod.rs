@@ -528,11 +528,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             let failures_before_run = invariant_test.test_data.failures.invariant_count();
             let mut stop_after_run = false;
 
-            let initial_seq = corpus_manager.new_inputs(
+            let mut initial_seq = corpus_manager.new_inputs(
                 &mut invariant_test.test_data.branch_runner,
                 &invariant_test.fuzz_state,
                 &invariant_test.targeted_contracts,
             )?;
+            // Corpus crossover mutations can grow the seed sequence past the configured invariant
+            // depth. Keep only the prefix the executor can actually consume this run.
+            initial_seq.truncate(self.config.depth.max(1) as usize);
 
             // Create current invariant run data.
             let mut current_run = InvariantTestRun::new(
@@ -792,12 +795,14 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     current_run.depth += 1;
                 }
 
-                current_run.inputs.push(corpus_manager.generate_next_input(
-                    &mut invariant_test.test_data.branch_runner,
-                    &initial_seq,
-                    discarded,
-                    current_run.depth as usize,
-                )?);
+                if current_run.depth < self.config.depth {
+                    current_run.inputs.push(corpus_manager.generate_next_input(
+                        &mut invariant_test.test_data.branch_runner,
+                        &initial_seq,
+                        discarded,
+                        current_run.depth as usize,
+                    )?);
+                }
             }
 
             // Extend corpus with current run data.
