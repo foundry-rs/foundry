@@ -268,8 +268,7 @@ contract SymbolicGasLeftBound {
 // bounded-symbolic approximation produces non-replaying counterexamples.
 //
 // The contract below has two branches gated by `gasleft()`:
-//   - the `low gas` branch is concretely unreachable under any normal forge
-//     transaction gas limit;
+//   - the `low gas` branch is concretely unreachable under any normal forge transaction gas limit;
 //   - the `high gas` branch is the only one a concrete replay can ever take.
 //
 // A correct symbolic engine should refuse to draw conclusions: rather than
