@@ -195,6 +195,8 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+evm_edge_coverage_collision_free = true
+evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
 failure_persist_dir = "cache/fuzz"
@@ -218,13 +220,14 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+evm_edge_coverage_collision_free = true
+evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
 check_interval = 1
-assert_all = true
 
 [labels]
 
@@ -1313,6 +1316,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "evm_edge_coverage_collision_free": true,
+    "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
     "failure_persist_dir": "cache/fuzz",
@@ -1338,6 +1343,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "evm_edge_coverage_collision_free": true,
+    "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
     "failure_persist_dir": "cache/invariant",
@@ -1346,8 +1353,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "show_solidity": false,
     "max_time_delay": null,
     "max_block_delay": null,
-    "check_interval": 1,
-    "assert_all": true
+    "check_interval": 1
   },
   "ffi": false,
   "live_logs": false,

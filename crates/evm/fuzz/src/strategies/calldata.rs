@@ -1,6 +1,6 @@
 use crate::{
     FuzzFixtures,
-    strategies::{EvmFuzzState, fuzz_param_from_state, fuzz_param_with_fixtures},
+    strategies::{FuzzStateReader, fuzz_param_from_state, fuzz_param_with_fixtures},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
@@ -40,10 +40,10 @@ pub fn fuzz_calldata(
 
 /// Given a function and some state, it returns a strategy which generated valid calldata for the
 /// given function's input types, based on state taken from the EVM.
-pub fn fuzz_calldata_from_state(
+pub fn fuzz_calldata_from_state<S: FuzzStateReader>(
     func: Function,
-    state: &EvmFuzzState,
-) -> impl Strategy<Value = Bytes> + use<> {
+    state: &S,
+) -> impl Strategy<Value = Bytes> + use<S> {
     let strats = func
         .inputs
         .iter()
