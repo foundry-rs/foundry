@@ -40,9 +40,8 @@ pub(super) async fn run(addr: Address, rpc: RpcOpts) -> Result<()> {
     }
 
     if !is_virtual {
-        // Zero-address sentinel mirrors the JSON branch's null master_address.
+        // No master address to emit; stdout stays empty.
         sh_status!("{addr} is not a virtual address")?;
-        sh_println!("{}", Address::ZERO)?;
         return Ok(());
     }
 

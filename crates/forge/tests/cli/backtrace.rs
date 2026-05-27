@@ -14,7 +14,8 @@ forgetest!(test_backtraces, |prj, cmd| {
 
     let output = cmd.args(["test", "-vvvvv"]).assert_failure();
 
-    output.stdout_eq(str![[r#"
+    output
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 
@@ -95,6 +96,46 @@ Backtrace:
 
 Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to view
+  [FILE]:29:5:
+   |
+29 |     function testSimpleRevert() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to view
+  [FILE]:34:5:
+   |
+34 |     function testRequireFail() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to view
+  [FILE]:39:5:
+   |
+39 |     function testAssertFail() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to view
+  [FILE]:44:5:
+   |
+44 |     function testCustomError() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to view
+  [FILE]:54:5:
+   |
+54 |     function testInternalCallsSameSource() public {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+Warning (2018): Function state mutability can be restricted to pure
+  [FILE]:67:5:
+   |
+67 |     function internalCall2() internal {
+   |     ^ (Relevant source part starts here and spans across multiple lines).
+
+
 "#]]);
 });
 
@@ -297,7 +338,8 @@ forgetest!(test_library_backtrace, |prj, cmd| {
     let output =
         cmd.args(["test", "-vvv", "--ast", "--mc", "LibraryBacktraceTest"]).assert_failure();
 
-    output.stdout_eq(str![[r#"
+    output
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 
@@ -368,6 +410,10 @@ Backtrace:
 
 Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 });
 
@@ -392,7 +438,8 @@ forgetest!(test_multiple_libraries_same_file, |prj, cmd| {
         .args(["test", "-vvvvv", "--ast", "--mc", "MultipleLibraryBacktraceTest"])
         .assert_failure();
 
-    output.stdout_eq(str![[r#"
+    output
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 
@@ -428,6 +475,10 @@ Backtrace:
 Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 
 ...
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 });
 
@@ -518,6 +569,10 @@ Backtrace:
   at ForkedERC20Wrapper.transferFromWithoutApproval (src/ForkedERC20Wrapper.sol:18:101)
   at ForkBacktraceTest.testTransferFromWithoutApproval (test/ForkBacktrace.t.sol:22:65)
 ...
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
 });
 
@@ -625,6 +680,10 @@ Backtrace:
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
 
     // -vvvv (verbosity 4): traces with setup and backtrace WITHOUT source locations.
@@ -652,6 +711,10 @@ Backtrace:
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
 
     // -vvvvv (verbosity 5): traces with setup, storage changes, and backtrace WITH source
@@ -680,5 +743,9 @@ Backtrace:
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
 });

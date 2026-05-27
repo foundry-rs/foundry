@@ -147,6 +147,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                     etherscan: args.etherscan,
                     retry: args.retry,
                     verifier: args.verifier,
+                    chained: args.chained,
                 };
                 return self.check(check_args).await;
             }
@@ -189,7 +190,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 }
 
                 if resp.result == "Already Verified" {
-                    let _ = sh_status!("Contract source code already verified");
+                    let msg = "Contract source code already verified";
+                    let _ = if args.chained { sh_status!("{msg}") } else { sh_println!("{msg}") };
                     return Ok(());
                 }
 
@@ -202,7 +204,8 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 }
 
                 if resp.result == "Pass - Verified" {
-                    let _ = sh_status!("Contract successfully verified");
+                    let msg = "Contract successfully verified";
+                    let _ = if args.chained { sh_status!("{msg}") } else { sh_println!("{msg}") };
                 }
 
                 Ok(())

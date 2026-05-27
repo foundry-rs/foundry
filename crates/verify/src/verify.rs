@@ -507,6 +507,9 @@ pub struct VerifyCheckArgs {
 
     #[command(flatten)]
     pub verifier: VerifierArgs,
+
+    #[arg(skip)]
+    pub chained: bool,
 }
 
 impl_figment_convert_cast!(VerifyCheckArgs);

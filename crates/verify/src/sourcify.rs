@@ -117,6 +117,7 @@ impl VerificationProvider for SourcifyVerificationProvider {
                     etherscan: args.etherscan,
                     retry: args.retry,
                     verifier: args.verifier,
+                    chained: args.chained,
                 };
                 return self.check(check_args).await;
             }
@@ -162,7 +163,9 @@ impl VerificationProvider for SourcifyVerificationProvider {
 
                 if let Some(error) = job_response.error {
                     if error.custom_code == "already_verified" {
-                        let _ = sh_status!("Contract source code already verified");
+                        let msg = "Contract source code already verified";
+                        let _ =
+                            if args.chained { sh_status!("{msg}") } else { sh_println!("{msg}") };
                         return Ok(());
                     }
 
@@ -174,10 +177,9 @@ impl VerificationProvider for SourcifyVerificationProvider {
                 }
 
                 if let Some(contract_status) = job_response.contract.match_status {
-                    let _ = sh_status!(
-                        "Contract successfully verified:\nStatus: `{}`",
-                        contract_status,
-                    );
+                    let msg =
+                        format!("Contract successfully verified:\nStatus: `{contract_status}`");
+                    let _ = if args.chained { sh_status!("{msg}") } else { sh_println!("{msg}") };
                 }
                 Ok(())
             })

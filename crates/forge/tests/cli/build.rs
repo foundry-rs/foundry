@@ -7,15 +7,19 @@ forgetest_init!(can_parse_build_filters, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();
 
-    cmd.args(["build", "--names", "--skip", "tests", "scripts"]).assert_success().stdout_eq(str![
-        [r#"
+    cmd.args(["build", "--names", "--skip", "tests", "scripts"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
   compiler version: [..]
     - Counter
 
-"#]
-    ]);
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
+"#]]);
 });
 
 forgetest!(throws_on_conflicting_args, |prj, cmd| {
@@ -72,7 +76,9 @@ contract Dummy {
 
 forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
-    cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["build", "--sizes"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 
@@ -82,6 +88,11 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
 | LargeContract | 62               | 50,125            | 24,514             | -973                |
 ╰---------------+------------------+-------------------+--------------------+---------------------╯
 
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+Error: some contracts exceed the initcode size limit (49152 bytes)
 
 "#]]);
 
@@ -99,19 +110,29 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
         .is_json(),
     );
 
-    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_failure().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .args(["build", "--sizes", "--md"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |---------------|------------------|-------------------|--------------------|---------------------|
 | LargeContract | 62               | 50,125            | 24,514             | -973                |
 
 
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+Error: some contracts exceed the initcode size limit (49152 bytes)
+
 "#]]);
 
     // Ignore EIP-3860
 
-    cmd.forge_fuse().args(["build", "--sizes", "--ignore-eip-3860"]).assert_success().stdout_eq(
-        str![[r#"
+    cmd.forge_fuse()
+        .args(["build", "--sizes", "--ignore-eip-3860"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 
 ╭---------------+------------------+-------------------+--------------------+---------------------╮
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
@@ -120,8 +141,11 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
 ╰---------------+------------------+-------------------+--------------------+---------------------╯
 
 
-"#]],
-    );
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
 
     cmd.forge_fuse()
         .args(["build", "--sizes", "--ignore-eip-3860", "--json"])
@@ -150,6 +174,10 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
 | LargeContract | 62               | 50,125            | 24,514             | -973                |
 
 
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
 });
 
@@ -177,9 +205,15 @@ forgetest!(build_sizes_respects_configured_code_size_limit, |prj, cmd| {
 // tests build output is as expected
 forgetest_init!(exact_build_output, |prj, cmd| {
     prj.initialize_default_contracts();
-    cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["build", "--force"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
