@@ -1066,3 +1066,55 @@ contract SymbolicStaticCreate {
 "#]],
     );
 });
+
+// CREATE whose constructor returns a symbolic-length runtime image must fail
+// closed as Unsupported instead of silently installing a max-length padded
+// bytecode (which would corrupt EXTCODESIZE, selector dispatch, and later
+// execution). The constructor below returns `len` bytes; with symbolic `len`
+// the engine must report the unsupported feature.
+forgetest_init!(symbolic_create_with_symbolic_runtime_size_reports_unsupported, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_create_with_symbolic_runtime_size_reports_unsupported because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicCreateRuntimeLen.t.sol",
+        r#"
+contract VariableLengthCtor {
+    constructor(uint256 len) {
+        assembly {
+            // Write a STOP byte at memory 0 so the returned data is well-formed,
+            // then return `len` bytes — a symbolic-length runtime image.
+            mstore8(0, 0x00)
+            return(0, len)
+        }
+    }
+}
+
+contract SymbolicCreateRuntimeLen {
+    function checkCreateSymbolicRuntimeLen(uint256 len) public {
+        new VariableLengthCtor(len);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkCreateSymbolicRuntimeLen"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    // The engine fails closed at the constructor's RETURN with symbolic size
+    // (upstream of the CREATE installation step). Either failure mode proves
+    // the runtime image is never silently installed as max-length bytecode.
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+unsupported symbolic execution feature: symbolic RETURN size
+"#]],
+    );
+});

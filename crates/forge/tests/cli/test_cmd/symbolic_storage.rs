@@ -2,7 +2,8 @@ use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
-use super::symbolic_helpers::{assert_symbolic, z3_available};
+use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness, z3_available};
+use crate::skip_unless_z3;
 
 forgetest_init!(symbolic_mapping_storage_finds_counterexample, |prj, cmd| {
     if !z3_available() {
@@ -432,4 +433,44 @@ checkSvmArbitraryStorage(address)
     );
     assert!(!stdout.contains("symbolic SLOAD key"), "{stdout}");
     assert!(!stdout.contains("symbolic Halmos compatibility cheatcode"), "{stdout}");
+});
+
+// Reading an unwritten mapping at a symbolic key must yield a fresh symbolic
+// value, not a concrete zero. The assertion below claims that no caller is an
+// admin; because nothing has ever written to `isAdmin`, the solver must still
+// be able to satisfy `isAdmin[user] == true` and produce a counterexample.
+forgetest_init!(symbolic_sload_unwritten_mapping_default_layout, |prj, cmd| {
+    skip_unless_z3!("symbolic_sload_unwritten_mapping_default_layout");
+
+    prj.add_test(
+        "SymbolicSLoadUnwrittenMapping.t.sol",
+        r#"
+contract SymbolicSLoadUnwrittenMapping {
+    mapping(address => bool) isAdmin;
+
+    function checkNoUserIsAdmin(address user) public view {
+        assert(!isAdmin[user]);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkNoUserIsAdmin",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicSLoadUnwrittenMapping.t.sol:SymbolicSLoadUnwrittenMapping
+[FAIL: symbolic counterexample did not replay; counterexample: [CALLDATA] [ARGS]] checkNoUserIsAdmin(address) ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
 });

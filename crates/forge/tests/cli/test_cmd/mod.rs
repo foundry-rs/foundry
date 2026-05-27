@@ -25,6 +25,7 @@ mod symbolic_conformance;
 mod symbolic_creates;
 mod symbolic_engine_capabilities;
 mod symbolic_helpers;
+mod symbolic_invariant;
 mod symbolic_limits;
 mod symbolic_memory;
 mod symbolic_opcodes;

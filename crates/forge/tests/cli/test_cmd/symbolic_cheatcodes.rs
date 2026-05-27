@@ -3777,3 +3777,55 @@ contract SymbolicAssumeNoRevertFilters is Test {
         assert!(!stdout.contains("symbolic Foundry cheatcode"), "{stdout}");
     }
 });
+
+// The `vm.prank(address, bool delegateCall)` overload diverges from concrete
+// Forge semantics when `delegateCall == true`: the engine does not model
+// pranking through a delegatecall frame, so this branch must fail closed as
+// Unsupported rather than silently behaving like the address-only overload.
+forgetest_init!(symbolic_vm_prank_delegatecall_overload_reports_unsupported, |prj, cmd| {
+    if !z3_available() {
+        let _ = sh_eprintln!(
+            "skipping symbolic_vm_prank_delegatecall_overload_reports_unsupported because z3 is not available"
+        );
+        return;
+    }
+
+    prj.add_test(
+        "SymbolicPrankDelegateCall.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Probe {
+    function sender() external view returns (address) {
+        return msg.sender;
+    }
+}
+
+contract SymbolicPrankDelegateCall is Test {
+    Probe probe;
+
+    function setUp() public {
+        probe = new Probe();
+    }
+
+    function checkPrankDelegateCall(address who) public {
+        vm.prank(who, true);
+        probe.sender();
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkPrankDelegateCall"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+unsupported symbolic execution feature: symbolic vm.prank delegatecall
+"#]],
+    );
+});
