@@ -106,6 +106,17 @@ impl GasSnapshotArgs {
         }
 
         let outcome = self.test.compile_and_run().await?;
+        if !shell::is_quiet()
+            && !outcome.allow_failure
+            && self.diff.is_none()
+            && self.check.is_none()
+            && outcome.failed() > 0
+        {
+            sh_eprintln!(
+                "Error: gas snapshot file \"{}\" was not written because the test run failed",
+                self.snap.display()
+            )?;
+        }
         outcome.ensure_ok(false)?;
         let tests = self.config.apply(outcome);
 

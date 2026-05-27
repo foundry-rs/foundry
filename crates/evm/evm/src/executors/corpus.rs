@@ -34,20 +34,21 @@
 //! - This all happens periodically, there is no clear order in which workers export or import
 //!   entries since it doesn't matter as long as the corpus eventually syncs across all workers
 
+use super::corpus_io::{CorpusDirEntry, read_corpus_dir};
 use crate::{
     executors::{Executor, RawCallResult, invariant::execute_tx},
-    inspectors::CmpOperands,
+    inspectors::{CmpOperands, EdgeIndexMap, MAX_EDGE_COUNT},
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;
-use alloy_primitives::{Bytes, I256};
+use alloy_primitives::{Address, Bytes, I256};
 use eyre::{Result, eyre};
-use foundry_common::sh_warn;
+use foundry_common::{ContractsByAddress, ContractsByArtifact, sh_warn};
 use foundry_config::FuzzCorpusConfig;
-use foundry_evm_core::evm::FoundryEvmNetwork;
+use foundry_evm_core::{evm::FoundryEvmNetwork, utils::StateChangeset};
 use foundry_evm_fuzz::{
     BasicTxDetails,
-    invariant::FuzzRunIdentifiedContracts,
+    invariant::{ArtifactFilters, FuzzRunIdentifiedContracts},
     strategies::{
         EvmFuzzState, FuzzStateReader, InvariantFuzzState, generate_msg_value, mutate_param_value,
     },
@@ -76,7 +77,6 @@ const SYNC_DIR: &str = "sync";
 const OPTIMIZATION_BEST_FILE: &str = "optimization_best.json";
 
 const FAVORABILITY_THRESHOLD: f64 = 0.3;
-const COVERAGE_MAP_SIZE: usize = 65536;
 
 /// Threshold for compressing corpus entries.
 /// 4KiB is usually the minimum file size on popular file systems.
@@ -265,6 +265,8 @@ pub struct WorkerCorpus {
     in_memory_corpus: Vec<CorpusEntry>,
     /// History of binned hitcount of edges seen during fuzzing
     history_map: Vec<u8>,
+    /// Stable dense EVM edge IDs for this worker's history map.
+    edge_indices: EdgeIndexMap,
     /// History of binned hitcount of sancov (native Rust) edges seen during fuzzing
     sancov_history_map: Vec<u8>,
     /// Number of failed replays from initial corpus
@@ -294,6 +296,49 @@ pub struct WorkerCorpus {
     optimization_best_sequence: Vec<BasicTxDetails>,
 }
 
+/// Refs used during corpus replay to register contracts deployed mid-sequence as fuzz targets,
+/// mirroring the campaign loop so follow-up calls into them aren't dropped by `can_replay_tx`.
+#[derive(Clone, Copy)]
+pub struct DynamicTargetCtx<'a> {
+    pub project_contracts: &'a ContractsByArtifact,
+    pub setup_contracts: &'a ContractsByAddress,
+    pub artifact_filters: &'a ArtifactFilters,
+}
+
+/// Registers contracts created by the last tx so subsequent txs in the same replayed sequence
+/// can target them.
+pub(crate) fn register_replay_created(
+    state_changeset: &StateChangeset,
+    dynamic: Option<&DynamicTargetCtx<'_>>,
+    fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+    created: &mut Vec<Address>,
+) {
+    let (Some(dynamic), Some(fuzzed_contracts)) = (dynamic, fuzzed_contracts) else {
+        return;
+    };
+    if let Err(error) = fuzzed_contracts.collect_created_contracts(
+        state_changeset,
+        dynamic.project_contracts,
+        dynamic.setup_contracts,
+        dynamic.artifact_filters,
+        created,
+    ) {
+        warn!(target: "corpus", "{error}");
+    }
+}
+
+/// Clears dynamic targets added during a replayed entry so they don't leak into the next one.
+pub(crate) fn rollback_replay_created(
+    fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+    created: Vec<Address>,
+) {
+    if !created.is_empty()
+        && let Some(fuzzed_contracts) = fuzzed_contracts
+    {
+        fuzzed_contracts.clear_created_contracts(created);
+    }
+}
+
 impl WorkerCorpus {
     pub fn new<FEN: FoundryEvmNetwork>(
         id: usize,
@@ -303,6 +348,7 @@ impl WorkerCorpus {
         executor: Option<&Executor<FEN>>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+        dynamic: Option<DynamicTargetCtx<'_>>,
     ) -> Result<Self> {
         let mutation_generator = prop_oneof![
             Just(MutationType::Splice),
@@ -328,8 +374,17 @@ impl WorkerCorpus {
         });
 
         let mut in_memory_corpus = vec![];
-        let mut history_map = vec![0u8; COVERAGE_MAP_SIZE];
-        let mut sancov_history_map = vec![0u8; COVERAGE_MAP_SIZE];
+        // Hash mode always merges a fixed `MAX_EDGE_COUNT` bitmap, so preallocate to
+        // avoid moving the one-time 64 KiB resize into the first merge. Collision-free
+        // and sancov maps grow on demand and start empty.
+        let mut history_map =
+            if config.collect_evm_edge_coverage() && !config.evm_edge_coverage_collision_free() {
+                vec![0u8; MAX_EDGE_COUNT]
+            } else {
+                Vec::new()
+            };
+        let mut edge_indices = EdgeIndexMap::default();
+        let mut sancov_history_map = Vec::new();
         let mut metrics = CorpusMetrics::default();
         let mut failed_replays = 0;
         let mut optimization_best_value = None;
@@ -386,15 +441,27 @@ impl WorkerCorpus {
                 // Warm up history map from loaded sequences.
                 let mut executor = executor.clone();
                 let mut cmp_seq = Vec::with_capacity(tx_seq.len());
+                // Targets deployed during this entry, cleared after the entry.
+                let mut created: Vec<Address> = Vec::new();
                 for tx in &tx_seq {
                     if Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                         let mut call_result = execute_tx(&mut executor, tx)?;
                         cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
-                        let (new_coverage, is_edge) = call_result
-                            .merge_all_coverage(&mut history_map, &mut sancov_history_map);
+                        let (new_coverage, is_edge) = call_result.merge_all_coverage(
+                            &mut history_map,
+                            &mut edge_indices,
+                            &mut sancov_history_map,
+                        );
                         if new_coverage {
                             metrics.update_seen(is_edge);
                         }
+
+                        register_replay_created(
+                            &call_result.state_changeset,
+                            dynamic.as_ref(),
+                            fuzzed_contracts,
+                            &mut created,
+                        );
 
                         // Commit only when running invariant / stateful tests.
                         if fuzzed_contracts.is_some() {
@@ -407,10 +474,12 @@ impl WorkerCorpus {
                         // If the only input for fuzzed function cannot be replied, then move to
                         // next one without adding it in memory.
                         if fuzzed_function.is_some() {
+                            rollback_replay_created(fuzzed_contracts, created);
                             continue 'corpus_replay;
                         }
                     }
                 }
+                rollback_replay_created(fuzzed_contracts, created);
 
                 metrics.corpus_count += 1;
 
@@ -430,6 +499,7 @@ impl WorkerCorpus {
             id,
             in_memory_corpus,
             history_map,
+            edge_indices,
             sancov_history_map,
             failed_replays,
             metrics,
@@ -580,8 +650,11 @@ impl WorkerCorpus {
             return false;
         }
 
-        let (new_coverage, is_edge) =
-            call_result.merge_all_coverage(&mut self.history_map, &mut self.sancov_history_map);
+        let (new_coverage, is_edge) = call_result.merge_all_coverage(
+            &mut self.history_map,
+            &mut self.edge_indices,
+            &mut self.sancov_history_map,
+        );
         if new_coverage {
             self.metrics.update_seen(is_edge);
         }
@@ -1047,6 +1120,7 @@ impl WorkerCorpus {
         executor: &Executor<FEN>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+        dynamic: Option<&DynamicTargetCtx<'_>>,
     ) -> Result<()> {
         let Some(worker_dir) = &self.worker_dir else {
             return Ok(());
@@ -1057,6 +1131,8 @@ impl WorkerCorpus {
         for (entry, tx_seq) in self.load_sync_corpus()? {
             let mut new_coverage_on_sync = false;
             let mut cmp_seq = Vec::with_capacity(tx_seq.len());
+            // Targets deployed during this entry, cleared after the entry.
+            let mut created: Vec<Address> = Vec::new();
             for tx in &tx_seq {
                 if !Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                     cmp_seq.push(Vec::new());
@@ -1067,13 +1143,23 @@ impl WorkerCorpus {
                 cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
 
                 // Check if this provides new coverage.
-                let (new_coverage, is_edge) = call_result
-                    .merge_all_coverage(&mut self.history_map, &mut self.sancov_history_map);
+                let (new_coverage, is_edge) = call_result.merge_all_coverage(
+                    &mut self.history_map,
+                    &mut self.edge_indices,
+                    &mut self.sancov_history_map,
+                );
 
                 if new_coverage {
                     self.metrics.update_seen(is_edge);
                     new_coverage_on_sync = true;
                 }
+
+                register_replay_created(
+                    &call_result.state_changeset,
+                    dynamic,
+                    fuzzed_contracts,
+                    &mut created,
+                );
 
                 // Commit only for stateful tests.
                 if fuzzed_contracts.is_some() {
@@ -1087,6 +1173,7 @@ impl WorkerCorpus {
                     "replayed tx for syncing",
                 );
             }
+            rollback_replay_created(fuzzed_contracts, created);
 
             let sync_path = &entry.path;
             if new_coverage_on_sync {
@@ -1264,13 +1351,14 @@ impl WorkerCorpus {
         executor: &Executor<FEN>,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
+        dynamic: Option<&DynamicTargetCtx<'_>>,
         global_corpus_metrics: &GlobalCorpusMetrics,
     ) -> Result<()> {
         trace!(target: "corpus", "syncing");
 
         self.sync_metrics(global_corpus_metrics);
 
-        self.calibrate(executor, fuzzed_function, fuzzed_contracts)?;
+        self.calibrate(executor, fuzzed_function, fuzzed_contracts, dynamic)?;
         if self.id == 0 {
             self.export_to_workers(num_workers)?;
         } else {
@@ -1288,7 +1376,7 @@ impl WorkerCorpus {
     }
 
     /// Helper to check if a tx can be replayed.
-    fn can_replay_tx(
+    pub(crate) fn can_replay_tx(
         tx: &BasicTxDetails,
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
@@ -1303,45 +1391,6 @@ impl WorkerCorpus {
     }
 }
 
-fn read_corpus_dir(path: &Path) -> impl Iterator<Item = CorpusDirEntry> {
-    let dir = match std::fs::read_dir(path) {
-        Ok(dir) => dir,
-        Err(err) => {
-            debug!(%err, ?path, "failed to read corpus directory");
-            return vec![].into_iter();
-        }
-    };
-    dir.filter_map(|res| match res {
-        Ok(entry) => {
-            let path = entry.path();
-            if !path.is_file() {
-                return None;
-            }
-            let name = if path.is_file()
-                && let Some(name) = path.file_name()
-                && let Some(name) = name.to_str()
-            {
-                name
-            } else {
-                return None;
-            };
-
-            if let Ok((uuid, timestamp)) = parse_corpus_filename(name) {
-                Some(CorpusDirEntry { path, uuid, timestamp })
-            } else {
-                debug!(target: "corpus", ?path, "failed to parse corpus filename");
-                None
-            }
-        }
-        Err(err) => {
-            debug!(%err, "failed to read corpus directory entry");
-            None
-        }
-    })
-    .collect::<Vec<_>>()
-    .into_iter()
-}
-
 fn has_legacy_invariant_corpus_dirs(path: &Path) -> bool {
     std::fs::read_dir(path).is_ok_and(|entries| {
         entries.flatten().any(|entry| {
@@ -1353,45 +1402,11 @@ fn has_legacy_invariant_corpus_dirs(path: &Path) -> bool {
     })
 }
 
-struct CorpusDirEntry {
-    path: PathBuf,
-    uuid: Uuid,
-    timestamp: u64,
-}
-
-impl CorpusDirEntry {
-    fn name(&self) -> &str {
-        self.path.file_name().unwrap().to_str().unwrap()
-    }
-
-    fn read_tx_seq(&self) -> foundry_common::fs::Result<Vec<BasicTxDetails>> {
-        let path = &self.path;
-        if path.extension() == Some("gz".as_ref()) {
-            foundry_common::fs::read_json_gzip_file(path)
-        } else {
-            foundry_common::fs::read_json_file(path)
-        }
-    }
-}
-
-/// Parses the corpus filename and returns the uuid and timestamp associated with it.
-fn parse_corpus_filename(name: &str) -> Result<(Uuid, u64)> {
-    let name = name.trim_end_matches(".gz").trim_end_matches(".json");
-
-    let (uuid_str, timestamp_str) =
-        name.rsplit_once('-').ok_or_else(|| eyre!("invalid corpus filename format: {name}"))?;
-
-    let uuid = Uuid::parse_str(uuid_str)?;
-    let timestamp = timestamp_str.parse()?;
-
-    Ok((uuid, timestamp))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloy_dyn_abi::DynSolValue;
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::U256;
     use std::fs;
 
     fn basic_tx() -> BasicTxDetails {
@@ -1475,8 +1490,9 @@ mod tests {
             in_memory_corpus: vec![corpus],
             current_mutated: Some(seed_uuid),
             failed_replays: 0,
-            history_map: vec![0u8; COVERAGE_MAP_SIZE],
-            sancov_history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            history_map: Vec::new(),
+            edge_indices: EdgeIndexMap::default(),
+            sancov_history_map: Vec::new(),
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
@@ -1609,8 +1625,9 @@ mod tests {
             in_memory_corpus: vec![favored, non_favored],
             current_mutated: None,
             failed_replays: 0,
-            history_map: vec![0u8; COVERAGE_MAP_SIZE],
-            sancov_history_map: vec![0u8; COVERAGE_MAP_SIZE],
+            history_map: Vec::new(),
+            edge_indices: EdgeIndexMap::default(),
+            sancov_history_map: Vec::new(),
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
