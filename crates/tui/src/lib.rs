@@ -1,7 +1,7 @@
 //! Shared terminal UI utilities for Foundry.
 
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, Event, read},
+    event::{DisableMouseCapture, EnableMouseCapture, Event, poll, read},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -16,6 +16,7 @@ use std::{
     panic::{PanicHookInfo, set_hook, take_hook},
     sync::Arc,
     thread::panicking,
+    time::Duration,
 };
 
 /// The default terminal backend used by Foundry TUIs.
@@ -119,11 +120,21 @@ pub trait TuiApp {
 
     /// Handles one terminal event.
     fn handle_event(&mut self, event: Event) -> ControlFlow<Self::Exit>;
+
+    /// Handles one elapsed tick when no terminal event was received.
+    fn on_tick(&mut self) -> ControlFlow<Self::Exit> {
+        ControlFlow::Continue(())
+    }
 }
 
 /// Runs an interactive terminal application with the default Foundry terminal setup.
 pub fn run_app<App: TuiApp>(app: &mut App) -> IoResult<App::Exit> {
-    with_terminal(|terminal| run_app_inner(terminal, app))?
+    with_terminal(|terminal| run_app_inner(terminal, app, None))?
+}
+
+/// Runs an interactive terminal application with a periodic tick.
+pub fn run_app_with_tick<App: TuiApp>(app: &mut App, tick_rate: Duration) -> IoResult<App::Exit> {
+    with_terminal(|terminal| run_app_inner(terminal, app, Some(tick_rate)))?
 }
 
 /// Runs an app only when the current environment supports an interactive TUI.
@@ -137,10 +148,17 @@ pub fn run_app_if_interactive<App: TuiApp>(app: &mut App) -> IoResult<Option<App
 fn run_app_inner<App: TuiApp>(
     terminal: &mut CrosstermTerminal,
     app: &mut App,
+    tick_rate: Option<Duration>,
 ) -> IoResult<App::Exit> {
     loop {
         terminal.draw(|frame| app.draw(frame))?;
-        match app.handle_event(read()?) {
+        let flow = if let Some(tick_rate) = tick_rate {
+            if poll(tick_rate)? { app.handle_event(read()?) } else { app.on_tick() }
+        } else {
+            app.handle_event(read()?)
+        };
+
+        match flow {
             ControlFlow::Continue(()) => {}
             ControlFlow::Break(reason) => return Ok(reason),
         }

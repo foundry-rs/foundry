@@ -1687,7 +1687,7 @@ impl AccountGenerator {
         self
     }
 
-    fn get_phrase(&self) -> &str {
+    pub(crate) fn get_phrase(&self) -> &str {
         &self.phrase
     }
 
@@ -1707,7 +1707,7 @@ impl AccountGenerator {
         self
     }
 
-    fn get_derivation_path(&self) -> &str {
+    pub(crate) fn get_derivation_path(&self) -> &str {
         self.derivation_path.as_deref().unwrap_or("m/44'/60'/0'/0/")
     }
 }

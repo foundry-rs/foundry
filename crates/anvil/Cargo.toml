@@ -29,6 +29,7 @@ foundry-config.workspace = true
 foundry-evm.workspace = true
 foundry-evm-networks.workspace = true
 foundry-primitives = { workspace = true, default-features = false }
+foundry-tui = { workspace = true, optional = true }
 tempo-chainspec.workspace = true
 tempo-primitives.workspace = true
 tempo-precompiles.workspace = true
@@ -110,8 +111,10 @@ clap = { version = "4", features = [
 ], optional = true }
 clap_complete = { workspace = true, optional = true }
 chrono.workspace = true
+crossterm = { workspace = true, optional = true }
 ctrlc = { version = "3", optional = true }
 fdlimit = { version = "0.3", optional = true }
+ratatui = { workspace = true, features = ["crossterm"], optional = true }
 
 [dev-dependencies]
 alloy-provider = { workspace = true, features = ["txpool-api"] }
@@ -147,6 +150,9 @@ cmd = [
     "clap_complete",
     "dep:fdlimit",
     "dep:ctrlc",
+    "dep:crossterm",
+    "dep:foundry-tui",
+    "dep:ratatui",
     "anvil-server/clap",
     "tokio/signal",
 ]

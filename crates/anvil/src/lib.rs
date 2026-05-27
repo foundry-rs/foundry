@@ -82,6 +82,9 @@ pub mod args;
 #[cfg(feature = "cmd")]
 pub mod opts;
 
+#[cfg(feature = "cmd")]
+mod tui;
+
 #[macro_use]
 extern crate foundry_common;
 

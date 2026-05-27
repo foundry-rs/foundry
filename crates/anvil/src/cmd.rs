@@ -2,6 +2,8 @@ use crate::{
     AccountGenerator, CHAIN_ID, NodeConfig,
     config::{DEFAULT_MNEMONIC, DEFAULT_SLOTS_IN_AN_EPOCH, ForkChoice},
     eth::{EthApi, backend::db::SerializableState, pool::transactions::TransactionOrder},
+    try_spawn,
+    tui::run as run_tui,
 };
 use alloy_genesis::Genesis;
 use alloy_network::Network;
@@ -17,6 +19,7 @@ use foundry_evm::hardfork::OpHardfork;
 use foundry_evm::hardfork::{EthereumHardfork, FoundryHardfork};
 use foundry_evm_networks::NetworkConfigs;
 use foundry_primitives::FoundryReceiptEnvelope;
+use foundry_tui::{TuiMode, tui_mode};
 use futures::FutureExt;
 use rand_08::{SeedableRng, rngs::StdRng};
 use std::{
@@ -96,6 +99,10 @@ pub struct NodeArgs {
     /// Slots in an epoch
     #[arg(long, value_name = "SLOTS_IN_AN_EPOCH", default_value_t = DEFAULT_SLOTS_IN_AN_EPOCH)]
     pub slots_in_an_epoch: u64,
+
+    /// Open an interactive terminal dashboard for live node activity.
+    #[arg(long, help_heading = "Display options")]
+    pub tui: bool,
 
     /// Writes output of `anvil` as json to user-specified file.
     #[arg(long, value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
@@ -385,8 +392,17 @@ impl NodeArgs {
         let dump_interval =
             self.state_interval.map(Duration::from_secs).unwrap_or(DEFAULT_DUMP_INTERVAL);
         let preserve_historical_states = self.preserve_historical_states;
+        let tui = self.tui;
+        let mut config = self.into_node_config()?;
 
-        let (api, mut handle) = crate::try_spawn(self.into_node_config()?).await?;
+        if tui && matches!(tui_mode(), TuiMode::Interactive) {
+            config = config.set_silent(true);
+            let (api, handle) = try_spawn(config).await?;
+            return run_tui(api, handle, dump_state, dump_interval, preserve_historical_states)
+                .await;
+        }
+
+        let (api, mut handle) = try_spawn(config).await?;
 
         // sets the signal handler to gracefully shutdown.
         let mut fork = api.get_fork();
@@ -727,7 +743,7 @@ impl AnvilEvmArgs {
 }
 
 /// Helper type to periodically dump the state of the chain to disk
-struct PeriodicStateDumper<N: Network> {
+pub(crate) struct PeriodicStateDumper<N: Network> {
     in_progress_dump: Option<Pin<Box<dyn Future<Output = ()> + Send + Sync + 'static>>>,
     api: EthApi<N>,
     dump_state: Option<PathBuf>,
@@ -736,7 +752,7 @@ struct PeriodicStateDumper<N: Network> {
 }
 
 impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> PeriodicStateDumper<N> {
-    fn new(
+    pub(crate) fn new(
         api: EthApi<N>,
         dump_state: Option<PathBuf>,
         interval: Duration,
@@ -754,7 +770,7 @@ impl<N: Network<ReceiptEnvelope = FoundryReceiptEnvelope>> PeriodicStateDumper<N
         Self { in_progress_dump: None, api, dump_state, preserve_historical_states, interval }
     }
 
-    async fn dump(&self) {
+    pub(crate) async fn dump(&self) {
         if let Some(state) = self.dump_state.clone() {
             Self::dump_state(self.api.clone(), state, self.preserve_historical_states).await
         }
@@ -952,6 +968,13 @@ mod tests {
         let args: NodeArgs = NodeArgs::parse_from(["anvil", "--hardfork", "berlin"]);
         let config = args.into_node_config().unwrap();
         assert_eq!(config.hardfork, Some(EthereumHardfork::Berlin.into()));
+    }
+
+    #[test]
+    fn can_parse_tui() {
+        let args = NodeArgs::parse_from(["anvil", "--tui"]);
+
+        assert!(args.tui);
     }
 
     #[test]
