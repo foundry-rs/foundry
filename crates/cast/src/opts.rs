@@ -1086,6 +1086,7 @@ pub enum CastSubcommand {
         sig: Option<String>,
 
         /// Optimize signature to contain provided amount of leading zeroes in selector.
+        #[arg(conflicts_with = "json")]
         optimize: Option<usize>,
     },
 

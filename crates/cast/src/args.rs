@@ -226,11 +226,9 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         }
 
         // ABI encoding & decoding
-        // TODO(json): token list output, needs array envelope, delegated to print_tokens which is
-        // already JSON-aware
         CastSubcommand::DecodeAbi { sig, calldata, input } => {
             let tokens = SimpleCast::abi_decode(&sig, &calldata, input)?;
-            print_tokens(&tokens);
+            print_tokens(&tokens)?;
         }
         CastSubcommand::AbiEncode { sig, packed, args } => {
             let out = if packed {
@@ -251,7 +249,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 sh_println!("[data]: {}", hex::encode_prefixed(log_data.data))?;
             }
         }
-        // TODO(json): token list output, delegated to print_tokens which is already JSON-aware
         CastSubcommand::DecodeCalldata { sig, calldata, file } => {
             let raw_hex = if let Some(file_path) = file {
                 let contents = fs::read_to_string(&file_path)?;
@@ -261,7 +258,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             };
 
             let tokens = SimpleCast::calldata_decode(&sig, &raw_hex, true)?;
-            print_tokens(&tokens);
+            print_tokens(&tokens)?;
         }
         CastSubcommand::CalldataEncode { sig, args, file } => {
             let final_args = if let Some(file_path) = file {
@@ -278,12 +275,10 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let out = SimpleCast::calldata_encode(sig, &final_args)?;
             print_scalar(out)?;
         }
-        // TODO(json): token list output, delegated to print_tokens which is already JSON-aware
         CastSubcommand::DecodeString { data } => {
             let tokens = SimpleCast::calldata_decode("Any(string)", &data, true)?;
-            print_tokens(&tokens);
+            print_tokens(&tokens)?;
         }
-        // TODO(json): token list output, delegated to print_tokens which is already JSON-aware
         CastSubcommand::DecodeEvent { sig, data } => {
             let decoded_event = if let Some(event_sig) = sig {
                 let event = get_event(event_sig.as_str())?;
@@ -303,9 +298,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     eyre::bail!("No matching event signature found for selector `{selector}`")
                 }
             };
-            print_tokens(&decoded_event.body);
+            print_tokens(&decoded_event.body)?;
         }
-        // TODO(json): token list output, delegated to print_tokens which is already JSON-aware
         CastSubcommand::DecodeError { sig, data } => {
             let error = if let Some(err_sig) = sig {
                 get_error(err_sig.as_str())?
@@ -322,7 +316,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 }
             };
             let decoded_error = error.decode_error(&hex::decode(data)?)?;
-            print_tokens(&decoded_error.body);
+            print_tokens(&decoded_error.body)?;
         }
         CastSubcommand::Interface(cmd) => cmd.run().await?,
         CastSubcommand::CreationCode(cmd) => cmd.run().await?,
@@ -335,8 +329,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let out = pretty_calldata(&calldata, offline).await?.to_string();
             print_scalar(out)?;
         }
-        // TODO(json): optimize=Some branch emits multi-line progress + timing; optimize=None uses
-        // print_scalar
+        // JSON: --optimize conflicts with --json at the clap level; optimize=None uses print_scalar
         CastSubcommand::Sig { sig, optimize } => {
             let sig = stdin::unwrap_line(sig)?;
             match optimize {
@@ -402,7 +395,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 .to_string();
             print_scalar(out)?;
         }
-        // TODO(json): structured block object, needs object envelope wrapping lib.rs output
         CastSubcommand::Block { block, full, fields, raw, rpc, network } => {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
@@ -439,7 +431,8 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     .block(block.unwrap_or(BlockId::Number(Latest)), full, fields)
                     .await?
             };
-            sh_println!("{}", output)?
+            // JSON: Output is already formatted by `Cast::block()`
+            sh_println!("{output}")?;
         }
         CastSubcommand::BlockNumber { rpc, block } => {
             let config = rpc.load_config()?;
@@ -505,11 +498,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 }
             };
             let addr = computed.to_checksum(None);
-            if shell::is_json() {
-                print_scalar(addr)?;
-            } else {
-                sh_println!("Computed Address: {addr}")?;
-            }
+            print_scalar(addr)?;
         }
         CastSubcommand::Disassemble { bytecode } => {
             let bytecode = stdin::unwrap_line(bytecode)?;
@@ -597,7 +586,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let out = Cast::new(provider).storage_root(who, slots, block).await?;
             print_scalar(out)?;
         }
-        // TODO(json): already serializes a full JSON object, needs wrapping in the shared envelope
         CastSubcommand::Proof { address, slots, rpc, block } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
@@ -606,7 +594,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 .get_proof(address, slots.into_iter().collect())
                 .block_id(block.unwrap_or_default())
                 .await?;
-            sh_println!("{}", serde_json::to_string(&value)?)?;
+            print_json_object(value)?;
         }
         CastSubcommand::Rpc(cmd) => cmd.run().await?,
         CastSubcommand::Storage(cmd) => cmd.run().await?,
@@ -615,8 +603,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Call(cmd) => cmd.run().await?,
         CastSubcommand::Estimate(cmd) => cmd.run().await?,
         CastSubcommand::MakeTx(cmd) => cmd.run().await?,
-        // TODO(json): emits either a tx hash or a full receipt depending on --async, needs envelope
-        // wrapping
         CastSubcommand::PublishTx { raw_tx, cast_async, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
@@ -625,16 +611,16 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let tx_hash = pending_tx.inner().tx_hash();
 
             if cast_async {
-                sh_println!("{tx_hash:#x}")?;
+                print_scalar(format!("{tx_hash:#x}"))?;
             } else {
                 let receipt = pending_tx.get_receipt().await?;
-                sh_println!("{}", serde_json::json!(receipt))?;
+                print_json_object(receipt)?;
             }
         }
-        // TODO(json): rich receipt structure, needs envelope wrapping
         CastSubcommand::Receipt { tx_hash, field, cast_async, confirmations, rpc } => {
             let config = rpc.load_config()?;
             let provider = utils::get_provider(&config)?;
+            // JSON: Output is already formatted by `Cast::format_receipt()`
             sh_println!(
                 "{}",
                 CastTxSender::new(provider)
@@ -646,7 +632,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::SendTx(cmd) => cmd.run().await?,
         CastSubcommand::BatchMakeTx(cmd) => cmd.run().await?,
         CastSubcommand::BatchSend(cmd) => cmd.run().await?,
-        // TODO(json): structured tx object, needs object envelope wrapping lib.rs output
         CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc, to_request, network } => {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
@@ -675,20 +660,18 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         .await?
                 }
             };
-            sh_println!("{}", output)?
+            // JSON: Output is already formatted by `Cast::transaction()`
+            sh_println!("{output}")?;
         }
 
         // 4Byte
-        // TODO(json): multiple signature candidates, needs array envelope
         CastSubcommand::FourByte { selector } => {
             let selector = stdin::unwrap_line(selector)?;
             let sigs = decode_function_selector(selector).await?;
             if sigs.is_empty() {
                 eyre::bail!("No matching function signatures found for selector `{selector}`");
             }
-            for sig in sigs {
-                sh_println!("{sig}")?
-            }
+            print_list(&sigs)?;
         }
 
         // TODO(json): multiple candidates + interactive selection + decoded tokens, needs
@@ -722,19 +705,16 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             };
 
             let tokens = SimpleCast::calldata_decode(sig, &calldata, true)?;
-            print_tokens(&tokens);
+            print_tokens(&tokens)?;
         }
 
-        // TODO(json): multiple signature candidates, needs array envelope
         CastSubcommand::FourByteEvent { topic } => {
             let topic = stdin::unwrap_line(topic)?;
             let sigs = decode_event_topic(topic).await?;
             if sigs.is_empty() {
                 eyre::bail!("No matching event signatures found for topic `{topic}`");
             }
-            for sig in sigs {
-                sh_println!("{sig}")?
-            }
+            print_list(&sigs)?;
         }
         // TODO(json): external API response printed via .describe(), needs structured envelope
         CastSubcommand::UploadSignature { signatures } => {
@@ -874,7 +854,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             generate(shell, &mut CastArgs::command(), "cast", &mut std::io::stdout())
         }
         CastSubcommand::Logs(cmd) => cmd.run().await?,
-        // JSON: always-JSON passthrough (rich alloy type, no --json flag by design)
         CastSubcommand::DecodeTransaction { tx, network } => {
             let tx = stdin::unwrap_line(tx)?;
             let decoded_tx = match network {
@@ -887,7 +866,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                 }
                 _ => SimpleCast::decode_raw_transaction::<Ethereum>(&tx)?,
             };
-            sh_println!("{}", serde_json::to_string_pretty(&decoded_tx)?)?;
+            print_json_object(decoded_tx)?;
         }
         CastSubcommand::RecoverAuthority { auth } => {
             let auth: SignedAuthorization = serde_json::from_str(&auth)?;
@@ -917,25 +896,48 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         Ok(())
     }
 
+    /// Prints a list of serializable items: JSON envelope wrapping an array in `--json` mode,
+    /// one item per line otherwise.
+    fn print_list<T: serde::Serialize + std::fmt::Display>(items: &[T]) -> Result<()> {
+        if shell::is_json() {
+            print_json_success(items)?;
+        } else {
+            for item in items {
+                sh_println!("{item}")?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Wraps a serializable object in the JSON envelope in `--json` mode, otherwise pretty-prints
+    /// it as JSON. Used for objects that have no human-readable `Display` format.
+    fn print_json_object<T: serde::Serialize>(value: T) -> Result<()> {
+        if shell::is_json() {
+            print_json_success(value)?;
+        } else {
+            sh_println!("{}", serde_json::to_string_pretty(&value)?)?;
+        }
+        Ok(())
+    }
+
     /// Prints slice of tokens using [`format_tokens`] or [`serialize_value_as_json`] depending
     /// whether the shell is in JSON mode.
     ///
     /// This is included here to avoid a cyclic dependency between `fmt` and `common`.
-    fn print_tokens(tokens: &[DynSolValue]) {
+    fn print_tokens(tokens: &[DynSolValue]) -> Result<()> {
         if shell::is_json() {
-            let tokens: Vec<serde_json::Value> = tokens
+            let values = tokens
                 .iter()
                 .cloned()
                 .map(|t| serialize_value_as_json(t, None))
-                .collect::<Result<Vec<_>>>()
-                .unwrap();
-            let _ = sh_println!("{}", serde_json::to_string_pretty(&tokens).unwrap());
+                .collect::<Result<Vec<serde_json::Value>>>()?;
+            print_json_success(values)?;
         } else {
-            let tokens = format_tokens(tokens);
-            tokens.for_each(|t| {
+            format_tokens(tokens).for_each(|t| {
                 let _ = sh_println!("{t}");
             });
         }
+        Ok(())
     }
 
     Ok(())

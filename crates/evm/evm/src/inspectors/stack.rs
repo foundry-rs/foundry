@@ -1,7 +1,7 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, CmpOperands, CustomPrintTracer, EdgeCovInspector,
-    Fuzzer, LineCoverageCollector, LogCollector, RevertDiagnostic, ScriptExecutionInspector,
-    TempoLabels, TracingInspector,
+    Cheatcodes, CheatsConfig, ChiselState, CmpOperands, CustomPrintTracer, EdgeCovConfig,
+    EdgeCovInspector, EdgeCoverage, Fuzzer, LineCoverageCollector, LogCollector, RevertDiagnostic,
+    ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256,
@@ -10,6 +10,7 @@ use alloy_primitives::{
 
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, NestedEvmClosure, Wallets};
 use foundry_common::compile::Analysis;
+use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
     backend::{DatabaseError, DatabaseExt, JournaledState},
@@ -31,7 +32,6 @@ use revm::{
     },
     context_interface::CreateScheme,
     handler::FrameResult,
-    inspector::JournalExt,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
         InstructionResult, Interpreter, InterpreterResult, return_ok,
@@ -315,7 +315,7 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
     pub labels: AddressHashMap<String>,
     pub traces: Option<SparsedTraceArena>,
     pub line_coverage: Option<HitMaps>,
-    pub edge_coverage: Option<Vec<u8>>,
+    pub edge_coverage: Option<EdgeCoverage>,
     pub evm_cmp_values: Option<Vec<CmpOperands>>,
     pub cheatcodes: Option<Box<Cheatcodes<FEN>>>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
@@ -540,11 +540,21 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.line_coverage = yes.then(Default::default);
     }
 
-    /// Set whether to enable the edge coverage collector.
+    /// Set whether to enable the edge coverage collector with default config.
     #[inline]
     pub fn collect_edge_coverage(&mut self, yes: bool) {
-        // TODO: configurable edge size?
-        self.edge_coverage = yes.then(EdgeCovInspector::new).map(Into::into);
+        self.edge_coverage =
+            yes.then(|| EdgeCovInspector::with_config(EdgeCovConfig::default()).into());
+    }
+
+    /// Configure the edge coverage collector from a [`FuzzCorpusConfig`].
+    ///
+    /// Derives both the on/off gate and [`EdgeCovConfig`] from `corpus`.
+    #[inline]
+    pub fn collect_edge_coverage_with_config(&mut self, corpus: &FuzzCorpusConfig) {
+        self.edge_coverage = corpus
+            .collect_evm_edge_coverage()
+            .then(|| EdgeCovInspector::with_config(corpus.into()).into());
     }
 
     /// Set whether to collect EVM comparison operands.
@@ -1255,6 +1265,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: true,
                         precompile_call_logs: vec![],
+                        charged_new_account_state_gas: false,
                     });
                 }
                 // Mark accounts and storage cold before STATICCALLs
