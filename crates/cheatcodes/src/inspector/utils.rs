@@ -2,8 +2,7 @@ use crate::inspector::Cheatcodes;
 use alloy_primitives::{Address, Bytes, U256};
 use foundry_evm_core::evm::{FoundryContextFor, FoundryEvmNetwork};
 use revm::{
-    context::ContextTr,
-    inspector::JournalExt,
+    context::{ContextTr, JournalTr},
     interpreter::{CreateInputs, CreateScheme},
 };
 

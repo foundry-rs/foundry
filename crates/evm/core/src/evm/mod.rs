@@ -227,6 +227,7 @@ pub fn get_create2_factory_call_inputs<T: JournalTr>(
         reservoir: inputs.reservoir(),
         is_static: false,
         return_memory_offset: 0..0,
+        charged_new_account_state_gas: false,
     })
 }
 
