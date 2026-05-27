@@ -32,7 +32,6 @@ use revm::{
     },
     context_interface::CreateScheme,
     handler::FrameResult,
-    inspector::JournalExt,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
         InstructionResult, Interpreter, InterpreterResult, return_ok,

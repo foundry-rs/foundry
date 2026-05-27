@@ -118,7 +118,7 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<HaltReason>, EVMError<DatabaseError>> {
-        self.ctx().set_tx(tx.into());
+        self.ctx().set_tx(tx);
 
         let mut handler = OpEvmHandler::<I>::new();
         let result = handler.inspect_run(self).map_err(map_op_error)?;

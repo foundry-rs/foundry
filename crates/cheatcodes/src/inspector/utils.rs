@@ -3,7 +3,6 @@ use alloy_primitives::{Address, Bytes, U256};
 use foundry_evm_core::evm::{FoundryContextFor, FoundryEvmNetwork};
 use revm::{
     context::{ContextTr, JournalTr},
-    inspector::JournalExt,
     interpreter::{CreateInputs, CreateScheme},
 };
 
