@@ -2,7 +2,8 @@ use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 
-use super::symbolic_helpers::z3_available;
+use super::symbolic_helpers::{assert_symbolic_witness, z3_available};
+use crate::skip_unless_z3;
 
 forgetest_init!(symbolic_opcode_byte_and_signextend_accept_symbolic_index, |prj, cmd| {
     if !z3_available() {
@@ -233,3 +234,86 @@ contract SymbolicExpWideExponent {
     );
     assert!(!stdout.contains("symbolic EXP exponent"), "{stdout}");
 });
+
+// Regression for the `GAS` / `gasleft()` opcode: if it silently returned
+// `U256::MAX`, the assertion below would always hold and the test would falsely
+// pass. Correct symbolic behavior bounds `gasleft()` by the transaction gas
+// limit (far below 2**200), so a counterexample must exist.
+forgetest_init!(symbolic_gasleft_is_bounded_not_max, |prj, cmd| {
+    skip_unless_z3!("symbolic_gasleft_is_bounded_not_max");
+
+    prj.add_test(
+        "SymbolicGasLeftBound.t.sol",
+        r#"
+contract SymbolicGasLeftBound {
+    function checkGasLeftIsBounded() public view {
+        assert(gasleft() > 2 ** 200);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkGasLeftIsBounded",
+    ]))
+    .failure();
+});
+
+// Plan-compliant target behavior for the `GAS` / `gasleft()` opcode: any
+// symbolic path that branches on `gasleft()` should taint the result as
+// Incomplete (Unsupported), because gas is not modeled symbolically and a
+// bounded-symbolic approximation produces non-replaying counterexamples.
+//
+// The contract below has two branches gated by `gasleft()`:
+//   - the `low gas` branch is concretely unreachable under any normal forge
+//     transaction gas limit;
+//   - the `high gas` branch is the only one a concrete replay can ever take.
+//
+// A correct symbolic engine should refuse to draw conclusions: rather than
+// PASS (if it silently treated `gasleft` as always high) or FAIL with a
+// non-replaying counterexample (if it lets Z3 pick `gasleft = 50`), it should
+// emit a `[FAIL: incomplete symbolic execution (Stuck): unsupported symbolic
+// execution feature: GAS/gasleft() not modeled]` result.
+forgetest_init!(
+    #[ignore = "TODO: GAS/gasleft() should fail closed as Unsupported; engine \
+                currently returns a bounded symbolic `gasleft <= gas_limit` \
+                which produces phantom non-replaying counterexamples instead"]
+    symbolic_gasleft_branch_reports_unsupported,
+    |prj, cmd| {
+        skip_unless_z3!("symbolic_gasleft_branch_reports_unsupported");
+
+        prj.add_test(
+            "SymbolicGasLeftIncomplete.t.sol",
+            r#"
+contract SymbolicGasLeftIncomplete {
+    // The `gasleft() < 100` branch is concretely unreachable under any
+    // normal forge transaction gas limit. A correct symbolic engine that
+    // does not model gas must not let Z3 pick `gasleft = 50`, take this
+    // branch, and report a counterexample that will never replay; the
+    // result should taint as Incomplete instead.
+    function checkGasGuardedBranch(uint256 input) public view {
+        if (gasleft() < 100) {
+            assert(input != 0xdead);
+        }
+    }
+}
+"#,
+        );
+
+        let stdout = cmd
+            .args(["test", "--symbolic", "--match-test", "checkGasGuardedBranch"])
+            .assert_failure()
+            .get_output()
+            .stdout_lossy();
+
+        assert_relevant_lines(
+            &stdout,
+            foundry_test_utils::str![[r#"
+incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
+"#]],
+        );
+    }
+);
