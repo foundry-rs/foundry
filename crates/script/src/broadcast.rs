@@ -374,13 +374,23 @@ pub(crate) fn remaining_unsigned_transactions<N: Network>(
     sequences: &[ScriptSequence<N>],
 ) -> impl Iterator<Item = RemainingScriptTransaction> + '_ {
     sequences.iter().flat_map(|sequence| {
-        sequence.transactions().skip(sequence.receipts.len()).filter(|tx| tx.is_unsigned()).map(
-            |tx| RemainingScriptTransaction {
+        remaining_transactions(sequence).filter(|tx| tx.is_unsigned()).map(|tx| {
+            RemainingScriptTransaction {
                 chain: sequence.chain,
                 from: tx.from().expect("missing from"),
-            },
-        )
+            }
+        })
     })
+}
+
+fn remaining_transaction_start<N: Network>(sequence: &ScriptSequence<N>) -> usize {
+    sequence.receipts.len().min(sequence.transactions.len())
+}
+
+fn remaining_transactions<N: Network>(
+    sequence: &ScriptSequence<N>,
+) -> impl Iterator<Item = &TransactionMaybeSigned<N>> + '_ {
+    sequence.transactions().skip(remaining_transaction_start(sequence))
 }
 
 /// Represents how to send _all_ transactions
@@ -563,12 +573,13 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
         };
 
         let tempo_sponsor = self.script_config.tempo.sponsor_config().await?.map(Arc::new);
-        if tempo_sponsor.is_some() && self.script_config.tempo.sponsor_sig.is_some() {
-            if remaining_transactions.len() > 1 {
-                eyre::bail!(
-                    "--tempo.sponsor-sig can only sponsor one remaining script transaction; use --tempo.sponsor-signer for multi-transaction scripts"
-                );
-            }
+        if tempo_sponsor.is_some()
+            && self.script_config.tempo.sponsor_sig.is_some()
+            && remaining_transactions.len() > 1
+        {
+            eyre::bail!(
+                "--tempo.sponsor-sig can only sponsor one remaining script transaction; use --tempo.sponsor-signer for multi-transaction scripts"
+            );
         }
 
         let progress = ScriptProgress::default();
@@ -896,12 +907,21 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
-        let provider = Arc::new(ProviderBuilder::<TempoNetwork>::new(sequence.rpc_url()).build()?);
-        let tempo_sponsor = self.script_config.tempo.sponsor_config().await?;
+        let total_transactions = sequence.transactions.len();
+        let remaining_start = remaining_transaction_start(sequence);
+
+        if remaining_start == total_transactions {
+            sh_println!("No transactions to broadcast in batch mode.")?;
+            return Ok(BroadcastedState {
+                args: self.args,
+                script_config: self.script_config,
+                build_data: self.build_data,
+                sequence: self.sequence,
+            });
+        }
 
         // Collect sender addresses - batch mode requires single sender
-        let senders: AddressHashSet = sequence
-            .transactions()
+        let senders: AddressHashSet = remaining_transactions(sequence)
             .filter(|tx| tx.is_unsigned())
             .filter_map(|tx| tx.from())
             .collect();
@@ -923,6 +943,9 @@ impl BundledState<TempoEvmNetwork> {
                 "You seem to be using Foundry's default sender. Be sure to set your own --sender."
             );
         }
+
+        let provider = Arc::new(ProviderBuilder::<TempoNetwork>::new(sequence.rpc_url()).build()?);
+        let tempo_sponsor = self.script_config.tempo.sponsor_config().await?;
 
         // Get wallet for signing
         enum BatchSigner {
@@ -961,15 +984,15 @@ impl BundledState<TempoEvmNetwork> {
         // Tempo batch transactions support CREATE only as the first call
         let mut calls: Vec<Call> = Vec::new();
         let mut has_create = false;
-        for (idx, tx) in sequence.transactions().enumerate() {
+        for (call_index, tx) in remaining_transactions(sequence).enumerate() {
             let to = match tx.to() {
                 Some(addr) => TxKind::Call(addr),
                 None => {
-                    if idx > 0 {
+                    if call_index > 0 {
                         bail!(
                             "Contract creation must be the first transaction in --batch mode. \
                              Found CREATE at position {}. Reorder your script or deploy separately.",
-                            idx + 1
+                            call_index + 1
                         );
                     }
                     if has_create {
@@ -983,16 +1006,6 @@ impl BundledState<TempoEvmNetwork> {
             let input = tx.input().cloned().unwrap_or_default();
 
             calls.push(Call { to, value, input });
-        }
-
-        if calls.is_empty() {
-            sh_println!("No transactions to broadcast in batch mode.")?;
-            return Ok(BroadcastedState {
-                args: self.args,
-                script_config: self.script_config,
-                build_data: self.build_data,
-                sequence: self.sequence,
-            });
         }
 
         sh_println!(
@@ -1132,7 +1145,7 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         // Mark all transactions as pending with the batch tx hash
-        for i in 0..sequence.transactions.len() {
+        for i in remaining_start..total_transactions {
             sequence.add_pending(i, tx_hash);
         }
 
@@ -1346,6 +1359,27 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].chain, 4217);
+    }
+
+    #[test]
+    fn remaining_transactions_skip_receipt_prefix() {
+        let completed = address!("0x1111111111111111111111111111111111111111");
+        let second = address!("0x2222222222222222222222222222222222222222");
+        let third = address!("0x3333333333333333333333333333333333333333");
+        let mut sequence = ScriptSequence::<Ethereum> {
+            chain: 4217,
+            transactions: [script_tx(completed), script_tx(second), script_tx(third)].into(),
+            receipts: vec![receipt()],
+            ..Default::default()
+        };
+
+        let remaining =
+            remaining_transactions(&sequence).map(|tx| tx.from().unwrap()).collect::<Vec<_>>();
+
+        assert_eq!(remaining, vec![second, third]);
+
+        sequence.receipts = (0..4).map(|_| receipt()).collect();
+        assert!(remaining_transactions(&sequence).next().is_none());
     }
 
     #[tokio::test]
