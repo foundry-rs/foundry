@@ -321,19 +321,12 @@ incomplete symbolic execution (Stuck): unsupported symbolic execution feature: G
 // must surface explicit Keccak/SHA3 vocabulary — either tainted as
 // Incomplete or carrying a user-facing warning — because the engine does
 // not model SHA3 collision resistance as a real cryptographic proof.
-forgetest_init!(
-    #[ignore = "TODO: results that depend on heuristic Keccak modeling \
-                must surface explicit Keccak/SHA3 vocabulary in their \
-                Incomplete/warning; engine currently emits only a generic \
-                `solver error: solver model does not satisfy path \
-                constraints` with no Keccak attribution"]
-    symbolic_keccak_dependent_safe_result_must_taint_incomplete,
-    |prj, cmd| {
-        skip_unless_z3!("symbolic_keccak_dependent_safe_result_must_taint_incomplete");
+forgetest_init!(symbolic_keccak_dependent_safe_result_must_taint_incomplete, |prj, cmd| {
+    skip_unless_z3!("symbolic_keccak_dependent_safe_result_must_taint_incomplete");
 
-        prj.add_test(
-            "SymbolicKeccakHeuristic.t.sol",
-            r#"
+    prj.add_test(
+        "SymbolicKeccakHeuristic.t.sol",
+        r#"
 contract SymbolicKeccakHeuristic {
     // The engine treats keccak as an uninterpreted function whose output
     // is never zero by construction, so this assertion holds symbolically.
@@ -344,27 +337,33 @@ contract SymbolicKeccakHeuristic {
     }
 }
 "#,
-        );
+    );
 
-        let stdout = cmd
-            .args(["test", "--symbolic", "--match-test", "checkKeccakNeverZero"])
-            .assert()
-            .get_output()
-            .stdout_lossy();
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkKeccakNeverZero"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
 
-        // Require explicit Keccak/SHA3 vocabulary in the result line; a bare
-        // "incomplete" for unrelated reasons (e.g. solver-error) does not
-        // satisfy the plan's "heuristic paths are visible, not silently
-        // presented as proof-grade" acceptance criterion.
-        let lowered = stdout.to_lowercase();
-        let has_keccak_signal = lowered.contains("keccak heuristic")
-            || lowered.contains("sha3 heuristic")
-            || lowered.contains("symbolic keccak")
-            || lowered.contains("symbolic sha3")
-            || lowered.contains("heuristic keccak");
-        assert!(
-            has_keccak_signal,
-            "expected Keccak-heuristic taint or warning in output, got:\n{stdout}"
-        );
-    }
-);
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Error): solver error: solver model does not satisfy path constraints involving symbolic Keccak heuristic
+"#]],
+    );
+
+    // Require explicit Keccak/SHA3 vocabulary in the result line; a bare
+    // "incomplete" for unrelated reasons (e.g. solver-error) does not
+    // satisfy the plan's "heuristic paths are visible, not silently
+    // presented as proof-grade" acceptance criterion.
+    let lowered = stdout.to_lowercase();
+    let has_keccak_signal = lowered.contains("keccak heuristic")
+        || lowered.contains("sha3 heuristic")
+        || lowered.contains("symbolic keccak")
+        || lowered.contains("symbolic sha3")
+        || lowered.contains("heuristic keccak");
+    assert!(
+        has_keccak_signal,
+        "expected Keccak-heuristic taint or warning in output, got:\n{stdout}"
+    );
+});
