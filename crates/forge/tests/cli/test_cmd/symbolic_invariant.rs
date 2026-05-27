@@ -1,4 +1,4 @@
-use super::symbolic_helpers::assert_symbolic;
+use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness};
 use crate::skip_unless_z3;
 use foundry_test_utils::{forgetest_init, str};
 
@@ -59,5 +59,68 @@ contract SymbolicTransientStorageInvariant is Test {
 Ran 1 test for test/SymbolicTransientStorageInvariant.t.sol:SymbolicTransientStorageInvariant
 [PASS] invariant_transientClearsBetweenSteps() ([METRICS])
 ...
+"#]]);
+});
+
+// A target function that branches symbolically into a revert path and a
+// state-mutating path. With `fail_on_revert = false` and `invariant_depth = 2`,
+// the engine must continue exploring non-reverting symbolic branches even when
+// other branches of the same function revert; otherwise it would silently
+// under-approximate and miss the counter increment below.
+forgetest_init!(symbolic_revert_branches_do_not_swallow_non_revert_paths, |prj, cmd| {
+    skip_unless_z3!("symbolic_revert_branches_do_not_swallow_non_revert_paths");
+
+    prj.add_test(
+        "SymbolicRevertBranchInvariant.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract RevertBranchTarget {
+    uint256 public counter;
+
+    function step(uint8 mode) external {
+        if (mode == 0) {
+            revert("symbolic revert branch");
+        }
+        unchecked { counter += 1; }
+    }
+}
+
+contract SymbolicRevertBranchInvariant is Test {
+    RevertBranchTarget target;
+
+    function setUp() public {
+        target = new RevertBranchTarget();
+        targetContract(address(target));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    /// forge-config: default.invariant.fail_on_revert = false
+    function invariant_counterStaysZero() public view {
+        assertEq(target.counter(), 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_counterStaysZero",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicRevertBranchInvariant.t.sol:SymbolicRevertBranchInvariant
+[FAIL: symbolic invariant counterexample]
+...
+ invariant_counterStaysZero() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
 "#]]);
 });
