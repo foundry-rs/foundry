@@ -1086,7 +1086,6 @@ impl BundledState<TempoEvmNetwork> {
             }
         }
 
-
         sh_println!(
             "\n## Broadcasting batch transaction with {} call(s) to chain {}...",
             calls.len(),
