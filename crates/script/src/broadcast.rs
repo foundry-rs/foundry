@@ -336,7 +336,11 @@ fn lookup_signer_in(from: Address, chain: u64, file: &KeysFile) -> Result<TempoL
             continue;
         }
         if entry.chain_id == chain {
-            return build_lookup(entry);
+            if entry.key.is_some() {
+                return build_lookup(entry);
+            }
+            // exact chain match but no key -> keep searching for a fallback
+            continue;
         }
         if entry.chain_id == 0 && fallback.is_none() {
             fallback = Some(entry);
