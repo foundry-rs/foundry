@@ -59,7 +59,7 @@ pub struct CallData {
 }
 
 /// Emit a typed `network.rpc.error` envelope and exit `Network (6)`.
-fn rpc_failure(err: &eyre::Report) -> Result<()> {
+fn rpc_failure(err: &eyre::Report) -> ! {
     let cause_chain: Vec<String> = err.chain().map(ToString::to_string).collect();
     let message = cause_chain.first().cloned().unwrap_or_else(|| err.to_string());
     let envelope = JsonEnvelope::error(
@@ -243,12 +243,19 @@ impl CallArgs {
     pub async fn run(self) -> Result<()> {
         // Reject flags whose stdout shape or interactivity conflicts with the envelope contract.
         if foundry_cli::is_machine() {
+            // `--interactive` and the hardware / cloud signer flags can trigger TTY prompts,
+            // hardware confirmations, or SDK auth output (e.g. AWS SSO device-auth URLs printed
+            // directly to stdout), all of which would corrupt the envelope.
             let unsupported = [
                 ("--trace", self.trace),
                 ("--debug", self.debug),
                 ("--decode-internal", self.decode_internal),
                 ("--curl", self.rpc.curl),
                 ("--interactive", self.wallet.raw.interactive),
+                ("--ledger", self.wallet.ledger),
+                ("--trezor", self.wallet.trezor),
+                ("--aws", self.wallet.aws),
+                ("--gcp", self.wallet.gcp),
             ]
             .into_iter()
             .filter_map(|(name, on)| on.then_some(name))
@@ -259,6 +266,18 @@ impl CallArgs {
                      run without `--machine` or omit those flags.",
                     unsupported.join(", ")
                 ));
+            }
+            // Unlocked keystore: prompts for the password on TTY at signer construction.
+            let has_keystore =
+                self.wallet.keystore_path.is_some() || self.wallet.keystore_account_name.is_some();
+            let has_password = self.wallet.keystore_password.is_some()
+                || self.wallet.keystore_password_file.is_some();
+            if has_keystore && !has_password {
+                foundry_cli::machine::bail_machine_usage(
+                    "`cast call --machine` requires `--password` or `--password-file` when \
+                     `--keystore` / `--account` is set; an unlocked keystore would prompt on \
+                     stdin and corrupt the envelope.",
+                );
             }
         }
 
@@ -325,11 +344,11 @@ impl CallArgs {
 
         // Provider construction (transport setup) is a network operation, so connection /
         // DNS / TCP failures here are typed `network.rpc.error` under `--machine`.
-        let machine_mode_provider = foundry_cli::is_machine();
+        let machine_mode = foundry_cli::is_machine();
         let provider =
             match ProviderBuilder::<FEN::Network>::from_config(&config).and_then(|b| b.build()) {
                 Ok(p) => p,
-                Err(err) if machine_mode_provider => return rpc_failure(&err),
+                Err(err) if machine_mode => rpc_failure(&err),
                 Err(err) => return Err(err),
             };
         let sender = SenderKind::from_wallet_opts(wallet).await?;
@@ -368,7 +387,7 @@ impl CallArgs {
         .await;
         let (tx, func) = match builder_result {
             Ok(v) => v,
-            Err(err) if machine_mode_provider => return rpc_failure(&err),
+            Err(err) if machine_mode => rpc_failure(&err),
             Err(err) => return Err(err),
         };
 
@@ -486,14 +505,13 @@ impl CallArgs {
 
         // Bypass the ABI decoder under `--machine`; the envelope carries raw hex only.
         // Only the eth_call itself maps to `network.rpc.error`; setup/local errors fall through.
-        let machine_mode = foundry_cli::is_machine();
         let decode_func = (!machine_mode).then_some(func.as_ref()).flatten();
         let response = match Cast::new(&provider)
             .call(&tx, decode_func, block, state_overrides, block_overrides)
             .await
         {
             Ok(r) => r,
-            Err(err) if machine_mode => return rpc_failure(&err),
+            Err(err) if machine_mode => rpc_failure(&err),
             Err(err) => return Err(err),
         };
 
