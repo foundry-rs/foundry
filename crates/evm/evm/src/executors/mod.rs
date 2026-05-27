@@ -65,6 +65,7 @@ pub use invariant::InvariantExecutor;
 mod corpus;
 mod corpus_io;
 mod sancov;
+mod sequence;
 mod showmap;
 mod trace;
 

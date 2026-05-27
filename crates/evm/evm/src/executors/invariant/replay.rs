@@ -1,7 +1,8 @@
-use super::{call_after_invariant_function, call_invariant_function, execute_tx};
+use super::{call_after_invariant_function, call_invariant_function};
 use crate::executors::{
     EarlyExit, Executor,
     invariant::shrink::{reset_shrink_progress, shrink_sequence, shrink_sequence_value},
+    sequence::execute_tx,
 };
 use alloy_dyn_abi::JsonAbiExt;
 use alloy_json_abi::Function;

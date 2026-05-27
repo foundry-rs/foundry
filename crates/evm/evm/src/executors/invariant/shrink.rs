@@ -3,9 +3,9 @@ use crate::executors::{
     invariant::{
         call_after_invariant_function, call_invariant_function,
         error::{handler_edge_fingerprint, snapshot_edge_fingerprint},
-        execute_tx,
         result::did_fail_on_assert,
     },
+    sequence::{execute_tx, replay_sequence},
 };
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, I256, Selector, U256};
@@ -17,6 +17,7 @@ use foundry_evm_fuzz::{BasicTxDetails, invariant::InvariantContract};
 use indicatif::ProgressBar;
 use proptest::bits::{BitSetLike, VarBitSet};
 use revm::context::Block;
+use std::ops::ControlFlow;
 
 /// Shrinker for a call sequence failure.
 /// Iterates sequence call sequence top down and removes calls one by one.
@@ -54,14 +55,6 @@ enum ShrinkErrorPolicy {
     /// "Bug gone" — restore the call. Used by handler shrink so a replay error never
     /// produces a sequence that no longer reproduces the anchor.
     RestoreRemoved,
-}
-
-/// Per-call decision returned by callbacks driving `replay_sequence`. `Continue` hands
-/// the result back so non-reverted calls auto-commit; `Stop` short-circuits.
-#[expect(clippy::large_enum_variant)]
-enum ReplayDecision<T, FEN: FoundryEvmNetwork> {
-    Stop(T),
-    Continue(RawCallResult<FEN>),
 }
 
 /// Options controlling how `check_sequence` evaluates a candidate call sequence.
@@ -277,70 +270,6 @@ pub(crate) fn shrink_sequence<FEN: FoundryEvmNetwork>(
     Ok(build_shrunk_sequence(calls, &shrinker, accumulate_warp_roll))
 }
 
-/// Replays `sequence` (indices into `calls`) against `executor`. When
-/// `accumulate_warp_roll` is set, warp/roll from skipped calls is folded into the next
-/// included call. `on_call` may stop early; otherwise non-reverted calls are committed.
-fn replay_sequence<FEN, T, F>(
-    executor: &mut Executor<FEN>,
-    calls: &[BasicTxDetails],
-    sequence: &[usize],
-    accumulate_warp_roll: bool,
-    mut on_call: F,
-) -> eyre::Result<Option<T>>
-where
-    FEN: FoundryEvmNetwork,
-    F: FnMut(usize, RawCallResult<FEN>) -> eyre::Result<ReplayDecision<T, FEN>>,
-{
-    // Fast path: no warp/roll accumulation → iterate only kept indices (O(k)) and pass
-    // `&calls[idx]` directly to skip the per-call `BasicTxDetails` clone.
-    if !accumulate_warp_roll {
-        for &idx in sequence {
-            let call_result = execute_tx(executor, &calls[idx])?;
-            match on_call(idx, call_result)? {
-                ReplayDecision::Stop(val) => return Ok(Some(val)),
-                ReplayDecision::Continue(mut call_result) => {
-                    if !call_result.reverted {
-                        executor.commit(&mut call_result);
-                    }
-                }
-            }
-        }
-        return Ok(None);
-    }
-
-    // Accumulating path: must scan the full `calls` so warp/roll from skipped txs lands on
-    // the next kept tx as a concrete delta.
-    let mut accumulated_warp = U256::ZERO;
-    let mut accumulated_roll = U256::ZERO;
-    let mut seq_iter = sequence.iter().peekable();
-
-    for (idx, tx) in calls.iter().enumerate() {
-        accumulated_warp += tx.warp.unwrap_or(U256::ZERO);
-        accumulated_roll += tx.roll.unwrap_or(U256::ZERO);
-        if seq_iter.peek() != Some(&&idx) {
-            continue;
-        }
-        seq_iter.next();
-
-        let executed = apply_warp_roll(tx, accumulated_warp, accumulated_roll);
-        let call_result = execute_tx(executor, &executed)?;
-
-        match on_call(idx, call_result)? {
-            ReplayDecision::Stop(val) => return Ok(Some(val)),
-            ReplayDecision::Continue(mut call_result) => {
-                if !call_result.reverted {
-                    executor.commit(&mut call_result);
-                }
-            }
-        }
-
-        accumulated_warp = U256::ZERO;
-        accumulated_roll = U256::ZERO;
-    }
-
-    Ok(None)
-}
-
 /// Checks if the given call sequence breaks the invariant.
 ///
 /// Used in shrinking phase for checking candidate sequences and in replay failures phase to test
@@ -363,15 +292,16 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
         calls,
         &sequence,
         options.accumulate_warp_roll,
-        |_idx, call_result| {
+        /* commit_state */ true,
+        |_executor, _idx, call_result| {
             // Ignore calls reverted with `MAGIC_ASSUME`. This is needed to handle failed
             // scenarios that are replayed with a modified version of test driver (that use
             // new `vm.assume` cheatcodes).
             if call_result.result.as_ref() == MAGIC_ASSUME {
-                return Ok(ReplayDecision::Continue(call_result));
+                return Ok(ControlFlow::Continue(call_result));
             }
             if did_fail_on_assert(&call_result, &call_result.state_changeset) {
-                return Ok(ReplayDecision::Stop((
+                return Ok(ControlFlow::Break((
                     false,
                     false,
                     assertion_failure_reason(call_result, options.rd),
@@ -379,15 +309,15 @@ pub fn check_sequence<FEN: FoundryEvmNetwork>(
             }
             if call_result.reverted && options.fail_on_revert {
                 if options.expect_assertion_failure {
-                    return Ok(ReplayDecision::Stop((true, false, None)));
+                    return Ok(ControlFlow::Break((true, false, None)));
                 }
-                return Ok(ReplayDecision::Stop((
+                return Ok(ControlFlow::Break((
                     false,
                     false,
                     call_failure_reason(call_result, options.rd),
                 )));
             }
-            Ok(ReplayDecision::Continue(call_result))
+            Ok(ControlFlow::Continue(call_result))
         },
     )?;
     if let Some(result) = early {
@@ -484,7 +414,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
     let calldata: Bytes = target_invariant.selector().to_vec().into();
 
     // Special case: check if target value is achieved with 0 calls.
-    if check_sequence_value(executor.clone(), calls, vec![], target_address, calldata.clone())?
+    if check_empty_sequence_value(executor.clone(), calls, target_address, calldata.clone())?
         == Some(target_value)
     {
         return Ok(vec![]);
@@ -523,7 +453,7 @@ pub(crate) fn shrink_sequence_value<FEN: FoundryEvmNetwork>(
         call_idx = shrinker.next_index(call_idx);
     }
 
-    Ok(build_shrunk_sequence(calls, &shrinker, true))
+    Ok(build_shrunk_sequence(calls, &shrinker, /* accumulate_warp_roll */ true))
 }
 
 /// Replays a handler-bug sequence and returns whether the anchor still asserts on the same
@@ -548,7 +478,8 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
         calls,
         &sequence,
         accumulate_warp_roll,
-        |idx, call_result| {
+        /* commit_state */ true,
+        |_executor, idx, call_result| {
             let asserted = did_fail_on_assert(&call_result, &call_result.state_changeset);
             if idx == anchor_idx {
                 let snapshot = snapshot_edge_fingerprint(&call_result);
@@ -564,7 +495,7 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
                 let fingerprint = handler_edge_fingerprint(snapshot, reverter, selector);
                 let reason =
                     if asserted { assertion_failure_reason(call_result, rd) } else { None };
-                return Ok(ReplayDecision::Stop(HandlerReplayOutcome {
+                return Ok(ControlFlow::Break(HandlerReplayOutcome {
                     anchor_asserted: asserted,
                     revert_reason: reason,
                     anchor_fingerprint: fingerprint,
@@ -572,13 +503,13 @@ pub fn replay_handler_failure_sequence<FEN: FoundryEvmNetwork>(
             }
             if asserted {
                 // Pre-anchor assertion = different bug; reject.
-                return Ok(ReplayDecision::Stop(HandlerReplayOutcome {
+                return Ok(ControlFlow::Break(HandlerReplayOutcome {
                     anchor_asserted: false,
                     revert_reason: None,
                     anchor_fingerprint: B256::ZERO,
                 }));
             }
-            Ok(ReplayDecision::Continue(call_result))
+            Ok(ControlFlow::Continue(call_result))
         },
     )?;
 
@@ -685,7 +616,32 @@ pub fn check_sequence_value<FEN: FoundryEvmNetwork>(
     // Apply any remaining accumulated warp/roll before calling invariant.
     apply_warp_roll_to_env(&mut executor, accumulated_warp, accumulated_roll);
 
-    let (inv_result, success) = call_invariant_function(&executor, test_address, calldata)?;
+    read_sequence_value(&executor, test_address, calldata)
+}
+
+fn check_empty_sequence_value<FEN: FoundryEvmNetwork>(
+    mut executor: Executor<FEN>,
+    calls: &[BasicTxDetails],
+    test_address: Address,
+    calldata: Bytes,
+) -> eyre::Result<Option<I256>> {
+    let mut accumulated_warp = U256::ZERO;
+    let mut accumulated_roll = U256::ZERO;
+    for tx in calls {
+        accumulated_warp += tx.warp.unwrap_or(U256::ZERO);
+        accumulated_roll += tx.roll.unwrap_or(U256::ZERO);
+    }
+
+    apply_warp_roll_to_env(&mut executor, accumulated_warp, accumulated_roll);
+    read_sequence_value(&executor, test_address, calldata)
+}
+
+fn read_sequence_value<FEN: FoundryEvmNetwork>(
+    executor: &Executor<FEN>,
+    test_address: Address,
+    calldata: Bytes,
+) -> eyre::Result<Option<I256>> {
+    let (inv_result, success) = call_invariant_function(executor, test_address, calldata)?;
 
     if success
         && inv_result.result.len() >= 32
@@ -723,7 +679,7 @@ mod tests {
         let mut shrinker = CallSequenceShrinker::new(calls.len());
         shrinker.included_calls.clear(0);
 
-        let shrunk = build_shrunk_sequence(&calls, &shrinker, true);
+        let shrunk = build_shrunk_sequence(&calls, &shrinker, /* accumulate_warp_roll */ true);
 
         assert_eq!(shrunk.len(), 2);
         assert_eq!(shrunk[0].warp, Some(U256::from(10)));
@@ -738,7 +694,7 @@ mod tests {
         let mut shrinker = CallSequenceShrinker::new(calls.len());
         shrinker.included_calls.clear(1);
 
-        let shrunk = build_shrunk_sequence(&calls, &shrinker, true);
+        let shrunk = build_shrunk_sequence(&calls, &shrinker, /* accumulate_warp_roll */ true);
 
         assert_eq!(shrunk.len(), 1);
         assert_eq!(shrunk[0].warp, Some(U256::from(3)));

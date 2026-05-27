@@ -16,7 +16,7 @@ use crate::executors::{
     Executor,
     corpus::{DynamicTargetCtx, WorkerCorpus, register_replay_created, rollback_replay_created},
     corpus_io::{canonical_replay_dirs, read_corpus_dir},
-    invariant::execute_tx,
+    sequence::execute_tx,
 };
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, hex};
