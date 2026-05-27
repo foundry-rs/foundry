@@ -1122,7 +1122,8 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
             // `new C{salt, value}` path and the `--batch` rewrite path.
             let salt = match inputs.scheme() {
                 CreateScheme::Create2 { salt } => salt,
-                // --batch: nonce makes re-runs unique, counter makes each deploy unique.
+                // --batch: process_salt (random per run) + counter make each deploy unique.
+                // The nonce below is from the EVM frame caller (script contract), not the EOA.
                 CreateScheme::Create => {
                     if !self.inner.batch_rewrite_warned {
                         let _ = sh_warn!(
