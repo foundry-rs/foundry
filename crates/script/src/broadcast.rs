@@ -264,13 +264,6 @@ where
     }
 }
 
-struct ScriptSessionSigner {
-    chain: u64,
-    root_account: Address,
-    signer: WalletSigner,
-    access_key: TempoAccessKeyConfig,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct SignerScope {
     chain: u64,
@@ -287,70 +280,32 @@ impl SignerScope {
     }
 }
 
-impl From<ResolvedSessionSigner> for ScriptSessionSigner {
-    fn from(resolved: ResolvedSessionSigner) -> Self {
-        Self {
-            chain: resolved.session.chain_id,
-            root_account: resolved.session.root_account,
-            signer: resolved.signer,
-            access_key: resolved.access_key,
-        }
-    }
-}
-
-impl ScriptSessionSigner {
-    /// Resolves the active Tempo session into the access-key signer used by script broadcast.
-    ///
-    /// The returned entry is keyed by the root account because script transactions still use the
-    /// root account as `from`; the temporary session key only changes how the transaction is
-    /// authorized and signed.
-    fn resolve_for_chain<FEN: FoundryEvmNetwork>(
-        script_config: &ScriptConfig<FEN>,
-        wallets: &foundry_wallets::MultiWalletOpts,
-        expected_sender: Option<Address>,
-        expected_chain_id: u64,
-    ) -> Result<Option<Self>> {
-        script_config
-            .tempo
-            .session_signer_for_multi_wallet(wallets, expected_sender, expected_chain_id)
-            .map(|session| session.map(Into::into))
-    }
-
-    /// Resolves the active Tempo session without imposing a command-level chain.
-    ///
-    /// The returned signer must be keyed by its own session chain before transaction selection.
-    fn resolve_any_chain<FEN: FoundryEvmNetwork>(
-        script_config: &ScriptConfig<FEN>,
-        wallets: &foundry_wallets::MultiWalletOpts,
-        expected_sender: Option<Address>,
-    ) -> Result<Option<Self>> {
-        script_config
-            .tempo
-            .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)
-            .map(|session| session.map(Into::into))
-    }
-}
-
 fn insert_session_access_key_for_remaining_transactions(
     access_keys: &mut HashMap<SignerScope, (WalletSigner, TempoAccessKeyConfig)>,
-    session_signer: ScriptSessionSigner,
+    session: ResolvedSessionSigner,
     remaining_transactions: &[RemainingScriptTransaction],
 ) -> Result<()> {
-    if let Some(tx) = remaining_transactions
-        .iter()
-        .find(|tx| tx.from == session_signer.root_account && tx.chain != session_signer.chain)
-    {
-        eyre::bail!(
-            "Tempo session is for chain {}, but a remaining transaction from session root {} is on chain {}",
-            session_signer.chain,
-            session_signer.root_account,
-            tx.chain
-        );
+    let session_scope = SignerScope::new(session.session.chain_id, session.session.root_account);
+    let mut should_insert = false;
+    for tx in remaining_transactions {
+        if tx.from != session.session.root_account {
+            continue;
+        }
+
+        if tx.chain != session.session.chain_id {
+            eyre::bail!(
+                "Tempo session is for chain {}, but a remaining transaction from session root {} is on chain {}",
+                session.session.chain_id,
+                session.session.root_account,
+                tx.chain
+            );
+        }
+
+        should_insert = true;
     }
 
-    let scope = SignerScope::new(session_signer.chain, session_signer.root_account);
-    if remaining_transactions.iter().any(|tx| SignerScope::new(tx.chain, tx.from) == scope) {
-        access_keys.insert(scope, (session_signer.signer, session_signer.access_key));
+    if should_insert {
+        access_keys.insert(session_scope, (session.signer, session.access_key));
     }
 
     Ok(())
@@ -567,15 +522,15 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
             let mut access_keys: HashMap<SignerScope, (WalletSigner, TempoAccessKeyConfig)> =
                 HashMap::default();
             if let Some(expected_session_sender) = expected_session_sender
-                && let Some(session_signer) = ScriptSessionSigner::resolve_any_chain(
-                    &self.script_config,
-                    &self.args.wallets,
-                    Some(expected_session_sender),
-                )?
+                && let Some(session) =
+                    self.script_config.tempo.session_signer_for_multi_wallet_any_chain(
+                        &self.args.wallets,
+                        Some(expected_session_sender),
+                    )?
             {
                 insert_session_access_key_for_remaining_transactions(
                     &mut access_keys,
-                    session_signer,
+                    session,
                     &remaining_transactions,
                 )?;
             }
@@ -1000,16 +955,12 @@ impl BundledState<TempoEvmNetwork> {
 
         let batch_signer = if self.args.unlocked {
             BatchSigner::Unlocked
-        } else if let Some(session_signer) = ScriptSessionSigner::resolve_for_chain(
-            &self.script_config,
+        } else if let Some(session) = self.script_config.tempo.session_signer_for_multi_wallet(
             &self.args.wallets,
             Some(sender),
             chain_id,
         )? {
-            BatchSigner::TempoKeychain(
-                Box::new(session_signer.signer),
-                Box::new(session_signer.access_key),
-            )
+            BatchSigner::TempoKeychain(Box::new(session.signer), Box::new(session.access_key))
         } else {
             let mut signers = self.script_wallets.into_multi_wallet().into_signers()?;
             if let Some(signer) = signers.remove(&sender) {
@@ -1250,10 +1201,11 @@ mod tests {
     use super::*;
     use alloy_consensus::{Eip658Value, Receipt, ReceiptEnvelope, ReceiptWithBloom};
     use alloy_network::Ethereum;
-    use alloy_primitives::{Bloom, address};
+    use alloy_primitives::{B256, Bloom, address};
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
     use forge_script_sequence::TransactionWithMetadata;
+    use foundry_common::tempo::{KeyType, SessionEntry, SessionKeyMaterial, SessionStatus};
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -1344,27 +1296,13 @@ mod tests {
 
     #[test]
     fn session_access_key_rejects_session_root_on_wrong_chain() {
-        let root = foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap();
-        let root_address = root.address();
-        let access_key =
-            foundry_wallets::utils::create_private_key_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
-        let access_key_address = access_key.address();
-        let session_signer = ScriptSessionSigner {
-            chain: 4217,
-            root_account: root_address,
-            signer: access_key,
-            access_key: TempoAccessKeyConfig {
-                wallet_address: root_address,
-                key_address: access_key_address,
-                key_authorization: None,
-            },
-        };
+        let (session, root_address, _) = session_signer(4217);
         let remaining = [RemainingScriptTransaction { chain: 1, from: root_address }];
         let mut access_keys = HashMap::default();
 
         let err = insert_session_access_key_for_remaining_transactions(
             &mut access_keys,
-            session_signer,
+            session,
             &remaining,
         )
         .unwrap_err();
@@ -1378,30 +1316,12 @@ mod tests {
 
     #[test]
     fn session_access_key_is_inserted_for_session_chain() {
-        let root = foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap();
-        let root_address = root.address();
-        let access_key =
-            foundry_wallets::utils::create_private_key_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
-        let access_key_address = access_key.address();
-        let session_signer = ScriptSessionSigner {
-            chain: 4217,
-            root_account: root_address,
-            signer: access_key,
-            access_key: TempoAccessKeyConfig {
-                wallet_address: root_address,
-                key_address: access_key_address,
-                key_authorization: None,
-            },
-        };
+        let (session, root_address, access_key_address) = session_signer(4217);
         let remaining = [RemainingScriptTransaction { chain: 4217, from: root_address }];
         let mut access_keys = HashMap::default();
 
-        insert_session_access_key_for_remaining_transactions(
-            &mut access_keys,
-            session_signer,
-            &remaining,
-        )
-        .unwrap();
+        insert_session_access_key_for_remaining_transactions(&mut access_keys, session, &remaining)
+            .unwrap();
 
         let (signer, config) =
             access_keys.get(&SignerScope::new(4217, root_address)).expect("session access key");
@@ -1485,6 +1405,36 @@ mod tests {
             from: Some(from),
             ..Default::default()
         }))
+    }
+
+    fn session_signer(chain_id: u64) -> (ResolvedSessionSigner, Address, Address) {
+        let root = foundry_wallets::utils::create_private_key_signer(ROOT_PRIVATE_KEY).unwrap();
+        let root_address = root.address();
+        let signer =
+            foundry_wallets::utils::create_private_key_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
+        let key_address = signer.address();
+        let access_key = TempoAccessKeyConfig {
+            wallet_address: root_address,
+            key_address,
+            key_authorization: None,
+        };
+        let session = SessionEntry {
+            session_id: B256::ZERO,
+            root_account: root_address,
+            chain_id,
+            key_address,
+            expiry: u64::MAX,
+            scope: None,
+            limits: None,
+            status: SessionStatus::Active,
+            key: Some(SessionKeyMaterial {
+                key_type: KeyType::Secp256k1,
+                key: ACCESS_KEY_PRIVATE_KEY.to_string(),
+                key_authorization: None,
+            }),
+        };
+
+        (ResolvedSessionSigner { session, signer, access_key }, root_address, key_address)
     }
 
     fn receipt() -> TransactionReceipt {

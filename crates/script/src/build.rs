@@ -42,12 +42,11 @@ fn available_script_signers<FEN: FoundryEvmNetwork>(
     wallets: &MultiWalletOpts,
     script_wallets: &Wallets,
     expected_sender: Option<Address>,
-    remaining: impl IntoIterator<Item = SignerScope>,
+    remaining: &HashSet<SignerScope>,
 ) -> Result<HashSet<SignerScope>> {
     let signers = script_wallets
         .signers()
         .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
-    let remaining = remaining.into_iter().collect::<HashSet<_>>();
     let mut available = remaining
         .iter()
         .copied()
@@ -363,7 +362,7 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     &self.args.wallets,
                     &self.script_wallets,
                     expected_session_sender,
-                    remaining_signers.iter().copied(),
+                    &remaining_signers,
                 )?;
 
                 if remaining_signers.is_subset(&available_signers) {
@@ -485,7 +484,7 @@ mod tests {
             &MultiWalletOpts::default(),
             &Wallets::new(Default::default(), None),
             None,
-            [],
+            &HashSet::default(),
         )
         .unwrap();
 

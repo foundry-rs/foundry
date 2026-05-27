@@ -271,13 +271,19 @@ impl ScriptArgs {
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
         let has_session = self.tempo.session_id()?.is_some();
-        let session_sender = if has_session && !self.resume && self.multi {
-            self.tempo.session_sender_for_multi_wallet(&self.wallets, self.evm.sender)?
-        } else if has_session && !self.resume {
-            let expected_chain_id = Self::tempo_session_chain_id(&evm_opts).await;
-            self.tempo
-                .session_signer_for_multi_wallet(&self.wallets, self.evm.sender, expected_chain_id)?
-                .map(|session| session.access_key.wallet_address)
+        let session_sender = if has_session && !self.resume {
+            if self.multi {
+                self.tempo.session_sender_for_multi_wallet(&self.wallets, self.evm.sender)?
+            } else {
+                let expected_chain_id = Self::tempo_session_chain_id(&evm_opts).await;
+                self.tempo
+                    .session_signer_for_multi_wallet(
+                        &self.wallets,
+                        self.evm.sender,
+                        expected_chain_id,
+                    )?
+                    .map(|session| session.access_key.wallet_address)
+            }
         } else {
             None
         };
