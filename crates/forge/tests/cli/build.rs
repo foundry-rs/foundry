@@ -92,7 +92,7 @@ forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
 "#]])
         .stderr_eq(str![[r#"
 Compiler run successful!
-Error: some contracts exceed the initcode size limit (49152 bytes)
+Error: some contracts exceed the initcode size limit (EIP-3860: 49152 bytes)
 
 "#]]);
 
@@ -123,7 +123,7 @@ Error: some contracts exceed the initcode size limit (49152 bytes)
 "#]])
         .stderr_eq(str![[r#"
 No files changed, compilation skipped
-Error: some contracts exceed the initcode size limit (49152 bytes)
+Error: some contracts exceed the initcode size limit (EIP-3860: 49152 bytes)
 
 "#]]);
 
