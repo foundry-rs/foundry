@@ -591,12 +591,12 @@ rexpect = { git = "https://github.com/rust-cli/rexpect", rev = "2ed0b1898d7edaf6
 
 ## op-revm / op-alloy / alloy-op-evm
 ## Pinned to foundry-rs forks until upstream optimism bumps to revm 40.
-op-revm = { git = "https://github.com/stevencartavia/op-revm", branch = "revm-40" }
-alloy-op-evm = { git = "https://github.com/stevencartavia/optimism", branch = "revm-40" }
-op-alloy-consensus = { git = "https://github.com/stevencartavia/optimism", branch = "revm-40" }
-op-alloy-network = { git = "https://github.com/stevencartavia/optimism", branch = "revm-40" }
-op-alloy-rpc-types = { git = "https://github.com/stevencartavia/optimism", branch = "revm-40" }
-alloy-op-hardforks = { git = "https://github.com/stevencartavia/optimism", branch = "revm-40" }
+op-revm = { git = "https://github.com/foundry-rs/op-revm", rev = "4201f16a746f2da2df38f1eac477500d492eaed5" }
+alloy-op-evm = { git = "https://github.com/foundry-rs/optimism", branch = "revm-40" }
+op-alloy-consensus = { git = "https://github.com/foundry-rs/optimism", branch = "revm-40" }
+op-alloy-network = { git = "https://github.com/foundry-rs/optimism", branch = "revm-40" }
+op-alloy-rpc-types = { git = "https://github.com/foundry-rs/optimism", branch = "revm-40" }
+alloy-op-hardforks = { git = "https://github.com/foundry-rs/optimism", branch = "revm-40" }
 
 ## foundry-fork-db
 foundry-fork-db = { git = "https://github.com/foundry-rs/foundry-core", rev = "8027e5ccdfe55e562a1111495d2c9acb6e27a930" }
