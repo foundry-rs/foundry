@@ -1234,7 +1234,7 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         // Batch is already confirmed; stamp every remaining call with the batch tx hash.
-        for tx in &mut sequence.transactions[remaining_start..] {
+        for tx in sequence.transactions.iter_mut().skip(remaining_start) {
             tx.hash = Some(tx_hash);
         }
 
