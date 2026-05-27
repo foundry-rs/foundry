@@ -842,15 +842,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         match result {
             SymbolicRunResult::Safe(stats) => {
-                self.result.symbolic_result(true, None, None, stats.paths, stats.solver_queries);
+                self.result.symbolic_result(true, None, None, stats);
             }
             SymbolicRunResult::Incomplete { kind, reason, stats } => {
                 self.result.symbolic_result(
                     false,
                     Some(format!("incomplete symbolic execution ({kind:?}): {reason}")),
                     None,
-                    stats.paths,
-                    stats.solver_queries,
+                    stats,
                 );
             }
             SymbolicRunResult::Counterexample { args, calldata, stats } => {
@@ -871,13 +870,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         return self.result;
                     }
                     Err(err) => {
-                        self.result.symbolic_result(
-                            false,
-                            Some(err.to_string()),
-                            None,
-                            stats.paths,
-                            stats.solver_queries,
-                        );
+                        self.result.symbolic_result(false, Some(err.to_string()), None, stats);
                         self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
                         self.result.symbolic_diagnostics = symbolic_diagnostics;
                         return self.result;
@@ -903,8 +896,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         reason
                     },
                     Some(counterexample),
-                    stats.paths,
-                    stats.solver_queries,
+                    stats,
                 );
             }
         }
@@ -1014,15 +1006,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
         match result {
             SymbolicInvariantRunResult::Safe(stats) => {
-                self.result.symbolic_result(true, None, None, stats.paths, stats.solver_queries);
+                self.result.symbolic_result(true, None, None, stats);
             }
             SymbolicInvariantRunResult::Incomplete { kind, reason, stats } => {
                 self.result.symbolic_result(
                     false,
                     Some(format!("incomplete symbolic invariant execution ({kind:?}): {reason}")),
                     None,
-                    stats.paths,
-                    stats.solver_queries,
+                    stats,
                 );
             }
             SymbolicInvariantRunResult::Counterexample { sequence, stats } => {
@@ -1036,8 +1027,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         Some("symbolic invariant counterexample did not replay".to_string())
                     },
                     Some(CounterExample::Sequence(replay_sequence.len(), replay_sequence)),
-                    stats.paths,
-                    stats.solver_queries,
+                    stats,
                 );
             }
         }

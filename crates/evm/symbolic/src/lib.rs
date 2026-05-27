@@ -203,8 +203,23 @@ pub enum SymbolicStopReason {
 pub struct SymbolicStats {
     /// Number of explored symbolic paths.
     pub paths: usize,
-    /// Number of solver queries issued during the run.
+    /// Number of normalized solver queries issued during the run.
     pub solver_queries: usize,
+    /// Number of satisfiability checks requested by the executor.
+    #[serde(default)]
+    pub sat_queries: usize,
+    /// Number of concrete model requests requested by the executor.
+    #[serde(default)]
+    pub model_queries: usize,
+    /// Number of satisfiability checks served from the normalized cache.
+    #[serde(default)]
+    pub sat_cache_hits: usize,
+    /// Number of model requests served from the normalized model cache.
+    #[serde(default)]
+    pub model_cache_hits: usize,
+    /// Wall-clock time spent waiting on backend solver subprocesses, in milliseconds.
+    #[serde(default)]
+    pub solver_time_ms: u64,
 }
 
 /// SMT-LIB-backed symbolic executor.

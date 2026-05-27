@@ -42,6 +42,7 @@ pub(crate) const PORTFOLIO_SCHEDULER_MAX_SPEED_BONUS: i64 = 100;
 
 // Solver query cache limits
 pub(crate) const SYMBOLIC_SOLVER_SAT_CACHE_MAX_ENTRIES: usize = 4096;
+pub(crate) const SYMBOLIC_SOLVER_MODEL_CACHE_MAX_ENTRIES: usize = 512;
 
 // Hard arithmetic witness search limits
 pub(crate) const HARD_ARITH_FALLBACK_MAX_VARS: usize = 4;

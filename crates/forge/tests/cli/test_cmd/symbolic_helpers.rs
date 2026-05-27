@@ -21,13 +21,13 @@ macro_rules! skip_unless_z3 {
 /// Run a symbolic test with redactions that mask solver-dependent / wall-clock
 /// noise so the snapshot is stable across solver versions and runs.
 ///
-/// - `[METRICS]` — `paths: N, queries: M` line suffix (engine internal metrics change with solver
+/// - `[METRICS]` — symbolic metrics line suffix (engine internal metrics change with solver
 ///   heuristic / engine path-pruning changes).
 /// - `[SENDER]` — `sender=0x...` symbolic invariant senders, which the solver picks freely from an
 ///   unconstrained address pool.
 pub fn assert_symbolic(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[
-        ("[METRICS]", r"paths: \d+, queries: \d+"),
+        ("[METRICS]", r"paths: \d+, queries: \d+(?:, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), solver: \d+ms)?"),
         ("[SENDER]", r"sender=0x[0-9a-fA-F]{40}"),
     ])
 }
@@ -38,7 +38,7 @@ pub fn assert_symbolic(cmd: &mut TestCommand) -> OutputAssert {
 /// *some* counterexample exists, not what it is.
 pub fn assert_symbolic_witness(cmd: &mut TestCommand) -> OutputAssert {
     cmd.assert_with(&[
-        ("[METRICS]", r"paths: \d+, queries: \d+"),
+        ("[METRICS]", r"paths: \d+, queries: \d+(?:, sat: \d+ \(\d+ cached\), models: \d+ \(\d+ cached\), solver: \d+ms)?"),
         ("[SENDER]", r"sender=0x[0-9a-fA-F]{40}"),
         ("[CALLDATA]", r"calldata=0x[0-9a-fA-F]+"),
         // `args=[...]` may contain nested scientific-notation brackets like

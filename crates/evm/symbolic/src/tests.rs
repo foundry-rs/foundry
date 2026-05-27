@@ -2536,8 +2536,142 @@ fn sat_cache_reuses_normalized_is_sat_results() {
     assert!(solver.is_sat(&constraints).unwrap());
     assert!(solver.is_sat(&reordered_constraints).unwrap());
 
-    assert_eq!(solver.stats().solver_queries, 1);
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(stats.model_queries, 0);
     assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for nested canonical satisfiability query cache keys.
+fn sat_cache_reuses_nested_commutative_results() {
+    let marker = portfolio_test_marker("sat-cache-canonical");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x = Expr::Var("x".to_string());
+    let y = Expr::Var("y".to_string());
+    let constraints = vec![BoolExpr::and(vec![
+        BoolExpr::eq(Expr::op(ExprOp::Add, x.clone(), y.clone()), Expr::Const(U256::from(3))),
+        BoolExpr::eq(x.clone(), Expr::Const(U256::from(1))),
+    ])];
+    let reordered_constraints = vec![BoolExpr::and(vec![
+        BoolExpr::eq(Expr::Const(U256::from(1)), x),
+        BoolExpr::eq(
+            Expr::Const(U256::from(3)),
+            Expr::op(ExprOp::Add, y, Expr::Var("x".to_string())),
+        ),
+    ])];
+
+    assert!(solver.is_sat(&constraints).unwrap());
+    assert!(solver.is_sat(&reordered_constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for duplicate conjuncts sharing satisfiability cache keys.
+fn sat_cache_deduplicates_repeated_constraints() {
+    let marker = portfolio_test_marker("sat-cache-dedup");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x = Expr::Var("x".to_string());
+    let constraint = BoolExpr::eq(x, Expr::Const(U256::from(1)));
+    let duplicated = vec![constraint.clone(), constraint.clone()];
+    let deduplicated = vec![constraint];
+
+    assert!(solver.is_sat(&duplicated).unwrap());
+    assert!(solver.is_sat(&deduplicated).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for nested duplicate conjuncts sharing satisfiability cache keys.
+fn sat_cache_deduplicates_nested_repeated_constraints() {
+    let marker = portfolio_test_marker("sat-cache-nested-dedup");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x = Expr::Var("x".to_string());
+    let constraint = BoolExpr::eq(x, Expr::Const(U256::from(1)));
+    let duplicated = vec![BoolExpr::And(vec![constraint.clone(), constraint.clone()])];
+    let deduplicated = vec![constraint];
+
+    assert!(solver.is_sat(&duplicated).unwrap());
+    assert!(solver.is_sat(&deduplicated).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for grouped conjunctions sharing satisfiability cache keys.
+fn sat_cache_flattens_grouped_conjunction_keys() {
+    let marker = portfolio_test_marker("sat-cache-and-flatten");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x = Expr::Var("x".to_string());
+    let y = Expr::Var("y".to_string());
+    let z = Expr::Var("z".to_string());
+    let a = BoolExpr::eq(x, Expr::Const(U256::from(1)));
+    let b = BoolExpr::eq(y, Expr::Const(U256::from(2)));
+    let c = BoolExpr::eq(z, Expr::Const(U256::from(3)));
+    let grouped = vec![BoolExpr::And(vec![BoolExpr::And(vec![b.clone(), c.clone()]), a.clone()])];
+    let split = vec![c, a, b];
+
+    assert!(solver.is_sat(&grouped).unwrap());
+    assert!(solver.is_sat(&split).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for comparison-direction canonical satisfiability cache keys.
+fn sat_cache_reuses_reversed_comparisons() {
+    let marker = portfolio_test_marker("sat-cache-reversed-cmp");
+    let commands = vec![counted_solver_command(&marker, "sat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 3, false);
+    let x = Expr::Var("x".to_string());
+    let y = Expr::Var("y".to_string());
+
+    assert!(solver.is_sat(&[BoolExpr::cmp(BoolExprOp::Ugt, x.clone(), y.clone())]).unwrap());
+    assert!(solver.is_sat(&[BoolExpr::cmp(BoolExprOp::Ult, y.clone(), x.clone())]).unwrap());
+    assert!(solver.is_sat(&[BoolExpr::cmp(BoolExprOp::Uge, x.clone(), y.clone())]).unwrap());
+    assert!(solver.is_sat(&[BoolExpr::cmp(BoolExprOp::Ule, y.clone(), x.clone())]).unwrap());
+    assert!(solver.is_sat(&[BoolExpr::cmp(BoolExprOp::Sgt, x.clone(), y.clone())]).unwrap());
+    assert!(solver.is_sat(&[BoolExpr::cmp(BoolExprOp::Slt, y, x)]).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 3);
+    assert_eq!(stats.sat_queries, 6);
+    assert_eq!(stats.sat_cache_hits, 3);
+    assert_eq!(counted_solver_invocations(&marker), 3);
     let _ = std::fs::remove_file(&marker);
 }
 
@@ -2553,8 +2687,96 @@ fn sat_cache_does_not_cache_unknown_results() {
     assert!(matches!(solver.is_sat(&constraints), Err(SymbolicError::SolverUnknown)));
     assert!(matches!(solver.is_sat(&constraints), Err(SymbolicError::SolverUnknown)));
 
-    assert_eq!(solver.stats().solver_queries, 2);
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 2);
+    assert_eq!(stats.sat_queries, 2);
+    assert_eq!(stats.sat_cache_hits, 0);
     assert_eq!(counted_solver_invocations(&marker), 2);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for normalized solver model cache hits.
+fn model_cache_reuses_normalized_model_results() {
+    let marker = portfolio_test_marker("model-cache");
+    let model_output = "sat\n\
+        ((define-fun x () (_ BitVec 256) \
+        #x0000000000000000000000000000000000000000000000000000000000000001)\n\
+        (define-fun y () (_ BitVec 256) \
+        #x0000000000000000000000000000000000000000000000000000000000000002))";
+    let commands = vec![counted_solver_command(&marker, model_output)];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let x = Expr::Var("x".to_string());
+    let y = Expr::Var("y".to_string());
+    let constraints = vec![
+        BoolExpr::Const(true),
+        BoolExpr::eq(x.clone(), Expr::Const(U256::from(1))),
+        BoolExpr::eq(y.clone(), Expr::Const(U256::from(2))),
+    ];
+    let reordered_constraints = vec![
+        BoolExpr::eq(y, Expr::Const(U256::from(2))),
+        BoolExpr::eq(x, Expr::Const(U256::from(1))),
+    ];
+
+    assert_eq!(solver.model(&constraints).unwrap().get("x"), Some(&U256::from(1)));
+    assert_eq!(solver.model(&reordered_constraints).unwrap().get("y"), Some(&U256::from(2)));
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.model_queries, 2);
+    assert_eq!(stats.model_cache_hits, 1);
+    assert_eq!(stats.sat_queries, 0);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for model queries populating the satisfiability cache.
+fn model_query_populates_sat_cache() {
+    let marker = portfolio_test_marker("model-cache-sat");
+    let model_output = "sat\n\
+        ((define-fun x () (_ BitVec 256) \
+        #x0000000000000000000000000000000000000000000000000000000000000001))";
+    let commands = vec![counted_solver_command(&marker, model_output)];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let constraints = vec![BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)))];
+
+    assert_eq!(solver.model(&constraints).unwrap().get("x"), Some(&U256::from(1)));
+    assert!(solver.is_sat(&constraints).unwrap());
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.model_queries, 1);
+    assert_eq!(stats.sat_queries, 1);
+    assert_eq!(stats.sat_cache_hits, 1);
+    assert_eq!(stats.model_cache_hits, 0);
+    assert_eq!(counted_solver_invocations(&marker), 1);
+    let _ = std::fs::remove_file(&marker);
+}
+
+#[cfg(unix)]
+#[test]
+/// Regression coverage for satisfiability cache unsat results short-circuiting model queries.
+fn model_short_circuits_when_sat_cache_proved_unsat() {
+    let marker = portfolio_test_marker("model-cache-unsat");
+    let commands = vec![counted_solver_command(&marker, "unsat")];
+    let mut solver = SmtLibSubprocessSolver::new(Ok(commands), None, 1, false);
+    let constraints = vec![BoolExpr::eq(Expr::Var("x".to_string()), Expr::Const(U256::from(1)))];
+
+    assert!(!solver.is_sat(&constraints).unwrap());
+    assert!(
+        matches!(solver.model(&constraints), Err(SymbolicError::Solver(message)) if message.contains("unsat"))
+    );
+
+    let stats = solver.stats();
+    assert_eq!(stats.solver_queries, 1);
+    assert_eq!(stats.sat_queries, 1);
+    assert_eq!(stats.sat_cache_hits, 0);
+    assert_eq!(stats.model_queries, 1);
+    assert_eq!(stats.model_cache_hits, 0);
+    assert_eq!(counted_solver_invocations(&marker), 1);
     let _ = std::fs::remove_file(&marker);
 }
 
