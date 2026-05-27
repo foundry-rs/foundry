@@ -1493,11 +1493,16 @@ pub(crate) fn parse_and_validate_model(
     if constraints.iter().all(|constraint| eval_bool_expr(constraint, &model).unwrap_or(false)) {
         Ok(model)
     } else {
+        let reason = if constraints.iter().any(bool_contains_keccak) {
+            "solver model does not satisfy path constraints involving symbolic Keccak heuristic"
+        } else {
+            "solver model does not satisfy path constraints"
+        };
         debug!(
             constraint_count = constraints.len(),
-            "solver model does not satisfy path constraints"
+            reason, "solver model does not satisfy path constraints"
         );
-        Err(SymbolicError::Solver("solver model does not satisfy path constraints".to_string()))
+        Err(SymbolicError::Solver(reason.to_string()))
     }
 }
 
