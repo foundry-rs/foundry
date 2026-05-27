@@ -124,3 +124,89 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 "#]]);
 });
+
+// Top-level invariant sequence calls must look up code through the symbolic
+// world overlay so that prior-step `vm.etch` writes are visible. The target
+// below deploys a `Counter` whose `value()` returns 0, then exposes an
+// `etchCounter` step that overwrites that address with bytecode that returns
+// 42 for any call. If the engine fetched code from the backend instead of the
+// overlay, the etch effect would be invisible at the next step and the
+// (intentionally false) invariant would silently hold.
+forgetest_init!(symbolic_invariant_sees_etched_code_via_overlay, |prj, cmd| {
+    skip_unless_z3!("symbolic_invariant_sees_etched_code_via_overlay");
+
+    prj.add_test(
+        "SymbolicOverlayCodeInvariant.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract Counter {
+    function value() external pure returns (uint256) {
+        return 0;
+    }
+}
+
+contract AlwaysReturns42 {
+    fallback() external {
+        assembly {
+            mstore(0, 42)
+            return(0, 32)
+        }
+    }
+}
+
+contract OverlayTarget is Test {
+    Counter public c;
+    address etched;
+
+    constructor() {
+        c = new Counter();
+        etched = address(new AlwaysReturns42());
+    }
+
+    function etchCounter() external {
+        vm.etch(address(c), etched.code);
+    }
+
+    function callCounter() external view returns (uint256) {
+        return c.value();
+    }
+}
+
+contract SymbolicOverlayCodeInvariant is Test {
+    OverlayTarget t;
+
+    function setUp() public {
+        t = new OverlayTarget();
+        targetContract(address(t));
+    }
+
+    /// forge-config: default.symbolic.invariant_depth = 2
+    function invariant_counterAlwaysReturnsZero() public view {
+        assertEq(t.callCounter(), 0);
+    }
+}
+"#,
+    );
+
+    assert_symbolic_witness(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "invariant_counterAlwaysReturnsZero",
+    ]))
+    .failure()
+    .stdout_eq(str![[r#"
+...
+Failing tests:
+Encountered 1 failing test in test/SymbolicOverlayCodeInvariant.t.sol:SymbolicOverlayCodeInvariant
+[FAIL: symbolic invariant counterexample]
+...
+ invariant_counterAlwaysReturnsZero() ([METRICS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]);
+});
