@@ -39,9 +39,43 @@ forge test --symbolic --match-test check_average
 Requirements:
 
 - The configured solver must be available. The default solver command is `z3`.
+  Install it locally with your package manager, for example `brew install z3`
+  on macOS or `sudo apt-get install z3` on Ubuntu.
 - `check*` and `prove*` tests are only selected when `--symbolic` is enabled.
 - A reported counterexample must replay concretely before Forge prints it as a
   failure.
+
+## Preview Result Semantics
+
+Native symbolic testing is a preview feature. Results are scoped to the
+executor's current EVM model and the configured exploration bounds.
+
+Forge reports symbolic test outcomes as:
+
+- `PASS`: every explored path finished without a feasible failure under the
+  currently modeled semantics and configured bounds.
+- `FAIL` with a counterexample: the solver found a failing model and Forge
+  replayed that concrete input or invariant sequence through the normal
+  executor.
+- `FAIL: incomplete symbolic execution (...)`: Forge could not complete the
+  search or validate a counterexample for this run. Treat this outcome as "not
+  established".
+
+Symbolic exploration is bounded by configuration, including
+`symbolic.max_depth`, `symbolic.max_paths`, `symbolic.max_solver_queries`,
+dynamic calldata length settings, and `symbolic.invariant_depth`.
+
+`Incomplete` can occur when exploration reaches a configured bound, the solver
+times out or returns `unknown`, a test uses unsupported EVM or cheatcode
+semantics, a backend error occurs, or a solver model does not replay concretely.
+
+Current modeling notes:
+
+- Unsupported opcodes, world-state behavior, or cheatcode forms are reported as
+  incomplete results with an explanatory reason.
+- Symbolic `KECCAK256` supports common Solidity storage patterns; arbitrary
+  symbolic hashing may require heuristics and can make a run incomplete.
+- Counterexamples are shown only after successful concrete replay.
 
 ## Writing Symbolic Tests
 
