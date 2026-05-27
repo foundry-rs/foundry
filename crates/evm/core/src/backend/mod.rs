@@ -17,7 +17,7 @@ use alloy_genesis::GenesisAccount;
 use alloy_network::{
     AnyNetwork, AnyRpcBlock, AnyRpcTransaction, BlockResponse, Network, TransactionResponse,
 };
-use alloy_primitives::{Address, B256, TxKind, U256, keccak256, uint};
+use alloy_primitives::{Address, B256, TxKind, U256, keccak256, map::AddressSet, uint};
 use alloy_rpc_types::BlockNumberOrTag;
 use eyre::Context;
 use foundry_common::{SYSTEM_TRANSACTION_TYPE, is_known_system_sender};
@@ -30,7 +30,7 @@ use revm::{
     context_interface::{journaled_state::account::JournaledAccountTr, result::ResultAndState},
     database::{CacheDB, DatabaseRef, EmptyDB},
     primitives::{AddressMap, HashMap as Map, KECCAK_EMPTY, Log},
-    state::{Account, AccountInfo, EvmState, EvmStorageSlot},
+    state::{Account, AccountInfo, EvmState, EvmStorageSlot, TransactionId},
 };
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -1523,7 +1523,7 @@ impl<FEN: FoundryEvmNetwork> DatabaseExt<FEN::EvmFactory> for Backend<FEN> {
                         EvmStorageSlot::new_changed(
                             acc.storage.get(&slot).map(|s| s.present_value).unwrap_or_default(),
                             U256::from_be_bytes(value.0),
-                            0,
+                            TransactionId::ZERO,
                         ),
                     );
                 }
@@ -1973,9 +1973,8 @@ impl<FEN: FoundryEvmNetwork> BackendInner<FEN> {
             journal_inner.set_spec_id(self.spec_id.into());
             journal_inner
         };
-        journal
-            .warm_addresses
-            .set_precompile_addresses(self.precompiles().addresses().copied().collect());
+        let precompile_addresses: AddressSet = self.precompiles().addresses().copied().collect();
+        journal.warm_addresses.set_precompile_addresses(&precompile_addresses);
         journal
     }
 }
