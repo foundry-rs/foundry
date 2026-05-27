@@ -448,7 +448,7 @@ dependencies = [
 [[package]]
 name = "alloy-op-evm"
 version = "0.32.0"
-source = "git+https://github.com/stevencartavia/optimism?branch=rusowsky%2Frevm-40#b0e7c0e7833e1eddf79f48cafd75463b780d724d"
+source = "git+https://github.com/stevencartavia/optimism?branch=revm-40#7f55bd7036a658cc29faab88016f85aeb82ed1f9"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -465,7 +465,7 @@ dependencies = [
 [[package]]
 name = "alloy-op-hardforks"
 version = "0.4.7"
-source = "git+https://github.com/stevencartavia/optimism?branch=rusowsky%2Frevm-40#b0e7c0e7833e1eddf79f48cafd75463b780d724d"
+source = "git+https://github.com/stevencartavia/optimism?branch=revm-40#7f55bd7036a658cc29faab88016f85aeb82ed1f9"
 dependencies = [
  "alloy-chains",
  "alloy-hardforks",
@@ -8070,7 +8070,7 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 [[package]]
 name = "op-alloy"
 version = "0.24.0"
-source = "git+https://github.com/stevencartavia/optimism?branch=rusowsky%2Frevm-40#b0e7c0e7833e1eddf79f48cafd75463b780d724d"
+source = "git+https://github.com/stevencartavia/optimism?branch=revm-40#7f55bd7036a658cc29faab88016f85aeb82ed1f9"
 dependencies = [
  "op-alloy-consensus",
  "op-alloy-network",
@@ -8082,7 +8082,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-consensus"
 version = "0.24.0"
-source = "git+https://github.com/stevencartavia/optimism?branch=rusowsky%2Frevm-40#b0e7c0e7833e1eddf79f48cafd75463b780d724d"
+source = "git+https://github.com/stevencartavia/optimism?branch=revm-40#7f55bd7036a658cc29faab88016f85aeb82ed1f9"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8109,7 +8109,7 @@ checksum = "a79f352fc3893dcd670172e615afef993a41798a1d3fc0db88a3e60ef2e70ecc"
 [[package]]
 name = "op-alloy-network"
 version = "0.24.0"
-source = "git+https://github.com/stevencartavia/optimism?branch=rusowsky%2Frevm-40#b0e7c0e7833e1eddf79f48cafd75463b780d724d"
+source = "git+https://github.com/stevencartavia/optimism?branch=revm-40#7f55bd7036a658cc29faab88016f85aeb82ed1f9"
 dependencies = [
  "alloy-consensus",
  "alloy-network",
@@ -8122,7 +8122,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-provider"
 version = "0.24.0"
-source = "git+https://github.com/stevencartavia/optimism?branch=rusowsky%2Frevm-40#b0e7c0e7833e1eddf79f48cafd75463b780d724d"
+source = "git+https://github.com/stevencartavia/optimism?branch=revm-40#7f55bd7036a658cc29faab88016f85aeb82ed1f9"
 dependencies = [
  "alloy-network",
  "alloy-primitives",
@@ -8136,7 +8136,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-rpc-types"
 version = "0.24.0"
-source = "git+https://github.com/stevencartavia/optimism?branch=rusowsky%2Frevm-40#b0e7c0e7833e1eddf79f48cafd75463b780d724d"
+source = "git+https://github.com/stevencartavia/optimism?branch=revm-40#7f55bd7036a658cc29faab88016f85aeb82ed1f9"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8156,7 +8156,7 @@ dependencies = [
 [[package]]
 name = "op-alloy-rpc-types-engine"
 version = "0.24.0"
-source = "git+https://github.com/stevencartavia/optimism?branch=rusowsky%2Frevm-40#b0e7c0e7833e1eddf79f48cafd75463b780d724d"
+source = "git+https://github.com/stevencartavia/optimism?branch=revm-40#7f55bd7036a658cc29faab88016f85aeb82ed1f9"
 dependencies = [
  "alloy-consensus",
  "alloy-eips",
@@ -8177,7 +8177,7 @@ dependencies = [
 [[package]]
 name = "op-revm"
 version = "20.0.0"
-source = "git+https://github.com/stevencartavia/op-revm?branch=rusowsky%2Frevm-40#4201f16a746f2da2df38f1eac477500d492eaed5"
+source = "git+https://github.com/stevencartavia/op-revm?branch=revm-40#4201f16a746f2da2df38f1eac477500d492eaed5"
 dependencies = [
  "auto_impl",
  "revm",
