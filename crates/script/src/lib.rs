@@ -270,12 +270,12 @@ impl ScriptArgs {
         config: Config,
         mut evm_opts: EvmOpts,
     ) -> Result<PreprocessedState<FEN>> {
-        let session_sender = if !self.resume {
+        let session_sender = if self.resume {
+            None
+        } else {
             // Initial scripts may only reveal multi-chain transactions during execution. Use the
             // session root as the script sender here and validate chain scope during broadcast.
             self.tempo.session_sender_for_multi_wallet(&self.wallets, self.evm.sender)?
-        } else {
-            None
         };
 
         let script_wallets = Wallets::new(self.wallets.get_multi_wallet().await?, self.evm.sender);
