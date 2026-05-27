@@ -89,12 +89,6 @@ where
     N::UnsignedTx: SignableTransaction<Signature>,
     N::TransactionRequest: FoundryTransactionBuilder<N>,
 {
-    fn set_access_key_id_for_estimation(&mut self) {
-        if let Self::AccessKey(tx, _, access_key) = self {
-            tx.set_key_id(access_key.key_address);
-        }
-    }
-
     /// Prepares the transaction for broadcasting by synchronizing nonce and estimating gas.
     ///
     /// This method performs two key operations:
@@ -110,75 +104,72 @@ where
         estimate_multiplier: u64,
         tempo_sponsor: Option<&TempoSponsor>,
     ) -> Result<()> {
-        let access_key_authorization = match self {
-            Self::AccessKey(_, _, access_key) => Some((
-                access_key.wallet_address,
-                access_key.key_address,
-                access_key.key_authorization.clone(),
-            )),
-            _ => None,
+        let (tx, access_key_authorization) = match self {
+            Self::Raw(tx, _) | Self::Unlocked(tx) | Self::Browser(tx, _) => (tx, None),
+            Self::AccessKey(tx, _, access_key) => {
+                tx.set_key_id(access_key.key_address);
+                (
+                    tx,
+                    Some((
+                        access_key.wallet_address,
+                        access_key.key_address,
+                        access_key.key_authorization.as_ref(),
+                    )),
+                )
+            }
+            Self::Signed(_) => return Ok(()),
         };
 
-        self.set_access_key_id_for_estimation();
+        if sequential_broadcast {
+            let from = tx.from().expect("no sender");
 
-        if let Self::Raw(tx, _)
-        | Self::Unlocked(tx)
-        | Self::Browser(tx, _)
-        | Self::AccessKey(tx, _, _) = self
-        {
-            if sequential_broadcast {
-                let from = tx.from().expect("no sender");
-
-                let tx_nonce = tx.nonce().expect("no nonce");
-                for attempt in 0..5 {
-                    let nonce = provider.get_transaction_count(from).await?;
-                    match nonce.cmp(&tx_nonce) {
-                        Ordering::Greater => {
+            let tx_nonce = tx.nonce().expect("no nonce");
+            for attempt in 0..5 {
+                let nonce = provider.get_transaction_count(from).await?;
+                match nonce.cmp(&tx_nonce) {
+                    Ordering::Greater => {
+                        bail!(
+                            "EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider."
+                        )
+                    }
+                    Ordering::Less => {
+                        if attempt == 4 {
                             bail!(
-                                "EOA nonce changed unexpectedly while sending transactions. Expected {tx_nonce} got {nonce} from provider."
+                                "After 5 attempts, provider nonce ({nonce}) is still behind expected nonce ({tx_nonce})."
                             )
                         }
-                        Ordering::Less => {
-                            if attempt == 4 {
-                                bail!(
-                                    "After 5 attempts, provider nonce ({nonce}) is still behind expected nonce ({tx_nonce})."
-                                )
-                            }
-                            warn!(
-                                "Expected nonce ({tx_nonce}) is ahead of provider nonce ({nonce}). Retrying in 1 second..."
-                            );
-                            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-                        }
-                        Ordering::Equal => {
-                            // Nonces are equal, we can proceed.
-                            break;
-                        }
+                        warn!(
+                            "Expected nonce ({tx_nonce}) is ahead of provider nonce ({nonce}). Retrying in 1 second..."
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                    }
+                    Ordering::Equal => {
+                        // Nonces are equal, we can proceed.
+                        break;
                     }
                 }
             }
+        }
 
-            if let Some((wallet_address, key_address, key_authorization)) =
-                access_key_authorization.as_ref()
-            {
-                tx.prepare_access_key_authorization(
-                    provider,
-                    *wallet_address,
-                    *key_address,
-                    key_authorization.as_ref(),
-                )
-                .await?;
-            }
+        if let Some((wallet_address, key_address, key_authorization)) = access_key_authorization {
+            tx.prepare_access_key_authorization(
+                provider,
+                wallet_address,
+                key_address,
+                key_authorization,
+            )
+            .await?;
+        }
 
-            // Chains which use `eth_estimateGas` are being sent sequentially and require their
-            // gas to be re-estimated right before broadcasting.
-            if !is_fixed_gas_limit && estimate_via_rpc {
-                estimate_gas(tx, provider, estimate_multiplier).await?;
-            }
+        // Chains which use `eth_estimateGas` are being sent sequentially and require their
+        // gas to be re-estimated right before broadcasting.
+        if !is_fixed_gas_limit && estimate_via_rpc {
+            estimate_gas(tx, provider, estimate_multiplier).await?;
+        }
 
-            if let Some(sponsor) = tempo_sponsor {
-                let from = tx.from().expect("no sender");
-                sponsor.attach_and_print::<N>(tx, from).await?;
-            }
+        if let Some(sponsor) = tempo_sponsor {
+            let from = tx.from().expect("no sender");
+            sponsor.attach_and_print::<N>(tx, from).await?;
         }
 
         Ok(())
@@ -274,10 +265,6 @@ impl SignerScope {
     pub(crate) const fn new(chain: u64, sender: Address) -> Self {
         Self { chain, sender }
     }
-
-    pub(crate) const fn sender(&self) -> Address {
-        self.sender
-    }
 }
 
 fn insert_session_access_key_for_remaining_transactions(
@@ -285,23 +272,20 @@ fn insert_session_access_key_for_remaining_transactions(
     session: ResolvedSessionSigner,
     remaining_transactions: &[RemainingScriptTransaction],
 ) -> Result<()> {
-    let session_scope = SignerScope::new(session.session.chain_id, session.session.root_account);
-    let mut should_insert = false;
-    for tx in remaining_transactions.iter().filter(|tx| tx.from == session.session.root_account) {
-        if tx.chain != session.session.chain_id {
-            eyre::bail!(
-                "Tempo session is for chain {}, but a remaining transaction from session root {} is on chain {}",
-                session.session.chain_id,
-                session.session.root_account,
-                tx.chain
-            );
-        }
-
-        should_insert = true;
+    let chain = session.session.chain_id;
+    let root = session.session.root_account;
+    if let Some(tx) = remaining_transactions.iter().find(|tx| tx.from == root && tx.chain != chain)
+    {
+        eyre::bail!(
+            "Tempo session is for chain {}, but a remaining transaction from session root {} is on chain {}",
+            chain,
+            root,
+            tx.chain,
+        );
     }
 
-    if should_insert {
-        access_keys.insert(session_scope, (session.signer, session.access_key));
+    if remaining_transactions.iter().any(|tx| tx.from == root) {
+        access_keys.insert(SignerScope::new(chain, root), (session.signer, session.access_key));
     }
 
     Ok(())
@@ -333,17 +317,15 @@ pub(crate) fn lookup_signer_for_chain(from: Address, chain: u64) -> Result<Tempo
         };
 
         let signer = foundry_wallets::utils::create_private_key_signer(&key)?;
-        let is_direct = entry.key_address.is_none() || entry.key_address == Some(from);
-        if is_direct {
+        let Some(key_address) = entry.key_address.filter(|key_address| *key_address != from) else {
             return Ok(TempoLookup::Direct(signer));
-        }
+        };
 
         let key_authorization =
             entry.key_authorization.as_deref().map(decode_key_authorization).transpose()?;
         let config = TempoAccessKeyConfig {
             wallet_address: entry.wallet_address,
-            // SAFETY: `is_direct` was false, so `key_address` is `Some` and != wallet_address.
-            key_address: entry.key_address.unwrap(),
+            key_address,
             key_authorization,
         };
         return Ok(TempoLookup::Keychain(signer, Box::new(config)));
@@ -1366,8 +1348,8 @@ mod tests {
         assert_eq!(remaining[0].chain, 4217);
     }
 
-    #[test]
-    fn access_key_sets_key_id_before_estimation() {
+    #[tokio::test]
+    async fn access_key_sets_key_id_before_estimation() {
         let root_address = address!("0x1111111111111111111111111111111111111111");
         let access_key =
             foundry_wallets::utils::create_private_key_signer(ACCESS_KEY_PRIVATE_KEY).unwrap();
@@ -1385,8 +1367,10 @@ mod tests {
             &access_key,
             &access_key_config,
         );
+        let provider =
+            RootProvider::<TempoNetwork>::new_http("http://localhost:8545".parse().unwrap());
 
-        sender.set_access_key_id_for_estimation();
+        sender.prepare(&provider, false, true, false, 100, None).await.unwrap();
 
         match sender {
             SendTransactionKind::AccessKey(tx, _, _) => {
