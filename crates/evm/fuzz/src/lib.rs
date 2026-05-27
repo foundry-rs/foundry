@@ -70,6 +70,22 @@ pub struct BasicTxDetails {
     pub call_details: CallDetails,
 }
 
+/// Optional per-call gas envelope overrides. Stamped by the `invariant.gas_fuzz`
+/// sampler. Lives behind a `Box` on `CallDetails` so the OFF-mode hot path pays a
+/// single niche-optimized pointer (`None` = no overrides, no allocation, no
+/// pointer chase). Persisted in the corpus so failing sequences replay at the
+/// exact gas envelope that triggered the failure.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GasOverrides {
+    /// Override for `tx.gas_limit`. `None` means use the executor's default
+    /// (typically the block gas limit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gas_limit: Option<u64>,
+    /// Override for `tx.gasprice`. `None` means use the executor's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gas_price: Option<u64>,
+}
+
 /// Call details of a transaction generated to fuzz.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CallDetails {
@@ -81,19 +97,44 @@ pub struct CallDetails {
     /// Uses `#[serde(default)]` for backwards compatibility with existing corpus files.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<U256>,
-    /// Optional override for `tx.gas_limit`. Set by the gas-envelope sampler when
-    /// `invariant.gas_fuzz = true`. `None` means use the executor's default (typically
-    /// the block gas limit). Persisted in the corpus so failing sequences can be replayed
-    /// at the exact gas budget that triggered the failure.
-    /// Uses `#[serde(default)]` for backwards compatibility with existing corpus files.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gas_limit: Option<u64>,
-    /// Optional override for `tx.gasprice`. Same lifecycle as `gas_limit`: set by the
-    /// gas-envelope sampler when `invariant.gas_fuzz = true`, `None` means default,
-    /// persisted for deterministic replay of gas-price-dependent failures.
-    /// Uses `#[serde(default)]` for backwards compatibility with existing corpus files.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gas_price: Option<u64>,
+    /// Boxed per-call gas envelope. `None` when `invariant.gas_fuzz = false` (default)
+    /// so the hot path adds only 8 bytes vs master. Flattened so JSON keys remain
+    /// `gas_limit` / `gas_price` at the top level (backwards-compatible with corpus
+    /// files written by earlier revisions of #14902).
+    #[serde(default, flatten, skip_serializing_if = "Option::is_none")]
+    pub gas: Option<Box<GasOverrides>>,
+}
+
+impl CallDetails {
+    /// Returns the per-call `tx.gas_limit` override, if any.
+    #[inline]
+    pub fn gas_limit(&self) -> Option<u64> {
+        self.gas.as_deref().and_then(|g| g.gas_limit)
+    }
+
+    /// Returns the per-call `tx.gasprice` override, if any.
+    #[inline]
+    pub fn gas_price(&self) -> Option<u64> {
+        self.gas.as_deref().and_then(|g| g.gas_price)
+    }
+
+    /// Stamp a sampled gas envelope onto this call. Allocates one `GasOverrides`
+    /// when first set; reuses on subsequent updates.
+    pub fn set_gas_envelope(&mut self, gas_limit: Option<u64>, gas_price: Option<u64>) {
+        if gas_limit.is_none() && gas_price.is_none() {
+            self.gas = None;
+            return;
+        }
+        match &mut self.gas {
+            Some(g) => {
+                g.gas_limit = gas_limit;
+                g.gas_price = gas_price;
+            }
+            None => {
+                self.gas = Some(Box::new(GasOverrides { gas_limit, gas_price }));
+            }
+        }
+    }
 }
 
 impl BasicTxDetails {
@@ -166,8 +207,8 @@ impl BaseCounterExample {
         let target = tx.call_details.target;
         let bytes = &tx.call_details.calldata;
         let value = tx.call_details.value;
-        let gas_limit = tx.call_details.gas_limit;
-        let gas_price = tx.call_details.gas_price;
+        let gas_limit = tx.call_details.gas_limit();
+        let gas_price = tx.call_details.gas_price();
         let warp = tx.warp;
         let roll = tx.roll;
         if let Some((name, abi)) = &contracts.get(&target)
@@ -537,8 +578,10 @@ mod tests {
                 target: address!("00000000000000000000000000000000000000aa"),
                 calldata: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
                 value: None,
-                gas_limit: Some(123_456),
-                gas_price: Some(1_000_000_000_000),
+                gas: Some(Box::new(GasOverrides {
+                    gas_limit: Some(123_456),
+                    gas_price: Some(1_000_000_000_000),
+                })),
             },
         };
 

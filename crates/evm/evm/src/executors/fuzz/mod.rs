@@ -278,8 +278,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                     target: address,
                     calldata: calldata.clone(),
                     value: None,
-                    gas_limit: None,
-                    gas_price: None,
+                    gas: None,
                 },
             }],
             &[cmp_values],
@@ -456,8 +455,7 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
                 target: Default::default(),
                 calldata,
                 value: None,
-                gas_limit: None,
-                gas_price: None,
+                gas: None,
             },
         });
 

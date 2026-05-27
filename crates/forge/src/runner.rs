@@ -1876,12 +1876,15 @@ fn base_counterexamples_to_txes(
                 warp: seq.warp,
                 roll: seq.roll,
                 sender: seq.sender.unwrap_or_default(),
-                call_details: CallDetails {
-                    target: seq.addr.unwrap_or_default(),
-                    calldata: seq.calldata.clone(),
-                    value: seq.value,
-                    gas_limit: seq.gas_limit,
-                    gas_price: seq.gas_price,
+                call_details: {
+                    let mut cd = CallDetails {
+                        target: seq.addr.unwrap_or_default(),
+                        calldata: seq.calldata.clone(),
+                        value: seq.value,
+                        gas: None,
+                    };
+                    cd.set_gas_envelope(seq.gas_limit, seq.gas_price);
+                    cd
                 },
             }
         })

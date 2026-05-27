@@ -665,8 +665,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     );
                     let sampled_price = sample_gas_price(rng);
                     if let Some(last) = current_run.inputs.last_mut() {
-                        last.call_details.gas_limit = sampled_limit;
-                        last.call_details.gas_price = Some(sampled_price);
+                        last.call_details.set_gas_envelope(sampled_limit, Some(sampled_price));
                     }
                 }
 
@@ -732,7 +731,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     if current_run
                         .inputs
                         .last()
-                        .is_some_and(|tx| tx.call_details.gas_price.is_some())
+                        .is_some_and(|tx| tx.call_details.gas_price().is_some())
                     {
                         clear_pending_gas_price(&mut current_run.executor);
                     }
@@ -785,7 +784,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     if self.config.gas_fuzz
                         && call_result.gas_used > 0
                         && let Some(last) = current_run.inputs.last()
-                        && last.call_details.gas_limit.is_none()
+                        && last.call_details.gas_limit().is_none()
                     {
                         gas_observations.record(
                             handler_target,
@@ -1665,7 +1664,7 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
 
     // Per-call gas-limit override under `gas_fuzz`. Save/restore so the executor's
     // natural limit applies to invariant assertion calls.
-    let saved_gas_limit = tx.call_details.gas_limit.map(|g| {
+    let saved_gas_limit = tx.call_details.gas_limit().map(|g| {
         let saved = executor.gas_limit();
         executor.set_gas_limit(g);
         saved
@@ -1675,7 +1674,7 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
     // consumes this one-shot during `initialize_interp` (via `.take()`), so the
     // executor's natural price applies to any follow-up invariant assertion call
     // even if the sampled price is non-zero.
-    if let Some(p) = tx.call_details.gas_price
+    if let Some(p) = tx.call_details.gas_price()
         && let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
     {
         cheats.gas_price = Some(p.into());

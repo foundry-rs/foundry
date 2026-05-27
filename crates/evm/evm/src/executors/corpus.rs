@@ -1418,8 +1418,7 @@ mod tests {
                 target: Address::ZERO,
                 calldata: Bytes::new(),
                 value: None,
-                gas_limit: None,
-                gas_price: None,
+                gas: None,
             },
         }
     }
@@ -1445,8 +1444,7 @@ mod tests {
                 target: Address::ZERO,
                 calldata,
                 value: None,
-                gas_limit: None,
-                gas_price: None,
+                gas: None,
             },
         };
         let cmp = CmpOperands {
