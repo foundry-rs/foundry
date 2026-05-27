@@ -56,7 +56,6 @@ use revm::{
     context::{Cfg, ContextTr, Host, JournalTr, Transaction, TransactionType, result::EVMError},
     context_interface::{CreateScheme, transaction::SignedAuthorization},
     handler::FrameResult,
-    inspector::JournalExt,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
         InstructionResult, Interpreter, InterpreterAction, InterpreterResult,
@@ -900,6 +899,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: false,
                         precompile_call_logs: vec![],
+                        charged_new_account_state_gas: false,
                     });
                 }
             };
@@ -920,6 +920,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     memory_offset: call.return_memory_offset.clone(),
                     was_precompile_called: true,
                     precompile_call_logs: vec![],
+                    charged_new_account_state_gas: false,
                 }),
                 Err(err) => Some(CallOutcome {
                     result: InterpreterResult {
@@ -930,6 +931,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     memory_offset: call.return_memory_offset.clone(),
                     was_precompile_called: false,
                     precompile_call_logs: vec![],
+                    charged_new_account_state_gas: false,
                 }),
             };
         }
@@ -1053,6 +1055,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 memory_offset: call.return_memory_offset.clone(),
                                 was_precompile_called: false,
                                 precompile_call_logs: vec![],
+                                charged_new_account_state_gas: false,
                             });
                         }
                     }
@@ -1072,6 +1075,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                     memory_offset: call.return_memory_offset.clone(),
                     was_precompile_called: true,
                     precompile_call_logs: vec![],
+                    charged_new_account_state_gas: false,
                 });
             }
         }
@@ -1112,6 +1116,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                             memory_offset: call.return_memory_offset.clone(),
                             was_precompile_called: false,
                             precompile_call_logs: vec![],
+                            charged_new_account_state_gas: false,
                         });
                     }
 
@@ -1147,6 +1152,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                                 memory_offset: call.return_memory_offset.clone(),
                                 was_precompile_called: false,
                                 precompile_call_logs: vec![],
+                                charged_new_account_state_gas: false,
                             });
                         }
                         tx_req.set_blob_sidecar(blob_sidecar);
@@ -1192,6 +1198,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: false,
                         precompile_call_logs: vec![],
+                        charged_new_account_state_gas: false,
                     });
                 }
             }
@@ -2315,7 +2322,7 @@ impl<FEN: FoundryEvmNetwork> Cheatcodes<FEN> {
     }
 
     #[cold]
-    fn meter_gas_reset(&mut self, interpreter: &mut Interpreter) {
+    const fn meter_gas_reset(&mut self, interpreter: &mut Interpreter) {
         let mut gas = Gas::new(interpreter.gas.limit());
         gas.memory_mut().words_num = interpreter.gas.memory().words_num;
         gas.memory_mut().expansion_cost = interpreter.gas.memory().expansion_cost;
@@ -2992,7 +2999,7 @@ fn apply_dispatch<FEN: FoundryEvmNetwork>(
 const fn will_exit(action: &InterpreterAction) -> bool {
     match action {
         InterpreterAction::Return(result) => {
-            result.result.is_ok_or_revert() || result.result.is_error()
+            result.result.is_ok_or_revert() || result.result.is_halt()
         }
         _ => false,
     }
