@@ -28,7 +28,8 @@ use foundry_common::{
     provider::{ProviderBuilder, try_get_http_provider},
     shell,
     tempo::{
-        ResolvedSessionSigner, TempoSponsor, WALLET_KEYS_PATH, decode_key_authorization, tempo_home,
+        KeyEntry, KeysFile, ResolvedSessionSigner, TempoSponsor, WALLET_KEYS_PATH,
+        decode_key_authorization, tempo_home,
     },
 };
 use foundry_config::Config;
@@ -291,11 +292,29 @@ fn insert_session_access_key_for_remaining_transactions(
     Ok(())
 }
 
+fn build_lookup(entry: &KeyEntry) -> Result<TempoLookup> {
+    let Some(ref key) = entry.key else {
+        return Ok(TempoLookup::NotFound);
+    };
+    let signer = foundry_wallets::utils::create_private_key_signer(key)?;
+    let Some(key_address) = entry.key_address.filter(|ka| *ka != entry.wallet_address) else {
+        return Ok(TempoLookup::Direct(signer));
+    };
+    let key_authorization =
+        entry.key_authorization.as_deref().map(decode_key_authorization).transpose()?;
+    let config = TempoAccessKeyConfig {
+        wallet_address: entry.wallet_address,
+        key_address,
+        key_authorization,
+    };
+    Ok(TempoLookup::Keychain(signer, Box::new(config)))
+}
+
 /// Looks up a Tempo wallet signer scoped to the transaction chain.
 ///
-/// Tempo `keys.toml` entries are stored per `(wallet_address, chain_id)`, and access-key
-/// authorizations are chain-specific. Script broadcast must preserve that scope instead of picking
-/// the first key for a wallet address.
+/// Prefers an entry whose `(wallet_address, chain_id)` both match. Falls back to an entry with
+/// `chain_id == 0` (the value when the field is absent) so that `keys.toml` files written by older
+/// Tempo clients (which omit `chain_id`) continue to work.
 pub(crate) fn lookup_signer_for_chain(from: Address, chain: u64) -> Result<TempoLookup> {
     let Some(path) = tempo_home().map(|home| home.join(WALLET_KEYS_PATH)) else {
         return Ok(TempoLookup::NotFound);
@@ -305,33 +324,25 @@ pub(crate) fn lookup_signer_for_chain(from: Address, chain: u64) -> Result<Tempo
     }
 
     let contents = std::fs::read_to_string(&path)?;
-    let file: foundry_common::tempo::KeysFile = toml::from_str(&contents)?;
+    let file: KeysFile = toml::from_str(&contents)?;
 
-    for entry in file.keys {
-        if entry.wallet_address != from || entry.chain_id != chain {
+    lookup_signer_in(from, chain, &file)
+}
+
+fn lookup_signer_in(from: Address, chain: u64, file: &KeysFile) -> Result<TempoLookup> {
+    let mut fallback: Option<&KeyEntry> = None;
+    for entry in &file.keys {
+        if entry.wallet_address != from {
             continue;
         }
-
-        let Some(key) = entry.key else {
-            continue;
-        };
-
-        let signer = foundry_wallets::utils::create_private_key_signer(&key)?;
-        let Some(key_address) = entry.key_address.filter(|key_address| *key_address != from) else {
-            return Ok(TempoLookup::Direct(signer));
-        };
-
-        let key_authorization =
-            entry.key_authorization.as_deref().map(decode_key_authorization).transpose()?;
-        let config = TempoAccessKeyConfig {
-            wallet_address: entry.wallet_address,
-            key_address,
-            key_authorization,
-        };
-        return Ok(TempoLookup::Keychain(signer, Box::new(config)));
+        if entry.chain_id == chain {
+            return build_lookup(entry);
+        }
+        if entry.chain_id == 0 && fallback.is_none() {
+            fallback = Some(entry);
+        }
     }
-
-    Ok(TempoLookup::NotFound)
+    fallback.map(build_lookup).unwrap_or(Ok(TempoLookup::NotFound))
 }
 
 /// Returns the single sender a Tempo session is allowed to cover.
@@ -1200,6 +1211,7 @@ mod tests {
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    const TEST_ADDR: Address = address!("f39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
     const ACCESS_KEY_PRIVATE_KEY: &str =
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
 
@@ -1473,5 +1485,49 @@ mod tests {
             to: None,
             contract_address: None,
         }
+    }
+
+    // lookup_signer_in tests
+
+    fn make_entry(addr: Address, chain_id: u64) -> KeyEntry {
+        KeyEntry {
+            wallet_address: addr,
+            chain_id,
+            key: Some(ROOT_PRIVATE_KEY.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn lookup_exact_chain_match() {
+        let file = KeysFile { keys: vec![make_entry(TEST_ADDR, 31318)] };
+        let result = lookup_signer_in(TEST_ADDR, 31318, &file).unwrap();
+        assert!(matches!(result, TempoLookup::Direct(_)));
+    }
+
+    #[test]
+    fn lookup_chain_zero_fallback() {
+        // Entry with chain_id omitted (defaults to 0) should match any chain.
+        let file = KeysFile { keys: vec![make_entry(TEST_ADDR, 0)] };
+        let result = lookup_signer_in(TEST_ADDR, 31318, &file).unwrap();
+        assert!(
+            matches!(result, TempoLookup::Direct(_)),
+            "chain-0 entry should be used as fallback"
+        );
+    }
+
+    #[test]
+    fn lookup_exact_wins_over_chain_zero_fallback() {
+        // chain-0 entry comes first; exact match must still win.
+        let file = KeysFile { keys: vec![make_entry(TEST_ADDR, 0), make_entry(TEST_ADDR, 31318)] };
+        let result = lookup_signer_in(TEST_ADDR, 31318, &file).unwrap();
+        assert!(matches!(result, TempoLookup::Direct(_)));
+    }
+
+    #[test]
+    fn lookup_mismatched_chain_no_fallback_returns_not_found() {
+        let file = KeysFile { keys: vec![make_entry(TEST_ADDR, 1)] };
+        let result = lookup_signer_in(TEST_ADDR, 31318, &file).unwrap();
+        assert!(matches!(result, TempoLookup::NotFound));
     }
 }
