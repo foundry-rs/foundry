@@ -46,6 +46,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+const INVARIANT_CAMPAIGN_DISPLAY_NAME: &str = "Invariant/Property Tests";
+
 mod error;
 pub use error::{
     FailureKey, HandlerAssertionFailure, InvariantFailures, InvariantFuzzError,
@@ -217,7 +219,7 @@ fn record_new_invariant_failures(
 /// single JSON event shape.
 fn build_invariant_progress_json<M: Serialize>(
     timestamp_secs: u64,
-    invariant_name: &str,
+    campaign_name: &str,
     corpus_metrics: &M,
     optimization_best: Option<I256>,
     throughput: InvariantThroughputMetrics,
@@ -236,7 +238,7 @@ fn build_invariant_progress_json<M: Serialize>(
     let mut payload = json!({
         "timestamp": timestamp_secs,
         "event": "pulse",
-        "invariant": invariant_name,
+        "invariant": campaign_name,
         "metrics": metrics,
         "total_txs": throughput.total_txs,
         "total_gas": throughput.total_gas,
@@ -876,10 +878,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             {
                 // Sync handler-bug count snapshot into failure_metrics before emitting.
                 failure_metrics.broken_handlers = invariant_test.test_data.failures.handler_count();
+                let progress_campaign_name = if invariant_contract.invariant_fns.len() > 1 {
+                    INVARIANT_CAMPAIGN_DISPLAY_NAME
+                } else {
+                    &invariant_contract.anchor().name
+                };
                 // Display corpus metrics inline as JSON.
                 let metrics = build_invariant_progress_json(
                     SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-                    &invariant_contract.anchor().name,
+                    progress_campaign_name,
                     &corpus_manager.metrics,
                     invariant_test.test_data.optimization_best_value,
                     throughput,

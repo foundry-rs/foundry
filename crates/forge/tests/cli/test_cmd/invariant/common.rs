@@ -1945,7 +1945,7 @@ Invariant/Property Tests: 2/2 invariants broken
 [FAIL: wrong counter assert] invariant_with_assert
 [FAIL: wrong counter require] invariant_with_require
 ...
- invariant_with_assert() ([RUNS])
+ Invariant/Property Tests ([RUNS])
 ...
 "#]]);
 });
@@ -2133,7 +2133,7 @@ Invariant/Property Tests: 2/2 invariants broken
 [FAIL: false] invariant_neverFalse
 [FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
 2 invariant failure(s) persisted to cache/invariant/failures/InvariantTest — rerun to shrink
- invariant_neverFalse() ([RUNS])
+ Invariant/Property Tests ([RUNS])
 
 [STATS]
 
@@ -2153,7 +2153,7 @@ Invariant/Property Tests: 2/2 invariants broken
 [FAIL: false] invariant_neverFalse
 [FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
 2 invariant failure(s) persisted to cache/invariant/failures/InvariantTest — rerun to shrink
- invariant_neverFalse() ([RUNS])
+ Invariant/Property Tests ([RUNS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

@@ -19,13 +19,16 @@ use foundry_evm::{
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashMap as Map},
     fmt::{self, Write},
     time::Duration,
 };
 use yansi::Paint;
+
+pub(crate) const INVARIANT_CAMPAIGN_DISPLAY_NAME: &str = "Invariant/Property Tests";
 
 /// The aggregated result of a test run.
 #[derive(Clone, Debug)]
@@ -252,10 +255,9 @@ fn test_failure_exit_code() -> i32 {
 }
 
 /// A set of test results for a single test suite, which is all the tests in a single contract.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct SuiteResult {
     /// Wall clock time it took to execute all tests in this suite.
-    #[serde(with = "foundry_common::serde_helpers::duration")]
     pub duration: Duration,
     /// Individual test results: `test fn signature -> TestResult`.
     pub test_results: BTreeMap<String, TestResult>,
@@ -325,6 +327,20 @@ impl SuiteResult {
         self.test_results.iter()
     }
 
+    fn serialized_test_results(&self) -> BTreeMap<Cow<'_, str>, &TestResult> {
+        self.test_results
+            .iter()
+            .map(|(name, result)| {
+                let name = if result.kind.is_invariant() && result.invariant_count.is_some() {
+                    Cow::Borrowed(INVARIANT_CAMPAIGN_DISPLAY_NAME)
+                } else {
+                    Cow::Borrowed(name.as_str())
+                };
+                (name, result)
+            })
+            .collect()
+    }
+
     /// Whether this test suite is empty.
     pub fn is_empty(&self) -> bool {
         self.test_results.is_empty()
@@ -355,6 +371,30 @@ impl SuiteResult {
             self.duration,
             self.total_time(),
         )
+    }
+}
+
+impl Serialize for SuiteResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("SuiteResult", 3)?;
+        state.serialize_field("duration", &SerializableDuration(&self.duration))?;
+        state.serialize_field("test_results", &self.serialized_test_results())?;
+        state.serialize_field("warnings", &self.warnings)?;
+        state.end()
+    }
+}
+
+struct SerializableDuration<'a>(&'a Duration);
+
+impl Serialize for SerializableDuration<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        foundry_common::serde_helpers::duration::serialize(self.0, serializer)
     }
 }
 
@@ -434,11 +474,6 @@ pub enum InvariantFailure {
         counterexample: Option<CounterExample>,
         /// Path where the counterexample was persisted for re-running and shrinking.
         persisted_path: std::path::PathBuf,
-        /// Whether this failure is the stable campaign anchor.
-        /// When `true` and this is the only failure, the function name is omitted on the
-        /// `[FAIL: ...]` line (the trailing summary already identifies it).
-        #[serde(default)]
-        is_anchor: bool,
     },
     /// A handler-side assertion bug discovered during the campaign.
     Handler {
@@ -661,20 +696,19 @@ impl TestResult {
                         s.push(']');
                     }
                 } else if !self.invariant_failures.is_empty() {
-                    // Render every broken invariant uniformly. Show the function name on the
-                    // `[FAIL: ...]` line when there is >1 failure or the failure isn't the
-                    // anchor (the anchor's name is already on the trailing summary).
-                    let multi = self.invariant_failures.len() > 1;
+                    // Contract-level campaigns identify the broken predicate even when a single
+                    // predicate failed. Preserve the compact legacy shape only when a run
+                    // actually exercised one predicate.
+                    let legacy_single_predicate =
+                        self.invariant_count.is_none() && self.invariant_failures.len() == 1;
                     for (i, failure) in self.invariant_failures.iter().enumerate() {
                         if i > 0 {
                             s.push('\n');
                         }
-                        let is_anchor =
-                            matches!(failure, InvariantFailure::Predicate { is_anchor: true, .. });
-                        let name_suffix = if multi || !is_anchor {
-                            format!(" {}", failure.name())
-                        } else {
+                        let name_suffix = if legacy_single_predicate {
                             String::new()
+                        } else {
+                            format!(" {}", failure.name())
                         };
                         if let Some(CounterExample::Sequence(original, sequence)) =
                             failure.counterexample()
@@ -731,7 +765,7 @@ impl TestResult {
         writeln!(
             s,
             "\n{}: {}/{total} invariants broken",
-            if user_facing { "Invariant/Property Tests" } else { "Predicates" },
+            if user_facing { INVARIANT_CAMPAIGN_DISPLAY_NAME } else { "Predicates" },
             self.invariant_failures.len()
         )
         .unwrap();
@@ -797,7 +831,7 @@ impl TestResult {
 
         if show_header {
             s.push('\n');
-            s.push_str(if user_facing { "Invariant/Property Tests" } else { "Predicates" });
+            s.push_str(if user_facing { INVARIANT_CAMPAIGN_DISPLAY_NAME } else { "Predicates" });
             s.push_str(":\n");
         }
 
@@ -987,9 +1021,10 @@ impl TestResult {
     pub fn invariant_replay_fail(
         &mut self,
         replayed_entirely: bool,
-        invariant_name: &String,
+        display_name: &str,
         replay_reason: Option<String>,
         call_sequence: Vec<BaseCounterExample>,
+        invariant_count: Option<usize>,
     ) {
         self.kind = TestKind::Invariant {
             runs: 1,
@@ -1002,12 +1037,13 @@ impl TestResult {
         self.status = TestStatus::Failure;
         self.reason = replay_reason.or_else(|| {
             if replayed_entirely {
-                Some(format!("{invariant_name} replay failure"))
+                Some(format!("{display_name} replay failure"))
             } else {
-                Some(format!("{invariant_name} persisted failure revert"))
+                Some(format!("{display_name} persisted failure revert"))
             }
         });
         self.counterexample = Some(CounterExample::Sequence(call_sequence.len(), call_sequence));
+        self.invariant_count = invariant_count;
     }
 
     /// Returns the fail result for invariant test setup.
@@ -1137,6 +1173,11 @@ impl TestResult {
                 })
                 .join("\n");
         }
+        let name = if self.kind.is_invariant() && self.invariant_count.is_some() {
+            INVARIANT_CAMPAIGN_DISPLAY_NAME
+        } else {
+            name
+        };
         format!("{} {name} {}", self.render_status_block(true), self.kind.report())
     }
 
@@ -1367,6 +1408,98 @@ impl TestKind {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn invariant_result(runs: usize, calls: usize) -> TestResult {
+        let mut result = TestResult::default();
+        result.kind = TestKind::Invariant {
+            runs,
+            calls,
+            reverts: 0,
+            metrics: HashMap::default(),
+            failed_corpus_replays: 0,
+            optimization_best_value: None,
+        };
+        result
+    }
+
+    #[test]
+    fn short_result_uses_campaign_name_for_multi_predicate_invariants() {
+        let mut result = invariant_result(5, 250);
+        result.status = TestStatus::Success;
+        result.invariant_count = Some(2);
+        result.invariant_predicate_results = vec![
+            InvariantPredicateResult {
+                name: "invariant_primary_safe".to_string(),
+                status: TestStatus::Success,
+                reason: None,
+            },
+            InvariantPredicateResult {
+                name: "invariant_secondary_breakable".to_string(),
+                status: TestStatus::Success,
+                reason: None,
+            },
+        ];
+
+        let rendered = result.short_result("invariant_primary_safe()");
+
+        assert!(rendered.contains("Invariant/Property Tests (runs: 5, calls: 250, reverts: 0)"));
+        assert!(!rendered.contains("invariant_primary_safe() (runs:"));
+    }
+
+    #[test]
+    fn multi_predicate_single_failure_keeps_predicate_name_in_failure_block() {
+        let mut result = invariant_result(1, 3);
+        result.status = TestStatus::Failure;
+        result.invariant_count = Some(2);
+        result.invariant_failures = vec![InvariantFailure::Predicate {
+            name: "invariant_primary_breakable".to_string(),
+            reason: "primary broken".to_string(),
+            counterexample: None,
+            persisted_path: std::path::PathBuf::new(),
+        }];
+        result.invariant_predicate_results = vec![
+            InvariantPredicateResult {
+                name: "invariant_primary_breakable".to_string(),
+                status: TestStatus::Failure,
+                reason: Some("primary broken".to_string()),
+            },
+            InvariantPredicateResult {
+                name: "invariant_secondary_safe".to_string(),
+                status: TestStatus::Success,
+                reason: None,
+            },
+        ];
+
+        let rendered = result.short_result("invariant_primary_breakable()");
+
+        assert!(rendered.contains("[FAIL: primary broken] invariant_primary_breakable"));
+        assert!(rendered.contains("Invariant/Property Tests: 1/2 invariants broken"));
+        assert!(rendered.contains("Invariant/Property Tests (runs: 1, calls: 3, reverts: 0)"));
+        assert!(!rendered.contains("invariant_primary_breakable() (runs:"));
+    }
+
+    #[test]
+    fn single_predicate_invariant_keeps_legacy_summary_name() {
+        let mut result = invariant_result(1, 3);
+        result.status = TestStatus::Failure;
+        result.invariant_failures = vec![InvariantFailure::Predicate {
+            name: "invariant_single".to_string(),
+            reason: "single broken".to_string(),
+            counterexample: None,
+            persisted_path: std::path::PathBuf::new(),
+        }];
+
+        let rendered = result.short_result("invariant_single()");
+
+        assert!(rendered.contains("[FAIL: single broken]"));
+        assert!(rendered.contains("invariant_single() (runs: 1, calls: 3, reverts: 0)"));
+        assert!(!rendered.contains("Invariant/Property Tests"));
     }
 }
 

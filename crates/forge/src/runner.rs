@@ -7,7 +7,8 @@ use crate::{
     multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
     result::{
-        InvariantFailure, InvariantPredicateResult, SuiteResult, TestResult, TestSetup, TestStatus,
+        INVARIANT_CAMPAIGN_DISPLAY_NAME, InvariantFailure, InvariantPredicateResult, SuiteResult,
+        TestResult, TestSetup, TestStatus,
     },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -1022,11 +1023,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &self.cr.contract.abi,
         );
         let show_solidity = invariant_config.show_solidity;
+        let logical_invariant_count =
+            invariant_contract.invariant_fns.len() + skipped_predicate_results.len();
+        let invariant_count = (logical_invariant_count > 1).then_some(logical_invariant_count);
+        let invariant_display_name = if invariant_count.is_some() {
+            INVARIANT_CAMPAIGN_DISPLAY_NAME
+        } else {
+            func.name.as_str()
+        };
 
         let progress = start_fuzz_progress(
             self.cr.progress,
             self.cr.name,
-            &invariant_contract.anchor().name,
+            invariant_display_name,
             invariant_config.timeout,
             invariant_config.runs,
         );
@@ -1058,12 +1067,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             if let Ok((success, replayed_entirely, replay_reason)) = replay
                 && !success
             {
-                let warn =
-                    "Replayed invariant failure from persisted file. \nRun `forge clean` or remove file to ignore failure and to continue invariant test campaign."
-                        .to_string();
+                let warn = "Replayed invariant failure from persisted file. \nRun `forge clean` or remove file to ignore failure and to continue invariant test campaign.";
 
                 if let Some(ref progress) = progress {
-                    progress.set_prefix(format!("{}\n{warn}\n", invariant_contract.anchor().name));
+                    progress.set_prefix(format!("{invariant_display_name}\n{warn}\n"));
                 } else {
                     let _ = sh_warn!("{warn}");
                 }
@@ -1108,9 +1115,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
 
                 self.result.invariant_replay_fail(
                     replayed_entirely,
-                    &invariant_contract.anchor().name,
+                    invariant_display_name,
                     replay_reason,
                     call_sequence,
+                    invariant_count,
                 );
                 return self.result;
             }
@@ -1262,7 +1270,6 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     reason: error.revert_reason().unwrap_or_default(),
                     counterexample: anchor_counterexample,
                     persisted_path: primary_failure_file,
-                    is_anchor: true,
                 });
             }
 
@@ -1364,19 +1371,12 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         reason: error.revert_reason().unwrap_or_default(),
                         counterexample: secondary_counterexample,
                         persisted_path: persisted_failure.clone(),
-                        is_anchor: false,
                     });
                 }
             }
         }
 
         let invariant_failure_dir = any_failure_persisted.then(|| failure_dir.clone());
-        // Only attach a campaign-level roll-up when this run actually exercised >1 predicate.
-        // Single-predicate runs keep the legacy single-block render with no roll-up line.
-        let invariant_count = (invariant_contract.invariant_fns.len()
-            + skipped_predicate_results.len()
-            > 1)
-        .then_some(invariant_contract.invariant_fns.len() + skipped_predicate_results.len());
         let invariant_predicate_results = if invariant_count.is_some() {
             let failures_by_name = invariant_failures
                 .iter()

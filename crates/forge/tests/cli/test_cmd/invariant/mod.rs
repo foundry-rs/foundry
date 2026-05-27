@@ -214,7 +214,7 @@ contract AnotherCounterHandler is Test {
 Invariant/Property Tests:
 [PASS] invariant_counter
 [PASS] invariant_counter2
- invariant_counter() (runs: 10, calls: 5000, reverts: [..])
+ Invariant/Property Tests (runs: 10, calls: 5000, reverts: [..])
 
 ╭-----------------------+----------------+-------+---------+----------╮
 | Contract              | Selector       | Calls | Reverts | Discards |
@@ -857,7 +857,7 @@ Invariant/Property Tests:
 [PASS] invariant_foo_called
 [PASS] invariant_setUp_considered_target
 [PASS] invariant_testSanity_considered_target
- invariant_considered_target() (runs: 10, calls: 1000, reverts: 0)
+ Invariant/Property Tests (runs: 10, calls: 1000, reverts: 0)
 
 ╭---------------------+----------+-------+---------+----------╮
 | Contract            | Selector | Calls | Reverts | Discards |
@@ -1249,6 +1249,8 @@ contract JsonInvariantReportTest is Test {
     let suite = json.as_object().unwrap().values().next().unwrap();
     let tests = suite["test_results"].as_object().unwrap();
     assert_eq!(tests.len(), 1);
+    assert!(tests.contains_key("Invariant/Property Tests"), "{tests:?}");
+    assert!(!tests.contains_key("invariant_break()"), "{tests:?}");
     let result = tests.values().next().unwrap();
     let predicates = result["invariant_predicate_results"].as_array().unwrap();
     assert_eq!(predicates.len(), 2);
@@ -2111,7 +2113,7 @@ Invariant/Property Tests: 2/2 invariants broken
 [FAIL: first broken] invariant_first
 [FAIL: second broken] invariant_second
 2 invariant failure(s) persisted to [..]/cache/invariant/failures/StaleSecondaryTest — rerun to shrink
- invariant_first() (runs: 1, calls: 3, reverts: 0)
+ Invariant/Property Tests (runs: 1, calls: 3, reverts: 0)
 
 ╭----------+----------+-------+---------+----------╮
 | Contract | Selector | Calls | Reverts | Discards |
@@ -2140,7 +2142,7 @@ Invariant/Property Tests: 2/2 invariants broken
 [FAIL: first broken] invariant_first
 [FAIL: second broken] invariant_second
 2 invariant failure(s) persisted to [..]/cache/invariant/failures/StaleSecondaryTest — rerun to shrink
- invariant_first() (runs: 1, calls: 3, reverts: 0)
+ Invariant/Property Tests (runs: 1, calls: 3, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -2203,7 +2205,8 @@ contract SecondaryOnlyTest is Test {
     assert!(stdout.contains("[FAIL: breakable broken] invariant_secondary_breakable"), "{stdout}");
     assert!(stdout.contains("Invariant/Property Tests: 1/2 invariants broken"), "{stdout}");
     assert!(stdout.contains("[PASS] invariant_anchor_safe"), "{stdout}");
-    assert!(stdout.contains(" invariant_anchor_safe() (runs: 5, calls: 250, reverts: 0)"));
+    assert!(stdout.contains(" Invariant/Property Tests (runs: 5, calls: 250, reverts: 0)"));
+    assert!(!stdout.contains(" invariant_anchor_safe() (runs:"), "{stdout}");
     assert!(!stdout.contains("[FAIL: safe broken] invariant_anchor_safe"), "{stdout}");
 });
 
@@ -2263,6 +2266,68 @@ contract RerunSecondaryOnlyTest is Test {
     assert!(stdout.contains("[FAIL: breakable broken]"), "{stdout}");
     assert!(stdout.contains(" invariant_secondary_breakable() (runs:"), "{stdout}");
     assert!(!stdout.contains("invariant_anchor_safe"), "{stdout}");
+});
+
+// Verifies the persisted-primary replay fast path keeps the campaign-level output label instead
+// of falling back to the selected predicate name.
+forgetest_init!(persisted_primary_replay_uses_campaign_label, |prj, cmd| {
+    prj.update_config(|config| {
+        config.invariant.runs = 5;
+        config.invariant.depth = 50;
+    });
+    prj.add_source(
+        "Counter.sol",
+        r#"
+contract Counter {
+    uint256 public cond;
+
+    function inc() public {
+        cond++;
+    }
+}
+   "#,
+    );
+    prj.add_test(
+        "PersistedPrimaryReplayTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+import {Counter} from "../src/Counter.sol";
+
+contract PersistedPrimaryReplayTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        counter = new Counter();
+        targetContract(address(counter));
+    }
+
+    function invariant_primary_breakable() public view {
+        require(counter.cond() < 2, "primary broken");
+    }
+
+    function invariant_secondary_safe() public view {
+        require(counter.cond() < 1000000, "safe broken");
+    }
+}
+   "#,
+    );
+
+    let first = cmd.args(["test", "--mt", "invariant_"]).assert_failure();
+    let first_stdout = String::from_utf8_lossy(&first.get_output().stdout);
+    assert!(
+        first_stdout.contains("[FAIL: primary broken] invariant_primary_breakable"),
+        "{first_stdout}"
+    );
+    assert!(first_stdout.contains(" Invariant/Property Tests (runs:"), "{first_stdout}");
+    assert!(!first_stdout.contains(" invariant_primary_breakable() (runs:"), "{first_stdout}");
+
+    let output = cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    let stderr = String::from_utf8_lossy(&output.get_output().stderr);
+    assert!(stderr.contains("Replayed invariant failure from persisted file."), "{stderr}");
+    assert!(stdout.contains("[FAIL: primary broken]"), "{stdout}");
+    assert!(stdout.contains(" Invariant/Property Tests (runs:"), "{stdout}");
+    assert!(!stdout.contains(" invariant_primary_breakable() (runs:"), "{stdout}");
 });
 
 // Verifies the structured JSON failure event emitted at campaign end attributes the broken
