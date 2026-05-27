@@ -891,22 +891,28 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     &mut raw_call_result,
                     false,
                 );
+                if success {
+                    self.result.symbolic_result(
+                        false,
+                        Some(
+                            "incomplete symbolic execution (Error): symbolic counterexample did not replay"
+                                .to_string(),
+                        ),
+                        None,
+                        stats,
+                    );
+                    self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
+                    self.result.symbolic_diagnostics = symbolic_diagnostics;
+                    return self.result;
+                }
+
                 let counterexample = CounterExample::Single(BaseCounterExample::from_fuzz_call(
                     calldata,
                     args,
                     raw_call_result.traces.clone(),
                 ));
                 self.result.extend(raw_call_result);
-                self.result.symbolic_result(
-                    false,
-                    if success {
-                        Some("symbolic counterexample did not replay".to_string())
-                    } else {
-                        reason
-                    },
-                    Some(counterexample),
-                    stats,
-                );
+                self.result.symbolic_result(false, reason, Some(counterexample), stats);
             }
         }
 
@@ -1028,13 +1034,27 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             SymbolicInvariantRunResult::Counterexample { sequence, stats } => {
                 let (replayed, reason, replay_sequence) =
                     self.replay_symbolic_invariant_sequence(func, &sequence, fail_on_revert);
+                if !replayed {
+                    let reason = reason.map_or_else(
+                        || "symbolic invariant counterexample did not replay".to_string(),
+                        |reason| {
+                            format!("symbolic invariant counterexample did not replay: {reason}")
+                        },
+                    );
+                    self.result.symbolic_result(
+                        false,
+                        Some(format!("incomplete symbolic invariant execution (Error): {reason}")),
+                        None,
+                        stats,
+                    );
+                    self.result.symbolic_portfolio_diagnostics = portfolio_diagnostics;
+                    self.result.symbolic_diagnostics = symbolic_diagnostics;
+                    return self.result;
+                }
+
                 self.result.symbolic_result(
                     false,
-                    if replayed {
-                        reason.or_else(|| Some("symbolic invariant counterexample".to_string()))
-                    } else {
-                        Some("symbolic invariant counterexample did not replay".to_string())
-                    },
+                    reason.or_else(|| Some("symbolic invariant counterexample".to_string())),
                     Some(CounterExample::Sequence(replay_sequence.len(), replay_sequence)),
                     stats,
                 );

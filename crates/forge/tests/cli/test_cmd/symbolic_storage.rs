@@ -2,7 +2,7 @@ use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
-use super::symbolic_helpers::{assert_symbolic, assert_symbolic_witness, z3_available};
+use super::symbolic_helpers::{assert_symbolic, z3_available};
 use crate::skip_unless_z3;
 
 forgetest_init!(symbolic_mapping_storage_finds_counterexample, |prj, cmd| {
@@ -437,8 +437,10 @@ checkSvmArbitraryStorage(address)
 
 // Reading an unwritten mapping at a symbolic key must yield a fresh symbolic
 // value, not a concrete zero. The assertion below claims that no caller is an
-// admin; because nothing has ever written to `isAdmin`, the solver must still
-// be able to satisfy `isAdmin[user] == true` and produce a counterexample.
+// admin; because nothing has ever written to `isAdmin`, the solver can satisfy
+// `isAdmin[user] == true`. That candidate does not replay concretely from the
+// default concrete storage value, so Forge must report Incomplete instead of a
+// user-facing counterexample.
 forgetest_init!(symbolic_sload_unwritten_mapping_default_layout, |prj, cmd| {
     skip_unless_z3!("symbolic_sload_unwritten_mapping_default_layout");
 
@@ -455,7 +457,7 @@ contract SymbolicSLoadUnwrittenMapping {
 "#,
     );
 
-    assert_symbolic_witness(cmd.args([
+    assert_symbolic(cmd.args([
         "test",
         "--symbolic",
         "--match-test",
@@ -466,7 +468,7 @@ contract SymbolicSLoadUnwrittenMapping {
 ...
 Failing tests:
 Encountered 1 failing test in test/SymbolicSLoadUnwrittenMapping.t.sol:SymbolicSLoadUnwrittenMapping
-[FAIL: symbolic counterexample did not replay; counterexample: [CALLDATA] [ARGS]] checkNoUserIsAdmin(address) ([METRICS])
+[FAIL: incomplete symbolic execution (Error): symbolic counterexample did not replay] checkNoUserIsAdmin(address) ([METRICS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
