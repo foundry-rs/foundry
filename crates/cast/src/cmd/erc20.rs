@@ -620,7 +620,6 @@ impl Erc20Subcommand {
 /// wallet flows. Mirrors the filling logic in the shared tx builder but operates on a
 /// pre-built transaction request from the sol! macro rather than through the builder pipeline.
 /// Only fills fields that haven't already been set by the user.
-///
 async fn fill_tx<N: Network, P: Provider<N>>(
     provider: &P,
     tx: &mut N::TransactionRequest,
