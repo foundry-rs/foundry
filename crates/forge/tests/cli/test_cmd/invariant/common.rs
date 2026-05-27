@@ -3,12 +3,6 @@ use super::*;
 forgetest!(invariant_after_invariant, |prj, cmd| {
     prj.insert_vm();
     prj.insert_ds_test();
-    // This test exercises `afterInvariant` semantics in isolation; disable `assert_all` so the
-    // campaign aborts on the first broken invariant per function (legacy behavior) instead of
-    // fanning out across all invariants in the suite.
-    prj.update_config(|config| {
-        config.invariant.assert_all = false;
-    });
 
     prj.add_test(
         "InvariantAfterInvariant.t.sol",
@@ -826,7 +820,7 @@ Ran 1 test for test/InvariantInnerContract.t.sol:InvariantInnerContract
 	[Sequence] (original: 2, shrunk: 2)
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Jesus][..] calldata=create_fren() args=[]
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Judas][..] calldata=betray() args=[]
- invariantHideJesus() (runs: 256, calls: 258, reverts: 125)
+ invariantHideJesus() (runs: 1, calls: 3, reverts: 1)
 ...
 "#]]);
     }
@@ -1521,7 +1515,7 @@ contract InvariantFailOnAssertPanic is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnAssertPanic.t.sol:InvariantFailOnAssertPanic
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)][..]
 ...
  invariant_fail_on_assert_panic() ([RUNS])
@@ -1566,7 +1560,7 @@ contract InvariantIgnoreAssertWhenFlagOff is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantIgnoreAssertWhenFlagOff.t.sol:InvariantIgnoreAssertWhenFlagOff
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)][..]
 ...
  invariant_assert_discarded() ([RUNS])
@@ -1695,7 +1689,7 @@ contract ReplayFailOnAssertTest is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantReplayFailOnAssert.t.sol:ReplayFailOnAssertTest
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)][..]
 ...
 "#]]);
@@ -1703,7 +1697,7 @@ Suite handlers: 1 assertion bug(s) found
     cmd.assert_failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantReplayFailOnAssert.t.sol:ReplayFailOnAssertTest
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: panic: assertion failed (0x01)][..]
 ...
 "#]]);
@@ -1747,7 +1741,7 @@ contract InvariantFailOnVmAssertRevert is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnVmAssertRevert.t.sol:InvariantFailOnVmAssertRevert
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: assertion failed: 1 != 2][..]
 ...
  invariant_fail_on_vm_assert_revert() ([RUNS])
@@ -1793,7 +1787,7 @@ contract InvariantIgnoreVmAssertWhenFlagOff is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantIgnoreVmAssertWhenFlagOff.t.sol:InvariantIgnoreVmAssertWhenFlagOff
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: assertion failed: 1 != 2][..]
 ...
  invariant_vm_assert_discarded() ([RUNS])
@@ -1840,7 +1834,7 @@ contract InvariantFailOnVmAssertGlobalFlag is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantFailOnVmAssertGlobalFlag.t.sol:InvariantFailOnVmAssertGlobalFlag
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: assertion failed][..]
 ...
  invariant_fail_on_vm_assert_global_flag() ([RUNS])
@@ -1887,7 +1881,7 @@ contract InvariantIgnoreVmAssertGlobalFlagWhenFlagOff is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
 Ran 1 test for test/InvariantIgnoreVmAssertGlobalFlagWhenFlagOff.t.sol:InvariantIgnoreVmAssertGlobalFlagWhenFlagOff
-Suite handlers: 1 assertion bug(s) found
+Assertion Tests: 1 assertion bug(s) found
 [FAIL: assertion failed][..]
 ...
  invariant_vm_assert_global_flag_discarded() ([RUNS])
@@ -1937,18 +1931,21 @@ contract InvariantShrinkWithAssert is Test {
 "#,
     );
 
-    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
-[FAIL: wrong counter [..]][..]
-	[Sequence] (original: 2, shrunk: 2)
+Ran 1 test for test/InvariantShrinkWithAssert.t.sol:InvariantShrinkWithAssert
+[FAIL: wrong counter assert] invariant_with_assert
+	[SEQUENCE]
 ...
- invariant_with_[..]() ([..])
+[FAIL: wrong counter require] invariant_with_require
+	[SEQUENCE]
+
+Invariant/Property Tests: 2/2 invariants broken
 ...
-[FAIL: wrong counter [..]][..]
-	[Sequence] (original: 2, shrunk: 2)
+[FAIL: wrong counter assert] invariant_with_assert
+[FAIL: wrong counter require] invariant_with_require
 ...
- invariant_with_[..]() ([..])
+ invariant_with_assert() ([RUNS])
 ...
 "#]]);
 });
@@ -2077,11 +2074,8 @@ Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantR
 });
 
 forgetest_init!(invariant_test1, |prj, cmd| {
-    // Disable `assert_all` so each invariant in the suite reports independently without secondary
-    // failures being attached to the other (the two invariants here share the same condition).
     prj.update_config(|config| {
         config.invariant.depth = 10;
-        config.invariant.assert_all = false;
     });
 
     prj.add_test(
@@ -2128,35 +2122,42 @@ contract InvariantTest is Test {
 
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 ...
-Ran 2 tests for test/InvariantTest1.t.sol:InvariantTest
-[FAIL: false]
+Ran 1 test for test/InvariantTest1.t.sol:InvariantTest
+[FAIL: false] invariant_neverFalse
 	[SEQUENCE]
+
+[FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
+	[SEQUENCE]
+
+Invariant/Property Tests: 2/2 invariants broken
+[FAIL: false] invariant_neverFalse
+[FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
+2 invariant failure(s) persisted to cache/invariant/failures/InvariantTest — rerun to shrink
  invariant_neverFalse() ([RUNS])
 
 [STATS]
 
-[FAIL: false]
-	[SEQUENCE]
- statefulFuzz_neverFalseWithInvariantAlias() ([RUNS])
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 
-[STATS]
-
-Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
-
-Ran 1 test suite [ELAPSED]: 0 tests passed, 2 failed, 0 skipped (2 total tests)
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
-Encountered 2 failing tests in test/InvariantTest1.t.sol:InvariantTest
-[FAIL: false]
+Encountered 1 failing test in test/InvariantTest1.t.sol:InvariantTest
+[FAIL: false] invariant_neverFalse
 	[SEQUENCE]
+
+[FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
+	[SEQUENCE]
+
+Invariant/Property Tests: 2/2 invariants broken
+[FAIL: false] invariant_neverFalse
+[FAIL: false] statefulFuzz_neverFalseWithInvariantAlias
+2 invariant failure(s) persisted to cache/invariant/failures/InvariantTest — rerun to shrink
  invariant_neverFalse() ([RUNS])
-[FAIL: false]
-	[SEQUENCE]
- statefulFuzz_neverFalseWithInvariantAlias() ([RUNS])
 
-Encountered a total of 2 failing tests, 0 tests succeeded
+Encountered a total of 1 failing tests, 0 tests succeeded
 
-Tip: Run `forge test --rerun` to retry only the 2 failed tests
+Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
 
@@ -2164,14 +2165,11 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 });
 
 forgetest_init!(invariant_warp_and_roll, |prj, cmd| {
-    // Disable `assert_all` so `--mt invariant_warp` only exercises invariant_warp, isolating the
-    // warp/roll behavior under test from invariant_roll fan-out.
     prj.update_config(|config| {
         config.fuzz.seed = Some(U256::from(119u32));
         config.invariant.max_time_delay = Some(604800);
         config.invariant.max_block_delay = Some(60480);
         config.invariant.shrink_run_limit = 0;
-        config.invariant.assert_all = false;
     });
 
     prj.add_test(
@@ -2219,7 +2217,7 @@ contract InvariantWarpAndRoll {
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=198040 roll=60259 calldata=increment() args=[]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=20609 roll=27086 calldata=setNumber(uint256) args=[26717227324157985679793128079000084308648530834088529513797156275625002 [2.671e70]]
 		sender=[..] addr=[test/InvariantWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=409368 roll=24864 calldata=increment() args=[]
- invariant_warp() (runs: 0, calls: 0, reverts: 0)
+ invariant_warp() (runs: 1, calls: 5, reverts: 0)
 ...
 
 "#]]);
@@ -2252,7 +2250,7 @@ contract InvariantWarpAndRoll {
 		vm.roll(block.number + 17834);
 		vm.prank([..]);
 		Counter(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).setNumber(24752675372815722001736610830);
- invariant_roll() (runs: 0, calls: 0, reverts: 0)
+ invariant_roll() (runs: 1, calls: 6, reverts: 0)
 ...
 
 "#]]);
@@ -2305,7 +2303,7 @@ Ran 1 test for test/HandlerWarpAndRoll.t.sol:HandlerWarpAndRoll
 		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=198040 roll=60259 calldata=increment() args=[]
 		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=20609 roll=27086 calldata=setNumber(uint256) args=[26717227324157985679793128079000084308648530834088529513797156275625002 [2.671e70]]
 		sender=[..] addr=[test/HandlerWarpAndRoll.t.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f warp=409368 roll=24864 calldata=increment() args=[]
- invariant_handler() (runs: 0, calls: 0, reverts: 1)
+ invariant_handler() (runs: 1, calls: 5, reverts: 1)
 
 ...
 
@@ -2679,7 +2677,7 @@ contract InvariantWarp is Test {
 		vm.roll(block.number + 52068);
 		vm.prank([..]);
 		Roll(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
- invariant_roll() (runs: 256, calls: 258, reverts: 216)
+ invariant_roll() (runs: 1, calls: 3, reverts: 2)
 ...
 
 "#]]);
@@ -2692,7 +2690,7 @@ contract InvariantWarp is Test {
 		vm.warp(block.timestamp + 656868);
 		vm.prank([..]);
 		Warp(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f).increment();
- invariant_warp() (runs: 256, calls: 258, reverts: 222)
+ invariant_warp() (runs: 1, calls: 3, reverts: 2)
 ...
 
 "#
