@@ -1,8 +1,9 @@
 use super::symbolic_helpers::assert_relevant_lines;
 use foundry_common::sh_eprintln;
-use foundry_test_utils::{forgetest_init, util::OutputExt};
+use foundry_test_utils::{forgetest_init, str, util::OutputExt};
 
-use super::symbolic_helpers::z3_available;
+use super::symbolic_helpers::{assert_symbolic, z3_available};
+use crate::skip_unless_z3;
 
 forgetest_init!(symbolic_mload_accepts_symbolic_offset, |prj, cmd| {
     if !z3_available() {
@@ -922,4 +923,51 @@ contract SymbolicRevertSize {
 "#]],
     );
     assert!(!stdout.contains("symbolic REVERT size"), "{stdout}");
+});
+
+// Dynamic-offset memory read must respect write-epoch ordering: if a later
+// concrete MSTORE has written to an offset, a subsequent symbolic-offset MLOAD
+// that aliases that offset must see the later value, not the stale earlier
+// symbolic write. If epoch ordering regressed, Z3 could pick `symKey == 0x80`
+// and the symbolic MLOAD would surface `0xdeadbeef` instead of `0x1234`,
+// flipping the assertion below into a counterexample.
+forgetest_init!(symbolic_dynamic_mload_respects_later_concrete_overwrite, |prj, cmd| {
+    skip_unless_z3!("symbolic_dynamic_mload_respects_later_concrete_overwrite");
+
+    prj.add_test(
+        "SymbolicMemoryEpochOrdering.t.sol",
+        r#"
+contract SymbolicMemoryEpochOrdering {
+    function checkLaterConcreteWriteWins(uint256 symKey, uint256 readKey) public pure {
+        uint256 v;
+        assembly {
+            // Earlier symbolic-offset write.
+            mstore(symKey, 0xdeadbeef)
+            // Later concrete-offset write — must be visible at slot 0x80
+            // regardless of what `symKey` was.
+            mstore(0x80, 0x1234)
+            // Dynamic-offset read.
+            v := mload(readKey)
+        }
+        if (readKey == 0x80) {
+            assert(v == 0x1234);
+        }
+    }
+}
+"#,
+    );
+
+    assert_symbolic(cmd.args([
+        "test",
+        "--symbolic",
+        "--match-test",
+        "checkLaterConcreteWriteWins",
+    ]))
+    .success()
+    .stdout_eq(str![[r#"
+...
+Ran 1 test for test/SymbolicMemoryEpochOrdering.t.sol:SymbolicMemoryEpochOrdering
+[PASS] checkLaterConcreteWriteWins(uint256,uint256) ([METRICS])
+...
+"#]]);
 });
