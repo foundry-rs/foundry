@@ -2134,8 +2134,11 @@ forgetest_init!(skip_output, |prj, cmd| {
     cmd.arg("test").assert_success().stdout_eq(str![[r#"
 ...
 Ran 6 tests for src/Counter.t.sol:Skips
-[SKIP] invariant_skipInvariant() (runs: 1, calls: 1, reverts: 1)
-[SKIP: invariant] invariant_skipInvariantReason() (runs: 1, calls: 1, reverts: 1)
+[SKIP]
+Skips invariants:
+[SKIP] invariant_skipInvariant
+[SKIP: invariant] invariant_skipInvariantReason
+ Skips invariants (runs: 1, calls: 1, reverts: 1)
 [SKIP] test_skipFuzz(uint256) (runs: 0, [AVG_GAS])
 [SKIP: fuzz] test_skipFuzzReason(uint256) (runs: 0, [AVG_GAS])
 [SKIP] test_skipUnit() ([GAS])
