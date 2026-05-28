@@ -377,14 +377,32 @@ pub fn resolve_inheritdoc_var(
     for search_id in &search_contracts {
         let search_contract = gcx.hir.contract(*search_id);
         for &item_id in search_contract.items {
-            if let ItemId::Variable(vid) = item_id {
-                let v = gcx.hir.variable(vid);
-                if v.name.map(|n| n.as_str() == var_name).unwrap_or(false)
-                    && let Some(doc) = extract_inherited_doc_var(gcx, vid)
-                    && (!doc.notices.is_empty() || !doc.devs.is_empty())
-                {
-                    return Some(doc);
+            match item_id {
+                ItemId::Variable(vid) => {
+                    let v = gcx.hir.variable(vid);
+                    if v.name.map(|n| n.as_str() == var_name).unwrap_or(false)
+                        && let Some(doc) = extract_inherited_doc_var(gcx, vid)
+                        && (!doc.notices.is_empty() || !doc.devs.is_empty())
+                    {
+                        return Some(doc);
+                    }
                 }
+                // A public state variable can implement an interface getter declared as a
+                // zero-arg function (e.g. `function totalSupply() external view returns
+                // (uint256)`). Fall back to matching a same-name zero-parameter function so
+                // `@inheritdoc IERC20` on `uint256 public totalSupply` picks up the
+                // interface's notice/return docs.
+                ItemId::Function(fid) => {
+                    let f = gcx.hir.function(fid);
+                    if f.name.map(|n| n.as_str() == var_name).unwrap_or(false)
+                        && function_param_types(gcx, fid).map(|p| p.is_empty()).unwrap_or(false)
+                        && let Some(doc) = extract_inherited_doc(gcx, fid)
+                        && (!doc.notices.is_empty() || !doc.devs.is_empty() || !doc.returns.is_empty())
+                    {
+                        return Some(doc);
+                    }
+                }
+                _ => {}
             }
         }
     }

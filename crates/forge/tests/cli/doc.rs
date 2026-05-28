@@ -658,6 +658,54 @@ function tryRecover(bytes32 hash, uint8 v, bytes32 r, bytes32 s) internal pure r
     similar_asserts::assert_eq!(content, expected);
 });
 
+// Test that @inheritdoc on a public state variable resolves docs from the interface getter
+// function (e.g. ERC20's `totalSupply()`).
+// fixes <https://github.com/foundry-rs/foundry/pull/14568>
+forgetest_init!(inheritdoc_variable_resolves_interface_getter, |prj, cmd| {
+    prj.add_source(
+        "IERC20.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IERC20 {
+    /// @notice Returns the total token supply.
+    /// @return The total supply.
+    function totalSupply() external view returns (uint256);
+}
+"#,
+    );
+
+    prj.add_source(
+        "ERC20.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./IERC20.sol";
+
+contract ERC20 is IERC20 {
+    /// @inheritdoc IERC20
+    uint256 public totalSupply;
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.ERC20.mdx");
+    let content = std::fs::read_to_string(&doc_path).unwrap();
+
+    assert!(
+        content.contains("Returns the total token supply"),
+        "@inheritdoc on state variable should inherit notice from interface getter, found:\n{content}"
+    );
+    assert!(
+        content.contains("The total supply"),
+        "@inheritdoc on state variable should inherit return docs from interface getter, found:\n{content}"
+    );
+});
+
 // Test that `**Inherits:**` links resolve to the actually-inherited contract even
 // when another contract with the same name lives in a directory closer to the
 // consumer. Without exact-id resolution, the proximity heuristic in
