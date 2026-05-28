@@ -2039,7 +2039,7 @@ contract AfterInvariantTest is Test {
 
     cmd.args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: after_invariant_marker]
+[FAIL: after_invariant_marker] invariant_first
 ...
 "#]]);
 });
