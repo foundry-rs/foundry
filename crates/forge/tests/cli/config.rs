@@ -970,6 +970,46 @@ Global:
 "#]]);
 });
 
+// Verifies the contract invariant: `forge remappings` and `forge remappings --pretty` emit
+// identical stdout, even when remappings have contexts. The context prefix is part of the
+// machine-readable value and must survive `--pretty` mode.
+forgetest!(remappings_pretty_keeps_context_on_stdout, |prj, cmd| {
+    prj.update_config(|config| {
+        config.auto_detect_remappings = false;
+        config.remappings = vec![
+            Remapping::from_str("@global/=lib/global/").unwrap().into(),
+            Remapping::from_str("ctx-a:@scoped/=lib/a/").unwrap().into(),
+            Remapping::from_str("ctx-b:@scoped/=lib/b/").unwrap().into(),
+        ];
+    });
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+@global/=lib/global/
+ctx-a:@scoped/=lib/a/
+ctx-b:@scoped/=lib/b/
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["remappings", "--pretty"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+@global/=lib/global/
+ctx-a:@scoped/=lib/a/
+ctx-b:@scoped/=lib/b/
+
+"#]])
+        .stderr_eq(str![[r#"
+Global:
+
+Context: ctx-a
+
+Context: ctx-b
+
+
+"#]]);
+});
+
 // test to check that foundry.toml libs section updates on install
 forgetest!(can_update_libs_section, |prj, cmd| {
     cmd.git_init();
