@@ -9,11 +9,19 @@ the second write overwrites it.
 
 ## What it does
 
-Within a flat sequence of statements (no intervening branches or loops), reports the first
-assignment to a simple state variable when that same variable is written a second time before being
-read. Only plain `=` assignments and `delete` expressions on bare state variable identifiers are
-checked; compound assignments (`+=`, `|=`, etc.) and index/member writes (`mapping[k]`,
-`struct.field`) are conservatively excluded to avoid false positives.
+Reports the first assignment to a state variable when that same variable is written a second time
+before being read. Detection covers:
+
+- Plain `=` assignments and `delete` on bare state variable identifiers
+- Tuple/destructuring assignments: `(x, y) = (1, 2)` tracks each component individually
+- Pre/post increment and decrement (`++x`, `x--`, etc.) — these read then write, so the write
+  they produce can itself become dead if immediately overwritten
+
+The analysis recurses into branch bodies (`if`/`else`, loops, `try` clauses) and modifier bodies
+with fresh state so intra-body pairs are still caught. Conditional boundaries (`&&`, `||`,
+ternary) are handled conservatively to avoid false positives across short-circuit paths. Compound
+assignments (`+=`, `|=`, etc.) and index/member writes (`mapping[k]`, `struct.field`) are
+excluded to avoid false positives.
 
 ## Why is this bad?
 

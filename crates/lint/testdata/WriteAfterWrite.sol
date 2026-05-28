@@ -132,6 +132,59 @@ contract WriteAfterWrite {
         bool b = (v > 0) && (x = v) > 0;
         return b;
     }
+
+    // bad: tuple destructuring writes x; second write to x is dead
+    function bad7(uint256 v) public {
+        (x, y) = (1, 2);
+        x = v;
+    }
+
+    // bad: ++x writes x; x = v overwrites without reading
+    function bad8(uint256 v) public {
+        ++x;
+        x = v;
+    }
+
+    // bad: x = 1; x++ reads then writes; x = v overwrites the x++ write
+    function bad9(uint256 v) public {
+        x = 1;
+        x++;
+        x = v;
+    }
+
+    // bad: write inside call option named arg overwrites pending write
+    function bad10(address payable addr, uint256 v) public {
+        x = 1;
+        addr.call{value: (x = v)}("");
+    }
+
+    // bad: emit between two writes only reads args; pending should survive
+    event MyEvent(uint256 v);
+    function bad11(uint256 v) public {
+        x = 1;
+        emit MyEvent(v);
+        x = v;
+    }
+
+    // good: no false positive for writes after a return (unreachable code)
+    function good13(uint256 v) public returns (uint256) {
+        x = v;
+        return x;
+        x = 1;
+        x = 2;
+    }
+
+    // good: x++ reads x before writing, so prior x=1 write is live
+    function good14() public returns (uint256) {
+        x = 1;
+        return x++;
+    }
+
+    // good: pre-inc reads x before writing; write between two is fine
+    function good15(uint256 v) public {
+        x = v;
+        ++x;
+    }
 }
 
 // good: modifier placeholder clears pending so writes on both sides are live

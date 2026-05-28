@@ -43,6 +43,13 @@ fn check_block<'hir>(
 ) {
     for stmt in block.stmts {
         check_stmt(ctx, hir, stmt, pending);
+        // Stop at terminal statements; subsequent code is unreachable.
+        if matches!(
+            stmt.kind,
+            StmtKind::Return(_) | StmtKind::Revert(_) | StmtKind::Break | StmtKind::Continue
+        ) {
+            break;
+        }
     }
 }
 
@@ -76,7 +83,17 @@ fn check_stmt<'hir>(
             pending.clear();
         }
         StmtKind::Emit(expr) => {
-            collect_reads(ctx, hir, expr, pending);
+            // Emit only logs; it doesn't invoke external code that could observe state.
+            // Walk the call args directly so pending is not cleared.
+            if let ExprKind::Call(callee, args, named_args) = &expr.peel_parens().kind {
+                collect_reads(ctx, hir, callee, pending);
+                for arg in args.exprs() {
+                    collect_reads(ctx, hir, arg, pending);
+                }
+                walk_named_args(ctx, hir, named_args, pending);
+            } else {
+                collect_reads(ctx, hir, expr, pending);
+            }
         }
         StmtKind::Revert(expr) => {
             collect_reads(ctx, hir, expr, pending);
@@ -139,25 +156,19 @@ fn process_expr<'hir>(
             collect_reads(ctx, hir, rhs, pending);
 
             if op.is_none() {
-                // Plain `=`: check if LHS is a simple bare state variable.
-                if let Some(var_id) = simple_state_var_id(hir, lhs) {
-                    if let Some(&prev_span) = pending.get(&var_id) {
-                        ctx.emit(&WRITE_AFTER_WRITE, prev_span);
-                    }
-                    pending.insert(var_id, expr.span);
-                } else {
-                    // Non-simple LHS (index/member access): the base variable is read
-                    // as part of the slot computation, so treat it as a read.
-                    collect_reads(ctx, hir, lhs, pending);
-                }
+                // Plain `=`: recursively handle the LHS as a write target.
+                process_assignment_lhs(ctx, hir, lhs, expr.span, pending);
             } else {
                 // Compound assignment (+=, etc.) reads the current value of LHS first.
                 collect_reads(ctx, hir, lhs, pending);
             }
         }
         ExprKind::Unary(op, inner) if op.kind.has_side_effects() => {
-            // Pre/post inc/dec: read-then-write, so just consume any pending write.
+            // Pre/post inc/dec: reads the variable, then writes it.
             collect_reads(ctx, hir, inner, pending);
+            if let Some(var_id) = simple_state_var_id(hir, inner) {
+                pending.insert(var_id, expr.span);
+            }
         }
         ExprKind::Delete(inner) => {
             // `delete x` is a pure write with no read of the previous value.
@@ -172,16 +183,46 @@ fn process_expr<'hir>(
         }
         // Any function/method call can observe state through re-entrancy or view
         // calls, so conservatively treat it as reading everything pending.
-        // Walk callee and arguments first — Solidity evaluates them before the call.
-        ExprKind::Call(callee, args, _) => {
+        // Walk callee, arguments, and call options first — all are evaluated before the call.
+        ExprKind::Call(callee, args, named_args) => {
             collect_reads(ctx, hir, callee, pending);
             for arg in args.exprs() {
                 collect_reads(ctx, hir, arg, pending);
             }
+            walk_named_args(ctx, hir, named_args, pending);
             pending.clear();
         }
         // For any other expression used as a statement, scan for reads.
         _ => collect_reads(ctx, hir, expr, pending),
+    }
+}
+
+/// Recursively handle a plain-`=` assignment LHS, tracking each component as a write.
+/// For tuple destructuring `(x, y) = ...`, each element is processed independently.
+fn process_assignment_lhs<'hir>(
+    ctx: &LintContext,
+    hir: &'hir Hir<'hir>,
+    lhs: &'hir Expr<'hir>,
+    assign_span: Span,
+    pending: &mut HashMap<VariableId, Span>,
+) {
+    match &lhs.peel_parens().kind {
+        ExprKind::Tuple(exprs) => {
+            for e in exprs.iter().flatten() {
+                process_assignment_lhs(ctx, hir, e, assign_span, pending);
+            }
+        }
+        _ => {
+            if let Some(var_id) = simple_state_var_id(hir, lhs) {
+                if let Some(&prev_span) = pending.get(&var_id) {
+                    ctx.emit(&WRITE_AFTER_WRITE, prev_span);
+                }
+                pending.insert(var_id, assign_span);
+            } else {
+                // Non-simple LHS (index/member access): slot computation reads the base.
+                collect_reads(ctx, hir, lhs, pending);
+            }
+        }
     }
 }
 
@@ -234,12 +275,13 @@ fn collect_reads<'hir>(
             collect_reads(ctx, hir, f, &mut else_pending);
         }
         // Any call may observe storage through re-entrancy or view semantics.
-        // Walk callee and arguments first — Solidity evaluates them before the call.
-        ExprKind::Call(callee, args, _) => {
+        // Walk callee, arguments, and call options first — all evaluated before the call.
+        ExprKind::Call(callee, args, named_args) => {
             collect_reads(ctx, hir, callee, pending);
             for arg in args.exprs() {
                 collect_reads(ctx, hir, arg, pending);
             }
+            walk_named_args(ctx, hir, named_args, pending);
             pending.clear();
         }
         ExprKind::Index(base, index) => {
@@ -268,12 +310,28 @@ fn collect_reads<'hir>(
                 collect_reads(ctx, hir, e, pending);
             }
         }
-        ExprKind::Delete(inner) => collect_reads(ctx, hir, inner, pending),
-        ExprKind::Lit(_)
-        | ExprKind::New(_)
-        | ExprKind::TypeCall(_)
-        | ExprKind::Type(_)
-        | ExprKind::Err(_) => {}
+        // A nested `delete` is a write; delegate to process_expr for correct tracking.
+        ExprKind::Delete(_) => {
+            process_expr(ctx, hir, expr.peel_parens(), pending);
+        }
+        ExprKind::Lit(_) | ExprKind::New(_) | ExprKind::TypeCall(_) | ExprKind::Type(_) => {}
+        ExprKind::Err(_) => {
+            pending.clear();
+        }
+    }
+}
+
+/// Walk named call arguments (e.g. `{value: expr, gas: expr}`) for reads and writes.
+fn walk_named_args<'hir>(
+    ctx: &LintContext,
+    hir: &'hir Hir<'hir>,
+    named_args: &Option<&'hir [solar::sema::hir::NamedArg<'hir>]>,
+    pending: &mut HashMap<VariableId, Span>,
+) {
+    if let Some(named) = named_args {
+        for na in *named {
+            collect_reads(ctx, hir, &na.value, pending);
+        }
     }
 }
 
