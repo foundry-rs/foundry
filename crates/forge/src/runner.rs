@@ -8,6 +8,7 @@ use crate::{
     progress::{TestsProgress, start_fuzz_progress, start_symbolic_progress},
     result::{
         InvariantFailure, InvariantPredicateResult, SuiteResult, TestResult, TestSetup, TestStatus,
+        invariant_campaign_display_name,
     },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -1406,6 +1407,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .iter()
             .position(|(invariant_fn, _)| *invariant_fn == campaign_anchor)
             .expect("campaign anchor must be present in invariant_fns");
+        let predicate_count = invariant_fns.len() + skipped_predicate_results.len();
         let invariant_contract = InvariantContract::new(
             self.address,
             self.cr.name,
@@ -1415,11 +1417,18 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &self.cr.contract.abi,
         );
         let show_solidity = invariant_config.show_solidity;
+        let is_campaign = predicate_count > 1;
+        let invariant_count = is_campaign.then_some(predicate_count);
+        let invariant_display_name = if is_campaign {
+            Cow::Owned(invariant_campaign_display_name(self.cr.name))
+        } else {
+            Cow::Borrowed(func.name.as_str())
+        };
 
         let progress = start_fuzz_progress(
             self.cr.progress,
             self.cr.name,
-            &invariant_contract.anchor().name,
+            invariant_display_name.as_ref(),
             invariant_config.timeout,
             invariant_config.runs,
         );
@@ -1456,7 +1465,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         .to_string();
 
                 if let Some(ref progress) = progress {
-                    progress.set_prefix(format!("{}\n{warn}\n", invariant_contract.anchor().name));
+                    progress.set_prefix(format!("{invariant_display_name}\n{warn}\n"));
                 } else {
                     let _ = sh_warn!("{warn}");
                 }
@@ -1764,13 +1773,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         }
 
         let invariant_failure_dir = any_failure_persisted.then(|| failure_dir.clone());
-        // Only attach a campaign-level roll-up when this run actually exercised >1 predicate.
-        // Single-predicate runs keep the legacy single-block render with no roll-up line.
-        let invariant_count = (invariant_contract.invariant_fns.len()
-            + skipped_predicate_results.len()
-            > 1)
-        .then_some(invariant_contract.invariant_fns.len() + skipped_predicate_results.len());
-        let invariant_predicate_results = if invariant_count.is_some() {
+        let invariant_predicate_results = if is_campaign {
             let failures_by_name = invariant_failures
                 .iter()
                 .map(|failure| (failure.name(), failure))

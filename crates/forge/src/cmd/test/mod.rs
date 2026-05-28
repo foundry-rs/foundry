@@ -991,7 +991,7 @@ impl TestArgs {
                 let show_traces =
                     !self.suppress_successful_traces || result.status == TestStatus::Failure;
                 if !silent {
-                    sh_println!("{}", result.short_result(name))?;
+                    sh_println!("{}", result.short_result_with_suite(name, &contract_name))?;
                     if let Some(diagnostics) = result
                         .symbolic_diagnostics
                         .take()

@@ -19,14 +19,20 @@ use foundry_evm::{
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
 use foundry_evm_symbolic::{PortfolioDiagnostics, SymbolicStats};
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, HashMap as Map},
     fmt::{self, Write},
     time::Duration,
 };
 use yansi::Paint;
+
+pub(crate) fn invariant_campaign_display_name(contract_name: &str) -> String {
+    format!("{contract_name} invariants")
+}
+
+const INVARIANT_CAMPAIGN_FALLBACK_NAME: &str = "Invariant campaign";
 
 /// The aggregated result of a test run.
 #[derive(Clone, Debug)]
@@ -211,7 +217,7 @@ impl TestOutcome {
             let term = if failed > 1 { "tests" } else { "test" };
             sh_println!("Encountered {failed} failing {term} in {suite_name}")?;
             for (name, result) in suite.failures() {
-                sh_println!("{}", result.short_result(name))?;
+                sh_println!("{}", result.short_result_with_suite(name, suite_name))?;
             }
             sh_println!()?;
         }
@@ -447,8 +453,8 @@ pub enum InvariantFailure {
         /// Path where the counterexample was persisted for re-running and shrinking.
         persisted_path: std::path::PathBuf,
         /// Whether this failure is the stable campaign anchor.
-        /// When `true` and this is the only failure, the function name is omitted on the
-        /// `[FAIL: ...]` line (the trailing summary already identifies it).
+        /// When `true` and this is the only single-predicate failure, the function name is
+        /// omitted on the `[FAIL: ...]` line (the trailing summary already identifies it).
         #[serde(default)]
         is_anchor: bool,
     },
@@ -545,11 +551,10 @@ pub struct TestResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invariant_failure_dir: Option<std::path::PathBuf>,
 
-    /// Total number of invariant predicates exercised in this campaign. When `Some(n)` the report
-    /// renders
-    /// an `Invariant/Property Tests: <broken>/<n> invariants broken` summary so users get an
-    /// at-a-glance health line without counting `[FAIL]` blocks. `None` for single-predicate
-    /// campaigns.
+    /// Total number of invariant predicates exercised in this campaign. When `Some(n)` the
+    /// user-facing report renders a contract-level `<broken>/<n> invariants broken` summary so
+    /// users get an at-a-glance health line without counting `[FAIL]` blocks. `None` for
+    /// single-predicate campaigns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub invariant_count: Option<usize>,
 
@@ -614,12 +619,16 @@ pub struct TestResult {
 
 impl fmt::Display for TestResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.render_status_block(false))
+        f.write_str(&self.render_status_block(false, None))
     }
 }
 
 impl TestResult {
-    fn render_status_block(&self, user_facing: bool) -> String {
+    fn render_status_block(
+        &self,
+        user_facing: bool,
+        invariant_campaign_name: Option<&str>,
+    ) -> String {
         match self.status {
             TestStatus::Success => {
                 // For optimization mode, show the best example sequence in green.
@@ -636,7 +645,12 @@ impl TestResult {
                         writeln!(s, "{ex}").unwrap();
                     }
                 }
-                self.write_invariant_predicate_results(&mut s, user_facing, true);
+                self.write_invariant_predicate_results(
+                    &mut s,
+                    user_facing,
+                    true,
+                    invariant_campaign_name,
+                );
                 format!("{}", s.green().wrap())
             }
             TestStatus::Skipped => {
@@ -645,7 +659,12 @@ impl TestResult {
                     write!(s, ": {reason}").unwrap();
                 }
                 s.push(']');
-                self.write_invariant_predicate_results(&mut s, user_facing, true);
+                self.write_invariant_predicate_results(
+                    &mut s,
+                    user_facing,
+                    true,
+                    invariant_campaign_name,
+                );
                 format!("{}", s.yellow())
             }
             TestStatus::Failure => {
@@ -681,17 +700,18 @@ impl TestResult {
                         s.push(']');
                     }
                 } else if !self.invariant_failures.is_empty() {
-                    // Render every broken invariant uniformly. Show the function name on the
-                    // `[FAIL: ...]` line when there is >1 failure or the failure isn't the
-                    // anchor (the anchor's name is already on the trailing summary).
+                    // Contract-level campaigns identify the broken predicate even when only one
+                    // predicate failed. Preserve the compact legacy shape only for the anchor of a
+                    // single-predicate run.
                     let multi = self.invariant_failures.len() > 1;
+                    let is_campaign = self.invariant_count.is_some();
                     for (i, failure) in self.invariant_failures.iter().enumerate() {
                         if i > 0 {
                             s.push('\n');
                         }
                         let is_anchor =
                             matches!(failure, InvariantFailure::Predicate { is_anchor: true, .. });
-                        let name_suffix = if multi || !is_anchor {
+                        let name_suffix = if is_campaign || multi || !is_anchor {
                             format!(" {}", failure.name())
                         } else {
                             String::new()
@@ -715,10 +735,19 @@ impl TestResult {
                     }
                 }
 
-                let rollup_rendered =
-                    self.write_invariant_rollup(&mut s, user_facing, is_invariant_failure);
+                let rollup_rendered = self.write_invariant_rollup(
+                    &mut s,
+                    user_facing,
+                    is_invariant_failure,
+                    invariant_campaign_name,
+                );
                 let show_predicate_header = if user_facing { !rollup_rendered } else { true };
-                self.write_invariant_predicate_results(&mut s, user_facing, show_predicate_header);
+                self.write_invariant_predicate_results(
+                    &mut s,
+                    user_facing,
+                    show_predicate_header,
+                    invariant_campaign_name,
+                );
                 self.write_invariant_persistence_note(&mut s);
                 let handler_preceded = if user_facing {
                     rollup_rendered
@@ -740,6 +769,7 @@ impl TestResult {
         s: &mut String,
         user_facing: bool,
         is_invariant_failure: bool,
+        invariant_campaign_name: Option<&str>,
     ) -> bool {
         let Some(total) = self.invariant_count else {
             return false;
@@ -751,7 +781,11 @@ impl TestResult {
         writeln!(
             s,
             "\n{}: {}/{total} invariants broken",
-            if user_facing { "Invariant/Property Tests" } else { "Predicates" },
+            if user_facing {
+                invariant_campaign_name.unwrap_or(INVARIANT_CAMPAIGN_FALLBACK_NAME)
+            } else {
+                "Predicates"
+            },
             self.invariant_failures.len()
         )
         .unwrap();
@@ -810,6 +844,7 @@ impl TestResult {
         s: &mut String,
         user_facing: bool,
         show_header: bool,
+        invariant_campaign_name: Option<&str>,
     ) {
         if self.invariant_predicate_results.len() <= 1 {
             return;
@@ -817,7 +852,11 @@ impl TestResult {
 
         if show_header {
             s.push('\n');
-            s.push_str(if user_facing { "Invariant/Property Tests" } else { "Predicates" });
+            s.push_str(if user_facing {
+                invariant_campaign_name.unwrap_or(INVARIANT_CAMPAIGN_FALLBACK_NAME)
+            } else {
+                "Predicates"
+            });
             s.push_str(":\n");
         }
 
@@ -997,9 +1036,10 @@ impl TestResult {
             optimization_best_value: None,
         };
         self.status = TestStatus::Skipped;
-        self.reason = reason.0;
-        self.invariant_count =
-            (invariant_predicate_results.len() > 1).then_some(invariant_predicate_results.len());
+        let predicate_count = invariant_predicate_results.len();
+        let is_campaign = predicate_count > 1;
+        self.reason = if is_campaign { None } else { reason.0 };
+        self.invariant_count = is_campaign.then_some(predicate_count);
         self.invariant_predicate_results = invariant_predicate_results;
     }
 
@@ -1166,21 +1206,29 @@ impl TestResult {
 
     /// Formats the test result into a string (for printing).
     pub fn short_result(&self, name: &str) -> String {
-        if self.status.is_skipped() && self.invariant_predicate_results.len() > 1 {
-            return self
-                .invariant_predicate_results
-                .iter()
-                .map(|predicate| {
-                    let mut s = String::from("[SKIP");
-                    if let Some(reason) = &predicate.reason {
-                        write!(s, ": {reason}").unwrap();
-                    }
-                    s.push(']');
-                    format!("{} {}() {}", s.yellow(), predicate.name, self.kind.report())
-                })
-                .join("\n");
-        }
-        format!("{} {name} {}", self.render_status_block(true), self.kind.report())
+        self.short_result_with_campaign_name(name, None)
+    }
+
+    pub(crate) fn short_result_with_suite(&self, name: &str, suite_name: &str) -> String {
+        self.short_result_with_campaign_name(name, Some(get_contract_name(suite_name)))
+    }
+
+    fn short_result_with_campaign_name(&self, name: &str, contract_name: Option<&str>) -> String {
+        let is_invariant_campaign = self.is_invariant_campaign();
+        let name = if is_invariant_campaign {
+            contract_name
+                .map(invariant_campaign_display_name)
+                .map(Cow::Owned)
+                .unwrap_or(Cow::Borrowed(INVARIANT_CAMPAIGN_FALLBACK_NAME))
+        } else {
+            Cow::Borrowed(name)
+        };
+        let status = self.render_status_block(true, is_invariant_campaign.then_some(name.as_ref()));
+        format!("{status} {name} {}", self.kind.report())
+    }
+
+    const fn is_invariant_campaign(&self) -> bool {
+        self.kind.is_invariant() && self.invariant_count.is_some()
     }
 
     fn logical_count(&self) -> usize {
