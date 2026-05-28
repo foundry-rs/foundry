@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     cmp::min,
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
@@ -961,8 +961,8 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         };
         // A non-anchor predicate's persisted failure is only honored when its embedded settings
         // still match the current run; stale caches fall back to a fresh campaign.
-        let persisted_invariants = if is_optimization {
-            BTreeSet::new()
+        let persisted_skipped: Vec<&str> = if is_optimization {
+            Vec::new()
         } else {
             live_invariants
                 .iter()
@@ -972,31 +972,21 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         .is_some()
                         .then_some(invariant_fn.name.as_str())
                 })
-                .collect::<BTreeSet<_>>()
+                .collect()
         };
         // Warn when predicates are dropped because they already have persisted failures from a
         // previous campaign. Symmetric with the primary's persisted-replay warning so users
         // aren't surprised when fewer invariants appear in the report than their contract
         // defines (Echidna/Medusa never skip properties between runs).
-        if !is_optimization {
-            let persisted_skipped: Vec<&str> = live_invariants
-                .iter()
-                .filter(|(invariant_fn, _)| {
-                    *invariant_fn != campaign_anchor
-                        && persisted_invariants.contains(invariant_fn.name.as_str())
-                })
-                .map(|(invariant_fn, _)| invariant_fn.name.as_str())
-                .collect();
-            if !persisted_skipped.is_empty() {
-                let _ = sh_warn!(
-                    "{}: {} invariant(s) skipped due to persisted failures: {}. \
-                     Run `forge clean` or delete files in {} to re-include.",
-                    self.cr.name,
-                    persisted_skipped.len(),
-                    persisted_skipped.join(", "),
-                    failure_dir.display(),
-                );
-            }
+        if !persisted_skipped.is_empty() {
+            let _ = sh_warn!(
+                "{}: {} invariant(s) skipped due to persisted failures: {}. \
+                 Run `forge clean` or delete files in {} to re-include.",
+                self.cr.name,
+                persisted_skipped.len(),
+                persisted_skipped.join(", "),
+                failure_dir.display(),
+            );
         }
         // Build the invariant list in source declaration order, retaining the anchor (`func`)
         // and every other selected predicate that doesn't already have a compatible persisted
@@ -1007,7 +997,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .filter(|(invariant_fn, _)| {
                 *invariant_fn == campaign_anchor
                     || (!is_optimization
-                        && !persisted_invariants.contains(invariant_fn.name.as_str()))
+                        && !persisted_skipped.contains(&invariant_fn.name.as_str()))
             })
             .collect();
         let anchor_idx = invariant_fns
@@ -1025,13 +1015,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             &self.cr.contract.abi,
         );
         let show_solidity = invariant_config.show_solidity;
-        let invariant_count =
-            (invariant_contract.predicate_count > 1).then_some(invariant_contract.predicate_count);
-        let invariant_display_name = if invariant_count.is_some() {
-            INVARIANT_CAMPAIGN_DISPLAY_NAME
-        } else {
-            func.name.as_str()
-        };
+        let is_campaign = invariant_contract.is_campaign();
+        let invariant_count = is_campaign.then_some(predicate_count);
+        let invariant_display_name =
+            if is_campaign { INVARIANT_CAMPAIGN_DISPLAY_NAME } else { func.name.as_str() };
 
         let progress = start_fuzz_progress(
             self.cr.progress,
@@ -1173,7 +1160,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     false,
                     Some(best_value),
                     &invariant_contract,
-                    invariant_contract.anchor(),
+                    primary_predicate,
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
                     &mut self.result.logs,
@@ -1199,7 +1186,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                 // Standard check mode: replay last run for traces.
                 if let Err(err) = replay_run(
                     &invariant_contract,
-                    invariant_contract.anchor(),
+                    primary_predicate,
                     self.clone_executor(),
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
@@ -1222,7 +1209,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             // then push it into `invariant_failures` as the first entry. Non-replayable error
             // variants (e.g. `MaxAssumeRejects`) still get an entry — without a counterexample
             // — so the reason is rendered.
-            if let Some(error) = invariant_result.errors.get(&invariant_contract.anchor().name) {
+            if let Some(error) = invariant_result.errors.get(&primary_predicate.name) {
                 let anchor_counterexample = match error {
                     InvariantFuzzError::BrokenInvariant(case_data)
                     | InvariantFuzzError::Revert(case_data) => {
@@ -1237,7 +1224,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                             case_data.assertion_failure,
                             None, // check mode
                             &invariant_contract,
-                            invariant_contract.anchor(),
+                            primary_predicate,
                             &self.cr.mcr.known_contracts,
                             identified_contracts.clone(),
                             &mut self.result.logs,
@@ -1271,7 +1258,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     InvariantFuzzError::HandlerAssertion(_) => None,
                 };
                 invariant_failures.push(InvariantFailure::Predicate {
-                    name: invariant_contract.anchor().name.clone(),
+                    name: primary_predicate.name.clone(),
                     reason: error.revert_reason().unwrap_or_default(),
                     counterexample: anchor_counterexample,
                     persisted_path: primary_failure_file,
@@ -1293,14 +1280,11 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     continue;
                 }
 
-                // Skip invariants whose counterexample is already persisted from a prior run
-                // (those were filtered out of the live campaign earlier; `errors` won't contain
-                // them, but the dir check is a belt-and-braces safety net). Use the same
-                // settings-aware compatibility check as the filter so a stale persisted cache
-                // doesn't suppress a freshly-broken secondary.
+                // Persisted secondaries were filtered out of the live campaign earlier, using the
+                // same settings-aware compatibility check so stale caches don't suppress a fresh
+                // break.
                 let persisted_failure = invariant_failure_file(&failure_dir, invariant);
-                if !persisted_invariants.contains(invariant.name.as_str())
-                    && let Some(error) = invariant_result.errors.get(&invariant.name)
+                if let Some(error) = invariant_result.errors.get(&invariant.name)
                     && let InvariantFuzzError::BrokenInvariant(case_data)
                     | InvariantFuzzError::Revert(case_data) = error
                     && let TestError::Fail(_, ref calls) = case_data.test_error
@@ -1375,14 +1359,14 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                         name: invariant.name.clone(),
                         reason: error.revert_reason().unwrap_or_default(),
                         counterexample: secondary_counterexample,
-                        persisted_path: persisted_failure.clone(),
+                        persisted_path: persisted_failure,
                     });
                 }
             }
         }
 
         let invariant_failure_dir = any_failure_persisted.then(|| failure_dir.clone());
-        let invariant_predicate_results = if invariant_count.is_some() {
+        let invariant_predicate_results = if is_campaign {
             let failures_by_name = invariant_failures
                 .iter()
                 .map(|failure| (failure.name(), failure))

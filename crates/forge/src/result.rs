@@ -20,7 +20,6 @@ use foundry_evm::{
 };
 use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
 use std::{
-    borrow::Cow,
     collections::{BTreeMap, HashMap as Map},
     fmt::{self, Write},
     time::Duration,
@@ -326,14 +325,14 @@ impl SuiteResult {
         self.test_results.iter()
     }
 
-    fn serialized_test_results(&self) -> BTreeMap<Cow<'_, str>, &TestResult> {
+    fn serialized_test_results(&self) -> BTreeMap<&str, &TestResult> {
         self.test_results
             .iter()
             .map(|(name, result)| {
-                let name = if result.kind.is_invariant() && result.invariant_count.is_some() {
-                    Cow::Borrowed(INVARIANT_CAMPAIGN_DISPLAY_NAME)
+                let name = if result.is_invariant_campaign() {
+                    INVARIANT_CAMPAIGN_DISPLAY_NAME
                 } else {
-                    Cow::Borrowed(name.as_str())
+                    name.as_str()
                 };
                 (name, result)
             })
@@ -1020,9 +1019,10 @@ impl TestResult {
             optimization_best_value: None,
         };
         self.status = TestStatus::Skipped;
-        self.reason = if invariant_predicate_results.len() > 1 { None } else { reason.0 };
-        self.invariant_count =
-            (invariant_predicate_results.len() > 1).then_some(invariant_predicate_results.len());
+        let predicate_count = invariant_predicate_results.len();
+        let is_campaign = predicate_count > 1;
+        self.reason = if is_campaign { None } else { reason.0 };
+        self.invariant_count = is_campaign.then_some(predicate_count);
         self.invariant_predicate_results = invariant_predicate_results;
     }
 
@@ -1091,17 +1091,17 @@ impl TestResult {
         });
         self.reason = Some(reason.clone());
         let counterexample = CounterExample::Sequence(call_sequence.len(), call_sequence);
-        self.counterexample = Some(counterexample.clone());
         if invariant_count.is_some()
             && let Some(failure) = failure
         {
             self.invariant_failures = vec![InvariantFailure::Predicate {
                 name: failure.predicate_name,
                 reason,
-                counterexample: Some(counterexample),
+                counterexample: Some(counterexample.clone()),
                 persisted_path: failure.persisted_path,
             }];
         }
+        self.counterexample = Some(counterexample);
         self.invariant_count = invariant_count;
     }
 
@@ -1218,12 +1218,13 @@ impl TestResult {
 
     /// Formats the test result into a string (for printing).
     pub fn short_result(&self, name: &str) -> String {
-        let name = if self.kind.is_invariant() && self.invariant_count.is_some() {
-            INVARIANT_CAMPAIGN_DISPLAY_NAME
-        } else {
-            name
-        };
+        let name =
+            if self.is_invariant_campaign() { INVARIANT_CAMPAIGN_DISPLAY_NAME } else { name };
         format!("{} {name} {}", self.render_status_block(true), self.kind.report())
+    }
+
+    const fn is_invariant_campaign(&self) -> bool {
+        self.kind.is_invariant() && self.invariant_count.is_some()
     }
 
     fn logical_count(&self) -> usize {

@@ -253,8 +253,8 @@ fn build_invariant_progress_json<M: Serialize>(
     payload
 }
 
-fn invariant_progress_campaign_name<'a>(invariant_contract: &'a InvariantContract<'a>) -> &'a str {
-    if invariant_contract.predicate_count > 1 {
+fn invariant_progress_campaign_name<'a>(invariant_contract: &InvariantContract<'a>) -> &'a str {
+    if invariant_contract.is_campaign() {
         INVARIANT_CAMPAIGN_DISPLAY_NAME
     } else {
         &invariant_contract.anchor().name

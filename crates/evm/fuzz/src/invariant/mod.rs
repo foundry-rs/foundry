@@ -323,6 +323,11 @@ impl<'a> InvariantContract<'a> {
         self.invariant_fns[self.anchor_idx].0
     }
 
+    /// Returns true when this contract represents a multi-predicate campaign.
+    pub const fn is_campaign(&self) -> bool {
+        self.predicate_count > 1
+    }
+
     /// Returns true if this is an optimization mode invariant (returns int256).
     pub fn is_optimization(&self) -> bool {
         is_optimization_invariant(self.anchor())
