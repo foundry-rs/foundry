@@ -7,8 +7,8 @@ use crate::{
     multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
     result::{
-        INVARIANT_CAMPAIGN_DISPLAY_NAME, InvariantFailure, InvariantPredicateResult, SuiteResult,
-        TestResult, TestSetup, TestStatus,
+        INVARIANT_CAMPAIGN_DISPLAY_NAME, InvariantFailure, InvariantPredicateResult,
+        InvariantReplayFailure, SuiteResult, TestResult, TestSetup, TestStatus,
     },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -1048,13 +1048,10 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         };
 
         // Try to replay recorded failure if any.
-        let primary_failure_file =
-            invariant_failure_file(&failure_dir, invariant_contract.anchor());
-        let persisted_primary = persisted_invariant_failure(
-            &failure_dir,
-            invariant_contract.anchor(),
-            &current_settings,
-        );
+        let primary_predicate = invariant_contract.anchor();
+        let primary_failure_file = invariant_failure_file(&failure_dir, primary_predicate);
+        let persisted_primary =
+            persisted_invariant_failure(&failure_dir, primary_predicate, &current_settings);
         if let Some(InvariantPersistedFailure { mut call_sequence, assertion_failure, .. }) =
             persisted_primary
         {
@@ -1085,7 +1082,7 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     assertion_failure,
                     None, // check mode
                     &invariant_contract,
-                    invariant_contract.anchor(),
+                    primary_predicate,
                     &self.cr.mcr.known_contracts,
                     identified_contracts.clone(),
                     &mut self.result.logs,
@@ -1113,12 +1110,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
                     }
                 }
 
-                self.result.invariant_replay_fail(
+                // This is failure attribution, not campaign identity: the summary/key still uses
+                // `invariant_display_name`, while the failure block names the replayed predicate.
+                let replay_failure = InvariantReplayFailure {
+                    predicate_name: primary_predicate.name.clone(),
+                    persisted_path: primary_failure_file,
+                };
+                self.result.invariant_replay_fail_with_failure(
                     replayed_entirely,
                     invariant_display_name,
                     replay_reason,
                     call_sequence,
                     invariant_count,
+                    replay_failure,
                 );
                 return self.result;
             }

@@ -2325,7 +2325,7 @@ contract PersistedPrimaryReplayTest is Test {
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     let stderr = String::from_utf8_lossy(&output.get_output().stderr);
     assert!(stderr.contains("Replayed invariant failure from persisted file."), "{stderr}");
-    assert!(stdout.contains("[FAIL: primary broken]"), "{stdout}");
+    assert!(stdout.contains("[FAIL: primary broken] invariant_primary_breakable"), "{stdout}");
     assert!(stdout.contains(" Invariant/Property Tests (runs:"), "{stdout}");
     assert!(!stdout.contains(" invariant_primary_breakable() (runs:"), "{stdout}");
 });

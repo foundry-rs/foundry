@@ -525,6 +525,15 @@ impl InvariantFailure {
     }
 }
 
+/// Predicate attribution for a persisted invariant replay failure.
+#[derive(Clone, Debug)]
+pub(crate) struct InvariantReplayFailure {
+    /// The predicate whose persisted counterexample was replayed.
+    pub(crate) predicate_name: String,
+    /// Path where the replayed counterexample was persisted.
+    pub(crate) persisted_path: std::path::PathBuf,
+}
+
 /// Pass/fail status for an invariant predicate evaluated inside a contract-level campaign.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InvariantPredicateResult {
@@ -552,8 +561,9 @@ pub struct TestResult {
 
     /// All broken invariant predicates in this campaign in source declaration order.
     ///
-    /// For invariant tests, this is the single source of truth used by the renderer.
-    /// `reason` and `counterexample` are not populated for invariant tests.
+    /// For invariant tests, this is the single source of truth used by the renderer. Fresh
+    /// invariant runs do not populate `reason` and `counterexample`; persisted replay keeps those
+    /// legacy fields for compatibility.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub invariant_failures: Vec<InvariantFailure>,
 
@@ -1026,6 +1036,44 @@ impl TestResult {
         call_sequence: Vec<BaseCounterExample>,
         invariant_count: Option<usize>,
     ) {
+        self.invariant_replay_fail_inner(
+            replayed_entirely,
+            display_name,
+            replay_reason,
+            call_sequence,
+            invariant_count,
+            None,
+        );
+    }
+
+    pub(crate) fn invariant_replay_fail_with_failure(
+        &mut self,
+        replayed_entirely: bool,
+        display_name: &str,
+        replay_reason: Option<String>,
+        call_sequence: Vec<BaseCounterExample>,
+        invariant_count: Option<usize>,
+        failure: InvariantReplayFailure,
+    ) {
+        self.invariant_replay_fail_inner(
+            replayed_entirely,
+            display_name,
+            replay_reason,
+            call_sequence,
+            invariant_count,
+            Some(failure),
+        );
+    }
+
+    fn invariant_replay_fail_inner(
+        &mut self,
+        replayed_entirely: bool,
+        display_name: &str,
+        replay_reason: Option<String>,
+        call_sequence: Vec<BaseCounterExample>,
+        invariant_count: Option<usize>,
+        failure: Option<InvariantReplayFailure>,
+    ) {
         self.kind = TestKind::Invariant {
             runs: 1,
             calls: 1,
@@ -1035,14 +1083,26 @@ impl TestResult {
             optimization_best_value: None,
         };
         self.status = TestStatus::Failure;
-        self.reason = replay_reason.or_else(|| {
+        let reason = replay_reason.unwrap_or_else(|| {
             if replayed_entirely {
-                Some(format!("{display_name} replay failure"))
+                format!("{display_name} replay failure")
             } else {
-                Some(format!("{display_name} persisted failure revert"))
+                format!("{display_name} persisted failure revert")
             }
         });
-        self.counterexample = Some(CounterExample::Sequence(call_sequence.len(), call_sequence));
+        self.reason = Some(reason.clone());
+        let counterexample = CounterExample::Sequence(call_sequence.len(), call_sequence);
+        self.counterexample = Some(counterexample.clone());
+        if invariant_count.is_some()
+            && let Some(failure) = failure
+        {
+            self.invariant_failures = vec![InvariantFailure::Predicate {
+                name: failure.predicate_name,
+                reason,
+                counterexample: Some(counterexample),
+                persisted_path: failure.persisted_path,
+            }];
+        }
         self.invariant_count = invariant_count;
     }
 
@@ -1482,6 +1542,47 @@ mod tests {
         assert!(rendered.contains("Invariant/Property Tests: 1/2 invariants broken"));
         assert!(rendered.contains("Invariant/Property Tests (runs: 1, calls: 3, reverts: 0)"));
         assert!(!rendered.contains("invariant_primary_breakable() (runs:"));
+    }
+
+    #[test]
+    fn multi_predicate_replay_failure_keeps_predicate_name_in_failure_block() {
+        let mut result = TestResult::default();
+        result.invariant_replay_fail_with_failure(
+            true,
+            INVARIANT_CAMPAIGN_DISPLAY_NAME,
+            Some("primary broken".to_string()),
+            Vec::new(),
+            Some(2),
+            InvariantReplayFailure {
+                predicate_name: "invariant_primary_breakable".to_string(),
+                persisted_path: std::path::PathBuf::from(
+                    "cache/invariant/failures/Test/invariants/invariant_primary_breakable",
+                ),
+            },
+        );
+
+        let rendered = result.short_result("invariant_primary_breakable()");
+
+        assert!(rendered.contains("[FAIL: primary broken] invariant_primary_breakable"));
+        assert!(rendered.contains("Invariant/Property Tests: 1/2 invariants broken"));
+        assert!(rendered.contains("Invariant/Property Tests (runs: 1, calls: 1, reverts: 1)"));
+        assert!(!rendered.contains("invariant_primary_breakable() (runs:"));
+        assert_eq!(result.invariant_failures.len(), 1);
+        assert!(result.invariant_predicate_results.is_empty());
+
+        let suite = SuiteResult::new(
+            Duration::default(),
+            BTreeMap::from([("invariant_primary_breakable()".to_string(), result)]),
+            Vec::new(),
+        );
+        let serialized = serde_json::to_value(&suite).unwrap();
+        let test_results = serialized["test_results"].as_object().unwrap();
+        assert!(test_results.contains_key(INVARIANT_CAMPAIGN_DISPLAY_NAME));
+        assert!(!test_results.contains_key("invariant_primary_breakable()"));
+        assert_eq!(
+            test_results[INVARIANT_CAMPAIGN_DISPLAY_NAME]["invariant_failures"][0]["name"],
+            "invariant_primary_breakable"
+        );
     }
 
     #[test]
