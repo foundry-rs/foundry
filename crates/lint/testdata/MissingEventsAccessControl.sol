@@ -26,6 +26,17 @@ contract MissingEventsAccessControl {
         _;
     }
 
+    modifier loggedModifier() {
+        emit Touched();
+        _;
+    }
+
+    modifier onlyOwnerViaSenderAlias() {
+        address sender = msg.sender;
+        require(sender == owner, "not owner");
+        _;
+    }
+
     modifier onlyOwnerViaCheck() {
         _checkOwner();
         _;
@@ -41,6 +52,16 @@ contract MissingEventsAccessControl {
         _;
     }
 
+    modifier guardAfterPlaceholder() {
+        _;
+        require(msg.sender == owner, "not owner");
+    }
+
+    modifier writesOwner(address newOwner) {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+        _;
+    }
+
     // SHOULD FAIL:
 
     function transferOwnership(address newOwner) external onlyOwner {
@@ -49,8 +70,13 @@ contract MissingEventsAccessControl {
 
     function acceptOwnership() external {
         if (msg.sender != pendingOwner) revert();
-        owner = pendingOwner;
-        pendingOwner = address(0);
+        owner = pendingOwner; //~WARN: `owner` is changed without an event but is used for access control
+        pendingOwner = address(0); //~WARN: `pendingOwner` is changed without an event but is used for access control
+    }
+
+    function acceptOwnershipFromSender() external {
+        if (msg.sender != pendingOwner) revert();
+        owner = msg.sender; //~WARN: `owner` is changed without an event but is used for access control
     }
 
     function setGuardian(address newGuardian) external onlyOwner {
@@ -84,6 +110,47 @@ contract MissingEventsAccessControl {
 
     function setOwnerOZStyle(address newOwner) external onlyOwnerViaCheck {
         owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerWithUnrelatedEventBefore(address newOwner) external onlyOwner {
+        emit Touched();
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerWithUnrelatedEventAfter(address newOwner) external onlyOwner {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+        emit Touched();
+    }
+
+    function setOwnerViaLoggingModifier(address newOwner) external onlyOwner loggedModifier {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerEventInOtherBranch(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) {
+            emit Touched();
+        }
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerViaSenderAlias(address newOwner) external onlyOwnerViaSenderAlias {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+    }
+
+    function setOwnerInModifier(address newOwner) external onlyOwner writesOwner(newOwner) {}
+
+    function grantRoleViaStorageAlias(address account) external onlyOwner {
+        mapping(address => bool) storage roleSet = roles;
+        roleSet[account] = true; //~WARN: `roles` is changed without an event but is used for access control
+    }
+
+    function setNamedRoleViaStorageAlias(
+        address account,
+        bytes32 role,
+        bool enabled
+    ) external onlyOwner {
+        mapping(bytes32 => bool) storage accountRoles = namedRoles[account];
+        accountRoles[role] = enabled; //~WARN: `namedRoles` is changed without an event but is used for access control
     }
 
     // Access-control usage that makes the state critical.
@@ -142,11 +209,6 @@ contract MissingEventsAccessControl {
         emit GuardianUpdated(newGuardian);
     }
 
-    function setWithUnrelatedEvent(address newOwner) external onlyOwner {
-        emit Touched();
-        owner = newOwner;
-    }
-
     function grantRoleWithEvent(address account) external onlyOwner {
         roles[account] = true;
         emit RoleUpdated(account, true);
@@ -158,6 +220,30 @@ contract MissingEventsAccessControl {
     }
 
     function unprotectedSetOwner(address newOwner) external {
+        owner = newOwner;
+    }
+
+    function setOwnerWithComputedSender(address expected, address newOwner) external {
+        require(msg.sender == computeAddress(expected), "not computed");
+        owner = newOwner;
+    }
+
+    function setOwnerViaOverwrittenLocal(address newOwner) external onlyOwner {
+        address next = newOwner;
+        next = address(0xBEEF);
+        owner = next;
+    }
+
+    function setOwnerAfterRevertingTaint(address newOwner) external onlyOwner {
+        address next = address(0xBEEF);
+        if (newOwner == address(0)) {
+            next = newOwner;
+            revert();
+        }
+        owner = next;
+    }
+
+    function setOwnerGuardAfterPlaceholder(address newOwner) external guardAfterPlaceholder {
         owner = newOwner;
     }
 
@@ -206,6 +292,10 @@ contract MissingEventsAccessControl {
 
     function _msgSender() internal view returns (address) {
         return msg.sender;
+    }
+
+    function computeAddress(address expected) internal pure returns (address) {
+        return expected;
     }
 }
 

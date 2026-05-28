@@ -12,13 +12,14 @@ This lint looks for mutable state variables that are:
 
 - read by an access-control check involving `msg.sender` or `tx.origin`,
 - written by a public or external state-mutating function with access control, and
-- assigned from function input, directly or through local aliases/internal helpers, and
-- changed by a function that does not emit any event directly or through an internal helper.
+- assigned from function input, `msg.sender`, another access-control state variable, or a keyed
+  mapping write, directly or through local aliases/internal helpers, and
+- changed without a related event that includes the same value or key source.
 
 It intentionally skips constructors, unprotected setters, variables not used in authorization
-checks, fixed writes, and functions that emit any event directly or through an internal helper.
-Those limits keep the rule focused on Slither's low-severity `events-access` case while avoiding
-common false positives.
+checks, unrelated events, and fixed writes other than clearing the state variable currently used by
+the access guard. Those limits keep the rule focused on Slither's low-severity `events-access` case
+while avoiding common false positives.
 
 ## Why is this bad?
 
