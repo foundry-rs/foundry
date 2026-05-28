@@ -69,6 +69,8 @@ struct Analyzer<'hir> {
     hir: &'hir hir::Hir<'hir>,
     /// Locals/non-state vars proven equal to a safe origin on this path.
     safe_vars: HashSet<hir::VariableId>,
+    /// Function-pointer locals proven to route to `this` on this path.
+    safe_fn_ptrs: HashSet<hir::VariableId>,
     /// True once a caller-restricting guard has fired on this path.
     caller_restricted: bool,
     hits: Vec<Span>,
@@ -77,6 +79,7 @@ struct Analyzer<'hir> {
 #[derive(Clone)]
 struct FlowState {
     safe_vars: HashSet<hir::VariableId>,
+    safe_fn_ptrs: HashSet<hir::VariableId>,
     caller_restricted: bool,
 }
 
@@ -84,14 +87,17 @@ impl FlowState {
     fn intersection(a: &Self, b: &Self) -> Self {
         Self {
             safe_vars: a.safe_vars.intersection(&b.safe_vars).copied().collect(),
+            safe_fn_ptrs: a.safe_fn_ptrs.intersection(&b.safe_fn_ptrs).copied().collect(),
             caller_restricted: a.caller_restricted && b.caller_restricted,
         }
     }
 
     fn intersection_all(mut states: impl Iterator<Item = Self>) -> Self {
-        let mut out = states
-            .next()
-            .unwrap_or_else(|| Self { safe_vars: HashSet::new(), caller_restricted: false });
+        let mut out = states.next().unwrap_or_else(|| Self {
+            safe_vars: HashSet::new(),
+            safe_fn_ptrs: HashSet::new(),
+            caller_restricted: false,
+        });
         for state in states {
             out = Self::intersection(&out, &state);
         }
@@ -107,15 +113,26 @@ const SELF_ALIAS_DEPTH: u8 = 8;
 
 impl<'hir> Analyzer<'hir> {
     fn new(hir: &'hir hir::Hir<'hir>) -> Self {
-        Self { hir, safe_vars: HashSet::new(), caller_restricted: false, hits: Vec::new() }
+        Self {
+            hir,
+            safe_vars: HashSet::new(),
+            safe_fn_ptrs: HashSet::new(),
+            caller_restricted: false,
+            hits: Vec::new(),
+        }
     }
 
     fn snapshot(&self) -> FlowState {
-        FlowState { safe_vars: self.safe_vars.clone(), caller_restricted: self.caller_restricted }
+        FlowState {
+            safe_vars: self.safe_vars.clone(),
+            safe_fn_ptrs: self.safe_fn_ptrs.clone(),
+            caller_restricted: self.caller_restricted,
+        }
     }
 
     fn restore(&mut self, state: FlowState) {
         self.safe_vars = state.safe_vars;
+        self.safe_fn_ptrs = state.safe_fn_ptrs;
         self.caller_restricted = state.caller_restricted;
     }
 
@@ -140,7 +157,10 @@ impl<'hir> Analyzer<'hir> {
                 Res::Item(ItemId::Variable(vid)) => self.is_safe_var(*vid),
                 _ => false,
             }),
-            ExprKind::Call(callee, args, _) if is_address_like_cast_callee(callee) => {
+            // Peel address and numeric casts so `payable(address(uint160(0)))` is safe.
+            ExprKind::Call(callee, args, _)
+                if is_address_like_cast_callee(callee) || is_numeric_cast_callee(callee) =>
+            {
                 args.exprs().next().is_some_and(|e| self.is_safe_inner(e, depth))
             }
             ExprKind::Payable(inner) => self.is_safe_inner(inner, depth),
@@ -198,12 +218,45 @@ impl<'hir> Analyzer<'hir> {
     fn assign_one(&mut self, lhs: &hir::Expr<'_>, rhs: Option<&hir::Expr<'_>>) {
         let Some(target) = underlying_var(lhs) else { return };
         self.safe_vars.remove(&target);
+        self.safe_fn_ptrs.remove(&target);
         if self.hir.variable(target).kind.is_state() {
+            return;
+        }
+        if matches!(self.hir.variable(target).ty.kind, TypeKind::Function(_)) {
+            if rhs.is_some_and(|r| self.is_fn_ptr_safe_rhs(r)) {
+                self.safe_fn_ptrs.insert(target);
+            }
             return;
         }
         if rhs.is_some_and(|r| self.is_safe(r)) {
             self.safe_vars.insert(target);
         }
+    }
+
+    /// True when `expr` is a function-pointer value whose destination is `this`.
+    fn is_fn_ptr_safe_rhs(&self, expr: &hir::Expr<'_>) -> bool {
+        match &expr.peel_parens().kind {
+            ExprKind::Member(base, _) => is_address_self(base),
+            ExprKind::Ident(reses) => reses.iter().any(|r| {
+                matches!(r, Res::Item(ItemId::Variable(vid)) if self.safe_fn_ptrs.contains(vid))
+            }),
+            ExprKind::Ternary(_, t, f) => self.is_fn_ptr_safe_rhs(t) && self.is_fn_ptr_safe_rhs(f),
+            _ => false,
+        }
+    }
+
+    /// True when `expr` is a fn-pointer call whose destination is provably `this`.
+    fn fn_ptr_call_routes_to_self(&self, expr: &hir::Expr<'_>) -> bool {
+        let ExprKind::Call(callee, _, _) = &expr.kind else { return false };
+        let callee_inner = callee.peel_parens();
+        let is_fn_ptr = match &callee_inner.kind {
+            ExprKind::Ident(reses) => reses.iter().any(|r| {
+                matches!(r, Res::Item(ItemId::Variable(vid))
+                    if matches!(self.hir.variable(*vid).ty.kind, TypeKind::Function(_)))
+            }),
+            _ => matches!(expr_type(self.hir, callee_inner), Some(TypeKind::Function(_))),
+        };
+        is_fn_ptr && self.is_fn_ptr_safe_rhs(callee_inner)
     }
 
     /// Records vars proven equal to a safe origin from `pred`. `negate = true` flips polarity.
@@ -424,18 +477,33 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
             StmtKind::Err(_) => {
                 self.safe_vars.clear();
             }
-            StmtKind::DeclSingle(vid) if var_is_address_like(self.hir.variable(*vid)) => {
-                if let Some(init) = self.hir.variable(*vid).initializer {
+            StmtKind::DeclSingle(vid) => {
+                let var = self.hir.variable(*vid);
+                if var_is_address_like(var)
+                    && let Some(init) = var.initializer
+                {
                     self.assign(*vid, init);
+                } else if matches!(var.ty.kind, TypeKind::Function(_)) {
+                    if var.initializer.is_some_and(|init| self.is_fn_ptr_safe_rhs(init)) {
+                        self.safe_fn_ptrs.insert(*vid);
+                    } else {
+                        self.safe_fn_ptrs.remove(vid);
+                    }
                 }
             }
             StmtKind::DeclMulti(vars, init) => {
                 if let ExprKind::Tuple(rhs) = &init.peel_parens().kind {
                     for (lhs, rhs) in vars.iter().zip(rhs.iter()) {
-                        if let (Some(vid), Some(expr)) = (lhs, rhs)
-                            && var_is_address_like(self.hir.variable(*vid))
-                        {
+                        let (Some(vid), Some(expr)) = (lhs, rhs) else { continue };
+                        let var = self.hir.variable(*vid);
+                        if var_is_address_like(var) {
                             self.assign(*vid, expr);
+                        } else if matches!(var.ty.kind, TypeKind::Function(_)) {
+                            if self.is_fn_ptr_safe_rhs(expr) {
+                                self.safe_fn_ptrs.insert(*vid);
+                            } else {
+                                self.safe_fn_ptrs.remove(vid);
+                            }
                         }
                     }
                 }
@@ -486,6 +554,7 @@ impl<'hir> hir::Visit<'hir> for Analyzer<'hir> {
                 if !self.caller_restricted
                     && let Some(dest) = match_sink(self.hir, expr)
                     && !self.is_safe(dest)
+                    && !self.fn_ptr_call_routes_to_self(expr)
                 {
                     self.hits.push(expr.span);
                 }
@@ -720,11 +789,20 @@ fn expr_restricts_caller(
             }
             let f = hir.function(*fid);
             let Some(body) = f.body else { return false };
-            if body.stmts.iter().any(stmt_contains_return) {
+            // Trailing bare `return;` is a normal exit and cannot bypass an earlier guard.
+            let mut stmts = body.stmts;
+            while let Some((last, init)) = stmts.split_last() {
+                if matches!(last.kind, StmtKind::Return(None)) {
+                    stmts = init;
+                } else {
+                    break;
+                }
+            }
+            if stmts.iter().any(stmt_contains_return) {
                 return false;
             }
             stack.push(*fid);
-            let r = body.stmts.iter().any(|s| stmt_restricts_caller(hir, s, f.parameters, stack));
+            let r = stmts.iter().any(|s| stmt_restricts_caller(hir, s, f.parameters, stack));
             stack.pop();
             r
         }

@@ -830,3 +830,11 @@ LL │         to.transfer(amount);
    │
    ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
 
+warning[arbitrary-send-eth]: ETH is sent to a user-controlled destination; restrict the destination or the caller
+   ╭▸ ROOT/testdata/ArbitrarySendEth.sol:LL:CC
+   │
+LL │         cb{value: amt}();
+   │         ━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/arbitrary-send-eth
+

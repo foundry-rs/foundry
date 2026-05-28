@@ -802,3 +802,27 @@ contract LeafSelfChainBad is MidSelfChain {
 library SelfRetLib {
     function self() internal view returns (address) { return address(this); }
 }
+
+contract NumericCastSafeOk {
+    function payZeroViaUint160Ok(uint256 amt) external { payable(address(uint160(0))).transfer(amt); }
+}
+
+contract FnPtrFromSelf {
+    receive() external payable {}
+    function receiveEth() external payable {}
+    function selfPtrOk(uint256 amt) external payable {
+        function() external payable cb = this.receiveEth;
+        cb{value: amt}();
+    }
+    function paramPtrBad(function() external payable cb, uint256 amt) external payable {
+        cb{value: amt}(); //~WARN: ETH is sent to a user-controlled destination; restrict the destination or the caller
+    }
+}
+
+contract TrailingReturnHelperOk {
+    address public immutable owner;
+    constructor() { owner = msg.sender; }
+    function _checkOwner() internal view { if (msg.sender != owner) revert(); return; }
+    modifier onlyOwner() { _checkOwner(); _; }
+    function withdraw(address payable to, uint256 amt) external onlyOwner { to.transfer(amt); }
+}
