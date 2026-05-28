@@ -1238,11 +1238,6 @@ impl SymbolicWorld {
         Ok(SymWord::Expr(result))
     }
 
-    /// Applies the `set_balance` symbolic state helper.
-    pub(crate) fn set_balance(&mut self, address: Address, value: U256) {
-        self.set_balance_word(address, SymWord::Concrete(value));
-    }
-
     /// Applies the `set_balance_word` symbolic state helper.
     pub(crate) fn set_balance_word(&mut self, address: Address, value: SymWord) {
         self.balances.insert(address, value.clone());

@@ -1237,9 +1237,12 @@ impl SymbolicExecutor {
         }
         if selector == selector!("deal(address,uint256)") {
             let target = read_abi_address_or_symbolic_slot_arg(state, args_offset, 0)?;
-            let value =
-                read_abi_constrained_word_arg(state, args_offset, 1, "symbolic vm.deal value")?;
-            state.world.set_balance(target, value);
+            let value = read_abi_word_arg(&state.memory, args_offset, 1)?;
+            if value.contains_gasleft() {
+                return Err(SymbolicError::Unsupported("GAS/gasleft() not modeled"));
+            }
+            let value = state.constrained_word(&value).map(SymWord::Concrete).unwrap_or(value);
+            state.world.set_balance_word(target, value);
             return Ok(CheatcodeOutcome::Continue(Vec::new()));
         }
         if selector == selector!("setNonce(address,uint64)")
