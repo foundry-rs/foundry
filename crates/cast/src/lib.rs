@@ -198,7 +198,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                 .into_iter()
                 .map(|value| serialize_value_as_json(value, None))
                 .collect::<eyre::Result<Vec<_>>>()?;
-            serde_json::to_string(&tokens)?
+            serde_json::to_string_pretty(&tokens).unwrap()
         } else {
             // seth compatible user-friendly return type conversions
             decoded.iter().map(format_token).collect::<Vec<_>>().join("\n")
