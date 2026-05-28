@@ -1,6 +1,6 @@
 use crate::{
     VerifierArgs,
-    provider::{VerificationContext, VerificationProvider},
+    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
     utils::ensure_solc_build_metadata,
     verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs},
 };
@@ -50,6 +50,10 @@ trait EtherscanSourceProvider: Send + Sync + Debug {
 
 #[async_trait::async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
+    fn provider_type(&self) -> VerificationProviderType {
+        VerificationProviderType::Etherscan
+    }
+
     async fn preflight_verify_check(
         &mut self,
         args: VerifyArgs,
@@ -455,7 +459,6 @@ impl EtherscanVerificationProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::VerificationProviderType;
     use clap::Parser;
     use foundry_common::fs;
     use foundry_test_utils::{forgetest_async, str};
