@@ -3,9 +3,12 @@ use alloy_primitives::{Address, I256, Selector};
 use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::BasicTxDetails;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Immutable plan-level description for an invariant campaign.
+///
+/// This is only a planning contract for splitting one logical campaign into worker ranges. It does
+/// not start workers, choose worker counts, or decide corpus/failure persistence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InvariantCampaignSpec {
     /// Total logical runs configured for the campaign.
@@ -44,6 +47,8 @@ impl InvariantCampaignSpec {
 /// Static assignment of a contiguous logical run range to one worker.
 ///
 /// The assigned range is `[first_global_run, first_global_run + runs)`.
+/// Worker `0` is the master worker for master-only artifacts such as persisted corpus replay
+/// counts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InvariantWorkerPlan {
     pub worker_id: u32,
@@ -52,6 +57,9 @@ pub struct InvariantWorkerPlan {
 }
 
 /// Output produced by one invariant worker.
+///
+/// This is a data envelope for aggregation only. It does not imply that this module executed the
+/// worker, shrank failures, or wrote any persisted corpus/failure files.
 #[derive(Debug)]
 pub struct InvariantWorkerOutput {
     pub plan: InvariantWorkerPlan,
@@ -65,6 +73,16 @@ impl InvariantWorkerOutput {
 }
 
 /// Merges worker outputs back into one logical invariant campaign result.
+///
+/// Merge policy:
+/// - outputs are folded in `first_global_run` order;
+/// - predicate failures keep the first failure in logical run order;
+/// - handler assertion failures keep the shorter reproducer, with equal lengths preserving the
+///   earlier logical worker;
+/// - optimization mode keeps the maximum value, with ties preserving the earlier logical worker;
+/// - `failed_corpus_replays` is a master-worker-only value from worker `0`;
+/// - cases, reverts, gas traces, selector metrics, and line coverage accumulate into the logical
+///   campaign result.
 #[derive(Debug)]
 pub struct InvariantCampaignAggregator {
     spec: InvariantCampaignSpec,
@@ -86,6 +104,7 @@ impl InvariantCampaignAggregator {
 
         self.outputs.sort_by_key(|output| output.plan.first_global_run);
         ensure_outputs_cover_campaign(self.spec, &self.outputs)?;
+        ensure_master_only_fields(&self.outputs)?;
 
         let mut errors = HashMap::default();
         let mut handler_errors = HashMap::default();
@@ -143,9 +162,12 @@ fn ensure_outputs_cover_campaign(
     spec: InvariantCampaignSpec,
     outputs: &[InvariantWorkerOutput],
 ) -> Result<()> {
+    ensure_worker_ids_are_dense(outputs)?;
+
     if spec.total_runs == 0 {
         ensure!(
             outputs.len() == 1
+                && outputs[0].plan.worker_id == 0
                 && outputs[0].plan.first_global_run == 0
                 && outputs[0].plan.runs == 0,
             "invariant worker outputs do not cover the logical campaign"
@@ -154,7 +176,11 @@ fn ensure_outputs_cover_campaign(
     }
 
     let mut next_global_run = 0;
-    for output in outputs {
+    for (expected_worker_id, output) in outputs.iter().enumerate() {
+        ensure!(
+            output.plan.worker_id == expected_worker_id as u32,
+            "invariant worker outputs are not in dense worker order"
+        );
         ensure!(output.plan.runs > 0, "invariant worker outputs do not cover the logical campaign");
         ensure!(
             output.plan.first_global_run == next_global_run,
@@ -172,7 +198,38 @@ fn ensure_outputs_cover_campaign(
     Ok(())
 }
 
+fn ensure_worker_ids_are_dense(outputs: &[InvariantWorkerOutput]) -> Result<()> {
+    let mut seen = HashSet::with_capacity(outputs.len());
+    for output in outputs {
+        ensure!(
+            seen.insert(output.plan.worker_id),
+            "duplicate invariant worker output for worker {}",
+            output.plan.worker_id
+        );
+    }
+
+    ensure!(seen.contains(&0), "missing invariant master worker output");
+    for expected in 0..outputs.len() as u32 {
+        ensure!(seen.contains(&expected), "missing invariant worker output for worker {expected}");
+    }
+    Ok(())
+}
+
+fn ensure_master_only_fields(outputs: &[InvariantWorkerOutput]) -> Result<()> {
+    for output in outputs {
+        if output.plan.worker_id != 0 {
+            ensure!(
+                output.result.failed_corpus_replays == 0,
+                "non-master invariant worker reported failed corpus replays"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Deduplicates handler assertion failures by site, keeping the shorter reproducer.
+/// Equal-length reproducers keep the one already inserted, which is the earlier logical worker
+/// because the caller folds worker outputs in `first_global_run` order.
 fn merge_handler_errors(
     merged: &mut HashMap<(Address, Selector), InvariantFuzzError>,
     worker_errors: HashMap<(Address, Selector), InvariantFuzzError>,
@@ -519,6 +576,52 @@ mod tests {
     }
 
     #[test]
+    fn aggregator_keeps_earlier_handler_assertion_when_lengths_tie() {
+        let spec = InvariantCampaignSpec::new(2);
+        let plans = [
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
+            InvariantWorkerPlan { worker_id: 1, first_global_run: 1, runs: 1 },
+        ];
+        let site = (Address::repeat_byte(0xaa), Selector::from([1, 2, 3, 4]));
+        let mut earlier = empty_result(0, 0);
+        earlier.handler_errors.insert(site, handler_error(site.0, site.1, 2, "earlier"));
+        let mut later = empty_result(0, 0);
+        later.handler_errors.insert(site, handler_error(site.0, site.1, 2, "later"));
+
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+        aggregator.push(InvariantWorkerOutput::new(plans[1], later));
+        aggregator.push(InvariantWorkerOutput::new(plans[0], earlier));
+        let result = aggregator.finish().unwrap();
+
+        let failure = result.handler_errors[&site].as_handler_assertion().unwrap();
+        assert_eq!(result.handler_errors.len(), 1);
+        assert_eq!(failure.call_sequence.len(), 2);
+        assert_eq!(failure.revert_reason, "earlier");
+    }
+
+    #[test]
+    fn aggregator_keeps_distinct_predicate_failures() {
+        let spec = InvariantCampaignSpec::new(2);
+        let plans = [
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
+            InvariantWorkerPlan { worker_id: 1, first_global_run: 1, runs: 1 },
+        ];
+        let mut earlier = empty_result(0, 0);
+        earlier.errors.insert("invariant_a".to_string(), predicate_error("a", 3));
+        let mut later = empty_result(0, 0);
+        later.errors.insert("invariant_b".to_string(), predicate_error("b", 2));
+
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+        aggregator.push(InvariantWorkerOutput::new(plans[1], later));
+        aggregator.push(InvariantWorkerOutput::new(plans[0], earlier));
+        let result = aggregator.finish().unwrap();
+
+        assert_eq!(result.errors.len(), 2);
+        assert_eq!(result.errors["invariant_a"].revert_reason().as_deref(), Some("a"));
+        assert_eq!(result.errors["invariant_b"].revert_reason().as_deref(), Some("b"));
+    }
+
+    #[test]
     fn aggregator_keeps_first_max_optimization_value_on_tie() {
         let spec = InvariantCampaignSpec::new(3);
         let plans = [
@@ -551,11 +654,85 @@ mod tests {
         let spec = InvariantCampaignSpec::new(1);
         let mut aggregator = InvariantCampaignAggregator::new(spec);
 
-        aggregator.push(InvariantWorkerOutput::new(one_worker_plan(spec), empty_result(0, 0)));
-        aggregator.push(InvariantWorkerOutput::new(one_worker_plan(spec), empty_result(0, 0)));
+        aggregator.push(InvariantWorkerOutput::new(
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
+            empty_result(0, 0),
+        ));
+        aggregator.push(InvariantWorkerOutput::new(
+            InvariantWorkerPlan { worker_id: 1, first_global_run: 0, runs: 1 },
+            empty_result(0, 0),
+        ));
         let err = aggregator.finish().unwrap_err();
 
         assert!(err.to_string().contains("do not cover the logical campaign"));
+    }
+
+    #[test]
+    fn aggregator_rejects_duplicate_worker_ids() {
+        let spec = InvariantCampaignSpec::new(2);
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+
+        aggregator.push(InvariantWorkerOutput::new(
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
+            empty_result(0, 0),
+        ));
+        aggregator.push(InvariantWorkerOutput::new(
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 1, runs: 1 },
+            empty_result(0, 0),
+        ));
+        let err = aggregator.finish().unwrap_err();
+
+        assert!(err.to_string().contains("duplicate invariant worker output"));
+    }
+
+    #[test]
+    fn aggregator_rejects_non_dense_worker_ids() {
+        let spec = InvariantCampaignSpec::new(2);
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+
+        aggregator.push(InvariantWorkerOutput::new(
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
+            empty_result(0, 0),
+        ));
+        aggregator.push(InvariantWorkerOutput::new(
+            InvariantWorkerPlan { worker_id: 2, first_global_run: 1, runs: 1 },
+            empty_result(0, 0),
+        ));
+        let err = aggregator.finish().unwrap_err();
+
+        assert!(err.to_string().contains("missing invariant worker output for worker 1"));
+    }
+
+    #[test]
+    fn aggregator_rejects_failed_corpus_replays_from_non_master_worker() {
+        let spec = InvariantCampaignSpec::new(2);
+        let plans = [
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
+            InvariantWorkerPlan { worker_id: 1, first_global_run: 1, runs: 1 },
+        ];
+
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+        aggregator.push(InvariantWorkerOutput::new(plans[0], empty_result(0, 0)));
+        aggregator.push(InvariantWorkerOutput::new(plans[1], empty_result(0, 1)));
+        let err = aggregator.finish().unwrap_err();
+
+        assert!(err.to_string().contains("non-master invariant worker reported"));
+    }
+
+    #[test]
+    fn aggregator_takes_failed_corpus_replays_from_master_worker() {
+        let spec = InvariantCampaignSpec::new(2);
+        let plans = [
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
+            InvariantWorkerPlan { worker_id: 1, first_global_run: 1, runs: 1 },
+        ];
+
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+        aggregator.push(InvariantWorkerOutput::new(plans[1], empty_result(0, 0)));
+        aggregator.push(InvariantWorkerOutput::new(plans[0], empty_result(0, 7)));
+        let result = aggregator.finish().unwrap();
+
+        assert_eq!(result.failed_corpus_replays, 7);
     }
 
     #[test]
