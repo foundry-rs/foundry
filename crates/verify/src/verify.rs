@@ -128,8 +128,8 @@ impl VerifierArgs {
                 }
             }
             VerificationProviderType::Custom => {
-                // Custom verifiers may not return Etherscan-shaped responses, so a raw HTTP
-                // probe is more reliable than the typed client. Treat 401/403 as auth failures.
+                // Custom verifiers may return Etherscan-shaped responses (HTTP 200 with a JSON
+                // body) or standard HTTP auth errors (401/403). Check both.
                 if let Some(url) = &self.verifier_url {
                     match reqwest::Client::new()
                         .get(url)
@@ -149,6 +149,16 @@ impl VerifierArgs {
                                     "verifier credential check failed: \
                                      invalid API key (HTTP {status})"
                                 )
+                            }
+                            // Also inspect the body for Etherscan-shaped auth-failure messages
+                            // returned with HTTP 200.
+                            if let Ok(body) = resp.text().await {
+                                let lower = body.to_lowercase();
+                                if lower.contains("invalid api key")
+                                    || lower.contains("invalid_api_key")
+                                {
+                                    eyre::bail!("verifier credential check failed: invalid API key")
+                                }
                             }
                         }
                     }
