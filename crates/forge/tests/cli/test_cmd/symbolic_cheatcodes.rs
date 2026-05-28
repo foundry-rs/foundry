@@ -3,6 +3,7 @@ use foundry_common::sh_eprintln;
 use foundry_test_utils::{forgetest_init, util::OutputExt};
 
 use super::symbolic_helpers::z3_available;
+use crate::skip_unless_z3;
 
 forgetest_init!(symbolic_cheatcodes_accept_symbolic_address_targets, |prj, cmd| {
     if !z3_available() {
@@ -1676,6 +1677,32 @@ contract SymbolicConstrainedCheatcodes is Test {
         assertEq(address(0xbeef).balance, 7);
     }
 
+    function checkSymbolicDealValueFundsCall(uint256 amount) public {
+        address recipient = address(0xbeef);
+
+        vm.deal(address(this), amount);
+        assertEq(address(this).balance, amount);
+
+        (bool ok,) = recipient.call{value: amount}("");
+
+        assertTrue(ok);
+        assertEq(recipient.balance, amount);
+        assertEq(address(this).balance, 0);
+    }
+
+    function checkSymbolicDealInsufficientFunds(uint256 amount) public {
+        vm.assume(amount < type(uint256).max);
+        address recipient = address(0xbeef);
+
+        vm.deal(address(this), amount);
+
+        (bool ok,) = recipient.call{value: amount + 1}("");
+
+        assertFalse(ok);
+        assertEq(address(this).balance, amount);
+        assertEq(recipient.balance, 0);
+    }
+
     function checkConstrainedRandomBytes(uint16 len) public {
         vm.assume(len == 3);
 
@@ -1702,12 +1729,88 @@ contract SymbolicConstrainedCheatcodes is Test {
     assert_relevant_lines(
         &stdout,
         foundry_test_utils::str![[r#"
+[PASS] checkSymbolicDealValueFundsCall(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+[PASS] checkSymbolicDealInsufficientFunds(uint256)
+"#]],
+    );
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
 [PASS] checkConstrainedRandomBytes(uint16)
 "#]],
     );
     assert!(!stdout.contains("symbolic vm.deal target"), "{stdout}");
     assert!(!stdout.contains("symbolic vm.deal value"), "{stdout}");
     assert!(!stdout.contains("symbolic randomBytes len"), "{stdout}");
+});
+
+forgetest_init!(symbolic_cheatcodes_reject_gas_deal_value, |prj, cmd| {
+    skip_unless_z3!("symbolic_cheatcodes_reject_gas_deal_value");
+
+    prj.add_test(
+        "SymbolicDealGasValue.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicDealGasValue is Test {
+    function checkGasDealValue() public {
+        vm.deal(address(this), gasleft());
+    }
+
+    function checkDerivedGasDealValue() public {
+        vm.deal(address(this), gasleft() + 1);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkGasDealValue"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
+"#]],
+    );
+});
+
+forgetest_init!(symbolic_cheatcodes_reject_derived_gas_deal_value, |prj, cmd| {
+    skip_unless_z3!("symbolic_cheatcodes_reject_derived_gas_deal_value");
+
+    prj.add_test(
+        "SymbolicDerivedDealGasValue.t.sol",
+        r#"
+import "forge-std/Test.sol";
+
+contract SymbolicDerivedDealGasValue is Test {
+    function checkDerivedGasDealValue() public {
+        vm.deal(address(this), gasleft() + 1);
+    }
+}
+"#,
+    );
+
+    let stdout = cmd
+        .args(["test", "--symbolic", "--match-test", "checkDerivedGasDealValue"])
+        .assert_failure()
+        .get_output()
+        .stdout_lossy();
+
+    assert_relevant_lines(
+        &stdout,
+        foundry_test_utils::str![[r#"
+incomplete symbolic execution (Stuck): unsupported symbolic execution feature: GAS/gasleft() not modeled
+"#]],
+    );
 });
 
 forgetest_init!(symbolic_cheatcodes_accept_bounded_symbolic_input_size, |prj, cmd| {
