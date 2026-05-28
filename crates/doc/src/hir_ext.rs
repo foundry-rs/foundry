@@ -173,7 +173,16 @@ pub fn build_name_to_page(
 fn source_paths(gcx: Gcx<'_>, source_id: SourceId, root: &Path) -> Option<(PathBuf, PathBuf)> {
     let file = &gcx.hir.source(source_id).file;
     if let FileName::Real(p) = &file.name {
-        let rel = p.strip_prefix(root).unwrap_or(p).to_owned();
+        let rel = if let Ok(r) = p.strip_prefix(root) {
+            r.to_path_buf()
+        } else {
+            // Outside-root files (e.g. absolute lib paths) get a synthetic
+            // `lib/<tail>` path that matches what builder.rs emits.
+            let comps: Vec<_> = p.components().collect();
+            let start = comps.len().saturating_sub(3);
+            let tail: PathBuf = comps[start..].iter().collect();
+            PathBuf::from("lib").join(tail)
+        };
         Some((p.clone(), rel))
     } else {
         None
@@ -431,17 +440,22 @@ fn function_param_types(gcx: Gcx<'_>, fid: FunctionId) -> Option<Vec<String>> {
 }
 
 /// Compute the parameter type strings of a [`ParameterList`] from the source map.
+///
+/// Types are normalized to their canonical ABI form so that `uint` and `uint256`
+/// (and `int` / `int256`) compare equal during overload matching.
 pub fn parameter_type_strings(gcx: Gcx<'_>, params: &ParameterList<'_>) -> Vec<String> {
     let sm = gcx.sess.source_map();
     params
         .vars
         .iter()
         .map(|v| {
-            sm.span_to_snippet(v.ty.span)
-                .unwrap_or_default()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
+            let raw = sm.span_to_snippet(v.ty.span).unwrap_or_default();
+            let t = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+            match t.as_str() {
+                "uint" => "uint256".to_string(),
+                "int" => "int256".to_string(),
+                _ => t,
+            }
         })
         .collect()
 }

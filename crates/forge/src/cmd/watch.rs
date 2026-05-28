@@ -414,6 +414,12 @@ pub async fn watch_doc(args: DocArgs) -> Result<()> {
                 paths.push(hp_path);
             }
         }
+        // Mirror vocs homepage resolution: <sources>/README.md takes priority over
+        // <root>/README.md.
+        let src_readme = config.src.join("README.md");
+        if src_readme.exists() {
+            paths.push(src_readme);
+        }
         let readme = root.join("README.md");
         if readme.exists() {
             paths.push(readme);

@@ -12,7 +12,7 @@ use solar::{
     },
     interface::{
         Ident,
-        source_map::{SourceFile, SourceMap},
+        source_map::{FileName, SourceFile, SourceMap},
     },
     sema::{Gcx, hir},
 };
@@ -32,7 +32,8 @@ pub fn source<'ast, 'gcx>(
     file: &Arc<SourceFile>,
     _sm: &SourceMap,
     rel_sol_path: &Path,
-    root: &Path,
+    abs_sol_path: &Path,
+    _root: &Path,
     gcx: Gcx<'gcx>,
     name_to_page: &NameToPage,
     git_url: Option<&str>,
@@ -61,7 +62,7 @@ pub fn source<'ast, 'gcx>(
                 let fname = format!("{kind_str}.{}.mdx", c.name.as_str());
                 let page_path = out_dir.join(&fname);
                 // Look up HIR contract id for inheritance/inheritdoc.
-                let hir_id = find_contract_id(gcx, c.name.as_str(), rel_sol_path, root);
+                let hir_id = find_contract_id(gcx, c.name.as_str(), abs_sol_path);
                 // Deployments only apply to non-abstract, non-interface, non-library contracts.
                 let contract_deployments = if matches!(c.kind, ContractKind::Contract) {
                     deployments.get(c.name.as_str()).map(Vec::as_slice).unwrap_or(&[])
@@ -1023,17 +1024,15 @@ const fn contract_kind_str(kind: ContractKind) -> &'static str {
 fn find_contract_id<'gcx>(
     gcx: Gcx<'gcx>,
     name: &str,
-    rel_sol_path: &Path,
-    root: &Path,
+    abs_sol_path: &Path,
 ) -> Option<hir::ContractId> {
-    let want = root.join(rel_sol_path);
     gcx.hir.contract_ids().find(|&id| {
         let c = gcx.hir.contract(id);
         if c.name.as_str() != name {
             return false;
         }
         match &gcx.hir.source(c.source).file.name {
-            solar::interface::source_map::FileName::Real(p) => p == &want,
+            FileName::Real(p) => p == abs_sol_path,
             _ => false,
         }
     })

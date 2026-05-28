@@ -202,6 +202,7 @@ impl DocBuilder {
                             &ast_source.file,
                             gcx.sess.source_map(),
                             &rel_path,
+                            &abs_path,
                             &root,
                             gcx,
                             &name_to_page,
@@ -292,11 +293,24 @@ impl DocBuilder {
                     .iter()
                     .filter_map(|p| p.strip_prefix("src").ok().map(|s| s.to_path_buf()))
                     .collect();
-                prune_stale_pages(&src_dir, &kept)?;
+                if src_dir.exists() {
+                    prune_dir(&src_dir, &src_dir, &kept)?;
+                }
                 HashSet::new()
             };
             let new_generated: HashSet<PathBuf> = all_rel.iter().cloned().collect();
             for stale in prev_generated.difference(&new_generated) {
+                let safe = !stale.is_absolute()
+                    && !stale.components().any(|c| {
+                        matches!(
+                            c,
+                            Component::ParentDir | Component::Prefix(_) | Component::RootDir
+                        )
+                    });
+                if !safe {
+                    warn!("forge doc: ignoring unsafe manifest entry '{}'", stale.display());
+                    continue;
+                }
                 let stale_abs = pages_dir.join(stale);
                 if stale_abs.is_file() {
                     debug!("pruning stale page {}", stale_abs.display());
@@ -336,16 +350,6 @@ impl DocBuilder {
             site_elapsed,
         })
     }
-}
-
-/// Recursively delete `.mdx` files under `pages_dir` whose path (relative to
-/// `pages_dir`) is not in `kept`. Empty directories left behind are removed.
-fn prune_stale_pages(pages_dir: &Path, kept: &HashSet<PathBuf>) -> eyre::Result<()> {
-    if !pages_dir.exists() {
-        return Ok(());
-    }
-    prune_dir(pages_dir, pages_dir, kept)?;
-    Ok(())
 }
 
 fn prune_dir(dir: &Path, pages_dir: &Path, kept: &HashSet<PathBuf>) -> eyre::Result<bool> {
