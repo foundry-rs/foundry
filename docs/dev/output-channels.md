@@ -141,7 +141,7 @@ Each row's status is one of:
 | `forge doc`            | (empty)                                              | n/a                                        | todo   |
 | `forge generate`       | (empty) or generated path                            | n/a                                        | todo   |
 | `forge soldeer`        | (empty)                                              | n/a                                        | todo   |
-| `forge remappings`     | One remapping per line                               | n/a                                        | todo   |
+| `forge remappings`     | One remapping per line                               | n/a                                        | migrated |
 | `forge compiler`       | Compiler info                                        | JSON                                       | todo   |
 | `forge verify-contract`| Verification GUID / URL                              | JSON                                       | todo   |
 
