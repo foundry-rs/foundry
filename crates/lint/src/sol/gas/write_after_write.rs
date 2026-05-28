@@ -35,22 +35,25 @@ impl<'hir> LateLintPass<'hir> for WriteAfterWrite {
     }
 }
 
+/// Whether control flow continues past this statement/block.
+#[derive(PartialEq, Eq)]
+enum Flow {
+    Continue,
+    Stop,
+}
+
 fn check_block<'hir>(
     ctx: &LintContext,
     hir: &'hir Hir<'hir>,
     block: Block<'hir>,
     pending: &mut HashMap<VariableId, Span>,
-) {
+) -> Flow {
     for stmt in block.stmts {
-        check_stmt(ctx, hir, stmt, pending);
-        // Stop at terminal statements; subsequent code is unreachable.
-        if matches!(
-            stmt.kind,
-            StmtKind::Return(_) | StmtKind::Revert(_) | StmtKind::Break | StmtKind::Continue
-        ) {
-            break;
+        if check_stmt(ctx, hir, stmt, pending) == Flow::Stop {
+            return Flow::Stop;
         }
     }
+    Flow::Continue
 }
 
 fn check_stmt<'hir>(
@@ -58,7 +61,7 @@ fn check_stmt<'hir>(
     hir: &'hir Hir<'hir>,
     stmt: &'hir Stmt<'hir>,
     pending: &mut HashMap<VariableId, Span>,
-) {
+) -> Flow {
     match &stmt.kind {
         StmtKind::Expr(expr) => {
             process_expr(ctx, hir, expr.peel_parens(), pending);
@@ -78,9 +81,11 @@ fn check_stmt<'hir>(
         StmtKind::Return(Some(expr)) => {
             collect_reads(ctx, hir, expr, pending);
             pending.clear();
+            return Flow::Stop;
         }
         StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {
             pending.clear();
+            return Flow::Stop;
         }
         StmtKind::Emit(expr) => {
             // Emit only logs; it doesn't invoke external code that could observe state.
@@ -98,24 +103,30 @@ fn check_stmt<'hir>(
         StmtKind::Revert(expr) => {
             collect_reads(ctx, hir, expr, pending);
             pending.clear();
+            return Flow::Stop;
         }
         // Branches and loops: recurse with a fresh map so intra-body pairs are still
         // caught, then clear the outer pending conservatively since any branch may
         // observe or skip the outer write.
+        // Propagate Stop only when both branches unconditionally stop (no else = Continue).
         StmtKind::If(cond, then_stmt, else_stmt) => {
             collect_reads(ctx, hir, cond, pending);
             pending.clear();
             let mut branch_pending = HashMap::default();
-            check_stmt(ctx, hir, then_stmt, &mut branch_pending);
+            let then_flow = check_stmt(ctx, hir, then_stmt, &mut branch_pending);
             if let Some(else_stmt) = else_stmt {
                 let mut else_pending = HashMap::default();
-                check_stmt(ctx, hir, else_stmt, &mut else_pending);
+                let else_flow = check_stmt(ctx, hir, else_stmt, &mut else_pending);
+                if then_flow == Flow::Stop && else_flow == Flow::Stop {
+                    return Flow::Stop;
+                }
             }
         }
         StmtKind::Loop(block, _) => {
             pending.clear();
             let mut loop_pending = HashMap::default();
             check_block(ctx, hir, *block, &mut loop_pending);
+            // A loop may execute zero times, so it never guarantees Stop for outer flow.
         }
         StmtKind::Try(try_stmt) => {
             collect_reads(ctx, hir, &try_stmt.expr, pending);
@@ -126,9 +137,9 @@ fn check_stmt<'hir>(
             }
         }
         // Nested blocks are sequential; share the same pending map so reads inside
-        // them properly invalidate outer writes.
+        // them properly invalidate outer writes. Propagate terminal flow outward.
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) => {
-            check_block(ctx, hir, *block, pending);
+            return check_block(ctx, hir, *block, pending);
         }
         // The placeholder `_` in a modifier body invokes the modified function, which
         // can freely read any storage variable. Conservatively clear everything.
@@ -141,6 +152,7 @@ fn check_stmt<'hir>(
             pending.clear();
         }
     }
+    Flow::Continue
 }
 
 /// Process an expression that appears as a statement, tracking writes and reads.
@@ -209,7 +221,7 @@ fn process_assignment_lhs<'hir>(
     match &lhs.peel_parens().kind {
         ExprKind::Tuple(exprs) => {
             for e in exprs.iter().flatten() {
-                process_assignment_lhs(ctx, hir, e, assign_span, pending);
+                process_assignment_lhs(ctx, hir, e, e.span, pending);
             }
         }
         _ => {

@@ -210,3 +210,83 @@ contract ModifierBad {
         _;
     }
 }
+
+// good: nested block return makes subsequent writes unreachable — no FP
+contract NestedReturn {
+    uint256 public x;
+
+    function nestedReturn(uint256 v) public {
+        { return; }
+        x = 1;
+        x = 2;
+    }
+
+    function bothBranchesExit(bool c, uint256 v) public {
+        if (c) return; else revert();
+        x = 1;
+        x = 2;
+    }
+
+    function nestedBreak(bool c, uint256 v) public {
+        while (c) {
+            { break; }
+            x = 1;
+            x = 2;
+        }
+    }
+
+    // bad (FP): solar does not yet lower inline assembly to HIR (TODO in solar),
+    // so the assembly statement is invisible and x = 1 appears overwritten.
+    function asmReadsX(uint256 v) public {
+        x = 1;
+        assembly { let z := sload(0) }
+        x = v;
+    }
+}
+
+// UX: tuple span should point at component `x`, not entire tuple LHS
+contract TupleSpanTest {
+    uint256 public x;
+    uint256 public y;
+
+    // bad: only the x component is dead; span should highlight `x`
+    function tuplePartial(uint256 v) public {
+        (x, y) = (1, 2);
+        x = v;
+    }
+}
+
+// Known false negatives (conservative design choices; documented for future updates)
+contract KnownFalseNegatives {
+    uint256 public x;
+    uint256 public y;
+
+    // FN: x = 1 is dead on both paths but the If arm clears outer pending conservatively.
+    function branchMiss(bool c, uint256 v) public {
+        x = 1;
+        if (c) { y = 2; }
+        x = v;
+    }
+
+    // FN: both branch writes are dead but branches are analyzed with fresh maps.
+    function bothBranchesAssign(bool c, uint256 v) public {
+        if (c) x = 1; else x = 2;
+        x = v;
+    }
+
+    // FN: short-circuit RHS clears pending to avoid FP in conditional path,
+    // which also drops the outer x = 1 even when && doesn't touch x.
+    function shortCircuitMiss(bool a, bool b) public {
+        x = 1;
+        bool z = a && b;
+        x = 2;
+    }
+
+    // FN: all calls clear pending (conservative re-entrancy assumption),
+    // so pure/view calls like abi.encode also suppress the WAW.
+    function pureCallMiss() public {
+        x = 1;
+        abi.encode(uint256(0));
+        x = 2;
+    }
+}
