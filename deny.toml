@@ -112,6 +112,7 @@ allow-git = [
     # Transitive dependency of Tempo
     "https://github.com/paradigmxyz/reth",
     "https://github.com/paradigmxyz/reth-core",
-    # Temporary: upstream OP crates until release is published.
-    "https://github.com/ethereum-optimism/optimism",
+    # Temporary: OP crates until upstream optimism bumps to revm 40.
+    "https://github.com/foundry-rs/optimism",
+    "https://github.com/foundry-rs/op-revm",
 ]

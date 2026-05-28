@@ -399,7 +399,7 @@ impl VerifyBytecodeArgs {
 
         trace!(ignore = ?self.ignore);
         // Check if `--ignore` is set to `creation`.
-        if !self.ignore.is_some_and(|b| b.is_creation()) {
+        if self.ignore.is_none_or(|b| !b.is_creation()) {
             // Compare creation code with locally built bytecode and `maybe_creation_code`.
             let match_type = crate::utils::match_bytecodes(
                 local_bytecode_vec.as_slice(),
@@ -433,7 +433,7 @@ impl VerifyBytecodeArgs {
             }
         }
 
-        if !self.ignore.is_some_and(|b| b.is_runtime()) {
+        if self.ignore.is_none_or(|b| !b.is_runtime()) {
             // Get contract creation block.
             let simulation_block = match self.block {
                 Some(BlockId::Number(BlockNumberOrTag::Number(block))) => block,

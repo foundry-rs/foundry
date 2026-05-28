@@ -107,6 +107,9 @@ impl VerificationContext {
 /// An abstraction for various verification providers such as etherscan, sourcify, blockscout
 #[async_trait]
 pub trait VerificationProvider {
+    /// Returns the provider type, used to assert the selected provider in tests.
+    fn provider_type(&self) -> VerificationProviderType;
+
     /// This should ensure the verify request can be prepared successfully.
     ///
     /// Caution: Implementers must ensure that this _never_ sends the actual verify request
@@ -228,17 +231,24 @@ impl VerificationProviderType {
         // 4. No explicit `--verifier` but ETHERSCAN_API_KEY is set: prefer Etherscan when the chain
         //    is supported; otherwise warn and fall through to the Sourcify default. See <https://github.com/foundry-rs/foundry/issues/10774>.
         //    Custom-Sourcify chains (e.g. Tempo) register Sourcify-compatible URLs under
-        //    etherscan_urls() and are excluded here even when a URL is present.
+        //    etherscan_urls() and are hard-excluded here regardless of whether a URL is present.
         if has_key {
             if let Some(chain) = chain
-                && (chain.etherscan_urls().is_none() || chain.is_custom_sourcify())
-                && !has_url
+                && (chain.is_custom_sourcify() || chain.etherscan_urls().is_none() && !has_url)
             {
-                sh_warn!(
-                    "ETHERSCAN_API_KEY is set but chain {chain} has no known Etherscan API URL. \
-                     Falling back to Sourcify. Pass --verifier-url <URL> or \
-                     `--verifier <provider>` to override."
-                )?;
+                if chain.is_custom_sourcify() {
+                    sh_warn!(
+                        "ETHERSCAN_API_KEY is set but chain {chain} uses a Sourcify-compatible \
+                         API. Falling back to Sourcify. Pass `--verifier sourcify` to suppress \
+                         this warning."
+                    )?;
+                } else {
+                    sh_warn!(
+                        "ETHERSCAN_API_KEY is set but chain {chain} has no known Etherscan API \
+                         URL. Falling back to Sourcify. Pass --verifier-url <URL> or \
+                         `--verifier <provider>` to override."
+                    )?;
+                }
                 // Fall through to branch 5 (Sourcify default) below.
             } else {
                 sh_eprintln!(
@@ -280,8 +290,10 @@ mod tests {
     #[test]
     fn etherscan_allows_unknown_chain_with_verifier_url() {
         let chain = Chain::from(3658348u64);
-        let res = VerificationProviderType::Etherscan.client(Some("key"), Some(chain), true, true);
-        assert!(res.is_ok());
+        let provider = VerificationProviderType::Etherscan
+            .client(Some("key"), Some(chain), true, true)
+            .unwrap();
+        assert_eq!(provider.provider_type(), VerificationProviderType::Etherscan);
     }
 
     #[test]
@@ -309,17 +321,33 @@ mod tests {
     #[test]
     fn explicit_etherscan_on_custom_sourcify_chain_with_url_is_ok() {
         let tempo = Chain::from(4217u64);
-        let res = VerificationProviderType::Etherscan.client(Some("key"), Some(tempo), true, true);
-        assert!(res.is_ok());
+        let provider = VerificationProviderType::Etherscan
+            .client(Some("key"), Some(tempo), true, true)
+            .unwrap();
+        assert_eq!(provider.provider_type(), VerificationProviderType::Etherscan);
     }
 
-    // Implicit ETHERSCAN_API_KEY on a custom-Sourcify chain must fall back to Sourcify, not error.
+    // Implicit ETHERSCAN_API_KEY on a supported chain selects Etherscan; on a custom-Sourcify
+    // chain it must fall back to Sourcify regardless of whether a --verifier-url is present.
     #[test]
-    fn implicit_etherscan_on_custom_sourcify_chain_falls_back_to_sourcify() {
-        let tempo = Chain::from(4217u64);
-        let res =
-            VerificationProviderType::Sourcify.client(Some("mykey"), Some(tempo), false, false);
-        assert!(res.is_ok(), "expected fallback to Sourcify, got error");
+    fn implicit_etherscan_custom_sourcify_chain_falls_back_to_sourcify() {
+        // Baseline: implicit key on a normal chain -> Etherscan.
+        let provider = VerificationProviderType::Sourcify
+            .client(Some("mykey"), Some(Chain::mainnet()), false, false)
+            .unwrap();
+        assert_eq!(provider.provider_type(), VerificationProviderType::Etherscan);
+
+        // Custom-Sourcify chain without URL -> Sourcify.
+        let provider = VerificationProviderType::Sourcify
+            .client(Some("mykey"), Some(Chain::from(4217u64)), false, false)
+            .expect("expected fallback to Sourcify, got error");
+        assert_eq!(provider.provider_type(), VerificationProviderType::Sourcify);
+
+        // Custom-Sourcify chain with URL -> still Sourcify (URL does not override the exclusion).
+        let provider = VerificationProviderType::Sourcify
+            .client(Some("mykey"), Some(Chain::from(4217u64)), true, false)
+            .expect("expected fallback to Sourcify, got error");
+        assert_eq!(provider.provider_type(), VerificationProviderType::Sourcify);
     }
 
     // Regression test for <https://github.com/foundry-rs/foundry/issues/10774>:
@@ -328,11 +356,16 @@ mod tests {
     // (Behavior is verified more strictly via `VerifierArgs::resolve` tests in `verify.rs`.)
     #[test]
     fn implicit_etherscan_unknown_chain_falls_back_to_sourcify() {
-        let chain = Chain::from(3658348u64);
-        let res =
-            VerificationProviderType::Sourcify.client(Some("mykey"), Some(chain), false, false);
-        if let Err(err) = res {
-            panic!("expected fallback to Sourcify, got error: {err}");
-        }
+        // Baseline: implicit key on a normal chain -> Etherscan.
+        let provider = VerificationProviderType::Sourcify
+            .client(Some("mykey"), Some(Chain::mainnet()), false, false)
+            .unwrap();
+        assert_eq!(provider.provider_type(), VerificationProviderType::Etherscan);
+
+        // Unknown chain: same call must fall back to Sourcify, not bail.
+        let provider = VerificationProviderType::Sourcify
+            .client(Some("mykey"), Some(Chain::from(3658348u64)), false, false)
+            .expect("expected fallback to Sourcify, got error");
+        assert_eq!(provider.provider_type(), VerificationProviderType::Sourcify);
     }
 }

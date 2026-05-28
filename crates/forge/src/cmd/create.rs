@@ -216,6 +216,7 @@ impl CreateArgs {
         // `<root>/tempo.lanes.toml`) and populate `self.tx.tempo.nonce_key` from the lane.
         // Must happen before `self.deploy(...)` so `TempoOpts::apply` picks up the nonce_key.
         let resolved_lane = resolve_lane(&mut self.tx.tempo, &config.root)?;
+        let expires_at = self.tx.tempo.resolve_expires();
 
         // Whether to broadcast the transaction or not
         let dry_run = !self.broadcast;
@@ -238,6 +239,7 @@ impl CreateArgs {
                 None,
                 Some(browser),
                 resolved_lane,
+                expires_at,
             )
             .await
         } else if self.unlocked {
@@ -255,6 +257,7 @@ impl CreateArgs {
                 None,
                 None,
                 resolved_lane,
+                expires_at,
             )
             .await
         } else if let Some(ak) = access_key {
@@ -276,6 +279,7 @@ impl CreateArgs {
                 Some((signer, ak)),
                 None,
                 resolved_lane,
+                expires_at,
             )
             .await
         } else {
@@ -300,6 +304,7 @@ impl CreateArgs {
                 None,
                 None,
                 resolved_lane,
+                expires_at,
             )
             .await
         }
@@ -392,6 +397,7 @@ impl CreateArgs {
         tempo_keychain: Option<(WalletSigner, TempoAccessKeyConfig)>,
         browser_signer: Option<BrowserSigner<N>>,
         resolved_lane: Option<ResolvedLane>,
+        expires_at: Option<u64>,
     ) -> Result<()>
     where
         N::TransactionRequest: FoundryTransactionBuilder<N> + serde::Serialize,
@@ -545,6 +551,10 @@ impl CreateArgs {
             }
 
             return Ok(());
+        }
+
+        if let Some(ts) = expires_at {
+            sh_println!("Transaction expires at unix timestamp {ts}")?;
         }
 
         let tempo_sponsor = self.tx.tempo.sponsor_config().await?;
