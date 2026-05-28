@@ -103,18 +103,16 @@ impl InvariantCampaignAggregator {
         let mut cases = Vec::new();
         let mut reverts = 0;
         let mut last_run_inputs = Vec::new();
-        let mut last_run_end = None;
         let mut gas_report_traces = Vec::new();
         let mut line_coverage = None;
         let mut metrics = HashMap::default();
-        let mut failed_corpus_replays = 0;
+        let failed_corpus_replays = self.outputs[0].result.failed_corpus_replays;
         let mut optimization_best_value = None;
         let mut optimization_best_sequence = Vec::new();
         let mut optimization_best_key = None;
 
         for output in self.outputs {
             let plan = output.plan;
-            let plan_end = worker_range_end(plan)?;
             let run_key =
                 RunChoice { first_global_run: plan.first_global_run, worker_id: plan.worker_id };
             let result = output.result;
@@ -123,16 +121,10 @@ impl InvariantCampaignAggregator {
             merge_handler_errors(&mut handler_errors, result.handler_errors);
             cases.extend(result.cases);
             reverts += result.reverts;
-            if last_run_end.is_none_or(|end| plan_end > end) {
-                last_run_end = Some(plan_end);
-                last_run_inputs = result.last_run_inputs;
-            }
+            last_run_inputs = result.last_run_inputs;
             gas_report_traces.extend(result.gas_report_traces);
             HitMaps::merge_opt(&mut line_coverage, result.line_coverage);
             merge_metrics(&mut metrics, result.metrics);
-            if plan.first_global_run == 0 {
-                failed_corpus_replays = result.failed_corpus_replays;
-            }
             merge_optimization(
                 &mut optimization_best_value,
                 &mut optimization_best_sequence,
