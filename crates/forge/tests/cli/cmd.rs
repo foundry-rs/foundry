@@ -53,6 +53,13 @@ Display options:
       --json
           Format log messages as JSON
 
+      --machine
+          Activate the agent contract: disables color and wraps CLI-runtime exits (parse / usage /
+          help / version) in a structured envelope. Per-command machine output (declared
+          `output_mode`, progress and prompt suppression, canonical exit codes) is adopted
+          incrementally — see `docs/agents/spec.md` §10. Mutually exclusive with `--json` and `--md`
+          to keep machine-mode output unambiguous
+
       --md
           Format log messages as Markdown
 
@@ -1443,6 +1450,29 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+forgetest!(snapshot_reports_when_snap_file_is_not_written, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "FailingSnapshot.t.sol",
+        r#"
+import "./test.sol";
+contract FailingSnapshotTest is DSTest {
+    function testSnapshotFailure() public {
+        assertTrue(false);
+    }
+}
+   "#,
+    );
+
+    let assert = cmd.args(["snapshot", "--snap", "failed.snap"]).assert_failure();
+    let output = assert.get_output();
+    assert!(output.stderr_lossy().contains(
+        "Error: gas snapshot file \"failed.snap\" was not written because the test run failed"
+    ));
+    assert!(!prj.root().join("failed.snap").exists());
 });
 
 // test that `forge build` does not print `(with warnings)` if file path is ignored
@@ -4172,4 +4202,25 @@ Bindings have been generated to [..]"#]]);
         .expect("Failed to run cargo build");
 
     assert!(out.status.success(), "Cargo build should succeed");
+});
+
+// `forge flatten -o <path>` writes the file and emits its status string to stderr,
+// keeping stdout empty so agents can pipe the command without diagnostics.
+forgetest!(flatten_output_writes_status_to_stderr, |prj, cmd| {
+    prj.add_source(
+        "Counter",
+        r#"contract Counter { uint256 public n; function inc() external { n += 1; } }"#,
+    );
+
+    let out = prj.root().join("flat.sol");
+    cmd.args(["flatten", "src/Counter.sol", "-o"])
+        .arg(&out)
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Flattened file written at [..]flat.sol
+
+"#]]);
+
+    assert!(out.exists(), "flattened file should have been written");
 });

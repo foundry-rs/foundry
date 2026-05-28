@@ -790,7 +790,7 @@ pub(crate) fn handle_expect_emit<FEN: FoundryEvmNetwork>(
             && let Some(expected_log) = &expected_emit.log
             && checks_topics_and_data(expected_emit.checks, expected_log, log)
             // Check revert address 
-            && (expected_emit.address.is_none() || expected_emit.address == Some(log.address))
+            && (expected_emit.address.is_none_or(|address| address == log.address))
         {
             if let Some(interpreter) = &mut interpreter {
                 // This event was emitted but we expected it NOT to be (count=0)

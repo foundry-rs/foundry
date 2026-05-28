@@ -11,8 +11,9 @@ use alloy_primitives::{Address, hex};
 use eyre::{Context, Result};
 use forge_fmt::FormatterConfig;
 use foundry_cli::utils::fetch_abi_from_etherscan;
-use foundry_config::RpcEndpointUrl;
+use foundry_config::{Config, RpcEndpointUrl};
 use foundry_evm::{
+    core::evm::FoundryEvmNetwork,
     decode::decode_console_logs,
     traces::{
         CallTraceDecoder, CallTraceDecoderBuilder, TraceKind, decode_trace_arena,
@@ -48,8 +49,8 @@ pub const CHISEL_CHAR: &str = "⚒️";
 
 /// Chisel input dispatcher
 #[derive(Debug)]
-pub struct ChiselDispatcher {
-    pub session: ChiselSession,
+pub struct ChiselDispatcher<FEN: FoundryEvmNetwork> {
+    pub session: ChiselSession<FEN>,
     pub helper: SolidityHelper,
 }
 
@@ -59,9 +60,9 @@ pub fn format_source(source: &str, config: FormatterConfig) -> eyre::Result<Stri
     Ok(formatted)
 }
 
-impl ChiselDispatcher {
+impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
     /// Associated public function to create a new Dispatcher instance
-    pub fn new(config: SessionSourceConfig) -> eyre::Result<Self> {
+    pub fn new(config: SessionSourceConfig<FEN>) -> eyre::Result<Self> {
         let session = ChiselSession::new(config)?;
         Ok(Self { session, helper: Default::default() })
     }
@@ -72,12 +73,12 @@ impl ChiselDispatcher {
     }
 
     /// Returns the [`SessionSource`].
-    pub const fn source(&self) -> &SessionSource {
+    pub const fn source(&self) -> &SessionSource<FEN> {
         &self.session.source
     }
 
     /// Returns the [`SessionSource`].
-    pub const fn source_mut(&mut self) -> &mut SessionSource {
+    pub const fn source_mut(&mut self) -> &mut SessionSource<FEN> {
         &mut self.session.source
     }
 
@@ -154,7 +155,7 @@ impl ChiselDispatcher {
     /// Decodes traces in the given [`ChiselResult`].
     // TODO: Add `known_contracts` back in.
     pub async fn decode_traces(
-        session_config: &SessionSourceConfig,
+        session_config: &SessionSourceConfig<FEN>,
         result: &mut ChiselResult,
         // known_contracts: &ContractsByArtifact,
     ) -> eyre::Result<CallTraceDecoder> {
@@ -199,7 +200,7 @@ impl ChiselDispatcher {
         Ok(())
     }
 
-    async fn execute_and_replace(&mut self, mut new_source: SessionSource) -> Result<()> {
+    async fn execute_and_replace(&mut self, mut new_source: SessionSource<FEN>) -> Result<()> {
         let mut res = new_source.execute().await?;
         let failed = !res.success;
         if new_source.config.traces || failed {
@@ -231,7 +232,7 @@ impl ChiselDispatcher {
 }
 
 /// [`ChiselCommand`] implementations.
-impl ChiselDispatcher {
+impl<FEN: FoundryEvmNetwork> ChiselDispatcher<FEN> {
     /// Dispatches a [`ChiselCommand`].
     pub async fn dispatch_command(&mut self, cmd: ChiselCommand) -> Result<ControlFlow<()>> {
         match cmd {
@@ -292,18 +293,23 @@ impl ChiselDispatcher {
         }
 
         let new_session = match id {
-            "latest" => ChiselSession::latest(),
-            id => ChiselSession::load(id),
+            "latest" => ChiselSession::<FEN>::latest(),
+            id => ChiselSession::<FEN>::load(id),
         }
         .wrap_err("failed to load session")?;
 
+        ensure_loaded_session_network_matches(
+            &self.session.source.config.foundry_config,
+            &new_session.source.config.foundry_config,
+            id,
+        )?;
         new_session.source.build()?;
         self.session = new_session;
         sh_println!("Loaded Chisel session! (ID = {})", self.session.id.as_ref().unwrap())
     }
 
     pub(crate) fn list_sessions(&self) -> Result<()> {
-        let sessions = ChiselSession::get_sessions()?;
+        let sessions = ChiselSession::<FEN>::get_sessions()?;
         if sessions.is_empty() {
             eyre::bail!("No sessions found. Use the `!save` command to save a session.");
         }
@@ -325,7 +331,7 @@ impl ChiselDispatcher {
     }
 
     pub(crate) fn clear_cache(&mut self) -> Result<()> {
-        ChiselSession::clear_cache().wrap_err("failed to clear cache")?;
+        ChiselSession::<FEN>::clear_cache().wrap_err("failed to clear cache")?;
         self.session.id = None;
         sh_println!("Cleared chisel cache!")
     }
@@ -506,6 +512,26 @@ impl ChiselDispatcher {
     }
 }
 
+fn config_network_name(config: &Config) -> &'static str {
+    config.networks.active_network_name().unwrap_or("ethereum")
+}
+
+fn ensure_loaded_session_network_matches(
+    current: &Config,
+    loaded: &Config,
+    id: &str,
+) -> Result<()> {
+    let current_network = config_network_name(current);
+    let loaded_network = config_network_name(loaded);
+    if current_network != loaded_network {
+        eyre::bail!(
+            "Chisel session `{id}` was saved for network `{loaded_network}`, but the current \
+             network is `{current_network}`. Rerun with `--network {loaded_network}` to load it.",
+        );
+    }
+    Ok(())
+}
+
 /// Preprocesses addresses to ensure they are correctly checksummed and returns whether the input
 /// only contained trivia (comments, whitespace).
 fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
@@ -535,6 +561,45 @@ fn preprocess(input: &str) -> (bool, Cow<'_, str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn config_with_network(network: Option<&str>) -> Config {
+        let mut config = Config::default();
+        if let Some(network) = network {
+            config.networks = serde_json::from_value(serde_json::json!({
+                "network": network,
+                "celo": false,
+                "bypass_prevrandao": false,
+            }))
+            .unwrap();
+        }
+        config
+    }
+
+    #[test]
+    fn config_network_name_defaults_to_ethereum() {
+        assert_eq!(config_network_name(&Config::default()), "ethereum");
+    }
+
+    #[test]
+    fn ensure_loaded_session_network_matches_rejects_different_network() {
+        let current = config_with_network(None);
+        let loaded = config_with_network(Some("tempo"));
+
+        let err = ensure_loaded_session_network_matches(&current, &loaded, "42").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Chisel session `42` was saved for network `tempo`, but the current network is \
+             `ethereum`. Rerun with `--network tempo` to load it."
+        );
+    }
+
+    #[test]
+    fn ensure_loaded_session_network_matches_accepts_same_network() {
+        let current = config_with_network(Some("tempo"));
+        let loaded = config_with_network(Some("tempo"));
+
+        ensure_loaded_session_network_matches(&current, &loaded, "42").unwrap();
+    }
 
     #[test]
     fn test_trivia() {
