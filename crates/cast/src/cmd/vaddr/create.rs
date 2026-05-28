@@ -11,7 +11,7 @@ use alloy_primitives::{Address, B256};
 use alloy_signer::Signer;
 use eyre::Result;
 use foundry_cli::{
-    json::{print_json_object, print_json_success},
+    json::print_json_success,
     utils::{LoadConfig, get_chain},
 };
 use foundry_common::{provider::ProviderBuilder, shell};
@@ -133,7 +133,7 @@ Master ID:         {}",
     register(owner, output.salt, send_tx, tx_opts).await?;
 
     if shell::is_json() {
-        print_json_object(payload)?;
+        print_json_success(payload)?;
     }
 
     Ok(())
