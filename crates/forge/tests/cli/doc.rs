@@ -455,6 +455,49 @@ interface IMultiline {
     );
 });
 
+// Test that overload matching normalizes uint/int aliases inside compound types so that
+// `Base.foo(uint256[] calldata)` is correctly matched by `Child.foo(uint[] calldata)`.
+forgetest_init!(inheritdoc_overload_normalizes_uint_aliases_in_arrays, |prj, cmd| {
+    prj.add_source(
+        "IAlias.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+interface IAlias {
+    /// @notice Process values
+    /// @param values The input array
+    function process(uint256[] calldata values) external;
+}
+"#,
+    );
+
+    prj.add_source(
+        "Alias.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./IAlias.sol";
+
+contract Alias is IAlias {
+    /// @inheritdoc IAlias
+    function process(uint[] calldata values) external {}
+}
+"#,
+    );
+
+    cmd.args(["doc"]).assert_success();
+
+    let doc_path = prj.root().join("docs/src/pages/src/contract.Alias.mdx");
+    let content = std::fs::read_to_string(&doc_path).unwrap();
+
+    assert!(
+        content.contains("Process values"),
+        "@inheritdoc with uint[] calldata should match uint256[] calldata in base, found:\n{content}"
+    );
+});
+
 // Test that @inheritdoc resolves docs from a deeply inherited chain
 // (Base inherits from an interface without redeclaring NatSpec).
 forgetest_init!(inheritdoc_resolves_deep_chain, |prj, cmd| {

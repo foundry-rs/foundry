@@ -397,7 +397,9 @@ pub fn resolve_inheritdoc_var(
                     if f.name.map(|n| n.as_str() == var_name).unwrap_or(false)
                         && function_param_types(gcx, fid).map(|p| p.is_empty()).unwrap_or(false)
                         && let Some(doc) = extract_inherited_doc(gcx, fid)
-                        && (!doc.notices.is_empty() || !doc.devs.is_empty() || !doc.returns.is_empty())
+                        && (!doc.notices.is_empty()
+                            || !doc.devs.is_empty()
+                            || !doc.returns.is_empty())
                     {
                         return Some(doc);
                     }
@@ -469,13 +471,45 @@ pub fn parameter_type_strings(gcx: Gcx<'_>, params: &ParameterList<'_>) -> Vec<S
         .map(|v| {
             let raw = sm.span_to_snippet(v.ty.span).unwrap_or_default();
             let t = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-            match t.as_str() {
-                "uint" => "uint256".to_string(),
-                "int" => "int256".to_string(),
-                _ => t,
-            }
+            normalize_sol_type(&t)
         })
         .collect()
+}
+
+/// Canonicalize Solidity type aliases so that e.g. `uint[]` and `uint256[]`
+/// compare equal during overload matching.
+///
+/// Replaces every occurrence of the bare alias tokens `uint` / `int` (not
+/// followed by a digit) with their canonical ABI equivalents `uint256` /
+/// `int256`.
+fn normalize_sol_type(t: &str) -> String {
+    // Walk char-by-char and replace `uint` / `int` that are not followed by a
+    // digit (i.e. are bare aliases, not `uint8`, `uint256`, etc.).
+    let bytes = t.as_bytes();
+    let len = bytes.len();
+    let mut out = String::with_capacity(len + 8);
+    let mut i = 0;
+    while i < len {
+        // Try to match the longer alias first (`uint` before `int`) to avoid
+        // a prefix match of `int` inside `uint`.
+        if bytes[i..].starts_with(b"uint")
+            && !bytes.get(i + 4).copied().map(|b| b.is_ascii_digit()).unwrap_or(false)
+        {
+            out.push_str("uint256");
+            i += 4;
+        } else if bytes[i..].starts_with(b"int")
+            && !bytes.get(i + 3).copied().map(|b| b.is_ascii_digit()).unwrap_or(false)
+        {
+            out.push_str("int256");
+            i += 3;
+        } else if let Some(ch) = t[i..].chars().next() {
+            out.push(ch);
+            i += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    out
 }
 
 fn extract_inherited_doc(gcx: Gcx<'_>, fid: FunctionId) -> Option<InheritedDoc> {
