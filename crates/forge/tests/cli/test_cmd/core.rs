@@ -99,8 +99,12 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 // `forge --machine test` emits NDJSON: per-test events, suite_finished
 // events, terminating in a success envelope. Exercises the canonical
-// passing-tests path with a small fixture suite.
+// passing-tests path with a small fixture suite and asserts the contract
+// shape (schema_id / command_id / RFC 3339 ts), per-suite ordering
+// (`test_result*` then `suite_finished` then no more `test_result` for
+// that suite), and the terminal envelope payload.
 forgetest_init!(machine_mode_emits_ndjson_stream, |prj, cmd| {
+    use std::collections::HashSet;
     prj.add_test(
         "MachinePass.t.sol",
         r#"
@@ -118,17 +122,39 @@ contract MachinePassTest is Test {
     assert!(lines.len() >= 2, "expected stream + envelope lines, got: {stdout}");
 
     // Every record parses as JSON and stream events carry the spec fields.
+    // Per-suite ordering: `test_result`s for a suite all precede that
+    // suite's `suite_finished`. Once `suite_finished` for a contract has
+    // fired, no further `test_result` may target that contract.
     let mut saw_test_result = false;
     let mut saw_suite_finished = false;
+    let mut closed_suites: HashSet<String> = HashSet::new();
     for line in &lines[..lines.len() - 1] {
         let v: Value = serde_json::from_str(line)
             .unwrap_or_else(|e| panic!("non-json stream line: {line}: {e}"));
         assert_eq!(v["schema_id"], "foundry:forge.test.event@v1");
         assert_eq!(v["command_id"], "forge.test");
-        assert!(v["ts"].is_string());
+        // `ts` must round-trip through RFC 3339 — agents pin this contract.
+        let ts = v["ts"].as_str().unwrap_or_else(|| panic!("missing ts on line: {line}"));
+        chrono::DateTime::parse_from_rfc3339(ts)
+            .unwrap_or_else(|e| panic!("ts `{ts}` not RFC 3339 on line {line}: {e}"));
+        let contract = v["contract"].as_str().unwrap_or_else(|| panic!("missing contract: {line}"));
         match v["kind"].as_str().unwrap_or("") {
-            "test_result" => saw_test_result = true,
-            "suite_finished" => saw_suite_finished = true,
+            "test_result" => {
+                assert!(
+                    !closed_suites.contains(contract),
+                    "test_result for `{contract}` after its suite_finished: {line}"
+                );
+                saw_test_result = true;
+            }
+            "suite_finished" => {
+                assert!(
+                    closed_suites.insert(contract.to_string()),
+                    "duplicate suite_finished for `{contract}`: {line}"
+                );
+                saw_suite_finished = true;
+            }
+            // `warning` is allowed inter-test under the spec; nothing to assert here.
+            "warning" => {}
             other => panic!("unexpected event kind `{other}` on line: {line}"),
         }
     }

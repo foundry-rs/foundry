@@ -350,11 +350,14 @@ impl TestArgs {
         .filter_map(|(name, on)| on.then_some(name))
         .collect::<Vec<_>>();
         if !unsupported.is_empty() {
-            foundry_cli::machine::bail_machine_usage(format!(
-                "`forge test` under `--machine` does not yet support {}; \
-                 run without `--machine` or omit those flags.",
-                unsupported.join(", ")
-            ));
+            foundry_cli::machine::bail_machine_usage_with_details(
+                format!(
+                    "`forge test` under `--machine` does not yet support {}; \
+                     run without `--machine` or omit those flags.",
+                    unsupported.join(", ")
+                ),
+                serde_json::json!({ "unsupported_flags": unsupported }),
+            );
         }
         Ok(())
     }

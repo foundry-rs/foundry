@@ -169,13 +169,27 @@ fn finalize_test_machine_mode(outcome: TestOutcome, wall_clock: std::time::Durat
     let summary = TestSummaryData::from_outcome(&outcome, wall_clock);
     let warnings = aggregate_test_warnings(&outcome);
 
+    // `--allow-failure` opts into "test failures don't fail the command".
+    // Preserve that legacy contract under `--machine`: emit a success
+    // envelope and exit 0 even if `summary.failed > 0`. Agents that need to
+    // detect tolerated failures inspect `data.failed` on the success
+    // envelope; the contract is documented on `ExitCode::Success` in
+    // `crates/forge/src/introspect.rs`.
     if outcome.allow_failure || outcome.failed() == 0 {
         print_json(&JsonEnvelope::success_with_warnings(summary, warnings))?;
         return Ok(());
     }
-    let details = serde_json::to_value(&summary).unwrap_or(serde_json::Value::Null);
-    let message =
-        format!("{} test(s) failed across {} suite(s)", outcome.failed(), outcome.results.len());
+    // `TestSummaryData` is `usize` + `u128`; serialization is infallible.
+    // Use `expect` so any future shape change that breaks this invariant
+    // fails loudly instead of silently dropping the details to null.
+    let details = serde_json::to_value(&summary).expect("TestSummaryData serialization");
+    let failing_suites = outcome.results.values().filter(|s| s.failed() > 0).count();
+    let message = format!(
+        "{} test(s) failed across {} failing suite(s) (out of {} ran)",
+        outcome.failed(),
+        failing_suites,
+        outcome.results.len(),
+    );
     let mut envelope = JsonEnvelope::error(
         JsonMessage::error(foundry_cli::diagnostic::test::FAILED, message).with_details(details),
     );

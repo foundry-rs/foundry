@@ -208,12 +208,61 @@ Stream commands write one JSON object per line on stdout. Each record carries:
 - `schema_id` — the event-schema id (e.g. `foundry:forge.test.event@v1`)
 - `command_id` — the emitting command (e.g. `forge.test`)
 - `kind` — record kind (per-event-schema enum)
-- `ts` — RFC 3339 timestamp
+- `ts` — RFC 3339 timestamp, UTC, millisecond precision (e.g.
+  `2026-05-28T17:15:42.123Z`). Fixed-width substring; safe for regex pinning
+  and log search.
 - additional kind-specific fields
 
 A stream may end with a single terminal `JsonEnvelope` record on the same
 stream. Consumers MUST tolerate streams that end without it (e.g. on signal
 termination).
+
+### Per-command event ordering
+
+For each per-command event schema (e.g. `foundry:forge.test.event@v1`),
+each grouping unit (suite for `forge.test`, simulation phase for
+`forge.script`, etc.) emits records in this order:
+
+1. zero or more child records (e.g. `test_result`)
+2. zero or more non-terminal annotations on that group (e.g. `warning`)
+3. exactly one terminator record for the group (e.g. `suite_finished`)
+
+After a group's terminator, no more records targeting that group may be
+emitted. Groups themselves are not ordered against each other; agents
+should key on the group identifier in the payload (e.g. `contract`) when
+correlating per-group records.
+
+### Warning duality
+
+When a command surfaces a warning that is also relevant to the terminal
+outcome, the warning is emitted **twice**:
+
+1. as a per-suite `warning` stream event with `kind: "warning"` and the
+   per-event `code` (e.g. `test.warning`) — for real-time visibility
+2. as an entry in the terminal envelope's `warnings[]` — for the
+   end-of-run summary
+
+Both surfaces carry the same `code`/`message`/`details` for the same logical
+warning. Agents consuming both surfaces should de-duplicate by
+`(suite, message)`. The terminal envelope's `warnings[]` is the
+authoritative aggregated set.
+
+### Concrete shapes (informative, `@v1`)
+
+The wire contract is the schema id and the field set documented per
+command in [`crates/forge/src/introspect.rs`](../../crates/forge/src/introspect.rs)
+and the equivalent registry files. The current `forge.test` event payloads
+under `foundry:forge.test.event@v1`:
+
+- `kind: "test_result"` — `{ contract, name, status, reason?, duration_ms }`
+  with `status ∈ { "passed", "failed", "skipped" }`.
+- `kind: "warning"` — `{ contract, code, message }`.
+- `kind: "suite_finished"` — `{ contract, passed, failed, skipped, duration_ms }`.
+
+The terminal envelope payload under `foundry:forge.test@v1`:
+`{ suites, passed, failed, skipped, duration_ms }`. When `--allow-failure`
+tolerated failures, `success: true` and `data.failed` may be non-zero — see
+the `Success` exit-code description on the per-command introspection.
 
 ---
 

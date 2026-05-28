@@ -141,8 +141,11 @@ impl JsonMessage {
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     let s = to_string(value)?;
     let mut shell = foundry_common::shell::Shell::get();
-    writeln!(shell.out(), "{s}")?;
-    shell.out().flush()?;
+    // Bind `out()` once so write and flush target the same writer; defensive
+    // against any future `out()` impl that returns a fresh wrapper.
+    let out = shell.out();
+    writeln!(out, "{s}")?;
+    out.flush()?;
     Ok(())
 }
 
@@ -151,18 +154,23 @@ pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
 /// Carries the per-record fields required by `docs/agents/spec.md` §6
 /// (`schema_id`, `command_id`, `kind`, `ts`) and flattens the kind-specific
 /// payload into the same object.
+///
+/// Fields are crate-private so the only construction paths are
+/// [`StreamRecord::new`] and [`print_stream_record`], which guarantee the
+/// `ts` invariant (RFC 3339 with millisecond precision).
 #[derive(Clone, Debug, Serialize)]
 pub struct StreamRecord<T> {
-    pub schema_id: &'static str,
-    pub command_id: &'static str,
-    pub kind: &'static str,
-    /// RFC 3339 timestamp.
-    pub ts: String,
+    pub(crate) schema_id: &'static str,
+    pub(crate) command_id: &'static str,
+    pub(crate) kind: &'static str,
+    /// RFC 3339 timestamp with millisecond precision, UTC. Fixed-width
+    /// substring keeps stream parsers and log search regexes stable.
+    pub(crate) ts: String,
     #[serde(flatten)]
-    pub payload: T,
+    pub(crate) payload: T,
 }
 
-impl<T: Serialize> StreamRecord<T> {
+impl<T> StreamRecord<T> {
     /// Build a record stamped with the current UTC time.
     pub fn new(
         schema_id: &'static str,
@@ -170,7 +178,13 @@ impl<T: Serialize> StreamRecord<T> {
         kind: &'static str,
         payload: T,
     ) -> Self {
-        Self { schema_id, command_id, kind, ts: chrono::Utc::now().to_rfc3339(), payload }
+        Self {
+            schema_id,
+            command_id,
+            kind,
+            ts: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            payload,
+        }
     }
 }
 
