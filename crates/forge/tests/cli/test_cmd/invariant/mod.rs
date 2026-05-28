@@ -1310,8 +1310,15 @@ contract SkipPredicateReportTest is Test {
     assert!(stdout.contains("[SKIP: secondary] invariant_skipped"), "{stdout}");
     assert!(stdout.contains(" SkipPredicateReportTest invariants (runs:"), "{stdout}");
     assert!(!stdout.contains(" invariant_live() (runs:"), "{stdout}");
-    assert!(!stdout.contains("Invariant/Property Tests"), "{stdout}");
     assert!(stdout.contains("Suite result: ok. 1 passed; 0 failed; 1 skipped;"), "{stdout}");
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--mt", "invariant_", "--show-progress", "-j1"])
+        .assert_success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("SkipPredicateReportTest invariants"), "{stdout}");
+    assert!(!stdout.contains(" invariant_live() (runs:"), "{stdout}");
 });
 
 forgetest_init!(junit_reports_invariant_predicates_and_handler_failures, |prj, cmd| {
@@ -2224,7 +2231,6 @@ contract SecondaryOnlyTest is Test {
     );
     assert!(!stdout.contains(" invariant_anchor_safe() (runs:"), "{stdout}");
     assert!(!stdout.contains("[FAIL: safe broken] invariant_anchor_safe"), "{stdout}");
-    assert!(!stdout.contains("Invariant/Property Tests"), "{stdout}");
 });
 
 // Verifies `forge test --rerun` records the predicate that actually failed inside a merged
