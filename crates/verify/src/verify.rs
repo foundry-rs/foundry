@@ -72,6 +72,9 @@ impl VerifierArgs {
     }
 
     /// Makes a lightweight network call to validate that credentials are accepted by the verifier.
+    ///
+    /// `api_key` must be the already-merged API key (CLI `--verifier-api-key` takes
+    /// precedence over config), as returned by [`Self::resolve_api_key`].
     pub async fn check_credentials(
         &self,
         api_key: Option<&str>,
@@ -82,8 +85,7 @@ impl VerifierArgs {
         match resolved {
             VerificationProviderType::Etherscan
             | VerificationProviderType::Blockscout
-            | VerificationProviderType::Oklink
-            | VerificationProviderType::Custom => {
+            | VerificationProviderType::Oklink => {
                 let etherscan_opts =
                     EtherscanOpts { key: api_key.map(str::to_owned), chain: Some(chain) };
                 let client = EtherscanVerificationProvider::default().client(
@@ -107,28 +109,64 @@ impl VerifierArgs {
                             | EtherscanError::ContractNotFound(_),
                         ),
                     ) => {}
+                    Ok(Err(EtherscanError::InvalidApiKey)) => {
+                        eyre::bail!("verifier credential check failed: invalid API key")
+                    }
                     Ok(Err(
-                        EtherscanError::InvalidApiKey
-                        | EtherscanError::InvalidApiVersion
-                        | EtherscanError::BlockedByCloudflare
-                        | EtherscanError::CloudFlareSecurityChallenge,
+                        // Transient CDN/rate issues: don't block the deploy.
+                        EtherscanError::BlockedByCloudflare
+                        | EtherscanError::CloudFlareSecurityChallenge
+                        | EtherscanError::RateLimitExceeded
+                        // Version mismatch is a client-library issue, not a bad key.
+                        | EtherscanError::InvalidApiVersion,
                     )) => {
-                        eyre::bail!("verifier credential check failed: invalid API key or blocked")
+                        sh_warn!("verifier credential check inconclusive, proceeding anyway")?;
                     }
                     Ok(Err(e)) => {
                         sh_warn!("verifier credential check failed: {e}, proceeding anyway")?;
                     }
                 }
             }
-            VerificationProviderType::Sourcify => {
-                // Only probe custom URLs; the default public endpoint is assumed reachable.
+            VerificationProviderType::Custom => {
+                // Custom verifiers may not return Etherscan-shaped responses, so a raw HTTP
+                // probe is more reliable than the typed client. Treat 401/403 as auth failures.
                 if let Some(url) = &self.verifier_url {
-                    reqwest::Client::new()
+                    match reqwest::Client::new()
                         .get(url)
                         .timeout(Duration::from_secs(10))
                         .send()
                         .await
-                        .map_err(|e| eyre::eyre!("Sourcify URL `{url}` is not reachable: {e}"))?;
+                    {
+                        Err(e) => {
+                            sh_warn!("verifier credential check failed: {e}, proceeding anyway")?;
+                        }
+                        Ok(resp) => {
+                            let status = resp.status();
+                            if status == reqwest::StatusCode::UNAUTHORIZED
+                                || status == reqwest::StatusCode::FORBIDDEN
+                            {
+                                eyre::bail!(
+                                    "verifier credential check failed: \
+                                     invalid API key (HTTP {status})"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            VerificationProviderType::Sourcify => {
+                // Only probe custom URLs; the default public endpoint is assumed reachable.
+                if let Some(url) = &self.verifier_url {
+                    let status = reqwest::Client::new()
+                        .get(url)
+                        .timeout(Duration::from_secs(10))
+                        .send()
+                        .await
+                        .map_err(|e| eyre::eyre!("Sourcify URL `{url}` is not reachable: {e}"))?
+                        .status();
+                    if !status.is_success() && status != reqwest::StatusCode::NOT_FOUND {
+                        sh_warn!("Sourcify URL `{url}` returned HTTP {status}, proceeding anyway")?;
+                    }
                 }
             }
         }

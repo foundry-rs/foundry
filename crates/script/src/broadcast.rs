@@ -917,16 +917,21 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
     pub async fn verify_preflight_check(&self) -> Result<()> {
         for sequence in self.sequence.sequences() {
             let chain: Chain = sequence.chain.into();
-            // Resolve the API key: CLI arg first, then config.
-            let etherscan_key = self.script_config.config.get_etherscan_api_key(Some(chain));
+            // Resolve the API key: CLI arg first, then per-chain config, then global fallback.
+            let etherscan_key = self
+                .script_config
+                .config
+                .get_etherscan_api_key(Some(chain))
+                .or_else(|| self.script_config.config.etherscan_api_key.clone());
             let api_key =
                 self.args.verifier.resolve_api_key(etherscan_key.as_deref()).map(str::to_owned);
             let has_url = self.args.verifier.verifier_url.is_some();
             let is_explicit = self.args.verifier.is_explicitly_set();
-            // Presence check: validates required credentials exist before broadcasting.
+            // Presence check: use the fully-resolved provider type so that implicit Etherscan
+            // selection (key from env/config, no explicit --verifier flag) is validated too.
             self.args
                 .verifier
-                .effective_type()
+                .resolve(api_key.as_deref(), Some(chain))
                 .client(api_key.as_deref(), Some(chain), has_url, is_explicit)
                 .wrap_err_with(|| {
                     format!("Verification preflight check failed for chain {}", sequence.chain)

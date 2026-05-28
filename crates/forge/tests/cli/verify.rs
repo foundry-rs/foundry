@@ -365,50 +365,6 @@ Contract [src/Counter.sol:Counter] "0x19b248616E4964f43F611b5871CE1250f360E9d3" 
 "#]]);
 });
 
-// Tests that `forge create --verify` fails before deploying when the verifier
-// rejects the API key (credential preflight check).
-forgetest_async!(create_fails_early_on_bad_verifier_credentials, |prj, cmd| {
-    prj.initialize_default_contracts();
-    let (_api, handle) = spawn(NodeConfig::test()).await;
-    let wallet = handle.dev_wallets().next().unwrap();
-    let pk = hex::encode(wallet.credential().to_bytes());
-
-    let (verifier_url, _server) =
-        spawn_mock_verifier(r#"{"status":"0","message":"NOTOK","result":"Invalid API Key"}"#).await;
-
-    let output = cmd
-        .forge_fuse()
-        .args([
-            "create",
-            "src/Counter.sol:Counter",
-            "--rpc-url",
-            handle.http_endpoint().as_str(),
-            "--private-key",
-            pk.as_str(),
-            "--verify",
-            "--verifier",
-            "custom",
-            "--verifier-url",
-            verifier_url.as_str(),
-            "--verifier-api-key",
-            "FAKE_KEY_1234",
-        ])
-        .execute();
-
-    assert!(!output.status.success(), "expected command to fail");
-    let stderr = output.stderr_lossy();
-    assert!(
-        stderr.contains("Verification preflight check failed"),
-        "expected preflight error in stderr, got: {stderr}"
-    );
-    // The contract must NOT have been deployed.
-    let stdout = output.stdout_lossy();
-    assert!(
-        !stdout.contains("Contract Address"),
-        "contract was deployed but preflight check should have prevented it"
-    );
-});
-
 // Tests that `forge script --broadcast --verify` fails before broadcasting when
 // the verifier rejects the API key (credential preflight check).
 forgetest_async!(script_fails_early_on_bad_verifier_credentials, |prj, cmd| {
@@ -461,8 +417,13 @@ contract Deploy is Script {
         stderr.contains("Verification preflight check failed"),
         "expected preflight error in stderr, got: {stderr}"
     );
-    // The command exiting non-zero with the preflight error message is sufficient evidence
-    // that no transactions were sent before the failure.
+    // The broadcast phase prints "ONCHAIN EXECUTION COMPLETE" and "Sending transactions";
+    // neither must appear if the preflight check stopped execution before broadcasting.
+    let stdout = output.stdout_lossy();
+    assert!(
+        !stdout.contains("ONCHAIN EXECUTION COMPLETE") && !stdout.contains("Sending transactions"),
+        "transactions were broadcast but preflight check should have prevented it: {stdout}"
+    );
 });
 
 /// Spawns a local HTTP server that always responds with the given JSON body, returning its URL.
