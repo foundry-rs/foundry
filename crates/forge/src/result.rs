@@ -18,7 +18,6 @@ use foundry_evm::{
     fuzz::{CounterExample, FuzzCase, FuzzFixtures, FuzzTestResult},
     traces::{CallTraceArena, CallTraceDecoder, TraceKind, Traces},
 };
-use itertools::Itertools;
 use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
 use std::{
     borrow::Cow,
@@ -1021,7 +1020,7 @@ impl TestResult {
             optimization_best_value: None,
         };
         self.status = TestStatus::Skipped;
-        self.reason = reason.0;
+        self.reason = if invariant_predicate_results.len() > 1 { None } else { reason.0 };
         self.invariant_count =
             (invariant_predicate_results.len() > 1).then_some(invariant_predicate_results.len());
         self.invariant_predicate_results = invariant_predicate_results;
@@ -1219,20 +1218,6 @@ impl TestResult {
 
     /// Formats the test result into a string (for printing).
     pub fn short_result(&self, name: &str) -> String {
-        if self.status.is_skipped() && self.invariant_predicate_results.len() > 1 {
-            return self
-                .invariant_predicate_results
-                .iter()
-                .map(|predicate| {
-                    let mut s = String::from("[SKIP");
-                    if let Some(reason) = &predicate.reason {
-                        write!(s, ": {reason}").unwrap();
-                    }
-                    s.push(']');
-                    format!("{} {}() {}", s.yellow(), predicate.name, self.kind.report())
-                })
-                .join("\n");
-        }
         let name = if self.kind.is_invariant() && self.invariant_count.is_some() {
             INVARIANT_CAMPAIGN_DISPLAY_NAME
         } else {
@@ -1476,16 +1461,17 @@ mod tests {
     use super::*;
 
     fn invariant_result(runs: usize, calls: usize) -> TestResult {
-        let mut result = TestResult::default();
-        result.kind = TestKind::Invariant {
-            runs,
-            calls,
-            reverts: 0,
-            metrics: HashMap::default(),
-            failed_corpus_replays: 0,
-            optimization_best_value: None,
-        };
-        result
+        TestResult {
+            kind: TestKind::Invariant {
+                runs,
+                calls,
+                reverts: 0,
+                metrics: HashMap::default(),
+                failed_corpus_replays: 0,
+                optimization_best_value: None,
+            },
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -1583,6 +1569,37 @@ mod tests {
             test_results[INVARIANT_CAMPAIGN_DISPLAY_NAME]["invariant_failures"][0]["name"],
             "invariant_primary_breakable"
         );
+    }
+
+    #[test]
+    fn multi_predicate_skip_uses_campaign_name_for_summary() {
+        let mut result = TestResult::default();
+        result.invariant_skip_with_predicates(
+            SkipReason(Some("anchor skipped".to_string())),
+            vec![
+                InvariantPredicateResult {
+                    name: "invariant_anchor_skipped".to_string(),
+                    status: TestStatus::Skipped,
+                    reason: Some("anchor skipped".to_string()),
+                },
+                InvariantPredicateResult {
+                    name: "invariant_second_skipped".to_string(),
+                    status: TestStatus::Skipped,
+                    reason: Some("second skipped".to_string()),
+                },
+            ],
+        );
+
+        let rendered = result.short_result("invariant_anchor_skipped()");
+
+        assert!(rendered.contains("[SKIP]"));
+        assert!(rendered.contains("Invariant/Property Tests:\n"));
+        assert!(rendered.contains("[SKIP: anchor skipped] invariant_anchor_skipped"));
+        assert!(rendered.contains("[SKIP: second skipped] invariant_second_skipped"));
+        assert!(rendered.contains("Invariant/Property Tests (runs: 1, calls: 1, reverts: 1)"));
+        assert!(!rendered.contains("invariant_anchor_skipped() (runs:"));
+        assert!(!rendered.contains("invariant_second_skipped() (runs:"));
+        assert!(result.reason.is_none());
     }
 
     #[test]

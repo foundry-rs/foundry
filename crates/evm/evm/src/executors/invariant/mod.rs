@@ -253,6 +253,14 @@ fn build_invariant_progress_json<M: Serialize>(
     payload
 }
 
+fn invariant_progress_campaign_name<'a>(invariant_contract: &'a InvariantContract<'a>) -> &'a str {
+    if invariant_contract.predicate_count > 1 {
+        INVARIANT_CAMPAIGN_DISPLAY_NAME
+    } else {
+        &invariant_contract.anchor().name
+    }
+}
+
 /// Contains data collected during invariant test runs.
 struct InvariantTestData {
     // Consumed gas and calldata of every successful fuzz call.
@@ -847,7 +855,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 // campaign-level counters share one struct.
                 failure_metrics.broken_handlers = invariant_test.test_data.failures.handler_count();
                 let handler_bugs = failure_metrics.broken_handlers;
-                let total_invariants = invariant_contract.invariant_fns.len();
+                let total_invariants = invariant_contract.predicate_count;
                 if edge_coverage_enabled || best.is_some() || broken > 0 || handler_bugs > 0 {
                     let mut msg = String::new();
                     if let Some(best) = best {
@@ -878,15 +886,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             {
                 // Sync handler-bug count snapshot into failure_metrics before emitting.
                 failure_metrics.broken_handlers = invariant_test.test_data.failures.handler_count();
-                let progress_campaign_name = if invariant_contract.invariant_fns.len() > 1 {
-                    INVARIANT_CAMPAIGN_DISPLAY_NAME
-                } else {
-                    &invariant_contract.anchor().name
-                };
                 // Display corpus metrics inline as JSON.
                 let metrics = build_invariant_progress_json(
                     SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-                    progress_campaign_name,
+                    invariant_progress_campaign_name(&invariant_contract),
                     &corpus_manager.metrics,
                     invariant_test.test_data.optimization_best_value,
                     throughput,
@@ -1617,6 +1620,41 @@ mod tests {
         assert_eq!(payload["metrics"]["failures"], json!(3));
         assert_eq!(payload["metrics"]["unique_failures"], json!(2));
         assert_eq!(payload["metrics"]["broken_handlers"], json!(7));
+    }
+
+    #[test]
+    fn invariant_progress_name_uses_logical_predicate_count() {
+        let anchor = Function {
+            name: "invariant_anchor".to_string(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            state_mutability: Default::default(),
+        };
+        let abi = Default::default();
+        let single = InvariantContract::new(
+            Address::ZERO,
+            "ProgressNameTest",
+            vec![(&anchor, false)],
+            0,
+            1,
+            false,
+            &abi,
+        );
+        assert_eq!(invariant_progress_campaign_name(&single), "invariant_anchor");
+
+        let multi_with_skipped = InvariantContract::new(
+            Address::ZERO,
+            "ProgressNameTest",
+            vec![(&anchor, false)],
+            0,
+            2,
+            false,
+            &abi,
+        );
+        assert_eq!(
+            invariant_progress_campaign_name(&multi_with_skipped),
+            INVARIANT_CAMPAIGN_DISPLAY_NAME
+        );
     }
 
     #[test]

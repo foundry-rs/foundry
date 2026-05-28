@@ -1014,18 +1014,19 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
             .iter()
             .position(|(invariant_fn, _)| *invariant_fn == campaign_anchor)
             .expect("campaign anchor must be present in invariant_fns");
+        let predicate_count = invariant_fns.len() + skipped_predicate_results.len();
         let invariant_contract = InvariantContract::new(
             self.address,
             self.cr.name,
             invariant_fns,
             anchor_idx,
+            predicate_count,
             call_after_invariant,
             &self.cr.contract.abi,
         );
         let show_solidity = invariant_config.show_solidity;
-        let logical_invariant_count =
-            invariant_contract.invariant_fns.len() + skipped_predicate_results.len();
-        let invariant_count = (logical_invariant_count > 1).then_some(logical_invariant_count);
+        let invariant_count =
+            (invariant_contract.predicate_count > 1).then_some(invariant_contract.predicate_count);
         let invariant_display_name = if invariant_count.is_some() {
             INVARIANT_CAMPAIGN_DISPLAY_NAME
         } else {

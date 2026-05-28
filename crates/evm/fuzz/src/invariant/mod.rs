@@ -284,6 +284,9 @@ pub struct InvariantContract<'a> {
     /// suites use a deterministic contract-local anchor so test filters do not affect
     /// corpus/failure namespaces.
     pub anchor_idx: usize,
+    /// Number of predicates selected for reporting, including predicates that were skipped before
+    /// fuzzing started. This may be larger than `invariant_fns.len()`.
+    pub predicate_count: usize,
     /// If true, `afterInvariant` function is called after each invariant run.
     pub call_after_invariant: bool,
     /// ABI of the test contract.
@@ -293,16 +296,26 @@ pub struct InvariantContract<'a> {
 impl<'a> InvariantContract<'a> {
     /// Creates a new invariant contract.
     ///
-    /// Caller must ensure `invariant_fns` is non-empty and `anchor_idx < invariant_fns.len()`.
+    /// Caller must ensure `invariant_fns` is non-empty, `anchor_idx < invariant_fns.len()`, and
+    /// `predicate_count >= invariant_fns.len()`.
     pub const fn new(
         address: Address,
         name: &'a str,
         invariant_fns: Vec<(&'a Function, bool)>,
         anchor_idx: usize,
+        predicate_count: usize,
         call_after_invariant: bool,
         abi: &'a JsonAbi,
     ) -> Self {
-        Self { address, name, invariant_fns, anchor_idx, call_after_invariant, abi }
+        Self {
+            address,
+            name,
+            invariant_fns,
+            anchor_idx,
+            predicate_count,
+            call_after_invariant,
+            abi,
+        }
     }
 
     /// Returns the stable campaign anchor.

@@ -1310,6 +1310,8 @@ contract SkipPredicateReportTest is Test {
     );
     assert!(stdout.contains("[PASS] invariant_live"), "{stdout}");
     assert!(stdout.contains("[SKIP: secondary] invariant_skipped"), "{stdout}");
+    assert!(stdout.contains(" Invariant/Property Tests (runs:"), "{stdout}");
+    assert!(!stdout.contains(" invariant_live() (runs:"), "{stdout}");
     assert!(stdout.contains("Suite result: ok. 1 passed; 0 failed; 1 skipped;"), "{stdout}");
 });
 
