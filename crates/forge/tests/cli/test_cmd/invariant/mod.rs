@@ -211,10 +211,10 @@ contract AnotherCounterHandler is Test {
     cmd.args(["test", "--mt", "invariant_"]).assert_success().stdout_eq(str![[r#"
 ...
 [PASS]
-Invariant/Property Tests:
+CounterTest invariants:
 [PASS] invariant_counter
 [PASS] invariant_counter2
- invariant_counter() (runs: 10, calls: 5000, reverts: [..])
+ CounterTest invariants (runs: 10, calls: 5000, reverts: [..])
 
 ╭-----------------------+----------------+-------+---------+----------╮
 | Contract              | Selector       | Calls | Reverts | Discards |
@@ -852,12 +852,12 @@ Compiler run successful!
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetTest
 [PASS]
-Invariant/Property Tests:
+InvariantTargetTest invariants:
 [PASS] invariant_considered_target
 [PASS] invariant_foo_called
 [PASS] invariant_setUp_considered_target
 [PASS] invariant_testSanity_considered_target
- invariant_considered_target() (runs: 10, calls: 1000, reverts: 0)
+ InvariantTargetTest invariants (runs: 10, calls: 1000, reverts: 0)
 
 ╭---------------------+----------+-------+---------+----------╮
 | Contract            | Selector | Calls | Reverts | Discards |
@@ -1308,7 +1308,17 @@ contract SkipPredicateReportTest is Test {
     );
     assert!(stdout.contains("[PASS] invariant_live"), "{stdout}");
     assert!(stdout.contains("[SKIP: secondary] invariant_skipped"), "{stdout}");
+    assert!(stdout.contains(" SkipPredicateReportTest invariants (runs:"), "{stdout}");
+    assert!(!stdout.contains(" invariant_live() (runs:"), "{stdout}");
     assert!(stdout.contains("Suite result: ok. 1 passed; 0 failed; 1 skipped;"), "{stdout}");
+
+    let output = cmd
+        .forge_fuse()
+        .args(["test", "--mt", "invariant_", "--show-progress", "-j1"])
+        .assert_success();
+    let stdout = String::from_utf8_lossy(&output.get_output().stdout);
+    assert!(stdout.contains("SkipPredicateReportTest invariants"), "{stdout}");
+    assert!(!stdout.contains(" invariant_live() (runs:"), "{stdout}");
 });
 
 forgetest_init!(junit_reports_invariant_predicates_and_handler_failures, |prj, cmd| {
@@ -1659,14 +1669,14 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 	[Sequence] (original: [..], shrunk: [..])
 ...
 
-Invariant/Property Tests: 3/4 invariants broken
+CounterTest invariants: 3/4 invariants broken
 [FAIL: condition 1 met] invariant_cond1
 ...
 "#]]);
 
     // Re-running a single target replays cond3's persisted counterexample and exits without
     // running a fresh campaign — only the primary block, no secondary [FAIL]s, no
-    // persisted-failures footer, no `Invariant/Property Tests` roll-up. A stderr warning calls out
+    // persisted-failures footer, no campaign roll-up. A stderr warning calls out
     // the other selected predicate with a persisted failure if it would otherwise be included.
     cmd.forge_fuse().args(["test", "--mt", "invariant_cond3"]).assert_failure().stdout_eq(str![[
         r#"
@@ -1734,7 +1744,7 @@ contract FilteredInvariantTest is Test {
         stdout.contains("Ran 1 test for test/FilteredInvariantTest.t.sol:FilteredInvariantTest"),
         "{stdout}"
     );
-    assert!(stdout.contains("Invariant/Property Tests: 2/2 invariants broken"), "{stdout}");
+    assert!(stdout.contains("FilteredInvariantTest invariants: 2/2 invariants broken"), "{stdout}");
     assert!(stdout.contains("[FAIL: b broken] invariant_b_checked"), "{stdout}");
     assert!(stdout.contains("[FAIL: c broken] invariant_c_checked"), "{stdout}");
     assert!(!stdout.contains("invariant_a_excluded_by_filter"), "{stdout}");
@@ -2029,7 +2039,7 @@ contract AfterInvariantTest is Test {
 
     cmd.args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
 ...
-[FAIL: after_invariant_marker]
+[FAIL: after_invariant_marker] invariant_first
 ...
 "#]]);
 });
@@ -2107,11 +2117,11 @@ Ran 1 test for test/StaleSecondaryTest.t.sol:StaleSecondaryTest
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
 
-Invariant/Property Tests: 2/2 invariants broken
+StaleSecondaryTest invariants: 2/2 invariants broken
 [FAIL: first broken] invariant_first
 [FAIL: second broken] invariant_second
 2 invariant failure(s) persisted to [..]/cache/invariant/failures/StaleSecondaryTest — rerun to shrink
- invariant_first() (runs: 1, calls: 3, reverts: 0)
+ StaleSecondaryTest invariants (runs: 1, calls: 3, reverts: 0)
 
 ╭----------+----------+-------+---------+----------╮
 | Contract | Selector | Calls | Reverts | Discards |
@@ -2136,11 +2146,11 @@ Encountered 1 failing test in test/StaleSecondaryTest.t.sol:StaleSecondaryTest
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
 		sender=[..] addr=[src/Counter.sol:Counter]0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f calldata=inc() args=[]
 
-Invariant/Property Tests: 2/2 invariants broken
+StaleSecondaryTest invariants: 2/2 invariants broken
 [FAIL: first broken] invariant_first
 [FAIL: second broken] invariant_second
 2 invariant failure(s) persisted to [..]/cache/invariant/failures/StaleSecondaryTest — rerun to shrink
- invariant_first() (runs: 1, calls: 3, reverts: 0)
+ StaleSecondaryTest invariants (runs: 1, calls: 3, reverts: 0)
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
@@ -2194,6 +2204,14 @@ contract SecondaryOnlyTest is Test {
     function invariant_secondary_breakable() public view {
         require(counter.cond() < 2, "breakable broken");
     }
+
+    function invariant_third_safe() public view {
+        require(counter.cond() < 1000000, "third safe broken");
+    }
+
+    function invariant_fourth_safe() public view {
+        require(counter.cond() < 1000000, "fourth safe broken");
+    }
 }
    "#,
     );
@@ -2201,9 +2219,17 @@ contract SecondaryOnlyTest is Test {
     let output = cmd.args(["test", "--mt", "invariant_"]).assert_failure();
     let stdout = String::from_utf8_lossy(&output.get_output().stdout);
     assert!(stdout.contains("[FAIL: breakable broken] invariant_secondary_breakable"), "{stdout}");
-    assert!(stdout.contains("Invariant/Property Tests: 1/2 invariants broken"), "{stdout}");
+    assert!(stdout.contains("SecondaryOnlyTest invariants: 1/4 invariants broken"), "{stdout}");
     assert!(stdout.contains("[PASS] invariant_anchor_safe"), "{stdout}");
-    assert!(stdout.contains(" invariant_anchor_safe() (runs: 5, calls: 250, reverts: 0)"));
+    assert!(stdout.contains("[PASS] invariant_third_safe"), "{stdout}");
+    assert!(stdout.contains("[PASS] invariant_fourth_safe"), "{stdout}");
+    assert!(stdout.contains(" SecondaryOnlyTest invariants (runs: 5, calls: 250, reverts: 0)"));
+    assert_eq!(
+        stdout.matches("| Contract | Selector | Calls | Reverts | Discards |").count(),
+        1,
+        "{stdout}"
+    );
+    assert!(!stdout.contains(" invariant_anchor_safe() (runs:"), "{stdout}");
     assert!(!stdout.contains("[FAIL: safe broken] invariant_anchor_safe"), "{stdout}");
 });
 
