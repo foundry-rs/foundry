@@ -132,6 +132,28 @@ fn exit_code_for_clap_error(err: &clap::Error) -> ExitCode {
     }
 }
 
+/// Emit a `cli.usage.invalid` envelope on stdout and exit with
+/// [`ExitCode::Usage`] (`2`). Use at call sites that intentionally reject
+/// a flag combination under `--machine`.
+pub fn bail_machine_usage(message: impl Into<String>) -> ! {
+    let envelope = JsonEnvelope::error(JsonMessage::error(diagnostic::cli::USAGE_INVALID, message));
+    let _ = print_json(&envelope);
+    std::process::exit(ExitCode::Usage.to_i32());
+}
+
+/// Fallback envelope emitter for an untyped `eyre::Report`. Always tags
+/// `cli.unknown` and preserves the eyre cause chain in `details.cause_chain`.
+/// The process exit code is the caller's responsibility.
+pub fn report_machine_error(report: &eyre::Report) {
+    let cause_chain: Vec<String> = report.chain().map(ToString::to_string).collect();
+    let message = cause_chain.first().cloned().unwrap_or_else(|| report.to_string());
+    let envelope = JsonEnvelope::error(
+        JsonMessage::error(diagnostic::cli::UNKNOWN, message)
+            .with_details(json!({ "cause_chain": cause_chain })),
+    );
+    let _ = print_json(&envelope);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,6 +205,35 @@ mod tests {
     #[derive(Debug, clap::Subcommand)]
     enum StrictSub {
         Run,
+    }
+
+    /// `report_machine_error` always tags `cli.unknown` and preserves the
+    /// full eyre cause chain in `errors[0].details.cause_chain`.
+    #[test]
+    fn report_machine_error_uses_cli_unknown_and_preserves_cause_chain() {
+        use eyre::WrapErr as _;
+        let leaf: eyre::Report = eyre::eyre!("solc: missing semicolon");
+        let report: eyre::Report = Result::<(), _>::Err(leaf)
+            .wrap_err("compile failed")
+            .wrap_err("build failed")
+            .unwrap_err();
+
+        let cause_chain: Vec<String> = report.chain().map(ToString::to_string).collect();
+        let message = cause_chain.first().cloned().unwrap();
+        let envelope = JsonEnvelope::error(
+            JsonMessage::error(diagnostic::cli::UNKNOWN, message)
+                .with_details(json!({ "cause_chain": cause_chain })),
+        );
+
+        assert!(!envelope.success);
+        assert_eq!(envelope.errors.len(), 1);
+        assert_eq!(envelope.errors[0].code, diagnostic::cli::UNKNOWN);
+        assert_eq!(envelope.errors[0].message, "build failed");
+        let details = envelope.errors[0].details.as_ref().expect("details");
+        let chain = details.get("cause_chain").and_then(|v| v.as_array()).expect("chain");
+        assert_eq!(chain.len(), 3);
+        assert_eq!(chain[0], "build failed");
+        assert_eq!(chain[2], "solc: missing semicolon");
     }
 
     #[test]
