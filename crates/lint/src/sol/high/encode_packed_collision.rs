@@ -105,8 +105,10 @@ fn call_return_type<'hir>(
             Some(&hir.variable(*ret).ty)
         }
         // Member call: token.name(), token.symbol(), etc.
-        // If multiple functions share the method name (overloads), return None to avoid
-        // false positives from picking the wrong overload.
+        // A contract may expose multiple entries for the same method name when a derived contract
+        // overrides an inherited function. In that case all candidates share the same return type,
+        // so we accept the match as long as every candidate agrees. If they disagree (genuine
+        // overloads with different return types) we bail to avoid false positives.
         ExprKind::Member(recv, method) => {
             let cid = contract_id_of(hir, recv)?;
             let matches: Vec<_> = hir
@@ -122,8 +124,13 @@ fn call_return_type<'hir>(
                     }
                 })
                 .collect();
-            let [ty] = matches.as_slice() else { return None };
-            Some(*ty)
+            let [first, rest @ ..] = matches.as_slice() else { return None };
+            // All candidates must agree on dynamic-ness; if any disagrees it's a genuine overload
+            // and we cannot determine which was called.
+            if rest.iter().any(|ty| is_dynamic_type(&ty.kind) != is_dynamic_type(&first.kind)) {
+                return None;
+            }
+            Some(*first)
         }
         // Indirect call via a function-typed value
         _ => match &expr_type(hir, callee)?.kind {

@@ -83,6 +83,24 @@ contract EncodePackedCollision {
     }
 }
 
+// SHOULD WARN: concrete contract overriding inherited name()/symbol(), both return string,
+// so even though contract_item_ids yields two entries per method the lint must still fire.
+interface IToken {
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+}
+
+contract ConcreteToken is IToken {
+    function name() external pure override returns (string memory) { return "Token"; }
+    function symbol() external pure override returns (string memory) { return "TKN"; }
+}
+
+contract OverrideCollision {
+    function tokenCollision(ConcreteToken token) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(token.name(), token.symbol())); //~WARN: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+    }
+}
+
 // SHOULD NOT WARN: overloaded function, must pick the correct overload based on arg type
 contract OverloadFP {
     function f(uint256) internal pure returns (string memory) { return ""; }
