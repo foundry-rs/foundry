@@ -60,7 +60,10 @@ static TEST_EXIT_CODES: &[ExitCodeInfo] = &[
     ExitCodeInfo {
         code: ExitCode::Success.to_i32(),
         name: Cow::Borrowed(ExitCode::Success.name()),
-        description: Cow::Borrowed("All tests passed; envelope `success: true`."),
+        description: Cow::Borrowed(
+            "All tests passed, or failures were tolerated by `--allow-failure`; envelope \
+             `success: true`. When `--allow-failure` is set, `data.failed` may be non-zero.",
+        ),
     },
     ExitCodeInfo {
         code: ExitCode::GenericError.to_i32(),
@@ -77,10 +80,19 @@ static TEST_EXIT_CODES: &[ExitCodeInfo] = &[
         ),
     },
     ExitCodeInfo {
+        code: ExitCode::Build.to_i32(),
+        name: Cow::Borrowed(ExitCode::Build.name()),
+        description: Cow::Borrowed(
+            "Solc reported one or more compile errors before tests could run \
+             (envelope `compiler.solc.error`).",
+        ),
+    },
+    ExitCodeInfo {
         code: ExitCode::TestFailure.to_i32(),
         name: Cow::Borrowed(ExitCode::TestFailure.name()),
         description: Cow::Borrowed(
-            "Test suite ran but at least one test failed (envelope `test.failed`).",
+            "Test suite ran and at least one test failed without `--allow-failure` \
+             (envelope `test.failed`).",
         ),
     },
 ];
@@ -118,7 +130,13 @@ static ENTRIES: &[RegistryEntry] = &[
                 reads_stdin: false,
                 supports_output_path: false,
                 requires_project: true,
-                side_effects: SideEffects::None,
+                // `forge test` writes artifacts, run-failure state, and gas
+                // snapshots, and routinely performs network reads (`--fork-url`,
+                // configured `eth_rpc_url`, trace lookups). `Capabilities`
+                // reports only the highest-impact side effect, so we declare
+                // `Network` to subsume the always-present `FsWrite`. Not
+                // `ChainWrite`: `forge test` does not broadcast user txs.
+                side_effects: SideEffects::Network,
                 long_running: true,
                 stateful: false,
             },

@@ -2,6 +2,7 @@ use super::{install, test::filter::ProjectPathsAwareFilter, watch::WatchArgs};
 use crate::{
     MultiContractRunner, MultiContractRunnerBuilder,
     decode::decode_console_logs,
+    diagnostic::build::SOLC_ERROR,
     gas_report::GasReport,
     multi_runner::{MultiNetworkConfig, ShowmapConfig, matches_artifact},
     result::{SuiteResult, TestKindReport, TestOutcome, TestResult, TestStatus},
@@ -17,12 +18,14 @@ use chrono::Utc;
 use clap::{Parser, ValueEnum, ValueHint};
 use eyre::{Context, OptionExt, Result, bail};
 use foundry_cli::{
+    ExitCode,
+    json::{JsonEnvelope, JsonMessage, print_json},
     opts::{BuildOpts, EvmArgs, GlobalArgs},
     utils::{self, LoadConfig},
 };
 use foundry_common::{EmptyTestFilter, TestFunctionExt, compile::ProjectCompiler, fs, shell};
 use foundry_compilers::{
-    ProjectCompileOutput,
+    CompilationError, ProjectCompileOutput,
     artifacts::{Libraries, output_selection::OutputSelection},
     compilers::{
         Language,
@@ -337,6 +340,11 @@ impl TestArgs {
             ("--list", self.list),
             ("--junit", self.junit),
             ("--show-progress", self.show_progress),
+            // `--live-logs` prints console.log output directly to stdout from
+            // the EVM log inspector, which would interleave with the NDJSON
+            // stream. The same risk via `live_logs = true` in foundry.toml is
+            // silently overridden in `compile_and_run` (see `machine_mode`).
+            ("--live-logs", self.evm.live_logs),
         ]
         .into_iter()
         .filter_map(|(name, on)| on.then_some(name))
@@ -377,6 +385,12 @@ impl TestArgs {
         });
         let output = project.compile()?;
         if output.has_compiler_errors() {
+            // Under `--machine` the precompile path emits the same typed
+            // `compiler.solc.error` + `Build (4)` envelope as the main compile
+            // path, so agents don't see this surface as `cli.unknown`/exit 1.
+            if foundry_cli::is_machine() {
+                emit_machine_compile_error(&output);
+            }
             sh_println!("{output}")?;
             eyre::bail!("Compilation failed");
         }
@@ -398,11 +412,28 @@ impl TestArgs {
     ///
     /// Returns the test results for all matching tests.
     pub async fn compile_and_run(&mut self) -> Result<TestOutcome> {
+        let machine_mode = foundry_cli::is_machine();
+
         // Merge all configs.
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
-        // Install missing dependencies.
-        if install::install_missing_dependencies(&mut config).await && config.auto_detect_remappings
+        // Under `--machine`, neutralize config-driven knobs that would print to
+        // stdout outside the NDJSON contract. CLI equivalents are rejected in
+        // `reject_machine_unsupported_flags`; this catches the foundry.toml
+        // side that the CLI preflight cannot see.
+        if machine_mode {
+            config.show_progress = false;
+            config.live_logs = false;
+        }
+
+        // Install missing dependencies. `install_missing_dependencies` prints
+        // "Missing dependencies found. Installing now..." to stdout, which would
+        // corrupt the NDJSON stream. Under `--machine`, skip it: a missing dep
+        // surfaces as a typed `compiler.solc.error` envelope from the compile
+        // path below, which is exactly what agents need.
+        if !machine_mode
+            && install::install_missing_dependencies(&mut config).await
+            && config.auto_detect_remappings
         {
             // need to re-configure here to also catch additional remappings
             config = self.load_config()?;
@@ -414,11 +445,21 @@ impl TestArgs {
         let filter = self.filter(&config)?;
         trace!(target: "forge::test", ?filter, "using filter");
 
-        let compiler = ProjectCompiler::new()
+        let mut compiler = ProjectCompiler::new()
             .dynamic_test_linking(config.dynamic_test_linking)
-            .quiet(shell::is_json() || self.junit || foundry_cli::is_machine())
+            .quiet(shell::is_json() || self.junit || machine_mode)
             .files(self.get_sources_to_compile(&config, &filter)?);
+        // Under `--machine`, disable the inner `bail` so a compile error
+        // returns the output and we can emit a typed envelope instead of an
+        // untyped eyre error mapped to `cli.unknown`.
+        if machine_mode {
+            compiler = compiler.bail(false);
+        }
         let output = compiler.compile(&project)?;
+
+        if machine_mode && output.has_compiler_errors() {
+            emit_machine_compile_error(&output);
+        }
 
         self.run_tests(&project.paths.root, config, evm_opts, &output, &filter, false).await
     }
@@ -1339,6 +1380,24 @@ fn emit_warning_event(contract: &str, message: &str) -> Result<()> {
         WarningEvent { contract, code: foundry_cli::diagnostic::test::WARNING, message },
     )?;
     Ok(())
+}
+
+/// Emit a `compiler.solc.error` envelope from a [`ProjectCompileOutput`] that
+/// reported errors, then exit with [`ExitCode::Build`]. Used by both the
+/// precompile and main-compile sites under `--machine` so agents see the
+/// same typed failure regardless of where the error was caught.
+///
+/// Mirrors the shape of `forge build`'s machine-mode compile-error path.
+fn emit_machine_compile_error(output: &ProjectCompileOutput) -> ! {
+    let errors: Vec<JsonMessage> = output
+        .output()
+        .errors
+        .iter()
+        .filter(|e| e.is_error())
+        .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
+        .collect();
+    let _ = print_json(&JsonEnvelope::<()>::failure(errors));
+    std::process::exit(ExitCode::Build.to_i32());
 }
 
 impl Provider for TestArgs {

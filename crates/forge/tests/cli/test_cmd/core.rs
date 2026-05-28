@@ -181,6 +181,105 @@ forgetest_init!(machine_mode_rejects_unsupported_flags, |_prj, cmd| {
     assert!(msg.contains("--gas-report"), "missing --gas-report mention: {envelope}");
 });
 
+// Compile errors at the main compile site (empty filter → precompile is
+// skipped) must surface as `compiler.solc.error` + `Build (4)` under
+// `--machine`, not as the generic `cli.unknown` + exit `1` that an
+// untyped `eyre::bail!("Compilation failed")` would produce.
+forgetest_init!(machine_mode_compile_failure_emits_typed_envelope, |prj, cmd| {
+    prj.add_test(
+        "BadCompile.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract BadCompileTest is Test {
+    function testWillNotCompile() public { this is not valid solidity; }
+}
+"#,
+    );
+    let assert = cmd.args(["--machine", "test"]).assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(4));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "compiler.solc.error");
+});
+
+// Same contract but with a filter set so `get_sources_to_compile` runs the
+// precompile path before the main compile. Both sites must emit the same
+// typed envelope, not the generic `cli.unknown` path.
+forgetest_init!(machine_mode_precompile_failure_emits_typed_envelope, |prj, cmd| {
+    prj.add_test(
+        "BadCompilePrecompile.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract BadCompilePrecompileTest is Test {
+    function testWillNotCompile() public { this is not valid solidity; }
+}
+"#,
+    );
+    let assert =
+        cmd.args(["--machine", "test", "--match-test", "testWillNotCompile"]).assert_failure();
+    assert_eq!(assert.get_output().status.code(), Some(4));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "compiler.solc.error");
+});
+
+// `live_logs = true` in foundry.toml would normally print console.log output
+// straight to stdout, corrupting the NDJSON stream. Under `--machine` the
+// config knob must be silently neutralized (the CLI equivalent `--live-logs`
+// is rejected separately in `machine_mode_rejects_unsupported_flags`).
+forgetest_init!(machine_mode_overrides_live_logs_config, |prj, cmd| {
+    prj.update_config(|c| c.live_logs = true);
+    prj.add_test(
+        "LiveLogs.t.sol",
+        r#"
+import "forge-std/Test.sol";
+import "forge-std/console.sol";
+contract LiveLogsTest is Test {
+    function testLogs() public { console.log("HUMAN_PROSE_LINE"); assertTrue(true); }
+}
+"#,
+    );
+    let assert = cmd.args(["--machine", "test"]).assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        !stdout.contains("HUMAN_PROSE_LINE"),
+        "raw console.log leaked to stdout under --machine: {stdout}"
+    );
+    // Every stdout line is valid JSON; no human prose survived.
+    for line in stdout.lines().filter(|l| !l.is_empty()) {
+        serde_json::from_str::<Value>(line)
+            .unwrap_or_else(|e| panic!("non-json stdout line `{line}`: {e}"));
+    }
+});
+
+// `show_progress = true` in foundry.toml would enable progress mode in
+// `multi_runner`, which batches results and prints progress UI — neither
+// compatible with real-time NDJSON streaming. Override must be silent.
+forgetest_init!(machine_mode_overrides_show_progress_config, |prj, cmd| {
+    prj.update_config(|c| c.show_progress = true);
+    prj.add_test(
+        "Progress.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract ProgressTest is Test {
+    function testOne() public { assertTrue(true); }
+    function testTwo() public { assertTrue(true); }
+}
+"#,
+    );
+    let assert = cmd.args(["--machine", "test"]).assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    // Every stdout line must be valid JSON; progress bars and human text would not be.
+    for line in stdout.lines().filter(|l| !l.is_empty()) {
+        serde_json::from_str::<Value>(line)
+            .unwrap_or_else(|e| panic!("non-json stdout line `{line}`: {e}"));
+    }
+});
+
 // `--watch` is dispatched separately from `cmd.run()`, so the rejection
 // preflight has to live at the top-level entry. This regression guards
 // against the dispatch boundary moving back under the rejection path.
