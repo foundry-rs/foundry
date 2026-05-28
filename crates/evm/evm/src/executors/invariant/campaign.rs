@@ -134,9 +134,8 @@ impl InvariantCampaignAggregator {
                 result.optimization_best_sequence,
             );
         }
-        let (optimization_best_value, optimization_best_sequence) = optimization_best
-            .map(|choice| (Some(choice.value), choice.sequence))
-            .unwrap_or_default();
+        let (optimization_best_value, optimization_best_sequence) =
+            optimization_best.map(|(value, sequence)| (Some(value), sequence)).unwrap_or_default();
         Ok(InvariantFuzzTestResult::new(
             errors,
             handler_errors,
@@ -153,11 +152,6 @@ impl InvariantCampaignAggregator {
     }
 }
 
-struct OptimizationChoice {
-    value: I256,
-    sequence: Vec<BasicTxDetails>,
-}
-
 fn ensure_outputs_cover_campaign(
     spec: InvariantCampaignSpec,
     outputs: &[InvariantWorkerOutput],
@@ -167,7 +161,6 @@ fn ensure_outputs_cover_campaign(
     if spec.total_runs == 0 {
         ensure!(
             outputs.len() == 1
-                && outputs[0].plan.worker_id == 0
                 && outputs[0].plan.first_global_run == 0
                 && outputs[0].plan.runs == 0,
             "invariant worker outputs do not cover the logical campaign"
@@ -217,12 +210,10 @@ fn ensure_worker_ids_are_dense(outputs: &[InvariantWorkerOutput]) -> Result<()> 
 
 fn ensure_master_only_fields(outputs: &[InvariantWorkerOutput]) -> Result<()> {
     for output in outputs {
-        if output.plan.worker_id != 0 {
-            ensure!(
-                output.result.failed_corpus_replays == 0,
-                "non-master invariant worker reported failed corpus replays"
-            );
-        }
+        ensure!(
+            output.plan.worker_id == 0 || output.result.failed_corpus_replays == 0,
+            "non-master invariant worker reported failed corpus replays"
+        );
     }
     Ok(())
 }
@@ -260,7 +251,7 @@ fn merge_metrics(
 
 /// Keeps the best optimization value, using logical run order to break ties.
 fn merge_optimization(
-    best: &mut Option<OptimizationChoice>,
+    best: &mut Option<(I256, Vec<BasicTxDetails>)>,
     candidate_value: Option<I256>,
     candidate_sequence: Vec<BasicTxDetails>,
 ) {
@@ -268,8 +259,8 @@ fn merge_optimization(
         return;
     };
 
-    if best.as_ref().is_none_or(|best| candidate_value > best.value) {
-        *best = Some(OptimizationChoice { value: candidate_value, sequence: candidate_sequence });
+    if best.as_ref().is_none_or(|(best, _)| candidate_value > *best) {
+        *best = Some((candidate_value, candidate_sequence));
     }
 }
 
