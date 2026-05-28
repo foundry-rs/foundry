@@ -2135,10 +2135,10 @@ forgetest_init!(skip_output, |prj, cmd| {
 ...
 Ran 6 tests for src/Counter.t.sol:Skips
 [SKIP]
-Invariant/Property Tests:
+Skips invariants:
 [SKIP] invariant_skipInvariant
 [SKIP: invariant] invariant_skipInvariantReason
- Invariant/Property Tests (runs: 1, calls: 1, reverts: 1)
+ Skips invariants (runs: 1, calls: 1, reverts: 1)
 [SKIP] test_skipFuzz(uint256) (runs: 0, [AVG_GAS])
 [SKIP: fuzz] test_skipFuzzReason(uint256) (runs: 0, [AVG_GAS])
 [SKIP] test_skipUnit() ([GAS])

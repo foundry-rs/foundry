@@ -7,8 +7,8 @@ use crate::{
     multi_runner::{TestContract, TestRunnerConfig},
     progress::{TestsProgress, start_fuzz_progress},
     result::{
-        INVARIANT_CAMPAIGN_DISPLAY_NAME, InvariantFailure, InvariantPredicateResult, SuiteResult,
-        TestResult, TestSetup, TestStatus,
+        InvariantFailure, InvariantPredicateResult, SuiteResult, TestResult, TestSetup, TestStatus,
+        invariant_campaign_display_name,
     },
 };
 use alloy_dyn_abi::{DynSolValue, JsonAbiExt};
@@ -1026,13 +1026,16 @@ impl<'a, FEN: FoundryEvmNetwork> FunctionRunner<'a, FEN> {
         let show_solidity = invariant_config.show_solidity;
         let is_campaign = predicate_count > 1;
         let invariant_count = is_campaign.then_some(predicate_count);
-        let invariant_display_name =
-            if is_campaign { INVARIANT_CAMPAIGN_DISPLAY_NAME } else { func.name.as_str() };
+        let invariant_display_name = if is_campaign {
+            Cow::Owned(invariant_campaign_display_name(self.cr.name))
+        } else {
+            Cow::Borrowed(func.name.as_str())
+        };
 
         let progress = start_fuzz_progress(
             self.cr.progress,
             self.cr.name,
-            invariant_display_name,
+            invariant_display_name.as_ref(),
             invariant_config.timeout,
             invariant_config.runs,
         );
