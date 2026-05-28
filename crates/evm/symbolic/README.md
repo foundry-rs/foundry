@@ -421,12 +421,41 @@ and symbolic storage keys. Supported behavior includes:
 - symbolic `KECCAK256` terms for Solidity mapping and dynamic-array storage
   patterns
 - balances, value transfer, nonce lifecycle, code hash, account existence, and
-  `SELFDESTRUCT`
+  pre-Cancun `SELFDESTRUCT`
 - common concrete-input precompile cases
 - block and transaction environment reads and supported environment cheatcodes
 
 Unsupported symbolic constructs return an incomplete result with a `Stuck`
 reason instead of silently proving the property.
+
+## Known Gaps
+
+The symbolic engine is useful today, but it is not a complete revm-equivalent
+EVM model. The current policy is to fail closed: if a construct can affect the
+result and is not modeled, Forge reports an incomplete symbolic run instead of a
+`PASS`.
+
+The main known incomplete surfaces are:
+
+| Area | Current behavior |
+|---|---|
+| Gas-sensitive semantics | `GAS` / `gasleft()` is tolerated only as the raw gas operand passed into a CALL-family opcode. Branches, arithmetic, memory offsets/sizes, log data, return-data copies, calldata, values, or solver constraints derived from observed gas report incomplete. The engine does not prove gas-dependent behavior yet. |
+| Cancun+ `SELFDESTRUCT` | Pre-Cancun deletion is modeled. Cancun/EIP-6780 same-transaction creation/deletion and end-of-transaction finalization are not fully modeled, so Cancun+ `SELFDESTRUCT` reports incomplete. |
+| Symbolic CALL targets | Concrete targets and bounded symbolic targets with known deployed contract candidates are supported. Symbolic targets with no known candidate set, unknown external contracts, or symbolic cheatcode addresses/selectors report incomplete. |
+| Symbolic CREATE / CREATE2 inputs | Concrete initcode and common bounded symbolic CREATE2 address expressions are supported. Symbolic runtime sizes and unsupported symbolic initcode shapes report incomplete. |
+| ABI and calldata shape limits | Primitive ABI types, arrays, tuples, structs, bytes, and strings are supported within configured dynamic length and calldata byte limits. Unsupported ABI types, invalid ABI shapes, or calldata exceeding configured budgets report incomplete or config errors. |
+| Dynamic memory and copy bounds | Many symbolic memory, calldata, returndata, and `MCOPY`/`RETURNDATACOPY` sizes are supported when bounded by configuration or solver-proved limits. Unbounded or out-of-bounds symbolic reads/copies report incomplete. |
+| Precompiles | Common concrete-input precompile cases are modeled. Unsupported precompiles, symbolic length headers, symbolic modexp output lengths, or out-of-bounds symbolic precompile inputs report incomplete. |
+| Hard arithmetic | Bit-vector arithmetic is modeled through SMT. Some expensive arithmetic has bounded helpers, but unsupported `EXP` base/exponent shapes and other solver-intractable forms can report incomplete or timeout. |
+| Cheatcode surface | The common testing cheatcodes listed below are modeled for safe concrete/symbolic forms. Unsupported Foundry/VM compatibility cheatcodes, value-bearing cheatcode calls, delegatecall prank forms, symbolic `expectCall` gas, unsupported symbolic `vm.bound` ranges, and unsupported symbolic `assumeNoRevert` decodes/overlaps report incomplete. |
+| Fork mutation during symbolic execution | Fork-backed setup is allowed before symbolic execution. Creating forks, selecting a different fork, or rolling/mutating fork blocks during symbolic execution is restricted and reports incomplete unless it stays on the already active fork in the supported form. |
+| Environment, FFI, and filesystem-shaped inputs | Environment and FFI cheatcodes are handled for supported concrete parse/command cases. Missing or unparsable env values, unsupported delimiters, disabled or failing FFI, non-UTF8 stdout, and artifact lookup failures report incomplete. |
+| Resource bounds | Path width, execution depth, invariant depth, calldata variants, solver query budgets, and solver timeouts are configured bounds. Exhausting them reports incomplete rather than a proof. |
+
+This list is intentionally user-facing rather than exhaustive at the individual
+helper-function level. Exact failure messages are preserved in the test output,
+for example `unsupported symbolic execution feature: GAS/gasleft() not modeled`
+or `unsupported symbolic execution feature: SELFDESTRUCT/EIP-6780 not modeled`.
 
 ## Cheatcodes
 
