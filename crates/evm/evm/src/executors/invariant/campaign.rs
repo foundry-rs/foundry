@@ -114,7 +114,13 @@ impl InvariantCampaignAggregator {
         let mut gas_report_traces = Vec::new();
         let mut line_coverage = None;
         let mut metrics = HashMap::default();
-        let failed_corpus_replays = self.outputs[0].result.failed_corpus_replays;
+        let failed_corpus_replays = self
+            .outputs
+            .iter()
+            .find(|output| output.plan.worker_id == 0)
+            .expect("master worker output was validated")
+            .result
+            .failed_corpus_replays;
         let mut optimization_best = None;
 
         for InvariantWorkerOutput { result, .. } in self.outputs {
@@ -156,7 +162,7 @@ fn ensure_outputs_cover_campaign(
     spec: InvariantCampaignSpec,
     outputs: &[InvariantWorkerOutput],
 ) -> Result<()> {
-    ensure_worker_ids_are_dense(outputs)?;
+    ensure_worker_ids_are_valid(outputs)?;
 
     if spec.total_runs == 0 {
         ensure!(
@@ -169,11 +175,7 @@ fn ensure_outputs_cover_campaign(
     }
 
     let mut next_global_run = 0;
-    for (expected_worker_id, output) in outputs.iter().enumerate() {
-        ensure!(
-            output.plan.worker_id == expected_worker_id as u32,
-            "invariant worker outputs are not in dense worker order"
-        );
+    for output in outputs {
         ensure!(output.plan.runs > 0, "invariant worker outputs do not cover the logical campaign");
         ensure!(
             output.plan.first_global_run == next_global_run,
@@ -191,7 +193,7 @@ fn ensure_outputs_cover_campaign(
     Ok(())
 }
 
-fn ensure_worker_ids_are_dense(outputs: &[InvariantWorkerOutput]) -> Result<()> {
+fn ensure_worker_ids_are_valid(outputs: &[InvariantWorkerOutput]) -> Result<()> {
     let mut seen = HashSet::with_capacity(outputs.len());
     for output in outputs {
         ensure!(
@@ -202,9 +204,6 @@ fn ensure_worker_ids_are_dense(outputs: &[InvariantWorkerOutput]) -> Result<()> 
     }
 
     ensure!(seen.contains(&0), "missing invariant master worker output");
-    for expected in 0..outputs.len() as u32 {
-        ensure!(seen.contains(&expected), "missing invariant worker output for worker {expected}");
-    }
     Ok(())
 }
 
@@ -677,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregator_rejects_non_dense_worker_ids() {
+    fn aggregator_allows_non_dense_worker_ids_with_contiguous_ranges() {
         let spec = InvariantCampaignSpec::new(2);
         let mut aggregator = InvariantCampaignAggregator::new(spec);
 
@@ -687,11 +686,29 @@ mod tests {
         ));
         aggregator.push(InvariantWorkerOutput::new(
             InvariantWorkerPlan { worker_id: 2, first_global_run: 1, runs: 1 },
+            empty_result(2, 0),
+        ));
+        let result = aggregator.finish().unwrap();
+
+        assert_eq!(result.reverts, 2);
+    }
+
+    #[test]
+    fn aggregator_rejects_missing_master_worker() {
+        let spec = InvariantCampaignSpec::new(2);
+        let mut aggregator = InvariantCampaignAggregator::new(spec);
+
+        aggregator.push(InvariantWorkerOutput::new(
+            InvariantWorkerPlan { worker_id: 1, first_global_run: 0, runs: 1 },
+            empty_result(0, 0),
+        ));
+        aggregator.push(InvariantWorkerOutput::new(
+            InvariantWorkerPlan { worker_id: 2, first_global_run: 1, runs: 1 },
             empty_result(0, 0),
         ));
         let err = aggregator.finish().unwrap_err();
 
-        assert!(err.to_string().contains("missing invariant worker output for worker 1"));
+        assert!(err.to_string().contains("missing invariant master worker output"));
     }
 
     #[test]
@@ -714,13 +731,13 @@ mod tests {
     fn aggregator_takes_failed_corpus_replays_from_master_worker() {
         let spec = InvariantCampaignSpec::new(2);
         let plans = [
-            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
-            InvariantWorkerPlan { worker_id: 1, first_global_run: 1, runs: 1 },
+            InvariantWorkerPlan { worker_id: 1, first_global_run: 0, runs: 1 },
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 1, runs: 1 },
         ];
 
         let mut aggregator = InvariantCampaignAggregator::new(spec);
-        aggregator.push(InvariantWorkerOutput::new(plans[1], empty_result(0, 0)));
-        aggregator.push(InvariantWorkerOutput::new(plans[0], empty_result(0, 7)));
+        aggregator.push(InvariantWorkerOutput::new(plans[0], empty_result(0, 0)));
+        aggregator.push(InvariantWorkerOutput::new(plans[1], empty_result(0, 7)));
         let result = aggregator.finish().unwrap();
 
         assert_eq!(result.failed_corpus_replays, 7);
