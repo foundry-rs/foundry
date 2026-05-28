@@ -1544,14 +1544,34 @@ impl SymbolicExecutor {
                 .unwrap_or_else(|| format!("unlabeled:{account}"));
             return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(label.bytes())));
         }
+        if selector == selector!("expectSafeMemory(uint64,uint64)") {
+            return Err(SymbolicError::Unsupported("symbolic vm.expectSafeMemory not modeled"));
+        }
+        if selector == selector!("expectSafeMemoryCall(uint64,uint64)") {
+            return Err(SymbolicError::Unsupported("symbolic vm.expectSafeMemoryCall not modeled"));
+        }
+        if selector == selector!("stopExpectSafeMemory()") {
+            return Err(SymbolicError::Unsupported("symbolic vm.stopExpectSafeMemory not modeled"));
+        }
+        if selector == selector!("lastCallGas()") {
+            return Err(SymbolicError::Unsupported("symbolic vm.lastCallGas not modeled"));
+        }
+        if selector == selector!("snapshotGasLastCall(string)")
+            || selector == selector!("snapshotGasLastCall(string,string)")
+        {
+            return Err(SymbolicError::Unsupported("symbolic vm.snapshotGasLastCall not modeled"));
+        }
+        if selector == selector!("stopSnapshotGas()")
+            || selector == selector!("stopSnapshotGas(string)")
+            || selector == selector!("stopSnapshotGas(string,string)")
+        {
+            return Err(SymbolicError::Unsupported("symbolic vm.stopSnapshotGas not modeled"));
+        }
         if selector == selector!("pauseGasMetering()")
             || selector == selector!("resumeGasMetering()")
             || selector == selector!("resetGasMetering()")
             || selector == selector!("breakpoint(string)")
             || selector == selector!("breakpoint(string,bool)")
-            || selector == selector!("expectSafeMemory(uint64,uint64)")
-            || selector == selector!("expectSafeMemoryCall(uint64,uint64)")
-            || selector == selector!("stopExpectSafeMemory()")
             || selector == selector!("snapshotValue(string,uint256)")
             || selector == selector!("snapshotValue(string,string,uint256)")
             || selector == selector!("startSnapshotGas(string)")
@@ -1573,23 +1593,6 @@ impl SymbolicExecutor {
             return Ok(CheatcodeOutcome::ContinueData(abi_concrete_bytes_return(
                 env!("CARGO_PKG_VERSION").bytes(),
             )));
-        }
-        if selector == selector!("lastCallGas()") {
-            return Ok(CheatcodeOutcome::Continue(vec![
-                SymWord::zero(),
-                SymWord::zero(),
-                SymWord::zero(),
-                SymWord::zero(),
-                SymWord::zero(),
-            ]));
-        }
-        if selector == selector!("snapshotGasLastCall(string)")
-            || selector == selector!("snapshotGasLastCall(string,string)")
-            || selector == selector!("stopSnapshotGas()")
-            || selector == selector!("stopSnapshotGas(string)")
-            || selector == selector!("stopSnapshotGas(string,string)")
-        {
-            return Ok(CheatcodeOutcome::Continue(vec![SymWord::zero()]));
         }
         if selector == selector!("projectRoot()") {
             let root = std::env::current_dir()

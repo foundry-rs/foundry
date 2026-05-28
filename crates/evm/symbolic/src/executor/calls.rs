@@ -1304,7 +1304,7 @@ impl SymbolicExecutor {
     ) -> Result<StepOutcome, SymbolicError> {
         let target = target.into_expr();
         let mut candidates = state.world.symbolic_call_targets(executor)?;
-        candidates.extend((1..=9).map(precompile_address));
+        candidates.extend((1..=10).map(precompile_address));
         candidates.sort();
         candidates.dedup();
         if candidates.is_empty() {

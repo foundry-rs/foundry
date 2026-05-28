@@ -67,23 +67,12 @@ impl SymbolicExecutor {
                 let n = state.stack.pop()?;
                 match (a, b, n) {
                     (SymWord::Concrete(a), SymWord::Concrete(b), SymWord::Concrete(n)) => {
-                        state.stack.push(SymWord::Concrete(if n.is_zero() {
-                            U256::ZERO
-                        } else {
-                            a.wrapping_add(b) % n
-                        }))?;
+                        state.stack.push(SymWord::Concrete(addmod_exact(a, b, n)))?;
                     }
-                    (a, b, n) => {
-                        let n = n.into_expr();
-                        state.stack.push(SymWord::Expr(Expr::Ite(
-                            Box::new(BoolExpr::eq(n.clone(), Expr::Const(U256::ZERO))),
-                            Box::new(Expr::Const(U256::ZERO)),
-                            Box::new(Expr::op(
-                                ExprOp::URem,
-                                Expr::op(ExprOp::Add, a.into_expr(), b.into_expr()),
-                                n,
-                            )),
-                        )))?;
+                    _ => {
+                        return Err(SymbolicError::Unsupported(
+                            "symbolic ADDMOD unbounded intermediate not modeled",
+                        ));
                     }
                 }
                 Ok(StepOutcome::Continue)
@@ -94,23 +83,12 @@ impl SymbolicExecutor {
                 let n = state.stack.pop()?;
                 match (a, b, n) {
                     (SymWord::Concrete(a), SymWord::Concrete(b), SymWord::Concrete(n)) => {
-                        state.stack.push(SymWord::Concrete(if n.is_zero() {
-                            U256::ZERO
-                        } else {
-                            a.wrapping_mul(b) % n
-                        }))?;
+                        state.stack.push(SymWord::Concrete(mulmod_exact(a, b, n)))?;
                     }
-                    (a, b, n) => {
-                        let n = n.into_expr();
-                        state.stack.push(SymWord::Expr(Expr::Ite(
-                            Box::new(BoolExpr::eq(n.clone(), Expr::Const(U256::ZERO))),
-                            Box::new(Expr::Const(U256::ZERO)),
-                            Box::new(Expr::op(
-                                ExprOp::URem,
-                                Expr::op(ExprOp::Mul, a.into_expr(), b.into_expr()),
-                                n,
-                            )),
-                        )))?;
+                    _ => {
+                        return Err(SymbolicError::Unsupported(
+                            "symbolic MULMOD unbounded intermediate not modeled",
+                        ));
                     }
                 }
                 Ok(StepOutcome::Continue)
@@ -822,4 +800,16 @@ impl SymbolicExecutor {
             StepOutcome::Revert
         }
     }
+}
+
+fn addmod_exact(a: U256, b: U256, n: U256) -> U256 {
+    if n.is_zero() { U256::ZERO } else { u512_mod_to_u256(U512::from(a) + U512::from(b), n) }
+}
+
+fn mulmod_exact(a: U256, b: U256, n: U256) -> U256 {
+    if n.is_zero() { U256::ZERO } else { u512_mod_to_u256(U512::from(a) * U512::from(b), n) }
+}
+
+fn u512_mod_to_u256(value: U512, modulus: U256) -> U256 {
+    U256::from_limbs_slice((value % U512::from(modulus)).as_limbs())
 }

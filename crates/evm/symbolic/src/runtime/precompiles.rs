@@ -17,7 +17,7 @@ pub(crate) fn precompile_number(address: Address) -> Option<u8> {
         return None;
     }
     match bytes[PRECOMPILE_ADDRESS_LEADING_ZEROS] {
-        1..=9 => Some(bytes[PRECOMPILE_ADDRESS_LEADING_ZEROS]),
+        1..=10 => Some(bytes[PRECOMPILE_ADDRESS_LEADING_ZEROS]),
         _ => None,
     }
 }
@@ -54,6 +54,9 @@ pub(crate) fn execute_precompile(
             u64::MAX,
         ),
         Some(9) => blake2::run(input, u64::MAX),
+        Some(10) => {
+            return Err(SymbolicError::Unsupported("KZG point-evaluation precompile not modeled"));
+        }
         _ => return Err(SymbolicError::Unsupported("unsupported precompile")),
     };
 
@@ -127,6 +130,7 @@ pub(crate) fn execute_symbolic_precompile(
             }
             Ok(Some(symbolic_fixed_len_precompile_output("blake2f", input, input_len, 64)))
         }
+        Some(10) => Err(SymbolicError::Unsupported("KZG point-evaluation precompile not modeled")),
         _ => {
             let input_len = input_len.into_usize("symbolic precompile input")?;
             let input = concrete_bytes(
