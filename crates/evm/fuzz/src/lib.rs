@@ -122,9 +122,6 @@ pub struct BaseCounterExample {
     /// Optional transaction gas limit override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gas_limit: Option<u64>,
-    /// Optional transaction gas price override.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gas_price: Option<u64>,
     /// Contract name if it exists.
     pub contract_name: Option<String>,
     /// Function name if it exists.
@@ -159,7 +156,6 @@ impl BaseCounterExample {
         let bytes = &tx.call_details.calldata;
         let value = tx.call_details.value;
         let gas_limit = tx.call_details.gas_limit;
-        let gas_price = None;
         let warp = tx.warp;
         let roll = tx.roll;
         if let Some((name, abi)) = &contracts.get(&target)
@@ -175,7 +171,6 @@ impl BaseCounterExample {
                     calldata: bytes.clone(),
                     value,
                     gas_limit,
-                    gas_price,
                     contract_name: Some(name.clone()),
                     func_name: Some(func.name.clone()),
                     signature: Some(func.signature()),
@@ -198,7 +193,6 @@ impl BaseCounterExample {
             calldata: bytes.clone(),
             value,
             gas_limit,
-            gas_price,
             contract_name: None,
             func_name: None,
             signature: None,
@@ -224,7 +218,6 @@ impl BaseCounterExample {
             calldata: bytes,
             value: None,
             gas_limit: None,
-            gas_price: None,
             contract_name: None,
             func_name: None,
             signature: None,
