@@ -415,7 +415,14 @@ impl ScriptArgs {
                 return Ok(None);
             }
 
+            let size_limits = pre_simulation
+                .script_config
+                .config
+                .code_size_limit
+                .map(ContractSizeLimits::with_runtime_limit)
+                .unwrap_or_default();
             pre_simulation.args.check_contract_sizes(
+                size_limits,
                 &pre_simulation.execution_result,
                 &pre_simulation.build_data.known_contracts,
                 create2_deployer,
@@ -531,6 +538,7 @@ impl ScriptArgs {
     /// the user.
     fn check_contract_sizes<N: Network>(
         &self,
+        size_limits: ContractSizeLimits,
         result: &ScriptResult<N>,
         known_contracts: &ContractsByArtifact,
         create2_deployer: Address,
@@ -565,7 +573,7 @@ impl ScriptArgs {
         }
 
         let mut prompt_user = false;
-        let max_size = self.contract_size_limits().runtime;
+        let max_size = size_limits.runtime;
 
         for (data, to) in result.transactions.iter().flat_map(|txes| {
             txes.iter().filter_map(|tx| {
@@ -611,10 +619,6 @@ impl ScriptArgs {
         }
 
         Ok(())
-    }
-
-    fn contract_size_limits(&self) -> ContractSizeLimits {
-        self.evm.env.code_size_limit.map(ContractSizeLimits::with_runtime_limit).unwrap_or_default()
     }
 
     /// We only broadcast transactions if --broadcast, --resume, or --verify was passed.
@@ -1194,7 +1198,10 @@ mod tests {
         let result = ScriptResult::<Ethereum>::default();
         let contracts = ContractsByArtifact::default();
         let create = Address::ZERO;
-        assert!(args.check_contract_sizes(&result, &contracts, create).is_ok());
+        assert!(
+            args.check_contract_sizes(ContractSizeLimits::default(), &result, &contracts, create)
+                .is_ok()
+        );
     }
 
     #[test]

@@ -4203,3 +4203,24 @@ Bindings have been generated to [..]"#]]);
 
     assert!(out.status.success(), "Cargo build should succeed");
 });
+
+// `forge flatten -o <path>` writes the file and emits its status string to stderr,
+// keeping stdout empty so agents can pipe the command without diagnostics.
+forgetest!(flatten_output_writes_status_to_stderr, |prj, cmd| {
+    prj.add_source(
+        "Counter",
+        r#"contract Counter { uint256 public n; function inc() external { n += 1; } }"#,
+    );
+
+    let out = prj.root().join("flat.sol");
+    cmd.args(["flatten", "src/Counter.sol", "-o"])
+        .arg(&out)
+        .assert_success()
+        .stdout_eq(str![""])
+        .stderr_eq(str![[r#"
+Flattened file written at [..]flat.sol
+
+"#]]);
+
+    assert!(out.exists(), "flattened file should have been written");
+});

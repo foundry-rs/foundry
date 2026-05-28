@@ -3417,7 +3417,7 @@ contract CounterInExternalLibScript is Script {
     .assert_success();
 
     let tx_hash = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(1))
         .await
         .unwrap()
         .unwrap()
@@ -3969,8 +3969,11 @@ contract WETH9 {
 
 // <https://github.com/foundry-rs/foundry/issues/10553>
 // <https://basescan.org/tx/0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de>
-casttest!(flaky_osaka_can_run_p256_precompile, |_prj, cmd| {
-    cmd.args([
+casttest!(
+    #[ignore = "public Base RPC endpoint used in CI does not reliably serve this transaction"]
+    flaky_osaka_can_run_p256_precompile,
+    |_prj, cmd| {
+        cmd.args([
         "run",
         "0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de",
         "--rpc-url",
@@ -4045,7 +4048,8 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+    }
+);
 
 // tests cast send gas estimate execution failure message contains decoded custom error
 // <https://github.com/foundry-rs/foundry/issues/9789>
@@ -4117,14 +4121,18 @@ Error: Failed to estimate gas: server returned an error response: error code 3: 
 });
 
 // <https://basescan.org/block/30558838>
-casttest!(flaky_estimate_base_da, |_prj, cmd| {
-    cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+casttest!(
+    #[ignore = "public Base RPC endpoint used in CI does not reliably serve this block"]
+    flaky_estimate_base_da,
+    |_prj, cmd| {
+        cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
+            .assert_success()
+            .stdout_eq(str![[r#"
 Estimated data availability size for block 30558838 with 225 transactions: 52916546100
 
 "#]]);
-});
+    }
+);
 
 // <https://github.com/foundry-rs/foundry/issues/10705>
 casttest!(cast_call_return_array_of_tuples, |_prj, cmd| {
