@@ -3391,10 +3391,15 @@ forgetest_init!(can_bind, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();
 
-    cmd.arg("bind").assert_success().stdout_eq(str![[r#"
+    cmd.arg("bind")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 Generating bindings for [..] contracts
 Bindings have been generated to [..]
 
@@ -4174,23 +4179,37 @@ forgetest_init!(can_bind_enum_modules, |prj, cmd| {
     }"#,
     );
 
-    cmd.args(["bind", "--select", "^Enum$"]).assert_success().stdout_eq(str![[
-        r#"[COMPILING_FILES] with [SOLC_VERSION]
+    cmd.args(["bind", "--select", "^Enum$"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 Generating bindings for 1 contracts
-Bindings have been generated to [..]"#
-    ]]);
+Bindings have been generated to [..]
+
+"#]]);
 });
 
 // forge bind e2e
 forgetest_init!(can_bind_e2e, |prj, cmd| {
     prj.initialize_default_contracts();
-    cmd.args(["bind"]).assert_success().stdout_eq(str![[r#"[COMPILING_FILES] with [SOLC_VERSION]
+    cmd.args(["bind"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
+
+"#]])
+        .stderr_eq(str![[r#"
 Generating bindings for 2 contracts
-Bindings have been generated to [..]"#]]);
+Bindings have been generated to [..]
+
+"#]]);
 
     let bindings_path = prj.root().join("out/bindings");
 
