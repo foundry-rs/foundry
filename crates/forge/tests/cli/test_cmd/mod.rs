@@ -43,6 +43,10 @@ fn setup_testdata_cmd(cmd: &mut TestCommand) {
 /// Format: pipe-separated regex alternation, e.g. `"Foo|Bar|Baz"`.
 const FLAKY_TESTDATA_CONTRACTS: &str = "Issue4640Test|Issue14212Test";
 
+// Issue14212Test depends on Base transaction lookups that are not reliably served by the public
+// Base RPC endpoint used in CI.
+const FLAKY_TESTDATA_RUN_CONTRACTS: &str = "Issue4640Test";
+
 // Run `forge test` on `/testdata`.
 forgetest!(testdata, |_prj, cmd| {
     setup_testdata_cmd(&mut cmd);
@@ -85,7 +89,7 @@ forgetest!(testdata, |_prj, cmd| {
 // Picked up by the nightly `test-flaky` workflow via `cargo nextest run --profile flaky`.
 forgetest!(flaky_testdata, |_prj, cmd| {
     setup_testdata_cmd(&mut cmd);
-    let mc = format!("--mc=({FLAKY_TESTDATA_CONTRACTS})");
+    let mc = format!("--mc=({FLAKY_TESTDATA_RUN_CONTRACTS})");
     cmd.args(["test", &mc]).assert_success();
 });
 
