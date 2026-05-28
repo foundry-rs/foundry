@@ -233,11 +233,19 @@ impl VerificationProviderType {
             if let Some(chain) = chain
                 && (chain.is_custom_sourcify() || chain.etherscan_urls().is_none() && !has_url)
             {
-                sh_warn!(
-                    "ETHERSCAN_API_KEY is set but chain {chain} has no known Etherscan API URL. \
-                     Falling back to Sourcify. Pass --verifier-url <URL> or \
-                     `--verifier <provider>` to override."
-                )?;
+                if chain.is_custom_sourcify() {
+                    sh_warn!(
+                        "ETHERSCAN_API_KEY is set but chain {chain} uses a Sourcify-compatible \
+                         API. Falling back to Sourcify. Pass `--verifier sourcify` to suppress \
+                         this warning."
+                    )?;
+                } else {
+                    sh_warn!(
+                        "ETHERSCAN_API_KEY is set but chain {chain} has no known Etherscan API \
+                         URL. Falling back to Sourcify. Pass --verifier-url <URL> or \
+                         `--verifier <provider>` to override."
+                    )?;
+                }
                 // Fall through to branch 5 (Sourcify default) below.
             } else {
                 sh_eprintln!(
