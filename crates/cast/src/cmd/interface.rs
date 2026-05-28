@@ -100,7 +100,7 @@ impl InterfaceArgs {
                 fs::create_dir_all(parent)?;
             }
             fs::write(&loc, res)?;
-            sh_println!("Saved interface at {}", loc.display())?;
+            sh_status!("Saved interface at {}", loc.display())?;
         } else if shell::is_json() {
             let abis = interfaces
                 .iter()

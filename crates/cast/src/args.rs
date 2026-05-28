@@ -554,7 +554,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         selector: selector.to_string(),
                         arguments,
                         state_mutability: state_mutability.to_string(),
-                        resolved: resolve.then(|| resolve_results[pos].clone()),
+                        resolved: resolve_results.get(pos).cloned(),
                     })
                     .collect();
                 print_json_object(infos)?;

@@ -726,14 +726,14 @@ impl KeychainPolicySubcommand {
 fn run_list() -> Result<()> {
     let keys_file = load_keys_file()?;
 
-    if keys_file.keys.is_empty() {
-        sh_println!("No keys found in keys.toml.")?;
-        return Ok(());
-    }
-
     if shell::is_json() {
         let entries: Vec<_> = keys_file.keys.iter().map(key_entry_to_json).collect();
         print_json_object(entries)?;
+        return Ok(());
+    }
+
+    if keys_file.keys.is_empty() {
+        sh_err!("No keys found in keys.toml.")?;
         return Ok(());
     }
 

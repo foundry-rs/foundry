@@ -11,7 +11,7 @@ use alloy_primitives::{Address, B256};
 use alloy_signer::Signer;
 use eyre::Result;
 use foundry_cli::{
-    json::print_json_object,
+    json::{print_json_object, print_json_success},
     utils::{LoadConfig, get_chain},
 };
 use foundry_common::{provider::ProviderBuilder, shell};
@@ -98,6 +98,36 @@ pub(super) async fn run(
         virtual_addresses.push((user_tag, vaddr));
     }
 
+    if no_register {
+        if shell::is_json() {
+            print_json_success(json!({
+                "salt": format!("{}", output.salt),
+                "registration_hash": format!("{}", output.registration_hash),
+                "master_id": format!("{}", output.master_id),
+                "virtual_addresses": virtual_addresses.iter().map(|(tag, addr)| json!({
+                    "tag": format!("{tag}"),
+                    "address": format!("{addr}"),
+                })).collect::<Vec<_>>(),
+            }))?;
+        } else {
+            sh_println!(
+                "Salt:              {}
+Registration hash: {}
+Master ID:         {}",
+                output.salt,
+                output.registration_hash,
+                output.master_id,
+            )?;
+            sh_println!("\nVirtual addresses:")?;
+            for (tag, vaddr) in &virtual_addresses {
+                sh_println!("  tag={tag}  {vaddr}")?;
+            }
+        }
+        return Ok(());
+    }
+
+    register(owner, output.salt, send_tx, tx_opts).await?;
+
     if shell::is_json() {
         print_json_object(json!({
             "salt": format!("{}", output.salt),
@@ -123,11 +153,7 @@ Master ID:         {}",
         }
     }
 
-    if no_register {
-        return Ok(());
-    }
-
-    register(owner, output.salt, send_tx, tx_opts).await
+    Ok(())
 }
 
 async fn register(
