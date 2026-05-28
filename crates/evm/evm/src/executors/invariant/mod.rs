@@ -714,6 +714,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                             invariant_contract.anchor(),
                             InvariantFuzzError::MaxAssumeRejects(self.config.max_assume_rejects),
                         );
+                        // Mirror the timeout path: surface the max-gas prefix collected so
+                        // far instead of emitting an empty `max_gas_sequence`.
+                        invariant_test.attach_max_gas_inputs(runs, &current_run.inputs);
                         break 'stop;
                     }
                 } else {

@@ -53,8 +53,9 @@ pub struct InvariantConfig {
     /// Default `false` (no behavior change, no new output).
     ///
     /// Turns on three things at once:
-    /// 1. Per-call `tx.gas_limit` / `tx.gasprice` randomization, biased toward the OOG /
-    ///    branch-on-gasprice bug regimes.
+    /// 1. Per-call `tx.gas_limit` drawn uniformly from `[2^24, 2^25)` to exercise gas-conditional
+    ///    EVM dispatch (refund accounting, EIP-150 1/64 retention, OOG dispatch at the EIP-7825
+    ///    cap).
     /// 2. Per-`(target, selector)` `max_gas` tracking (adds the "Max Gas" column).
     /// 3. Per-selector reproducer block: the call sequence that produced each peak.
     pub gas_fuzz: bool,
