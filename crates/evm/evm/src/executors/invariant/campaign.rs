@@ -3,7 +3,6 @@ use alloy_primitives::{Address, I256, Selector};
 use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::BasicTxDetails;
-use proptest::test_runner::TestError;
 use std::collections::HashMap;
 
 /// Immutable plan-level description for an invariant campaign.
@@ -77,13 +76,8 @@ impl InvariantCampaignAggregator {
         Self { spec, outputs: Vec::new() }
     }
 
-    pub fn push(&mut self, output: InvariantWorkerOutput) -> Result<()> {
-        ensure!(
-            worker_range_end(output.plan)? <= self.spec.total_runs,
-            "invariant worker output exceeds the logical campaign"
-        );
+    pub fn push(&mut self, output: InvariantWorkerOutput) {
         self.outputs.push(output);
-        Ok(())
     }
 
     /// Validates the collected worker ranges and folds them into one logical campaign result.
@@ -105,7 +99,9 @@ impl InvariantCampaignAggregator {
         let mut optimization_best = None;
 
         for InvariantWorkerOutput { result, .. } in self.outputs {
-            merge_predicate_errors(&mut errors, result.errors);
+            for (invariant, error) in result.errors {
+                errors.entry(invariant).or_insert(error);
+            }
             merge_handler_errors(&mut handler_errors, result.handler_errors);
             cases.extend(result.cases);
             reverts += result.reverts;
@@ -122,9 +118,6 @@ impl InvariantCampaignAggregator {
         let (optimization_best_value, optimization_best_sequence) = optimization_best
             .map(|choice| (Some(choice.value), choice.sequence))
             .unwrap_or_default();
-        let errors =
-            errors.into_iter().map(|(invariant, entry)| (invariant, entry.error)).collect();
-
         Ok(InvariantFuzzTestResult::new(
             errors,
             handler_errors,
@@ -141,20 +134,9 @@ impl InvariantCampaignAggregator {
     }
 }
 
-struct PredicateFailureEntry {
-    error: InvariantFuzzError,
-}
-
 struct OptimizationChoice {
     value: I256,
     sequence: Vec<BasicTxDetails>,
-}
-
-/// Returns the exclusive end of a worker's logical run range.
-fn worker_range_end(plan: InvariantWorkerPlan) -> Result<u32> {
-    plan.first_global_run
-        .checked_add(plan.runs)
-        .ok_or_else(|| eyre::eyre!("invariant worker output range overflows"))
 }
 
 fn ensure_outputs_cover_campaign(
@@ -178,7 +160,9 @@ fn ensure_outputs_cover_campaign(
             output.plan.first_global_run == next_global_run,
             "invariant worker outputs do not cover the logical campaign"
         );
-        next_global_run = worker_range_end(output.plan)?;
+        next_global_run = next_global_run
+            .checked_add(output.plan.runs)
+            .ok_or_else(|| eyre::eyre!("invariant worker output range overflows"))?;
     }
 
     ensure!(
@@ -188,24 +172,17 @@ fn ensure_outputs_cover_campaign(
     Ok(())
 }
 
-/// Keeps one predicate failure per invariant using the campaign's deterministic choice order.
-fn merge_predicate_errors(
-    merged: &mut HashMap<String, PredicateFailureEntry>,
-    worker_errors: HashMap<String, InvariantFuzzError>,
-) {
-    for (invariant, error) in worker_errors {
-        merged.entry(invariant).or_insert(PredicateFailureEntry { error });
-    }
-}
-
 /// Deduplicates handler assertion failures by site, keeping the shorter reproducer.
 fn merge_handler_errors(
     merged: &mut HashMap<(Address, Selector), InvariantFuzzError>,
     worker_errors: HashMap<(Address, Selector), InvariantFuzzError>,
 ) {
     for (site, error) in worker_errors {
-        let candidate_len = error_sequence_len(&error);
-        if merged.get(&site).is_none_or(|existing| error_sequence_len(existing) > candidate_len) {
+        let candidate_len = handler_error_sequence_len(&error);
+        if merged
+            .get(&site)
+            .is_none_or(|existing| handler_error_sequence_len(existing) > candidate_len)
+        {
             merged.insert(site, error);
         }
     }
@@ -234,24 +211,13 @@ fn merge_optimization(
         return;
     };
 
-    let should_replace = best.as_ref().is_none_or(|best| candidate_value > best.value);
-
-    if should_replace {
+    if best.as_ref().is_none_or(|best| candidate_value > best.value) {
         *best = Some(OptimizationChoice { value: candidate_value, sequence: candidate_sequence });
     }
 }
 
-const fn error_sequence_len(error: &InvariantFuzzError) -> usize {
-    match error {
-        InvariantFuzzError::BrokenInvariant(case_data) | InvariantFuzzError::Revert(case_data) => {
-            match &case_data.test_error {
-                TestError::Fail(_, sequence) => sequence.len(),
-                TestError::Abort(_) => usize::MAX,
-            }
-        }
-        InvariantFuzzError::HandlerAssertion(failure) => failure.call_sequence.len(),
-        InvariantFuzzError::MaxAssumeRejects(_) => usize::MAX,
-    }
+fn handler_error_sequence_len(error: &InvariantFuzzError) -> usize {
+    error.as_handler_assertion().map_or(usize::MAX, |failure| failure.call_sequence.len())
 }
 
 #[cfg(test)]
@@ -263,6 +229,7 @@ mod tests {
     use alloy_primitives::{B256, Bytes};
     use foundry_evm_coverage::HitMap;
     use foundry_evm_fuzz::{CallDetails, FuzzCase, FuzzedCases};
+    use proptest::test_runner::TestError;
     use revm_inspectors::tracing::CallTraceArena;
 
     fn empty_result(reverts: usize, failed_corpus_replays: usize) -> InvariantFuzzTestResult {
@@ -433,7 +400,7 @@ mod tests {
         let worker = InvariantWorkerOutput::new(one_worker_plan(spec), empty_result(2, 3));
 
         let mut aggregator = InvariantCampaignAggregator::new(spec);
-        aggregator.push(worker).unwrap();
+        aggregator.push(worker);
         let result = aggregator.finish().unwrap();
 
         assert_eq!(result.reverts, 2);
@@ -450,48 +417,42 @@ mod tests {
         ];
 
         let mut aggregator = InvariantCampaignAggregator::new(spec);
-        aggregator
-            .push(InvariantWorkerOutput::new(
-                plans[2],
-                worker_result(
-                    30,
-                    3,
-                    0x30,
-                    "transfer(address)",
-                    InvariantMetrics { calls: 3, reverts: 1, discards: 0 },
-                    3,
-                    0,
-                ),
-            ))
-            .unwrap();
-        aggregator
-            .push(InvariantWorkerOutput::new(
-                plans[0],
-                worker_result(
-                    10,
-                    1,
-                    0x10,
-                    "transfer(address)",
-                    InvariantMetrics { calls: 1, reverts: 0, discards: 2 },
-                    1,
-                    4,
-                ),
-            ))
-            .unwrap();
-        aggregator
-            .push(InvariantWorkerOutput::new(
-                plans[1],
-                worker_result(
-                    20,
-                    2,
-                    0x20,
-                    "approve(address)",
-                    InvariantMetrics { calls: 2, reverts: 1, discards: 1 },
-                    2,
-                    0,
-                ),
-            ))
-            .unwrap();
+        aggregator.push(InvariantWorkerOutput::new(
+            plans[2],
+            worker_result(
+                30,
+                3,
+                0x30,
+                "transfer(address)",
+                InvariantMetrics { calls: 3, reverts: 1, discards: 0 },
+                3,
+                0,
+            ),
+        ));
+        aggregator.push(InvariantWorkerOutput::new(
+            plans[0],
+            worker_result(
+                10,
+                1,
+                0x10,
+                "transfer(address)",
+                InvariantMetrics { calls: 1, reverts: 0, discards: 2 },
+                1,
+                4,
+            ),
+        ));
+        aggregator.push(InvariantWorkerOutput::new(
+            plans[1],
+            worker_result(
+                20,
+                2,
+                0x20,
+                "approve(address)",
+                InvariantMetrics { calls: 2, reverts: 1, discards: 1 },
+                2,
+                0,
+            ),
+        ));
 
         let result = aggregator.finish().unwrap();
 
@@ -525,27 +486,12 @@ mod tests {
         later.errors.insert("invariant_balance".to_string(), predicate_error("later", 1));
 
         let mut aggregator = InvariantCampaignAggregator::new(spec);
-        aggregator.push(InvariantWorkerOutput::new(plans[1], later)).unwrap();
-        aggregator.push(InvariantWorkerOutput::new(plans[0], earlier)).unwrap();
+        aggregator.push(InvariantWorkerOutput::new(plans[1], later));
+        aggregator.push(InvariantWorkerOutput::new(plans[0], earlier));
         let result = aggregator.finish().unwrap();
 
         assert_eq!(result.errors.len(), 1);
         assert_eq!(result.errors["invariant_balance"].revert_reason().as_deref(), Some("earlier"));
-    }
-
-    #[test]
-    fn predicate_error_merge_keeps_first_duplicate_failure() {
-        let mut merged = HashMap::default();
-
-        let mut worker_errors = HashMap::default();
-        worker_errors.insert("invariant_balance".to_string(), predicate_error("first", 4));
-        merge_predicate_errors(&mut merged, worker_errors);
-
-        let mut worker_errors = HashMap::default();
-        worker_errors.insert("invariant_balance".to_string(), predicate_error("second", 1));
-        merge_predicate_errors(&mut merged, worker_errors);
-
-        assert_eq!(merged["invariant_balance"].error.revert_reason().as_deref(), Some("first"));
     }
 
     #[test]
@@ -562,8 +508,8 @@ mod tests {
         shorter.handler_errors.insert(site, handler_error(site.0, site.1, 2, "shorter"));
 
         let mut aggregator = InvariantCampaignAggregator::new(spec);
-        aggregator.push(InvariantWorkerOutput::new(plans[1], shorter)).unwrap();
-        aggregator.push(InvariantWorkerOutput::new(plans[0], longer)).unwrap();
+        aggregator.push(InvariantWorkerOutput::new(plans[1], shorter));
+        aggregator.push(InvariantWorkerOutput::new(plans[0], longer));
         let result = aggregator.finish().unwrap();
 
         let failure = result.handler_errors[&site].as_handler_assertion().unwrap();
@@ -591,9 +537,9 @@ mod tests {
         later_tie.optimization_best_sequence = sequence(1, 0x30);
 
         let mut aggregator = InvariantCampaignAggregator::new(spec);
-        aggregator.push(InvariantWorkerOutput::new(plans[2], later_tie)).unwrap();
-        aggregator.push(InvariantWorkerOutput::new(plans[0], first)).unwrap();
-        aggregator.push(InvariantWorkerOutput::new(plans[1], earlier_best)).unwrap();
+        aggregator.push(InvariantWorkerOutput::new(plans[2], later_tie));
+        aggregator.push(InvariantWorkerOutput::new(plans[0], first));
+        aggregator.push(InvariantWorkerOutput::new(plans[1], earlier_best));
         let result = aggregator.finish().unwrap();
 
         assert_eq!(result.optimization_best_value, Some(I256::try_from(9).unwrap()));
@@ -605,12 +551,8 @@ mod tests {
         let spec = InvariantCampaignSpec::new(1);
         let mut aggregator = InvariantCampaignAggregator::new(spec);
 
-        aggregator
-            .push(InvariantWorkerOutput::new(one_worker_plan(spec), empty_result(0, 0)))
-            .unwrap();
-        aggregator
-            .push(InvariantWorkerOutput::new(one_worker_plan(spec), empty_result(0, 0)))
-            .unwrap();
+        aggregator.push(InvariantWorkerOutput::new(one_worker_plan(spec), empty_result(0, 0)));
+        aggregator.push(InvariantWorkerOutput::new(one_worker_plan(spec), empty_result(0, 0)));
         let err = aggregator.finish().unwrap_err();
 
         assert!(err.to_string().contains("do not cover the logical campaign"));
@@ -623,7 +565,7 @@ mod tests {
         let worker = InvariantWorkerOutput::new(plan, empty_result(0, 0));
 
         let mut aggregator = InvariantCampaignAggregator::new(spec);
-        aggregator.push(worker).unwrap();
+        aggregator.push(worker);
         let err = aggregator.finish().unwrap_err();
 
         assert!(err.to_string().contains("do not cover the logical campaign"));
