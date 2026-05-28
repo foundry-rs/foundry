@@ -952,14 +952,19 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
     let lib_toml_file = nested.join("foundry.toml");
     pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
 
-    cmd.args(["remappings", "--pretty"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["remappings", "--pretty"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+@utils/libraries/Contract.sol=src/Contract.sol
+@utils/=src/
+@openzeppelin/contracts/=lib/openzeppelin-contracts/
+@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
+dep1/=lib/dep1/src/
+forge-std/=lib/forge-std/src/
+
+"#]])
+        .stderr_eq(str![[r#"
 Global:
-- @utils/libraries/Contract.sol=src/Contract.sol
-- @utils/=src/
-- @openzeppelin/contracts/=lib/openzeppelin-contracts/
-- @openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
-- dep1/=lib/dep1/src/
-- forge-std/=lib/forge-std/src/
 
 
 "#]]);

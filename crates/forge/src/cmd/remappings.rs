@@ -29,17 +29,18 @@ impl RemappingArgs {
                 groups.entry(remapping.context.clone()).or_default().push(remapping);
             }
             for (group, remappings) in groups {
+                // Prose headers are diagnostics — keep stdout to one remapping per line.
                 if let Some(group) = group {
-                    sh_println!("Context: {group}")?;
+                    sh_status!("Context: {group}")?;
                 } else {
-                    sh_println!("Global:")?;
+                    sh_status!("Global:")?;
                 }
 
                 for mut remapping in remappings {
                     remapping.context = None; // avoid writing context twice
-                    sh_println!("- {remapping}")?;
+                    sh_println!("{remapping}")?;
                 }
-                sh_println!()?;
+                sh_eprintln!()?;
             }
         } else {
             for remapping in config.remappings {
