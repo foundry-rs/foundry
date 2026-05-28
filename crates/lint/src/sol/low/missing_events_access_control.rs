@@ -949,8 +949,8 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
     ) -> AnalyzerState {
         let mut writes = base.writes.clone();
         let base_len = writes.len();
-        for idx in 0..base_len {
-            writes[idx].evented = then_state.writes[idx].evented && else_state.writes[idx].evented;
+        for (idx, write) in writes.iter_mut().enumerate().take(base_len) {
+            write.evented = then_state.writes[idx].evented && else_state.writes[idx].evented;
         }
         writes.extend_from_slice(&then_state.writes[base_len..]);
         writes.extend_from_slice(&else_state.writes[base_len..]);
