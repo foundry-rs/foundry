@@ -17,7 +17,7 @@ use foundry_common::{
 };
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
-    FoundryBlock, FoundryTransaction,
+    FoundryBlock,
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
     },
@@ -31,8 +31,7 @@ use foundry_evm_fuzz::{
         RandomCallGenerator, SenderFilters, TargetedContract, TargetedContracts,
     },
     strategies::{
-        EvmFuzzState, GasObservations, InvariantFuzzState, invariant_strat, override_call_strat,
-        sample_gas_limit, sample_gas_price,
+        EvmFuzzState, InvariantFuzzState, invariant_strat, override_call_strat, sample_gas_limit,
     },
 };
 use foundry_evm_traces::{CallTraceArena, SparsedTraceArena};
@@ -40,10 +39,7 @@ use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, can_continue, did_fail_on_assert, invariant_preflight_check};
-use revm::{
-    context::{Block, Transaction},
-    state::Account,
-};
+use revm::{context::Block, state::Account};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -584,9 +580,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let mut throughput = InvariantThroughputMetrics::default();
         let mut failure_metrics = InvariantFailureMetrics::default();
 
-        // Campaign-scoped state for `invariant.gas_fuzz`. Unused when disabled.
-        let gas_observations = GasObservations::new();
-        let block_gas_cap = self.executor.gas_limit();
         let continue_campaign = |runs: u32| {
             if early_exit.should_stop() {
                 return false;
@@ -650,25 +643,17 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                     (last.call_details.target, Selector::from(sel_bytes))
                 };
 
-                // Per-call gas-envelope sampling. Both `gas_limit` and `gas_price`
-                // are stamped onto `call_details` so `execute_tx` applies them on
-                // the run-local executor (not `self.executor`) and so failing
-                // sequences replay with the exact gas envelope that triggered them.
-                // The campaign-seeded `branch_runner` RNG is used (not `rand::rng()`)
-                // so `--fuzz-seed` continues to deterministically reproduce gas-fuzzed
-                // campaigns.
+                // Per-call `tx.gas_limit` sampling. Stamped onto `call_details` so
+                // `execute_tx` applies it on the run-local executor (not
+                // `self.executor`) and so failing sequences replay with the exact
+                // gas envelope that triggered them. The campaign-seeded
+                // `branch_runner` RNG is used (not `rand::rng()`) so `--fuzz-seed`
+                // continues to deterministically reproduce gas-fuzzed campaigns.
                 if self.config.gas_fuzz {
                     let rng = invariant_test.test_data.branch_runner.rng();
-                    let sampled_limit = sample_gas_limit(
-                        &gas_observations,
-                        handler_target,
-                        handler_selector,
-                        block_gas_cap,
-                        rng,
-                    );
-                    let sampled_price = sample_gas_price(rng);
+                    let sampled_limit = sample_gas_limit(rng);
                     if let Some(last) = current_run.inputs.last_mut() {
-                        last.call_details.set_gas_envelope(sampled_limit, Some(sampled_price));
+                        last.call_details.gas_limit = Some(sampled_limit);
                     }
                 }
 
@@ -729,8 +714,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         break 'stop;
                     }
                 } else {
-                    // `execute_tx` scrubs any sampled gas-price override out
-                    // of `call_result.tx_env`, so `commit()` cannot re-arm it.
                     current_run.executor.commit(&mut call_result);
 
                     // Collect data for fuzzing from the state changeset.
@@ -775,20 +758,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         .fuzz_runs
                         .push(FuzzCase { gas: call_result.gas_used, stipend: call_result.stipend });
                     throughput.record_call(call_result.gas_used);
-
-                    // Only natural-gas runs feed the observation tracker; calls under
-                    // a tight sampled budget may have OOG'd and would skew the max down.
-                    if self.config.gas_fuzz
-                        && call_result.gas_used > 0
-                        && let Some(last) = current_run.inputs.last()
-                        && last.call_details.gas_limit().is_none()
-                    {
-                        gas_observations.record(
-                            handler_target,
-                            handler_selector,
-                            call_result.gas_used,
-                        );
-                    }
 
                     // Determine if test can continue or should exit.
                     // Check invariants based on check_interval to improve deep run performance.
@@ -1661,25 +1630,13 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
 
     // Per-call gas-limit override under `gas_fuzz`. Save/restore so the executor's
     // natural limit applies to invariant assertion calls.
-    let saved_gas_limit = tx.call_details.gas_limit().map(|g| {
+    let saved_gas_limit = tx.call_details.gas_limit.map(|g| {
         let saved = executor.gas_limit();
         executor.set_gas_limit(g);
         saved
     });
 
-    // Per-call `tx.gasprice` override under `gas_fuzz`. Snapshot the natural
-    // price so we can scrub it back below — otherwise downstream `commit()`
-    // (replay/shrink/corpus/showmap) would re-arm `cheats.gas_price` from
-    // `result.tx_env.gas_price()` and leak the sampled value to the next call.
-    let gas_price_override = tx.call_details.gas_price();
-    let natural_gas_price = executor.tx_env().gas_price();
-    if let Some(p) = gas_price_override
-        && let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
-    {
-        cheats.gas_price = Some(p.into());
-    }
-
-    let mut result = executor.call_raw(
+    let result = executor.call_raw(
         tx.sender,
         tx.call_details.target,
         tx.call_details.calldata.clone(),
@@ -1688,18 +1645,6 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
 
     if let Some(saved) = saved_gas_limit {
         executor.set_gas_limit(saved);
-    }
-
-    // Scrub override before returning so any downstream `commit()` cannot
-    // re-arm `cheats.gas_price`. Also defensively clear the inspector field
-    // in case `initialize_interp` was never reached.
-    if gas_price_override.is_some() {
-        if let Ok(call_result) = &mut result {
-            call_result.tx_env.set_gas_price(natural_gas_price);
-        }
-        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
-            cheats.gas_price = None;
-        }
     }
 
     result.map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))

@@ -713,7 +713,7 @@ mod tests {
                 target: Address::ZERO,
                 calldata: Bytes::new(),
                 value: None,
-                gas: None,
+                gas_limit: None,
             },
         }
     }
