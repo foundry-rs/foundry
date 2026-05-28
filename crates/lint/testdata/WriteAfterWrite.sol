@@ -112,6 +112,26 @@ contract WriteAfterWrite {
         { y = x + v; }
         x = v;
     }
+
+    // bad: write in call argument is still overwritten before being read
+    function bad6(uint256 v) public {
+        x = 1;
+        helper2(x = v);
+    }
+    function helper2(uint256) internal pure {}
+
+    // good: ternary arms are exclusive; only one branch writes x
+    function good11(bool flag) public {
+        uint256 z = (flag ? (x = 1) : (x = 2));
+        z;
+    }
+
+    // good: && short-circuits; RHS write may not execute
+    function good12(uint256 v) public returns (bool) {
+        x = 1;
+        bool b = (v > 0) && (x = v) > 0;
+        return b;
+    }
 }
 
 // good: modifier placeholder clears pending so writes on both sides are live
@@ -125,4 +145,15 @@ contract ModifierTest {
     }
 
     function go() public guarded {}
+}
+
+// bad: write-after-write inside a modifier body
+contract ModifierBad {
+    uint256 public x;
+
+    modifier badMod() {
+        x = 1;
+        x = 2;
+        _;
+    }
 }

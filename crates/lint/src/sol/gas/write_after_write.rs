@@ -7,7 +7,9 @@ use solar::{
     interface::Span,
     sema::{
         Hir,
-        hir::{Block, Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind, VariableId},
+        hir::{
+            BinOpKind, Block, Expr, ExprKind, Function, ItemId, Res, Stmt, StmtKind, VariableId,
+        },
     },
 };
 use std::collections::HashMap;
@@ -170,7 +172,12 @@ fn process_expr<'hir>(
         }
         // Any function/method call can observe state through re-entrancy or view
         // calls, so conservatively treat it as reading everything pending.
-        ExprKind::Call(_, _, _) => {
+        // Walk callee and arguments first — Solidity evaluates them before the call.
+        ExprKind::Call(callee, args, _) => {
+            collect_reads(ctx, hir, callee, pending);
+            for arg in args.exprs() {
+                collect_reads(ctx, hir, arg, pending);
+            }
             pending.clear();
         }
         // For any other expression used as a statement, scan for reads.
@@ -201,6 +208,14 @@ fn collect_reads<'hir>(
             // reads it. Delegate to process_expr so the write is tracked correctly.
             process_expr(ctx, hir, expr.peel_parens(), pending);
         }
+        // Short-circuit operators: LHS always evaluates, RHS may not.
+        // Clear outer pending before RHS to avoid false-positive WAW in the conditional path.
+        ExprKind::Binary(lhs, op, rhs) if matches!(op.kind, BinOpKind::And | BinOpKind::Or) => {
+            collect_reads(ctx, hir, lhs, pending);
+            pending.clear();
+            let mut rhs_pending = HashMap::default();
+            collect_reads(ctx, hir, rhs, &mut rhs_pending);
+        }
         ExprKind::Binary(lhs, _, rhs) => {
             collect_reads(ctx, hir, lhs, pending);
             collect_reads(ctx, hir, rhs, pending);
@@ -208,13 +223,23 @@ fn collect_reads<'hir>(
         ExprKind::Unary(_, inner) | ExprKind::Payable(inner) => {
             collect_reads(ctx, hir, inner, pending);
         }
+        // Ternary arms are mutually exclusive; analyze each independently with a fresh
+        // pending to avoid false-positive WAW between branches.
         ExprKind::Ternary(cond, t, f) => {
             collect_reads(ctx, hir, cond, pending);
-            collect_reads(ctx, hir, t, pending);
-            collect_reads(ctx, hir, f, pending);
+            pending.clear();
+            let mut then_pending = HashMap::default();
+            let mut else_pending = HashMap::default();
+            collect_reads(ctx, hir, t, &mut then_pending);
+            collect_reads(ctx, hir, f, &mut else_pending);
         }
         // Any call may observe storage through re-entrancy or view semantics.
-        ExprKind::Call(_, _, _) => {
+        // Walk callee and arguments first — Solidity evaluates them before the call.
+        ExprKind::Call(callee, args, _) => {
+            collect_reads(ctx, hir, callee, pending);
+            for arg in args.exprs() {
+                collect_reads(ctx, hir, arg, pending);
+            }
             pending.clear();
         }
         ExprKind::Index(base, index) => {
