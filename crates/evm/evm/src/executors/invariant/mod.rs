@@ -671,6 +671,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 // assumes / pops below) get zero-length entries that the corpus side filters out.
                 let call_cmp_values = call_result.evm_cmp_values.take().unwrap_or_default();
                 let discarded = call_result.result.as_ref() == MAGIC_ASSUME;
+                // `gas_fuzz=true` forces the metrics path (independently of `show_metrics`)
+                // because the max-gas-per-handler tracking — used to surface the gas-DoS
+                // signal `gas_fuzz` exists to find — lives in `record_metrics`.
                 if self.config.show_metrics || self.config.gas_fuzz {
                     // gas_used / run_inputs are only meaningful under `gas_fuzz`;
                     // `show_metrics` alone keeps the legacy table.
