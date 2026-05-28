@@ -1172,6 +1172,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             None,
             Some(&targeted_contracts),
             Some(self.dynamic_target_ctx()),
+            self.config.gas_fuzz,
         )?;
 
         let mut invariant_test =

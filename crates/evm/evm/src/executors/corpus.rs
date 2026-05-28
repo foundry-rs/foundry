@@ -294,6 +294,8 @@ pub struct WorkerCorpus {
     optimization_best_value: Option<I256>,
     /// Optimization mode: the call sequence that produced the best value.
     optimization_best_sequence: Vec<BasicTxDetails>,
+    /// `invariant.gas_fuzz` for this campaign; gates persisted `gas_limit` overrides on load.
+    gas_fuzz: bool,
 }
 
 /// Refs used during corpus replay to register contracts deployed mid-sequence as fuzz targets,
@@ -340,6 +342,7 @@ pub(crate) fn rollback_replay_created(
 }
 
 impl WorkerCorpus {
+    #[allow(clippy::too_many_arguments)]
     pub fn new<FEN: FoundryEvmNetwork>(
         id: usize,
         config: FuzzCorpusConfig,
@@ -349,6 +352,7 @@ impl WorkerCorpus {
         fuzzed_function: Option<&Function>,
         fuzzed_contracts: Option<&FuzzRunIdentifiedContracts>,
         dynamic: Option<DynamicTargetCtx<'_>>,
+        gas_fuzz: bool,
     ) -> Result<Self> {
         let mutation_generator = prop_oneof![
             Just(MutationType::Splice),
@@ -434,7 +438,7 @@ impl WorkerCorpus {
             // Then, [distribute]s it to workers.
             let executor = executor.expect("Executor required for master worker");
             'corpus_replay: for entry in read_corpus_dir(corpus_dir) {
-                let tx_seq = entry.read_tx_seq()?;
+                let mut tx_seq = entry.read_tx_seq()?;
                 if tx_seq.is_empty() {
                     continue;
                 }
@@ -443,7 +447,11 @@ impl WorkerCorpus {
                 let mut cmp_seq = Vec::with_capacity(tx_seq.len());
                 // Targets deployed during this entry, cleared after the entry.
                 let mut created: Vec<Address> = Vec::new();
-                for tx in &tx_seq {
+                for tx in &mut tx_seq {
+                    // Strip stale `gas_limit` from a prior `gas_fuzz=true` corpus.
+                    if !gas_fuzz {
+                        tx.call_details.gas_limit = None;
+                    }
                     if Self::can_replay_tx(tx, fuzzed_function, fuzzed_contracts) {
                         let mut call_result = execute_tx(&mut executor, tx)?;
                         cmp_seq.push(call_result.evm_cmp_values.take().unwrap_or_default());
@@ -513,6 +521,7 @@ impl WorkerCorpus {
             last_sync_metrics: Default::default(),
             optimization_best_value,
             optimization_best_sequence,
+            gas_fuzz,
         })
     }
 
@@ -1097,10 +1106,16 @@ impl WorkerCorpus {
             if entry.timestamp <= self.last_sync_timestamp {
                 continue;
             }
-            let tx_seq = entry.read_tx_seq()?;
+            let mut tx_seq = entry.read_tx_seq()?;
             if tx_seq.is_empty() {
                 warn!(target: "corpus", "skipping empty corpus entry: {}", entry.path.display());
                 continue;
+            }
+            // Mirror the master-worker load gate for sync entries.
+            if !self.gas_fuzz {
+                for tx in &mut tx_seq {
+                    tx.call_details.gas_limit = None;
+                }
             }
             imports.push((entry, tx_seq));
         }
@@ -1502,6 +1517,7 @@ mod tests {
             last_sync_metrics: CorpusMetrics::default(),
             optimization_best_value: None,
             optimization_best_sequence: vec![],
+            gas_fuzz: false,
         };
 
         (manager, seed_uuid)
@@ -1637,6 +1653,7 @@ mod tests {
             last_sync_metrics: CorpusMetrics::default(),
             optimization_best_value: None,
             optimization_best_sequence: vec![],
+            gas_fuzz: false,
         };
 
         // First eviction should remove the non-favored one.

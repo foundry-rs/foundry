@@ -466,8 +466,9 @@ impl<FEN: FoundryEvmNetwork> FuzzedExecutor<FEN> {
             // Master worker replays the persisted corpus using the executor
             (worker_id == 0).then_some(&self.executor_f),
             Some(func),
-            None, // fuzzed_contracts for invariant tests
-            None, // dynamic target ctx (invariant-only)
+            None,  // fuzzed_contracts for invariant tests
+            None,  // dynamic target ctx (invariant-only)
+            false, // gas_fuzz is invariant-only
         )?;
         let mut executor = self.executor_f.clone();
 
