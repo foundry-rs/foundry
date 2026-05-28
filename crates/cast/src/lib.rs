@@ -60,6 +60,8 @@ pub use foundry_evm::*;
 
 pub mod args;
 pub mod cmd;
+pub mod diagnostic;
+pub mod introspect;
 pub mod opts;
 pub mod tempo;
 
