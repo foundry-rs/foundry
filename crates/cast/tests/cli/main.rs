@@ -4752,10 +4752,10 @@ casttest!(correct_json_serialization, |_prj, cmd| {
         [true, "0x0000000000000000000000000000000000000000000000000000000000000012"],
         [true, "0x0000000000000000000000000000000000000000000000000000000000000012"]
     ]]);
-    let envelope: serde_json::Value =
+    let output: serde_json::Value =
         serde_json::from_slice(&cmd.args(args).assert_success().get_output().stdout)
             .expect("not valid json");
-    assert_eq!(envelope["data"], expected_output);
+    assert_eq!(output, expected_output);
 });
 
 // Test cast abi-encode-event with indexed parameters
