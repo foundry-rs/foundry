@@ -5,7 +5,7 @@ use crate::{
 };
 use solar::{
     ast,
-    interface::sym,
+    interface::{Ident, Symbol, sym},
     sema::hir::{
         ContractId, ElementaryType, Expr, ExprKind, Hir, ItemId, Res, Type, TypeKind, VariableId,
     },
@@ -25,7 +25,18 @@ impl<'hir> LateLintPass<'hir> for EncodedPackedCollision {
         if member.name != sym::encodePacked || !is_abi_builtin(base) {
             return;
         }
-        let dynamic_count = args.exprs().filter(|arg| is_dynamic_arg(hir, arg)).count();
+        // Only non-literal dynamic args count: a top-level string/hex/unicode literal is a
+        // compile-time constant. With at most one non-literal dynamic arg the packed encoding
+        // is still injective, so there is no collision risk.
+        let dynamic_count = args
+            .exprs()
+            .filter(|arg| {
+                !matches!(
+                    arg.peel_parens().kind,
+                    ExprKind::Lit(lit) if matches!(lit.kind, ast::LitKind::Str(..))
+                ) && is_dynamic_arg(hir, arg)
+            })
+            .count();
         if dynamic_count >= 2 {
             ctx.emit(&ENCODE_PACKED_COLLISION, expr.span);
         }
@@ -33,21 +44,78 @@ impl<'hir> LateLintPass<'hir> for EncodedPackedCollision {
 }
 
 fn is_abi_builtin(expr: &Expr<'_>) -> bool {
-    matches!(
-        &expr.peel_parens().kind,
-        ExprKind::Ident(reses)
-            if reses.iter().any(|r| matches!(r, Res::Builtin(b) if b.name() == sym::abi))
-    )
+    is_builtin_named(expr, sym::abi)
 }
 
 fn is_dynamic_arg(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
-    // String literals are always dynamic `string` type.
-    if matches!(&expr.peel_parens().kind, ExprKind::Lit(lit) if matches!(lit.kind, ast::LitKind::Str(..)))
-    {
-        return true;
+    let expr = expr.peel_parens();
+    match &expr.kind {
+        // String literals (and multi-line/hex string sequences) are always dynamic `string` type.
+        ExprKind::Lit(lit) if matches!(lit.kind, ast::LitKind::Str(..)) => true,
+        // Ternary: dynamic when both branches are dynamic. Handled here so that literal branches
+        // (which have no expr_type) are correctly identified as dynamic.
+        ExprKind::Ternary(_, then, else_) => {
+            is_dynamic_arg(hir, then) && is_dynamic_arg(hir, else_)
+        }
+        // Calls: check well-known builtins that return bytes/string, then generic path.
+        ExprKind::Call(callee, args, _) => is_dynamic_call(hir, callee, args.exprs().count()),
+        // Member access: check well-known dynamic builtin properties (msg.data, *.code, etc.)
+        // before the generic struct-field path in expr_type.
+        ExprKind::Member(base, member) => {
+            is_dynamic_builtin_member(base, member)
+                || expr_type(hir, expr).is_some_and(|ty| is_dynamic_type(&ty.kind))
+        }
+        _ => expr_type(hir, expr).is_some_and(|ty| is_dynamic_type(&ty.kind)),
     }
-    let Some(ty) = expr_type(hir, expr) else { return false };
-    is_dynamic_type(&ty.kind)
+}
+
+/// Returns `true` when `callee(args)` is statically known to return a dynamic type.
+fn is_dynamic_call<'hir>(hir: &'hir Hir<'hir>, callee: &'hir Expr<'hir>, n_args: usize) -> bool {
+    let callee = callee.peel_parens();
+    match &callee.kind {
+        // `new bytes(n)` / `new string(n)`: dynamic allocation.
+        ExprKind::New(ty) => return is_dynamic_type(&ty.kind),
+        ExprKind::Member(recv, method) => {
+            // abi.encode / abi.encodePacked / abi.encodeWithSelector / … -> bytes
+            if is_abi_builtin(recv) && is_abi_encode_method(method.name) {
+                return true;
+            }
+            // string.concat(…) -> string, bytes.concat(…) -> bytes
+            if method.name == sym::concat
+                && let ExprKind::Type(ty) = &recv.peel_parens().kind
+                && is_dynamic_type(&ty.kind)
+            {
+                return true;
+            }
+        }
+        _ => {}
+    }
+    call_return_type(hir, callee, Some(n_args)).is_some_and(|ty| is_dynamic_type(&ty.kind))
+}
+
+/// Returns `true` when `base.member` is a well-known builtin property of dynamic bytes type.
+fn is_dynamic_builtin_member(base: &Expr<'_>, member: &Ident) -> bool {
+    match member.name {
+        // msg.data -> bytes calldata
+        n if n == sym::data => is_builtin_named(base, sym::msg),
+        // <any>.code, type(C).creationCode, type(C).runtimeCode -> bytes
+        n if n == sym::code || n == sym::creationCode || n == sym::runtimeCode => true,
+        _ => false,
+    }
+}
+
+fn is_abi_encode_method(name: Symbol) -> bool {
+    name == sym::encode
+        || name == sym::encodePacked
+        || name == sym::encodeWithSelector
+        || name == sym::encodeWithSignature
+        || name == sym::encodeCall
+}
+
+fn is_builtin_named(expr: &Expr<'_>, name: Symbol) -> bool {
+    matches!(&expr.peel_parens().kind,
+        ExprKind::Ident(reses) if reses.iter().any(|r| matches!(r, Res::Builtin(b) if b.name() == name))
+    )
 }
 
 const fn is_dynamic_type(kind: &TypeKind<'_>) -> bool {
