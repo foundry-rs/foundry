@@ -147,7 +147,7 @@ forgetest!(
         fs::write(block2_file, "{}").unwrap();
         fs::create_dir_all(etherscan_cache_dir).unwrap();
 
-        let output = cmd.args(["cache", "ls"]).assert_success().get_output().stdout_lossy();
+        let output = cmd.args(["cache", "ls"]).assert_success().get_output().stderr_lossy();
         let output_lines = output.split('\n').collect::<Vec<_>>();
         println!("{output}");
 
