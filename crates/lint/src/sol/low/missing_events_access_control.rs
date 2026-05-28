@@ -9,7 +9,7 @@ use crate::{
 use solar::{
     ast::{ContractKind, DataLocation, LitKind, StateMutability, Visibility},
     interface::{Span, kw, sym},
-    sema::hir::{self, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId},
+    sema::hir::{self, EventId, ExprKind, FunctionId, ItemId, Res, StmtKind, VariableId},
 };
 use std::collections::{HashMap, HashSet};
 
@@ -27,7 +27,7 @@ impl<'hir> LateLintPass<'hir> for MissingEventsAccessControl {
         hir: &'hir hir::Hir<'hir>,
         contract: &'hir hir::Contract<'hir>,
     ) {
-        if contract.kind != ContractKind::Contract {
+        if !matches!(contract.kind, ContractKind::Contract | ContractKind::AbstractContract) {
             return;
         }
 
@@ -912,13 +912,17 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
     }
 
     fn mark_event(&mut self, expr: &hir::Expr<'_>) {
+        let Some(event_id) = emitted_event_id(expr) else { return };
         let event_sources = self.value_sources(expr);
         if event_sources.is_empty() {
             return;
         }
 
         for write in &mut self.writes {
-            if !write.evented && write.sources.intersects(&event_sources) {
+            if !write.evented
+                && write.sources.intersects(&event_sources)
+                && event_mentions_state_var(self.hir, event_id, write.var_id)
+            {
                 write.evented = true;
             }
         }
@@ -1599,12 +1603,78 @@ fn name_looks_like_access_control(name: &str) -> bool {
     lower == "auth"
         || lower == "requiresauth"
         || lower == "restricted"
+        || lower.starts_with("onlyadmin")
+        || lower.starts_with("onlyguardian")
+        || lower.starts_with("onlymanager")
         || lower.starts_with("onlyowner")
         || lower.starts_with("onlyrole")
+        || lower.starts_with("checkadmin")
+        || lower.starts_with("_checkadmin")
+        || lower.starts_with("checkguardian")
+        || lower.starts_with("_checkguardian")
+        || lower.starts_with("checkmanager")
+        || lower.starts_with("_checkmanager")
         || lower.starts_with("checkowner")
         || lower.starts_with("_checkowner")
         || lower.starts_with("checkrole")
         || lower.starts_with("_checkrole")
+}
+
+fn emitted_event_id(expr: &hir::Expr<'_>) -> Option<EventId> {
+    let ExprKind::Call(callee, _, _) = &expr.peel_parens().kind else { return None };
+    resolved_event_id(callee)
+}
+
+fn resolved_event_id(expr: &hir::Expr<'_>) -> Option<EventId> {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(reses) => reses.iter().find_map(|res| {
+            let Res::Item(ItemId::Event(event_id)) = res else { return None };
+            Some(*event_id)
+        }),
+        ExprKind::Member(base, _) => resolved_event_id(base),
+        _ => None,
+    }
+}
+
+fn event_mentions_state_var(hir: &hir::Hir<'_>, event_id: EventId, var_id: VariableId) -> bool {
+    let Some(var_name) = hir.variable(var_id).name else { return false };
+    let keywords = state_var_event_keywords(var_name.as_str());
+    let event = hir.event(event_id);
+
+    name_contains_event_keyword(event.name.as_str(), &keywords)
+        || event.parameters.iter().any(|param_id| {
+            hir.variable(*param_id)
+                .name
+                .is_some_and(|name| name_contains_event_keyword(name.as_str(), &keywords))
+        })
+}
+
+fn state_var_event_keywords(name: &str) -> Vec<String> {
+    let normalized = normalize_event_name_part(name);
+    let mut out = Vec::from([normalized.clone()]);
+
+    if let Some(singular) = normalized.strip_suffix('s')
+        && !singular.is_empty()
+    {
+        out.push(singular.to_string());
+    }
+
+    for keyword in ["owner", "admin", "guardian", "manager", "role"] {
+        if normalized.contains(keyword) {
+            out.push(keyword.to_string());
+        }
+    }
+
+    out
+}
+
+fn name_contains_event_keyword(name: &str, keywords: &[String]) -> bool {
+    let normalized = normalize_event_name_part(name);
+    keywords.iter().any(|keyword| !keyword.is_empty() && normalized.contains(keyword))
+}
+
+fn normalize_event_name_part(name: &str) -> String {
+    name.chars().filter(|ch| ch.is_ascii_alphanumeric()).map(|ch| ch.to_ascii_lowercase()).collect()
 }
 
 fn called_function_ids(expr: &hir::Expr<'_>) -> HashSet<FunctionId> {

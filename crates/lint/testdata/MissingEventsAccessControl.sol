@@ -19,6 +19,7 @@ contract MissingEventsAccessControl {
     event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
     event GuardianUpdated(address indexed guardian);
     event RoleUpdated(address indexed account, bool enabled);
+    event Logged(address val);
     event Touched();
 
     modifier onlyOwner() {
@@ -96,6 +97,10 @@ contract MissingEventsAccessControl {
         roles[account] = true; //~WARN: `roles` is changed without an event but is used for access control
     }
 
+    function revokeRole(address account) external onlyOwner {
+        delete roles[account]; //~WARN: `roles` is changed without an event but is used for access control
+    }
+
     function setNamedRole(address account, bytes32 role, bool enabled) external onlyOwner {
         namedRoles[account][role] = enabled; //~WARN: `namedRoles` is changed without an event but is used for access control
     }
@@ -120,6 +125,11 @@ contract MissingEventsAccessControl {
     function setOwnerWithUnrelatedEventAfter(address newOwner) external onlyOwner {
         owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
         emit Touched();
+    }
+
+    function setOwnerWithUnrelatedArgEvent(address newOwner) external onlyOwner {
+        owner = newOwner; //~WARN: `owner` is changed without an event but is used for access control
+        emit Logged(newOwner);
     }
 
     function setOwnerViaLoggingModifier(address newOwner) external onlyOwner loggedModifier {
@@ -311,5 +321,21 @@ contract AccessBase {
 contract MissingEventsAccessControlDerived is AccessBase {
     function transferBaseOwnership(address newOwner) external onlyBaseOwner {
         baseOwner = newOwner; //~WARN: `baseOwner` is changed without an event but is used for access control
+    }
+}
+
+abstract contract AbstractAccessBase {
+    address public admin;
+
+    modifier onlyAdmin() virtual;
+}
+
+abstract contract MissingEventsAccessControlAbstractDerived is AbstractAccessBase {
+    function setAdmin(address newAdmin) external onlyAdmin {
+        admin = newAdmin; //~WARN: `admin` is changed without an event but is used for access control
+    }
+
+    function adminAction() external view {
+        require(msg.sender == admin, "not admin");
     }
 }
