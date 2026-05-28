@@ -91,6 +91,7 @@ impl InvariantCampaignAggregator {
         Ok(())
     }
 
+    /// Validates the collected worker ranges and folds them into one logical campaign result.
     pub fn finish(mut self) -> Result<InvariantFuzzTestResult> {
         ensure!(!self.outputs.is_empty(), "missing invariant worker output");
 
@@ -163,6 +164,7 @@ struct PredicateFailureChoice {
     sequence_len: usize,
 }
 
+/// Returns the exclusive end of a worker's logical run range.
 fn worker_range_end(plan: InvariantWorkerPlan) -> Result<u32> {
     plan.first_global_run
         .checked_add(plan.runs)
@@ -200,6 +202,7 @@ fn ensure_outputs_cover_campaign(
     Ok(())
 }
 
+/// Keeps one predicate failure per invariant using the campaign's deterministic choice order.
 fn merge_predicate_errors(
     merged: &mut HashMap<String, InvariantFuzzError>,
     choices: &mut HashMap<String, PredicateFailureChoice>,
@@ -215,6 +218,7 @@ fn merge_predicate_errors(
     }
 }
 
+/// Deduplicates handler assertion failures by site, keeping the shorter reproducer.
 fn merge_handler_errors(
     merged: &mut HashMap<(Address, Selector), InvariantFuzzError>,
     worker_errors: HashMap<(Address, Selector), InvariantFuzzError>,
@@ -231,6 +235,7 @@ fn merge_handler_errors(
     }
 }
 
+/// Adds worker-local selector metrics into the logical campaign totals.
 fn merge_metrics(
     merged: &mut HashMap<String, InvariantMetrics>,
     worker_metrics: HashMap<String, InvariantMetrics>,
@@ -243,6 +248,7 @@ fn merge_metrics(
     }
 }
 
+/// Keeps the best optimization value, using logical run order to break ties.
 fn merge_optimization(
     best_value: &mut Option<I256>,
     best_sequence: &mut Vec<BasicTxDetails>,
@@ -330,6 +336,7 @@ mod tests {
         maps
     }
 
+    /// Builds a worker-local result fixture with the fields merged by the aggregator.
     fn worker_result(
         case_gas: u64,
         reverts: usize,
@@ -352,6 +359,7 @@ mod tests {
         (0..len).map(|idx| basic_tx(first_sender.wrapping_add(idx as u8))).collect()
     }
 
+    /// Builds a predicate failure fixture with a reproducible call sequence.
     fn predicate_error(reason: &str, sequence_len: usize) -> InvariantFuzzError {
         InvariantFuzzError::BrokenInvariant(FailedInvariantCaseData {
             test_error: TestError::Fail(reason.to_string().into(), sequence(sequence_len, 0x80)),
@@ -366,6 +374,7 @@ mod tests {
         })
     }
 
+    /// Builds a handler assertion fixture with a reproducible call sequence.
     fn handler_error(
         reverter: Address,
         selector: Selector,
