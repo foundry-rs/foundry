@@ -921,14 +921,28 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
     pub fn verify_preflight_check(&self) -> Result<()> {
         for sequence in self.sequence.sequences() {
-            if self.args.verifier.verifier == VerificationProviderType::Etherscan
-                && self
-                    .script_config
-                    .config
-                    .get_etherscan_api_key(Some(sequence.chain.into()))
-                    .is_none()
-            {
-                eyre::bail!("Missing etherscan key for chain {}", sequence.chain);
+            let chain: Chain = sequence.chain.into();
+            let etherscan_key = self
+                .script_config
+                .config
+                .get_etherscan_api_key(Some(chain))
+                .or_else(|| self.script_config.config.etherscan_api_key.clone());
+            // Use the centralized resolver so the preflight reflects the provider that will
+            // actually be used at verification time (not just the explicit CLI value).
+            let resolved = self.args.verifier.resolve(etherscan_key.as_deref(), Some(chain));
+            if resolved == VerificationProviderType::Etherscan {
+                let has_etherscan_url = (chain.etherscan_urls().is_some()
+                    && !chain.is_custom_sourcify())
+                    || self.args.verifier.verifier_url.is_some();
+                if !has_etherscan_url {
+                    eyre::bail!(
+                        "Chain {} has no known Etherscan API URL; pass --verifier-url <URL>",
+                        sequence.chain
+                    );
+                }
+                if etherscan_key.is_none() {
+                    eyre::bail!("Missing etherscan key for chain {}", sequence.chain);
+                }
             }
         }
 

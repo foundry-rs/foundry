@@ -1,5 +1,5 @@
 use crate::{
-    provider::{VerificationContext, VerificationProvider},
+    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
     utils::ensure_solc_build_metadata,
     verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs},
 };
@@ -21,6 +21,10 @@ pub struct SourcifyVerificationProvider;
 
 #[async_trait]
 impl VerificationProvider for SourcifyVerificationProvider {
+    fn provider_type(&self) -> VerificationProviderType {
+        VerificationProviderType::Sourcify
+    }
+
     async fn preflight_verify_check(
         &mut self,
         args: VerifyArgs,
