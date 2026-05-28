@@ -255,6 +255,27 @@ async fn test_reset_refreshes_fee_history_cache() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn test_revert_refreshes_fee_history_cache() {
+    let (api, _) = spawn(NodeConfig::test()).await;
+    let snapshot_id = api.evm_snapshot().await.unwrap();
+
+    let reverted_block_base_fee = U256::from(1_000u64);
+    api.anvil_set_next_block_base_fee_per_gas(reverted_block_base_fee).await.unwrap();
+    api.evm_mine(None).await.unwrap();
+
+    let before = api.fee_history(U256::from(1), BlockNumberOrTag::Number(1), vec![]).await.unwrap();
+    assert_eq!(
+        before.base_fee_per_gas.first().copied(),
+        Some(reverted_block_base_fee.to::<u128>())
+    );
+
+    assert!(api.evm_revert(snapshot_id).await.unwrap());
+
+    let after = api.fee_history(U256::from(1), BlockNumberOrTag::Number(1), vec![]).await.unwrap();
+    assert_ne!(after.base_fee_per_gas.first().copied(), Some(reverted_block_base_fee.to::<u128>()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn test_estimate_gas_empty_data() {
     let (api, handle) = spawn(NodeConfig::test()).await;
     let accounts = handle.dev_accounts().collect::<Vec<_>>();
