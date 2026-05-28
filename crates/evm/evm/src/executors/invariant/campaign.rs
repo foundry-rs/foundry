@@ -104,10 +104,8 @@ impl InvariantCampaignAggregator {
         let failed_corpus_replays = self.outputs[0].result.failed_corpus_replays;
         let mut optimization_best = None;
 
-        for InvariantWorkerOutput { plan, result } in self.outputs {
-            let run_key = RunChoice { first_global_run: plan.first_global_run };
-
-            merge_predicate_errors(&mut errors, result.errors, run_key);
+        for InvariantWorkerOutput { result, .. } in self.outputs {
+            merge_predicate_errors(&mut errors, result.errors);
             merge_handler_errors(&mut handler_errors, result.handler_errors);
             cases.extend(result.cases);
             reverts += result.reverts;
@@ -119,7 +117,6 @@ impl InvariantCampaignAggregator {
                 &mut optimization_best,
                 result.optimization_best_value,
                 result.optimization_best_sequence,
-                run_key,
             );
         }
         let (optimization_best_value, optimization_best_sequence) = optimization_best
@@ -144,26 +141,13 @@ impl InvariantCampaignAggregator {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct RunChoice {
-    first_global_run: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct PredicateFailureChoice {
-    run: RunChoice,
-    sequence_len: usize,
-}
-
 struct PredicateFailureEntry {
     error: InvariantFuzzError,
-    choice: PredicateFailureChoice,
 }
 
 struct OptimizationChoice {
     value: I256,
     sequence: Vec<BasicTxDetails>,
-    run: RunChoice,
 }
 
 /// Returns the exclusive end of a worker's logical run range.
@@ -208,13 +192,9 @@ fn ensure_outputs_cover_campaign(
 fn merge_predicate_errors(
     merged: &mut HashMap<String, PredicateFailureEntry>,
     worker_errors: HashMap<String, InvariantFuzzError>,
-    run: RunChoice,
 ) {
     for (invariant, error) in worker_errors {
-        let candidate = PredicateFailureChoice { run, sequence_len: error_sequence_len(&error) };
-        if merged.get(&invariant).is_none_or(|existing| candidate < existing.choice) {
-            merged.insert(invariant, PredicateFailureEntry { error, choice: candidate });
-        }
+        merged.entry(invariant).or_insert(PredicateFailureEntry { error });
     }
 }
 
@@ -249,22 +229,15 @@ fn merge_optimization(
     best: &mut Option<OptimizationChoice>,
     candidate_value: Option<I256>,
     candidate_sequence: Vec<BasicTxDetails>,
-    candidate_key: RunChoice,
 ) {
     let Some(candidate_value) = candidate_value else {
         return;
     };
 
-    let should_replace = best.as_ref().is_none_or(|best| {
-        candidate_value > best.value || candidate_value == best.value && candidate_key < best.run
-    });
+    let should_replace = best.as_ref().is_none_or(|best| candidate_value > best.value);
 
     if should_replace {
-        *best = Some(OptimizationChoice {
-            value: candidate_value,
-            sequence: candidate_sequence,
-            run: candidate_key,
-        });
+        *best = Some(OptimizationChoice { value: candidate_value, sequence: candidate_sequence });
     }
 }
 
@@ -561,25 +534,18 @@ mod tests {
     }
 
     #[test]
-    fn predicate_failure_choice_uses_sequence_length_after_run() {
+    fn predicate_error_merge_keeps_first_duplicate_failure() {
         let mut merged = HashMap::default();
 
         let mut worker_errors = HashMap::default();
-        worker_errors.insert("invariant_balance".to_string(), predicate_error("later-run", 1));
-        merge_predicate_errors(&mut merged, worker_errors, RunChoice { first_global_run: 6 });
+        worker_errors.insert("invariant_balance".to_string(), predicate_error("first", 4));
+        merge_predicate_errors(&mut merged, worker_errors);
 
         let mut worker_errors = HashMap::default();
-        worker_errors.insert("invariant_balance".to_string(), predicate_error("earlier-run", 4));
-        merge_predicate_errors(&mut merged, worker_errors, RunChoice { first_global_run: 5 });
-        assert_eq!(
-            merged["invariant_balance"].error.revert_reason().as_deref(),
-            Some("earlier-run")
-        );
+        worker_errors.insert("invariant_balance".to_string(), predicate_error("second", 1));
+        merge_predicate_errors(&mut merged, worker_errors);
 
-        let mut worker_errors = HashMap::default();
-        worker_errors.insert("invariant_balance".to_string(), predicate_error("shorter", 2));
-        merge_predicate_errors(&mut merged, worker_errors, RunChoice { first_global_run: 5 });
-        assert_eq!(merged["invariant_balance"].error.revert_reason().as_deref(), Some("shorter"));
+        assert_eq!(merged["invariant_balance"].error.revert_reason().as_deref(), Some("first"));
     }
 
     #[test]
@@ -607,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregator_keeps_max_optimization_value_and_earlier_tie() {
+    fn aggregator_keeps_first_max_optimization_value_on_tie() {
         let spec = InvariantCampaignSpec::new(3);
         let plans = [
             InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
