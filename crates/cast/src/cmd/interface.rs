@@ -87,7 +87,11 @@ impl InterfaceArgs {
 
         if let Some(loc) = output_location {
             let res = if shell::is_json() {
-                interfaces.iter().map(|iface| &iface.json_abi).format("\n").to_string()
+                let abis = interfaces
+                    .iter()
+                    .map(|iface| serde_json::from_str::<Value>(&iface.json_abi))
+                    .collect::<Result<Vec<_>, _>>()?;
+                serde_json::to_string_pretty(&abis)?
             } else {
                 format!(
                     "// SPDX-License-Identifier: UNLICENSED\n\

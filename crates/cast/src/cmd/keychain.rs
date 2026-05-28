@@ -733,7 +733,7 @@ fn run_list() -> Result<()> {
     }
 
     if keys_file.keys.is_empty() {
-        sh_err!("No keys found in keys.toml.")?;
+        sh_println!("No keys found in keys.toml.")?;
         return Ok(());
     }
 
