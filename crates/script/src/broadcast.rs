@@ -1232,9 +1232,12 @@ impl BundledState<TempoEvmNetwork> {
             });
         }
 
-        // CREATE2 deployer must exist on-chain for the rewritten CREATEs.
-        let needs_factory =
-            calls.iter().any(|c| matches!(c.to, TxKind::Call(a) if a == create2_deployer));
+        // CREATE2 deployer must exist on-chain for any rewritten CREATEs.
+        let needs_factory = sequence
+            .transactions
+            .iter()
+            .skip(remaining_start)
+            .any(|tx| matches!(tx.call_kind, CallKind::Create | CallKind::Create2));
         if needs_factory {
             let code = provider.get_code_at(create2_deployer).await?;
             if keccak256(&code) != DEFAULT_CREATE2_DEPLOYER_CODEHASH {
@@ -1335,10 +1338,15 @@ impl BundledState<TempoEvmNetwork> {
 
         sh_println!("Batch transaction sent: {:#x}", tx_hash)?;
 
-        // Checkpoint immediately via the pending machinery: stamps hashes, registers in
-        // sequence.pending, and saves so that a crash before the receipt doesn't lose the
-        // in-flight tx hash, and so that the early resume path above can detect a drop.
-        sequence.add_pending(remaining_start, tx_hash);
+        // Checkpoint: stamp the batch hash on all remaining transactions (so that resume
+        // detection finds it regardless of which tx it inspects first), register one entry
+        // in sequence.pending for drop/timeout tracking, then save.
+        for tx in sequence.transactions.iter_mut().skip(remaining_start) {
+            tx.hash = Some(tx_hash);
+        }
+        if !sequence.pending.contains(&tx_hash) {
+            sequence.pending.push(tx_hash);
+        }
         self.sequence.save(true, false)?;
 
         // Wait for receipt
