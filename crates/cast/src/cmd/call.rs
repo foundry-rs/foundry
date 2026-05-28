@@ -270,13 +270,13 @@ impl CallArgs {
             // Unlocked keystore: prompts for the password on TTY at signer construction.
             let has_keystore =
                 self.wallet.keystore_path.is_some() || self.wallet.keystore_account_name.is_some();
-            let has_password = self.wallet.keystore_password.is_some()
+            let has_noninteractive_password = self.wallet.keystore_password.is_some()
                 || self.wallet.keystore_password_file.is_some();
-            if has_keystore && !has_password {
+            if has_keystore && !has_noninteractive_password {
                 foundry_cli::machine::bail_machine_usage(
-                    "`cast call --machine` requires `--password` or `--password-file` when \
-                     `--keystore` / `--account` is set; an unlocked keystore would prompt on \
-                     stdin and corrupt the envelope.",
+                    "`cast call --machine` requires `--password`, `--password-file`, or the \
+                     `ETH_PASSWORD` env var when `--keystore` / `--account` is set; an unlocked \
+                     keystore would prompt on stdin and corrupt the envelope.",
                 );
             }
         }

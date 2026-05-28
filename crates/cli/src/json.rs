@@ -137,6 +137,7 @@ impl JsonMessage {
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     let mut stdout = std::io::stdout().lock();
     writeln!(stdout, "{}", to_string(value)?)?;
+    stdout.flush()?;
     Ok(())
 }
 
