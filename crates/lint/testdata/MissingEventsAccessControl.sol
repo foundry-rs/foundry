@@ -286,6 +286,20 @@ contract MissingEventsAccessControl {
         observedAddress = newValue;
     }
 
+    function senderAliasCycleEntry() external view {
+        senderAliasCycleA();
+    }
+
+    function senderAliasCycleA() internal view returns (address) {
+        address sender = senderAliasCycleB();
+        return sender;
+    }
+
+    function senderAliasCycleB() internal view returns (address) {
+        address sender = senderAliasCycleA();
+        return sender;
+    }
+
     function setThreshold(uint256 newThreshold) external onlyOwner {
         threshold = newThreshold;
     }
