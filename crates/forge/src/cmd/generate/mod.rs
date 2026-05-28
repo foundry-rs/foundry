@@ -46,7 +46,7 @@ impl GenerateTestArgs {
         // Write the test content to the test file.
         fs::write(&test_file_path, test_content)?;
 
-        sh_println!("{} test file: {}", "Generated".green(), test_file_path.to_str().unwrap())?;
+        sh_status!("{} test file: {}", "Generated".green(), test_file_path.to_str().unwrap())?;
         Ok(())
     }
 }
