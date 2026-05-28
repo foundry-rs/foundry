@@ -122,14 +122,14 @@ Each row's status is one of:
 | `forge inspect <field>`| Just that field's value                              | JSON of that field                         | todo   |
 | `forge install`        | (empty)                                              | (empty)                                    | todo   |
 | `forge init`           | (empty)                                              | (empty)                                    | todo   |
-| `forge update`         | (empty)                                              | (empty)                                    | todo   |
-| `forge remove`         | (empty)                                              | (empty)                                    | todo   |
+| `forge update`         | (empty)                                              | (empty)                                    | migrated |
+| `forge remove`         | (empty)                                              | (empty)                                    | migrated |
 | `forge clone`          | (empty)                                              | (empty)                                    | todo   |
 | `forge bind`           | (empty)                                              | (empty)                                    | todo   |
 | `forge bind-json`      | (empty) or generated path                            | JSON                                       | todo   |
 | `forge flatten`        | Flattened source                                     | n/a                                        | migrated |
 | `forge fmt`            | (empty) or formatted source with `--check`           | n/a                                        | todo   |
-| `forge tree`           | Dependency tree                                      | JSON                                       | todo   |
+| `forge tree`           | Dependency tree                                      | JSON                                       | migrated |
 | `forge config`         | Config TOML                                          | JSON config                                | todo   |
 | `forge selectors`      | Selectors output                                     | JSON                                       | todo   |
 | `forge eip712`         | (empty)                                              | JSON of types                              | todo   |
@@ -139,7 +139,7 @@ Each row's status is one of:
 | `forge coverage`       | Coverage table or report                             | JSON / LCOV / etc. via `--report`          | todo   |
 | `forge cache`          | (empty) or paths                                     | JSON                                       | todo   |
 | `forge doc`            | (empty)                                              | n/a                                        | todo   |
-| `forge generate`       | (empty) or generated path                            | n/a                                        | todo   |
+| `forge generate`       | (empty) or generated path                            | n/a                                        | migrated |
 | `forge soldeer`        | (empty)                                              | n/a                                        | todo   |
 | `forge remappings`     | One remapping per line                               | n/a                                        | migrated |
 | `forge compiler`       | Compiler info                                        | JSON                                       | todo   |
