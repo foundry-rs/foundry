@@ -139,7 +139,7 @@ Each row's status is one of:
 | `forge coverage`       | Coverage table or report                             | JSON / LCOV / etc. via `--report`          | todo   |
 | `forge cache`          | (empty) or paths                                     | JSON                                       | todo   |
 | `forge doc`            | (empty)                                              | n/a                                        | todo   |
-| `forge generate`       | (empty) or generated path                            | n/a                                        | todo   |
+| `forge generate`       | (empty) or generated path                            | n/a                                        | migrated |
 | `forge soldeer`        | (empty)                                              | n/a                                        | todo   |
 | `forge remappings`     | One remapping per line                               | n/a                                        | migrated |
 | `forge compiler`       | Compiler info                                        | JSON                                       | todo   |
