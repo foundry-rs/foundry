@@ -745,13 +745,13 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/TargetArtifacts.t.sol:TargetArtifacts
-[FAIL: false world]
+[FAIL: false world] invariantShouldFail
 	[SEQUENCE]
 
-Invariant/Property Tests: 1/2 invariants broken
+TargetArtifacts invariants: 1/2 invariants broken
 [FAIL: false world] invariantShouldFail
 [PASS] invariantShouldPass
- invariantShouldFail() ([RUNS])
+ TargetArtifacts invariants ([RUNS])
 
 [STATS]
 
@@ -761,13 +761,13 @@ Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
 Encountered 1 failing test in test/TargetArtifacts.t.sol:TargetArtifacts
-[FAIL: false world]
+[FAIL: false world] invariantShouldFail
 	[SEQUENCE]
 
-Invariant/Property Tests: 1/2 invariants broken
+TargetArtifacts invariants: 1/2 invariants broken
 [FAIL: false world] invariantShouldFail
 [PASS] invariantShouldPass
- invariantShouldFail() ([RUNS])
+ TargetArtifacts invariants ([RUNS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 

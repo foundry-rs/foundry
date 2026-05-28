@@ -1,6 +1,6 @@
 //! Contains various tests related to `forge script`.
 
-use crate::constants::TEMPLATE_CONTRACT;
+use crate::{constants::TEMPLATE_CONTRACT, utils::generate_large_runtime_contract};
 use alloy_hardforks::EthereumHardfork;
 use alloy_network::Ethereum;
 use alloy_primitives::{Address, Bytes, address, hex};
@@ -3518,7 +3518,7 @@ contract DeployScript is Script {
 Compiler run successful!
 Traces:
   [9882] DeployScript::run()
-    ├─ [0] 0x0000000000000000000000000000000000000000::fallback{value: 1000000000000000000}()
+    ├─ [0] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
     │   └─ ← [Stop]
     ├─ [0] VM::stopBroadcast()
     │   └─ ← [Return]
@@ -3531,7 +3531,7 @@ Script ran successfully.
 ==========================
 Simulated On-chain Traces:
 
-  [0] 0x0000000000000000000000000000000000000000::fallback{value: 1000000000000000000}()
+  [0] 0x0000000000000000000000000000000000000000::receive{value: 1000000000000000000}()
     └─ ← [Stop]
 
 
@@ -3833,4 +3833,62 @@ forgetest!(can_execute_script_command_with_tempo, |prj, cmd| {
         .arg("--root")
         .arg(prj.root())
         .assert_success();
+});
+
+// Helper: write a script that deploys `LargeRuntime` with runtime > default limit via
+// `vm.startBroadcast`.
+fn write_large_runtime_deploy_script(prj: &foundry_test_utils::TestProject, runtime_bytes: usize) {
+    prj.add_source("LargeRuntime.sol", generate_large_runtime_contract(runtime_bytes).as_str());
+    prj.add_source(
+        "DeployLarge.s.sol",
+        r#"
+import "forge-std/Script.sol";
+import "./LargeRuntime.sol";
+
+contract DeployLarge is Script {
+    function run() external {
+        vm.startBroadcast();
+        new LargeRuntime();
+    }
+}
+"#,
+    );
+}
+
+// Tests that `forge script` reports a contract-size violation against the default runtime limit
+// when neither the CLI nor foundry.toml override `code_size_limit`.
+forgetest_async!(script_check_contract_sizes_warns_at_default_limit, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    write_large_runtime_deploy_script(&prj, 30_000);
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.set_current_dir(prj.root());
+    for var in ["FOUNDRY_CODE_SIZE_LIMIT", "DAPP_CODE_SIZE_LIMIT", "DAPP_TEST_CODE_SIZE_LIMIT"] {
+        cmd.unset_env(var);
+    }
+    cmd.args(["script", "DeployLarge", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stderr_eq(str![[r#"
+Error: `LargeRuntime` is above the contract size limit ([..] > 24576).
+
+"#]]);
+});
+
+// Tests that `forge script` honors `code_size_limit` configured via foundry.toml
+// (the bug fix: previously only the CLI flag was honored).
+forgetest_async!(script_check_contract_sizes_honors_config_limit, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    write_large_runtime_deploy_script(&prj, 30_000);
+    prj.update_config(|config| {
+        config.code_size_limit = Some(64_000);
+    });
+
+    let (_api, handle) = spawn(NodeConfig::test()).await;
+    cmd.set_current_dir(prj.root());
+    for var in ["FOUNDRY_CODE_SIZE_LIMIT", "DAPP_CODE_SIZE_LIMIT", "DAPP_TEST_CODE_SIZE_LIMIT"] {
+        cmd.unset_env(var);
+    }
+    cmd.args(["script", "DeployLarge", "--rpc-url", &handle.http_endpoint()])
+        .assert_success()
+        .stderr_eq(str![[r#""#]]);
 });
