@@ -127,7 +127,7 @@ Each row's status is one of:
 | `forge clone`          | (empty)                                              | (empty)                                    | todo   |
 | `forge bind`           | (empty)                                              | (empty)                                    | todo   |
 | `forge bind-json`      | (empty) or generated path                            | JSON                                       | todo   |
-| `forge flatten`        | Flattened source                                     | n/a                                        | todo   |
+| `forge flatten`        | Flattened source                                     | n/a                                        | migrated |
 | `forge fmt`            | (empty) or formatted source with `--check`           | n/a                                        | todo   |
 | `forge tree`           | Dependency tree                                      | JSON                                       | todo   |
 | `forge config`         | Config TOML                                          | JSON config                                | todo   |
