@@ -210,3 +210,20 @@ contract LargeContract {{
 "
     )
 }
+
+/// Generates a Solidity contract with both runtime and initcode bytecode at
+/// least `n` bytes long, by embedding an `n`-byte hex constant returned from
+/// an external `pure` function.
+pub fn generate_large_runtime_contract(n: usize) -> String {
+    let data = vec![0xff; n];
+    let hex = alloy_primitives::hex::encode(data);
+    format!(
+        "\
+contract LargeRuntime {{
+    function data() external pure returns (bytes memory) {{
+        return hex\"{hex}\";
+    }}
+}}
+"
+    )
+}
