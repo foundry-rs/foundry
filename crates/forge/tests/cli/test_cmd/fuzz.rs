@@ -98,16 +98,21 @@ contract FuzzTimeoutTest is Test {
    "#,
     );
 
-    cmd.args(["test", "-j2"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-j2"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Contract.t.sol:FuzzTimeoutTest
 [PASS] test_fuzz_bound(uint256) (runs: [..], [AVG_GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -158,10 +163,11 @@ contract CounterTest is Test {
     );
 
     // Tests should not fail as revert happens in Counter contract.
-    cmd.args(["test", "--mc", "CounterTest"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mc", "CounterTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/CounterTest.t.sol:CounterTest
 [PASS] testFuzz_SetNumberAssert(uint256) (runs: 256, [AVG_GAS])
@@ -169,6 +175,10 @@ Ran 2 tests for test/CounterTest.t.sol:CounterTest
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
@@ -187,16 +197,21 @@ contract Counter {
     );
 
     // Tests should fail as revert happens in cheatcode (assert) and test (require) contract.
-    cmd.args(["-j1"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["-j1"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/CounterTest.t.sol:CounterTest
 [FAIL: assertion failed: [..]] testFuzz_SetNumberAssert(uint256) (runs: 0, [AVG_GAS])
 [FAIL: EvmError: Revert; [..]] testFuzz_SetNumberRequire(uint256) (runs: 0, [AVG_GAS])
 Suite result: FAILED. 0 passed; 2 failed; 0 skipped; [ELAPSED]
 ...
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -218,16 +233,21 @@ contract FuzzWithRejectsTest is Test {
     );
 
     // Tests should not fail as revert happens in Counter contract.
-    cmd.args(["test", "--mc", "FuzzWithRejectsTest"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mc", "FuzzWithRejectsTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/FuzzWithRejectsTest.t.sol:FuzzWithRejectsTest
 [PASS] testFuzzWithRejects(uint256) (runs: 256, [AVG_GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -272,16 +292,22 @@ contract CounterTest is Test {
    "#,
     );
     // Test should pass when replay failure with changed assume logic.
-    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .args(["test"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
@@ -298,16 +324,22 @@ contract CounterTest is Test {
    "#,
     );
     // Test should pass when replay failure with changed function signature.
-    cmd.forge_fuse().args(["test"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .args(["test"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint8) (runs: 256, [AVG_GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 

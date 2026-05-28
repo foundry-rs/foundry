@@ -16,11 +16,16 @@ contract SomeLibContract {
 }
    "#,
     );
-    cmd.args(["bind", "--select", "SomeLibContract"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["bind", "--select", "SomeLibContract"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Generating bindings for 1 contracts
 Bindings have been generated to [..]
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 });

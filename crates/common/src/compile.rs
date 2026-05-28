@@ -218,10 +218,10 @@ impl ProjectCompiler {
         if !quiet {
             if !shell::is_json() {
                 if output.is_unchanged() {
-                    sh_println!("No files changed, compilation skipped")?;
+                    sh_status!("No files changed, compilation skipped")?;
                 } else {
                     // print the compiler output / warnings
-                    sh_println!("{output}")?;
+                    sh_status!("{output}")?;
                 }
             }
 

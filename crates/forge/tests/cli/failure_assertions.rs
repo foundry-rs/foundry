@@ -206,8 +206,7 @@ forgetest!(flaky_expect_emit_tests_should_fail, |prj, cmd| {
     cmd.forge_fuse().arg("build").assert_success();
     cmd.forge_fuse().args(["selectors", "cache"]).assert_success();
 
-    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"No files changed, compilation skipped
-...
+    cmd.forge_fuse().args(["test", "--mc", "ExpectEmitFailureTest"]).assert_failure().stdout_eq(str![[r#"...
 [FAIL: E != expected A] testShouldFailCanMatchConsecutiveEvents() ([GAS])
 [FAIL: log != expected SomethingElse] testShouldFailDifferentIndexedParameters() ([GAS])
 [FAIL: log != expected log] testShouldFailEmitOnlyAppliesToNextCall() ([GAS])
@@ -225,6 +224,9 @@ forgetest!(flaky_expect_emit_tests_should_fail, |prj, cmd| {
 [FAIL: log != expected log] testShouldFailNoEmitDirectlyOnNextCall() ([GAS])
 Suite result: FAILED. 0 passed; 15 failed; 0 skipped; [ELAPSED]
 ...
+"#]]).stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
 
     cmd.forge_fuse()

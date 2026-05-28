@@ -116,10 +116,11 @@ contract PaymentFailureTest is Test {
 "#,
     );
 
-    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/PaymentFailure.t.sol:PaymentFailureTest
 [FAIL: EvmError: Revert] testCantPay() ([GAS])
@@ -134,6 +135,10 @@ Encountered 1 failing test in test/PaymentFailure.t.sol:PaymentFailureTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });

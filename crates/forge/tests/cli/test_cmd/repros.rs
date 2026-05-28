@@ -43,7 +43,6 @@ contract Issue3055Test is Test {
     cmd.arg("test").assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 3 tests for test/Issue3055.t.sol:Issue3055Test
 [FAIL] test_snapshot() ([GAS])
@@ -64,6 +63,9 @@ Encountered a total of 3 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 3 failed tests
 
 [SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -249,10 +251,11 @@ contract Issue6170Test is Test {
 "#,
     );
 
-    cmd.arg("test").assert_failure().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Issue6170.t.sol:Issue6170Test
 [FAIL: log != expected log] test() ([GAS])
@@ -267,6 +270,10 @@ Encountered 1 failing test in test/Issue6170.t.sol:Issue6170Test
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -351,10 +358,11 @@ contract Issue3347Test is Test {
 "#,
     );
 
-    cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Issue3347.t.sol:Issue3347Test
 [PASS] test() ([GAS])
@@ -366,6 +374,10 @@ Traces:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1017,10 +1029,11 @@ contract BlobhashesPreOverrideSnapshotTest is Test {
 "#,
     );
 
-    cmd.args(["test", "--evm-version=cancun"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--evm-version=cancun"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/BlobhashesPreOverride.t.sol:BlobhashesPreOverrideSnapshotTest
 [PASS] test_blobhashes_none_arm_revertToState() ([GAS])
@@ -1028,6 +1041,10 @@ Ran 2 tests for test/BlobhashesPreOverride.t.sol:BlobhashesPreOverrideSnapshotTe
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1071,10 +1088,11 @@ contract TxGasPricePreOverrideSnapshotTest is Test {
 "#,
     );
 
-    cmd.args(["test", "--evm-version=cancun"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--evm-version=cancun"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/TxGasPricePreOverride.t.sol:TxGasPricePreOverrideSnapshotTest
 [PASS] test_pre_override_gas_price_restored_after_revert() ([GAS])
@@ -1082,6 +1100,10 @@ Ran 2 tests for test/TxGasPricePreOverride.t.sol:TxGasPricePreOverrideSnapshotTe
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });

@@ -73,10 +73,11 @@ contract Dummy {
 
 forgetest!(initcode_size_exceeds_limit, |prj, cmd| {
     prj.add_source("LargeContract.sol", generate_large_init_contract(50_000).as_str());
-    cmd.args(["build", "--sizes"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["build", "--sizes"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 ╭---------------+------------------+-------------------+--------------------+---------------------╮
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
@@ -84,6 +85,10 @@ Compiler run successful!
 | LargeContract | 62               | 50,125            | 24,514             | -973                |
 ╰---------------+------------------+-------------------+--------------------+---------------------╯
 
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
@@ -101,13 +106,19 @@ Compiler run successful!
         .is_json(),
     );
 
-    cmd.forge_fuse().args(["build", "--sizes", "--md"]).assert_failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
+    cmd.forge_fuse()
+        .args(["build", "--sizes", "--md"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |---------------|------------------|-------------------|--------------------|---------------------|
 | LargeContract | 62               | 50,125            | 24,514             | -973                |
 
+
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
 
@@ -148,12 +159,15 @@ No files changed, compilation skipped
         .args(["build", "--sizes", "--ignore-eip-3860", "--md"])
         .assert_success()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 | Contract      | Runtime Size (B) | Initcode Size (B) | Runtime Margin (B) | Initcode Margin (B) |
 |---------------|------------------|-------------------|--------------------|---------------------|
 | LargeContract | 62               | 50,125            | 24,514             | -973                |
 
+
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
 });
@@ -182,9 +196,14 @@ forgetest!(build_sizes_respects_configured_code_size_limit, |prj, cmd| {
 // tests build output is as expected
 forgetest_init!(exact_build_output, |prj, cmd| {
     prj.initialize_default_contracts();
-    cmd.args(["build", "--force"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["build", "--force"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
 Compiler run successful!
 
 "#]]);

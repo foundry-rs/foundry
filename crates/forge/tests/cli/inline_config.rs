@@ -13,10 +13,11 @@ forgetest!(runs, |prj, cmd| {
     ",
     );
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/inline.sol:Inline
 [PASS] test1(bool) (runs: 2, [AVG_GAS])
@@ -25,13 +26,19 @@ Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 
     // Make sure inline config is parsed in coverage too.
-    cmd.forge_fuse().arg("coverage").assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .arg("coverage")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Analysing contracts...
 Running tests...
 
@@ -47,6 +54,10 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
 +=======================================================================+
 | Total | 100.00% (0/0) | 100.00% (0/0) | 100.00% (0/0) | 100.00% (0/0) |
 ╰-------+---------------+---------------+---------------+---------------╯
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -81,10 +92,12 @@ forgetest!(invalid_key, |prj, cmd| {
     ",
     );
 
-    cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
+    cmd.arg("test").assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
+
+"#]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/inline.sol:Inline
 [FAIL: failed to get inline configuration: unknown config section `default`] test(bool) ([GAS])
@@ -112,10 +125,12 @@ forgetest!(invalid_key_2, |prj, cmd| {
     ",
     );
 
-    cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
+    cmd.arg("test").assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
+
+"#]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/inline.sol:Inline
 [FAIL: failed to get inline configuration: unknown config section `default`] test(bool) ([GAS])
@@ -144,10 +159,12 @@ forgetest!(invalid_value, |prj, cmd| {
     ",
     );
 
-    cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
+    cmd.arg("test").assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
+
+"#]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/inline.sol:Inline
 [FAIL: invalid type: found sequence, expected u32 for key "default.fuzz.runs" in inline config] setUp() ([GAS])
@@ -177,10 +194,12 @@ forgetest!(invalid_value_2, |prj, cmd| {
     ",
     );
 
-    cmd.arg("test").assert_failure().stderr_eq(str![[]]).stdout_eq(str![[r#"
+    cmd.arg("test").assert_failure().stderr_eq(str![[r#"
+Compiler run successful!
+
+"#]]).stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/inline.sol:Inline
 [FAIL: invalid type: found string "2", expected u32 for key "default.fuzz.runs" in inline config] setUp() ([GAS])
@@ -255,10 +274,11 @@ forgetest_init!(config_inline_isolate, |prj, cmd| {
     "#,
     );
 
-    cmd.args(["test", "-j1"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-j1"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/inline.sol:ContractConfig
 [PASS] test_non_isolate() ([GAS])
@@ -270,6 +290,10 @@ Ran 2 tests for test/inline.sol:FunctionConfig
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 2 test suites [ELAPSED]: 3 tests passed, 0 failed, 0 skipped (3 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
@@ -504,10 +528,11 @@ forgetest!(per_test_network_routing, |prj, cmd| {
         "#,
     );
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/inline.sol:[..]Network
 [PASS] test_fee_manager_absent_on_[..]() ([GAS])
@@ -526,6 +551,10 @@ Ran 1 test for test/inline.sol:[..]Network
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 3 test suites [ELAPSED]: 4 tests passed, 0 failed, 0 skipped (4 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });

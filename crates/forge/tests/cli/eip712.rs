@@ -158,10 +158,12 @@ Structs.sol > Structs2 > FooBar:
     );
 
     // Testing `solar_project` doesn't mess up cache.
-    cmd.forge_fuse().arg("test").assert_failure().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .arg("test")
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Structs.sol:DummyTest
 [FAIL: test] testDummy() ([GAS])
@@ -176,6 +178,10 @@ Encountered 1 failing test in test/Structs.sol:DummyTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });

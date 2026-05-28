@@ -630,9 +630,14 @@ contract Greeter {}
         config.solc = Some(OTHER_SOLC_VERSION.into());
     });
 
-    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+    cmd.arg("build")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
 Compiler run successful!
 
 "#]]);
@@ -648,9 +653,14 @@ contract Foo {}
    ",
     );
 
-    cmd.args(["build", "--use", OTHER_SOLC_VERSION]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["build", "--use", OTHER_SOLC_VERSION])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
 Compiler run successful!
 
 "#]]);
@@ -662,6 +672,9 @@ Compiler run successful!
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
 Compiler run successful!
 
 "#]]);
@@ -683,6 +696,9 @@ Error: `solc` this/solc/does/not/exist does not exist
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
 Compiler run successful!
 
 "#]]);
@@ -2003,9 +2019,14 @@ forgetest_init!(test_exclude_lints_config, |prj, cmd| {
             "unwrapped-modifier-logic".to_string(),
         ]
     });
-    cmd.args(["lint"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["lint"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
 Compiler run successful!
 
 "#]]);

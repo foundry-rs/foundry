@@ -109,10 +109,11 @@ contract Fails is Test {
 "#,
     );
 
-    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-vv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 19 tests for test/DebugLogs.t.sol:DebugLogsTest
 [PASS] test1() ([GAS])
@@ -233,6 +234,10 @@ Logs:
 Suite result: ok. 19 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 19 tests passed, 0 failed, 0 skipped (19 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -777,7 +782,6 @@ contract Foo is Test {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Setup
 Test 1
 
@@ -786,6 +790,10 @@ Ran 1 test for test/Foo.t.sol:Foo
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -812,11 +820,12 @@ contract Foo is Test {
     "#,
     );
 
-    cmd.forge_fuse().args(["test", "--match-test", "test1"]).assert_success().stdout_eq(str![[
-        r#"
+    cmd.forge_fuse()
+        .args(["test", "--match-test", "test1"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Setup
 Test 1
 
@@ -826,8 +835,11 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
-"#
-    ]]);
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
+"#]]);
 });
 
 forgetest_init!(test_can_run_with_live_logs_flag_race_condition, |prj, cmd| {
@@ -879,7 +891,6 @@ Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
             .args(["test", "--live-logs", "--threads", "1"])
             .assert_success()
             .stdout_eq(str![[r#"
-No files changed, compilation skipped
 Setup
 Test 1
 Test 2
@@ -890,6 +901,10 @@ Ran 2 tests for test/Foo.t.sol:Foo
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]])
+            .stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
     }

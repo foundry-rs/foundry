@@ -136,10 +136,11 @@ contract InvariantAssume is Test {
 "#,
     );
 
-    assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test"]))
+        .success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/InvariantAssume.t.sol:InvariantAssume
 [PASS] invariant_dummy() ([RUNS])
@@ -150,6 +151,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 
     // Test that max_assume_rejects is respected.
@@ -157,8 +162,9 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         config.invariant.max_assume_rejects = 1;
     });
 
-    assert_invariant(&mut cmd).failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
+    assert_invariant(&mut cmd)
+        .failure()
+        .stdout_eq(str![[r#"
 
 Ran 1 test for test/InvariantAssume.t.sol:InvariantAssume
 [FAIL: `vm.assume` rejected too many inputs (1 allowed)] invariant_dummy() ([RUNS])
@@ -178,6 +184,10 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
+
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
 });
@@ -417,10 +427,11 @@ contract InvariantExcludedSendersTest is Test {
 "#,
     );
 
-    assert_invariant(cmd.args(["test"])).success().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test"]))
+        .success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/InvariantExcludedSenders.t.sol:InvariantExcludedSendersTest
 [PASS] invariant_check_sender() ([RUNS])
@@ -430,6 +441,10 @@ Ran 1 test for test/InvariantExcludedSenders.t.sol:InvariantExcludedSendersTest
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -812,8 +827,8 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
                     .join("persistence2"),
             );
         });
-        cmd.assert_failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
+        cmd.assert_failure()
+            .stdout_eq(str![[r#"
 
 Ran 1 test for test/InvariantInnerContract.t.sol:InvariantInnerContract
 [FAIL: jesus betrayed]
@@ -822,6 +837,10 @@ Ran 1 test for test/InvariantInnerContract.t.sol:InvariantInnerContract
 		sender=[..] addr=[test/InvariantInnerContract.t.sol:Judas][..] calldata=betray() args=[]
  invariantHideJesus() (runs: 1, calls: 3, reverts: 1)
 ...
+"#]])
+            .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
     }
 );
@@ -1173,10 +1192,11 @@ contract InvariantRollForkStateTest is Test {
 "#,
     );
 
-    assert_invariant(cmd.args(["test", "-j1"])).failure().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test", "-j1"]))
+        .failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/InvariantRollFork.t.sol:InvariantRollForkBlockTest
 [FAIL: too many blocks mined]
@@ -1214,6 +1234,10 @@ Encountered a total of 2 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
 [SEED] (use `--fuzz-seed` to reproduce)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1991,13 +2015,15 @@ contract InvariantReplayKeepsInvariantAssertion is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/InvariantReplayKeepsInvariantAssertion.t.sol:InvariantReplayKeepsInvariantAssertion
 [FAIL: wrong counter assert]
 ...
  invariant_with_assert() ([..])
 ...
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 
     cmd.assert_failure().stdout_eq(str![[r#"
@@ -2053,23 +2079,27 @@ contract InvariantReplayKeepsAfterInvariantAssertion is Test {
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantReplayKeepsAfterInvariantAssertion
 [FAIL: afterInvariant assertion]
 	[SEQUENCE]
  invariant_success() ([RUNS])
 ...
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 
     assert_invariant(&mut cmd).failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/InvariantReplayKeepsAfterInvariantAssertion.t.sol:InvariantReplayKeepsAfterInvariantAssertion
 [FAIL: afterInvariant assertion]
 	[SEQUENCE]
  invariant_success() ([RUNS])
 ...
+"#]]).stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
 });
 
@@ -2293,7 +2323,6 @@ contract HandlerWarpAndRoll {
     cmd.forge_fuse().args(["test", "--mt", "invariant_handler"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/HandlerWarpAndRoll.t.sol:HandlerWarpAndRoll
 [FAIL: max timestamp]
@@ -2306,6 +2335,9 @@ Ran 1 test for test/HandlerWarpAndRoll.t.sol:HandlerWarpAndRoll
  invariant_handler() (runs: 1, calls: 5, reverts: 1)
 
 ...
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });

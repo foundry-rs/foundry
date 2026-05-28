@@ -52,7 +52,6 @@ contract TestEvmVersion is Test {
     cmd.args(["test", "--mc", "TestEvmVersion", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/TestEvmVersion.t.sol:TestEvmVersion
 [PASS] test_evm_version() ([GAS])
@@ -85,6 +84,9 @@ Traces:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 

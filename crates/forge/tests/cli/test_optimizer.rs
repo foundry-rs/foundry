@@ -14,10 +14,15 @@ Compiling 23 files with [..]
 
 "#]]);
     // No files are rebuilt.
-    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+    cmd.with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
+...
+
+"#]])
+        .stderr_eq(str![[r#"
 No files changed, compilation skipped
-...
 
 "#]]);
 
@@ -48,10 +53,15 @@ Compiling 21 files with [..]
 
 "#]]);
     // No files are rebuilt.
-    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+    cmd.with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
+...
+
+"#]])
+        .stderr_eq(str![[r#"
 No files changed, compilation skipped
-...
 
 "#]]);
 
@@ -678,10 +688,15 @@ Compiling 22 files with [..]
 ...
 
 "#]]);
-    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+    cmd.with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
+...
+
+"#]])
+        .stderr_eq(str![[r#"
 No files changed, compilation skipped
-...
 
 "#]]);
 
@@ -763,10 +778,15 @@ Compiling 21 files with [..]
 ...
 
 "#]]);
-    cmd.with_no_redact().assert_success().stdout_eq(str![[r#"
+    cmd.with_no_redact()
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
+...
+
+"#]])
+        .stderr_eq(str![[r#"
 No files changed, compilation skipped
-...
 
 "#]]);
 
@@ -1408,10 +1428,11 @@ contract CounterTest is Test {
     "#,
     );
 
-    cmd.args(["test", "--decode-internal", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--decode-internal", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_Increment() ([GAS])
@@ -1434,6 +1455,10 @@ Traces:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1645,16 +1670,21 @@ contract CounterTest is Test {
     "#,
     );
     // Test should pass.
-    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_deployer() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });

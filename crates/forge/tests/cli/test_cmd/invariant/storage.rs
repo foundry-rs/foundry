@@ -63,10 +63,11 @@ contract InvariantStorageTest is Test {
 "#,
     );
 
-    assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
+    assert_invariant(cmd.args(["test"]))
+        .failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/name.sol:InvariantStorageTest
 [FAIL: changedAddr] invariantChangeAddress
@@ -122,6 +123,10 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });

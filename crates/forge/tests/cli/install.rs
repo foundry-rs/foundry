@@ -31,12 +31,17 @@ forgetest_init!(can_install_missing_deps_build, |prj, cmd| {
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
 
     // Build the project
-    cmd.arg("build").assert_success().stdout_eq(str![[r#"
+    cmd.arg("build")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Missing dependencies found. Installing now...
 
 [UPDATING_DEPENDENCIES]
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
 Compiler run successful!
 
 "#]]);
@@ -46,7 +51,13 @@ Compiler run successful!
     assert_eq!(forge_std.rev(), FORGE_STD_REVISION);
 
     // Expect compilation to be skipped as no files have changed
-    cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .arg("build")
+        .assert_success()
+        .stdout_eq(str![[r#"
+
+"#]])
+        .stderr_eq(str![[r#"
 No files changed, compilation skipped
 
 "#]]);
@@ -61,13 +72,14 @@ forgetest_init!(can_install_missing_deps_test, |prj, cmd| {
     let forge_std_dir = prj.root().join("lib/forge-std");
     pretty_err(&forge_std_dir, fs::remove_dir_all(&forge_std_dir));
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 Missing dependencies found. Installing now...
 
 [UPDATING_DEPENDENCIES]
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
@@ -75,6 +87,10 @@ Ran 2 tests for test/Counter.t.sol:CounterTest
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
@@ -438,9 +454,15 @@ contract CounterCopy is Counter {
         );
 
         // build and check output
-        cmd.forge_fuse().arg("build").assert_success().stdout_eq(str![[r#"
+        cmd.forge_fuse()
+            .arg("build")
+            .assert_success()
+            .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+
+"#]])
+            .stderr_eq(str![[r#"
 Compiler run successful!
 
 "#]]);

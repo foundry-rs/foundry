@@ -66,7 +66,6 @@ contract CounterTableTest is Test {
     cmd.args(["test", "--mc", "CounterTable", "-vvvvv"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 8 tests for test/CounterTable.t.sol:CounterTableTest
 [FAIL: 2 fixtures defined for diffSwap (expected 10)] tableMultipleParamsDifferentFixturesFail(uint256,bool) ([GAS])
@@ -123,6 +122,9 @@ Encountered 6 failing tests in test/CounterTable.t.sol:CounterTableTest
 Encountered a total of 6 failing tests, 2 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 6 failed tests
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -187,10 +189,11 @@ contract CounterTest is Test {
     "#,
     );
 
-    cmd.args(["test", "-vvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-vvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/CounterTest.t.sol:CounterTest
 [PASS] tableSetNumberTest((uint256,uint256,uint256)) (runs: 4, [AVG_GAS])
@@ -204,12 +207,18 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 
-    cmd.forge_fuse().args(["coverage"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .args(["coverage"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Analysing contracts...
 Running tests...
 
@@ -226,6 +235,10 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 |-----------------+---------------+---------------+---------------+---------------|
 | Total           | 100.00% (8/8) | 100.00% (7/7) | 100.00% (6/6) | 100.00% (1/1) |
 ╰-----------------+---------------+---------------+---------------+---------------╯
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });

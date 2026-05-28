@@ -270,10 +270,11 @@ contract TimeoutTest is Test {
      "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_counter_timeout"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "invariant_counter_timeout"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/TimeoutTest.t.sol:TimeoutTest
 [PASS] invariant_counter_timeout() (runs: 0, calls: 0, reverts: 0)
@@ -287,6 +288,10 @@ Ran 1 test for test/TimeoutTest.t.sol:TimeoutTest
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -848,7 +853,6 @@ contract InvariantTargetTest is Test {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetTest
 [PASS]
@@ -868,6 +872,10 @@ Invariant/Property Tests:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -949,10 +957,11 @@ contract InvariantTargetExcludeTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mt", "invariant_include"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "invariant_include"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
 [PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
@@ -968,6 +977,10 @@ Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
@@ -997,7 +1010,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         .args(["test", "--mt", "invariant_include", "--md"])
         .assert_success()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetIncludeTest
 [PASS] invariant_include() (runs: 10, calls: 1000, reverts: 0)
@@ -1011,13 +1023,16 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
 
     cmd.forge_fuse()
         .args(["test", "--mt", "invariant_exclude", "--md"])
         .assert_success()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
 [PASS] invariant_exclude() (runs: 10, calls: 1000, reverts: 0)
@@ -1030,6 +1045,10 @@ Ran 1 test for test/InvariantTargetTest.t.sol:InvariantTargetExcludeTest
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
 });
@@ -1642,10 +1661,11 @@ contract CounterTest is Test {
 
     // A wide filter that includes the contract's canonical predicate runs one contract-level
     // campaign and reports each selected predicate separately.
-    cmd.args(["test", "--mt", "invariant_cond[1-4]"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "invariant_cond[1-4]"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/CounterTest.t.sol:CounterTest
 [FAIL: condition 1 met] invariant_cond1
@@ -1662,15 +1682,20 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 Invariant/Property Tests: 3/4 invariants broken
 [FAIL: condition 1 met] invariant_cond1
 ...
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 
     // Re-running a single target replays cond3's persisted counterexample and exits without
     // running a fresh campaign — only the primary block, no secondary [FAIL]s, no
     // persisted-failures footer, no `Invariant/Property Tests` roll-up. A stderr warning calls out
     // the other selected predicate with a persisted failure if it would otherwise be included.
-    cmd.forge_fuse().args(["test", "--mt", "invariant_cond3"]).assert_failure().stdout_eq(str![[
-        r#"
-No files changed, compilation skipped
+    cmd.forge_fuse()
+        .args(["test", "--mt", "invariant_cond3"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 ...
 Ran 1 test for test/CounterTest.t.sol:CounterTest
 [FAIL: condition 3 met]
@@ -1678,8 +1703,11 @@ Ran 1 test for test/CounterTest.t.sol:CounterTest
 ...
  invariant_cond3() (runs: 1, calls: 1, reverts: [..])
 ...
-"#
-    ]]);
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
+"#]]);
 });
 
 forgetest_init!(invariant_campaign_keeps_contract_boundary_with_no_match_test, |prj, cmd| {
@@ -2093,7 +2121,6 @@ contract StaleSecondaryTest is Test {
     // bug, the bare `.exists()` check filtered the secondary out and only the primary block
     // would render (no roll-up).
     cmd.forge_fuse().args(["test", "--mt", "invariant_"]).assert_failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/StaleSecondaryTest.t.sol:StaleSecondaryTest
 [FAIL: first broken] invariant_first
@@ -2147,6 +2174,9 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]).stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
 });

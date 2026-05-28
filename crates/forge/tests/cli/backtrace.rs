@@ -14,10 +14,10 @@ forgetest!(test_backtraces, |prj, cmd| {
 
     let output = cmd.args(["test", "-vvvvv"]).assert_failure();
 
-    output.stdout_eq(str![[r#"
+    output
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
 ...
 Ran 11 tests for test/Backtrace.t.sol:BacktraceTest
 [FAIL: panic: assertion failed (0x01)] testAssertFail() ([GAS])
@@ -95,6 +95,10 @@ Backtrace:
 
 Suite result: FAILED. 0 passed; 11 failed; 0 skipped; [ELAPSED]
 ...
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful with warnings:
+
 "#]]);
 });
 
@@ -297,10 +301,10 @@ forgetest!(test_library_backtrace, |prj, cmd| {
     let output =
         cmd.args(["test", "-vvv", "--ast", "--mc", "LibraryBacktraceTest"]).assert_failure();
 
-    output.stdout_eq(str![[r#"
+    output
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 9 tests for test/LibraryBacktrace.t.sol:LibraryBacktraceTest
 [FAIL: DivisionByZero()] testExternalDivisionByZero() ([GAS])
@@ -368,6 +372,10 @@ Backtrace:
 
 Suite result: FAILED. 0 passed; 9 failed; 0 skipped; [ELAPSED]
 ...
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 });
 
@@ -395,7 +403,6 @@ forgetest!(test_multiple_libraries_same_file, |prj, cmd| {
     output.stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 4 tests for test/MultipleLibraryBacktrace.t.sol:MultipleLibraryBacktraceTest
 [FAIL: FirstLibError()] testAllLibrariesFirstFails() ([GAS])
@@ -428,6 +435,9 @@ Backtrace:
 Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
 
 ...
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 });
 
@@ -508,7 +518,6 @@ Suite result: FAILED. 0 passed; 5 failed; 0 skipped; [ELAPSED]
         ])
         .assert_failure()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 ...
 Ran 1 test for test/ForkBacktrace.t.sol:ForkBacktraceTest
 [FAIL: ERC20: transfer amount exceeds allowance] testTransferFromWithoutApproval() ([GAS])
@@ -519,6 +528,10 @@ Backtrace:
   at ForkedERC20Wrapper.transferFromWithoutApproval (src/ForkedERC20Wrapper.sol:18:101)
   at ForkBacktraceTest.testTransferFromWithoutApproval (test/ForkBacktrace.t.sol:22:65)
 ...
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
 });
 
@@ -611,7 +624,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         .args(["test", "--mc", "BacktraceVerbosityTest", "-vvv"])
         .assert_failure()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/BacktraceVerbosity.t.sol:BacktraceVerbosityTest
 [FAIL: Simple revert message] testRevert() ([GAS])
@@ -627,6 +639,10 @@ Backtrace:
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
 
     // -vvvv (verbosity 4): traces with setup and backtrace WITHOUT source locations.
@@ -634,7 +650,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         .args(["test", "--mc", "BacktraceVerbosityTest", "-vvvv"])
         .assert_failure()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/BacktraceVerbosity.t.sol:BacktraceVerbosityTest
 [FAIL: Simple revert message] testRevert() ([GAS])
@@ -655,6 +670,10 @@ Backtrace:
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
 
     // -vvvvv (verbosity 5): traces with setup, storage changes, and backtrace WITH source
@@ -663,7 +682,6 @@ Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
         .args(["test", "--mc", "BacktraceVerbosityTest", "-vvvvv"])
         .assert_failure()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/BacktraceVerbosity.t.sol:BacktraceVerbosityTest
 [FAIL: Simple revert message] testRevert() ([GAS])
@@ -684,5 +702,9 @@ Backtrace:
 
 Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
 ...
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 "#]]);
 });

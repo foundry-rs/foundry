@@ -57,15 +57,21 @@ contract Demo {
    "#,
     );
 
-    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+    cmd.arg("script")
+        .arg(script)
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
 == Logs ==
   script ran
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -260,7 +266,6 @@ contract DeployScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
   [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
@@ -306,6 +311,10 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]])
+    .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -358,13 +367,6 @@ contract DeployScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to view
- [FILE]:7:5:
-  |
-7 |     function wasteGas(uint256 minGas) public {
-  |     ^ (Relevant source part starts here and spans across multiple lines).
-
 Traces:
   [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
@@ -411,6 +413,15 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 [SAVED_SENSITIVE_VALUES]
 
 
+"#]])
+    .stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to view
+ [FILE]:7:5:
+  |
+7 |     function wasteGas(uint256 minGas) public {
+  |     ^ (Relevant source part starts here and spans across multiple lines).
+
 "#]]);
 });
 
@@ -441,7 +452,6 @@ contract Demo {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -449,6 +459,10 @@ Script ran successfully.
   script ran
   1
   2
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -471,10 +485,14 @@ contract Demo {
    "#,
     );
 
-    cmd.arg("script").arg(script).arg("1").arg("2").assert_success().stdout_eq(str![[r#"
+    cmd.arg("script")
+        .arg(script)
+        .arg("1")
+        .arg("2")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -482,6 +500,10 @@ Script ran successfully.
   script ran
   1
   2
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -500,10 +522,12 @@ contract Demo {
 }"#,
     );
 
-    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+    cmd.arg("script")
+        .arg(script)
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -513,6 +537,10 @@ result: uint256 255
 
 == Logs ==
   script ran
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -575,7 +603,6 @@ contract DeployScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
   [..] DeployScript::run()
     ├─ [0] VM::startBroadcast()
@@ -598,6 +625,10 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]])
+    .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
@@ -655,7 +686,6 @@ contract RunScript is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
   [..] RunScript::run()
     ├─ [0] VM::startBroadcast()
@@ -726,6 +756,10 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1208,7 +1242,6 @@ contract Script0 is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 ...
 Script ran successfully.
 
@@ -1232,6 +1265,9 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
@@ -1334,7 +1370,6 @@ contract Script0 is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 ...
 Script ran successfully.
 
@@ -1358,6 +1393,9 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
@@ -1404,7 +1442,6 @@ contract Demo {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -1414,6 +1451,10 @@ result: uint256 255
 
 == Logs ==
   script ran
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1507,11 +1548,14 @@ contract ContractC {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
 If you wish to simulate on-chain transactions pass a RPC URL.
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1578,7 +1622,6 @@ contract NestedCreate is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -1588,6 +1631,10 @@ Script ran successfully.
   0x159E2f2F1C094625A2c6c8bF59526d91454c2F3c
 
 If you wish to simulate on-chain transactions pass a RPC URL.
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1604,12 +1651,18 @@ interface Interface {}
             "#,
     );
 
-    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+    cmd.arg("script")
+        .arg(script)
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1630,14 +1683,20 @@ contract Script {
             "#,
     );
 
-    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+    cmd.arg("script")
+        .arg(script)
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
 If you wish to simulate on-chain transactions pass a RPC URL.
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1834,7 +1893,6 @@ contract SimpleScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 ...
 Script ran successfully.
 
@@ -1866,6 +1924,8 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 
 "#]]).stderr_eq(str![[r#"
+Compiler run successful!
+
 Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
@@ -1885,7 +1945,6 @@ Warning: Script contains a transaction to 0x000000000000000000000000000000000000
         ])
         .assert_success()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 ...
 Script ran successfully.
 
@@ -1917,6 +1976,8 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 
 "#]]).stderr_eq(str![[r#"
+No files changed, compilation skipped
+
 Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
@@ -2029,7 +2090,6 @@ contract SimpleScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 ...
 Script ran successfully.
 
@@ -2061,6 +2121,8 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 
 "#]]).stderr_eq(str![[r#"
+Compiler run successful!
+
 Warning: Script contains a transaction to 0x0000000000000000000000000000000000000000 which does not contain any code.
 
 "#]]);
@@ -2142,14 +2204,16 @@ contract SimpleScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+Script ran successfully.
+
+"#]])
+    .stderr_eq(str![[r#"
 Compiler run successful with warnings:
 Warning (2018): Function state mutability can be restricted to view
   [FILE]:13:5:
    |
 13 |     function run() external {
    |     ^ (Relevant source part starts here and spans across multiple lines).
-
-Script ran successfully.
 
 "#]]);
 });
@@ -2245,10 +2309,10 @@ contract SimpleScript is Script {
         "SimpleScript",
     ]);
 
-    cmd.assert_success().stdout_eq(str![[r#"
+    cmd.assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 
 ## Setting up 1 EVM.
@@ -2274,6 +2338,10 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
@@ -2313,12 +2381,15 @@ contract WalletScript is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
 == Logs ==
   0xa0Ee7A142d267C1f36714E4a8F75612F20a79720
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -2345,10 +2416,12 @@ contract WalletScript is Script {
     }
 }"#,
         );
-    cmd.arg("script").arg(script).assert_success().stdout_eq(str![[r#"
+    cmd.arg("script")
+        .arg(script)
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 [GAS]
 
@@ -2356,6 +2429,10 @@ Script ran successfully.
   0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
   0x70997970C51812dc3A010C7d01b50e0d17dc79C8
   0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -2389,10 +2466,10 @@ contract SimpleScript is Script {
     );
 
     cmd.arg("script").args(["SimpleScript", "--fork-url", &handle.http_endpoint(), "-vvvv"]);
-    cmd.assert_success().stdout_eq(str![[r#"
+    cmd.assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
   [..] SimpleScript::run()
     ├─ [0] VM::startBroadcast()
@@ -2420,6 +2497,10 @@ Simulated On-chain Traces:
     │   └─ ← [Return] 100
     └─ ← [Return] 62 bytes of code
 ...
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 });
 
@@ -2552,7 +2633,6 @@ contract DryRunTest is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
   [..] DryRunTest::run()
     ├─ [0] VM::startBroadcast()
@@ -2641,6 +2721,9 @@ SIMULATION COMPLETE. To broadcast these transactions, add --broadcast and wallet
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -2796,7 +2879,6 @@ contract EIP7702Script is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
   [..] EIP7702Script::setUp()
     └─ ← [Stop]
@@ -2878,6 +2960,9 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -2974,7 +3059,6 @@ contract BatchCallDelegationScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Script ran successfully.
 
 ## Setting up 1 EVM.
@@ -3000,6 +3084,10 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]])
+    .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
@@ -3186,7 +3274,6 @@ contract CounterScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
   [..] → new CounterScript@[..]
     └─ ← [Return] 2162 bytes of code
@@ -3213,6 +3300,8 @@ Traces:
 
 "#]])
     .stderr_eq(str![[r#"
+Compiler run successful!
+
 Error: script failed: call to non-contract address [..]
 "#]]);
 });
@@ -3289,7 +3378,6 @@ contract CounterScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
   [..] CounterScript::run()
     ├─ [0] VM::startBroadcast()
@@ -3339,6 +3427,10 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]])
+    .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -3497,7 +3589,6 @@ contract DeployScript is Script {
     .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Traces:
   [9882] DeployScript::run()
     ├─ [0] 0x0000000000000000000000000000000000000000::fallback{value: 1000000000000000000}()
@@ -3538,6 +3629,10 @@ ONCHAIN EXECUTION COMPLETE & SUCCESSFUL.
 
 [SAVED_SENSITIVE_VALUES]
 
+
+"#]])
+    .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -3609,11 +3704,14 @@ contract Foo is Script {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Setup
 Run 1
 Script ran successfully.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -3641,14 +3739,20 @@ contract Foo is Script {
     "#,
     );
 
-    cmd.forge_fuse().args(["script", "script/Foo.s.sol"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .args(["script", "script/Foo.s.sol"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Setup
 Run 1
 Script ran successfully.
 [GAS]
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });

@@ -700,9 +700,6 @@ warning[divide-before-multiply]: multiplication should occur before division to 
    ╰ help: https://getfoundry.sh/forge/linting/divide-before-multiply
 
 
-"#]]).stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
 Compiler run successful with warnings:
 Warning (2072): Unused local variable.
   [FILE]:13:9:
@@ -734,6 +731,9 @@ Warning (2018): Function state mutability can be restricted to pure
 18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
    |     ^ (Relevant source part starts here and spans across multiple lines).
 
+"#]]).stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 
 "#]]);
 });
@@ -799,9 +799,9 @@ forgetest!(build_respects_lint_on_build_false, |prj, cmd| {
     });
 
     // Run forge build - should NOT show linting output because lint_on_build is false
-    cmd.arg("build").assert_success().stderr_eq(str![[""]]).stdout_eq(str![[r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
+    cmd.arg("build")
+        .assert_success()
+        .stderr_eq(str![[r#"
 Compiler run successful with warnings:
 Warning (2072): Unused local variable.
   [FILE]:13:9:
@@ -833,6 +833,10 @@ Warning (2018): Function state mutability can be restricted to pure
 18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
    |     ^ (Relevant source part starts here and spans across multiple lines).
 
+"#]])
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 
 "#]]);
 });
@@ -874,10 +878,9 @@ forgetest!(build_no_lint_flag_skips_lint, |prj, cmd| {
         };
     });
 
-    cmd.args(["build", "--no-lint"]).assert_success().stderr_eq(str![[r#""#]]).stdout_eq(str![[
-        r#"
-[COMPILING_FILES] with [SOLC_VERSION]
-[SOLC_VERSION] [ELAPSED]
+    cmd.args(["build", "--no-lint"])
+        .assert_success()
+        .stderr_eq(str![[r#"
 Compiler run successful with warnings:
 Warning (2072): Unused local variable.
   [FILE]:13:9:
@@ -909,9 +912,12 @@ Warning (2018): Function state mutability can be restricted to pure
 18 |     function unoptimizedHashGas(uint256 a, uint256 b) public view {
    |     ^ (Relevant source part starts here and spans across multiple lines).
 
+"#]])
+        .stdout_eq(str![[r#"
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
 
-"#
-    ]]);
+"#]]);
 });
 
 // `deny = notes` + an info-level lint forces the linter to return Err, exercising the same
@@ -1026,9 +1032,15 @@ forgetest!(can_lint_param_constants, |prj, cmd| {
     prj.add_source("Counter", COUNTER_WITH_CONST);
     prj.add_test("CounterTest", COUNTER_TEST_WITH_CONST);
 
-    cmd.forge_fuse().args(["build"]).assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .args(["build"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
+
+"#]])
+        .stderr_eq(str![[r#"
 Compiler run successful!
 
 "#]]);

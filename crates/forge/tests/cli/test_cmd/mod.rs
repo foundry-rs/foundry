@@ -190,16 +190,21 @@ contract ATest is DSTest {
    "#,
     );
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/ATest.t.sol:ATest
 [PASS] testArray(uint64[2]) (runs: 256, [AVG_GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -222,15 +227,20 @@ contract ATest is DSTest {
    "#,
     );
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 ...
-Compiler run successful!
 
 Ran 1 test for src/ATest.t.sol:ATest
 [PASS] testArray(uint64[2]) (runs: 256, [AVG_GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -263,16 +273,21 @@ contract FailTest is DSTest {
    "#,
     );
 
-    cmd.args(["test", "--match-path", "*src/ATest.t.sol"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--match-path", "*src/ATest.t.sol"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/ATest.t.sol:ATest
 [PASS] testPass() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -308,16 +323,21 @@ contract FailTest is DSTest {
     let test_path = prj.root().join("src/ATest.t.sol");
     let test_path = test_path.to_string_lossy();
 
-    cmd.args(["test", "--match-path", test_path.as_ref()]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--match-path", test_path.as_ref()])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/ATest.t.sol:ATest
 [PASS] testPass() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -390,16 +410,21 @@ contract MyTest is DSTest {
    "#,
     );
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/nested/forge-tests/MyTest.t.sol:MyTest
 [PASS] testTrue() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -410,10 +435,11 @@ forgetest_init!(can_test_repeatedly, |prj, cmd| {
     prj.initialize_default_contracts();
     prj.clear();
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
@@ -421,12 +447,16 @@ Ran 2 tests for test/Counter.t.sol:CounterTest
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
     for _ in 0..5 {
-        cmd.assert_success().stdout_eq(str![[r#"
-No files changed, compilation skipped
+        cmd.assert_success()
+            .stdout_eq(str![[r#"
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [PASS] testFuzz_SetNumber(uint256) (runs: 256, [AVG_GAS])
@@ -434,6 +464,10 @@ Ran 2 tests for test/Counter.t.sol:CounterTest
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]])
+            .stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
     }
@@ -465,16 +499,21 @@ contract ContractTest is DSTest {
         config.solc = Some(SOLC_VERSION.into());
     });
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/Contract.t.sol:ContractTest
 [PASS] testExample() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 
@@ -483,16 +522,22 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         config.solc = Some(OTHER_SOLC_VERSION.into());
     });
 
-    cmd.forge_fuse().arg("test").assert_success().stdout_eq(str![[r#"
+    cmd.forge_fuse()
+        .arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/Contract.t.sol:ContractTest
 [PASS] testExample() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -540,16 +585,21 @@ contract ContractTest is Test {
         .replace("<url>", &endpoint),
     );
 
-    cmd.arg("test").assert_success().stdout_eq(str![[r#"
+    cmd.arg("test")
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Contract.t.sol:ContractTest
 [PASS] test() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -679,10 +729,11 @@ contract USDTCallingTest is Test {
         .replace("<url>", &endpoint),
     );
 
-    cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Contract.t.sol:USDTCallingTest
 [PASS] test() ([GAS])
@@ -697,6 +748,10 @@ Traces:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -749,10 +804,11 @@ contract CustomTypesTest is Test {
    "#,
     );
 
-    cmd.args(["test", "-vvvvv"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "-vvvvv"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/Contract.t.sol:CustomTypesTest
 [FAIL: PoolNotInitialized()] testErr() ([GAS])
@@ -780,6 +836,10 @@ Encountered 1 failing test in test/Contract.t.sol:CustomTypesTest
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -922,7 +982,6 @@ contract CounterTest is Test {
     cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/CounterFuzz.t.sol:CounterTest
 [FAIL: panic: arithmetic underflow or overflow (0x11); counterexample: calldata=[..] args=[..]] testAddOne(uint256) (runs: [..], [AVG_GAS])
@@ -939,6 +998,9 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -973,10 +1035,11 @@ contract CounterTest is Test {
 
     // make sure a pre-run invariant failure exits after the first campaign call and keeps the
     // predicate failure attribution.
-    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/CounterInvariant.t.sol:CounterTest
 [FAIL: wrong count] invariant_early_exit() (runs: 1, calls: 1, reverts: 0)
@@ -1000,6 +1063,10 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1030,10 +1097,11 @@ contract ReplayFailuresTest is Test {
      "#,
     );
 
-    cmd.args(["test"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 4 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
 [PASS] testA() ([GAS])
@@ -1053,14 +1121,20 @@ Encountered a total of 2 failing tests, 2 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
 
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 
     // Test failure filter should be persisted.
     assert!(prj.root().join("cache/test-failures").exists());
 
     // Perform only the 2 failing tests from last run.
-    cmd.forge_fuse().args(["test", "--rerun"]).assert_failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
+    cmd.forge_fuse()
+        .args(["test", "--rerun"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 
 Ran 2 tests for test/ReplayFailures.t.sol:ReplayFailuresTest
 [FAIL: testB failed] testB() ([GAS])
@@ -1077,6 +1151,10 @@ Encountered 2 failing tests in test/ReplayFailures.t.sol:ReplayFailuresTest
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
 });
@@ -1136,7 +1214,6 @@ contract PrecompileLabelsTest is Test {
     cmd.args(["test", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Contract.t.sol:PrecompileLabelsTest
 [PASS] testPrecompileLabels() ([GAS])
@@ -1178,6 +1255,9 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 });
 
@@ -1204,10 +1284,11 @@ contract ContractFuzz is Test {
 }
     "#,
     );
-    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-vv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
@@ -1219,6 +1300,10 @@ Logs:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1246,10 +1331,11 @@ contract ContractFuzz is Test {
 }
     "#,
     );
-    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-vv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
@@ -1261,6 +1347,10 @@ Logs:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1289,10 +1379,11 @@ forgetest_init!(should_not_show_logs_when_fuzz_test, |prj, cmd| {
      "#,
     );
     // At verbosity >= 2, logs from the last run should be shown even when show_logs is false
-    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-vv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
@@ -1302,6 +1393,10 @@ Logs:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1330,10 +1425,11 @@ contract ContractFuzz is Test {
      "#,
     );
     // At verbosity >= 2, logs from the last run should be shown even when show_logs is false
-    cmd.args(["test", "-vv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-vv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/ContractFuzz.t.sol:ContractFuzz
 [PASS] testFuzzConsoleLog(uint256) (runs: 3, [AVG_GAS])
@@ -1343,6 +1439,10 @@ Logs:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1390,10 +1490,11 @@ contract SimpleContractTest is Test {
 }
      "#,
     );
-    cmd.args(["test", "-vvvv", "--decode-internal"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "-vvvv", "--decode-internal"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Simple.sol:SimpleContractTest
 [PASS] test() ([GAS])
@@ -1416,6 +1517,10 @@ Traces:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -1611,16 +1716,21 @@ contract ATest is Test {
    "#,
     );
 
-    cmd.args(["test"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/ATest.t.sol:ATest
 [PASS] testSelfMeteringRevert() ([GAS])
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -2174,16 +2284,21 @@ contract SkipCounterSetup is Test {
     "#,
     );
 
-    cmd.args(["test", "--mc", "SkipCounterSetup"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mc", "SkipCounterSetup"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:SkipCounterSetup
 [SKIP: skipped: skip counter test] setUp() ([GAS])
 Suite result: ok. 0 passed; 0 failed; 1 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 0 tests passed, 0 failed, 1 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -2432,10 +2547,11 @@ contract FooTest {
 "#,
     );
 
-    cmd.args(["test", "--mt", "testWalletScript", "-vvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "testWalletScript", "-vvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for src/Foo.sol:FooTest
 [PASS] testWalletScript() ([GAS])
@@ -2444,6 +2560,10 @@ Logs:
   0x70997970C51812dc3A010C7d01b50e0d17dc79C8
   0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
 ...
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 });
 
@@ -2497,10 +2617,11 @@ contract MetadataTraceTest is Test {
    "#,
     );
 
-    cmd.args(["test", "--mt", "test_proxy_trace", "-vvvv"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mt", "test_proxy_trace", "-vvvv"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
 [PASS] test_proxy_trace() ([GAS])
@@ -2516,6 +2637,10 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 
     // Check consistent traces for running with no metadata.
@@ -2525,7 +2650,6 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/MetadataTraceTest.t.sol:MetadataTraceTest
 [PASS] test_proxy_trace() ([GAS])
@@ -2540,6 +2664,10 @@ Traces:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -2738,7 +2866,6 @@ contract ReverterTest is Test {
     cmd.args(["test", "--mc", "ReverterTest"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 8 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
 [FAIL: call reverted with 'FOUNDRY::ASSUME' when it was expected not to revert; counterexample: [..] testAssumeThenExpectCountZeroFails(uint256) (runs: [..], [AVG_GAS])
@@ -2750,6 +2877,9 @@ Ran 8 tests for src/AssumeNoRevertTest.t.sol:ReverterTest
 [FAIL: RevertWithData(3); counterexample: [..]] testMultipleAssumes_OneWrong_fails(uint256) (runs: [..], [AVG_GAS])
 [FAIL: vm.assumeNoRevert: you must make another external call prior to calling assumeNoRevert again; counterexample: [..]] testMultipleAssumes_ThrowOnGenericNoRevert_AfterSpecific_fails(bytes4) (runs: [..], [AVG_GAS])
 ...
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -3202,7 +3332,6 @@ Tip: Run `forge test --rerun` to retry only the 1 failed test
         .args(["test", "--mc", "SuppressTracesTest", "-vvvv"])
         .assert_failure()
         .stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 2 tests for test/SuppressTracesTest.t.sol:SuppressTracesTest
 [FAIL: assertion failed: 1 != 100] test_increment_failure() ([GAS])
@@ -3257,6 +3386,10 @@ Encountered 1 failing test in test/SuppressTracesTest.t.sol:SuppressTracesTest
 Encountered a total of 1 failing tests, 1 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]])
+        .stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
 });
@@ -3360,7 +3493,6 @@ contract SenderLogger {
     cmd.args(["test", "--mt", "test_stackPrank", "-vvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:CounterTest
 [PASS] test_stackPrank() ([GAS])
@@ -3396,6 +3528,9 @@ Traces:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -3886,10 +4021,11 @@ contract CounterTest is Test {
         .replace("<url>", &rpc::next_http_archive_rpc_url()),
     );
 
-    cmd.args(["test", "--mc", "CounterTest"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["test", "--mc", "CounterTest"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [PASS] test_assert_storage() ([GAS])
@@ -3897,6 +4033,10 @@ Ran 2 tests for test/Counter.t.sol:CounterTest
 Suite result: ok. 2 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 2 tests passed, 0 failed, 0 skipped (2 total tests)
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -3925,10 +4065,11 @@ contract CounterTest is Test {
     "#,
     );
 
-    cmd.args(["test", "--mc", "CounterTest"]).assert_failure().stdout_eq(str![[r#"
+    cmd.args(["test", "--mc", "CounterTest"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/Counter.t.sol:CounterTest
 [FAIL: EvmError: Revert] testCoolPanic() ([GAS])
@@ -3943,6 +4084,10 @@ Encountered 1 failing test in test/Counter.t.sol:CounterTest
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -3994,7 +4139,6 @@ contract NonContractCallRevertTest is Test {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 3 tests for test/NonContractCallRevertTest.t.sol:NonContractCallRevertTest
 [FAIL: call to non-contract address 0xdEADBEeF00000000000000000000000000000000] test_non_contract_call_failure() ([GAS])
@@ -4076,6 +4220,9 @@ Encountered a total of 3 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 3 failed tests
 
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
+
 "#]]);
 });
 
@@ -4125,7 +4272,6 @@ contract NonContractDelegateCallRevertTest is Test {
         .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/NonContractDelegateCallRevertTest.t.sol:NonContractDelegateCallRevertTest
 [FAIL: delegatecall to non-contract address 0xdEADBEeF00000000000000000000000000000000 (usually an unliked library)] test_unlinked_library_call_failure() ([GAS])
@@ -4161,6 +4307,9 @@ Encountered 1 failing test in test/NonContractDelegateCallRevertTest.t.sol:NonCo
 Encountered a total of 1 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -4236,7 +4385,6 @@ contract PrankTest is Test {
     cmd.args(["test", "--mc", "PrankTest", "-vvvvv"]).assert_success().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 1 test for test/PrankBug.t.sol:PrankTest
 [PASS] test_Increment() ([GAS])
@@ -4270,6 +4418,9 @@ Traces:
 Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });
@@ -4339,7 +4490,6 @@ contract CounterTest is Test {
     cmd.args(["test", "--fork-url", &endpoint]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 
 Ran 2 tests for test/Counter.t.sol:CounterTest
 [FAIL: EvmError: Revert] test_roll_fork() ([GAS])
@@ -4356,6 +4506,9 @@ Encountered 2 failing tests in test/Counter.t.sol:CounterTest
 Encountered a total of 2 failing tests, 0 tests succeeded
 
 Tip: Run `forge test --rerun` to retry only the 2 failed tests
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful!
 
 "#]]);
 });

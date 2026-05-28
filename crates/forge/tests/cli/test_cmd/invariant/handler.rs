@@ -401,19 +401,6 @@ contract MultiHandlerTest is Test {
     cmd.args(["test", "--mt", "invariant_ok"]).assert_failure().stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful with warnings:
-Warning (2018): Function state mutability can be restricted to pure
- [FILE]:5:5:
-  |
-5 |     function boomA() external { assert(false); }
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Warning (2018): Function state mutability can be restricted to pure
- [FILE]:5:5:
-  |
-5 |     function boomB() external { assert(false); }
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
 
 Ran 1 test for test/MultiHandlerTest.t.sol:MultiHandlerTest
 Assertion Tests: 2 assertion bug(s) found
@@ -453,6 +440,20 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]).stderr_eq(str![[r#"
+Compiler run successful with warnings:
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:5:5:
+  |
+5 |     function boomA() external { assert(false); }
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Warning (2018): Function state mutability can be restricted to pure
+ [FILE]:5:5:
+  |
+5 |     function boomB() external { assert(false); }
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 "#]]);
 
@@ -528,7 +529,6 @@ contract ShrinkReplayTest is Test {
         config.invariant.runs = 0;
     });
     cmd.forge_fuse().args(["test", "--mt", "invariant_ok"]).assert_failure().stdout_eq(str![[r#"
-No files changed, compilation skipped
 
 Ran 1 test for test/ShrinkReplayTest.t.sol:ShrinkReplayTest
 Assertion Tests: 1 assertion bug(s) found
@@ -553,6 +553,9 @@ Encountered a total of 1 failing tests, 0 tests succeeded
 Tip: Run `forge test --rerun` to retry only the 1 failed test
 
 [SEED] (use `--fuzz-seed` to reproduce)
+
+"#]]).stderr_eq(str![[r#"
+No files changed, compilation skipped
 
 "#]]);
 });

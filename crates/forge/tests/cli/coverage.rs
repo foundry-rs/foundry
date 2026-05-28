@@ -11,11 +11,11 @@ fn assert_lcov(cmd: &mut TestCommand, data: impl IntoData) {
 }
 
 fn basic_base(prj: TestProject, mut cmd: TestCommand) {
-    cmd.args(["coverage", "--report=lcov", "--report=summary"]).assert_success().stdout_eq(str![[
-        r#"
+    cmd.args(["coverage", "--report=lcov", "--report=summary"])
+        .assert_success()
+        .stdout_eq(str![[r#"
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
-Compiler run successful!
 Analysing contracts...
 Running tests...
 
@@ -37,8 +37,11 @@ Wrote LCOV report.
 | Total                | 44.44% (4/9)  | 40.00% (2/5)  | 100.00% (0/0) | 50.00% (2/4)  |
 ╰----------------------+---------------+---------------+---------------+---------------╯
 
-"#
-    ]]);
+"#]])
+        .stderr_eq(str![[r#"
+Compiler run successful!
+
+"#]]);
 
     let lcov = prj.root().join("lcov.info");
     assert!(lcov.exists(), "lcov.info was not created");
