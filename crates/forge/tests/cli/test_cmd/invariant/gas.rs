@@ -415,6 +415,58 @@ contract GasPriceIsolationTest is Test {
 "#]]);
 });
 
+// Replay path must not observe a leaked sampled `tx.gasprice`.
+// `replay_run` loops `execute_tx` + `executor.commit(&mut result)` per tx and
+// then runs the invariant assertion. If `commit` re-armed `cheats.gas_price`
+// from a sampled override, the invariant view would observe non-zero
+// `tx.gasprice` instead of the natural `0`, and the surfaced failure would
+// flip to the leak revert instead of the intended forced revert.
+forgetest_init!(should_not_leak_sampled_gas_price_through_replay_commit, |prj, cmd| {
+    prj.add_test(
+        "GasPriceReplayLeakTest.t.sol",
+        r#"
+import {Test} from "forge-std/Test.sol";
+
+contract ReplayLeakHandler is Test {
+    // Storage write so the sampled gas envelope is actually exercised.
+    uint256 public n;
+    function poke(uint256 a) public { n = a; }
+}
+
+contract GasPriceReplayLeakTest is Test {
+    ReplayLeakHandler public handler;
+
+    function setUp() public {
+        handler = new ReplayLeakHandler();
+        targetContract(address(handler));
+    }
+
+    /// forge-config: default.invariant.runs = 2
+    /// forge-config: default.invariant.depth = 10
+    /// forge-config: default.invariant.fail-on-revert = false
+    /// forge-config: default.invariant.gas-fuzz = true
+    function invariant_replayDoesNotObserveLeakedGasPrice() public view {
+        // Natural price is 0; any non-zero here means a sampled override
+        // leaked through `commit()` into this invariant call.
+        require(tx.gasprice == 0, "gas-price leaked across commit in replay");
+        // Force a failure so shrink + replay actually run.
+        require(false, "forced failure to trigger shrink+replay");
+    }
+}
+     "#,
+    );
+
+    // Surfaced failure must be the forced one; a leak would flip it to the
+    // leak revert above.
+    cmd.args(["test", "--mt", "invariant_replayDoesNotObserveLeakedGasPrice"])
+        .assert_failure()
+        .stdout_eq(str![[r#"
+...
+[FAIL: forced failure to trigger shrink+replay] invariant_replayDoesNotObserveLeakedGasPrice() (runs: [..], calls: [..], reverts: [..])
+...
+"#]]);
+});
+
 forgetest_init!(should_replay_persisted_gas_price_failure, |prj, cmd| {
     prj.update_config(|config| {
         config.invariant.runs = 2;

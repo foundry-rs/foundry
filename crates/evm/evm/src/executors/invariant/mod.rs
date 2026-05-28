@@ -17,7 +17,7 @@ use foundry_common::{
 };
 use foundry_config::InvariantConfig;
 use foundry_evm_core::{
-    FoundryBlock,
+    FoundryBlock, FoundryTransaction,
     constants::{
         CALLER, CHEATCODE_ADDRESS, DEFAULT_CREATE2_DEPLOYER, HARDHAT_CONSOLE_ADDRESS, MAGIC_ASSUME,
     },
@@ -40,7 +40,10 @@ use indicatif::ProgressBar;
 use parking_lot::RwLock;
 use proptest::{strategy::Strategy, test_runner::TestRunner};
 use result::{assert_after_invariant, can_continue, did_fail_on_assert, invariant_preflight_check};
-use revm::{context::Block, state::Account};
+use revm::{
+    context::{Block, Transaction},
+    state::Account,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -726,15 +729,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                         break 'stop;
                     }
                 } else {
-                    // Commit executed call result.
+                    // `execute_tx` scrubs any sampled gas-price override out
+                    // of `call_result.tx_env`, so `commit()` cannot re-arm it.
                     current_run.executor.commit(&mut call_result);
-                    if current_run
-                        .inputs
-                        .last()
-                        .is_some_and(|tx| tx.call_details.gas_price().is_some())
-                    {
-                        clear_pending_gas_price(&mut current_run.executor);
-                    }
 
                     // Collect data for fuzzing from the state changeset.
                     // This step updates the state dictionary and therefore invalidates the
@@ -1670,17 +1667,19 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
         saved
     });
 
-    // Per-call `tx.gasprice` override under `gas_fuzz`. The cheatcodes inspector
-    // consumes this one-shot during `initialize_interp` (via `.take()`), so the
-    // executor's natural price applies to any follow-up invariant assertion call
-    // even if the sampled price is non-zero.
-    if let Some(p) = tx.call_details.gas_price()
+    // Per-call `tx.gasprice` override under `gas_fuzz`. Snapshot the natural
+    // price so we can scrub it back below — otherwise downstream `commit()`
+    // (replay/shrink/corpus/showmap) would re-arm `cheats.gas_price` from
+    // `result.tx_env.gas_price()` and leak the sampled value to the next call.
+    let gas_price_override = tx.call_details.gas_price();
+    let natural_gas_price = executor.tx_env().gas_price();
+    if let Some(p) = gas_price_override
         && let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut()
     {
         cheats.gas_price = Some(p.into());
     }
 
-    let result = executor.call_raw(
+    let mut result = executor.call_raw(
         tx.sender,
         tx.call_details.target,
         tx.call_details.calldata.clone(),
@@ -1691,13 +1690,19 @@ pub(crate) fn execute_tx<FEN: FoundryEvmNetwork>(
         executor.set_gas_limit(saved);
     }
 
-    result.map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
-}
-
-fn clear_pending_gas_price<FEN: FoundryEvmNetwork>(executor: &mut Executor<FEN>) {
-    if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
-        cheats.gas_price = None;
+    // Scrub override before returning so any downstream `commit()` cannot
+    // re-arm `cheats.gas_price`. Also defensively clear the inspector field
+    // in case `initialize_interp` was never reached.
+    if gas_price_override.is_some() {
+        if let Ok(call_result) = &mut result {
+            call_result.tx_env.set_gas_price(natural_gas_price);
+        }
+        if let Some(cheats) = executor.inspector_mut().cheatcodes.as_mut() {
+            cheats.gas_price = None;
+        }
     }
+
+    result.map_err(|e| eyre!(format!("Could not make raw evm call: {e}")))
 }
 
 #[cfg(test)]
