@@ -81,13 +81,13 @@ Ran 1 test for test/name.sol:InvariantStorageTest
 [FAIL: pushUint] invariantPush
 	[SEQUENCE]
 
-Invariant/Property Tests: 4/4 invariants broken
+InvariantStorageTest invariants: 4/4 invariants broken
 [FAIL: changedAddr] invariantChangeAddress
 [FAIL: changedStr] invariantChangeString
 [FAIL: changedUint] invariantChangeUint
 [FAIL: pushUint] invariantPush
 4 invariant failure(s) persisted to cache/invariant/failures/InvariantStorageTest — rerun to shrink
- invariantChangeAddress() ([RUNS])
+ InvariantStorageTest invariants ([RUNS])
 
 [STATS]
 
@@ -109,13 +109,13 @@ Encountered 1 failing test in test/name.sol:InvariantStorageTest
 [FAIL: pushUint] invariantPush
 	[SEQUENCE]
 
-Invariant/Property Tests: 4/4 invariants broken
+InvariantStorageTest invariants: 4/4 invariants broken
 [FAIL: changedAddr] invariantChangeAddress
 [FAIL: changedStr] invariantChangeString
 [FAIL: changedUint] invariantChangeUint
 [FAIL: pushUint] invariantPush
 4 invariant failure(s) persisted to cache/invariant/failures/InvariantStorageTest — rerun to shrink
- invariantChangeAddress() ([RUNS])
+ InvariantStorageTest invariants ([RUNS])
 
 Encountered a total of 1 failing tests, 0 tests succeeded
 
