@@ -130,9 +130,12 @@ impl<'hir> Analyzer<'hir> {
             }
             ExprKind::Member(base, ident) if ident.name == kw::Origin => is_builtin(base, sym::tx),
             ExprKind::Ident(_) if is_builtin(expr, sym::this) => true,
-            ExprKind::Lit(lit) => {
-                matches!(lit.kind, LitKind::Address(_) | LitKind::Number(_))
-            }
+            // Address literals are safe; only `0` is accepted among numeric literals.
+            ExprKind::Lit(lit) => match &lit.kind {
+                LitKind::Address(_) => true,
+                LitKind::Number(n) => n.is_zero(),
+                _ => false,
+            },
             ExprKind::Ident(reses) => reses.iter().any(|r| match r {
                 Res::Item(ItemId::Variable(vid)) => self.is_safe_var(*vid),
                 _ => false,
@@ -806,7 +809,8 @@ fn callee_no_arg_returns(
     })
 }
 
-/// True when `fid` is a zero-parameter function whose body is exactly `return expr;`
+/// True when `fid` is a zero-parameter function whose body is `return expr;`,
+/// or `namedRet = expr;` (with an optional trailing bare `return;`).
 fn function_no_arg_returns(
     hir: &hir::Hir<'_>,
     fid: FunctionId,
@@ -814,9 +818,30 @@ fn function_no_arg_returns(
 ) -> bool {
     let f = hir.function(fid);
     let Some(body) = f.body else { return false };
-    f.parameters.is_empty()
-        && body.stmts.len() == 1
-        && matches!(&body.stmts[0].kind, StmtKind::Return(Some(e)) if pred(e))
+    if !f.parameters.is_empty() {
+        return false;
+    }
+    // A trailing bare `return;` is a no-op; ignore it before matching the body shape.
+    let stmts: &[_] = match body.stmts.split_last() {
+        Some((last, rest)) if matches!(last.kind, StmtKind::Return(None)) => rest,
+        _ => body.stmts,
+    };
+    if stmts.len() != 1 {
+        return false;
+    }
+    match &stmts[0].kind {
+        StmtKind::Return(Some(e)) => pred(e),
+        // Named-return form: the sole named return is assigned the result.
+        StmtKind::Expr(e) => match &e.peel_parens().kind {
+            ExprKind::Assign(lhs, None, rhs) => {
+                f.returns.len() == 1
+                    && underlying_var(lhs).is_some_and(|v| v == f.returns[0])
+                    && pred(rhs)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 /// Shared shape for `msg.sender` / `tx.origin` recognition.
@@ -863,7 +888,12 @@ fn is_trusted_principal_inner(
         },
         ExprKind::Call(callee, args, _) if is_address_like_cast_callee(callee) => {
             args.exprs().next().is_some_and(|inner| match &inner.peel_parens().kind {
-                ExprKind::Lit(lit) => matches!(lit.kind, LitKind::Address(_) | LitKind::Number(_)),
+                // Address literals trust; only the `0` numeric literal trusts.
+                ExprKind::Lit(lit) => match &lit.kind {
+                    LitKind::Address(_) => true,
+                    LitKind::Number(n) => n.is_zero(),
+                    _ => false,
+                },
                 _ => is_trusted_principal_inner(hir, inner, params, depth),
             })
         }
