@@ -25,19 +25,15 @@ impl InvariantCampaignSpec {
     pub fn worker_plans(self, workers: usize) -> Result<Vec<InvariantWorkerPlan>> {
         ensure!(workers > 0, "invariant campaign requires at least one worker");
 
-        if self.total_runs == 0 {
-            return Ok(vec![InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 0 }]);
-        }
-
-        let worker_count = workers.min(self.total_runs as usize);
-        let base_runs = self.total_runs / worker_count as u32;
-        let extra_runs = self.total_runs % worker_count as u32;
+        let worker_count = workers.min(self.total_runs.max(1) as usize) as u32;
+        let base_runs = self.total_runs / worker_count;
+        let extra_runs = self.total_runs % worker_count;
 
         let mut first_global_run = 0;
-        let mut plans = Vec::with_capacity(worker_count);
+        let mut plans = Vec::with_capacity(worker_count as usize);
         for worker_id in 0..worker_count {
-            let runs = base_runs + u32::from((worker_id as u32) < extra_runs);
-            plans.push(InvariantWorkerPlan { worker_id: worker_id as u32, first_global_run, runs });
+            let runs = base_runs + u32::from(worker_id < extra_runs);
+            plans.push(InvariantWorkerPlan { worker_id, first_global_run, runs });
             first_global_run += runs;
         }
 
@@ -82,9 +78,8 @@ impl InvariantCampaignAggregator {
     }
 
     pub fn push(&mut self, output: InvariantWorkerOutput) -> Result<()> {
-        let end = worker_range_end(output.plan)?;
         ensure!(
-            end <= self.spec.total_runs,
+            worker_range_end(output.plan)? <= self.spec.total_runs,
             "invariant worker output exceeds the logical campaign"
         );
         self.outputs.push(output);
@@ -99,7 +94,6 @@ impl InvariantCampaignAggregator {
         ensure_outputs_cover_campaign(self.spec, &self.outputs)?;
 
         let mut errors = HashMap::default();
-        let mut error_choices = HashMap::default();
         let mut handler_errors = HashMap::default();
         let mut cases = Vec::new();
         let mut reverts = 0;
@@ -108,17 +102,13 @@ impl InvariantCampaignAggregator {
         let mut line_coverage = None;
         let mut metrics = HashMap::default();
         let failed_corpus_replays = self.outputs[0].result.failed_corpus_replays;
-        let mut optimization_best_value = None;
-        let mut optimization_best_sequence = Vec::new();
-        let mut optimization_best_key = None;
+        let mut optimization_best = None;
 
-        for output in self.outputs {
-            let plan = output.plan;
+        for InvariantWorkerOutput { plan, result } in self.outputs {
             let run_key =
                 RunChoice { first_global_run: plan.first_global_run, worker_id: plan.worker_id };
-            let result = output.result;
 
-            merge_predicate_errors(&mut errors, &mut error_choices, result.errors, run_key);
+            merge_predicate_errors(&mut errors, result.errors, run_key);
             merge_handler_errors(&mut handler_errors, result.handler_errors);
             cases.extend(result.cases);
             reverts += result.reverts;
@@ -127,14 +117,17 @@ impl InvariantCampaignAggregator {
             HitMaps::merge_opt(&mut line_coverage, result.line_coverage);
             merge_metrics(&mut metrics, result.metrics);
             merge_optimization(
-                &mut optimization_best_value,
-                &mut optimization_best_sequence,
-                &mut optimization_best_key,
+                &mut optimization_best,
                 result.optimization_best_value,
                 result.optimization_best_sequence,
                 run_key,
             );
         }
+        let (optimization_best_value, optimization_best_sequence) = optimization_best
+            .map(|choice| (Some(choice.value), choice.sequence))
+            .unwrap_or_default();
+        let errors =
+            errors.into_iter().map(|(invariant, entry)| (invariant, entry.error)).collect();
 
         Ok(InvariantFuzzTestResult::new(
             errors,
@@ -162,6 +155,17 @@ struct RunChoice {
 struct PredicateFailureChoice {
     run: RunChoice,
     sequence_len: usize,
+}
+
+struct PredicateFailureEntry {
+    error: InvariantFuzzError,
+    choice: PredicateFailureChoice,
+}
+
+struct OptimizationChoice {
+    value: I256,
+    sequence: Vec<BasicTxDetails>,
+    run: RunChoice,
 }
 
 /// Returns the exclusive end of a worker's logical run range.
@@ -204,16 +208,14 @@ fn ensure_outputs_cover_campaign(
 
 /// Keeps one predicate failure per invariant using the campaign's deterministic choice order.
 fn merge_predicate_errors(
-    merged: &mut HashMap<String, InvariantFuzzError>,
-    choices: &mut HashMap<String, PredicateFailureChoice>,
+    merged: &mut HashMap<String, PredicateFailureEntry>,
     worker_errors: HashMap<String, InvariantFuzzError>,
     run: RunChoice,
 ) {
     for (invariant, error) in worker_errors {
         let candidate = PredicateFailureChoice { run, sequence_len: error_sequence_len(&error) };
-        if choices.get(&invariant).is_none_or(|existing| candidate < *existing) {
-            choices.insert(invariant.clone(), candidate);
-            merged.insert(invariant, error);
+        if merged.get(&invariant).is_none_or(|existing| candidate < existing.choice) {
+            merged.insert(invariant, PredicateFailureEntry { error, choice: candidate });
         }
     }
 }
@@ -225,12 +227,8 @@ fn merge_handler_errors(
 ) {
     for (site, error) in worker_errors {
         let candidate_len = error_sequence_len(&error);
-        match merged.get_mut(&site) {
-            Some(existing) if error_sequence_len(existing) <= candidate_len => {}
-            Some(existing) => *existing = error,
-            None => {
-                merged.insert(site, error);
-            }
+        if merged.get(&site).is_none_or(|existing| error_sequence_len(existing) > candidate_len) {
+            merged.insert(site, error);
         }
     }
 }
@@ -250,9 +248,7 @@ fn merge_metrics(
 
 /// Keeps the best optimization value, using logical run order to break ties.
 fn merge_optimization(
-    best_value: &mut Option<I256>,
-    best_sequence: &mut Vec<BasicTxDetails>,
-    best_key: &mut Option<RunChoice>,
+    best: &mut Option<OptimizationChoice>,
     candidate_value: Option<I256>,
     candidate_sequence: Vec<BasicTxDetails>,
     candidate_key: RunChoice,
@@ -261,16 +257,16 @@ fn merge_optimization(
         return;
     };
 
-    let should_replace = best_value.is_none_or(|best_value| candidate_value > best_value)
-        || best_value.is_some_and(|best_value| {
-            candidate_value == best_value
-                && best_key.is_none_or(|best_key| candidate_key < best_key)
-        });
+    let should_replace = best.as_ref().is_none_or(|best| {
+        candidate_value > best.value || candidate_value == best.value && candidate_key < best.run
+    });
 
     if should_replace {
-        *best_value = Some(candidate_value);
-        *best_sequence = candidate_sequence;
-        *best_key = Some(candidate_key);
+        *best = Some(OptimizationChoice {
+            value: candidate_value,
+            sequence: candidate_sequence,
+            run: candidate_key,
+        });
     }
 }
 
@@ -569,13 +565,11 @@ mod tests {
     #[test]
     fn predicate_failure_choice_uses_worker_id_then_sequence_length_after_run() {
         let mut merged = HashMap::default();
-        let mut choices = HashMap::default();
 
         let mut worker_errors = HashMap::default();
         worker_errors.insert("invariant_balance".to_string(), predicate_error("worker-2", 1));
         merge_predicate_errors(
             &mut merged,
-            &mut choices,
             worker_errors,
             RunChoice { first_global_run: 5, worker_id: 2 },
         );
@@ -584,21 +578,19 @@ mod tests {
         worker_errors.insert("invariant_balance".to_string(), predicate_error("worker-1", 4));
         merge_predicate_errors(
             &mut merged,
-            &mut choices,
             worker_errors,
             RunChoice { first_global_run: 5, worker_id: 1 },
         );
-        assert_eq!(merged["invariant_balance"].revert_reason().as_deref(), Some("worker-1"));
+        assert_eq!(merged["invariant_balance"].error.revert_reason().as_deref(), Some("worker-1"));
 
         let mut worker_errors = HashMap::default();
         worker_errors.insert("invariant_balance".to_string(), predicate_error("shorter", 2));
         merge_predicate_errors(
             &mut merged,
-            &mut choices,
             worker_errors,
             RunChoice { first_global_run: 5, worker_id: 1 },
         );
-        assert_eq!(merged["invariant_balance"].revert_reason().as_deref(), Some("shorter"));
+        assert_eq!(merged["invariant_balance"].error.revert_reason().as_deref(), Some("shorter"));
     }
 
     #[test]
