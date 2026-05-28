@@ -279,9 +279,31 @@ fn render_contract<'ast, 'gcx>(
                         );
                         c.devs.extend(inherited_devs);
                     }
+                    for (name, desc) in &base_doc.returns {
+                        if !c.returns.iter().any(|(n, _)| n == name) {
+                            c.returns.push((name.clone(), sanitize(desc)));
+                        }
+                    }
                 }
                 write_comment_block(out, &c);
                 write_code_block(out, &ctx.dedented_snippet(*span));
+                if !c.returns.is_empty() {
+                    let ty = format!("`{}`", ctx.snippet(v.ty.span).trim());
+                    writeln!(out, "**Returns**").unwrap();
+                    writeln!(out).unwrap();
+                    writeln!(out, "| Name | Type | Description |").unwrap();
+                    writeln!(out, "| ---- | ---- | ----------- |").unwrap();
+                    for (name, desc) in &c.returns {
+                        // Solar parses `@return <first-word> <rest>` where the first word
+                        // becomes `name` and the rest becomes `desc`. For unnamed returns the
+                        // first word is actually part of the description, so recombine them.
+                        let full_desc =
+                            if desc.is_empty() { name.clone() } else { format!("{name} {desc}") };
+                        let desc_cell = escape_table_cell(&full_desc);
+                        writeln!(out, "| &lt;none&gt; | {ty} | {desc_cell} |").unwrap();
+                    }
+                    writeln!(out).unwrap();
+                }
             }
         };
 
