@@ -964,11 +964,6 @@ impl BundledState<TempoEvmNetwork> {
             });
         }
 
-        // Resume detection: if remaining txs already have a hash stamped, the batch was
-        // sent in a previous run that was interrupted before the receipt was saved.
-        let pending_batch_hash: Option<TxHash> =
-            sequence.transactions.iter().skip(remaining_start).find_map(|tx| tx.hash);
-
         // Reject pre-signed transactions: a batch is a single atomic tx from one sender,
         // so any tx already signed by another key would silently be re-attributed.
         if let Some((idx, _)) =
@@ -1006,6 +1001,153 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         let provider = Arc::new(ProviderBuilder::<TempoNetwork>::new(sequence.rpc_url()).build()?);
+
+        // Resume detection happens before signer resolution, gas estimation, and sponsor attachment
+        // so that recovering an already-submitted batch tx never requires the original
+        // signer/sponsor or a fresh estimate.
+        //
+        // If the hash is found in the stamped transactions but a receipt cannot be obtained within
+        // the timeout, the tx is assumed dropped. We clear the stamped hashes so that a subsequent
+        // --resume will re-send a replacement instead of waiting on a dead hash.
+        let pending_batch_hash: Option<TxHash> =
+            sequence.transactions.iter().skip(remaining_start).find_map(|tx| tx.hash);
+
+        if let Some(tx_hash) = pending_batch_hash {
+            sh_println!(
+                "Resuming batch: tx {tx_hash:#x} already submitted, waiting for receipt..."
+            )?;
+
+            let timeout = self.script_config.config.transaction_timeout;
+            let receipt_result = tokio::time::timeout(Duration::from_secs(timeout), async {
+                loop {
+                    if let Some(receipt) = provider.get_transaction_receipt(tx_hash).await? {
+                        return Ok::<_, eyre::Error>(Some(receipt));
+                    }
+                    // If the tx has left the mempool without a receipt it was dropped.
+                    if provider.get_transaction_by_hash(tx_hash).await?.is_none() {
+                        return Ok(None);
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            })
+            .await;
+
+            match receipt_result {
+                Ok(Ok(Some(receipt))) => {
+                    // Tx confirmed, process receipt and return without touching signer/sponsor.
+                    let success = receipt.status();
+                    if success {
+                        sh_println!(
+                            "Batch transaction confirmed in block {}",
+                            receipt.block_number.unwrap_or(0)
+                        )?;
+                    } else {
+                        bail!("Batch transaction failed (reverted)");
+                    }
+
+                    let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
+                    let remaining_len = sequence.transactions.len() - remaining_start;
+                    let per_tx_addresses: Vec<Option<Address>> = sequence
+                        .transactions
+                        .iter()
+                        .skip(remaining_start)
+                        .map(|tx| match tx.call_kind {
+                            CallKind::Create | CallKind::Create2 => tx.contract_address,
+                            _ => None,
+                        })
+                        .collect();
+
+                    for (idx, addr) in per_tx_addresses.iter().enumerate() {
+                        if let Some(addr) = addr {
+                            sh_println!("  call[{idx}] deployed at: {addr:#x}")?;
+                        }
+                    }
+
+                    for addr in &per_tx_addresses {
+                        let mut tx_receipt = receipt.clone();
+                        tx_receipt.contract_address = *addr;
+                        sequence.receipts.push(tx_receipt);
+                    }
+                    // Clear the pending entry now that we have a receipt.
+                    sequence.remove_pending(tx_hash);
+
+                    let chain = sequence.chain;
+                    let _ = sequence;
+                    self.sequence.save(true, false)?;
+
+                    let total_gas = receipt.gas_used();
+                    let gas_price = receipt.effective_gas_price() as u64;
+                    let total_paid = total_gas * gas_price;
+                    let paid = format_units(total_paid, 18).unwrap_or_else(|_| "N/A".to_string());
+                    let gas_price_gwei =
+                        format_units(gas_price, 9).unwrap_or_else(|_| "N/A".to_string());
+                    let token_symbol = NamedChain::try_from(chain)
+                        .unwrap_or_default()
+                        .native_currency_symbol()
+                        .unwrap_or("ETH");
+                    sh_println!(
+                        "\nTotal Paid: {} {} ({} gas * {} gwei)\n(resumed from previous run, {} tx(s))",
+                        paid.trim_end_matches('0'),
+                        token_symbol,
+                        total_gas,
+                        gas_price_gwei.trim_end_matches('0').trim_end_matches('.'),
+                        remaining_len,
+                    )?;
+
+                    if !shell::is_json() {
+                        sh_println!("\n\n==========================")?;
+                        sh_println!("\nBATCH EXECUTION COMPLETE & SUCCESSFUL.")?;
+                        sh_println!(
+                            "All {} calls executed atomically in a single transaction.",
+                            remaining_len
+                        )?;
+                    }
+
+                    return Ok(BroadcastedState {
+                        args: self.args,
+                        script_config: self.script_config,
+                        build_data: self.build_data,
+                        sequence: self.sequence,
+                    });
+                }
+                Ok(Ok(None)) => {
+                    // Dropped from mempool, clear stamped hashes so the next --resume re-sends.
+                    sh_println!(
+                        "Batch tx {tx_hash:#x} was dropped from the mempool; will re-send..."
+                    )?;
+                    let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
+                    sequence.remove_pending(tx_hash);
+                    for tx in sequence.transactions.iter_mut().skip(remaining_start) {
+                        tx.hash = None;
+                    }
+                    self.sequence.save(true, false)?;
+                    // Fall through to full send path below.
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    // Timeout, clear stamped hashes so the next --resume can re-send rather than
+                    // waiting indefinitely on a potentially dead hash.
+                    sh_println!(
+                        "Timeout waiting for batch tx {tx_hash:#x}; clearing checkpoint so \
+                         --resume can re-send a replacement."
+                    )?;
+                    let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
+                    sequence.remove_pending(tx_hash);
+                    for tx in sequence.transactions.iter_mut().skip(remaining_start) {
+                        tx.hash = None;
+                    }
+                    self.sequence.save(true, false)?;
+                    return Err(eyre::eyre!(
+                        "Timeout waiting for batch transaction receipt (tx: {tx_hash:#x}). \
+                         The transaction hash has been cleared; run with --resume to retry."
+                    ));
+                }
+            }
+        }
+
+        // Reborrow after the potential save above.
+        let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
+
         let tempo_sponsor = self.script_config.tempo.sponsor_config().await?;
 
         // Get wallet for signing
@@ -1160,59 +1302,44 @@ impl BundledState<TempoEvmNetwork> {
             sponsor.attach_and_print::<TempoNetwork>(&mut batch_tx, sender).await?;
         }
 
-        // Sign and send — or reuse the hash from a previous interrupted run.
-        let tx_hash = if let Some(pending) = pending_batch_hash {
-            sh_println!(
-                "Resuming batch: tx {pending:#x} already submitted, waiting for receipt..."
-            )?;
-            pending
-        } else {
-            let hash = match batch_signer {
-                BatchSigner::Wallet(wallet) => {
-                    let provider_with_wallet =
-                        alloy_provider::ProviderBuilder::<_, _, TempoNetwork>::default()
-                            .wallet(wallet)
-                            .connect_provider(provider.as_ref());
+        // Sign and send.
+        let tx_hash = match batch_signer {
+            BatchSigner::Wallet(wallet) => {
+                let provider_with_wallet =
+                    alloy_provider::ProviderBuilder::<_, _, TempoNetwork>::default()
+                        .wallet(wallet)
+                        .connect_provider(provider.as_ref());
 
-                    let pending = provider_with_wallet.send_transaction(batch_tx).await?;
-                    *pending.tx_hash()
-                }
-                BatchSigner::TempoKeychain(signer, access_key) => {
-                    let raw_tx = batch_tx
-                        .sign_with_access_key(
-                            provider.as_ref(),
-                            &*signer,
-                            access_key.wallet_address,
-                            access_key.key_address,
-                            access_key.key_authorization.as_ref(),
-                        )
-                        .await?;
-
-                    let pending = provider.send_raw_transaction(&raw_tx).await?;
-                    *pending.tx_hash()
-                }
-                BatchSigner::Unlocked => {
-                    let pending = provider.send_transaction(batch_tx).await?;
-                    *pending.tx_hash()
-                }
-            };
-
-            sh_println!("Batch transaction sent: {:#x}", hash)?;
-
-            // Checkpoint immediately: stamp hashes and save before waiting for the receipt
-            // so that a crash or timeout here doesn't lose the in-flight tx hash.
-            for tx in sequence.transactions.iter_mut().skip(remaining_start) {
-                tx.hash = Some(hash);
+                let pending = provider_with_wallet.send_transaction(batch_tx).await?;
+                *pending.tx_hash()
             }
-            self.sequence.save(true, false)?;
+            BatchSigner::TempoKeychain(signer, access_key) => {
+                let raw_tx = batch_tx
+                    .sign_with_access_key(
+                        provider.as_ref(),
+                        &*signer,
+                        access_key.wallet_address,
+                        access_key.key_address,
+                        access_key.key_authorization.as_ref(),
+                    )
+                    .await?;
 
-            // Re-borrow sequence after save (save takes &mut self.sequence).
-            let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
-            // Silence the unused-variable warning; sequence is used below.
-            let _ = &sequence;
-
-            hash
+                let pending = provider.send_raw_transaction(&raw_tx).await?;
+                *pending.tx_hash()
+            }
+            BatchSigner::Unlocked => {
+                let pending = provider.send_transaction(batch_tx).await?;
+                *pending.tx_hash()
+            }
         };
+
+        sh_println!("Batch transaction sent: {:#x}", tx_hash)?;
+
+        // Checkpoint immediately via the pending machinery: stamps hashes, registers in
+        // sequence.pending, and saves so that a crash before the receipt doesn't lose the
+        // in-flight tx hash, and so that the early resume path above can detect a drop.
+        sequence.add_pending(remaining_start, tx_hash);
+        self.sequence.save(true, false)?;
 
         // Wait for receipt
         let timeout = self.script_config.config.transaction_timeout;
@@ -1225,7 +1352,7 @@ impl BundledState<TempoEvmNetwork> {
             }
         })
         .await
-        .map_err(|_| eyre::eyre!("Timeout waiting for batch transaction receipt"))??;
+        .map_err(|_| eyre::eyre!("Timeout waiting for batch transaction receipt (tx: {tx_hash:#x}). Run with --resume to retry."))??;
 
         let success = receipt.status();
         if success {
@@ -1238,6 +1365,7 @@ impl BundledState<TempoEvmNetwork> {
         }
 
         let sequence = self.sequence.sequences_mut().get_mut(0).unwrap();
+        sequence.remove_pending(tx_hash);
 
         // Receipts are pushed 1:1 with the remaining (not-yet-receipted) transactions.
         let remaining_len = sequence.transactions.len() - remaining_start;
