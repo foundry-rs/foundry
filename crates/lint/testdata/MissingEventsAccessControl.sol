@@ -359,3 +359,27 @@ abstract contract MissingEventsAccessControlAbstractDerived is AbstractAccessBas
         require(msg.sender == admin, "not admin");
     }
 }
+
+abstract contract MissingEventsAccessControlAssertionHelpers {
+    bool private _failed;
+
+    function assertEq(uint128 left, uint128 right) internal view virtual {
+        assertEq(uint256(left), uint256(right));
+    }
+
+    function assertEq(uint256 left, uint256 right) internal view virtual {
+        if (left != right || _failed) {
+            fail();
+        }
+    }
+
+    function fail() internal view virtual {
+        assertEq(uint256(0), uint256(1));
+    }
+}
+
+contract MissingEventsAccessControlForgeStdLikeTest is MissingEventsAccessControlAssertionHelpers {
+    function testFuzz_SendMail(uint128 mintAmount, uint128 sendAmount) public view {
+        assertEq(uint256(mintAmount), uint256(sendAmount));
+    }
+}

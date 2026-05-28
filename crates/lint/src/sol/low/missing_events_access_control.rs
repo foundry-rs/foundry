@@ -212,9 +212,8 @@ fn collect_access_control_state_vars_in_stmt(
             }
         }
         StmtKind::Expr(expr) => {
-            let mut alias_seen = seen.clone();
             collect_access_control_state_vars_in_expr(hir, expr, seen, sender_aliases, out);
-            update_sender_aliases_from_assignment(hir, expr, &mut alias_seen, sender_aliases);
+            update_sender_aliases_from_assignment(hir, expr, seen, sender_aliases);
         }
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
             for stmt in block.stmts {
@@ -239,11 +238,10 @@ fn collect_access_control_state_vars_in_stmt(
             collect_access_control_state_vars_in_expr(hir, expr, seen, sender_aliases, out);
         }
         StmtKind::DeclSingle(var_id) => {
-            let mut alias_seen = seen.clone();
             if let Some(init) = hir.variable(var_id).initializer {
                 collect_access_control_state_vars_in_expr(hir, init, seen, sender_aliases, out);
             }
-            update_sender_alias_from_decl(hir, var_id, &mut alias_seen, sender_aliases);
+            update_sender_alias_from_decl(hir, var_id, seen, sender_aliases);
         }
         StmtKind::DeclMulti(_, expr) => {
             collect_access_control_state_vars_in_expr(hir, expr, seen, sender_aliases, out);
@@ -1238,7 +1236,7 @@ fn is_protected(hir: &hir::Hir<'_>, func_id: FunctionId, func: &hir::Function<'_
 fn update_sender_alias_from_decl(
     hir: &hir::Hir<'_>,
     var_id: VariableId,
-    seen: &mut HashSet<FunctionId>,
+    seen: &HashSet<FunctionId>,
     sender_aliases: &mut HashSet<VariableId>,
 ) {
     let var = hir.variable(var_id);
@@ -1246,7 +1244,11 @@ fn update_sender_alias_from_decl(
         return;
     }
 
-    if var.initializer.is_some_and(|init| expr_reads_sender(hir, init, seen, sender_aliases)) {
+    let mut sender_seen = seen.clone();
+    if var
+        .initializer
+        .is_some_and(|init| expr_reads_sender(hir, init, &mut sender_seen, sender_aliases))
+    {
         sender_aliases.insert(var_id);
     } else {
         sender_aliases.remove(&var_id);
@@ -1256,13 +1258,14 @@ fn update_sender_alias_from_decl(
 fn update_sender_aliases_from_assignment(
     hir: &hir::Hir<'_>,
     expr: &hir::Expr<'_>,
-    seen: &mut HashSet<FunctionId>,
+    seen: &HashSet<FunctionId>,
     sender_aliases: &mut HashSet<VariableId>,
 ) {
     let ExprKind::Assign(lhs, _, rhs) = &expr.peel_parens().kind else { return };
     let Some(local) = lhs_local_var(hir, lhs) else { return };
 
-    if expr_reads_sender(hir, rhs, seen, sender_aliases) {
+    let mut sender_seen = seen.clone();
+    if expr_reads_sender(hir, rhs, &mut sender_seen, sender_aliases) {
         sender_aliases.insert(local);
     } else {
         sender_aliases.remove(&local);
@@ -1331,9 +1334,8 @@ fn stmt_has_access_guard(
                 })
         }
         StmtKind::Expr(expr) => {
-            let mut alias_seen = seen.clone();
             let has_guard = expr_has_access_guard(hir, expr, seen, sender_aliases);
-            update_sender_aliases_from_assignment(hir, expr, &mut alias_seen, sender_aliases);
+            update_sender_aliases_from_assignment(hir, expr, seen, sender_aliases);
             has_guard
         }
         StmtKind::Block(block) | StmtKind::UncheckedBlock(block) | StmtKind::Loop(block, _) => {
@@ -1356,12 +1358,11 @@ fn stmt_has_access_guard(
             expr_has_access_guard(hir, expr, seen, sender_aliases)
         }
         StmtKind::DeclSingle(var_id) => {
-            let mut alias_seen = seen.clone();
             let has_guard = hir
                 .variable(var_id)
                 .initializer
                 .is_some_and(|init| expr_has_access_guard(hir, init, seen, sender_aliases));
-            update_sender_alias_from_decl(hir, var_id, &mut alias_seen, sender_aliases);
+            update_sender_alias_from_decl(hir, var_id, seen, sender_aliases);
             has_guard
         }
         StmtKind::DeclMulti(_, expr) => expr_has_access_guard(hir, expr, seen, sender_aliases),
@@ -1543,18 +1544,16 @@ fn stmt_reads_sender(
 ) -> bool {
     match stmt.kind {
         StmtKind::DeclSingle(var_id) => {
-            let mut alias_seen = seen.clone();
             let reads = hir
                 .variable(var_id)
                 .initializer
                 .is_some_and(|init| expr_reads_sender(hir, init, seen, sender_aliases));
-            update_sender_alias_from_decl(hir, var_id, &mut alias_seen, sender_aliases);
+            update_sender_alias_from_decl(hir, var_id, seen, sender_aliases);
             reads
         }
         StmtKind::Expr(expr) => {
-            let mut alias_seen = seen.clone();
             let reads = expr_reads_sender(hir, expr, seen, sender_aliases);
-            update_sender_aliases_from_assignment(hir, expr, &mut alias_seen, sender_aliases);
+            update_sender_aliases_from_assignment(hir, expr, seen, sender_aliases);
             reads
         }
         StmtKind::DeclMulti(_, expr) | StmtKind::Emit(expr) | StmtKind::Revert(expr) => {
