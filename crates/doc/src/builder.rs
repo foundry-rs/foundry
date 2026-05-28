@@ -11,7 +11,7 @@ use solar::{config::CompilerStage, sema::Compiler};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -155,8 +155,17 @@ impl DocBuilder {
                         return (None, None);
                     };
 
-                    let rel_path =
-                        abs_path.strip_prefix(&root).unwrap_or(path.as_path()).to_owned();
+                    // For sources outside the project root (e.g. library deps that live under a
+                    // different prefix), synthesise a safe relative path so that
+                    // `pages_dir.join(rel_out_path)` can never escape the docs tree.
+                    let rel_path = if let Ok(p) = abs_path.strip_prefix(&root) {
+                        p.to_path_buf()
+                    } else {
+                        let comps: Vec<_> = abs_path.components().collect();
+                        let start = comps.len().saturating_sub(3);
+                        let tail: PathBuf = comps[start..].iter().collect();
+                        PathBuf::from("lib").join(tail)
+                    };
 
                     // Git source link (skipped on library files).
                     let git_url = if *from_library {
@@ -225,6 +234,20 @@ impl DocBuilder {
                 }
                 if let Some(page_list) = pages {
                     for (rel_out_path, content) in page_list {
+                        // Reject any output path that would escape the docs tree.
+                        if rel_out_path.is_absolute()
+                            || rel_out_path.components().any(|c| {
+                                matches!(
+                                    c,
+                                    Component::ParentDir
+                                        | Component::RootDir
+                                        | Component::Prefix(_)
+                                )
+                            })
+                        {
+                            warn!("skipping unsafe output path: {}", rel_out_path.display());
+                            continue;
+                        }
                         let abs_out = pages_dir.join(&rel_out_path);
                         if let Some(parent) = abs_out.parent() {
                             fs::create_dir_all(parent)?;
@@ -250,18 +273,43 @@ impl DocBuilder {
                 );
             }
 
-            // Prune stale `.mdx` pages left behind by previous runs (renames,
-            // deletions). Only the generated `src/` subtree is pruned so that
-            // user-authored pages outside that directory are never touched.
-            // NOTE: any `.mdx` under `docs/src/pages/src/` not produced by this
-            // run will be deleted. Add custom pages under `docs/src/pages/` but
-            // outside the `src/` subdirectory to avoid this.
-            let src_dir = pages_dir.join("src");
-            let kept: HashSet<PathBuf> = all_rel
-                .iter()
-                .filter_map(|p| p.strip_prefix("src").ok().map(|s| s.to_path_buf()))
-                .collect();
-            prune_stale_pages(&src_dir, &kept)?;
+            // Prune stale `.mdx` pages using a manifest of previously generated
+            // files. This covers every generated subtree (including library pages
+            // outside `src/`), while never touching user-authored pages that were
+            // never listed in the manifest.
+            let manifest_path = pages_dir.join(".forge-doc-manifest");
+            let prev_generated: HashSet<PathBuf> = if manifest_path.exists() {
+                fs::read_to_string(&manifest_path)
+                    .unwrap_or_default()
+                    .lines()
+                    .filter(|l| !l.is_empty())
+                    .map(PathBuf::from)
+                    .collect()
+            } else {
+                // No manifest: fall back to pruning only the legacy `src/` subtree.
+                let src_dir = pages_dir.join("src");
+                let kept: HashSet<PathBuf> = all_rel
+                    .iter()
+                    .filter_map(|p| p.strip_prefix("src").ok().map(|s| s.to_path_buf()))
+                    .collect();
+                prune_stale_pages(&src_dir, &kept)?;
+                HashSet::new()
+            };
+            let new_generated: HashSet<PathBuf> = all_rel.iter().cloned().collect();
+            for stale in prev_generated.difference(&new_generated) {
+                let stale_abs = pages_dir.join(stale);
+                if stale_abs.is_file() {
+                    debug!("pruning stale page {}", stale_abs.display());
+                    let _ = fs::remove_file(&stale_abs);
+                }
+            }
+            // Write new manifest.
+            {
+                let mut manifest_lines: Vec<String> =
+                    all_rel.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+                manifest_lines.sort();
+                fs::write(&manifest_path, manifest_lines.join("\n") + "\n")?;
+            }
 
             Ok(all_rel)
         })?;

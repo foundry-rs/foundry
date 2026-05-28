@@ -249,7 +249,36 @@ fn render_contract<'ast, 'gcx>(
                 let vname = v.name.map(|n| n.as_str().to_string()).unwrap_or_default();
                 writeln!(out, "### {vname}").unwrap();
                 writeln!(out).unwrap();
-                let c = collect_comments(docs, name_to_page, page_path);
+                let mut c = collect_comments(docs, name_to_page, page_path);
+                // Attempt @inheritdoc resolution for public state variables.
+                let inherited = inheritdoc_base(docs).and_then(|base| {
+                    hir_id.and_then(|cid| hir_ext::resolve_inheritdoc_var(gcx, cid, &vname, &base))
+                });
+                if let Some(ref inh) = inherited {
+                    let sanitize =
+                        |s: &str| hir_ext::replace_inline_links(s, name_to_page, page_path);
+                    if c.notices.is_empty() {
+                        let inherited_notices: Vec<String> =
+                            inh.notices.iter().map(|s| sanitize(s)).collect();
+                        let mut new_desc: Vec<Description> = inherited_notices
+                            .iter()
+                            .map(|s| Description { kind: DescKind::Notice, content: s.clone() })
+                            .collect();
+                        new_desc.append(&mut c.descriptions);
+                        c.descriptions = new_desc;
+                        c.notices.extend(inherited_notices);
+                    }
+                    if c.devs.is_empty() {
+                        let inherited_devs: Vec<String> =
+                            inh.devs.iter().map(|s| sanitize(s)).collect();
+                        c.descriptions.extend(
+                            inherited_devs
+                                .iter()
+                                .map(|s| Description { kind: DescKind::Dev, content: s.clone() }),
+                        );
+                        c.devs.extend(inherited_devs);
+                    }
+                }
                 write_comment_block(out, &c);
                 write_code_block(out, &ctx.dedented_snippet(*span));
             }

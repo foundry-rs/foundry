@@ -3,7 +3,7 @@
 //! Generates `vocs.config.ts`, `pages/index.mdx`, `package.json`, and `.gitignore`
 //! from the emitted MDX pages.
 
-use crate::utils::git_source_url;
+use crate::utils::{git_raw_url, git_source_url};
 use foundry_config::DocConfig;
 use path_slash::PathExt;
 use std::{
@@ -445,8 +445,16 @@ fn try_rewrite_target(
     }
 
     let path = Path::new(path_part);
-    let abs = if path.is_absolute() { path.to_path_buf() } else { base_dir.join(path) };
-    let rel = normalize_path(&abs).strip_prefix(root).ok()?.to_path_buf();
+    // A leading `/` in a README link means "relative to project root", not an
+    // OS-absolute filesystem path. Resolve against `root` so `/src/Foo.sol`
+    // becomes `<root>/src/Foo.sol` rather than failing to strip the root prefix.
+    let abs = if path.is_absolute() {
+        let without_root_prefix = path.strip_prefix("/").unwrap_or(path);
+        normalize_path(&root.join(without_root_prefix))
+    } else {
+        normalize_path(&base_dir.join(path))
+    };
+    let rel = abs.strip_prefix(root).ok()?.to_path_buf();
 
     // `.sol` -> vocs page.
     if path.extension().and_then(|e| e.to_str()) == Some("sol") {
@@ -457,9 +465,25 @@ fn try_rewrite_target(
         }
     }
 
-    // Fall back to repo blob URL for everything else under the project root.
+    // Fall back to a repo URL for everything else under the project root.
+    // Use raw (download) URLs for image assets so they render inline rather
+    // than pointing at the GitHub blob viewer page.
     let repo = repo?;
-    let mut url = git_source_url(repo, commit.unwrap_or("HEAD"), root, &normalize_path(&abs))?;
+    let is_image = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "ico"
+            )
+        })
+        .unwrap_or(false);
+    let mut url = if is_image {
+        git_raw_url(repo, commit.unwrap_or("HEAD"), root, &abs)?
+    } else {
+        git_source_url(repo, commit.unwrap_or("HEAD"), root, &abs)?
+    };
     url.push_str(suffix);
     Some(url)
 }
@@ -536,7 +560,7 @@ mod tests {
         assert!(out.contains("[Unknown](https://github.com/x/y/blob/abc123/src/Unknown.sol)"));
         // Other relative paths -> repo blob URL.
         assert!(out.contains("[Contrib](https://github.com/x/y/blob/abc123/CONTRIBUTING.md)"));
-        assert!(out.contains("[Logo](https://github.com/x/y/blob/abc123/img/logo.png)"));
+        assert!(out.contains("[Logo](https://github.com/x/y/raw/abc123/img/logo.png)"));
         // Absolute URL and pure anchor untouched.
         assert!(out.contains("[ext](https://x.com)"));
         assert!(out.contains("[anchor](#section)"));

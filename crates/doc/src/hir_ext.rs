@@ -8,11 +8,13 @@
 
 use path_slash::PathBufExt;
 use solar::{
-    ast::{CommentKind, ContractKind, DocComments, FunctionKind, NatSpecKind, ParameterList},
+    ast::{
+        CommentKind, ContractKind, DocComments, FunctionKind, ItemKind, NatSpecKind, ParameterList,
+    },
     interface::source_map::FileName,
     sema::{
         Gcx,
-        hir::{ContractId, FunctionId, ItemId, SourceId},
+        hir::{ContractId, FunctionId, ItemId, SourceId, VariableId},
     },
 };
 use std::{
@@ -321,6 +323,10 @@ pub fn resolve_inheritdoc(
             }
         }
 
+        if name_matches.len() > 1 && param_types.is_some() {
+            continue;
+        }
+
         // Return the first candidate that has actual documentation; if none have docs
         // at this inheritance level continue walking up the chain.
         for &fid in &name_matches {
@@ -336,6 +342,67 @@ pub fn resolve_inheritdoc(
     }
 
     None
+}
+
+/// Resolve `@inheritdoc BaseContract` for a **state variable** named `var_name`
+/// inside `contract_id`. Walks the linearised bases to find a matching public
+/// variable and returns its natspec if found.
+pub fn resolve_inheritdoc_var(
+    gcx: Gcx<'_>,
+    contract_id: ContractId,
+    var_name: &str,
+    base_name: &str,
+) -> Option<InheritedDoc> {
+    let contract = gcx.hir.contract(contract_id);
+    let base_id = contract
+        .linearized_bases
+        .iter()
+        .copied()
+        .find(|&bid| gcx.hir.contract(bid).name.as_str() == base_name)?;
+
+    let base_contract = gcx.hir.contract(base_id);
+    let search_contracts: Vec<ContractId> = std::iter::once(base_id)
+        .chain(base_contract.linearized_bases.iter().copied().filter(|&id| id != base_id))
+        .collect();
+
+    for search_id in &search_contracts {
+        let search_contract = gcx.hir.contract(*search_id);
+        for &item_id in search_contract.items {
+            if let ItemId::Variable(vid) = item_id {
+                let v = gcx.hir.variable(vid);
+                if v.name.map(|n| n.as_str() == var_name).unwrap_or(false)
+                    && let Some(doc) = extract_inherited_doc_var(gcx, vid)
+                    && (!doc.notices.is_empty() || !doc.devs.is_empty())
+                {
+                    return Some(doc);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_inherited_doc_var(gcx: Gcx<'_>, vid: VariableId) -> Option<InheritedDoc> {
+    let v = gcx.hir.variable(vid);
+    let ast_source = gcx.sources.get(v.source)?;
+    let ast = ast_source.ast.as_ref()?;
+    let var_span = v.span;
+
+    let docs = ast.items.iter().find_map(|item| {
+        if item.span == var_span {
+            return Some(&item.docs);
+        }
+        if let ItemKind::Contract(c) = &item.kind {
+            for member in c.body.iter() {
+                if member.span == var_span {
+                    return Some(&member.docs);
+                }
+            }
+        }
+        None
+    })?;
+
+    Some(collect_inherited_doc(docs))
 }
 
 /// Extract the parameter type strings (in source order) for a function.

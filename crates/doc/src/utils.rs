@@ -29,6 +29,15 @@ pub fn git_source_url(repo: &str, commit: &str, root: &Path, item_path: &Path) -
     Some(format!("{repo}/blob/{commit}/{}", rel.to_slash_lossy()))
 }
 
+/// Return a `{repo}/raw/{commit}/...` URL suitable for embedding binary assets
+/// (images, fonts, etc.) directly rather than the GitHub blob viewer page.
+pub fn git_raw_url(repo: &str, commit: &str, root: &Path, item_path: &Path) -> Option<String> {
+    let repo = repo.trim_end_matches('/');
+    let commit = if commit.is_empty() { "HEAD" } else { commit };
+    let rel = item_path.strip_prefix(root).ok()?;
+    Some(format!("{repo}/raw/{commit}/{}", rel.to_slash_lossy()))
+}
+
 // ── deployments ──────────────────────────────────────────────────────────────
 
 /// A contract deployment entry, deserialised from `<dir>/<network>/<contract>.json`.
