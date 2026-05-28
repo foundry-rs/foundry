@@ -280,9 +280,9 @@ pub struct InvariantContract<'a> {
     /// Stored in **source declaration order** so failure-event attribution and report
     /// rendering match user expectations.
     pub invariant_fns: Vec<(&'a Function, bool)>,
-    /// Index into [`Self::invariant_fns`] of the campaign anchor — the function chosen by
-    /// the `--mt` filter (or the only one). Used for corpus and persistence file paths and
-    /// for the legacy single-invariant `TestResult.{reason, counterexample}` fields.
+    /// Index into [`Self::invariant_fns`] of the stable campaign anchor. Boolean invariant
+    /// suites use a deterministic contract-local anchor so test filters do not affect
+    /// corpus/failure namespaces.
     pub anchor_idx: usize,
     /// If true, `afterInvariant` function is called after each invariant run.
     pub call_after_invariant: bool,
@@ -305,8 +305,7 @@ impl<'a> InvariantContract<'a> {
         Self { address, name, invariant_fns, anchor_idx, call_after_invariant, abi }
     }
 
-    /// Returns the campaign anchor — the invariant matched by `--mt` (or the only one).
-    /// Used for corpus and persistence file paths and for legacy primary `TestResult` fields.
+    /// Returns the stable campaign anchor.
     pub fn anchor(&self) -> &'a Function {
         self.invariant_fns[self.anchor_idx].0
     }

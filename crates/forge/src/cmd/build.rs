@@ -6,7 +6,10 @@ use foundry_cli::{
     opts::{BuildOpts, configure_pcx_from_solc, get_solar_sources_from_compile_output},
     utils::{Git, LoadConfig, cache_local_signatures},
 };
-use foundry_common::{compile::ProjectCompiler, shell};
+use foundry_common::{
+    compile::{ContractSizeLimits, ProjectCompiler},
+    shell,
+};
 use foundry_compilers::{
     CompilationError, FileFilter, Project, ProjectCompileOutput,
     compilers::{Language, multi::MultiCompilerLanguage},
@@ -114,6 +117,12 @@ impl BuildArgs {
             .print_names(self.names)
             .print_sizes(self.sizes)
             .ignore_eip_3860(self.ignore_eip_3860)
+            .size_limits(
+                config
+                    .code_size_limit
+                    .map(ContractSizeLimits::with_runtime_limit)
+                    .unwrap_or_default(),
+            )
             .bail(!format_json);
 
         let mut output = compiler.compile(&project)?;
