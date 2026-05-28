@@ -90,7 +90,7 @@ impl InvariantCampaignAggregator {
     pub fn finish(mut self) -> Result<InvariantFuzzTestResult> {
         ensure!(!self.outputs.is_empty(), "missing invariant worker output");
 
-        self.outputs.sort_by_key(|output| (output.plan.first_global_run, output.plan.worker_id));
+        self.outputs.sort_by_key(|output| output.plan.first_global_run);
         ensure_outputs_cover_campaign(self.spec, &self.outputs)?;
 
         let mut errors = HashMap::default();
@@ -105,8 +105,7 @@ impl InvariantCampaignAggregator {
         let mut optimization_best = None;
 
         for InvariantWorkerOutput { plan, result } in self.outputs {
-            let run_key =
-                RunChoice { first_global_run: plan.first_global_run, worker_id: plan.worker_id };
+            let run_key = RunChoice { first_global_run: plan.first_global_run };
 
             merge_predicate_errors(&mut errors, result.errors, run_key);
             merge_handler_errors(&mut handler_errors, result.handler_errors);
@@ -148,7 +147,6 @@ impl InvariantCampaignAggregator {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct RunChoice {
     first_global_run: u32,
-    worker_id: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -563,33 +561,24 @@ mod tests {
     }
 
     #[test]
-    fn predicate_failure_choice_uses_worker_id_then_sequence_length_after_run() {
+    fn predicate_failure_choice_uses_sequence_length_after_run() {
         let mut merged = HashMap::default();
 
         let mut worker_errors = HashMap::default();
-        worker_errors.insert("invariant_balance".to_string(), predicate_error("worker-2", 1));
-        merge_predicate_errors(
-            &mut merged,
-            worker_errors,
-            RunChoice { first_global_run: 5, worker_id: 2 },
-        );
+        worker_errors.insert("invariant_balance".to_string(), predicate_error("later-run", 1));
+        merge_predicate_errors(&mut merged, worker_errors, RunChoice { first_global_run: 6 });
 
         let mut worker_errors = HashMap::default();
-        worker_errors.insert("invariant_balance".to_string(), predicate_error("worker-1", 4));
-        merge_predicate_errors(
-            &mut merged,
-            worker_errors,
-            RunChoice { first_global_run: 5, worker_id: 1 },
+        worker_errors.insert("invariant_balance".to_string(), predicate_error("earlier-run", 4));
+        merge_predicate_errors(&mut merged, worker_errors, RunChoice { first_global_run: 5 });
+        assert_eq!(
+            merged["invariant_balance"].error.revert_reason().as_deref(),
+            Some("earlier-run")
         );
-        assert_eq!(merged["invariant_balance"].error.revert_reason().as_deref(), Some("worker-1"));
 
         let mut worker_errors = HashMap::default();
         worker_errors.insert("invariant_balance".to_string(), predicate_error("shorter", 2));
-        merge_predicate_errors(
-            &mut merged,
-            worker_errors,
-            RunChoice { first_global_run: 5, worker_id: 1 },
-        );
+        merge_predicate_errors(&mut merged, worker_errors, RunChoice { first_global_run: 5 });
         assert_eq!(merged["invariant_balance"].error.revert_reason().as_deref(), Some("shorter"));
     }
 
