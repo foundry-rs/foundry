@@ -547,6 +547,7 @@ struct StateWrite {
     var_id: VariableId,
     span: Span,
     sources: WriteSources,
+    fixed_clear: bool,
     evented: bool,
 }
 
@@ -730,14 +731,16 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
                     write_sources.extend(self.value_sources(lhs));
                 }
 
+                let fixed_clear = expr_is_zero_value(rhs);
                 for var_id in state_lhs_vars(self.hir, lhs, &self.storage_aliases) {
                     if self.targets.contains(&var_id)
-                        && self.write_is_reportable(var_id, &write_sources, expr_is_zero_value(rhs))
+                        && self.write_is_reportable(var_id, &write_sources, fixed_clear)
                     {
                         self.writes.push(StateWrite {
                             var_id,
                             span: lhs.span,
                             sources: write_sources.clone(),
+                            fixed_clear,
                             evented: false,
                         });
                     }
@@ -764,6 +767,7 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
                             var_id,
                             span: inner.span,
                             sources: sources.clone(),
+                            fixed_clear: true,
                             evented: false,
                         });
                     }
@@ -914,13 +918,10 @@ impl<'a, 'hir> WriteAnalyzer<'a, 'hir> {
     fn mark_event(&mut self, expr: &hir::Expr<'_>) {
         let Some(event_id) = emitted_event_id(expr) else { return };
         let event_sources = self.value_sources(expr);
-        if event_sources.is_empty() {
-            return;
-        }
 
         for write in &mut self.writes {
             if !write.evented
-                && write.sources.intersects(&event_sources)
+                && (write.fixed_clear || write.sources.intersects(&event_sources))
                 && event_mentions_state_var(self.hir, event_id, write.var_id)
             {
                 write.evented = true;

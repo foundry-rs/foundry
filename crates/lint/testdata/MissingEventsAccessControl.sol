@@ -229,6 +229,12 @@ contract MissingEventsAccessControl {
         emit OwnershipTransferred(owner, newOwner);
     }
 
+    function renounceOwnershipWithEvent() external onlyOwner {
+        address oldOwner = owner;
+        owner = address(0);
+        emit OwnershipTransferred(oldOwner, address(0));
+    }
+
     function unprotectedSetOwner(address newOwner) external {
         owner = newOwner;
     }
