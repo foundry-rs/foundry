@@ -128,3 +128,57 @@ contract MemberCalls {
         return keccak256(abi.encodePacked(token.name()));
     }
 }
+
+// Explicit interface casts; IERC20Metadata(addr).name()
+contract InterfaceCast {
+    // SHOULD WARN: interface cast receiver
+    function castCollision(address addr) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(IERC20Metadata(addr).name(), IERC20Metadata(addr).symbol())); //~WARN: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+    }
+}
+
+// Contract-typed struct fields and array elements
+contract TokenRegistry {
+    struct Config { IERC20Metadata token; }
+
+    // SHOULD WARN: struct field receiver
+    function structField(Config memory cfg) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(cfg.token.name(), cfg.token.symbol())); //~WARN: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+    }
+
+    // SHOULD WARN: array index receiver
+    function arrayIndex(IERC20Metadata[] memory tokens) public view returns (bytes32) {
+        return keccak256(abi.encodePacked(tokens[0].name(), tokens[0].symbol())); //~WARN: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+    }
+}
+
+// Member overloads with different arities; f() is dynamic, f(uint256) is not
+contract OverloadArity {
+    function f() internal pure returns (string memory) { return ""; }
+    function f(uint256) internal pure returns (uint256) { return 1; }
+
+    // SHOULD WARN: f() (0 args) unambiguously returns string; s is also dynamic
+    function g(string memory s) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(f(), s)); //~WARN: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+    }
+}
+
+// Ternary expressions
+contract TernaryDynamic {
+    // SHOULD WARN: ternary where both branches are dynamic strings
+    function ternaryCollision(bool flag, string memory a, string memory b, string memory c) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(flag ? a : b, c)); //~WARN: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+    }
+}
+
+// Calldata slices
+contract SliceDynamic {
+    // SHOULD WARN: calldata slice (still bytes) + another dynamic arg
+    function sliceCollision(bytes calldata data, string memory s) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(data[:4], s)); //~WARN: `abi.encodePacked()` called with multiple dynamic type arguments; hash collisions possible
+    }
+}
+
+// Fixed-size arrays with dynamic element types (e.g. string[2], bytes[2]).
+// Note: solc itself rejects these in abi.encodePacked with "Type not supported in packed mode",
+// so no lint fixture is needed, the compiler prevents the problematic pattern.

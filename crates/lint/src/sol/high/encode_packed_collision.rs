@@ -64,12 +64,16 @@ fn expr_type<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<&'hir
             let var_id = var_resolution(resolutions)?;
             Some(&hir.variable(var_id).ty)
         }
-        ExprKind::Call(callee, _, _) => call_return_type(hir, callee),
+        ExprKind::Call(callee, args, _) => {
+            call_return_type(hir, callee, Some(args.exprs().count()))
+        }
         ExprKind::Index(base, _) => match &expr_type(hir, base)?.kind {
             TypeKind::Array(array) => Some(&array.element),
             TypeKind::Mapping(mapping) => Some(&mapping.value),
             _ => None,
         },
+        // Slice expressions (e.g. `data[:4]`) preserve the element type of the base.
+        ExprKind::Slice(base, ..) => expr_type(hir, base),
         ExprKind::Member(base, member) => {
             let base_ty = expr_type(hir, base)?;
             let TypeKind::Custom(ItemId::Struct(sid)) = &base_ty.kind else { return None };
@@ -79,6 +83,12 @@ fn expr_type<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<&'hir
                 .find(|&&fid| hir.variable(fid).name.is_some_and(|n| n.name == member.name))
                 .map(|&fid| &hir.variable(fid).ty)
         }
+        // Ternary: use then-branch type if both branches agree on dynamic-ness.
+        ExprKind::Ternary(_, then, else_) => {
+            let then_ty = expr_type(hir, then)?;
+            let else_ty = expr_type(hir, else_)?;
+            (is_dynamic_type(&then_ty.kind) == is_dynamic_type(&else_ty.kind)).then_some(then_ty)
+        }
         _ => None,
     }
 }
@@ -86,18 +96,25 @@ fn expr_type<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<&'hir
 fn call_return_type<'hir>(
     hir: &'hir Hir<'hir>,
     callee: &'hir Expr<'hir>,
+    // Number of arguments in the outer call; used to disambiguate same-name overloads by arity.
+    n_call_args: Option<usize>,
 ) -> Option<&'hir Type<'hir>> {
     match &callee.peel_parens().kind {
-        // Type cast: bytes(x), string(x) — the result type is the cast target
+        // Type cast: bytes(x), string(x); the result type is the cast target
         ExprKind::Type(ty) => Some(ty),
         // Direct function call: getString(), getBytes()
-        // If multiple function resolutions exist (overloads), we can't determine which was
-        // called without argument types, return None to avoid false positives.
+        // If multiple function resolutions remain after arity filtering we can't determine which
+        // overload was called, so return None to avoid false positives.
         ExprKind::Ident(resolutions) => {
             let fids: Vec<_> = resolutions
                 .iter()
                 .filter_map(|r| {
-                    if let Res::Item(ItemId::Function(fid)) = r { Some(*fid) } else { None }
+                    if let Res::Item(ItemId::Function(fid)) = r {
+                        let f = hir.function(*fid);
+                        n_call_args.is_none_or(|n| f.parameters.len() == n).then_some(*fid)
+                    } else {
+                        None
+                    }
                 })
                 .collect();
             let [fid] = fids.as_slice() else { return None };
@@ -107,8 +124,9 @@ fn call_return_type<'hir>(
         // Member call: token.name(), token.symbol(), etc.
         // A contract may expose multiple entries for the same method name when a derived contract
         // overrides an inherited function. In that case all candidates share the same return type,
-        // so we accept the match as long as every candidate agrees. If they disagree (genuine
-        // overloads with different return types) we bail to avoid false positives.
+        // so we accept the match as long as every candidate agrees on dynamic-ness. If they
+        // disagree (genuine overloads with different return types) we bail to avoid false
+        // positives. Arity filtering further narrows candidates before the agreement check.
         ExprKind::Member(recv, method) => {
             let cid = contract_id_of(hir, recv)?;
             let matches: Vec<_> = hir
@@ -116,7 +134,9 @@ fn call_return_type<'hir>(
                 .filter_map(|item| {
                     let fid = item.as_function()?;
                     let f = hir.function(fid);
-                    if f.name.is_some_and(|n| n.name == method.name) {
+                    let name_matches = f.name.is_some_and(|n| n.name == method.name);
+                    let arity_matches = n_call_args.is_none_or(|n| f.parameters.len() == n);
+                    if name_matches && arity_matches {
                         let [ret] = f.returns else { return None };
                         Some(&hir.variable(*ret).ty)
                     } else {
@@ -145,6 +165,7 @@ fn call_return_type<'hir>(
 
 fn contract_id_of(hir: &Hir<'_>, expr: &Expr<'_>) -> Option<ContractId> {
     match &expr.peel_parens().kind {
+        // Bare identifier resolved to a contract variable or contract type.
         ExprKind::Ident(reses) => reses.iter().find_map(|r| match r {
             Res::Item(ItemId::Variable(vid)) => match hir.variable(*vid).ty.kind {
                 TypeKind::Custom(ItemId::Contract(cid)) => Some(cid),
@@ -153,7 +174,25 @@ fn contract_id_of(hir: &Hir<'_>, expr: &Expr<'_>) -> Option<ContractId> {
             Res::Item(ItemId::Contract(cid)) => Some(*cid),
             _ => None,
         }),
-        _ => None,
+        // Interface/contract cast: IERC20Metadata(addr) or MyContract(addr).
+        // The callee can be either an Ident resolving to a contract item or a Type node.
+        ExprKind::Call(callee, ..) => match &callee.peel_parens().kind {
+            ExprKind::Ident(reses) => reses.iter().find_map(|r| match r {
+                Res::Item(ItemId::Contract(cid)) => Some(*cid),
+                _ => None,
+            }),
+            ExprKind::Type(ty) => match &ty.kind {
+                TypeKind::Custom(ItemId::Contract(cid)) => Some(*cid),
+                _ => None,
+            },
+            _ => None,
+        },
+        // General fallback: compute the expression's type.
+        // This covers struct field access (cfg.token) and array index access (tokens[i]).
+        _ => match &expr_type(hir, expr)?.kind {
+            TypeKind::Custom(ItemId::Contract(cid)) => Some(*cid),
+            _ => None,
+        },
     }
 }
 
