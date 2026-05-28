@@ -48,7 +48,7 @@ use alloy_primitives::{
     map::{HashMap, HashSet},
 };
 use alloy_rpc_types::{
-    AccessList, AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
+    AccessListResult, BlockId, BlockNumberOrTag as BlockNumber, BlockTransactions,
     EIP1186AccountProofResponse, FeeHistory, Filter, FilteredParams, Index, Log, Work,
     anvil::{
         ForkedNetwork, Forking, Metadata, MineOptions, NodeEnvironment, NodeForkConfig, NodeInfo,
@@ -91,10 +91,13 @@ use futures::{
 };
 use parking_lot::RwLock;
 use revm::{
-    context::BlockEnv,
-    context_interface::{block::BlobExcessGasAndPrice, result::Output},
+    context::{BlockEnv, Cfg},
+    context_interface::{
+        block::BlobExcessGasAndPrice,
+        result::{HaltReason, Output},
+    },
     database::CacheDB,
-    interpreter::{InstructionResult, return_ok, return_revert},
+    interpreter::{InstructionResult, SuccessOrHalt, return_ok, return_revert},
     primitives::eip7702::PER_EMPTY_ACCOUNT_COST,
 };
 use std::{sync::Arc, time::Duration};
@@ -357,7 +360,7 @@ impl<N: Network> EthApi<N> {
             )
             .into());
         }
-        self.backend.set_gas_price(gas.to());
+        self.backend.set_gas_price(gas.saturating_to());
         Ok(())
     }
 
@@ -372,7 +375,7 @@ impl<N: Network> EthApi<N> {
             )
             .into());
         }
-        self.backend.set_base_fee(basefee.to());
+        self.backend.set_base_fee(basefee.saturating_to());
         Ok(())
     }
 
@@ -503,7 +506,7 @@ impl<N: Network> EthApi<N> {
     /// Handler for RPC call: `evm_setBlockGasLimit`
     pub fn evm_set_block_gas_limit(&self, gas_limit: U256) -> Result<bool> {
         node_info!("evm_setBlockGasLimit");
-        self.backend.set_gas_limit(gas_limit.to());
+        self.backend.set_gas_limit(gas_limit.saturating_to());
         Ok(true)
     }
 
@@ -1102,16 +1105,7 @@ impl<N: Network> EthApi<N> {
         node_info!("eth_feeHistory");
         // max number of blocks in the requested range
 
-        let current = self.backend.best_number();
-        let slots_in_an_epoch = 32u64;
-
-        let number = match newest_block {
-            BlockNumber::Latest | BlockNumber::Pending => current,
-            BlockNumber::Earliest => 0,
-            BlockNumber::Number(n) => n,
-            BlockNumber::Safe => current.saturating_sub(slots_in_an_epoch),
-            BlockNumber::Finalized => current.saturating_sub(slots_in_an_epoch * 2),
-        };
+        let number = self.backend.convert_block_number(Some(newest_block));
 
         // check if the number predates the fork, if in fork mode
         if let Some(fork) = self.get_fork() {
@@ -1126,7 +1120,7 @@ impl<N: Network> EthApi<N> {
         }
 
         const MAX_BLOCK_COUNT: u64 = 1024u64;
-        let block_count = block_count.to::<u64>().min(MAX_BLOCK_COUNT);
+        let block_count = block_count.saturating_to::<u64>().min(MAX_BLOCK_COUNT);
 
         // highest and lowest block num in the requested range
         let highest = number;
@@ -2422,25 +2416,25 @@ impl EthApi<FoundryNetwork> {
 
         self.backend
             .with_database_at(Some(block_request), |state, block_env| {
-                let (exit, out, _, access_list) = self.backend.build_access_list_with_state(
+                let (_, _, _, access_list) = self.backend.build_access_list_with_state(
                     &state,
                     request.clone(),
                     FeeDetails::zero(),
                     block_env.clone(),
                 )?;
-                ensure_return_ok(exit, &out)?;
 
-                // execute again but with access list set
+                // Re-execute with the access list applied to get the post-AL gas usage.
+                // EVM failures (including reverts) are surfaced in the result's `error`
+                // field per the execution-apis `eth_createAccessList` spec, so callers
+                // can still inspect the traced slots when execution fails.
                 request.access_list = Some(access_list.clone());
-
-                let (exit, out, gas_used, _) =
+                let (exit, _, gas_used, _) =
                     self.backend.call_with_state(&state, request, FeeDetails::zero(), block_env)?;
-                ensure_return_ok(exit, &out)?;
 
                 Ok(AccessListResult {
-                    access_list: AccessList(access_list.0),
+                    access_list,
                     gas_used: U256::from(gas_used),
-                    error: None,
+                    error: execution_error(exit),
                 })
             })
             .await?
@@ -2489,9 +2483,7 @@ impl EthApi<FoundryNetwork> {
             self.request_nonce(&request, from).await?.0
         };
 
-        // Prefill gas limit with estimated gas, bubble up the error if the gas estimation fails
-        // This is a workaround to avoid the error being swallowed by the `build_tx_request`
-        // function
+        // Prefill gas limit with estimated gas and bubble up estimation errors directly.
         if request.as_ref().gas_limit().is_none() {
             let estimated_gas =
                 self.estimate_gas(request.clone(), None, EvmOverrides::default()).await?;
@@ -2829,7 +2821,7 @@ impl EthApi<FoundryNetwork> {
     /// Handler for ETH RPC call: `anvil_mine`
     pub async fn anvil_mine(&self, num_blocks: Option<U256>, interval: Option<U256>) -> Result<()> {
         node_info!("anvil_mine");
-        let interval = interval.map(|i| i.to::<u64>());
+        let interval = interval.map(|i| i.saturating_to::<u64>());
         let blocks = num_blocks.unwrap_or(U256::from(1));
         if blocks.is_zero() {
             return Ok(());
@@ -2837,7 +2829,7 @@ impl EthApi<FoundryNetwork> {
 
         self.on_blocking_task(|this| async move {
             // mine all the blocks
-            for _ in 0..blocks.to::<u64>() {
+            for _ in 0..blocks.saturating_to::<u64>() {
                 // If we have an interval, jump forwards in time to the "next" timestamp
                 if let Some(interval) = interval {
                     this.backend.time().increase_time(interval);
@@ -3234,12 +3226,12 @@ impl EthApi<FoundryNetwork> {
         // with the same From address.
         for pending in self.pool.ready_transactions() {
             let entry = inspect.pending.entry(*pending.pending_transaction.sender()).or_default();
-            let key = pending.pending_transaction.nonce().to_string();
+            let key = txpool_transaction_key(&pending.pending_transaction);
             entry.insert(key, convert(pending));
         }
         for queued in self.pool.pending_transactions() {
             let entry = inspect.queued.entry(*queued.pending_transaction.sender()).or_default();
-            let key = queued.pending_transaction.nonce().to_string();
+            let key = txpool_transaction_key(&queued.pending_transaction);
             entry.insert(key, convert(queued));
         }
         Ok(inspect)
@@ -3277,12 +3269,12 @@ impl EthApi<FoundryNetwork> {
 
         for pending in self.pool.ready_transactions() {
             let entry = content.pending.entry(*pending.pending_transaction.sender()).or_default();
-            let key = pending.pending_transaction.nonce().to_string();
+            let key = txpool_transaction_key(&pending.pending_transaction);
             entry.insert(key, convert(pending)?);
         }
         for queued in self.pool.pending_transactions() {
             let entry = content.queued.entry(*queued.pending_transaction.sender()).or_default();
-            let key = queued.pending_transaction.nonce().to_string();
+            let key = txpool_transaction_key(&queued.pending_transaction);
             entry.insert(key, convert(queued)?);
         }
 
@@ -3452,6 +3444,15 @@ impl EthApi<FoundryNetwork> {
         request.nonce().is_none().then(|| request.set_nonce(nonce));
         request.kind().is_none().then(|| request.set_kind(TxKind::default()));
         if request.gas_limit().is_none() {
+            let fallback_gas_limit = {
+                let evm_env = self.backend.evm_env().read();
+                let block_gas_limit = evm_env.block_env.gas_limit;
+                if evm_env.cfg_env.tx_gas_limit_cap.is_none() {
+                    block_gas_limit.min(evm_env.cfg_env().tx_gas_limit_cap())
+                } else {
+                    block_gas_limit
+                }
+            };
             request.set_gas_limit(
                 self.do_estimate_gas(
                     request.as_ref().clone().into(),
@@ -3460,7 +3461,7 @@ impl EthApi<FoundryNetwork> {
                 )
                 .await
                 .map(|v| v as u64)
-                .unwrap_or(self.backend.gas_limit()),
+                .unwrap_or(fallback_gas_limit),
             );
         }
 
@@ -3651,12 +3652,20 @@ fn tempo_parallel_nonce_markers(
 ) -> Option<(Vec<TxMarker>, Vec<TxMarker>)> {
     // Tempo txs with non-zero nonce_key use a 2D nonce system and should not
     // be sequenced by account nonce markers.
-    if let FoundryTxEnvelope::Tempo(aa_tx) = pending_transaction.transaction.as_ref()
-        && !aa_tx.tx().nonce_key.is_zero()
-    {
-        Some((vec![], vec![pending_transaction.hash().to_vec()]))
-    } else {
-        None
+    pending_transaction
+        .transaction
+        .as_ref()
+        .has_nonzero_tempo_nonce_key()
+        .then(|| (vec![], vec![pending_transaction.hash().to_vec()]))
+}
+
+fn txpool_transaction_key(pending_transaction: &PendingTransaction<FoundryTxEnvelope>) -> String {
+    match pending_transaction.transaction.as_ref() {
+        FoundryTxEnvelope::Tempo(tx) if !tx.tx().nonce_key.is_zero() => {
+            let tx = tx.tx();
+            format!("{}:{}", tx.nonce_key, tx.nonce)
+        }
+        _ => pending_transaction.nonce().to_string(),
     }
 }
 
@@ -3675,6 +3684,18 @@ fn ensure_return_ok(exit: InstructionResult, out: &Option<Output>) -> Result<Byt
         return_ok!() => Ok(out),
         return_revert!() => Err(InvalidTransactionError::Revert(Some(out)).into()),
         reason => Err(BlockchainError::EvmError(reason)),
+    }
+}
+
+/// Maps an EVM exit code to the optional `error` string reported in
+/// `eth_createAccessList` results.
+fn execution_error(exit: InstructionResult) -> Option<String> {
+    match SuccessOrHalt::<HaltReason>::from(exit) {
+        SuccessOrHalt::Success(_) => None,
+        SuccessOrHalt::Revert => Some("execution reverted".to_string()),
+        SuccessOrHalt::Halt(reason) => Some(reason.to_string()),
+        SuccessOrHalt::FatalExternalError => Some("fatal external error".to_string()),
+        SuccessOrHalt::Internal(_) => Some("internal EVM error".to_string()),
     }
 }
 

@@ -13,7 +13,7 @@ use alloy_network::{Ethereum, Network};
 use alloy_primitives::{Address, Signature, U256};
 use alloy_rlp::Decodable;
 use foundry_common::{FoundryReceiptResponse, FoundryTransactionBuilder, fmt::UIfmt};
-use foundry_config::FromEvmVersion;
+use foundry_config::ExecutionSpec;
 use foundry_fork_db::{DatabaseError, ForkBlockEnv};
 use revm::{
     Database,
@@ -93,7 +93,7 @@ pub type BlockResponseFor<FEN> = <NetworkFor<FEN> as Network>::BlockResponse;
 
 pub trait FoundryEvmFactory:
     EvmFactory<
-        Spec: Into<SpecId> + FromEvmVersion + Default + Copy + Unpin + Send + 'static,
+        Spec: Into<SpecId> + ExecutionSpec + Default + Copy + Unpin + Send + 'static,
         BlockEnv: FoundryBlock + ForkBlockEnv + Default + Unpin,
         Tx: Clone + Debug + FoundryTransaction + FromAnyRpcTransaction + Default + Send + Sync,
         HaltReason: IntoInstructionResult,
@@ -227,6 +227,7 @@ pub fn get_create2_factory_call_inputs<T: JournalTr>(
         reservoir: inputs.reservoir(),
         is_static: false,
         return_memory_offset: 0..0,
+        charged_new_account_state_gas: false,
     })
 }
 

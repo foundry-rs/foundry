@@ -64,13 +64,64 @@ contract InvariantStorageTest is Test {
     );
 
     assert_invariant(cmd.args(["test"])).failure().stdout_eq(str![[r#"
-...
-Suite result: FAILED. 0 passed; 4 failed; 0 skipped; [ELAPSED]
+[COMPILING_FILES] with [SOLC_VERSION]
+[SOLC_VERSION] [ELAPSED]
+Compiler run successful!
 
-Ran 1 test suite [ELAPSED]: 0 tests passed, 4 failed, 0 skipped (4 total tests)
+Ran 1 test for test/name.sol:InvariantStorageTest
+[FAIL: changedAddr] invariantChangeAddress
+	[SEQUENCE]
+
+[FAIL: changedStr] invariantChangeString
+	[SEQUENCE]
+
+[FAIL: changedUint] invariantChangeUint
+	[SEQUENCE]
+
+[FAIL: pushUint] invariantPush
+	[SEQUENCE]
+
+Invariant/Property Tests: 4/4 invariants broken
+[FAIL: changedAddr] invariantChangeAddress
+[FAIL: changedStr] invariantChangeString
+[FAIL: changedUint] invariantChangeUint
+[FAIL: pushUint] invariantPush
+4 invariant failure(s) persisted to cache/invariant/failures/InvariantStorageTest — rerun to shrink
+ invariantChangeAddress() ([RUNS])
+
+[STATS]
+
+Suite result: FAILED. 0 passed; 1 failed; 0 skipped; [ELAPSED]
+
+Ran 1 test suite [ELAPSED]: 0 tests passed, 1 failed, 0 skipped (1 total tests)
 
 Failing tests:
-Encountered 4 failing tests in test/name.sol:InvariantStorageTest
-...
+Encountered 1 failing test in test/name.sol:InvariantStorageTest
+[FAIL: changedAddr] invariantChangeAddress
+	[SEQUENCE]
+
+[FAIL: changedStr] invariantChangeString
+	[SEQUENCE]
+
+[FAIL: changedUint] invariantChangeUint
+	[SEQUENCE]
+
+[FAIL: pushUint] invariantPush
+	[SEQUENCE]
+
+Invariant/Property Tests: 4/4 invariants broken
+[FAIL: changedAddr] invariantChangeAddress
+[FAIL: changedStr] invariantChangeString
+[FAIL: changedUint] invariantChangeUint
+[FAIL: pushUint] invariantPush
+4 invariant failure(s) persisted to cache/invariant/failures/InvariantStorageTest — rerun to shrink
+ invariantChangeAddress() ([RUNS])
+
+Encountered a total of 1 failing tests, 0 tests succeeded
+
+Tip: Run `forge test --rerun` to retry only the 1 failed test
+
+[SEED] (use `--fuzz-seed` to reproduce)
+
 "#]]);
 });

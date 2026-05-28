@@ -1,43 +1,3 @@
-note[multi-contract-file]: prefer having only one contract, interface or library per file
-   ╭▸ ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
-   │
-LL │ interface IERC20 {
-   │           ━━━━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
-
-note[multi-contract-file]: prefer having only one contract, interface or library per file
-   ╭▸ ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
-   │
-LL │ interface IERC20Wrapper {
-   │           ━━━━━━━━━━━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
-
-note[multi-contract-file]: prefer having only one contract, interface or library per file
-   ╭▸ ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
-   │
-LL │ contract UncheckedTransfer {
-   │          ━━━━━━━━━━━━━━━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
-
-note[multi-contract-file]: prefer having only one contract, interface or library per file
-   ╭▸ ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
-   │
-LL │ library Currency {
-   │         ━━━━━━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
-
-note[multi-contract-file]: prefer having only one contract, interface or library per file
-   ╭▸ ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
-   │
-LL │ contract UncheckedTransferUsingCurrencyLib {
-   │          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   │
-   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
-
 warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls should check the return value
    ╭▸ ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
    │
@@ -57,6 +17,14 @@ LL │         token.transfer(to, amount);
 warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls should check the return value
    ╭▸ ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
    │
+LL │         token.transfer({to: to, amount: amount});
+   │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/erc20-unchecked-transfer
+
+warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls should check the return value
+   ╭▸ ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   │
 LL │ …     IERC20(address(token)).transferFrom(from, to, amount);
    │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
@@ -67,6 +35,14 @@ warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls sho
    │
 LL │         token.transferFrom(from, to, amount);
    │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   │
+   ╰ help: https://getfoundry.sh/forge/linting/erc20-unchecked-transfer
+
+warning[erc20-unchecked-transfer]: ERC20 'transfer' and 'transferFrom' calls should check the return value
+   ╭▸ ROOT/testdata/UncheckedTransferERC20.sol:LL:CC
+   │
+LL │ …     token.transferFrom({from: from, to: to, amount: amount});
+   │       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    │
    ╰ help: https://getfoundry.sh/forge/linting/erc20-unchecked-transfer
 

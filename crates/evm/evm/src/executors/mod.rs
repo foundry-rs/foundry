@@ -7,7 +7,8 @@
 // the concrete `Executor` type.
 
 use crate::inspectors::{
-    Cheatcodes, InspectorData, InspectorStack, cheatcodes::BroadcastableTransactions,
+    Cheatcodes, CmpOperands, EdgeCoverage, EdgeIndexMap, InspectorData, InspectorStack,
+    cheatcodes::BroadcastableTransactions,
 };
 use alloy_dyn_abi::{DynSolValue, FunctionExt, JsonAbiExt};
 use alloy_json_abi::Function;
@@ -62,9 +63,13 @@ pub mod invariant;
 pub use invariant::InvariantExecutor;
 
 mod corpus;
+mod corpus_io;
 mod sancov;
+mod showmap;
 mod trace;
 
+pub use corpus::DynamicTargetCtx;
+pub use showmap::{ShowmapDomain, ShowmapOpts, ShowmapStats, replay_corpus_to_showmap};
 pub use trace::TracingExecutor;
 
 const DURATION_BETWEEN_METRICS_REPORT: Duration = Duration::from_secs(5);
@@ -663,6 +668,21 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.is_success(address, call_result.reverted, state_changeset, should_fail)
     }
 
+    /// Like [`Self::is_raw_call_mut_success`] but uses [`Self::is_success_handler_gate`] under
+    /// the hood. Intended for invariant view-call success checks during a campaign where the
+    /// committed `GLOBAL_FAIL_SLOT` may be stale poison from a previously-recorded handler bug.
+    pub fn is_raw_call_mut_success_handler_gate(
+        &self,
+        address: Address,
+        call_result: &mut RawCallResult<FEN>,
+    ) -> bool {
+        if call_result.has_state_snapshot_failure {
+            return false;
+        }
+        let state_changeset = std::mem::take(&mut call_result.state_changeset);
+        self.is_success_handler_gate(address, call_result.reverted, Cow::Owned(state_changeset))
+    }
+
     /// Returns `true` if a test can be considered successful.
     ///
     /// If the call succeeded, we also have to check the global and local failure flags.
@@ -691,8 +711,22 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         state_changeset: Cow<'_, StateChangeset>,
         should_fail: bool,
     ) -> bool {
-        let success = self.is_success_raw(address, reverted, state_changeset);
+        let success = self.is_success_raw(address, reverted, state_changeset, false);
         should_fail ^ success
+    }
+
+    /// Like [`Self::is_success`] but ignores the *committed* `GLOBAL_FAIL_SLOT` and only treats
+    /// the slot as failed when this call's in-flight changeset writes it. Used by the invariant
+    /// runner's per-call handler-success gate, where a `1` already in committed storage is just
+    /// stale poison from a previously-recorded handler bug (separately tracked) and must not
+    /// suppress later `assert_invariants` / `afterInvariant` evaluations.
+    pub fn is_success_handler_gate(
+        &self,
+        address: Address,
+        reverted: bool,
+        state_changeset: Cow<'_, StateChangeset>,
+    ) -> bool {
+        self.is_success_raw(address, reverted, state_changeset, true)
     }
 
     #[instrument(name = "is_success", level = "debug", skip_all)]
@@ -701,6 +735,7 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         address: Address,
         reverted: bool,
         state_changeset: Cow<'_, StateChangeset>,
+        pending_global_failure_only: bool,
     ) -> bool {
         // The call reverted.
         if reverted {
@@ -712,8 +747,16 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
             return false;
         }
 
-        // Check the global failure slot.
-        if self.has_global_failure(&state_changeset) {
+        // Check the global failure slot. Callers that already track recorded handler bugs
+        // out-of-band can pass `pending_global_failure_only = true` to ignore the committed
+        // slot (which would otherwise stay `1` for the rest of the run after a non-reverting
+        // `vm.assert*` under `assertions_revert = false`).
+        let global_failed = if pending_global_failure_only {
+            Self::has_pending_global_failure(&state_changeset)
+        } else {
+            self.has_global_failure(&state_changeset)
+        };
+        if global_failed {
             return false;
         }
 
@@ -778,22 +821,6 @@ impl<FEN: FoundryEvmNetwork> Executor<FEN> {
         self.backend()
             .storage_ref(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT)
             .is_ok_and(|failed_slot| !failed_slot.is_zero())
-    }
-
-    /// Clears the global assertion failure flag from both the committed backend state and, when
-    /// provided, the in-flight state changeset for the current call.
-    pub fn clear_global_failure(
-        &mut self,
-        state_changeset: Option<&mut StateChangeset>,
-    ) -> BackendResult<()> {
-        if let Some(state_changeset) = state_changeset
-            && let Some(acc) = state_changeset.get_mut(&CHEATCODE_ADDRESS)
-            && let Some(failed_slot) = acc.storage.get_mut(&GLOBAL_FAIL_SLOT)
-        {
-            failed_slot.present_value = U256::ZERO;
-        }
-
-        self.set_storage_slot(CHEATCODE_ADDRESS, GLOBAL_FAIL_SLOT, U256::ZERO)
     }
 
     /// Creates the environment to use when executing a transaction in a test context
@@ -960,7 +987,9 @@ pub struct RawCallResult<FEN: FoundryEvmNetwork = EthEvmNetwork> {
     /// The line coverage info collected during the call
     pub line_coverage: Option<HitMaps>,
     /// The edge coverage info collected during the call
-    pub edge_coverage: Option<Vec<u8>>,
+    pub edge_coverage: Option<EdgeCoverage>,
+    /// EVM comparison operands collected during the call.
+    pub evm_cmp_values: Option<Vec<CmpOperands>>,
     /// Sancov edge coverage from instrumented native Rust crates (e.g. precompiles).
     /// Tracked separately from EVM edge coverage to avoid ID-space collisions.
     pub sancov_coverage: Option<Vec<u8>>,
@@ -998,6 +1027,7 @@ impl<FEN: FoundryEvmNetwork> Default for RawCallResult<FEN> {
             traces: None,
             line_coverage: None,
             edge_coverage: None,
+            evm_cmp_values: None,
             sancov_coverage: None,
             sancov_cmp_values: None,
             transactions: None,
@@ -1068,49 +1098,89 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
     }
 
     /// Update provided history map with edge coverage info collected during this call.
-    /// Uses AFL binning algo <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
-    pub fn merge_edge_coverage(&mut self, history_map: &mut [u8]) -> (bool, bool) {
+    pub fn merge_edge_coverage(
+        &mut self,
+        history_map: &mut Vec<u8>,
+        edge_indices: &mut EdgeIndexMap,
+    ) -> (bool, bool) {
         let mut new_coverage = false;
         let mut is_edge = false;
         if let Some(x) = &mut self.edge_coverage {
-            // Iterate over the current map and the history map together and update
-            // the history map, if we discover some new coverage, report true
-            for (curr, hist) in std::iter::zip(x, history_map) {
-                // If we got a hitcount of at least 1
-                if *curr > 0 {
-                    // Convert hitcount into bucket count
-                    let bucket = match *curr {
-                        0 => 0,
-                        1 => 1,
-                        2 => 2,
-                        3 => 4,
-                        4..=7 => 8,
-                        8..=15 => 16,
-                        16..=31 => 32,
-                        32..=127 => 64,
-                        128..=255 => 128,
-                    };
-
-                    // If the old record for this edge pair is lower, update
-                    if *hist < bucket {
-                        if *hist == 0 {
-                            // Counts as an edge the first time we see it, otherwise it's a feature.
-                            is_edge = true;
-                        }
-                        *hist = bucket;
-                        new_coverage = true;
+            match x {
+                EdgeCoverage::Hash(x) => {
+                    if history_map.len() < x.len() {
+                        history_map.resize(x.len(), 0);
                     }
+                    // Iterate over the current map and the history map together and update
+                    // the history map, if we discover some new coverage, report true
+                    for (curr, hist) in std::iter::zip(x.iter_mut(), history_map.iter_mut()) {
+                        Self::merge_edge_count(*curr, hist, &mut new_coverage, &mut is_edge);
 
-                    // Zero out the current map for next iteration.
-                    *curr = 0;
+                        // Hash reuses its map; collision-free drains hits.
+                        *curr = 0;
+                    }
+                }
+                EdgeCoverage::CollisionFree(hits) => {
+                    for hit in hits.drain(..) {
+                        let edge_index = edge_indices.edge_index(hit.edge);
+                        if history_map.len() <= edge_index {
+                            debug_assert_eq!(history_map.len(), edge_index);
+                            // `Vec::push` already amortizes geometric growth; no need
+                            // to pre-reserve a single slot.
+                            history_map.push(0);
+                        }
+                        Self::merge_edge_count(
+                            hit.count,
+                            &mut history_map[edge_index],
+                            &mut new_coverage,
+                            &mut is_edge,
+                        );
+                    }
                 }
             }
         }
         (new_coverage, is_edge)
     }
 
+    const fn merge_edge_count(
+        curr: u8,
+        hist: &mut u8,
+        new_coverage: &mut bool,
+        is_edge: &mut bool,
+    ) {
+        let Some(bucket) = Self::bin_count(curr) else {
+            return;
+        };
+
+        // If the old record for this edge pair is lower, update
+        if *hist < bucket {
+            if *hist == 0 {
+                // Counts as an edge the first time we see it, otherwise it's a feature.
+                *is_edge = true;
+            }
+            *hist = bucket;
+            *new_coverage = true;
+        }
+    }
+
+    /// Convert a hitcount into an AFL-style bucket.
+    /// <https://github.com/h0mbre/Lucid/blob/3026e7323c52b30b3cf12563954ac1eaa9c6981e/src/coverage.rs#L57-L85>
+    const fn bin_count(count: u8) -> Option<u8> {
+        match count {
+            0 => None,
+            1 => Some(1),
+            2 => Some(2),
+            3 => Some(4),
+            4..=7 => Some(8),
+            8..=15 => Some(16),
+            16..=31 => Some(32),
+            32..=127 => Some(64),
+            128..=255 => Some(128),
+        }
+    }
+
     /// Update provided history map with sancov coverage info collected during this call.
-    /// Same AFL binning algo as [`Self::merge_edge_coverage`].
+    /// Uses AFL-style hitcount binning.
     pub fn merge_sancov_coverage(&mut self, history_map: &mut Vec<u8>) -> (bool, bool) {
         let mut new_coverage = false;
         let mut is_edge = false;
@@ -1120,18 +1190,9 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
             }
             for (curr, hist) in std::iter::zip(x.iter_mut(), history_map.iter_mut()) {
                 if *curr > 0 {
-                    let bucket = match *curr {
-                        0 => 0,
-                        1 => 1,
-                        2 => 2,
-                        3 => 4,
-                        4..=7 => 8,
-                        8..=15 => 16,
-                        16..=31 => 32,
-                        32..=127 => 64,
-                        128..=255 => 128,
-                    };
-                    if *hist < bucket {
+                    if let Some(bucket) = Self::bin_count(*curr)
+                        && *hist < bucket
+                    {
                         if *hist == 0 {
                             is_edge = true;
                         }
@@ -1149,10 +1210,11 @@ impl<FEN: FoundryEvmNetwork> RawCallResult<FEN> {
     /// Returns `(new_coverage, is_edge)` — true if either domain produced new coverage.
     pub fn merge_all_coverage(
         &mut self,
-        evm_history: &mut [u8],
+        evm_history: &mut Vec<u8>,
+        evm_edge_indices: &mut EdgeIndexMap,
         sancov_history: &mut Vec<u8>,
     ) -> (bool, bool) {
-        let (new_evm, edge_evm) = self.merge_edge_coverage(evm_history);
+        let (new_evm, edge_evm) = self.merge_edge_coverage(evm_history, evm_edge_indices);
         let (new_san, edge_san) = self.merge_sancov_coverage(sancov_history);
         (new_evm || new_san, edge_evm || edge_san)
     }
@@ -1217,6 +1279,7 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         traces,
         line_coverage,
         edge_coverage,
+        evm_cmp_values,
         cheatcodes,
         chisel_state,
         reverter,
@@ -1238,12 +1301,13 @@ fn convert_executed_result<FEN: FoundryEvmNetwork>(
         result,
         gas_used,
         gas_refunded,
-        stipend: gas.initial_total_gas,
+        stipend: gas.initial_total_gas(),
         logs,
         labels,
         traces,
         line_coverage,
         edge_coverage,
+        evm_cmp_values,
         sancov_coverage: None,
         sancov_cmp_values: None,
         transactions,
@@ -1315,8 +1379,53 @@ impl EarlyExit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use foundry_evm_core::constants::MAGIC_SKIP;
-    use revm::{context::Cfg, primitives::hardfork::SpecId};
+    use crate::inspectors::{EdgeCovHit, EdgeKey};
+    use alloy_primitives::B256;
+    use foundry_cheatcodes::{
+        CheatsConfig,
+        Vm::{blobhashesCall, revertToStateCall, snapshotStateCall},
+    };
+    use foundry_config::Config;
+    use foundry_evm_core::{constants::MAGIC_SKIP, opts::EvmOpts};
+    use revm::{
+        context::{Cfg, TxEnv},
+        primitives::hardfork::SpecId,
+    };
+
+    fn dense_call(edge: EdgeKey) -> RawCallResult {
+        RawCallResult {
+            edge_coverage: Some(EdgeCoverage::CollisionFree(vec![EdgeCovHit { edge, count: 1 }])),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn collision_free_edge_merge_uses_stable_indices() {
+        let first =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(10) };
+        let second =
+            EdgeKey { address: Address::ZERO, depth: None, pc: 0, jump_dest: U256::from(20) };
+        let mut history = Vec::new();
+        let mut edge_indices = EdgeIndexMap::default();
+
+        assert_eq!(
+            dense_call(first).merge_edge_coverage(&mut history, &mut edge_indices),
+            (true, true)
+        );
+        assert_eq!(history, [1]);
+
+        assert_eq!(
+            dense_call(second).merge_edge_coverage(&mut history, &mut edge_indices),
+            (true, true)
+        );
+        assert_eq!(history, [1, 1]);
+
+        assert_eq!(
+            dense_call(first).merge_edge_coverage(&mut history, &mut edge_indices),
+            (false, false)
+        );
+        assert_eq!(history, [1, 1]);
+    }
 
     #[test]
     fn cheatcode_skip_payload_is_classified_as_skip() {
@@ -1378,5 +1487,71 @@ mod tests {
             &revm::context_interface::cfg::GasParams::new_spec(SpecId::AMSTERDAM),
         );
         assert!(executor.evm_env().cfg_env.is_amsterdam_eip8037_enabled());
+    }
+
+    /// Regression test for `pre_override_blob_hashes` restoration.
+    ///
+    /// Exercises the `None` arm of `sync_tx_after_env_override_restore` with
+    /// *non-empty* native blob hashes, the case that cannot be reached from
+    /// Solidity because no cheatcode sets `tx.blob_hashes` without also setting
+    /// `env_overrides.blob_hashes`.
+    ///
+    /// Steps:
+    /// 1. Seed `tx.blob_hashes = original` directly (no cheatcode -> override stays `None`).
+    /// 2. `vm.snapshotState()` -> `inner_snapshot_state` captures `pre_override_blob_hashes =
+    ///    Some(original)`.
+    /// 3. `vm.blobhashes(new)` -> sets override (`Some`) AND real tx hashes.
+    /// 4. `vm.revertToState(id)` -> restores override to `None`,
+    ///    `sync_tx_after_env_override_restore` must restore `tx.blob_hashes = original`.
+    #[test]
+    fn pre_override_blob_hashes_restored_on_revert_to_state() {
+        let cheats_config =
+            Arc::new(CheatsConfig::new(&Config::default(), EvmOpts::default(), None, None, None));
+
+        let backend = Backend::<EthEvmNetwork>::spawn(None).unwrap();
+        let mut executor = ExecutorBuilder::default()
+            .inspectors(|stack| stack.cheatcodes(cheats_config))
+            .spec_id(SpecId::CANCUN)
+            .build(EvmEnv::default(), TxEnv::default(), backend);
+
+        let original: Vec<B256> = vec![B256::repeat_byte(0x11), B256::repeat_byte(0x22)];
+        executor.tx_env_mut().set_blob_hashes(original.clone());
+
+        let snap_result = executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                snapshotStateCall {}.abi_encode().into(),
+                U256::ZERO,
+            )
+            .expect("snapshotState failed");
+        assert!(!snap_result.reverted, "snapshotState reverted unexpectedly");
+        let snapshot_id = U256::from_be_slice(&snap_result.result[..32]);
+
+        let new_hashes = vec![B256::repeat_byte(0x33)];
+        let blob_result = executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                blobhashesCall { hashes: new_hashes }.abi_encode().into(),
+                U256::ZERO,
+            )
+            .expect("blobhashes failed");
+        assert!(!blob_result.reverted, "blobhashes reverted unexpectedly");
+
+        let revert_result = executor
+            .transact_raw(
+                CALLER,
+                CHEATCODE_ADDRESS,
+                revertToStateCall { snapshotId: snapshot_id }.abi_encode().into(),
+                U256::ZERO,
+            )
+            .expect("revertToState failed");
+        assert!(!revert_result.reverted, "revertToState reverted unexpectedly");
+
+        assert_eq!(
+            revert_result.tx_env.blob_hashes, original,
+            "pre_override_blob_hashes must be restored to original non-empty hashes, not []",
+        );
     }
 }

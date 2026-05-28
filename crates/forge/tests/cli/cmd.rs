@@ -53,6 +53,13 @@ Display options:
       --json
           Format log messages as JSON
 
+      --machine
+          Activate the agent contract: disables color and wraps CLI-runtime exits (parse / usage /
+          help / version) in a structured envelope. Per-command machine output (declared
+          `output_mode`, progress and prompt suppression, canonical exit codes) is adopted
+          incrementally — see `docs/agents/spec.md` §10. Mutually exclusive with `--json` and `--md`
+          to keep machine-mode output unambiguous
+
       --md
           Format log messages as Markdown
 
@@ -739,6 +746,21 @@ Compiler run successful!
 
     let s = read_string(&foundry_toml);
     let _config: BasicConfig = parse_with_profile(&s).unwrap().unwrap().1;
+});
+
+// Checks that `--no-commit` is accepted as a noop backwards-compatibility flag for clone
+forgetest!(flaky_can_clone_with_no_commit, |prj, cmd| {
+    prj.wipe();
+
+    cmd.args([
+        "clone",
+        "--etherscan-api-key",
+        next_etherscan_api_key().as_str(),
+        "--no-commit",
+        "0x044b75f554b886A065b9567891e45c79542d7357",
+    ])
+    .arg(prj.root())
+    .assert_success();
 });
 
 // Checks that quiet mode does not print anything for clone
@@ -1428,6 +1450,29 @@ Suite result: ok. 1 passed; 0 failed; 0 skipped; [ELAPSED]
 Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 
 "#]]);
+});
+
+forgetest!(snapshot_reports_when_snap_file_is_not_written, |prj, cmd| {
+    prj.insert_ds_test();
+
+    prj.add_source(
+        "FailingSnapshot.t.sol",
+        r#"
+import "./test.sol";
+contract FailingSnapshotTest is DSTest {
+    function testSnapshotFailure() public {
+        assertTrue(false);
+    }
+}
+   "#,
+    );
+
+    let assert = cmd.args(["snapshot", "--snap", "failed.snap"]).assert_failure();
+    let output = assert.get_output();
+    assert!(output.stderr_lossy().contains(
+        "Error: gas snapshot file \"failed.snap\" was not written because the test run failed"
+    ));
+    assert!(!prj.root().join("failed.snap").exists());
 });
 
 // test that `forge build` does not print `(with warnings)` if file path is ignored

@@ -128,6 +128,10 @@ pub struct FuzzCorpusConfig {
     pub corpus_min_size: usize,
     /// Whether to collect and display edge coverage metrics.
     pub show_edge_coverage: bool,
+    /// Whether EVM edge coverage should use collision-free dense IDs.
+    pub evm_edge_coverage_collision_free: bool,
+    /// Whether EVM edge coverage IDs should include call-frame depth.
+    pub evm_edge_coverage_include_call_depth: bool,
     /// Whether to collect edge coverage from native Rust crates compiled with
     /// SanitizerCoverage instrumentation (e.g. precompile implementations).
     /// Requires building forge with a `RUSTC_WRAPPER` that injects sancov flags.
@@ -159,6 +163,25 @@ impl FuzzCorpusConfig {
         !self.sancov_edges && (self.corpus_dir.is_some() || self.show_edge_coverage)
     }
 
+    /// Whether EVM comparison operand capture is enabled.
+    ///
+    /// EVM comparison operands are only useful for coverage-guided fuzzing, so they are derived
+    /// from corpus mode. Disabled when sancov edge coverage is active because sancov replaces EVM
+    /// bytecode coverage as the guidance signal.
+    pub const fn collect_evm_cmp_log(&self) -> bool {
+        !self.sancov_edges && self.corpus_dir.is_some()
+    }
+
+    /// Whether EVM edge coverage should use collision-free dense IDs.
+    pub const fn evm_edge_coverage_collision_free(&self) -> bool {
+        self.evm_edge_coverage_collision_free
+    }
+
+    /// Whether EVM edge coverage IDs should include call-frame depth.
+    pub const fn evm_edge_coverage_include_call_depth(&self) -> bool {
+        self.evm_edge_coverage_include_call_depth
+    }
+
     /// Whether sancov edge coverage collection is enabled.
     pub const fn collect_sancov_edges(&self) -> bool {
         self.sancov_edges
@@ -188,6 +211,8 @@ impl Default for FuzzCorpusConfig {
             corpus_min_mutations: 5,
             corpus_min_size: 0,
             show_edge_coverage: false,
+            evm_edge_coverage_collision_free: true,
+            evm_edge_coverage_include_call_depth: false,
             sancov_edges: false,
             sancov_trace_cmp: false,
         }

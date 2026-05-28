@@ -1,6 +1,7 @@
 use super::{
-    Cheatcodes, CheatsConfig, ChiselState, CustomPrintTracer, Fuzzer, LineCoverageCollector,
-    LogCollector, RevertDiagnostic, ScriptExecutionInspector, TempoLabels, TracingInspector,
+    Cheatcodes, CheatsConfig, ChiselState, CmpOperands, CustomPrintTracer, EdgeCovConfig,
+    EdgeCovInspector, EdgeCoverage, Fuzzer, LineCoverageCollector, LogCollector, RevertDiagnostic,
+    ScriptExecutionInspector, TempoLabels, TracingInspector,
 };
 use alloy_primitives::{
     Address, B256, Bytes, Log, TxKind, U256,
@@ -9,6 +10,7 @@ use alloy_primitives::{
 
 use foundry_cheatcodes::{CheatcodeAnalysis, CheatcodesExecutor, NestedEvmClosure, Wallets};
 use foundry_common::compile::Analysis;
+use foundry_config::FuzzCorpusConfig;
 use foundry_evm_core::{
     FoundryBlock, FoundryTransaction, InspectorExt,
     backend::{DatabaseError, DatabaseExt, JournaledState},
@@ -25,12 +27,11 @@ use foundry_evm_traces::{SparsedTraceArena, TraceMode};
 use revm::{
     Inspector,
     context::{
-        Block, Cfg, ContextTr, JournalTr, Transaction,
+        Block, Cfg, ContextTr, JournalTr, Transaction, TransactionType,
         result::{EVMError, ExecutionResult, Output},
     },
     context_interface::CreateScheme,
     handler::FrameResult,
-    inspector::JournalExt,
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, FrameInput, Gas,
         InstructionResult, Interpreter, InterpreterResult, return_ok,
@@ -38,7 +39,6 @@ use revm::{
     primitives::KECCAK_EMPTY,
     state::{Account, AccountStatus},
 };
-use revm_inspectors::edge_cov::EdgeCovInspector;
 use std::{
     ops::{Deref, DerefMut},
     sync::Arc,
@@ -315,7 +315,8 @@ pub struct InspectorData<FEN: FoundryEvmNetwork> {
     pub labels: AddressHashMap<String>,
     pub traces: Option<SparsedTraceArena>,
     pub line_coverage: Option<HitMaps>,
-    pub edge_coverage: Option<Vec<u8>>,
+    pub edge_coverage: Option<EdgeCoverage>,
+    pub evm_cmp_values: Option<Vec<CmpOperands>>,
     pub cheatcodes: Option<Box<Cheatcodes<FEN>>>,
     pub chisel_state: Option<(Vec<U256>, Vec<u8>)>,
     pub reverter: Option<Address>,
@@ -539,11 +540,33 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
         self.line_coverage = yes.then(Default::default);
     }
 
-    /// Set whether to enable the edge coverage collector.
+    /// Set whether to enable the edge coverage collector with default config.
     #[inline]
     pub fn collect_edge_coverage(&mut self, yes: bool) {
-        // TODO: configurable edge size?
-        self.edge_coverage = yes.then(EdgeCovInspector::new).map(Into::into);
+        self.edge_coverage =
+            yes.then(|| EdgeCovInspector::with_config(EdgeCovConfig::default()).into());
+    }
+
+    /// Configure the edge coverage collector from a [`FuzzCorpusConfig`].
+    ///
+    /// Derives both the on/off gate and [`EdgeCovConfig`] from `corpus`.
+    #[inline]
+    pub fn collect_edge_coverage_with_config(&mut self, corpus: &FuzzCorpusConfig) {
+        self.edge_coverage = corpus
+            .collect_evm_edge_coverage()
+            .then(|| EdgeCovInspector::with_config(corpus.into()).into());
+    }
+
+    /// Set whether to collect EVM comparison operands.
+    #[inline]
+    pub fn collect_evm_cmp_log(&mut self, yes: bool) {
+        if yes {
+            self.edge_coverage
+                .get_or_insert_with(|| EdgeCovInspector::new().into())
+                .enable_cmp_log(true);
+        } else if let Some(edge_coverage) = &mut self.edge_coverage {
+            edge_coverage.enable_cmp_log(false);
+        }
     }
 
     /// Set whether to collect sancov edge coverage from instrumented native crates.
@@ -657,6 +680,13 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
             SparsedTraceArena { arena, ignored }
         });
 
+        let (edge_coverage, evm_cmp_values) = edge_coverage
+            .map(|edge_coverage| {
+                let (hitcount, cmp_values) = edge_coverage.into_parts();
+                (Some(hitcount), (!cmp_values.is_empty()).then_some(cmp_values))
+            })
+            .unwrap_or_default();
+
         InspectorData {
             logs: log_collector.and_then(|logs| logs.into_captured_logs()).unwrap_or_default(),
             labels: {
@@ -668,7 +698,8 @@ impl<FEN: FoundryEvmNetwork> InspectorStack<FEN> {
             },
             traces,
             line_coverage: line_coverage.map(|line_coverage| line_coverage.finish()),
-            edge_coverage: edge_coverage.map(|edge_coverage| edge_coverage.into_hitcount()),
+            edge_coverage,
+            evm_cmp_values,
             cheatcodes,
             chisel_state: chisel_state.and_then(|state| state.state),
             reverter,
@@ -776,10 +807,28 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
             ecx.tx_mut().set_gas_limit(gas_limit);
         }
         ecx.tx_mut().set_gas_price(0);
+        // If the cached tx is EIP-4844 (e.g. set by `vm.blobhashes`), downgrade
+        // it to EIP-1559 and drop the blob hashes so revm doesn't reject the
+        // synthetic inner tx because `gas_price = 0` plus blob fields fail
+        // 4844 validation. The contract-visible `BLOBHASH` opcode is restored
+        // via `EnvOverrides`. Other types (incl. EIP-2930 access lists) are
+        // intentionally left intact, and the full original tx is restored
+        // from `cached_tx_env` after the inner call.
+        if ecx.tx().tx_type() == TransactionType::Eip4844 as u8 {
+            ecx.tx_mut().set_tx_type(TransactionType::Eip1559 as u8);
+            ecx.tx_mut().set_blob_hashes(Vec::new());
+        }
 
         self.inner_context_data =
             Some(InnerContextData { original_origin: cached_tx_env.caller() });
         self.in_inner_context = true;
+
+        // Tell cheatcodes we're entering the synthetic inner transaction so
+        // env-mutating cheatcodes route through `env_overrides` instead of
+        // fighting with the fee-accounting zeroing above. See `EnvOverrides`.
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats.in_isolation_context = true;
+        }
 
         let evm_env = ecx.evm_clone();
         let tx_env = ecx.tx_clone();
@@ -832,6 +881,12 @@ impl<FEN: FoundryEvmNetwork> InspectorStackRefMut<'_, FEN> {
 
         self.in_inner_context = false;
         self.inner_context_data = None;
+
+        // Reset the cheatcodes isolation flag now that the synthetic inner
+        // transaction has finished.
+        if let Some(cheats) = self.cheatcodes.as_deref_mut() {
+            cheats.in_isolation_context = false;
+        }
 
         let mut gas = Gas::new(gas_limit);
 
@@ -1210,6 +1265,7 @@ impl<FEN: FoundryEvmNetwork> Inspector<FoundryContextFor<'_, FEN>>
                         memory_offset: call.return_memory_offset.clone(),
                         was_precompile_called: true,
                         precompile_call_logs: vec![],
+                        charged_new_account_state_gas: false,
                     });
                 }
                 // Mark accounts and storage cold before STATICCALLs

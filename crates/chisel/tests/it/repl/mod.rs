@@ -125,13 +125,37 @@ repl_test!(trailing_whitespace, |repl| {
 // Issue #4652: Test that solc flags are respected.
 repl_test!(solc_flags, "--use 0.8.23", |repl| {
     repl.sendln("pragma solidity 0.8.24;");
-    repl.expect("invalid solc version");
+    repl.expect("invalid compiler version");
 });
 
 // Issue #4915: `chisel eval`
 repl_test!(eval_subcommand, "eval type(uint8).max", |repl| {
     repl.expect("Decimal: 255");
 });
+
+repl_test!(
+    eval_tempo_network_uses_tempo_executor,
+    "--network tempo eval address(0xfeEC000000000000000000000000000000000000).code.length",
+    |repl| {
+        repl.expect("Decimal: 1");
+    }
+);
+
+repl_test!(
+    eval_tempo_chain_id_uses_tempo_executor,
+    "--chain 4217 eval address(0xfeEC000000000000000000000000000000000000).code.length",
+    |repl| {
+        repl.expect("Decimal: 1");
+    }
+);
+
+repl_test!(
+    eval_tempo_named_chain_uses_tempo_executor,
+    "--chain tempo eval address(0xfeEC000000000000000000000000000000000000).code.length",
+    |repl| {
+        repl.expect("Decimal: 1");
+    }
+);
 
 // Issue #4938: Test memory/stack dumps with assembly.
 repl_test!(assembly_memory_dump, |repl| {
