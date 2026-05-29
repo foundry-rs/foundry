@@ -181,7 +181,7 @@ pub fn run_command(args: Forge) -> Result<()> {
 }
 
 /// Human-readable subcommand name (e.g. `"snapshot"`) for diagnostics.
-fn subcommand_name(cmd: &ForgeSubcommand) -> &'static str {
+const fn subcommand_name(cmd: &ForgeSubcommand) -> &'static str {
     match cmd {
         ForgeSubcommand::Test(_) => "test",
         ForgeSubcommand::Script(_) => "script",
