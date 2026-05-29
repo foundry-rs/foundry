@@ -50,7 +50,7 @@ use foundry_evm::{
 };
 use rand::Rng;
 use regex::Regex;
-use revm::{context::Transaction, bytecode::opcode::{OpCode}};
+use revm::{bytecode::opcode::OpCode, context::Transaction};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Write,
@@ -195,10 +195,14 @@ pub struct TestArgs {
     #[arg(long)]
     pub rerun: bool,
 
-    /// Specify opcodes to analyze when verbosity level is 5.
-    /// Separate with each opcode with ,
-    #[arg(long)]
-    pub opcodes: Option<String>,
+    /// Print the given opcodes inline in trace output, with their gas cost
+    /// and (for SLOAD/SSTORE) the storage slot and value.
+    ///
+    /// Accepts a comma-separated list of opcode names, e.g.
+    /// `--opcodes SLOAD,MLOAD,SSTORE`. Names are case-insensitive.
+    /// Requires `-vvvvv` to render.
+    #[arg(long, value_parser = parse_opcode, value_delimiter(','), num_args(1..))]
+    pub opcodes: Vec<OpCode>,
 
     /// Print test summary table.
     #[arg(long, help_heading = "Display options")]
@@ -830,6 +834,11 @@ impl TestArgs {
                 decoder.clear_addresses();
                 decoder.labels.extend(result.labels.iter().map(|(k, v)| (*k, v.clone())));
 
+                if !self.opcodes.is_empty() && verbosity < 5 {
+                        sh_eprintln!()?;
+                        eyre::bail!("Not enough verbosity. Use -vvvvv to show opcodes.");
+                }
+
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
                 for (kind, arena) in &mut result.traces {
@@ -853,19 +862,12 @@ impl TestArgs {
                     };
 
                     if should_include {
-                        if let Some(ref opcodes_str) = self.opcodes {
-                            decoder.opcodes = opcodes_str
-                                .split(",")
-                                .map(|opcode_name| OpCode::parse(opcode_name)) 
-                                .collect() // if any opcode name is invalid, decoder.opcodes becomes empty
-                            }
+                        decoder.opcodes = self.opcodes.clone();
 
                         decode_trace_arena(arena, &decoder).await;
-
                         if let Some(trace_depth) = self.trace_depth {
                             prune_trace_depth(arena, trace_depth);
                         }
-                        
 
                         decoded_traces.push(render_trace_arena_inner(arena, false, verbosity > 4));
                     }
@@ -1142,6 +1144,10 @@ impl Provider for TestArgs {
 
         Ok(Map::from([(Config::selected_profile(), dict)]))
     }
+}
+
+fn parse_opcode(s: &str) -> Result<OpCode, String> {
+    OpCode::parse(s).ok_or_else(|| format!("invalid opcode: {s}"))
 }
 
 /// Lists all matching tests
