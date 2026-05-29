@@ -132,7 +132,7 @@ Each row's status is one of:
 | `forge tree`           | Dependency tree                                      | JSON                                       | migrated |
 | `forge config`         | Config TOML                                          | JSON config                                | todo   |
 | `forge selectors`      | Selectors output                                     | JSON                                       | todo   |
-| `forge eip712`         | (empty)                                              | JSON of types                              | todo   |
+| `forge eip712`         | (empty)                                              | JSON of types                              | migrated |
 | `forge geiger`         | Findings                                             | JSON                                       | todo   |
 | `forge lint`           | (empty; findings on stderr/exit code)                | JSON findings                              | todo   |
 | `forge snapshot`       | Snapshot file content / diff                         | JSON                                       | todo   |
