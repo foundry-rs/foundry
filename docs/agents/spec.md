@@ -229,8 +229,8 @@ each grouping unit (suite for `forge.test`, simulation phase for
 
 After a group's terminator, no more records targeting that group may be
 emitted. Groups themselves are not ordered against each other; agents
-should key on the group identifier in the payload (e.g. `contract`) when
-correlating per-group records.
+should key on the group identifier in the payload (e.g. `suite` for
+`forge.test`) when correlating per-group records.
 
 ### Warning duality
 
@@ -242,12 +242,21 @@ outcome, the warning is emitted **twice**:
 2. as an entry in the terminal envelope's `warnings[]` — for the
    end-of-run summary
 
-Both surfaces carry the same `code` and `message` for the same logical
-warning. The grouping identifier differs by surface: the stream event
-identifies the suite via the top-level `contract` field; the terminal
-envelope warning identifies it via `details.suite`. Agents consuming
-both surfaces should de-duplicate by `(suite, message)`. The terminal
-envelope's `warnings[]` is the authoritative aggregated set.
+Both surfaces carry the same `code` and `message` and identify the suite
+via the same `suite` key — `suite` as a top-level field on the stream
+event, and `details.suite` on the terminal envelope warning. Agents
+consuming both surfaces should de-duplicate by `(suite, message)`. The
+terminal envelope's `warnings[]` is the authoritative aggregated set.
+
+### Failure-envelope conventions
+
+A command's `result_schema_ref` describes the envelope `data` payload
+when present. Failure envelopes may set `data: null` and surface
+structured failure context inside `errors[].details`. Agents that need
+to detect failure key on the combination of exit code, `success: false`,
+and `errors[].code`; per-command spec sections document where additional
+context lives on failure (for `forge.test`, the summary appears under
+`errors[0].details` and is the same shape as `data` on success).
 
 ### Concrete shapes (informative, `@v1`)
 
@@ -256,15 +265,22 @@ command in [`crates/forge/src/introspect.rs`](../../crates/forge/src/introspect.
 and the equivalent registry files. The current `forge.test` event payloads
 under `foundry:forge.test.event@v1`:
 
-- `kind: "test_result"` — `{ contract, name, status, reason?, duration_ms }`
+- `kind: "test_result"` — `{ suite, name, status, reason?, duration_ms }`
   with `status ∈ { "passed", "failed", "skipped" }`.
-- `kind: "warning"` — `{ contract, code, message }`.
-- `kind: "suite_finished"` — `{ contract, passed, failed, skipped, duration_ms }`.
+- `kind: "warning"` — `{ suite, code, message }`.
+- `kind: "suite_finished"` — `{ suite, passed, failed, skipped, duration_ms }`.
+
+`suite` is the full suite identifier (e.g. `test/Counter.t.sol:CounterTest`).
+A `suite_finished` record terminates the group for that suite; no further
+records targeting that suite are emitted. Warning-only suites still emit a
+`suite_finished` (with zero counts) so the group lifecycle is honest.
 
 The terminal envelope payload under `foundry:forge.test@v1`:
 `{ suites, passed, failed, skipped, duration_ms }`. When `--allow-failure`
 tolerated failures, `success: true` and `data.failed` may be non-zero — see
-the `Success` exit-code description on the per-command introspection.
+the `Success` exit-code description on the per-command introspection. On
+test failure (`success: false`, `errors[0].code: test.failed`), the same
+payload appears under `errors[0].details`.
 
 ---
 

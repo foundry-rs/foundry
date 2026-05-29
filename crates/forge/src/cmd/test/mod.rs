@@ -344,6 +344,8 @@ impl TestArgs {
             // `live_logs = true` config equivalent is overridden in
             // `compile_and_run`.
             ("--live-logs", self.evm.live_logs),
+            // Bails mid-suite on diff; config equivalent overridden in `compile_and_run`.
+            ("--gas-snapshot-check", self.gas_snapshot_check.unwrap_or(false)),
         ]
         .into_iter()
         .filter_map(|(name, on)| on.then_some(name))
@@ -419,11 +421,12 @@ impl TestArgs {
         let (mut config, evm_opts) = self.load_config_and_evm_opts()?;
 
         // Override foundry.toml knobs that would print outside the NDJSON
-        // stream; the CLI equivalents are rejected in
+        // stream or bail mid-suite; the CLI equivalents are rejected in
         // `reject_machine_unsupported_flags`.
         if machine_mode {
             config.show_progress = false;
             config.live_logs = false;
+            config.gas_snapshot_check = false;
         }
 
         // Skip implicit dep install: it prints to stdout. A missing dep then
@@ -520,6 +523,21 @@ impl TestArgs {
         // Parse inline config early to detect per-test network annotations.
         let inline_config = InlineConfig::new_parsed(output, &config)?;
         let override_networks = inline_config.referenced_override_networks(&config.profile);
+
+        // Multi-pass would emit `test_result*` + `suite_finished` once per
+        // pass for the same suite, violating "exactly one terminator per group".
+        if foundry_cli::is_machine() && !override_networks.is_empty() {
+            let networks: Vec<String> = override_networks.iter().map(|n| n.to_string()).collect();
+            foundry_cli::machine::bail_machine_usage_with_details(
+                "`forge test` under `--machine` does not yet support inline network \
+                 overrides; run without `--machine` or remove the inline `network` \
+                 annotations.",
+                serde_json::json!({
+                    "unsupported_features": ["inline_network_overrides"],
+                    "networks": networks,
+                }),
+            );
+        }
 
         let (libraries, mut outcome) = if override_networks.is_empty() {
             // Single-pass: no per-test network overrides, use global network setting.
@@ -1191,7 +1209,9 @@ impl TestArgs {
                 for warning in &suite_result.warnings {
                     emit_warning_event(&contract_name, warning)?;
                 }
-                if has_tests {
+                // Terminator follows any record for the group; warning-only
+                // suites get a zero-count `suite_finished`.
+                if has_tests || !suite_result.warnings.is_empty() {
                     emit_suite_finished_event(&contract_name, &suite_result)?;
                 }
             }
@@ -1298,7 +1318,7 @@ impl TestSummaryData {
 
 #[derive(serde::Serialize)]
 struct TestResultEvent<'a> {
-    contract: &'a str,
+    suite: &'a str,
     name: &'a str,
     status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1308,7 +1328,7 @@ struct TestResultEvent<'a> {
 
 #[derive(serde::Serialize)]
 struct SuiteFinishedEvent<'a> {
-    contract: &'a str,
+    suite: &'a str,
     passed: usize,
     failed: usize,
     skipped: usize,
@@ -1317,7 +1337,7 @@ struct SuiteFinishedEvent<'a> {
 
 #[derive(serde::Serialize)]
 struct WarningEvent<'a> {
-    contract: &'a str,
+    suite: &'a str,
     code: &'static str,
     message: &'a str,
 }
@@ -1331,7 +1351,7 @@ const fn status_str(status: TestStatus) -> &'static str {
 }
 
 fn emit_test_result_event(
-    contract: &str,
+    suite: &str,
     name: &str,
     result: &crate::result::TestResult,
 ) -> Result<()> {
@@ -1340,7 +1360,7 @@ fn emit_test_result_event(
         "forge.test",
         "test_result",
         TestResultEvent {
-            contract,
+            suite,
             name,
             status: status_str(result.status),
             reason: result.reason.as_deref(),
@@ -1350,28 +1370,28 @@ fn emit_test_result_event(
     Ok(())
 }
 
-fn emit_suite_finished_event(contract: &str, suite: &SuiteResult) -> Result<()> {
+fn emit_suite_finished_event(suite: &str, result: &SuiteResult) -> Result<()> {
     foundry_cli::json::print_stream_record(
         crate::introspect::TEST_EVENT_SCHEMA,
         "forge.test",
         "suite_finished",
         SuiteFinishedEvent {
-            contract,
-            passed: suite.passed(),
-            failed: suite.failed(),
-            skipped: suite.skipped(),
-            duration_ms: suite.duration.as_millis(),
+            suite,
+            passed: result.passed(),
+            failed: result.failed(),
+            skipped: result.skipped(),
+            duration_ms: result.duration.as_millis(),
         },
     )?;
     Ok(())
 }
 
-fn emit_warning_event(contract: &str, message: &str) -> Result<()> {
+fn emit_warning_event(suite: &str, message: &str) -> Result<()> {
     foundry_cli::json::print_stream_record(
         crate::introspect::TEST_EVENT_SCHEMA,
         "forge.test",
         "warning",
-        WarningEvent { contract, code: foundry_cli::diagnostic::test::WARNING, message },
+        WarningEvent { suite, code: foundry_cli::diagnostic::test::WARNING, message },
     )?;
     Ok(())
 }

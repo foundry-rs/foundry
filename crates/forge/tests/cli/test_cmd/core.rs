@@ -129,19 +129,19 @@ contract MachinePassTest is Test {
         let ts = v["ts"].as_str().unwrap_or_else(|| panic!("missing ts on line: {line}"));
         chrono::DateTime::parse_from_rfc3339(ts)
             .unwrap_or_else(|e| panic!("ts `{ts}` not RFC 3339 on line {line}: {e}"));
-        let contract = v["contract"].as_str().unwrap_or_else(|| panic!("missing contract: {line}"));
+        let suite = v["suite"].as_str().unwrap_or_else(|| panic!("missing suite: {line}"));
         match v["kind"].as_str().unwrap_or("") {
             "test_result" => {
                 assert!(
-                    !closed_suites.contains(contract),
-                    "test_result for `{contract}` after its suite_finished: {line}"
+                    !closed_suites.contains(suite),
+                    "test_result for `{suite}` after its suite_finished: {line}"
                 );
                 saw_test_result = true;
             }
             "suite_finished" => {
                 assert!(
-                    closed_suites.insert(contract.to_string()),
-                    "duplicate suite_finished for `{contract}`: {line}"
+                    closed_suites.insert(suite.to_string()),
+                    "duplicate suite_finished for `{suite}`: {line}"
                 );
                 saw_suite_finished = true;
             }
@@ -323,6 +323,45 @@ forgetest_init!(machine_mode_rejects_watch, |_prj, cmd| {
     assert_eq!(assert.get_output().status.code(), Some(2));
     let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
     assert!(msg.contains("--watch"), "missing --watch mention: {envelope}");
+});
+
+// Warning duality: same `code`/`message`/`suite` on stream + envelope surfaces.
+forgetest_init!(machine_mode_warning_appears_in_stream_and_envelope, |prj, cmd| {
+    // Mis-cased `setup()` triggers a SuiteResult warning.
+    prj.add_test(
+        "MachineWarning.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract MachineWarningTest is Test {
+    function setup() public {}
+    function testPasses() public { assertTrue(true); }
+}
+"#,
+    );
+    let assert = cmd.args(["--machine", "test"]).assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+
+    let mut stream_warning: Option<Value> = None;
+    for line in &lines[..lines.len() - 1] {
+        let v: Value = serde_json::from_str(line).unwrap();
+        if v["kind"] == "warning" {
+            stream_warning = Some(v);
+            break;
+        }
+    }
+    let stream_warning = stream_warning.expect("no stream warning event emitted");
+    assert_eq!(stream_warning["code"], "test.warning");
+    let stream_message = stream_warning["message"].as_str().unwrap();
+    let stream_suite = stream_warning["suite"].as_str().unwrap();
+
+    let envelope: Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+    let envelope_warning = envelope["warnings"]
+        .as_array()
+        .and_then(|ws| ws.iter().find(|w| w["code"] == "test.warning"))
+        .expect("envelope warnings[] missing test.warning entry");
+    assert_eq!(envelope_warning["message"].as_str().unwrap(), stream_message);
+    assert_eq!(envelope_warning["details"]["suite"].as_str().unwrap(), stream_suite);
 });
 
 forgetest_init!(payment_failure, |prj, cmd| {
