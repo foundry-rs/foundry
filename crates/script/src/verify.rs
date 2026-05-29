@@ -164,6 +164,7 @@ impl VerifyBundle {
                     root: None,
                     verifier: self.verifier.clone(),
                     via_ir: self.via_ir,
+                    license_type: None,
                     evm_version: Some(evm_version),
                     show_standard_json_input: false,
                     guess_constructor_args: false,
