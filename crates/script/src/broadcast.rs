@@ -19,7 +19,7 @@ use alloy_provider::{Provider, RootProvider, utils::Eip1559Estimation};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer::Signature;
 use eyre::{Context, Result, bail};
-use forge_script_sequence::ScriptSequence;
+use forge_script_sequence::{ScriptSequence, TransactionWithMetadata};
 use forge_verify::provider::VerificationProviderType;
 use foundry_cheatcodes::Wallets;
 use foundry_cli::utils::{has_batch_support, has_different_gas_calc};
@@ -433,6 +433,12 @@ fn remaining_transactions<N: Network>(
     sequence.transactions().skip(remaining_transaction_start(sequence))
 }
 
+fn remaining_transactions_with_indices<N: Network>(
+    sequence: &ScriptSequence<N>,
+) -> impl Iterator<Item = (usize, &TransactionWithMetadata<N>)> + '_ {
+    sequence.transactions.iter().enumerate().skip(remaining_transaction_start(sequence))
+}
+
 /// Represents how to send _all_ transactions
 pub enum SendTransactionsKind<N: Network> {
     /// Send via `eth_sendTransaction` and rely on the  `from` address being unlocked.
@@ -690,11 +696,7 @@ impl<FEN: FoundryEvmNetwork> BundledState<FEN> {
 
                 // Iterate through transactions, matching the `from` field with the associated
                 // wallet. Then send the transaction. Panics if we find a unknown `from`
-                let transactions = sequence
-                    .transactions
-                    .iter()
-                    .enumerate()
-                    .skip(already_broadcasted)
+                let transactions = remaining_transactions_with_indices(sequence)
                     .map(|(sequence_index, tx_with_metadata)| {
                         let is_fixed_gas_limit = tx_with_metadata.is_fixed_gas_limit;
 
@@ -1236,7 +1238,6 @@ mod tests {
     use alloy_primitives::{B256, Bloom, address};
     use alloy_rpc_types::TransactionReceipt;
     use alloy_signer::Signer;
-    use forge_script_sequence::TransactionWithMetadata;
     use foundry_common::tempo::{KeyType, SessionEntry, SessionKeyMaterial, SessionStatus};
 
     const ROOT_PRIVATE_KEY: &str =
@@ -1254,16 +1255,23 @@ mod tests {
         };
         let mut sequence = ScriptSequence::<Ethereum> {
             transactions: [script_tx(), script_tx(), script_tx(), script_tx()].into(),
+            receipts: vec![receipt()],
             ..Default::default()
         };
 
+        let remaining_sequence_indices = remaining_transactions_with_indices(&sequence)
+            .map(|(sequence_index, _)| sequence_index)
+            .collect::<Vec<_>>();
+        assert_eq!(remaining_sequence_indices, vec![1, 2, 3]);
+
         let completions = [
-            (3, B256::repeat_byte(0x22)),
-            (1, B256::repeat_byte(0x00)),
-            (2, B256::repeat_byte(0x11)),
+            (remaining_sequence_indices[2], B256::repeat_byte(0x22)),
+            (remaining_sequence_indices[0], B256::repeat_byte(0x00)),
+            (remaining_sequence_indices[1], B256::repeat_byte(0x11)),
         ];
 
-        for (sequence_index, tx_hash) in completions {
+        for (completion_order, (sequence_index, tx_hash)) in completions.into_iter().enumerate() {
+            assert_ne!(sequence.receipts.len() + completion_order, sequence_index);
             sequence.add_pending(sequence_index, tx_hash);
         }
 
