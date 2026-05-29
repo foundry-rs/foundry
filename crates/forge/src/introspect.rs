@@ -52,10 +52,7 @@ static BUILD_EXIT_CODES: &[ExitCodeInfo] = &[
     },
 ];
 
-/// Exit codes `forge test` may emit under `--machine`. `TestFailure` is the
-/// canonical "tests ran cleanly but at least one failed" signal that lets
-/// agents distinguish a test failure from an infrastructure error without
-/// parsing the envelope.
+/// Exit codes `forge test` may emit under `--machine`.
 static TEST_EXIT_CODES: &[ExitCodeInfo] = &[
     ExitCodeInfo {
         code: ExitCode::Success.to_i32(),
@@ -130,12 +127,8 @@ static ENTRIES: &[RegistryEntry] = &[
                 reads_stdin: false,
                 supports_output_path: false,
                 requires_project: true,
-                // `forge test` writes artifacts, run-failure state, and gas
-                // snapshots, and routinely performs network reads (`--fork-url`,
-                // configured `eth_rpc_url`, trace lookups). `Capabilities`
-                // reports only the highest-impact side effect, so we declare
-                // `Network` to subsume the always-present `FsWrite`. Not
-                // `ChainWrite`: `forge test` does not broadcast user txs.
+                // `Network` subsumes the always-present `FsWrite`; `forge
+                // test` does not broadcast user txs, so not `ChainWrite`.
                 side_effects: SideEffects::Network,
                 long_running: true,
                 stateful: false,

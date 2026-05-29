@@ -141,10 +141,8 @@ pub fn bail_machine_usage(message: impl Into<String>) -> ! {
     std::process::exit(ExitCode::Usage.to_i32());
 }
 
-/// Like [`bail_machine_usage`] but attaches structured `details` to the
-/// emitted [`JsonMessage`]. Use when the rejection carries machine-parseable
-/// context (e.g. a list of conflicting flag names) so agents do not have
-/// to parse the prose `message` to react.
+/// Like [`bail_machine_usage`] but attaches structured `details` so agents
+/// can react without parsing the prose `message`.
 pub fn bail_machine_usage_with_details(
     message: impl Into<String>,
     details: serde_json::Value,

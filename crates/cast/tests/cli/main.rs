@@ -3517,6 +3517,11 @@ forgetest_async!(cast_call_machine_mode_rejects_unsupported_flags, |_prj, cmd| {
     assert_eq!(assert.get_output().status.code(), Some(2));
     let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
     assert!(msg.contains("--trace"), "missing --trace mention: {envelope}");
+    assert_eq!(
+        envelope["errors"][0]["details"]["unsupported_flags"],
+        serde_json::json!(["--trace"]),
+        "missing structured unsupported_flags details: {envelope}"
+    );
 });
 
 // Transport/connectivity failures (here: unreachable RPC URL) emit a typed

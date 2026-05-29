@@ -14,15 +14,8 @@ fn sigint(pid: u32) {
     assert!(status.success(), "failed to deliver SIGINT to pid {pid}");
 }
 
-/// Spawns `anvil` with `--port 0` and the given extra args, waits for the
-/// startup handshake, then returns the running child.
-///
-/// In normal mode anvil emits a human-readable "Listening on" banner on
-/// stdout, which is the handshake we wait for. Under `--machine` the shell
-/// is forced to `Quiet` (no human prints reach stdout) and the structured
-/// `session_start` record is a follow-up PR, so there is no on-stdout
-/// handshake to wait for: we fall back to a fixed grace period long enough
-/// for the bind to complete.
+/// Spawns `anvil --port 0` with extra args and waits for the startup
+/// handshake before returning the running child.
 fn spawn_anvil(extra: &[&str]) -> (Child, BufReader<std::process::ChildStdout>) {
     let bin = env!("CARGO_BIN_EXE_anvil");
     let mut cmd = Command::new(bin);
@@ -31,11 +24,9 @@ fn spawn_anvil(extra: &[&str]) -> (Child, BufReader<std::process::ChildStdout>) 
     let stdout = BufReader::new(child.stdout.take().unwrap());
 
     if extra.contains(&"--machine") {
-        // No on-stdout startup record yet under `--machine`; give anvil time
-        // to bind AND register its ctrlc handler before returning so the
-        // SIGINT lands on the installed handler rather than the default
-        // termination handler. 5s is generous but matches the upper bound
-        // of cold-start under a debug build on a busy CI runner.
+        // `--machine` silences the "Listening on" banner and the structured
+        // `session_start` handshake is not yet implemented; fall back to a
+        // fixed grace period for bind + ctrlc-handler registration.
         std::thread::sleep(Duration::from_secs(5));
         return (child, stdout);
     }

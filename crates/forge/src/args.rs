@@ -63,9 +63,7 @@ pub fn run_command(args: Forge) -> Result<()> {
     // Run the subcommand.
     match args.cmd {
         ForgeSubcommand::Test(cmd) => {
-            // Preflight runs before the watcher dispatch so `--watch` (and
-            // every other unsupported flag) is rejected at the top level
-            // rather than swallowed by the watch loop.
+            // Preflight before watcher dispatch so `--watch` is rejected too.
             cmd.reject_machine_unsupported_flags()?;
             if cmd.is_watch() {
                 global.block_on(watch::watch_test(cmd))
@@ -163,26 +161,17 @@ pub fn run_command(args: Forge) -> Result<()> {
 }
 
 /// Emit the terminal `forge test` envelope and exit appropriately under
-/// `--machine`. Bypasses [`TestOutcome::ensure_ok`]'s human output entirely;
-/// the agent stream owns stdout for the run.
+/// `--machine`. Bypasses [`TestOutcome::ensure_ok`]'s human output.
 fn finalize_test_machine_mode(outcome: TestOutcome, wall_clock: std::time::Duration) -> Result<()> {
     let summary = TestSummaryData::from_outcome(&outcome, wall_clock);
     let warnings = aggregate_test_warnings(&outcome);
 
-    // `--allow-failure` opts into "test failures don't fail the command".
-    // Preserve that legacy contract under `--machine`: emit a success
-    // envelope and exit 0 even if `summary.failed > 0`. Agents that need to
-    // detect tolerated failures inspect `data.failed` on the success
-    // envelope; the contract is documented on `ExitCode::Success` in
-    // `crates/forge/src/introspect.rs`.
+    // `--allow-failure`: success envelope + exit 0 even if `summary.failed > 0`.
     if outcome.allow_failure || outcome.failed() == 0 {
         print_json(&JsonEnvelope::success_with_warnings(summary, warnings))?;
         return Ok(());
     }
-    // `TestSummaryData` is `usize` + `u128`; serialization is infallible.
-    // Use `expect` so any future shape change that breaks this invariant
-    // fails loudly instead of silently dropping the details to null.
-    let details = serde_json::to_value(&summary).expect("TestSummaryData serialization");
+    let details = serde_json::to_value(&summary).expect("TestSummaryData is plain scalar fields");
     let failing_suites = outcome.results.values().filter(|s| s.failed() > 0).count();
     let message = format!(
         "{} test(s) failed across {} failing suite(s) (out of {} ran)",
@@ -198,8 +187,7 @@ fn finalize_test_machine_mode(outcome: TestOutcome, wall_clock: std::time::Durat
     std::process::exit(foundry_cli::ExitCode::TestFailure.to_i32());
 }
 
-/// Collect every `SuiteResult.warnings` string into structured envelope
-/// messages keyed by the stable `test.warning` code.
+/// Flatten per-suite warnings into envelope messages keyed by `test.warning`.
 fn aggregate_test_warnings(outcome: &TestOutcome) -> Vec<JsonMessage> {
     outcome
         .results

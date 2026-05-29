@@ -190,7 +190,9 @@ impl BuildArgs {
                 .filter(|e| e.is_error())
                 .map(|e| JsonMessage::error(SOLC_ERROR, e.to_string()))
                 .collect();
-            print_json(&JsonEnvelope::<()>::failure(errors))?;
+            // Best-effort: bubbling via `?` on a broken stdout would demote
+            // the canonical `Build (4)` exit to `GenericError (1)`.
+            let _ = print_json(&JsonEnvelope::<()>::failure(errors));
             std::process::exit(ExitCode::Build.to_i32());
         }
 

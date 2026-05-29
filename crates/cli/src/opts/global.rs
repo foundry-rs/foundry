@@ -140,18 +140,8 @@ impl GlobalArgs {
 
     /// Create a new shell instance.
     pub fn shell(&self) -> Shell {
-        // `--machine` owns stdout; force the global shell to Quiet so every
-        // `sh_println!` / `sh_warn!` / `sh_err!` site becomes a no-op.
-        // Explicit machine output (envelopes, NDJSON records) goes through
+        // `--machine` forces Quiet; structured output goes through
         // `print_json` / `print_stream_record`, which bypass the quiet check.
-        //
-        // Consequence: any binary or subcommand that has NOT been adopted
-        // into the agent contract will produce zero stdout and zero stderr
-        // under `--machine` — appearing completely silent / hung from the
-        // agent's perspective. Adoption work for a new command MUST wire up
-        // a session_start record, NDJSON stream events, and/or a terminal
-        // envelope so the agent has something to observe. See
-        // `docs/agents/spec.md` for the per-mode contract.
         let mode = match self.quiet || self.machine {
             true => OutputMode::Quiet,
             false => OutputMode::Normal,

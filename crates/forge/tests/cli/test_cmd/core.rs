@@ -97,12 +97,8 @@ Tip: Run `forge test --rerun` to retry only the 2 failed tests
 "#]]);
 });
 
-// `forge --machine test` emits NDJSON: per-test events, suite_finished
-// events, terminating in a success envelope. Exercises the canonical
-// passing-tests path with a small fixture suite and asserts the contract
-// shape (schema_id / command_id / RFC 3339 ts), per-suite ordering
-// (`test_result*` then `suite_finished` then no more `test_result` for
-// that suite), and the terminal envelope payload.
+// `forge --machine test` on passing tests: NDJSON stream + success envelope.
+// Asserts record shape, per-suite ordering, and envelope payload.
 forgetest_init!(machine_mode_emits_ndjson_stream, |prj, cmd| {
     use std::collections::HashSet;
     prj.add_test(
@@ -121,10 +117,7 @@ contract MachinePassTest is Test {
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
     assert!(lines.len() >= 2, "expected stream + envelope lines, got: {stdout}");
 
-    // Every record parses as JSON and stream events carry the spec fields.
-    // Per-suite ordering: `test_result`s for a suite all precede that
-    // suite's `suite_finished`. Once `suite_finished` for a contract has
-    // fired, no further `test_result` may target that contract.
+    // Per-suite ordering: no `test_result` for a suite after its `suite_finished`.
     let mut saw_test_result = false;
     let mut saw_suite_finished = false;
     let mut closed_suites: HashSet<String> = HashSet::new();
@@ -133,7 +126,6 @@ contract MachinePassTest is Test {
             .unwrap_or_else(|e| panic!("non-json stream line: {line}: {e}"));
         assert_eq!(v["schema_id"], "foundry:forge.test.event@v1");
         assert_eq!(v["command_id"], "forge.test");
-        // `ts` must round-trip through RFC 3339 — agents pin this contract.
         let ts = v["ts"].as_str().unwrap_or_else(|| panic!("missing ts on line: {line}"));
         chrono::DateTime::parse_from_rfc3339(ts)
             .unwrap_or_else(|e| panic!("ts `{ts}` not RFC 3339 on line {line}: {e}"));
@@ -153,7 +145,6 @@ contract MachinePassTest is Test {
                 );
                 saw_suite_finished = true;
             }
-            // `warning` is allowed inter-test under the spec; nothing to assert here.
             "warning" => {}
             other => panic!("unexpected event kind `{other}` on line: {line}"),
         }
@@ -170,8 +161,7 @@ contract MachinePassTest is Test {
     assert!(envelope["data"]["suites"].as_u64().is_some(), "missing suites: {envelope}");
 });
 
-// On a failing test, `forge --machine test` ends with an error envelope and
-// exits with `ExitCode::TestFailure` (5).
+// Failing test → error envelope + exit `TestFailure (5)`.
 forgetest_init!(machine_mode_failing_test_emits_error_envelope, |prj, cmd| {
     prj.add_test(
         "MachineFail.t.sol",
@@ -194,7 +184,7 @@ contract MachineFailTest is Test {
     assert!(failed >= 1, "expected at least one failed test in details: {envelope}");
 });
 
-// `--machine` rejects flags that would corrupt the NDJSON stream contract.
+// Rejection envelope: stable `code`, exit code, structured `details.unsupported_flags`.
 forgetest_init!(machine_mode_rejects_unsupported_flags, |_prj, cmd| {
     let assert = cmd.args(["--machine", "test", "--gas-report"]).assert_failure();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
@@ -205,12 +195,37 @@ forgetest_init!(machine_mode_rejects_unsupported_flags, |_prj, cmd| {
     assert_eq!(assert.get_output().status.code(), Some(2));
     let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
     assert!(msg.contains("--gas-report"), "missing --gas-report mention: {envelope}");
+    assert_eq!(
+        envelope["errors"][0]["details"]["unsupported_flags"],
+        serde_json::json!(["--gas-report"]),
+        "missing structured unsupported_flags details: {envelope}"
+    );
 });
 
-// Compile errors at the main compile site (empty filter → precompile is
-// skipped) must surface as `compiler.solc.error` + `Build (4)` under
-// `--machine`, not as the generic `cli.unknown` + exit `1` that an
-// untyped `eyre::bail!("Compilation failed")` would produce.
+// `--allow-failure`: success envelope with `data.failed > 0` and exit 0.
+forgetest_init!(machine_mode_allow_failure_emits_success_envelope, |prj, cmd| {
+    prj.add_test(
+        "MachineAllowFailure.t.sol",
+        r#"
+import "forge-std/Test.sol";
+contract MachineAllowFailureTest is Test {
+    function testAlwaysFails() public { assertTrue(false); }
+}
+"#,
+    );
+    let assert = cmd.args(["--machine", "test", "--allow-failure"]).assert_success();
+    assert_eq!(assert.get_output().status.code(), Some(0));
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
+    let envelope: Value = serde_json::from_str(lines.last().unwrap())
+        .unwrap_or_else(|e| panic!("trailing line not envelope: {stdout}: {e}"));
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["errors"], serde_json::json!([]));
+    let failed = envelope["data"]["failed"].as_u64().unwrap_or(0);
+    assert!(failed >= 1, "expected at least one tolerated failure in data: {envelope}");
+});
+
+// Main-compile errors → `compiler.solc.error` + `Build (4)`, not `cli.unknown`.
 forgetest_init!(machine_mode_compile_failure_emits_typed_envelope, |prj, cmd| {
     prj.add_test(
         "BadCompile.t.sol",
@@ -230,9 +245,7 @@ contract BadCompileTest is Test {
     assert_eq!(envelope["errors"][0]["code"], "compiler.solc.error");
 });
 
-// Same contract but with a filter set so `get_sources_to_compile` runs the
-// precompile path before the main compile. Both sites must emit the same
-// typed envelope, not the generic `cli.unknown` path.
+// Same contract with a filter so the precompile path runs; same typed envelope.
 forgetest_init!(machine_mode_precompile_failure_emits_typed_envelope, |prj, cmd| {
     prj.add_test(
         "BadCompilePrecompile.t.sol",
@@ -253,10 +266,7 @@ contract BadCompilePrecompileTest is Test {
     assert_eq!(envelope["errors"][0]["code"], "compiler.solc.error");
 });
 
-// `live_logs = true` in foundry.toml would normally print console.log output
-// straight to stdout, corrupting the NDJSON stream. Under `--machine` the
-// config knob must be silently neutralized (the CLI equivalent `--live-logs`
-// is rejected separately in `machine_mode_rejects_unsupported_flags`).
+// `live_logs = true` in foundry.toml is silently overridden under `--machine`.
 forgetest_init!(machine_mode_overrides_live_logs_config, |prj, cmd| {
     prj.update_config(|c| c.live_logs = true);
     prj.add_test(
@@ -275,16 +285,13 @@ contract LiveLogsTest is Test {
         !stdout.contains("HUMAN_PROSE_LINE"),
         "raw console.log leaked to stdout under --machine: {stdout}"
     );
-    // Every stdout line is valid JSON; no human prose survived.
     for line in stdout.lines().filter(|l| !l.is_empty()) {
         serde_json::from_str::<Value>(line)
             .unwrap_or_else(|e| panic!("non-json stdout line `{line}`: {e}"));
     }
 });
 
-// `show_progress = true` in foundry.toml would enable progress mode in
-// `multi_runner`, which batches results and prints progress UI — neither
-// compatible with real-time NDJSON streaming. Override must be silent.
+// `show_progress = true` in foundry.toml is silently overridden under `--machine`.
 forgetest_init!(machine_mode_overrides_show_progress_config, |prj, cmd| {
     prj.update_config(|c| c.show_progress = true);
     prj.add_test(
@@ -299,16 +306,13 @@ contract ProgressTest is Test {
     );
     let assert = cmd.args(["--machine", "test"]).assert_success();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-    // Every stdout line must be valid JSON; progress bars and human text would not be.
     for line in stdout.lines().filter(|l| !l.is_empty()) {
         serde_json::from_str::<Value>(line)
             .unwrap_or_else(|e| panic!("non-json stdout line `{line}`: {e}"));
     }
 });
 
-// `--watch` is dispatched separately from `cmd.run()`, so the rejection
-// preflight has to live at the top-level entry. This regression guards
-// against the dispatch boundary moving back under the rejection path.
+// `--watch` is dispatched before `cmd.run()`; guards the top-level preflight.
 forgetest_init!(machine_mode_rejects_watch, |_prj, cmd| {
     let assert = cmd.args(["--machine", "test", "--watch"]).assert_failure();
     let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();

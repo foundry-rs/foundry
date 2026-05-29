@@ -242,10 +242,12 @@ outcome, the warning is emitted **twice**:
 2. as an entry in the terminal envelope's `warnings[]` — for the
    end-of-run summary
 
-Both surfaces carry the same `code`/`message`/`details` for the same logical
-warning. Agents consuming both surfaces should de-duplicate by
-`(suite, message)`. The terminal envelope's `warnings[]` is the
-authoritative aggregated set.
+Both surfaces carry the same `code` and `message` for the same logical
+warning. The grouping identifier differs by surface: the stream event
+identifies the suite via the top-level `contract` field; the terminal
+envelope warning identifies it via `details.suite`. Agents consuming
+both surfaces should de-duplicate by `(suite, message)`. The terminal
+envelope's `warnings[]` is the authoritative aggregated set.
 
 ### Concrete shapes (informative, `@v1`)
 

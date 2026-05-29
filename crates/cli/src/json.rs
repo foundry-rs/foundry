@@ -129,42 +129,28 @@ impl JsonMessage {
     }
 }
 
-/// Prints a value as compact, single-line JSON to stdout.
+/// Prints a value as one compact JSON line on stdout and flushes.
 ///
-/// Bypasses the shell verbosity layer (see
-/// [`foundry_common::shell::Shell::is_quiet`]) so neither `--quiet` nor the
-/// `--machine`-induced Quiet mode can suppress structured output the caller
-/// explicitly asked for. Always flushes before returning so that callers
-/// which immediately `std::process::exit` cannot drop the record on a piped
-/// stdout. The trailing newline makes this suitable for NDJSON streams when
-/// each call emits one self-contained JSON record.
+/// Bypasses the shell verbosity layer so `--quiet` cannot suppress structured
+/// output the caller explicitly asked for.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     let s = to_string(value)?;
     let mut shell = foundry_common::shell::Shell::get();
-    // Bind `out()` once so write and flush target the same writer; defensive
-    // against any future `out()` impl that returns a fresh wrapper.
     let out = shell.out();
     writeln!(out, "{s}")?;
     out.flush()?;
     Ok(())
 }
 
-/// One NDJSON record emitted on the stream of a long-running command.
-///
-/// Carries the per-record fields required by `docs/agents/spec.md` §6
-/// (`schema_id`, `command_id`, `kind`, `ts`) and flattens the kind-specific
-/// payload into the same object.
-///
-/// Fields are crate-private so the only construction paths are
-/// [`StreamRecord::new`] and [`print_stream_record`], which guarantee the
-/// `ts` invariant (RFC 3339 with millisecond precision).
+/// One NDJSON record on a long-running command's stream. The kind-specific
+/// `payload` is flattened into the same object alongside the spec fields
+/// (`schema_id`, `command_id`, `kind`, `ts`).
 #[derive(Clone, Debug, Serialize)]
 pub struct StreamRecord<T> {
     pub(crate) schema_id: &'static str,
     pub(crate) command_id: &'static str,
     pub(crate) kind: &'static str,
-    /// RFC 3339 timestamp with millisecond precision, UTC. Fixed-width
-    /// substring keeps stream parsers and log search regexes stable.
+    /// RFC 3339 UTC with millisecond precision.
     pub(crate) ts: String,
     #[serde(flatten)]
     pub(crate) payload: T,
