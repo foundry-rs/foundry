@@ -669,6 +669,7 @@ pub fn replace_inline_links(text: &str, name_to_page: &NameToPage, current_page:
                     // Sanitize to ASCII alphanumerics and `_` only, Solidity identifiers
                     // never contain other characters, so this drops any injection attempt.
                     if let Some(member) = part {
+                        let member = member.split('-').next().unwrap_or(member);
                         let safe_member: String = member
                             .chars()
                             .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
@@ -731,11 +732,16 @@ fn parse_inline_link(s: &str) -> Option<(usize, &str, Option<&str>, Option<&str>
     let inner = &s[..close];
 
     // inner = "[xref-]Ident[-part]"
-    let (raw_ident, raw_part) = if let Some(dash) = inner.rfind('-') {
-        // Heuristic: only split on dash if the suffix looks like a member name.
+    let (raw_ident, raw_part) = if let Some(rest) = inner.strip_prefix("xref-") {
+        if let Some(dash) = rest.find('-') {
+            (&inner[..("xref-".len() + dash)], Some(&rest[dash + 1..]))
+        } else {
+            (inner, None)
+        }
+    } else if let Some(dash) = inner.find('-') {
         let candidate_ident = &inner[..dash];
         let candidate_part = &inner[dash + 1..];
-        if candidate_ident.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        if candidate_ident.chars().all(|c| c.is_alphanumeric() || c == '_')
             && !candidate_part.is_empty()
         {
             (candidate_ident, Some(candidate_part))
@@ -775,4 +781,25 @@ fn page_link(page: &Path, _current_page: &Path) -> String {
     // Strip .mdx extension and produce an absolute path from the pages root.
     let without_ext = page.with_extension("");
     format!("/{}", without_ext.to_slash_lossy())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_signature_xref_links_member_anchor() {
+        let mut name_to_page = NameToPage::new();
+        name_to_page
+            .by_name
+            .insert("ERC721".to_string(), vec![PathBuf::from("src/contract.ERC721.mdx")]);
+
+        let out = replace_inline_links(
+            "See {xref-ERC721-_safeMint-address-uint256-}.",
+            &name_to_page,
+            Path::new("src/contract.Child.mdx"),
+        );
+
+        assert_eq!(out, "See [ERC721._safeMint-address-uint256-](/src/contract.ERC721#_safeMint).");
+    }
 }

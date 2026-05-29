@@ -344,11 +344,32 @@ fn escape_mdx_outside_code_fences(text: &str) -> String {
             out.push_str(line);
         } else {
             // Escape `{` and bare `<` (not already `&lt;` or a known entity).
+            let mut inline_code_ticks = 0usize;
+            let mut pending_ticks = 0usize;
             for ch in line.chars() {
-                match ch {
-                    '{' => out.push_str(r"\{"),
-                    '<' => out.push_str("&lt;"),
-                    c => out.push(c),
+                if ch == '`' {
+                    pending_ticks += 1;
+                    out.push(ch);
+                    continue;
+                }
+
+                if pending_ticks > 0 {
+                    if inline_code_ticks == 0 {
+                        inline_code_ticks = pending_ticks;
+                    } else if inline_code_ticks == pending_ticks {
+                        inline_code_ticks = 0;
+                    }
+                    pending_ticks = 0;
+                }
+
+                if inline_code_ticks > 0 {
+                    out.push(ch);
+                } else {
+                    match ch {
+                        '{' => out.push_str(r"\{"),
+                        '<' => out.push_str("&lt;"),
+                        c => out.push(c),
+                    }
                 }
             }
         }
@@ -572,6 +593,7 @@ mod tests {
 # Title
 
 Plain text with {placeholder} and <TOKEN> here.
+Inline code keeps `forge create <Contract>` and `{OWNER}` unchanged.
 
 ```solidity
 contract Foo {
@@ -595,6 +617,8 @@ End {brace}.
         assert!(out.contains(r"\{another}"));
         assert!(out.contains("&lt;bar/>"));
         assert!(out.contains(r"\{brace}"));
+        assert!(out.contains("`forge create <Contract>`"), "inline code span must be unchanged");
+        assert!(out.contains("`{OWNER}`"), "inline code span braces must be unchanged");
 
         // Inside ``` fences: untouched.
         assert!(

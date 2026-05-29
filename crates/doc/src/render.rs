@@ -968,7 +968,7 @@ fn write_param_table(
     // Positional fall-back to `@custom:name <name>` for unnamed params
     // (parameters only, return names aren't substituted).
     let mut unnamed_iter = comments.unnamed_param_names.iter();
-    for var in params.iter() {
+    for (index, var) in params.iter().enumerate() {
         let name = match var.name {
             Some(n) => n.as_str().to_string(),
             None if !is_return => unnamed_iter.next().cloned().unwrap_or_else(|| "_".to_string()),
@@ -976,7 +976,13 @@ fn write_param_table(
         };
         let ty = format!("`{}`", ctx.snippet(var.ty.span).trim());
         let desc = if is_return {
-            comments.returns.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str()).unwrap_or("")
+            let by_name =
+                comments.returns.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str());
+            if by_name.is_none() && var.name.is_none() {
+                comments.returns.get(index).map(|(_, d)| d.as_str()).unwrap_or("")
+            } else {
+                by_name.unwrap_or("")
+            }
         } else {
             comments.params.iter().find(|(n, _)| n == &name).map(|(_, d)| d.as_str()).unwrap_or("")
         };

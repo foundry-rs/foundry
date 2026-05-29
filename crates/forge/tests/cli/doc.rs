@@ -313,6 +313,10 @@ contract Safe is IUnsafe {
         content.contains("&lt;none&gt;"),
         "unnamed return should render as `&lt;none&gt;`, found:\n{content}"
     );
+    assert!(
+        content.contains("| &lt;none&gt; | `uint256` | new balance |"),
+        "unnamed return description should be preserved positionally, found:\n{content}"
+    );
 });
 
 // Test that inline-link labels containing MDX-sensitive characters are escaped.
