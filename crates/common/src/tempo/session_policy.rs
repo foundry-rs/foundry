@@ -7,6 +7,7 @@ use super::{
 use alloy_primitives::{Address, B256, U256, hex};
 use alloy_rlp::Encodable;
 use alloy_signer_local::PrivateKeySigner;
+use eyre::ensure;
 use std::{fmt, num::NonZeroU64};
 use tempo_primitives::transaction::{
     CallScope, KeyAuthorization, SelectorRule, SignatureType, SignedKeyAuthorization, TokenLimit,
@@ -44,31 +45,30 @@ pub struct PreparedSessionAuthorization {
 impl SessionAuthorizationRequest {
     /// Validate this request and build the unsigned Tempo [`KeyAuthorization`].
     pub fn prepare(&self, now: u64) -> eyre::Result<PreparedSessionAuthorization> {
-        eyre::ensure!(self.session_id != B256::ZERO, "session id cannot be zero");
-        eyre::ensure!(self.root_account != Address::ZERO, "session root account cannot be zero");
-        eyre::ensure!(self.chain_id != 0, "session chain id cannot be zero");
-        eyre::ensure!(self.key_address != Address::ZERO, "session key address cannot be zero");
-        eyre::ensure!(
+        ensure!(self.session_id != B256::ZERO, "session id cannot be zero");
+        ensure!(self.root_account != Address::ZERO, "session root account cannot be zero");
+        ensure!(self.chain_id != 0, "session chain id cannot be zero");
+        ensure!(self.key_address != Address::ZERO, "session key address cannot be zero");
+        ensure!(
             self.key_address != self.root_account,
             "session key address must differ from the root account"
         );
 
         let expiry = self.expiry.get();
-        eyre::ensure!(
+        ensure!(
             expiry > now,
             "session expiry {expiry} must be greater than current timestamp {now}"
         );
-        eyre::ensure!(!self.scope.is_empty(), "session authorization requires a call scope");
+        ensure!(!self.scope.is_empty(), "session authorization requires a call scope");
 
-        let mut authorization = KeyAuthorization::unrestricted(
+        let authorization = KeyAuthorization::unrestricted(
             self.chain_id,
             SignatureType::Secp256k1,
             self.key_address,
         )
-        .with_expiry(expiry);
-        authorization =
-            authorization.with_limits(session_spend_limits_to_authorization(&self.spend_limits));
-        authorization = authorization.with_allowed_calls(self.scope.clone());
+        .with_expiry(expiry)
+        .with_limits(session_spend_limits_to_authorization(&self.spend_limits))
+        .with_allowed_calls(self.scope.clone());
 
         Ok(PreparedSessionAuthorization {
             entry: SessionEntry {
@@ -94,7 +94,7 @@ impl PreparedSessionAuthorization {
         session_key: GeneratedSessionKey,
         signed_authorization: &SignedKeyAuthorization,
     ) -> eyre::Result<SessionEntry> {
-        eyre::ensure!(
+        ensure!(
             session_key.address == self.entry.key_address,
             "session key material resolves to {}, expected {}",
             session_key.address,

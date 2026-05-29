@@ -7,7 +7,9 @@ use eyre::ensure;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU64, path::PathBuf};
-use tempo_primitives::transaction::{SignatureType, SignedKeyAuthorization};
+use tempo_primitives::transaction::{
+    CallScope, KeyAuthorization, SelectorRule, SignatureType, SignedKeyAuthorization, TokenLimit,
+};
 
 /// Relative path from Tempo home to the session registry file.
 pub const WALLET_SESSIONS_PATH: &str = "wallet/sessions.toml";
@@ -306,25 +308,26 @@ pub(crate) fn validate_signed_session_authorization(
     expected_key_type: SignatureType,
     authorization: &SignedKeyAuthorization,
 ) -> eyre::Result<()> {
+    let auth = &authorization.authorization;
     ensure!(
-        authorization.authorization.key_id == session.key_address,
+        auth.key_id == session.key_address,
         "session {} key_authorization key_id is {}, expected {}",
         session.session_id,
-        authorization.authorization.key_id,
+        auth.key_id,
         session.key_address
     );
     ensure!(
-        authorization.authorization.chain_id == session.chain_id,
+        auth.chain_id == session.chain_id,
         "session {} key_authorization chain_id is {}, expected {}",
         session.session_id,
-        authorization.authorization.chain_id,
+        auth.chain_id,
         session.chain_id
     );
     ensure!(
-        authorization.authorization.key_type == expected_key_type,
+        auth.key_type == expected_key_type,
         "session {} key_authorization key_type is {:?}, expected {:?}",
         session.session_id,
-        authorization.authorization.key_type,
+        auth.key_type,
         expected_key_type
     );
     let recovered = authorization
@@ -337,16 +340,14 @@ pub(crate) fn validate_signed_session_authorization(
         recovered,
         session.root_account
     );
-    validate_session_authorization_policy(session, authorization)
+    validate_session_authorization_policy(session, auth)
 }
 
 /// Ensures authorization expiry, limits, and call scope match the stored session policy.
 fn validate_session_authorization_policy(
     session: &SessionEntry,
-    authorization: &SignedKeyAuthorization,
+    auth: &KeyAuthorization,
 ) -> eyre::Result<()> {
-    let auth = &authorization.authorization;
-
     let expected_expiry = NonZeroU64::new(session.expiry)
         .ok_or_else(|| eyre::eyre!("session {} has invalid zero expiry", session.session_id))?;
     ensure!(
@@ -402,30 +403,25 @@ struct CanonicalSelectorRule {
 fn session_authorization_limits(
     session: &SessionEntry,
 ) -> eyre::Result<Option<Vec<CanonicalTokenLimit>>> {
-    session
-        .limits
-        .as_deref()
-        .map(|limits| {
-            let mut limits = limits
-                .iter()
-                .map(|limit| {
-                    Ok(CanonicalTokenLimit {
-                        token: limit.currency,
-                        limit: parse_session_limit(&limit.limit)?,
-                        period: 0,
-                    })
-                })
-                .collect::<eyre::Result<Vec<_>>>()?;
-            limits.sort();
-            Ok(limits)
+    let Some(limits) = session.limits.as_deref() else {
+        return Ok(None);
+    };
+    let mut limits = limits
+        .iter()
+        .map(|limit| {
+            Ok(CanonicalTokenLimit {
+                token: limit.currency,
+                limit: parse_session_limit(&limit.limit)?,
+                period: 0,
+            })
         })
-        .transpose()
+        .collect::<eyre::Result<Vec<_>>>()?;
+    limits.sort();
+    Ok(Some(limits))
 }
 
 /// Converts signed authorization limits into canonical form for session comparison.
-fn authorization_limits(
-    limits: &[tempo_primitives::transaction::TokenLimit],
-) -> Vec<CanonicalTokenLimit> {
+fn authorization_limits(limits: &[TokenLimit]) -> Vec<CanonicalTokenLimit> {
     let mut limits = limits
         .iter()
         .map(|limit| CanonicalTokenLimit {
@@ -447,23 +443,21 @@ fn parse_session_limit(raw: &str) -> eyre::Result<U256> {
 
 /// Converts stored session scope into canonical form for authorization comparison.
 fn session_authorization_scope(session: &SessionEntry) -> Option<Vec<CanonicalCallScope>> {
-    session.scope.as_deref().map(|scope| {
-        let mut scope = scope
-            .iter()
-            .map(|scope| CanonicalCallScope {
-                target: scope.target,
-                selector_rules: session_authorization_selector_rules(&scope.selector_rules),
-            })
-            .collect::<Vec<_>>();
-        scope.sort();
-        scope
-    })
+    let mut scope = session
+        .scope
+        .as_deref()?
+        .iter()
+        .map(|scope| CanonicalCallScope {
+            target: scope.target,
+            selector_rules: session_authorization_selector_rules(&scope.selector_rules),
+        })
+        .collect::<Vec<_>>();
+    scope.sort();
+    Some(scope)
 }
 
 /// Converts signed authorization scope into canonical form for session comparison.
-fn authorization_scope(
-    scope: &[tempo_primitives::transaction::CallScope],
-) -> Vec<CanonicalCallScope> {
+fn authorization_scope(scope: &[CallScope]) -> Vec<CanonicalCallScope> {
     let mut scope = scope
         .iter()
         .map(|scope| CanonicalCallScope {
@@ -492,9 +486,7 @@ fn session_authorization_selector_rules(
 }
 
 /// Converts signed authorization selector rules into canonical form for session comparison.
-fn authorization_selector_rules(
-    rules: &[tempo_primitives::transaction::SelectorRule],
-) -> Vec<CanonicalSelectorRule> {
+fn authorization_selector_rules(rules: &[SelectorRule]) -> Vec<CanonicalSelectorRule> {
     let mut rules = rules
         .iter()
         .map(|rule| {
@@ -572,9 +564,7 @@ mod tests {
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use std::{fs, str::FromStr};
-    use tempo_primitives::transaction::{
-        CallScope, KeyAuthorization, PrimitiveSignature, SelectorRule, TokenLimit,
-    };
+    use tempo_primitives::transaction::PrimitiveSignature;
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
