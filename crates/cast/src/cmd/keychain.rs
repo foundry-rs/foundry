@@ -479,7 +479,7 @@ impl KeychainSubcommand {
                     key_address,
                     root_account,
                     to,
-                    selector.map(|selector| selector.0),
+                    selector.map(|s| s.0),
                     recipient,
                     fee_token,
                     tempo,
