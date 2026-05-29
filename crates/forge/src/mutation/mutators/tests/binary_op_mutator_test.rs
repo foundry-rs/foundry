@@ -14,10 +14,7 @@ mutator_tests!(BinaryOpMutator;
     bit_or:                    "x | y"   => Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x ^ y"]);
     bit_xor:                   "x ^ y"   => Some(vec!["x + y", "x - y", "x * y", "x / y", "x % y", "x ** y", "x << y", "x >> y", "x >>> y", "x & y", "x | y"]);
     non_binary:                "a = true" => None;
-    // Compound assignments are intentionally skipped: the current textual
-    // replacement would rewrite `a += b` to `a - b` (dropping the assignment)
-    // instead of `a -= b`, so the mutator must report them as inapplicable.
-    compound_assign_add:       "a += b" => None;
-    compound_assign_sub:       "a -= b" => None;
-    compound_assign_mul:       "a *= b" => None;
+    compound_assign_add:       "a += b" => Some(vec!["a >>= b", "a <<= b", "a >>>= b", "a &= b", "a |= b", "a ^= b", "a -= b", "a **= b", "a *= b", "a /= b", "a %= b"]);
+    compound_assign_sub:       "a -= b" => Some(vec!["a >>= b", "a <<= b", "a >>>= b", "a &= b", "a |= b", "a ^= b", "a += b", "a **= b", "a *= b", "a /= b", "a %= b"]);
+    compound_assign_mul:       "a *= b" => Some(vec!["a >>= b", "a <<= b", "a >>>= b", "a &= b", "a |= b", "a ^= b", "a += b", "a -= b", "a **= b", "a /= b", "a %= b"]);
 );

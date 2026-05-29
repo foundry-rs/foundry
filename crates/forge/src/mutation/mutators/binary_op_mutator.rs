@@ -9,13 +9,7 @@ pub struct BinaryOpMutator;
 impl Mutator for BinaryOpMutator {
     fn generate_mutants(&self, context: &MutationContext<'_>) -> Result<Vec<Mutant>> {
         let expr = context.expr.ok_or_eyre("BinaryOpMutator: no expression")?;
-        // Compound assignments (`a += b`, etc.) are intentionally not mutated
-        // here: the mutation text we build is `"lhs new_op rhs"` and the
-        // replacement span covers the whole assignment, which would silently
-        // rewrite `a += b` to `a - b` and corrupt the test. See
-        // `is_applicable` — those expressions are filtered out up-front so
-        // this case is unreachable, but guard defensively.
-        let (bin_op, _op_span, lhs, rhs) = get_bin_op_parts(expr)?;
+        let (bin_op, _op_span, lhs, rhs, compound_assignment) = get_bin_op_parts(expr)?;
         let op = bin_op.kind;
 
         let operations_bools = vec![
@@ -53,8 +47,11 @@ impl Mutator for BinaryOpMutator {
         let rhs_text = extract_span_text(source, rhs.span);
         let op_str = op.to_str();
 
-        // Build original expression: "lhs op rhs"
-        let original_expr = format!("{lhs_text} {op_str} {rhs_text}");
+        let original_expr = if compound_assignment {
+            format!("{lhs_text} {op_str}= {rhs_text}")
+        } else {
+            format!("{lhs_text} {op_str} {rhs_text}")
+        };
 
         // Use the full expression span for the mutation (not just the operator span)
         let expr_span = context.span;
@@ -68,8 +65,11 @@ impl Mutator for BinaryOpMutator {
             .into_iter()
             .filter(|&kind| kind != op)
             .map(|kind| {
-                // Build mutated expression: "lhs new_op rhs"
-                let mutated_expr = format!("{} {} {}", lhs_text, kind.to_str(), rhs_text);
+                let mutated_expr = if compound_assignment {
+                    format!("{} {}= {}", lhs_text, kind.to_str(), rhs_text)
+                } else {
+                    format!("{} {} {}", lhs_text, kind.to_str(), rhs_text)
+                };
                 Mutant {
                     span: expr_span,
                     mutation: MutationType::BinaryOpExpr { new_op: kind, mutated_expr },
@@ -88,20 +88,20 @@ impl Mutator for BinaryOpMutator {
             return false;
         }
 
-        // We only mutate plain binary expressions. Compound assignments
-        // (`a += b`, `a *= b`, ...) are deliberately excluded: the textual
-        // replacement we build is `"lhs new_op rhs"` over the whole assignment
-        // span, which would rewrite `a += b` into `a - b` (dropping the
-        // assignment) rather than `a -= b`. Until we emit `lhs new_op= rhs`
-        // for the compound case, leave it alone.
-        matches!(ctxt.expr.unwrap().kind, ExprKind::Binary(_, _, _))
+        matches!(
+            ctxt.expr.unwrap().kind,
+            ExprKind::Binary(_, _, _) | ExprKind::Assign(_, Some(_), _)
+        )
     }
 }
 
 /// Extract the binary operator, its span, and LHS/RHS expressions
-fn get_bin_op_parts<'a>(expr: &'a Expr<'a>) -> Result<(BinOp, Span, &'a Expr<'a>, &'a Expr<'a>)> {
+fn get_bin_op_parts<'a>(
+    expr: &'a Expr<'a>,
+) -> Result<(BinOp, Span, &'a Expr<'a>, &'a Expr<'a>, bool)> {
     match &expr.kind {
-        ExprKind::Binary(lhs, op, rhs) => Ok((*op, op.span, lhs, rhs)),
+        ExprKind::Assign(lhs, Some(op), rhs) => Ok((*op, op.span, lhs, rhs, true)),
+        ExprKind::Binary(lhs, op, rhs) => Ok((*op, op.span, lhs, rhs, false)),
         _ => eyre::bail!("BinaryOpMutator: unexpected expression kind"),
     }
 }
