@@ -187,6 +187,11 @@ pub async fn run_mutation_testing(
             continue;
         }
 
+        // Load survived spans for adaptive mutation testing. Only loaded after
+        // we successfully obtained mutants for this build, so a stale survived
+        // cache from a different mutant set is not applied.
+        handler.retrieve_survived_spans(&build_id, &execution_cache_key);
+
         // Sort mutations by span for optimal adaptive testing
         mutants.sort_by(|a, b| {
             a.span.lo().0.cmp(&b.span.lo().0).then_with(|| b.span.hi().0.cmp(&a.span.hi().0))
