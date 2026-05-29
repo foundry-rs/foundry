@@ -43,9 +43,7 @@ use tempo_primitives::transaction::{
 use yansi::Paint;
 
 use crate::cmd::tempo_policy_args::{
-    SelectorArg, parse_limit_spec, parse_period as parse_period_spec,
-    parse_policy_token as parse_policy_token_spec, parse_scope_spec,
-    parse_selector_arg as parse_selector_arg_spec, parse_selector_bytes,
+    parse_limit, parse_period, parse_policy_token, parse_scope, parse_selector_bytes,
 };
 use foundry_cli::utils::{maybe_print_resolved_lane, resolve_lane};
 
@@ -116,8 +114,8 @@ pub enum KeychainSubcommand {
 
         /// Function selector for the TIP-1011 scope check (hex `0x12345678`,
         /// known shorthand like `transfer`, or full signature like `foo(uint256)`).
-        #[arg(long, value_parser = parse_selector_arg, requires = "to")]
-        selector: Option<SelectorArg>,
+        #[arg(long, value_parser = parse_selector_bytes, requires = "to")]
+        selector: Option<[u8; 4]>,
 
         /// Recipient address for the TIP-1011 scope check (per-selector recipient list).
         #[arg(long, value_name = "ADDRESS", requires = "selector")]
@@ -285,8 +283,8 @@ pub enum KeychainPolicySubcommand {
         target: Address,
 
         /// Function selector, full signature, or known TIP-20 shorthand.
-        #[arg(long, value_parser = parse_selector_arg)]
-        selector: SelectorArg,
+        #[arg(long, value_parser = parse_selector_bytes)]
+        selector: [u8; 4],
 
         /// Optional recipient/spender restrictions for selector calls.
         #[arg(long, value_delimiter = ',')]
@@ -393,45 +391,6 @@ const fn wallet_type_name(t: &WalletType) -> &'static str {
     }
 }
 
-/// Parse a `--limit TOKEN:AMOUNT` flag value.
-fn parse_limit(s: &str) -> Result<TokenLimit, String> {
-    let (token, amount) = parse_limit_spec(s)?;
-    Ok(TokenLimit { token, amount, period: 0 })
-}
-
-/// Parse a `--scope TARGET[:SELECTORS[@RECIPIENTS]]` flag value.
-///
-/// Formats:
-/// - `0xAddr` — allow all calls to target
-/// - `0xAddr:transfer,approve` — allow only those selectors (by name or 4-byte hex)
-/// - `0xAddr:transfer@0xRecipient` — selector with recipient restriction
-fn parse_scope(s: &str) -> Result<CallScope, String> {
-    let parsed = parse_scope_spec(s)?;
-    Ok(CallScope {
-        target: parsed.target,
-        selectorRules: parsed
-            .selector_rules
-            .into_iter()
-            .map(|rule| SelectorRule {
-                selector: rule.selector.into(),
-                recipients: rule.recipients,
-            })
-            .collect(),
-    })
-}
-
-fn parse_selector_arg(s: &str) -> Result<SelectorArg, String> {
-    parse_selector_arg_spec(s)
-}
-
-fn parse_policy_token(s: &str) -> Result<Address, String> {
-    parse_policy_token_spec(s)
-}
-
-fn parse_period(s: &str) -> Result<u64, String> {
-    parse_period_spec(s)
-}
-
 /// Represents a single scope entry in JSON format for `--scopes`.
 #[derive(serde::Deserialize)]
 struct JsonCallScope {
@@ -519,7 +478,7 @@ impl KeychainSubcommand {
                     key_address,
                     root_account,
                     to,
-                    selector.map(|s| s.0),
+                    selector,
                     recipient,
                     fee_token,
                     tempo,
@@ -589,7 +548,7 @@ impl KeychainPolicySubcommand {
                     key_address,
                     root_account,
                     target,
-                    selector.0,
+                    selector,
                     recipients,
                     tx,
                     send_tx,
@@ -3255,18 +3214,6 @@ mod tests {
     use std::str::FromStr;
     use tempo_primitives::transaction::{KeyAuthorization, PrimitiveSignature};
 
-    fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
-        let crate::cmd::tempo_policy_args::ParsedScope { selector_rules, .. } =
-            parse_scope_spec(&format!("0x0000000000000000000000000000000000000001:{s}"))?;
-        Ok(selector_rules
-            .into_iter()
-            .map(|rule| SelectorRule {
-                selector: rule.selector.into(),
-                recipients: rule.recipients,
-            })
-            .collect())
-    }
-
     #[test]
     fn test_parse_selector_bytes_named() {
         let sel = parse_selector_bytes("transfer").unwrap();
@@ -3302,32 +3249,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_selector_rules_simple() {
-        let rules = parse_selector_rules("transfer,approve").unwrap();
-        assert_eq!(rules.len(), 2);
-        assert!(rules[0].recipients.is_empty());
-        assert!(rules[1].recipients.is_empty());
-    }
-
-    #[test]
-    fn test_parse_selector_rules_with_recipient() {
-        let rules =
-            parse_selector_rules("transfer@0x1111111111111111111111111111111111111111").unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].recipients.len(), 1);
-        assert_eq!(
-            rules[0].recipients[0],
-            Address::from_str("0x1111111111111111111111111111111111111111").unwrap()
-        );
-    }
-
-    #[test]
     fn test_parse_selector_rules_hex_with_recipient() {
-        let rules =
-            parse_selector_rules("0xaabbccdd@0x1111111111111111111111111111111111111111").unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
-        assert_eq!(rules[0].recipients.len(), 1);
+        let scope = parse_scope(
+            "0x20c0000000000000000000000000000000000001:0xaabbccdd@0x1111111111111111111111111111111111111111",
+        )
+        .unwrap();
+        assert_eq!(scope.selectorRules.len(), 1);
+        assert_eq!(scope.selectorRules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
+        assert_eq!(scope.selectorRules[0].recipients.len(), 1);
     }
 
     #[test]

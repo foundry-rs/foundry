@@ -4,7 +4,7 @@ use super::{
     KeyType, SessionCallScope, SessionEntry, SessionKeyMaterial, SessionSelectorRule,
     SessionStatus, SessionTokenLimit, session::validate_signed_session_authorization,
 };
-use alloy_primitives::{Address, B256, U256, hex};
+use alloy_primitives::{Address, B256, hex};
 use alloy_rlp::Encodable;
 use alloy_signer_local::PrivateKeySigner;
 use eyre::ensure;
@@ -12,13 +12,6 @@ use std::{fmt, num::NonZeroU64};
 use tempo_primitives::transaction::{
     CallScope, KeyAuthorization, SelectorRule, SignatureType, SignedKeyAuthorization, TokenLimit,
 };
-
-/// Typed spending limit for a temporary session access key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SessionSpendLimit {
-    pub token: Address,
-    pub amount: U256,
-}
 
 /// Typed inputs needed to authorize a temporary session access key.
 ///
@@ -32,7 +25,7 @@ pub struct SessionAuthorizationRequest {
     pub key_address: Address,
     pub expiry: NonZeroU64,
     pub scope: Vec<CallScope>,
-    pub spend_limits: Vec<SessionSpendLimit>,
+    pub spend_limits: Vec<TokenLimit>,
 }
 
 /// Prepared local session metadata plus the Tempo authorization that the root must sign.
@@ -67,7 +60,7 @@ impl SessionAuthorizationRequest {
             self.key_address,
         )
         .with_expiry(expiry)
-        .with_limits(session_spend_limits_to_authorization(&self.spend_limits))
+        .with_limits(self.spend_limits.clone())
         .with_allowed_calls(self.scope.clone())
         .with_witness(self.session_id);
 
@@ -79,7 +72,7 @@ impl SessionAuthorizationRequest {
                 key_address: self.key_address,
                 expiry,
                 scope: Some(session_scopes_to_entry(&self.scope)),
-                limits: Some(session_spend_limits_to_entry(&self.spend_limits)),
+                limits: Some(session_limits_to_entry(&self.spend_limits)),
                 status: SessionStatus::Pending,
                 key: None,
             },
@@ -161,17 +154,10 @@ impl fmt::Debug for GeneratedSessionKey {
     }
 }
 
-fn session_spend_limits_to_entry(limits: &[SessionSpendLimit]) -> Vec<SessionTokenLimit> {
+fn session_limits_to_entry(limits: &[TokenLimit]) -> Vec<SessionTokenLimit> {
     limits
         .iter()
-        .map(|limit| SessionTokenLimit { currency: limit.token, limit: limit.amount.to_string() })
-        .collect()
-}
-
-fn session_spend_limits_to_authorization(limits: &[SessionSpendLimit]) -> Vec<TokenLimit> {
-    limits
-        .iter()
-        .map(|limit| TokenLimit { token: limit.token, limit: limit.amount, period: 0 })
+        .map(|limit| SessionTokenLimit { currency: limit.token, limit: limit.limit.to_string() })
         .collect()
 }
 
@@ -198,7 +184,7 @@ fn session_selector_rules_to_entry(rules: &[SelectorRule]) -> Vec<SessionSelecto
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::Selector;
+    use alloy_primitives::{Selector, U256};
     use alloy_signer::SignerSync;
     use tempo_primitives::transaction::PrimitiveSignature;
 
@@ -229,7 +215,7 @@ mod tests {
                     recipients: vec![recipient],
                 }],
             }],
-            spend_limits: vec![SessionSpendLimit { token, amount: U256::ZERO }],
+            spend_limits: vec![TokenLimit { token, limit: U256::ZERO, period: 0 }],
         };
 
         let prepared = request.prepare(1_700_000_000).unwrap();
@@ -377,7 +363,7 @@ mod tests {
             key_address: session_key.address(),
             expiry: NonZeroU64::new(1_700_000_600).unwrap(),
             scope: vec![CallScope { target: Address::from([0x33; 20]), selector_rules: vec![] }],
-            spend_limits: vec![SessionSpendLimit { token, amount: U256::ZERO }],
+            spend_limits: vec![TokenLimit { token, limit: U256::ZERO, period: 0 }],
         };
         let prepared = request.prepare(1_700_000_000).unwrap();
         let mut authorization = prepared.authorization.clone();
@@ -443,8 +429,8 @@ mod tests {
                 CallScope { target: target_b, selector_rules: vec![] },
             ],
             spend_limits: vec![
-                SessionSpendLimit { token: token_a, amount: U256::from(1) },
-                SessionSpendLimit { token: token_b, amount: U256::from(2) },
+                TokenLimit { token: token_a, limit: U256::from(1), period: 0 },
+                TokenLimit { token: token_b, limit: U256::from(2), period: 0 },
             ],
         };
         let prepared = request.prepare(1_700_000_000).unwrap();

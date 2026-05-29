@@ -23,7 +23,6 @@ pub use keystore::*;
 pub use session::*;
 pub use session_policy::{
     GeneratedSessionKey, PreparedSessionAuthorization, SessionAuthorizationRequest,
-    SessionSpendLimit,
 };
 
 #[cfg(test)]

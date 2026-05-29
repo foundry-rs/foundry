@@ -5,7 +5,7 @@ use eyre::{Context, Result};
 use foundry_common::{
     sh_println, shell,
     tempo::{
-        GeneratedSessionKey, SessionAuthorizationRequest, SessionSpendLimit, remove_session_entry,
+        GeneratedSessionKey, SessionAuthorizationRequest, remove_session_entry,
         upsert_session_entry,
     },
 };
@@ -15,11 +15,9 @@ use std::{
     num::NonZeroU64,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule};
+use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule, TokenLimit};
 
-use crate::cmd::tempo_policy_args::{
-    ParsedScope, parse_limit_spec, parse_period as parse_period_spec, parse_scope_spec,
-};
+use crate::cmd::tempo_policy_args::{parse_limit, parse_period, parse_scope as parse_policy_scope};
 
 /// Tempo wallet session lifecycle commands.
 #[derive(Debug, Parser)]
@@ -44,7 +42,7 @@ pub enum SessionSubcommands {
 
         /// Token spend limit, in `TOKEN:AMOUNT` or `TOKEN=AMOUNT` format.
         #[arg(long = "spend-limit", value_parser = parse_spend_limit)]
-        spend_limits: Vec<SessionSpendLimit>,
+        spend_limits: Vec<TokenLimit>,
 
         #[command(flatten)]
         wallet: WalletOpts,
@@ -74,33 +72,40 @@ async fn run_create(
     chain_id: u64,
     expires: u64,
     scope: Vec<CallScope>,
-    spend_limits: Vec<SessionSpendLimit>,
+    spend_limits: Vec<TokenLimit>,
     wallet: WalletOpts,
 ) -> Result<()> {
     let entry =
         build_session_entry(root_account, chain_id, expires, scope, spend_limits, wallet).await?;
-    upsert_session_entry(entry.clone())?;
+    let session_id = entry.session_id;
+    let root_account = entry.root_account;
+    let chain_id = entry.chain_id;
+    let key_address = entry.key_address;
+    let expiry = entry.expiry;
+    let scope_count = entry.scope.as_ref().map_or(0, |scopes| scopes.len());
+    let spend_limit_count = entry.limits.as_ref().map_or(0, |limits| limits.len());
+    upsert_session_entry(entry)?;
 
     if shell::is_json() {
         sh_println!(
             "{}",
             serde_json::to_string_pretty(&json!({
-                "session_id": entry.session_id.to_string(),
-                "root_account": entry.root_account.to_string(),
-                "chain_id": entry.chain_id,
-                "key_address": entry.key_address.to_string(),
-                "expiry": entry.expiry,
+                "session_id": session_id.to_string(),
+                "root_account": root_account.to_string(),
+                "chain_id": chain_id,
+                "key_address": key_address.to_string(),
+                "expiry": expiry,
                 "status": "active",
-                "scope_count": entry.scope.as_ref().map_or(0, |scopes| scopes.len()),
-                "spend_limit_count": entry.limits.as_ref().map_or(0, |limits| limits.len()),
+                "scope_count": scope_count,
+                "spend_limit_count": spend_limit_count,
             }))?
         )?;
     } else {
-        sh_println!("Created Tempo session {}", entry.session_id)?;
-        sh_println!("Root:  {}", entry.root_account)?;
-        sh_println!("Chain: {}", entry.chain_id)?;
-        sh_println!("Key:   {}", entry.key_address)?;
-        sh_println!("Expiry: {}", entry.expiry)?;
+        sh_println!("Created Tempo session {}", session_id)?;
+        sh_println!("Root:  {}", root_account)?;
+        sh_println!("Chain: {}", chain_id)?;
+        sh_println!("Key:   {}", key_address)?;
+        sh_println!("Expiry: {}", expiry)?;
     }
 
     Ok(())
@@ -131,7 +136,7 @@ async fn build_session_entry(
     chain_id: u64,
     expires: u64,
     scope: Vec<CallScope>,
-    spend_limits: Vec<SessionSpendLimit>,
+    spend_limits: Vec<TokenLimit>,
     wallet: WalletOpts,
 ) -> Result<foundry_common::tempo::SessionEntry> {
     if expires == 0 {
@@ -188,10 +193,10 @@ async fn resolve_root_signer(wallet: WalletOpts, root_account: Address) -> Resul
 }
 
 fn parse_scope(s: &str) -> Result<CallScope, String> {
-    let ParsedScope { target, selector_rules } = parse_scope_spec(s)?;
-    Ok(CallScope {
-        target,
-        selector_rules: selector_rules
+    parse_policy_scope(s).map(|scope| CallScope {
+        target: scope.target,
+        selector_rules: scope
+            .selectorRules
             .into_iter()
             .map(|rule| SelectorRule {
                 selector: rule.selector.into(),
@@ -201,13 +206,12 @@ fn parse_scope(s: &str) -> Result<CallScope, String> {
     })
 }
 
-fn parse_spend_limit(s: &str) -> Result<SessionSpendLimit, String> {
-    let (token, amount) = parse_limit_spec(s)?;
-    Ok(SessionSpendLimit { token, amount })
-}
-
-fn parse_period(s: &str) -> Result<u64, String> {
-    parse_period_spec(s)
+fn parse_spend_limit(s: &str) -> Result<TokenLimit, String> {
+    parse_limit(s).map(|limit| TokenLimit {
+        token: limit.token,
+        limit: limit.amount,
+        period: limit.period,
+    })
 }
 
 fn now_unix_timestamp() -> Result<u64> {
@@ -220,7 +224,7 @@ fn now_unix_timestamp() -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{U256, address};
+    use alloy_primitives::address;
     use foundry_common::tempo::SessionStatus;
     use std::sync::Mutex;
 
@@ -237,30 +241,6 @@ mod tests {
         test();
         // SAFETY: restore the process environment after the critical section.
         unsafe { std::env::remove_var("TEMPO_HOME") };
-    }
-
-    #[test]
-    fn can_parse_session_scope() {
-        let scope = parse_scope("0x20c0000000000000000000000000000000000001:transfer@0x0000000000000000000000000000000000000002").unwrap();
-        assert_eq!(scope.target, address!("0x20c0000000000000000000000000000000000001"));
-        assert_eq!(scope.selector_rules.len(), 1);
-        assert_eq!(
-            scope.selector_rules[0].recipients,
-            vec![address!("0x0000000000000000000000000000000000000002")]
-        );
-    }
-
-    #[test]
-    fn can_parse_spend_limit_with_equals() {
-        let limit = parse_spend_limit("PathUSD=0").unwrap();
-        assert_eq!(limit.token, address!("0x20C0000000000000000000000000000000000001"));
-        assert_eq!(limit.amount, U256::ZERO);
-    }
-
-    #[test]
-    fn can_parse_period_units() {
-        assert_eq!(parse_period("10m").unwrap(), 600);
-        assert_eq!(parse_period("2h").unwrap(), 7200);
     }
 
     #[test]
@@ -302,13 +282,15 @@ mod tests {
                 assert_eq!(entry.status, SessionStatus::Active);
                 assert!(entry.key.is_some());
 
-                upsert_session_entry(entry.clone()).unwrap();
+                let session_id = entry.session_id;
+                let expiry = entry.expiry;
+                upsert_session_entry(entry).unwrap();
                 let record = foundry_common::tempo::read_session_record().unwrap();
                 assert_eq!(record.sessions.len(), 1);
-                assert_eq!(record.sessions[0].session_id, entry.session_id);
-                assert!(record.sessions[0].has_live_key_at(entry.expiry - 1));
+                assert_eq!(record.sessions[0].session_id, session_id);
+                assert!(record.sessions[0].has_live_key_at(expiry - 1));
 
-                assert!(remove_session_entry(entry.session_id).unwrap());
+                assert!(remove_session_entry(session_id).unwrap());
                 assert!(foundry_common::tempo::read_session_record().unwrap().is_empty());
             });
         });

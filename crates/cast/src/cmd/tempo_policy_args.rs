@@ -1,24 +1,9 @@
 use alloy_primitives::{Address, U256, hex, keccak256};
 use foundry_cli::utils::parse_fee_token_address;
-use tempo_contracts::precompiles::PATH_USD_ADDRESS;
-
-/// Parsed selector argument used by policy-editing commands.
-#[derive(Debug, Clone, Copy)]
-pub struct SelectorArg(pub(crate) [u8; 4]);
-
-/// Parsed selector rule shared by Tempo policy commands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ParsedSelectorRule {
-    pub selector: [u8; 4],
-    pub recipients: Vec<Address>,
-}
-
-/// Parsed call scope shared by Tempo policy commands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ParsedScope {
-    pub target: Address,
-    pub selector_rules: Vec<ParsedSelectorRule>,
-}
+use tempo_contracts::precompiles::{
+    IAccountKeychain::{CallScope, SelectorRule, TokenLimit},
+    PATH_USD_ADDRESS,
+};
 
 /// Parse a selector string into 4-byte selector bytes.
 ///
@@ -57,13 +42,8 @@ pub(crate) fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
     }
 }
 
-/// Parse a selector string into a named selector argument.
-pub(crate) fn parse_selector_arg(s: &str) -> Result<SelectorArg, String> {
-    parse_selector_bytes(s).map(SelectorArg)
-}
-
-/// Parse a `TARGET[:SELECTORS[@RECIPIENTS]]` scope string into a shared scope spec.
-pub(crate) fn parse_scope_spec(s: &str) -> Result<ParsedScope, String> {
+/// Parse a `TARGET[:SELECTORS[@RECIPIENTS]]` scope string.
+pub(crate) fn parse_scope(s: &str) -> Result<CallScope, String> {
     let (target_str, selectors_str) = match s.split_once(':') {
         Some((t, sel)) => (t, Some(sel)),
         None => (s, None),
@@ -74,13 +54,13 @@ pub(crate) fn parse_scope_spec(s: &str) -> Result<ParsedScope, String> {
 
     let selector_rules = match selectors_str {
         None => vec![],
-        Some(sel_str) => parse_selector_rules_spec(sel_str)?,
+        Some(sel_str) => parse_selector_rules(sel_str)?,
     };
 
-    Ok(ParsedScope { target, selector_rules })
+    Ok(CallScope { target, selectorRules: selector_rules })
 }
 
-fn parse_selector_rules_spec(s: &str) -> Result<Vec<ParsedSelectorRule>, String> {
+fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
     let mut rules = Vec::new();
 
     for part in s.split(',') {
@@ -110,14 +90,14 @@ fn parse_selector_rules_spec(s: &str) -> Result<Vec<ParsedSelectorRule>, String>
                 .collect::<Result<Vec<_>, _>>()?,
         };
 
-        rules.push(ParsedSelectorRule { selector, recipients });
+        rules.push(SelectorRule { selector: selector.into(), recipients });
     }
 
     Ok(rules)
 }
 
 /// Parse a `TOKEN:AMOUNT` or `TOKEN=AMOUNT` spending limit spec.
-pub(crate) fn parse_limit_spec(s: &str) -> Result<(Address, U256), String> {
+pub(crate) fn parse_limit(s: &str) -> Result<TokenLimit, String> {
     let (token_str, amount_str) = if let Some(pair) = s.split_once(':') {
         pair
     } else if let Some(pair) = s.split_once('=') {
@@ -129,7 +109,7 @@ pub(crate) fn parse_limit_spec(s: &str) -> Result<(Address, U256), String> {
     let token = parse_policy_token(token_str.trim())?;
     let amount: U256 =
         amount_str.trim().parse().map_err(|e| format!("invalid amount '{amount_str}': {e}"))?;
-    Ok((token, amount))
+    Ok(TokenLimit { token, amount, period: 0 })
 }
 
 /// Parse a policy token label or address into an address.
