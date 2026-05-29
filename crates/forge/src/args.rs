@@ -1,8 +1,9 @@
 use crate::{
     cmd::{cache::CacheSubcommands, generate::GenerateSubcommands, watch},
+    introspect::REGISTRY,
     opts::{Forge, ForgeSubcommand},
 };
-use clap::{CommandFactory, Parser};
+use clap::CommandFactory;
 use clap_complete::generate;
 use eyre::Result;
 use foundry_cli::utils;
@@ -11,11 +12,15 @@ use foundry_evm::inspectors::cheatcodes::{ForgeContext, set_execution_context};
 
 /// Run the `forge` command line interface.
 pub fn run() -> Result<()> {
-    setup()?;
-
+    // Pre-parse discovery flags run before `setup()` so they cannot be blocked
+    // by panic-handler / tracing init failures and avoid that init's cost.
+    foundry_cli::machine::check_machine();
+    foundry_cli::opts::GlobalArgs::check_introspect_with(Forge::command, &REGISTRY);
     foundry_cli::opts::GlobalArgs::check_markdown_help::<Forge>();
 
-    let args = Forge::parse();
+    setup()?;
+
+    let args = foundry_cli::parse_or_exit::<Forge>();
     args.global.init()?;
 
     run_command(args)
@@ -72,6 +77,7 @@ pub fn run_command(args: Forge) -> Result<()> {
         }
         ForgeSubcommand::Bind(cmd) => cmd.run(),
         ForgeSubcommand::Build(cmd) => {
+            cmd.ensure_machine_compatible();
             if cmd.is_watch() {
                 global.block_on(watch::watch_build(cmd))
             } else {
@@ -140,5 +146,70 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Eip712(cmd) => cmd.run(),
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
         ForgeSubcommand::Lint(cmd) => cmd.run(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_cli::introspect::{
+        CommandRegistry, INTROSPECT_SCHEMA_ID, IntrospectDocument, OutputMode, build_document,
+        capability_violations, duplicate_command_ids, render_introspect_document,
+    };
+
+    /// Every `command_id` exposed by `forge --introspect` MUST be unique.
+    /// This is the foundation of the agent contract — agents key on
+    /// `command_id` to identify commands, and duplicates would silently break
+    /// downstream tooling.
+    #[test]
+    fn introspect_command_ids_are_unique() {
+        let cmd = Forge::command();
+        let doc = build_document(&cmd, &REGISTRY);
+        let dups = duplicate_command_ids(&doc);
+        assert!(dups.is_empty(), "duplicate forge command_ids: {dups:?}");
+    }
+
+    /// `forge --introspect` must produce a JSON document that parses back into
+    /// the canonical `IntrospectDocument` shape.
+    #[test]
+    fn introspect_document_is_valid_json() {
+        let cmd = Forge::command();
+        let json = render_introspect_document(&cmd, &CommandRegistry::EMPTY);
+        let doc: IntrospectDocument = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(doc.schema_id, INTROSPECT_SCHEMA_ID);
+        assert_eq!(doc.binary.name, "forge");
+    }
+
+    /// Capability self-consistency: any command declaring an output mode
+    /// must wire the matching schema reference. See
+    /// [`capability_violations`].
+    #[test]
+    fn introspect_capabilities_are_consistent() {
+        let cmd = Forge::command();
+        let doc = build_document(&cmd, &REGISTRY);
+        let v = capability_violations(&doc);
+        assert!(v.is_empty(), "forge capability violations: {v:?}");
+    }
+
+    /// Every adopted command (`output_mode = Envelope`) must pin a stable
+    /// `command_id` matching its registry entry. Catches accidental drift
+    /// between the registry and the clap tree.
+    #[test]
+    fn registered_commands_pin_stable_ids() {
+        let cmd = Forge::command();
+        let doc = build_document(&cmd, &REGISTRY);
+        fn walk(c: &foundry_cli::introspect::CommandInfo) -> Vec<&str> {
+            let mut out = Vec::new();
+            if matches!(c.capabilities.output_mode, OutputMode::Envelope) {
+                out.push(c.command_id.as_str());
+            }
+            for sub in &c.subcommands {
+                out.extend(walk(sub));
+            }
+            out
+        }
+        let mut envelope_ids: Vec<&str> = doc.commands.iter().flat_map(walk).collect();
+        envelope_ids.sort();
+        assert!(envelope_ids.contains(&"forge.build"), "forge.build missing: {envelope_ids:?}");
     }
 }

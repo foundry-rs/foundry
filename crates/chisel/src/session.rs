@@ -5,21 +5,23 @@
 
 use crate::prelude::{SessionSource, SessionSourceConfig};
 use eyre::Result;
+use foundry_evm::core::evm::FoundryEvmNetwork;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use time::{OffsetDateTime, format_description};
 
 /// A Chisel REPL Session
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ChiselSession {
+#[serde(bound = "")]
+pub struct ChiselSession<FEN: FoundryEvmNetwork> {
     /// The `SessionSource` object that houses the REPL session.
-    pub source: SessionSource,
+    pub source: SessionSource<FEN>,
     /// The current session's identifier
     pub id: Option<String>,
 }
 
 // ChiselSession Common Associated Functions
-impl ChiselSession {
+impl<FEN: FoundryEvmNetwork> ChiselSession<FEN> {
     /// Create a new `ChiselSession` with a specified `solc` version and configuration.
     ///
     /// ### Takes
@@ -29,7 +31,7 @@ impl ChiselSession {
     /// ### Returns
     ///
     /// A new instance of [ChiselSession]
-    pub fn new(config: SessionSourceConfig) -> Result<Self> {
+    pub fn new(config: SessionSourceConfig<FEN>) -> Result<Self> {
         // Return initialized ChiselSession with set solc version
         Ok(Self { source: SessionSource::new(config)?, id: None })
     }

@@ -583,11 +583,9 @@ mod tests {
     #[test]
     fn mutant_cache_path_ignores_execution_only_timeout() {
         let (_temp, mut first_config) = test_config();
-        let root = first_config.root.clone();
         let mut second_config = first_config.clone();
 
         first_config.mutation.timeout = Some(1);
-        second_config.root = root;
         second_config.mutation.timeout = Some(99);
 
         let first = test_handler(first_config).cache_file_path("build", CacheKind::Mutants);

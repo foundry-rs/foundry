@@ -381,7 +381,7 @@ fn expr_type<'hir>(
 ) -> Option<&'hir hir::Type<'hir>> {
     match &expr.peel_parens().kind {
         ExprKind::Ident(reses) => {
-            let var = reses.iter().filter_map(hir::Res::as_variable).next()?;
+            let var = reses.iter().find_map(hir::Res::as_variable)?;
             Some(&hir.variable(var).ty)
         }
         ExprKind::Index(base, _) => match &expr_type(hir, base)?.kind {

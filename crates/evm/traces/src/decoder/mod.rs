@@ -800,7 +800,7 @@ impl CallTraceDecoder {
         // This is due to trace.status is derived from the revm_interpreter::InstructionResult in
         // revm-inspectors status will `None` post revm 27, as `InstructionResult::Continue` does
         // not exists anymore.
-        if trace.status.is_none() || trace.status.is_some_and(|s| s.is_ok()) {
+        if trace.status.is_none_or(|s| s.is_ok()) {
             return None;
         }
         (!trace.success).then(|| self.revert_decoder.decode(&trace.output, trace.status))
