@@ -126,7 +126,7 @@ Each row's status is one of:
 | `forge remove`         | (empty)                                              | (empty)                                    | migrated |
 | `forge clone`          | (empty)                                              | (empty)                                    | todo   |
 | `forge bind`           | (empty)                                              | (empty)                                    | migrated |
-| `forge bind-json`      | (empty) or generated path                            | JSON                                       | todo   |
+| `forge bind-json`      | (empty) or generated path                            | JSON                                       | migrated |
 | `forge flatten`        | Flattened source                                     | n/a                                        | migrated |
 | `forge fmt`            | (empty) or formatted source with `--check`           | n/a                                        | todo   |
 | `forge tree`           | Dependency tree                                      | JSON                                       | migrated |
