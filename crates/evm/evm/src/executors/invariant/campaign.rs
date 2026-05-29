@@ -25,10 +25,11 @@ impl InvariantCampaignSpec {
     /// This only describes work assignment. It does not start worker execution and does not
     /// attribute failures to worker/run origins.
     pub fn worker_plans(self, workers: usize) -> Result<Vec<InvariantWorkerPlan>> {
+        ensure!(workers > 0, "invariant campaign requires at least one worker");
+
         if self.total_runs == 0 {
             return Ok(vec![InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 0 }]);
         }
-        ensure!(workers > 0, "invariant campaign requires at least one worker");
 
         let worker_count = workers.min(self.total_runs.max(1) as usize) as u32;
         let base_runs = self.total_runs / worker_count;
@@ -442,7 +443,9 @@ mod tests {
     #[test]
     fn worker_plans_reject_zero_workers() {
         let err = InvariantCampaignSpec::new(1).worker_plans(0).unwrap_err();
+        assert!(err.to_string().contains("requires at least one worker"));
 
+        let err = InvariantCampaignSpec::new(0).worker_plans(0).unwrap_err();
         assert!(err.to_string().contains("requires at least one worker"));
     }
 
