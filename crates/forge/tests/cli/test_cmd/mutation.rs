@@ -1,6 +1,10 @@
 // CLI integration tests for mutation testing
 
-use foundry_test_utils::str;
+use foundry_test_utils::{str, util::OutputExt};
+
+fn mutation_summary(stdout: &str) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(stdout.trim()).unwrap()["summary"].clone()
+}
 
 forgetest_init!(can_run_mutation_testing, |prj, cmd| {
     prj.add_source(
@@ -261,6 +265,88 @@ Survived mutants
 ════════════════════════════════════════════════════════════
 
 "#]]);
+});
+
+forgetest_init!(mutation_result_cache_invalidates_when_tests_change, |prj, _cmd| {
+    prj.add_source(
+        "Calculator.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Calculator {
+    function add(uint256 a, uint256 b) public pure returns (uint256) {
+        return a + b;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Calculator.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Calculator.sol";
+
+contract CalculatorTest {
+    Calculator public calculator;
+
+    function setUp() public {
+        calculator = new Calculator();
+    }
+
+    function test_Add() public view {
+        calculator.add(1, 2);
+    }
+}
+"#,
+    );
+
+    let mut weak_cmd = prj.forge_command();
+    let weak_stdout = weak_cmd
+        .args(["test", "--mutate", "src/Calculator.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let weak_summary = mutation_summary(&weak_stdout);
+
+    prj.add_test(
+        "Calculator.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "../src/Calculator.sol";
+
+contract CalculatorTest {
+    Calculator public calculator;
+
+    function setUp() public {
+        calculator = new Calculator();
+    }
+
+    function test_Add() public view {
+        assert(calculator.add(1, 2) == 3);
+    }
+}
+"#,
+    );
+
+    let mut strong_cmd = prj.forge_command();
+    let strong_stdout = strong_cmd
+        .args(["test", "--mutate", "src/Calculator.sol", "--mutation-jobs", "1", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let strong_summary = mutation_summary(&strong_stdout);
+
+    assert_eq!(weak_summary["total"], strong_summary["total"]);
+    assert!(
+        strong_summary["killed"].as_u64().unwrap() > weak_summary["killed"].as_u64().unwrap(),
+        "expected changed tests to invalidate cached mutation results: weak={weak_summary}, strong={strong_summary}",
+    );
 });
 
 // Test require/assert mutation for security-critical patterns

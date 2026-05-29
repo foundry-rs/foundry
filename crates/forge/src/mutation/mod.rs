@@ -24,6 +24,13 @@ use solar::{
     parse::Parser,
 };
 
+#[derive(Clone, Copy)]
+enum CacheKind<'a> {
+    Mutants,
+    Results { execution_key: &'a str },
+    Survived { execution_key: &'a str },
+}
+
 pub mod mutant;
 mod mutators;
 pub mod orchestrator;
@@ -320,12 +327,13 @@ impl MutationHandler {
 
     // Note: we now get the build hash directly from the recent compile output (see test flow)
 
-    /// Returns the cache file path for the given build hash and extension.
+    /// Returns the cache file path for the given build hash and cache kind.
     /// The filename encodes a hash of the full contract path to prevent collisions
     /// between files with the same stem in different directories, and a hash of
     /// the active mutation config so changes to enabled operators invalidate
-    /// previously cached mutants/results.
-    fn cache_file_path(&self, hash: &str, ext: &str) -> PathBuf {
+    /// previously cached mutants. Result-like caches also include an execution
+    /// key so stale outcomes are not reused after test/config/EVM changes.
+    fn cache_file_path(&self, hash: &str, kind: CacheKind<'_>) -> PathBuf {
         use std::{
             collections::hash_map::DefaultHasher,
             hash::{Hash, Hasher},
@@ -334,42 +342,45 @@ impl MutationHandler {
         self.contract_to_mutate.hash(&mut hasher);
         let path_hash = hasher.finish();
 
-        // Hash the effective set of enabled mutation operators so cache entries
-        // are invalidated when the user changes `include_operators` /
-        // `exclude_operators` in their config. Also fold in the timeout so a
-        // changed budget invalidates previously cached results that may have
-        // been collected under a different (possibly larger) limit.
+        // Hash the effective set of enabled mutation operators so mutant cache
+        // entries are invalidated when the user changes `include_operators` /
+        // `exclude_operators` in their config.
         //
-        // We also fold in the active `--mutate-contract` regex pattern, because
-        // running with vs. without that filter produces a different set of
-        // mutants for the same file. Without this, a cached results vector
-        // collected under one filter could be silently reused under another
-        // (or absent) filter and report the wrong survival status.
-        let mut cfg_hasher = DefaultHasher::new();
+        // Also fold in the active `--mutate-contract` regex pattern, because
+        // running with vs. without that filter produces a different mutant set
+        // for the same file.
+        let mut mutant_cfg_hasher = DefaultHasher::new();
+        // Version salt for this mutant-set cache schema. Bump this if the
+        // inputs that define generated mutants change.
+        "mutant-set-v1".hash(&mut mutant_cfg_hasher);
         for op in self.config.mutation.enabled_operators() {
-            op.to_string().hash(&mut cfg_hasher);
+            op.to_string().hash(&mut mutant_cfg_hasher);
         }
-        self.config.mutation.timeout.hash(&mut cfg_hasher);
         match self.contract_filter.as_ref() {
             Some(re) => {
-                "filter:".hash(&mut cfg_hasher);
-                re.as_str().hash(&mut cfg_hasher);
+                "filter:".hash(&mut mutant_cfg_hasher);
+                re.as_str().hash(&mut mutant_cfg_hasher);
             }
-            None => "nofilter".hash(&mut cfg_hasher),
+            None => "nofilter".hash(&mut mutant_cfg_hasher),
         }
-        let cfg_hash = cfg_hasher.finish();
+        let mutant_cfg_hash = mutant_cfg_hasher.finish();
+
+        let (ext, execution_suffix) = match kind {
+            CacheKind::Mutants => ("mutants", String::new()),
+            CacheKind::Results { execution_key } => ("results", format!("_{execution_key}")),
+            CacheKind::Survived { execution_key } => ("survived", format!("_{execution_key}")),
+        };
 
         let stem =
             self.contract_to_mutate.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        self.config
-            .root
-            .join(&self.config.mutation_dir)
-            .join(format!("{hash}_{stem}_{path_hash:x}_{cfg_hash:x}.{ext}"))
+        self.config.root.join(&self.config.mutation_dir).join(format!(
+            "{hash}_{stem}_{path_hash:x}_{mutant_cfg_hash:x}{execution_suffix}.{ext}"
+        ))
     }
 
     /// Persists cached mutants using build hash for cache invalidation.
     pub fn persist_cached_mutants(&self, hash: &str, mutants: &[Mutant]) -> std::io::Result<()> {
-        let cache_file = self.cache_file_path(hash, "mutants");
+        let cache_file = self.cache_file_path(hash, CacheKind::Mutants);
         if let Some(dir) = cache_file.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -381,9 +392,10 @@ impl MutationHandler {
     pub fn persist_cached_results(
         &self,
         hash: &str,
+        execution_key: &str,
         results: &[(Mutant, crate::mutation::mutant::MutationResult)],
     ) -> std::io::Result<()> {
-        let cache_file = self.cache_file_path(hash, "results");
+        let cache_file = self.cache_file_path(hash, CacheKind::Results { execution_key });
         if let Some(dir) = cache_file.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -446,7 +458,7 @@ impl MutationHandler {
 
     /// Retrieves cached mutants using build hash.
     pub fn retrieve_cached_mutants(&self, hash: &str) -> Option<Vec<Mutant>> {
-        let cache_file = self.cache_file_path(hash, "mutants");
+        let cache_file = self.cache_file_path(hash, CacheKind::Mutants);
         let data = std::fs::read_to_string(cache_file).ok()?;
         serde_json::from_str(&data).ok()
     }
@@ -455,8 +467,9 @@ impl MutationHandler {
     pub fn retrieve_cached_mutant_results(
         &self,
         hash: &str,
+        execution_key: &str,
     ) -> Option<Vec<(Mutant, MutationResult)>> {
-        let cache_file = self.cache_file_path(hash, "results");
+        let cache_file = self.cache_file_path(hash, CacheKind::Results { execution_key });
         let data = std::fs::read_to_string(cache_file).ok()?;
         serde_json::from_str(&data).ok()
     }
@@ -472,8 +485,8 @@ impl MutationHandler {
     }
 
     /// Persist survived spans to cache for adaptive mutation testing.
-    pub fn persist_survived_spans(&self, hash: &str) -> std::io::Result<()> {
-        let cache_file = self.cache_file_path(hash, "survived");
+    pub fn persist_survived_spans(&self, hash: &str, execution_key: &str) -> std::io::Result<()> {
+        let cache_file = self.cache_file_path(hash, CacheKind::Survived { execution_key });
         if let Some(dir) = cache_file.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -483,8 +496,8 @@ impl MutationHandler {
     }
 
     /// Retrieve survived spans from cache.
-    pub fn retrieve_survived_spans(&mut self, hash: &str) -> bool {
-        let cache_file = self.cache_file_path(hash, "survived");
+    pub fn retrieve_survived_spans(&mut self, hash: &str, execution_key: &str) -> bool {
+        let cache_file = self.cache_file_path(hash, CacheKind::Survived { execution_key });
 
         if let Ok(data) = std::fs::read_to_string(cache_file)
             && let Ok(pairs) = serde_json::from_str::<Vec<(u32, u32)>>(&data)
@@ -494,5 +507,72 @@ impl MutationHandler {
         }
 
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_config::Config;
+    use tempfile::TempDir;
+
+    fn test_handler(config: Config) -> MutationHandler {
+        let source = config.root.join("src").join("Counter.sol");
+        MutationHandler::new(source, Arc::new(config))
+    }
+
+    fn test_config() -> (TempDir, Config) {
+        let temp = TempDir::new().unwrap();
+        let config = Config {
+            root: temp.path().to_path_buf(),
+            mutation_dir: "cache/mutation".into(),
+            ..Default::default()
+        };
+        (temp, config)
+    }
+
+    #[test]
+    fn result_cache_path_includes_execution_key() {
+        let (_temp, config) = test_config();
+        let handler = test_handler(config);
+
+        let first =
+            handler.cache_file_path("build", CacheKind::Results { execution_key: "exec-a" });
+        let second =
+            handler.cache_file_path("build", CacheKind::Results { execution_key: "exec-b" });
+        let mutants = handler.cache_file_path("build", CacheKind::Mutants);
+
+        assert_ne!(first, second);
+        assert_ne!(first, mutants);
+        assert_ne!(second, mutants);
+    }
+
+    #[test]
+    fn survived_span_cache_path_includes_execution_key() {
+        let (_temp, config) = test_config();
+        let handler = test_handler(config);
+
+        let first =
+            handler.cache_file_path("build", CacheKind::Survived { execution_key: "exec-a" });
+        let second =
+            handler.cache_file_path("build", CacheKind::Survived { execution_key: "exec-b" });
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn mutant_cache_path_ignores_execution_only_timeout() {
+        let (_temp, mut first_config) = test_config();
+        let root = first_config.root.clone();
+        let mut second_config = first_config.clone();
+
+        first_config.mutation.timeout = Some(1);
+        second_config.root = root;
+        second_config.mutation.timeout = Some(99);
+
+        let first = test_handler(first_config).cache_file_path("build", CacheKind::Mutants);
+        let second = test_handler(second_config).cache_file_path("build", CacheKind::Mutants);
+
+        assert_eq!(first, second);
     }
 }
