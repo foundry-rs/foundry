@@ -244,6 +244,15 @@ contract AddrCodeCollision {
     }
 }
 
+// SHOULD PASS: a user-defined struct field named `code` is not address.code bytes.
+contract StructCodeField {
+    struct S { uint256 code; }
+
+    function structCodeAndString(S memory x, string memory s) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(x.code, s));
+    }
+}
+
 // SHOULD WARN: new bytes() + string
 contract NewBytesCollision {
     function newBytesAndString(uint256 n, string memory s) public pure returns (bytes32) {

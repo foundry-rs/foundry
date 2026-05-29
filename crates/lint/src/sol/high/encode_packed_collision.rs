@@ -59,11 +59,14 @@ fn is_dynamic_arg(hir: &Hir<'_>, expr: &Expr<'_>) -> bool {
         }
         // Calls: check well-known builtins that return bytes/string, then generic path.
         ExprKind::Call(callee, args, _) => is_dynamic_call(hir, callee, args.exprs().count()),
-        // Member access: check well-known dynamic builtin properties (msg.data, *.code, etc.)
-        // before the generic struct-field path in expr_type.
+        // Member access: prefer the resolved type so user-defined struct fields named like
+        // builtin properties (e.g. `code`) do not get treated as dynamic bytes.
         ExprKind::Member(base, member) => {
-            is_dynamic_builtin_member(base, member)
-                || expr_type(hir, expr).is_some_and(|ty| is_dynamic_type(&ty.kind))
+            if let Some(ty) = expr_type(hir, expr) {
+                is_dynamic_type(&ty.kind)
+            } else {
+                is_dynamic_builtin_member(base, member)
+            }
         }
         _ => expr_type(hir, expr).is_some_and(|ty| is_dynamic_type(&ty.kind)),
     }
@@ -140,7 +143,7 @@ fn expr_type<'hir>(hir: &'hir Hir<'hir>, expr: &'hir Expr<'hir>) -> Option<&'hir
             TypeKind::Mapping(mapping) => Some(&mapping.value),
             _ => None,
         },
-        // Slice expressions (e.g. `data[:4]`) preserve the element type of the base.
+        // Slice expressions (e.g. `data[:4]`) preserve the base type.
         ExprKind::Slice(base, ..) => expr_type(hir, base),
         ExprKind::Member(base, member) => {
             let base_ty = expr_type(hir, base)?;

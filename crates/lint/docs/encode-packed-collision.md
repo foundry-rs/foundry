@@ -21,6 +21,10 @@ Hash collisions allow an attacker to craft inputs that hash to an identifier the
 - Signature payloads: two different messages that produce the same signature hash
 - Access-control keys: two different (user, resource) pairs that map to the same key
 
+This lint is intentionally conservative and flags by argument type, not by proving exploitability.
+Some injective patterns, such as repeating the same dynamic value or manually adding length prefixes,
+may still be reported.
+
 ## Example
 
 ### Bad
