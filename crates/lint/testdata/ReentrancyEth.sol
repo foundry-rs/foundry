@@ -1,14 +1,16 @@
-//@compile-flags: --only-lint reentrancy-unlimited-gas
+//@compile-flags: --only-lint reentrancy-eth
 
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-contract ReentrancyUnlimitedGas {
+contract ReentrancyEth {
     event Withdrawn(address indexed account, uint256 amount);
 
     mapping(address => uint256) public balances;
     mapping(address => uint256) public totalPaid;
+    uint256 private constant ZERO = 0;
     uint256 public totalWithdrawn;
+    uint256 private locked;
 
     function withdraw() external {
         uint256 amount = balances[msg.sender];
@@ -71,6 +73,21 @@ contract ReentrancyUnlimitedGas {
         require(ok, "transfer failed");
     }
 
+    function guardedByNonReentrant() external nonReentrant {
+        uint256 amount = balances[msg.sender];
+        (bool ok,) = payable(msg.sender).call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
+        require(ok, "transfer failed");
+        balances[msg.sender] = 0;
+    }
+
+    function nonReentrantWrapsModifier() external nonReentrant callInsideGuardNoWarn {
+        balances[msg.sender] = 0;
+    }
+
+    function outerModifierRunsBeforeNonReentrant() external callBeforeGuard nonReentrant {
+        balances[msg.sender] = 0;
+    }
+
     function effectsBeforeInteraction() external {
         uint256 amount = balances[msg.sender];
         balances[msg.sender] = 0;
@@ -109,6 +126,13 @@ contract ReentrancyUnlimitedGas {
         balances[receiver] = amount;
     }
 
+    function zeroConstantValueCall(address payable receiver) external {
+        uint256 amount = balances[receiver];
+        (bool ok,) = receiver.call{value: ZERO}("");
+        require(ok, "transfer failed");
+        balances[receiver] = amount;
+    }
+
     function mutuallyExclusivePaths(address payable receiver, bool send) external {
         if (send) {
             uint256 amount = balances[receiver];
@@ -138,6 +162,27 @@ contract ReentrancyUnlimitedGas {
         balances[msg.sender] = 0;
     }
 
+    modifier nonReentrant() {
+        require(locked == 0, "reentrant");
+        locked = 1;
+        _;
+        locked = 0;
+    }
+
+    modifier callInsideGuardNoWarn() {
+        uint256 amount = balances[msg.sender];
+        (bool ok,) = payable(msg.sender).call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
+        require(ok, "transfer failed");
+        _;
+    }
+
+    modifier callBeforeGuard() {
+        uint256 amount = balances[msg.sender];
+        (bool ok,) = payable(msg.sender).call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
+        require(ok, "transfer failed");
+        _;
+    }
+
     modifier basicModifier() {
         _;
     }
@@ -149,5 +194,20 @@ contract ReentrancyUnlimitedGas {
 
     function recordPayment(address receiver) internal {
         totalPaid[receiver] += 1 ether;
+    }
+}
+
+contract ReentrancyEthNameOnlyGuard {
+    mapping(address => uint256) public balances;
+
+    function withdraw() external nonReentrant {
+        uint256 amount = balances[msg.sender];
+        (bool ok,) = payable(msg.sender).call{value: amount}(""); //~WARN: uncapped ETH transfer can be reentered before `balances` is updated
+        require(ok, "transfer failed");
+        balances[msg.sender] = 0;
+    }
+
+    modifier nonReentrant() {
+        _;
     }
 }

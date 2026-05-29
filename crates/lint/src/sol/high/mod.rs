@@ -9,7 +9,7 @@ mod unprotected_initializer;
 
 use arbitrary_send_erc20::ARBITRARY_SEND_ERC20;
 use incorrect_shift::INCORRECT_SHIFT;
-use reentrancy::REENTRANCY_UNLIMITED_GAS;
+use reentrancy::REENTRANCY_ETH;
 use rtlo::RTLO;
 use unchecked_calls::{ERC20_UNCHECKED_TRANSFER, UNCHECKED_CALL};
 use unprotected_initializer::UNPROTECTED_INITIALIZER;
@@ -17,7 +17,7 @@ use unprotected_initializer::UNPROTECTED_INITIALIZER;
 register_lints!(
     (ArbitrarySendErc20, late, (ARBITRARY_SEND_ERC20)),
     (IncorrectShift, early, (INCORRECT_SHIFT)),
-    (ReentrancyUnlimitedGas, late, (REENTRANCY_UNLIMITED_GAS)),
+    (ReentrancyEth, late, (REENTRANCY_ETH)),
     (UncheckedCall, early, (UNCHECKED_CALL)),
     (UncheckedTransferERC20, late, (ERC20_UNCHECKED_TRANSFER)),
     (UnprotectedInitializer, late, (UNPROTECTED_INITIALIZER)),
