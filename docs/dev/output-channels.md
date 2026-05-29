@@ -137,7 +137,7 @@ Each row's status is one of:
 | `forge lint`           | (empty; findings on stderr/exit code)                | JSON findings                              | todo   |
 | `forge snapshot`       | Snapshot file content / diff                         | JSON                                       | todo   |
 | `forge coverage`       | Coverage table or report                             | JSON / LCOV / etc. via `--report`          | todo   |
-| `forge cache`          | (empty) or paths                                     | JSON                                       | todo   |
+| `forge cache`          | (empty) or paths                                     | JSON                                       | migrated |
 | `forge doc`            | (empty)                                              | n/a                                        | todo   |
 | `forge generate`       | (empty) or generated path                            | n/a                                        | migrated |
 | `forge soldeer`        | (empty)                                              | n/a                                        | todo   |
