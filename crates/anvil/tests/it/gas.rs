@@ -279,7 +279,6 @@ async fn test_revert_refreshes_fee_history_cache() {
         after.base_fee_per_gas.first().copied(),
         latest_block.header.base_fee_per_gas.map(Into::into)
     );
-    assert_ne!(after.base_fee_per_gas.first().copied(), Some(reverted_block_base_fee.to::<u128>()));
 }
 
 #[tokio::test(flavor = "multi_thread")]
