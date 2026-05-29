@@ -117,9 +117,10 @@ contract MachinePassTest is Test {
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
     assert!(lines.len() >= 2, "expected stream + envelope lines, got: {stdout}");
 
-    // Per-suite ordering: no `test_result` for a suite after its `suite_finished`.
+    // Per-suite lifecycle: every opened suite is closed exactly once, and no
+    // record of any kind targets a suite after its `suite_finished`.
     let mut saw_test_result = false;
-    let mut saw_suite_finished = false;
+    let mut opened_suites: HashSet<String> = HashSet::new();
     let mut closed_suites: HashSet<String> = HashSet::new();
     for line in &lines[..lines.len() - 1] {
         let v: Value = serde_json::from_str(line)
@@ -130,27 +131,29 @@ contract MachinePassTest is Test {
         chrono::DateTime::parse_from_rfc3339(ts)
             .unwrap_or_else(|e| panic!("ts `{ts}` not RFC 3339 on line {line}: {e}"));
         let suite = v["suite"].as_str().unwrap_or_else(|| panic!("missing suite: {line}"));
-        match v["kind"].as_str().unwrap_or("") {
-            "test_result" => {
-                assert!(
-                    !closed_suites.contains(suite),
-                    "test_result for `{suite}` after its suite_finished: {line}"
-                );
-                saw_test_result = true;
-            }
+        let kind = v["kind"].as_str().unwrap_or("");
+        assert!(
+            !closed_suites.contains(suite),
+            "`{kind}` for `{suite}` after its suite_finished: {line}"
+        );
+        opened_suites.insert(suite.to_string());
+        match kind {
+            "test_result" => saw_test_result = true,
             "suite_finished" => {
                 assert!(
                     closed_suites.insert(suite.to_string()),
                     "duplicate suite_finished for `{suite}`: {line}"
                 );
-                saw_suite_finished = true;
             }
             "warning" => {}
             other => panic!("unexpected event kind `{other}` on line: {line}"),
         }
     }
     assert!(saw_test_result, "missing any test_result event in: {stdout}");
-    assert!(saw_suite_finished, "missing any suite_finished event in: {stdout}");
+    assert_eq!(
+        opened_suites, closed_suites,
+        "every opened suite must be terminated by a suite_finished"
+    );
 
     // Terminal envelope.
     let envelope: Value = serde_json::from_str(lines.last().unwrap()).unwrap();

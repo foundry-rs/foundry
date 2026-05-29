@@ -346,6 +346,9 @@ impl TestArgs {
             ("--live-logs", self.evm.live_logs),
             // Bails mid-suite on diff; config equivalent overridden in `compile_and_run`.
             ("--gas-snapshot-check", self.gas_snapshot_check.unwrap_or(false)),
+            // Writes mid-suite to disk and can fail between test_result and
+            // suite_finished; config equivalent overridden in `compile_and_run`.
+            ("--gas-snapshot-emit", self.gas_snapshot_emit == Some(true)),
         ]
         .into_iter()
         .filter_map(|(name, on)| on.then_some(name))
@@ -427,6 +430,7 @@ impl TestArgs {
             config.show_progress = false;
             config.live_logs = false;
             config.gas_snapshot_check = false;
+            config.gas_snapshot_emit = false;
         }
 
         // Skip implicit dep install: it prints to stdout. A missing dep then
