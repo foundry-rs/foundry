@@ -43,7 +43,8 @@ use tempo_primitives::transaction::{
 use yansi::Paint;
 
 use crate::cmd::tempo_policy_args::{
-    parse_limit, parse_period, parse_policy_token, parse_scope, parse_selector_bytes,
+    SelectorArg, parse_limit, parse_period, parse_policy_token, parse_scope, parse_selector_arg,
+    parse_selector_bytes,
 };
 use foundry_cli::utils::{maybe_print_resolved_lane, resolve_lane};
 
@@ -114,8 +115,8 @@ pub enum KeychainSubcommand {
 
         /// Function selector for the TIP-1011 scope check (hex `0x12345678`,
         /// known shorthand like `transfer`, or full signature like `foo(uint256)`).
-        #[arg(long, value_parser = parse_selector_bytes, requires = "to")]
-        selector: Option<[u8; 4]>,
+        #[arg(long, value_parser = parse_selector_arg, requires = "to")]
+        selector: Option<SelectorArg>,
 
         /// Recipient address for the TIP-1011 scope check (per-selector recipient list).
         #[arg(long, value_name = "ADDRESS", requires = "selector")]
@@ -283,8 +284,8 @@ pub enum KeychainPolicySubcommand {
         target: Address,
 
         /// Function selector, full signature, or known TIP-20 shorthand.
-        #[arg(long, value_parser = parse_selector_bytes)]
-        selector: [u8; 4],
+        #[arg(long, value_parser = parse_selector_arg)]
+        selector: SelectorArg,
 
         /// Optional recipient/spender restrictions for selector calls.
         #[arg(long, value_delimiter = ',')]
@@ -478,7 +479,7 @@ impl KeychainSubcommand {
                     key_address,
                     root_account,
                     to,
-                    selector,
+                    selector.map(|selector| selector.0),
                     recipient,
                     fee_token,
                     tempo,
@@ -548,7 +549,7 @@ impl KeychainPolicySubcommand {
                     key_address,
                     root_account,
                     target,
-                    selector,
+                    selector.0,
                     recipients,
                     tx,
                     send_tx,

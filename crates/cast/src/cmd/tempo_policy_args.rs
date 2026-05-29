@@ -5,6 +5,10 @@ use tempo_contracts::precompiles::{
     PATH_USD_ADDRESS,
 };
 
+/// Parsed selector argument used by policy-editing commands.
+#[derive(Debug, Clone, Copy)]
+pub struct SelectorArg(pub(crate) [u8; 4]);
+
 /// Parse a selector string into 4-byte selector bytes.
 ///
 /// Accepts 4-byte hex (`0xd09de08a`), a full signature
@@ -40,6 +44,11 @@ pub(crate) fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
         arr.copy_from_slice(&hash[..4]);
         Ok(arr)
     }
+}
+
+/// Parse a selector string into a named selector argument.
+pub(crate) fn parse_selector_arg(s: &str) -> Result<SelectorArg, String> {
+    parse_selector_bytes(s).map(SelectorArg)
 }
 
 /// Parse a `TARGET[:SELECTORS[@RECIPIENTS]]` scope string.
