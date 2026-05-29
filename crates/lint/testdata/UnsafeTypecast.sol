@@ -487,4 +487,137 @@ contract MemberCallRepros {
         //~^WARN: typecasts that can truncate values should be checked
     }
 }
+
+contract InnerCastInTernaryRepros {
+    function innerCastInTernaryIsSafe(bool cond, uint256 x, uint128 y) internal pure {
+        uint128 b = uint128(x);
+        //~^WARN: typecasts that can truncate values should be checked
+        uint128 a = uint128(cond ? uint128(x) : y);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+}
+
+interface IOverloadedArity {
+    function value() external view returns (uint256);
+    function value(address x) external view returns (uint128);
+}
+
+contract OverloadArityRepros {
+    function safeOverload(IOverloadedArity foo, address who) internal view {
+        uint128 a = uint128(foo.value(who));
+    }
+
+    function unsafeOverload(IOverloadedArity foo) internal view {
+        uint128 a = uint128(foo.value());
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+}
+
+interface IOverloadedSameArity {
+    function value(address x) external view returns (uint128);
+    function value(uint256 x) external view returns (uint256);
+}
+
+contract OverloadSameArityRepros {
+    function safeOverload(IOverloadedSameArity foo, address who) internal view {
+        uint128 a = uint128(foo.value(who));
+    }
+}
+
+contract GlobalRepros {
+    function blockTimestampNarrowing() internal view returns (uint32) {
+        return uint32(block.timestamp);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+
+    function msgValueNarrowing() internal view returns (uint128) {
+        return uint128(msg.value);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+
+    function arrayLengthNarrowing(uint256[] memory data) internal pure returns (uint32) {
+        return uint32(data.length);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+
+    function addressBalanceNarrowing(address who) internal view returns (uint128) {
+        return uint128(who.balance);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+}
+
+struct Position {
+    uint256 amount;
+    uint128 shares;
+}
+
+contract StructRepros {
+    function structFieldUnsafe(Position memory p) internal pure returns (uint128) {
+        return uint128(p.amount);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+
+    function structFieldSafe(Position memory p) internal pure returns (uint128) {
+        return uint128(p.shares);
+    }
+}
+
+contract IndexRepros {
+    function arrayIndexNarrowing(uint256[] memory data) internal pure returns (uint128) {
+        return uint128(data[0]);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+
+    function mappingIndexNarrowing(
+        mapping(address => uint256) storage balances,
+        address who
+    ) internal view returns (uint128) {
+        return uint128(balances[who]);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+
+    function nestedIndexNarrowing(uint256[][] memory matrix) internal pure returns (uint128) {
+        return uint128(matrix[0][0]);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+
+    function indexedStructFieldNarrowing(Position[] memory positions) internal pure returns (uint128) {
+        return uint128(positions[0].amount);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+
+    function nestedMappingNarrowing(
+        mapping(address => mapping(uint256 => uint256)) storage nested,
+        address who,
+        uint256 id
+    ) internal view returns (uint128) {
+        return uint128(nested[who][id]);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+}
+
+library MathLib {
+    function asUint256(uint128 x) internal pure returns (uint256) {
+        return x;
+    }
+}
+
+contract LibraryRepros {
+    function libraryCallUnsafe(uint128 x) internal pure returns (uint128) {
+        return uint128(MathLib.asUint256(x));
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+}
+
+contract FixedBytesRepros {
+    function fixedBytesLengthIsUint8(bytes32 b) internal pure returns (int8) {
+        return int8(b.length);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+
+    function selectorNarrowing(function() external pure fp) external pure returns (bytes2) {
+        return bytes2(fp.selector);
+        //~^WARN: typecasts that can truncate values should be checked
+    }
+}
 // forge-lint: disable-end(mixed-case-variable)

@@ -5,6 +5,7 @@ use crate::{
 };
 use solar::{
     ast::{LitKind, StrKind},
+    interface::sym,
     sema::hir::{self, ElementaryType, ExprKind, ItemId, Res, TypeKind},
 };
 
@@ -22,7 +23,6 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
         hir: &'hir hir::Hir<'hir>,
         expr: &'hir hir::Expr<'hir>,
     ) {
-        // Check for type cast expressions: Type(value)
         if let ExprKind::Call(call, args, _) = &expr.kind
             && let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) = &call.kind
             && args.len() == 1
@@ -41,7 +41,6 @@ impl<'hir> LateLintPass<'hir> for UnsafeTypecast {
     }
 }
 
-/// Determines if a typecast is potentially unsafe (could lose data or precision).
 fn is_unsafe_typecast_hir(
     hir: &hir::Hir<'_>,
     source_expr: &hir::Expr<'_>,
@@ -57,30 +56,20 @@ fn is_unsafe_typecast_hir(
     source_types.iter().any(|source_ty| is_unsafe_elementary_typecast(source_ty, target_type))
 }
 
-/// Infers the elementary source type(s) of an expression.
-///
-/// Traverses an expression tree to find the original "source" types and pushes them
-/// into `output`. For cast chains, finds the ultimate source type, not intermediate
-/// cast results. For binary and ternary operations, collects types from all branches.
 fn infer_source_types(output: &mut Vec<ElementaryType>, hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) {
     match &expr.kind {
-        // A type cast call: `Type(val)`, or a regular function call.
         ExprKind::Call(call_expr, args, ..) => {
-            // Check if the called expression is a type, which indicates a cast.
             if let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(..), .. }) =
                 &call_expr.kind
                 && let Some(inner) = args.exprs().next()
             {
-                // Recurse to find the original (inner-most) source type.
                 infer_source_types(output, hir, inner);
                 return;
             }
 
-            // For non-cast function calls, infer the return type from the function signature.
-            resolve_call_return_types(output, hir, call_expr);
+            resolve_call_return_types(output, hir, call_expr, args.len());
         }
 
-        // Identifiers (variables)
         ExprKind::Ident(resolutions) => {
             if let Some(Res::Item(ItemId::Variable(var_id))) = resolutions.first() {
                 let variable = hir.variable(*var_id);
@@ -90,65 +79,79 @@ fn infer_source_types(output: &mut Vec<ElementaryType>, hir: &hir::Hir<'_>, expr
             }
         }
 
-        // Handle literal values
         ExprKind::Lit(hir::Lit { kind, .. }) => match kind {
             LitKind::Str(StrKind::Hex, ..) => output.push(ElementaryType::Bytes),
             LitKind::Str(..) => output.push(ElementaryType::String),
             LitKind::Address(_) => output.push(ElementaryType::Address(false)),
             LitKind::Bool(_) => output.push(ElementaryType::Bool),
-            // Unnecessary to check numbers as assigning literal values that cannot fit into a type
-            // throws a compiler error. Reference: <https://solang.readthedocs.io/en/latest/language/types.html>
             _ => {}
         },
 
-        // Unary operations: Recurse to find the source type of the inner expression.
         ExprKind::Unary(_, inner_expr) => infer_source_types(output, hir, inner_expr),
 
-        // Binary operations: recurse on both sides.
         ExprKind::Binary(lhs, _, rhs) => {
-            infer_source_types(output, hir, lhs);
-            infer_source_types(output, hir, rhs);
+            infer_branch_type(output, hir, lhs);
+            infer_branch_type(output, hir, rhs);
         }
 
-        // Ternary: check both branches.
         ExprKind::Ternary(_, true_expr, false_expr) => {
-            infer_source_types(output, hir, true_expr);
-            infer_source_types(output, hir, false_expr);
+            infer_branch_type(output, hir, true_expr);
+            infer_branch_type(output, hir, false_expr);
         }
 
-        // Complex expressions are not evaluated.
+        ExprKind::Member(base, member) => {
+            if let Some(elem_ty) = resolve_member_elem_type(hir, base, member) {
+                output.push(elem_ty);
+            }
+        }
+
+        ExprKind::Index(_, _) => {
+            if let Some(elem_ty) = resolve_index_elem_type(hir, expr) {
+                output.push(elem_ty);
+            }
+        }
+
         _ => {}
     }
 }
 
-/// Resolves the return type(s) of a function call expression and pushes them to `output`.
-///
-/// Handles both direct function calls (`foo()`) and member function calls
-/// (`contract.foo()`). For overloaded functions, collects return types from all
-/// matching overloads to avoid false negatives.
+fn infer_branch_type(output: &mut Vec<ElementaryType>, hir: &hir::Hir<'_>, expr: &hir::Expr<'_>) {
+    if let ExprKind::Call(call_expr, _, ..) = &expr.kind
+        && let ExprKind::Type(hir::Type { kind: TypeKind::Elementary(ty), .. }) = &call_expr.kind
+    {
+        output.push(*ty);
+        return;
+    }
+    infer_source_types(output, hir, expr);
+}
+
 fn resolve_call_return_types(
     output: &mut Vec<ElementaryType>,
     hir: &hir::Hir<'_>,
     call_expr: &hir::Expr<'_>,
+    args_count: usize,
 ) {
     match &call_expr.kind {
-        // Direct function call: `foo()`
         ExprKind::Ident(resolutions) => {
             resolve_function_returns(output, hir, resolutions);
         }
-        // Member function call: `contract.foo()`
-        ExprKind::Member(contract_expr, func_ident) => {
-            // Resolve the contract from the base expression.
-            let contract_id = match &contract_expr.kind {
-                // Variable with contract type: `myContract.foo()`
-                ExprKind::Ident([Res::Item(ItemId::Variable(var_id)), ..]) => {
-                    if let TypeKind::Custom(ItemId::Contract(cid)) = hir.variable(*var_id).ty.kind {
-                        Some(cid)
+        ExprKind::Member(base_expr, func_ident) => {
+            let contract_id = match &base_expr.kind {
+                ExprKind::Ident(reses) => {
+                    if let Some(Res::Item(ItemId::Variable(var_id))) = reses.first() {
+                        if let TypeKind::Custom(ItemId::Contract(cid)) =
+                            hir.variable(*var_id).ty.kind
+                        {
+                            Some(cid)
+                        } else {
+                            None
+                        }
+                    } else if let Some(Res::Item(ItemId::Contract(cid))) = reses.first() {
+                        Some(*cid)
                     } else {
                         None
                     }
                 }
-                // Contract type cast: `IFoo(addr).foo()`
                 ExprKind::Call(
                     hir::Expr { kind: ExprKind::Ident([Res::Item(ItemId::Contract(cid))]), .. },
                     ..,
@@ -157,17 +160,23 @@ fn resolve_call_return_types(
             };
 
             if let Some(cid) = contract_id {
-                // Find matching functions in the contract by name.
+                let mut candidates: Vec<ElementaryType> = Vec::new();
                 for item in hir.contract_item_ids(cid) {
                     let Some(fid) = item.as_function() else { continue };
                     let func = hir.function(fid);
                     if func.name.is_some_and(|name| name.as_str() == func_ident.as_str())
+                        && func.parameters.len() == args_count
                         && func.returns.len() == 1
                     {
                         let ret_var = hir.variable(func.returns[0]);
                         if let TypeKind::Elementary(elem_ty) = &ret_var.ty.kind {
-                            output.push(*elem_ty);
+                            candidates.push(*elem_ty);
                         }
+                    }
+                }
+                if let Some(&first) = candidates.first() {
+                    if candidates.iter().all(|t| t == &first) {
+                        output.push(first);
                     }
                 }
             }
@@ -176,10 +185,6 @@ fn resolve_call_return_types(
     }
 }
 
-/// Resolves elementary return types from function resolutions.
-///
-/// For overloaded functions with multiple resolutions, collects return types from all
-/// matching overloads to avoid false negatives.
 fn resolve_function_returns(
     output: &mut Vec<ElementaryType>,
     hir: &hir::Hir<'_>,
@@ -188,7 +193,6 @@ fn resolve_function_returns(
     for res in resolutions {
         if let Res::Item(ItemId::Function(func_id)) = res {
             let func = hir.function(*func_id);
-            // Only handle single-return functions.
             if func.returns.len() == 1 {
                 let ret_var = hir.variable(func.returns[0]);
                 if let TypeKind::Elementary(elem_ty) = &ret_var.ty.kind {
@@ -199,38 +203,165 @@ fn resolve_function_returns(
     }
 }
 
-/// Checks if a type cast from source_type to target_type is unsafe.
+fn resolve_expr_type<'hir>(
+    hir: &'hir hir::Hir<'hir>,
+    expr: &hir::Expr<'_>,
+) -> Option<&'hir hir::Type<'hir>> {
+    match &expr.peel_parens().kind {
+        ExprKind::Ident(reses) => {
+            let var_id = reses.iter().find_map(|r| {
+                if let Res::Item(ItemId::Variable(vid)) = r { Some(*vid) } else { None }
+            })?;
+            Some(&hir.variable(var_id).ty)
+        }
+        ExprKind::Index(base, _) => {
+            let base_ty = resolve_expr_type(hir, base)?;
+            match &base_ty.kind {
+                TypeKind::Array(arr) => Some(&arr.element),
+                TypeKind::Mapping(m) => Some(&m.value),
+                _ => None,
+            }
+        }
+        ExprKind::Member(base, member) => {
+            let base_ty = resolve_expr_type(hir, base)?;
+            if let TypeKind::Custom(ItemId::Struct(sid)) = &base_ty.kind {
+                return hir
+                    .strukt(*sid)
+                    .fields
+                    .iter()
+                    .map(|&fid| hir.variable(fid))
+                    .find(|f| f.name.is_some_and(|n| n.as_str() == member.as_str()))
+                    .map(|f| &f.ty);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn resolve_member_elem_type(
+    hir: &hir::Hir<'_>,
+    base: &hir::Expr<'_>,
+    member: &solar::interface::Ident,
+) -> Option<ElementaryType> {
+    let member_name = member.as_str();
+
+    if let ExprKind::Ident(reses) = &base.kind {
+        if let Some(Res::Builtin(builtin)) = reses.first() {
+            let builtin_name = builtin.name();
+
+            if builtin_name == sym::block {
+                return match member_name {
+                    "timestamp" | "number" | "basefee" | "chainid" | "gaslimit" | "prevrandao"
+                    | "difficulty" | "blobbasefee" => Some(ElementaryType::UInt(uint_size(256))),
+                    _ => None,
+                };
+            }
+
+            if builtin_name == sym::msg {
+                return match member_name {
+                    "value" | "gas" => Some(ElementaryType::UInt(uint_size(256))),
+                    "sender" => Some(ElementaryType::Address(false)),
+                    _ => None,
+                };
+            }
+
+            if builtin_name == sym::tx {
+                return match member_name {
+                    "gasprice" => Some(ElementaryType::UInt(uint_size(256))),
+                    _ => None,
+                };
+            }
+
+            return None;
+        }
+    }
+
+    let base_ty = resolve_expr_type(hir, base)?;
+
+    match member_name {
+        "balance" => {
+            if matches!(&base_ty.kind, TypeKind::Elementary(ElementaryType::Address(_))) {
+                return Some(ElementaryType::UInt(uint_size(256)));
+            }
+        }
+        "length" => match &base_ty.kind {
+            TypeKind::Array(arr) if arr.size.is_none() => {
+                return Some(ElementaryType::UInt(uint_size(256)));
+            }
+            TypeKind::Elementary(ElementaryType::Bytes) => {
+                return Some(ElementaryType::UInt(uint_size(256)));
+            }
+            TypeKind::Elementary(ElementaryType::FixedBytes(_)) => {
+                return Some(ElementaryType::UInt(uint_size(8)));
+            }
+            _ => {}
+        },
+        "selector" => {
+            if matches!(&base_ty.kind, TypeKind::Function(_)) {
+                return Some(ElementaryType::FixedBytes(fixed_bytes_size(4)));
+            }
+        }
+        _ => {}
+    }
+
+    if let TypeKind::Custom(ItemId::Struct(struct_id)) = &base_ty.kind {
+        return hir
+            .strukt(*struct_id)
+            .fields
+            .iter()
+            .map(|&field_id| hir.variable(field_id))
+            .find(|field| field.name.is_some_and(|n| n.as_str() == member_name))
+            .and_then(
+                |field| {
+                    if let TypeKind::Elementary(e) = &field.ty.kind { Some(*e) } else { None }
+                },
+            );
+    }
+
+    None
+}
+
+fn resolve_index_elem_type(
+    hir: &hir::Hir<'_>,
+    index_expr: &hir::Expr<'_>,
+) -> Option<ElementaryType> {
+    let base_ty = resolve_expr_type(hir, index_expr)?;
+    if let TypeKind::Elementary(e) = &base_ty.kind { Some(*e) } else { None }
+}
+
+fn uint_size(bits: u16) -> solar::ast::TypeSize {
+    solar::ast::TypeSize::new_int_bits(bits)
+}
+
+fn fixed_bytes_size(bytes: u8) -> solar::ast::TypeSize {
+    solar::ast::TypeSize::new_fb_bytes(bytes)
+}
+
 const fn is_unsafe_elementary_typecast(
     source_type: &ElementaryType,
     target_type: &ElementaryType,
 ) -> bool {
     match (source_type, target_type) {
-        // Numeric downcasts (smaller target size)
         (ElementaryType::UInt(source_size), ElementaryType::UInt(target_size))
         | (ElementaryType::Int(source_size), ElementaryType::Int(target_size)) => {
             source_size.bits() > target_size.bits()
         }
 
-        // Signed to unsigned conversion (potential loss of sign)
         (ElementaryType::Int(_), ElementaryType::UInt(_)) => true,
 
-        // Unsigned to signed conversion with same or smaller size
         (ElementaryType::UInt(source_size), ElementaryType::Int(target_size)) => {
             source_size.bits() >= target_size.bits()
         }
 
-        // Fixed bytes to smaller fixed bytes
         (ElementaryType::FixedBytes(source_size), ElementaryType::FixedBytes(target_size)) => {
             source_size.bytes() > target_size.bytes()
         }
 
-        // Dynamic bytes to fixed bytes (potential truncation)
         (ElementaryType::Bytes | ElementaryType::String, ElementaryType::FixedBytes(_)) => true,
 
-        // Address to smaller uint (truncation) - address is 160 bits
         (ElementaryType::Address(_), ElementaryType::UInt(target_size)) => target_size.bits() < 160,
 
-        // Address to int (sign issues)
         (ElementaryType::Address(_), ElementaryType::Int(_)) => true,
 
         _ => false,
