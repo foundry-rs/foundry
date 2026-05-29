@@ -68,7 +68,8 @@ impl SessionAuthorizationRequest {
         )
         .with_expiry(expiry)
         .with_limits(session_spend_limits_to_authorization(&self.spend_limits))
-        .with_allowed_calls(self.scope.clone());
+        .with_allowed_calls(self.scope.clone())
+        .with_witness(self.session_id);
 
         Ok(PreparedSessionAuthorization {
             entry: SessionEntry {
@@ -259,6 +260,7 @@ mod tests {
         assert_eq!(prepared.authorization.key_type, SignatureType::Secp256k1);
         assert_eq!(prepared.authorization.key_id, key);
         assert_eq!(prepared.authorization.expiry.map(NonZeroU64::get), Some(1_700_000_600));
+        assert_eq!(prepared.authorization.witness, Some(session_id));
         assert_eq!(
             prepared.authorization.limits,
             Some(vec![TokenLimit { token, limit: U256::ZERO, period: 0 }])
@@ -386,6 +388,33 @@ mod tests {
         let error = prepared.into_active_entry(session_key, &signed).unwrap_err();
 
         assert!(error.to_string().contains("limits"));
+    }
+
+    #[test]
+    fn signed_session_authorization_rejects_session_id_mismatch() {
+        let root: PrivateKeySigner = ROOT_PRIVATE_KEY.parse().unwrap();
+        let session_key = GeneratedSessionKey::from_private_key(SESSION_PRIVATE_KEY).unwrap();
+        let request = SessionAuthorizationRequest {
+            session_id: B256::from([0x70; 32]),
+            root_account: root.address(),
+            chain_id: 4217,
+            key_address: session_key.address(),
+            expiry: NonZeroU64::new(1_700_000_600).unwrap(),
+            scope: vec![CallScope { target: Address::from([0x33; 20]), selector_rules: vec![] }],
+            spend_limits: vec![],
+        };
+        let prepared = request.prepare(1_700_000_000).unwrap();
+        let signature = root.sign_hash_sync(&prepared.authorization.signature_hash()).unwrap();
+        let signed =
+            prepared.authorization.clone().into_signed(PrimitiveSignature::Secp256k1(signature));
+
+        let mut other_request = request;
+        other_request.session_id = B256::from([0x71; 32]);
+        let other_prepared = other_request.prepare(1_700_000_000).unwrap();
+
+        let error = other_prepared.into_active_entry(session_key, &signed).unwrap_err();
+
+        assert!(error.to_string().contains("witness"));
     }
 
     #[test]

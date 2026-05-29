@@ -330,6 +330,14 @@ pub(crate) fn validate_signed_session_authorization(
         auth.key_type,
         expected_key_type
     );
+    // `session_id` is local metadata; the signed binding lives in the authorization witness.
+    ensure!(
+        auth.witness == Some(session.session_id),
+        "session {} key_authorization witness is {:?}, expected {}",
+        session.session_id,
+        auth.witness,
+        session.session_id
+    );
     let recovered = authorization
         .recover_signer()
         .map_err(|err| eyre::eyre!("failed to recover session key_authorization signer: {err}"))?;
@@ -652,7 +660,8 @@ mod tests {
             SignatureType::Secp256k1,
             entry.key_address,
         )
-        .with_expiry(entry.expiry);
+        .with_expiry(entry.expiry)
+        .with_witness(entry.session_id);
         if let Some(limits) = &entry.limits {
             authorization = authorization.with_limits(
                 limits
@@ -1010,6 +1019,23 @@ mod tests {
             let error = resolve_live_session_signer(session_id, 100).unwrap_err();
 
             assert!(error.to_string().contains("allowed_calls"));
+        });
+    }
+
+    #[test]
+    fn resolve_live_session_signer_rejects_authorization_for_wrong_session_id() {
+        with_tempo_home(|| {
+            let session_id = B256::from([0x15; 32]);
+            let mut entry = sample_entry_with_valid_key(session_id, 200, SessionStatus::Active);
+            entry.key.as_mut().unwrap().key_authorization =
+                Some(signed_key_authorization_hex_with(&entry, |auth| {
+                    auth.with_witness(B256::from([0x16; 32]))
+                }));
+            upsert_session_entry(entry).unwrap();
+
+            let error = resolve_live_session_signer(session_id, 100).unwrap_err();
+
+            assert!(error.to_string().contains("witness"));
         });
     }
 
