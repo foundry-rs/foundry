@@ -256,7 +256,8 @@ async fn test_reset_refreshes_fee_history_cache() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_revert_refreshes_fee_history_cache() {
-    let (api, _) = spawn(NodeConfig::test()).await;
+    let (api, handle) = spawn(NodeConfig::test()).await;
+    let provider = handle.http_provider();
     let snapshot_id = api.evm_snapshot().await.unwrap();
 
     let reverted_block_base_fee = U256::from(1_000u64);
@@ -271,7 +272,13 @@ async fn test_revert_refreshes_fee_history_cache() {
 
     assert!(api.evm_revert(snapshot_id).await.unwrap());
 
-    let after = api.fee_history(U256::from(1), BlockNumberOrTag::Number(1), vec![]).await.unwrap();
+    let latest_block = provider.get_block(BlockId::latest()).await.unwrap().unwrap();
+    let after = api.fee_history(U256::from(1), BlockNumberOrTag::Latest, vec![]).await.unwrap();
+    assert_eq!(after.base_fee_per_gas.len(), 2);
+    assert_eq!(
+        after.base_fee_per_gas.first().copied(),
+        latest_block.header.base_fee_per_gas.map(Into::into)
+    );
     assert_ne!(after.base_fee_per_gas.first().copied(), Some(reverted_block_base_fee.to::<u128>()));
 }
 

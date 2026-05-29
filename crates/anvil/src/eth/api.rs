@@ -15,7 +15,10 @@ use crate::{
         error::{
             BlockchainError, FeeHistoryError, InvalidTransactionError, Result, ToRpcResponseResult,
         },
-        fees::{FeeDetails, FeeHistoryCache, FeeHistoryService, MIN_SUGGESTED_PRIORITY_FEE},
+        fees::{
+            FeeDetails, FeeHistoryCache, MIN_SUGGESTED_PRIORITY_FEE,
+            insert_fee_history_cache_entry_for_block,
+        },
         macros::node_info,
         miner::FixedBlockTimeMiner,
         pool::{
@@ -88,10 +91,7 @@ use foundry_primitives::{
 };
 use futures::{
     StreamExt, TryFutureExt,
-    channel::{
-        mpsc::{Receiver, unbounded},
-        oneshot,
-    },
+    channel::{mpsc::Receiver, oneshot},
 };
 use parking_lot::RwLock;
 use revm::{
@@ -616,20 +616,21 @@ impl<N: Network> EthApi<N> {
     {
         self.fee_history_cache.lock().clear();
 
-        let (_, new_blocks) = unbounded();
-        let fee_history_service = FeeHistoryService::new(
-            self.backend.blob_params(),
-            new_blocks,
-            self.fee_history_cache.clone(),
-            self.storage_info(),
-        );
-
+        let blob_params = self.backend.blob_params();
+        let storage_info = self.storage_info();
         let best_number = self.backend.best_number();
         let oldest_number = best_number.saturating_sub(self.fee_history_limit.saturating_sub(1));
 
         for block_number in oldest_number..=best_number {
             if let Some(header) = self.backend.get_block(block_number).map(|block| block.header) {
-                fee_history_service.insert_cache_entry_for_block(header.hash_slow(), &header);
+                insert_fee_history_cache_entry_for_block(
+                    &self.fee_history_cache,
+                    self.fee_history_limit,
+                    blob_params,
+                    &storage_info,
+                    header.hash_slow(),
+                    &header,
+                );
             }
         }
     }
