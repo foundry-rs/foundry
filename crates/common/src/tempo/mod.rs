@@ -23,8 +23,8 @@ pub use keystore::*;
 pub use session::*;
 pub use session_policy::{
     GeneratedSessionKey, PATH_USD_ADDRESS, PreparedSessionAuthorization,
-    SessionAuthorizationRequest, SessionSpendLimit, parse_tempo_duration, parse_tempo_scope,
-    parse_tempo_scope_parts, parse_tempo_scopes_json, parse_tempo_spend_limit,
+    SessionAuthorizationRequest, SessionSpendLimit, parse_tempo_duration, parse_tempo_scope_parts,
+    parse_tempo_spend_limit,
 };
 
 #[cfg(test)]
