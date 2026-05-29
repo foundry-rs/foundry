@@ -278,6 +278,42 @@ Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
 "#]]);
 });
 
+forgetest_async!(create_resolves_tempo_expires_before_broadcast, |prj, cmd| {
+    foundry_test_utils::util::initialize(prj.root());
+    prj.initialize_default_contracts();
+
+    let (_api, handle) = spawn(NodeConfig::test_tempo()).await;
+    let rpc = handle.http_endpoint();
+    let wallet = handle.dev_wallets().next().unwrap();
+    let pk = hex::encode(wallet.credential().to_bytes());
+
+    // explicitly byte code hash for consistent checks
+    prj.update_config(|c| c.bytecode_hash = BytecodeHash::None);
+
+    let output = cmd
+        .forge_fuse()
+        .args([
+            "create",
+            format!("./src/{TEMPLATE_CONTRACT}.sol:{TEMPLATE_CONTRACT}").as_str(),
+            "--rpc-url",
+            rpc.as_str(),
+            "--private-key",
+            pk.as_str(),
+            "--broadcast",
+            "--tempo.expires",
+            "30",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    assert!(
+        output.contains("Transaction expires at unix timestamp "),
+        "expected create to print resolved tempo expiry, got:\n{output}",
+    );
+    assert!(output.contains("Deployed to:"), "{output}");
+});
+
 // tests that we can deploy the template contract
 forgetest_async!(can_create_using_unlocked, |prj, cmd| {
     foundry_test_utils::util::initialize(prj.root());

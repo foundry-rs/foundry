@@ -4,7 +4,7 @@ use crate::{
     sol::{Severity, SolLint},
 };
 use solar::{
-    ast::{ElementaryType, Visibility},
+    ast::{DataLocation, ElementaryType, StateMutability, Visibility},
     interface::{kw, sym},
     sema::{
         Gcx, Ty,
@@ -246,12 +246,16 @@ impl<'ctx, 's, 'c, 'hir> Analyzer<'ctx, 's, 'c, 'hir> {
     }
 }
 
-fn is_external_call<'gcx>(
+pub(super) fn is_external_call<'gcx>(
     gcx: Gcx<'gcx>,
     hir: &Hir<'gcx>,
     callee: &Expr<'gcx>,
     explicit_arg_count: usize,
 ) -> bool {
+    // `new Foo(...)` runs the deployed contract's constructor — an external interaction.
+    if matches!(callee.peel_parens().kind, ExprKind::New(_)) {
+        return true;
+    }
     let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
 
     if matches!(member.name, kw::Call | kw::Delegatecall | kw::Staticcall)
@@ -268,11 +272,112 @@ fn is_external_call<'gcx>(
         return true;
     }
 
+    // `super.<member>(...)` is internal base-chain dispatch, not an external call.
+    // Short-circuit before any code that would ask Solar for `super`'s type (panics).
+    if is_super(base) {
+        return false;
+    }
+
     if resolves_to_internal_library_extension(gcx, hir, base, *member, explicit_arg_count) {
         return false;
     }
 
-    matches!(semantic_member_ty(gcx, hir, base, member.name).map(|ty| ty.kind), Some(TyKind::FnPtr(func)) if func.visibility >= Visibility::Public)
+    // Iterate matching members so overloads aren't dropped by a unique-name lookup.
+    external_member_signatures(gcx, hir, base, member.name, explicit_arg_count)
+        .into_iter()
+        .any(|(vis, _)| vis >= Visibility::Public)
+}
+
+/// Like [`is_external_call`], but excludes calls that cannot affect log ordering or
+/// observable state: `staticcall` and high-level `view`/`pure` callees (including `this.*`).
+pub(super) fn is_state_mutating_external_call<'gcx>(
+    gcx: Gcx<'gcx>,
+    hir: &Hir<'gcx>,
+    callee: &Expr<'gcx>,
+    explicit_arg_count: usize,
+    enclosing_contract: Option<ContractId>,
+) -> bool {
+    // Contract deployment: the constructor runs arbitrary code and can emit logs.
+    if matches!(callee.peel_parens().kind, ExprKind::New(_)) {
+        return true;
+    }
+    let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return false };
+
+    // Low-level address calls: `call` and `delegatecall` are in scope; `staticcall` is not.
+    if matches!(member.name, kw::Call | kw::Delegatecall) && is_address_like(hir, base) {
+        return true;
+    }
+
+    if member.name == kw::Staticcall && is_address_like(hir, base) {
+        return false;
+    }
+
+    if matches!(member.name, sym::send | sym::transfer) && is_address_like(hir, base) {
+        return true;
+    }
+
+    if is_this(base) {
+        // `this.<view|pure>()` compiles to a STATICCALL and cannot reorder events; only
+        // taint when the resolved self-call is state-mutating.
+        return self_call_is_state_mutating(
+            hir,
+            enclosing_contract,
+            member.name,
+            explicit_arg_count,
+        );
+    }
+
+    // `super.<member>(...)` is internal dispatch — not an external call.
+    if is_super(base) {
+        return false;
+    }
+
+    if resolves_to_internal_library_extension(gcx, hir, base, *member, explicit_arg_count) {
+        return false;
+    }
+
+    // Iterate overloads: conservatively flag if any matching public/external member is
+    // not `view`/`pure` (rather than silently dropping overloaded names).
+    external_member_signatures(gcx, hir, base, member.name, explicit_arg_count).into_iter().any(
+        |(vis, mut_)| {
+            vis >= Visibility::Public
+                && !matches!(mut_, StateMutability::View | StateMutability::Pure)
+        },
+    )
+}
+
+/// Returns `true` when a `this.<member>(...)` call may emit logs or mutate state.
+/// Conservative on unresolved/overloaded names (avoids `gcx.type_of_res` for the `this` builtin,
+/// which panics).
+fn self_call_is_state_mutating(
+    hir: &Hir<'_>,
+    enclosing_contract: Option<ContractId>,
+    member_name: solar::interface::Symbol,
+    explicit_arg_count: usize,
+) -> bool {
+    let Some(contract_id) = enclosing_contract else { return true };
+
+    let mut matched = false;
+    for item_id in hir.contract_item_ids(contract_id) {
+        let Some(func_id) = item_id.as_function() else { continue };
+        let func = hir.function(func_id);
+        if func.name.is_none_or(|name| name.name != member_name) {
+            continue;
+        }
+        if func.parameters.len() != explicit_arg_count {
+            continue;
+        }
+        // Only externally-callable functions can appear in a `this.<member>(...)` call.
+        if func.visibility < Visibility::Public {
+            continue;
+        }
+        matched = true;
+        if !matches!(func.state_mutability, StateMutability::View | StateMutability::Pure) {
+            return true;
+        }
+    }
+    // No public/external match resolved → conservatively taint.
+    !matched
 }
 
 fn resolves_to_internal_library_extension<'gcx>(
@@ -309,7 +414,43 @@ fn member_function_ids<'gcx>(
         .collect()
 }
 
-fn resolved_internal_function_ids<'hir>(
+/// `(visibility, state_mutability)` for every callable member named `member_name`.
+/// When `explicit_arg_count` matches one or more overloads, narrows to those; otherwise
+/// returns the full set. Preserves overloads (no `unique` collapse).
+fn external_member_signatures<'gcx>(
+    gcx: Gcx<'gcx>,
+    hir: &Hir<'gcx>,
+    base: &Expr<'gcx>,
+    member_name: solar::interface::Symbol,
+    explicit_arg_count: usize,
+) -> Vec<(Visibility, StateMutability)> {
+    let Some(base_ty) = semantic_expr_ty(gcx, hir, base) else { return Vec::new() };
+
+    // (visibility, state_mutability, arity) for every matching callable member.
+    let all: Vec<(Visibility, StateMutability, usize)> = gcx
+        .members_of(base_ty, base_item_source(hir, base), base_contract(hir, base))
+        .iter()
+        .filter(|member| member.name == member_name)
+        .filter_map(|member| match (member.res, member.ty.kind) {
+            (Some(Res::Item(ItemId::Function(func_id))), _) => {
+                let f = hir.function(func_id);
+                Some((f.visibility, f.state_mutability, f.parameters.len()))
+            }
+            (_, TyKind::FnPtr(func)) => {
+                Some((func.visibility, func.state_mutability, func.parameters.len()))
+            }
+            _ => None,
+        })
+        .collect();
+
+    // Prefer arity-matched overloads; fall back to the full set when none match.
+    let arity_matched: Vec<_> =
+        all.iter().filter(|(_, _, n)| *n == explicit_arg_count).copied().collect();
+    let chosen = if arity_matched.is_empty() { all } else { arity_matched };
+    chosen.into_iter().map(|(v, m, _)| (v, m)).collect()
+}
+
+pub(super) fn resolved_internal_function_ids<'hir>(
     hir: &'hir Hir<'hir>,
     callee: &'hir Expr<'hir>,
 ) -> impl Iterator<Item = FunctionId> + 'hir {
@@ -326,6 +467,38 @@ fn resolved_internal_function_ids<'hir>(
     })
 }
 
+/// Resolves `super.<member>(...)` to the matching base-chain function(s) — for transitive
+/// analysis of external calls reached through C3 super dispatch.
+pub(super) fn resolved_super_function_ids<'hir>(
+    hir: &'hir Hir<'hir>,
+    enclosing_contract: Option<ContractId>,
+    callee: &'hir Expr<'hir>,
+    explicit_arg_count: usize,
+) -> Vec<FunctionId> {
+    let ExprKind::Member(base, member) = &callee.peel_parens().kind else { return Vec::new() };
+    if !is_super(base) {
+        return Vec::new();
+    }
+    let Some(contract_id) = enclosing_contract else { return Vec::new() };
+
+    let mut out = Vec::new();
+    // Skip the contract itself; super dispatch starts at the next base in linearization order.
+    for base_id in hir.contract(contract_id).linearized_bases.iter().skip(1).copied() {
+        for item_id in hir.contract(base_id).items {
+            let Some(func_id) = item_id.as_function() else { continue };
+            let func = hir.function(func_id);
+            if func.name.is_some_and(|name| name.name == member.name)
+                && func.parameters.len() == explicit_arg_count
+                && matches!(func.visibility, Visibility::Internal | Visibility::Public)
+            {
+                out.push(func_id);
+                return out;
+            }
+        }
+    }
+    out
+}
+
 const fn is_internal_callable(func: &Function<'_>) -> bool {
     func.kind.is_function()
         && matches!(
@@ -340,6 +513,17 @@ fn is_this(expr: &Expr<'_>) -> bool {
         ExprKind::Ident(reses)
             if reses.iter().any(|res| {
                 matches!(res, Res::Builtin(builtin) if builtin.name() == sym::this)
+            })
+    )
+}
+
+/// `super` is the C3-linearized base-chain dispatch builtin; `gcx.type_of_res` panics on it.
+fn is_super(expr: &Expr<'_>) -> bool {
+    matches!(
+        &expr.peel_parens().kind,
+        ExprKind::Ident(reses)
+            if reses.iter().any(|res| {
+                matches!(res, Res::Builtin(builtin) if builtin.name() == sym::super_)
             })
     )
 }
@@ -422,8 +606,7 @@ fn member_return_type<'hir>(
     for item in hir.contract_item_ids(contract_id) {
         let Some(func_id) = item.as_function() else { continue };
         let func = hir.function(func_id);
-        if !func.name.is_some_and(|name| name.name == member.name) || func.parameters.len() != arity
-        {
+        if func.name.is_none_or(|name| name.name != member.name) || func.parameters.len() != arity {
             continue;
         }
         let [ret_id] = func.returns else { return None };
@@ -484,7 +667,13 @@ fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) ->
                         res.as_variable().map(|var_id| Res::Item(ItemId::Variable(var_id)))
                     }))
                 })?;
-            Some(gcx.type_of_res(res))
+            let ty = gcx.type_of_res(res);
+            Some(match res {
+                Res::Item(ItemId::Variable(var_id)) => {
+                    ty.with_loc_if_ref_opt(gcx, variable_data_location(hir, var_id))
+                }
+                _ => ty,
+            })
         }
         ExprKind::Index(base, _) => semantic_index_ty(gcx, hir, base),
         ExprKind::Member(base, member) => semantic_member_ty(gcx, hir, base, member.name),
@@ -506,10 +695,19 @@ fn semantic_expr_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, expr: &Expr<'gcx>) ->
 
 fn semantic_index_ty<'gcx>(gcx: Gcx<'gcx>, hir: &Hir<'gcx>, base: &Expr<'gcx>) -> Option<Ty<'gcx>> {
     let base_ty = semantic_expr_ty(gcx, hir, base)?;
+    let loc = indexed_base_data_location(base_ty);
     match base_ty.peel_refs().kind {
-        TyKind::Mapping(_, value) => Some(value),
+        TyKind::Mapping(_, value) => Some(value.with_loc_if_ref_opt(gcx, loc)),
         _ => base_ty.base_type(gcx),
     }
+}
+
+fn indexed_base_data_location(ty: Ty<'_>) -> Option<DataLocation> {
+    ty.loc().or_else(|| {
+        // Mappings can only live in storage, but Solar does not model `TyKind::Mapping`
+        // itself as a reference type.
+        matches!(ty.kind, TyKind::Mapping(..)).then_some(DataLocation::Storage)
+    })
 }
 
 fn semantic_member_ty<'gcx>(
@@ -550,6 +748,13 @@ fn referenced_item(expr: &Expr<'_>) -> Option<ItemId> {
         ExprKind::Ident([Res::Item(id), ..]) => Some(*id),
         _ => None,
     }
+}
+
+fn variable_data_location(hir: &Hir<'_>, var_id: hir::VariableId) -> Option<DataLocation> {
+    let var = hir.variable(var_id);
+    var.data_location.or_else(|| {
+        (var.function.is_none() && var.contract.is_some()).then_some(DataLocation::Storage)
+    })
 }
 
 fn unique<T>(mut iter: impl Iterator<Item = T>) -> Option<T> {

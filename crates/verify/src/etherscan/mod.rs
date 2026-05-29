@@ -1,7 +1,6 @@
 use crate::{
     VerifierArgs,
-    provider::{VerificationContext, VerificationProvider},
-    retry::RETRY_CHECK_ON_VERIFY,
+    provider::{VerificationContext, VerificationProvider, VerificationProviderType},
     utils::ensure_solc_build_metadata,
     verify::{ContractLanguage, VerifyArgs, VerifyCheckArgs},
 };
@@ -51,6 +50,10 @@ trait EtherscanSourceProvider: Send + Sync + Debug {
 
 #[async_trait::async_trait]
 impl VerificationProvider for EtherscanVerificationProvider {
+    fn provider_type(&self) -> VerificationProviderType {
+        VerificationProviderType::Etherscan
+    }
+
     async fn preflight_verify_check(
         &mut self,
         args: VerifyArgs,
@@ -139,7 +142,7 @@ impl VerificationProvider for EtherscanVerificationProvider {
                 let check_args = VerifyCheckArgs {
                     id: resp.result,
                     etherscan: args.etherscan,
-                    retry: RETRY_CHECK_ON_VERIFY,
+                    retry: args.retry,
                     verifier: args.verifier,
                 };
                 return self.check(check_args).await;
@@ -258,7 +261,7 @@ impl EtherscanVerificationProvider {
     ) -> Result<Client> {
         let chain = etherscan_opts.chain.unwrap_or_default();
         let etherscan_key = etherscan_opts.key();
-        let verifier_type = &verifier_args.verifier;
+        let verifier_type = verifier_args.effective_type();
         let verifier_url = verifier_args.verifier_url.as_deref();
 
         // Verifier is etherscan if explicitly set or if no verifier set (default sourcify) but
@@ -456,7 +459,6 @@ impl EtherscanVerificationProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::VerificationProviderType;
     use clap::Parser;
     use foundry_common::fs;
     use foundry_test_utils::{forgetest_async, str};
@@ -569,7 +571,7 @@ mod tests {
 
         let config = args.load_config().unwrap();
 
-        assert_eq!(args.verifier.verifier, VerificationProviderType::Etherscan);
+        assert_eq!(args.verifier.effective_type(), VerificationProviderType::Etherscan);
 
         let etherscan = EtherscanVerificationProvider::default();
         let client = etherscan.client(&args.etherscan, &args.verifier, &config).unwrap();
