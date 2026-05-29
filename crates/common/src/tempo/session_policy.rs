@@ -5,7 +5,7 @@ use super::{
     SessionStatus, SessionTokenLimit,
     session::{parse_session_limit, validate_signed_session_authorization},
 };
-use alloy_primitives::{Address, B256, U256, address, hex, keccak256};
+use alloy_primitives::{Address, B256, U256, hex, keccak256};
 use alloy_rlp::Encodable;
 use alloy_signer_local::PrivateKeySigner;
 use serde::Deserialize;
@@ -19,7 +19,7 @@ use tempo_primitives::{
 };
 
 /// Canonical PathUSD token address used by Tempo session policy aliases.
-pub const PATH_USD_ADDRESS: Address = address!("0x20C0000000000000000000000000000000000000");
+pub use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
 /// Typed spending limit for a temporary session access key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
