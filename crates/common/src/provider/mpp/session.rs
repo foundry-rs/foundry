@@ -16,7 +16,9 @@ use mpp::{
             ChannelEntry, OpenPayloadOptions, build_credential, create_voucher_payload,
             resolve_chain_id, resolve_escrow,
         },
-        tempo::signing::{TempoSigningMode, sign_and_encode_async},
+        tempo::signing::{
+            TempoSigningMode, sign_and_encode_async, sign_and_encode_fee_payer_envelope_async,
+        },
     },
     error::MppError,
     protocol::{
@@ -421,7 +423,11 @@ impl SessionProvider {
             },
         );
 
-        let signed_tx = sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?;
+        let signed_tx = if options.fee_payer {
+            sign_and_encode_fee_payer_envelope_async(tx, &self.signer, &self.signing_mode).await?
+        } else {
+            sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?
+        };
 
         let voucher = sign_voucher(
             &self.signer,
@@ -519,7 +525,11 @@ impl SessionProvider {
             },
         );
 
-        let signed_tx = sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?;
+        let signed_tx = if fee_payer {
+            sign_and_encode_fee_payer_envelope_async(tx, &self.signer, &self.signing_mode).await?
+        } else {
+            sign_and_encode_async(tx, &self.signer, &self.signing_mode).await?
+        };
 
         Ok(SessionCredentialPayload::TopUp {
             payload_type: "transaction".to_string(),
@@ -754,6 +764,7 @@ impl SessionProvider {
 mod tests {
     use super::*;
     use mpp::client::tempo::signing::KeychainVersion;
+    use tempo_alloy::contracts::precompiles::DEFAULT_FEE_TOKEN;
     use tempo_primitives::transaction::{
         KeyAuthorization, PrimitiveSignature, SignatureType, SignedKeyAuthorization,
     };
@@ -867,6 +878,72 @@ mod tests {
             matches!(result_mode, TempoSigningMode::Direct),
             "Direct mode should pass through unchanged"
         );
+    }
+
+    fn payload_transaction_type(payload: &SessionCredentialPayload) -> u8 {
+        let transaction = match payload {
+            SessionCredentialPayload::Open { transaction, .. }
+            | SessionCredentialPayload::TopUp { transaction, .. } => transaction,
+            _ => panic!("expected transaction payload"),
+        };
+        let bytes =
+            alloy_primitives::hex::decode(transaction.strip_prefix("0x").unwrap_or(transaction))
+                .expect("valid transaction hex");
+        bytes[0]
+    }
+
+    /// Regression test for <https://github.com/foundry-rs/foundry/issues/14588>:
+    /// session open/topup transactions must be encoded as `0x78` fee-payer
+    /// envelope when `fee_payer == true`, not as a bare `0x76` Tempo tx.
+    #[tokio::test]
+    async fn test_session_transactions_use_fee_payer_envelope_when_fee_payer_true() {
+        let signer = mpp::PrivateKeySigner::random();
+        let payer = signer.address();
+        let provider = SessionProvider::new(signer, unique_origin())
+            .with_signing_mode(TempoSigningMode::Direct);
+        let escrow_contract = Address::repeat_byte(0x11);
+        let payee = Address::repeat_byte(0x22);
+        let chain_id = 4217;
+
+        let (entry, open_payload) = provider
+            .create_open_tx(
+                payer,
+                OpenPayloadOptions {
+                    authorized_signer: None,
+                    escrow_contract,
+                    payee,
+                    currency: DEFAULT_FEE_TOKEN,
+                    deposit: 1_000_000,
+                    initial_amount: 10,
+                    chain_id,
+                    fee_payer: true,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(payload_transaction_type(&open_payload), 0x78);
+
+        let topup_payload =
+            provider.create_topup_tx(&entry, 1_000_000, DEFAULT_FEE_TOKEN, true).await.unwrap();
+        assert_eq!(payload_transaction_type(&topup_payload), 0x78);
+
+        let (_, open_without_fee_payer) = provider
+            .create_open_tx(
+                payer,
+                OpenPayloadOptions {
+                    authorized_signer: None,
+                    escrow_contract,
+                    payee,
+                    currency: DEFAULT_FEE_TOKEN,
+                    deposit: 1_000_000,
+                    initial_amount: 10,
+                    chain_id,
+                    fee_payer: false,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(payload_transaction_type(&open_without_fee_payer), 0x76);
     }
 
     /// Verify that a payment serialization lock (mirroring `lock_pay()` in
