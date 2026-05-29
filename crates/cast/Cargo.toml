@@ -48,6 +48,7 @@ alloy-provider = { workspace = true, features = [
     "txpool-api",
 ] }
 alloy-rlp.workspace = true
+alloy-rpc-client.workspace = true
 alloy-rpc-types = { workspace = true, features = ["eth", "trace"] }
 alloy-rpc-types-beacon.workspace = true
 alloy-signer-local = { workspace = true, features = ["mnemonic", "keystore"] }
@@ -91,6 +92,7 @@ tokio = { workspace = true, features = ["macros", "signal"] }
 tracing.workspace = true
 yansi.workspace = true
 evmole.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 alloy-hardforks.workspace = true
@@ -98,6 +100,7 @@ alloy-serde.workspace = true
 dirs.workspace = true
 anvil.workspace = true
 foundry-test-utils.workspace = true
+tempo-chainspec.workspace = true
 
 [features]
 default = ["jemalloc", "asm-keccak", "optimism"]

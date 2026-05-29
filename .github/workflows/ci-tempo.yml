@@ -62,7 +62,7 @@ jobs:
       # Build and install binaries
       - name: Build and install Foundry binaries
         run: |
-          cargo build --profile dev --locked -p forge -p cast -p anvil -p chisel
+          cargo build --profile dev --locked --bin forge --bin cast --bin anvil --bin chisel
           echo "${{ github.workspace }}/target/debug" >> "$GITHUB_PATH"
 
       - name: Check Tempo fork schedule compatibility

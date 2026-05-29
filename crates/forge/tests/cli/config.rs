@@ -196,6 +196,8 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+evm_edge_coverage_collision_free = true
+evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
 failure_persist_dir = "cache/fuzz"
@@ -219,13 +221,14 @@ corpus_gzip = true
 corpus_min_mutations = 5
 corpus_min_size = 0
 show_edge_coverage = false
+evm_edge_coverage_collision_free = true
+evm_edge_coverage_include_call_depth = false
 sancov_edges = false
 sancov_trace_cmp = false
 failure_persist_dir = "cache/invariant"
 show_metrics = true
 show_solidity = false
 check_interval = 1
-assert_all = true
 
 [mutation]
 include_operators = []
@@ -956,14 +959,59 @@ forgetest_init!(can_prioritise_project_remappings, |prj, cmd| {
     let lib_toml_file = nested.join("foundry.toml");
     pretty_err(&lib_toml_file, fs::write(&lib_toml_file, lib_config.to_string_pretty().unwrap()));
 
-    cmd.args(["remappings", "--pretty"]).assert_success().stdout_eq(str![[r#"
+    cmd.args(["remappings", "--pretty"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+@utils/libraries/Contract.sol=src/Contract.sol
+@utils/=src/
+@openzeppelin/contracts/=lib/openzeppelin-contracts/
+@openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
+dep1/=lib/dep1/src/
+forge-std/=lib/forge-std/src/
+
+"#]])
+        .stderr_eq(str![[r#"
 Global:
-- @utils/libraries/Contract.sol=src/Contract.sol
-- @utils/=src/
-- @openzeppelin/contracts/=lib/openzeppelin-contracts/
-- @openzeppelin/contracts-upgradeable/=lib/dep1/lib/openzeppelin-upgradeable/
-- dep1/=lib/dep1/src/
-- forge-std/=lib/forge-std/src/
+
+
+"#]]);
+});
+
+// Verifies the contract invariant: `forge remappings` and `forge remappings --pretty` emit
+// identical stdout, even when remappings have contexts. The context prefix is part of the
+// machine-readable value and must survive `--pretty` mode.
+forgetest!(remappings_pretty_keeps_context_on_stdout, |prj, cmd| {
+    prj.update_config(|config| {
+        config.auto_detect_remappings = false;
+        config.remappings = vec![
+            Remapping::from_str("@global/=lib/global/").unwrap().into(),
+            Remapping::from_str("ctx-a:@scoped/=lib/a/").unwrap().into(),
+            Remapping::from_str("ctx-b:@scoped/=lib/b/").unwrap().into(),
+        ];
+    });
+
+    cmd.args(["remappings"]).assert_success().stdout_eq(str![[r#"
+@global/=lib/global/
+ctx-a:@scoped/=lib/a/
+ctx-b:@scoped/=lib/b/
+
+"#]]);
+
+    cmd.forge_fuse()
+        .args(["remappings", "--pretty"])
+        .assert_success()
+        .stdout_eq(str![[r#"
+@global/=lib/global/
+ctx-a:@scoped/=lib/a/
+ctx-b:@scoped/=lib/b/
+
+"#]])
+        .stderr_eq(str![[r#"
+Global:
+
+Context: ctx-a
+
+Context: ctx-b
 
 
 "#]]);
@@ -1321,6 +1369,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "evm_edge_coverage_collision_free": true,
+    "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
     "failure_persist_dir": "cache/fuzz",
@@ -1346,6 +1396,8 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "corpus_min_mutations": 5,
     "corpus_min_size": 0,
     "show_edge_coverage": false,
+    "evm_edge_coverage_collision_free": true,
+    "evm_edge_coverage_include_call_depth": false,
     "sancov_edges": false,
     "sancov_trace_cmp": false,
     "failure_persist_dir": "cache/invariant",
@@ -1354,8 +1406,7 @@ forgetest_init!(test_default_config, |prj, cmd| {
     "show_solidity": false,
     "max_time_delay": null,
     "max_block_delay": null,
-    "check_interval": 1,
-    "assert_all": true
+    "check_interval": 1
   },
   "mutation": {
     "include_operators": [],
