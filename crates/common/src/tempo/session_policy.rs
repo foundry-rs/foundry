@@ -405,8 +405,7 @@ mod tests {
         };
         let prepared = request.prepare(1_700_000_000).unwrap();
         let signature = root.sign_hash_sync(&prepared.authorization.signature_hash()).unwrap();
-        let signed =
-            prepared.authorization.clone().into_signed(PrimitiveSignature::Secp256k1(signature));
+        let signed = prepared.authorization.into_signed(PrimitiveSignature::Secp256k1(signature));
 
         let mut other_request = request;
         other_request.session_id = B256::from([0x71; 32]);
