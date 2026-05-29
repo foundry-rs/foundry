@@ -16,7 +16,7 @@ use clap::CommandFactory;
 use clap_complete::generate;
 use eyre::{Result, WrapErr};
 use foundry_cli::{
-    json::{print_json_object, print_list, print_scalar, print_tokens},
+    json::{print_json_object, print_json_value_or_scalar, print_list, print_scalar, print_tokens},
     utils::{self, LoadConfig},
 };
 use foundry_common::{
@@ -34,7 +34,6 @@ use foundry_common::{
 use foundry_evm_networks::NetworkVariant;
 #[cfg(feature = "optimism")]
 use op_alloy_network::Optimism;
-use serde_json::Value;
 use std::time::Instant;
 use tempo_alloy::TempoNetwork;
 
@@ -412,7 +411,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
             let is_raw_block = raw || fields.contains(&"raw".into());
-            let has_fields = !fields.is_empty();
             let output = if is_raw_block {
                 match network {
                     #[cfg(feature = "optimism")]
@@ -446,11 +444,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                     .block(block.unwrap_or(BlockId::Number(Latest)), full, fields)
                     .await?
             };
-            if shell::is_json() && !is_raw_block && !has_fields {
-                print_json_object(serde_json::from_str::<Value>(&output)?)?;
-            } else {
-                print_scalar(output)?;
-            }
+            print_json_value_or_scalar(output)?;
         }
         CastSubcommand::BlockNumber { rpc, block } => {
             let config = rpc.load_config()?;
@@ -676,7 +670,6 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
         CastSubcommand::Tx { tx_hash, from, nonce, field, raw, rpc, to_request, network } => {
             let config = rpc.load_config()?;
             // Can use either --raw or specify raw as a field
-            let has_field = field.is_some();
             let is_raw = raw || field.as_ref().is_some_and(|f| f == "raw");
             let output = match network {
                 #[cfg(feature = "optimism")]
@@ -702,11 +695,7 @@ pub async fn run_command(args: CastArgs) -> Result<()> {
                         .await?
                 }
             };
-            if shell::is_json() && !is_raw && !has_field {
-                print_json_object(serde_json::from_str::<Value>(&output)?)?;
-            } else {
-                print_scalar(output)?;
-            }
+            print_json_value_or_scalar(output)?;
         }
 
         // 4Byte

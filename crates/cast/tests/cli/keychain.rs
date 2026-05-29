@@ -74,3 +74,24 @@ casttest!(keychain_authorize_sponsor_hash_json_is_object, async |_prj, cmd| {
     assert!(hash.starts_with("0x"), "sponsor_hash should be 0x-prefixed, got: {hash}");
     assert_eq!(hash.len(), 66, "sponsor_hash should be 32-byte hex (66 chars), got: {hash}");
 });
+
+casttest!(keychain_doctor_json_keeps_report_schema_version, async |_prj, cmd| {
+    let output = cmd
+        .args([
+            "keychain",
+            "doctor",
+            accounts::ADDR2,
+            "--root-account",
+            accounts::ADDR1,
+            "--rpc-url",
+            "http://127.0.0.1:1",
+            "--json",
+        ])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let parsed: serde_json::Value = serde_json::from_str(output.trim())
+        .expect("cast keychain doctor --json should emit valid JSON");
+    assert_eq!(parsed["schema_version"], 1);
+});

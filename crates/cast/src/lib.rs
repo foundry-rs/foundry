@@ -1132,8 +1132,19 @@ where
             let encoded = tx.as_ref().encoded_2718();
             format!("0x{}", hex::encode(encoded))
         } else if let Some(ref field) = field {
-            get_pretty_tx_attr::<N>(&tx, field.as_str())
-                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.clone()))?
+            if let Some(value) = get_pretty_tx_attr::<N>(&tx, field.as_str()) {
+                value
+            } else {
+                let tx_json = serde_json::to_value(&tx)?;
+                let value = tx_json
+                    .get(field)
+                    .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.clone()))?;
+
+                match value {
+                    serde_json::Value::String(value) => value.clone(),
+                    value => value.to_string(),
+                }
+            }
         } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()

@@ -169,6 +169,20 @@ pub fn print_json_success_with_warnings<T: Serialize>(
     print_json(&JsonEnvelope::success_with_warnings(data, warnings))
 }
 
+/// Prints command output that may already be JSON: parsed and envelope-wrapped in `--json` mode,
+/// plain text otherwise. If the output is not valid JSON, it is wrapped as a scalar string.
+pub fn print_json_value_or_scalar(value: impl AsRef<str> + std::fmt::Display) -> Result<()> {
+    if shell::is_json() {
+        match serde_json::from_str::<Value>(value.as_ref()) {
+            Ok(value) => print_json_success(value),
+            Err(_) => print_json_success(value.as_ref()),
+        }
+    } else {
+        sh_println!("{value}")?;
+        Ok(())
+    }
+}
+
 /// Prints a scalar value: JSON envelope in `--json` mode, plain text otherwise.
 pub fn print_scalar(value: impl Serialize + std::fmt::Display) -> Result<()> {
     if shell::is_json() {

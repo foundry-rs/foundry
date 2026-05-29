@@ -193,6 +193,31 @@ casttest!(block_raw, |_prj, cmd| {
     );
 });
 
+casttest!(block_json_wraps_raw_and_scalar_field_outputs, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    let raw_output = cmd
+        .args(["block", "22934900", "--rpc-url", eth_rpc_url.as_str(), "--raw", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let raw_envelope: serde_json::Value = serde_json::from_str(raw_output.trim()).unwrap();
+    assert_eq!(raw_envelope["schema_version"], 1);
+    assert!(raw_envelope["success"].as_bool().unwrap());
+    assert!(raw_envelope["data"].as_str().unwrap().starts_with("0x"));
+
+    let field_output = cmd
+        .cast_fuse()
+        .args(["block", "0x123", "--field", "number", "--rpc-url", eth_rpc_url.as_str(), "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let field_envelope: serde_json::Value = serde_json::from_str(field_output.trim()).unwrap();
+    assert_eq!(field_envelope["schema_version"], 1);
+    assert!(field_envelope["success"].as_bool().unwrap());
+    assert_eq!(field_envelope["data"], 291);
+});
+
 casttest!(block_raw_tempo, |_prj, cmd| {
     // https://explore.tempo.xyz/block/8386710
     let output = cmd
@@ -2984,6 +3009,17 @@ casttest!(send_eip7702_multiple_auth, async |_prj, cmd| {
 
     // Verify we have 2 authorizations
     assert_eq!(auth_list.len(), 2, "Expected 2 authorizations in the transaction");
+
+    let field_output = cmd
+        .cast_fuse()
+        .args(["tx", tx_hash, "authorizationList", "--rpc-url", &endpoint, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let field_envelope: serde_json::Value = serde_json::from_str(field_output.trim()).unwrap();
+    let field_auth_list = field_envelope["data"].as_array().unwrap();
+    assert_eq!(field_auth_list.len(), 2, "Expected authorizationList field data to be an array");
 });
 
 // Test that multiple address-based authorizations are rejected
