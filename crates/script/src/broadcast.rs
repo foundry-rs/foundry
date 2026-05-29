@@ -1247,7 +1247,7 @@ mod tests {
         "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0";
 
     #[test]
-    fn pending_hashes_keep_original_sequence_indices_when_completions_are_unordered() {
+    fn pending_hashes_use_remaining_sequence_indices_when_completions_are_unordered() {
         let script_tx = || {
             TransactionWithMetadata::from_tx_request(TransactionMaybeSigned::Unsigned(
                 TransactionRequest::default(),
@@ -1271,7 +1271,11 @@ mod tests {
         ];
 
         for (completion_order, (sequence_index, tx_hash)) in completions.into_iter().enumerate() {
-            assert_ne!(sequence.receipts.len() + completion_order, sequence_index);
+            assert_ne!(
+                sequence.receipts.len() + completion_order,
+                sequence_index,
+                "completion order must differ from the original sequence index"
+            );
             sequence.add_pending(sequence_index, tx_hash);
         }
 
