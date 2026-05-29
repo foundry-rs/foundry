@@ -39,9 +39,6 @@ pub use tempo_precompiles::{
     tip20_channel_reserve::TIP20ChannelReserve,
 };
 
-/// Backward-compatible name used by early T5 planning docs for the channel reserve precompile.
-pub use tempo_contracts::precompiles::TIP20_CHANNEL_RESERVE_ADDRESS as TIP20_CHANNEL_ESCROW;
-
 /// All well-known Tempo precompile addresses.
 pub const TEMPO_PRECOMPILE_ADDRESSES: &[Address] = &[
     NONCE_PRECOMPILE_ADDRESS,
