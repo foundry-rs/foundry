@@ -6,7 +6,7 @@ use alloy_signer::Signer;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU64, path::PathBuf};
-use tempo_primitives::transaction::SignedKeyAuthorization;
+use tempo_primitives::transaction::{SignatureType, SignedKeyAuthorization};
 
 /// Relative path from Tempo home to the session registry file.
 pub const WALLET_SESSIONS_PATH: &str = "wallet/sessions.toml";
@@ -284,7 +284,11 @@ pub fn resolve_live_session_signer(
         })
         .transpose()?;
     if let Some(auth) = &key_authorization {
-        validate_session_key_authorization(&session, key, auth)?;
+        validate_signed_session_authorization(
+            &session,
+            key_type_to_signature_type(key.key_type),
+            auth,
+        )?;
     }
     let access_key = TempoAccessKeyConfig {
         wallet_address: session.root_account,
@@ -295,10 +299,10 @@ pub fn resolve_live_session_signer(
     Ok(Some(ResolvedSessionSigner { session, signer, access_key }))
 }
 
-/// Ensures a session key authorization matches the stored key, chain, and root signer.
-fn validate_session_key_authorization(
+/// Ensures a signed authorization matches stored session identity, key type, signer, and policy.
+pub(crate) fn validate_signed_session_authorization(
     session: &SessionEntry,
-    key: &SessionKeyMaterial,
+    expected_key_type: SignatureType,
     authorization: &SignedKeyAuthorization,
 ) -> eyre::Result<()> {
     eyre::ensure!(
@@ -315,7 +319,6 @@ fn validate_session_key_authorization(
         authorization.authorization.chain_id,
         session.chain_id
     );
-    let expected_key_type = key_type_to_signature_type(key.key_type);
     eyre::ensure!(
         authorization.authorization.key_type == expected_key_type,
         "session {} key_authorization key_type is {:?}, expected {:?}",
@@ -333,8 +336,7 @@ fn validate_session_key_authorization(
         recovered,
         session.root_account
     );
-    validate_session_authorization_policy(session, authorization)?;
-    Ok(())
+    validate_session_authorization_policy(session, authorization)
 }
 
 /// Ensures authorization expiry, limits, and call scope match the stored session policy.
@@ -436,7 +438,7 @@ fn authorization_limits(
 }
 
 /// Parses a stored session spending limit from decimal or 0x-prefixed hex.
-fn parse_session_limit(raw: &str) -> eyre::Result<U256> {
+pub(crate) fn parse_session_limit(raw: &str) -> eyre::Result<U256> {
     let raw = raw.trim();
     if let Some(hex) = raw.strip_prefix("0x") { U256::from_str_radix(hex, 16) } else { raw.parse() }
         .map_err(|err| eyre::eyre!("invalid session spending limit `{raw}`: {err}"))
@@ -505,13 +507,11 @@ fn authorization_selector_rules(
 }
 
 /// Maps stored session key types to Tempo authorization signature types.
-const fn key_type_to_signature_type(
-    key_type: KeyType,
-) -> tempo_primitives::transaction::SignatureType {
+const fn key_type_to_signature_type(key_type: KeyType) -> SignatureType {
     match key_type {
-        KeyType::Secp256k1 => tempo_primitives::transaction::SignatureType::Secp256k1,
-        KeyType::P256 => tempo_primitives::transaction::SignatureType::P256,
-        KeyType::WebAuthn => tempo_primitives::transaction::SignatureType::WebAuthn,
+        KeyType::Secp256k1 => SignatureType::Secp256k1,
+        KeyType::P256 => SignatureType::P256,
+        KeyType::WebAuthn => SignatureType::WebAuthn,
     }
 }
 
@@ -572,7 +572,7 @@ mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use std::{fs, str::FromStr};
     use tempo_primitives::transaction::{
-        CallScope, KeyAuthorization, PrimitiveSignature, SelectorRule, SignatureType, TokenLimit,
+        CallScope, KeyAuthorization, PrimitiveSignature, SelectorRule, TokenLimit,
     };
 
     const ROOT_PRIVATE_KEY: &str =
