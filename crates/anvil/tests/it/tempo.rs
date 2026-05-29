@@ -53,6 +53,7 @@ async fn test_tempo_fork_detects_hardfork_from_fork_timestamp() {
     let node_info = api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.hard_fork, "T3");
 
+    api.mine_one().await;
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
@@ -74,6 +75,7 @@ async fn test_tempo_reset_to_fork_uses_fee_manager_beneficiary() {
     .await
     .unwrap();
 
+    api.mine_one().await;
     let latest_block = handle
         .http_provider()
         .get_block_by_number(BlockNumberOrTag::Latest)
