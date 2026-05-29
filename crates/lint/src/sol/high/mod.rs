@@ -1,6 +1,7 @@
 use crate::sol::{EarlyLintPass, LateLintPass, SolLint};
 
 mod arbitrary_send_erc20;
+mod encode_packed_collision;
 mod incorrect_shift;
 mod reentrancy;
 mod rtlo;
@@ -8,6 +9,7 @@ mod unchecked_calls;
 mod unprotected_initializer;
 
 use arbitrary_send_erc20::ARBITRARY_SEND_ERC20;
+use encode_packed_collision::ENCODE_PACKED_COLLISION;
 use incorrect_shift::INCORRECT_SHIFT;
 use reentrancy::REENTRANCY_UNLIMITED_GAS;
 use rtlo::RTLO;
@@ -16,6 +18,7 @@ use unprotected_initializer::UNPROTECTED_INITIALIZER;
 
 register_lints!(
     (ArbitrarySendErc20, late, (ARBITRARY_SEND_ERC20)),
+    (EncodedPackedCollision, late, (ENCODE_PACKED_COLLISION)),
     (IncorrectShift, early, (INCORRECT_SHIFT)),
     (ReentrancyUnlimitedGas, late, (REENTRANCY_UNLIMITED_GAS)),
     (UncheckedCall, early, (UNCHECKED_CALL)),
