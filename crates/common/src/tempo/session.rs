@@ -3,6 +3,7 @@
 use super::{KeyType, registry::*, tempo_home};
 use alloy_primitives::{Address, B256, Selector, U256};
 use alloy_signer::Signer;
+use eyre::ensure;
 use foundry_wallets::{TempoAccessKeyConfig, WalletSigner};
 use serde::{Deserialize, Serialize};
 use std::{num::NonZeroU64, path::PathBuf};
@@ -305,21 +306,21 @@ pub(crate) fn validate_signed_session_authorization(
     expected_key_type: SignatureType,
     authorization: &SignedKeyAuthorization,
 ) -> eyre::Result<()> {
-    eyre::ensure!(
+    ensure!(
         authorization.authorization.key_id == session.key_address,
         "session {} key_authorization key_id is {}, expected {}",
         session.session_id,
         authorization.authorization.key_id,
         session.key_address
     );
-    eyre::ensure!(
+    ensure!(
         authorization.authorization.chain_id == session.chain_id,
         "session {} key_authorization chain_id is {}, expected {}",
         session.session_id,
         authorization.authorization.chain_id,
         session.chain_id
     );
-    eyre::ensure!(
+    ensure!(
         authorization.authorization.key_type == expected_key_type,
         "session {} key_authorization key_type is {:?}, expected {:?}",
         session.session_id,
@@ -329,7 +330,7 @@ pub(crate) fn validate_signed_session_authorization(
     let recovered = authorization
         .recover_signer()
         .map_err(|err| eyre::eyre!("failed to recover session key_authorization signer: {err}"))?;
-    eyre::ensure!(
+    ensure!(
         recovered == session.root_account,
         "session {} key_authorization signer is {}, expected {}",
         session.session_id,
@@ -348,7 +349,7 @@ fn validate_session_authorization_policy(
 
     let expected_expiry = NonZeroU64::new(session.expiry)
         .ok_or_else(|| eyre::eyre!("session {} has invalid zero expiry", session.session_id))?;
-    eyre::ensure!(
+    ensure!(
         auth.expiry == Some(expected_expiry),
         "session {} key_authorization expiry is {:?}, expected {}",
         session.session_id,
@@ -358,7 +359,7 @@ fn validate_session_authorization_policy(
 
     let expected_limits = session_authorization_limits(session)?;
     let actual_limits = auth.limits.as_deref().map(authorization_limits);
-    eyre::ensure!(
+    ensure!(
         actual_limits == expected_limits,
         "session {} key_authorization limits do not match session limits",
         session.session_id
@@ -366,7 +367,7 @@ fn validate_session_authorization_policy(
 
     let expected_scope = session_authorization_scope(session);
     let actual_scope = auth.allowed_calls.as_deref().map(authorization_scope);
-    eyre::ensure!(
+    ensure!(
         actual_scope == expected_scope,
         "session {} key_authorization allowed_calls do not match session scope",
         session.session_id
