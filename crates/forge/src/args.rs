@@ -60,6 +60,26 @@ pub fn run_command(args: Forge) -> Result<()> {
 
     let global = &args.global;
 
+    // Reject `--machine` for forge subcommands not declared adopted in the
+    // introspect registry. Without this, embedders that wrap `TestArgs` (e.g.
+    // `snapshot`, `coverage`) would emit `forge.test` stream events on the
+    // process-global `is_machine()` flag without ever emitting a terminal
+    // envelope — spoofing `command_id` and leaving the stream unterminated.
+    if foundry_cli::is_machine() {
+        let adopted = matches!(args.cmd, ForgeSubcommand::Build(_) | ForgeSubcommand::Test(_));
+        if !adopted {
+            let name = subcommand_name(&args.cmd);
+            foundry_cli::machine::bail_machine_usage_with_details(
+                format!(
+                    "`forge {name}` is not yet adopted for `--machine`; only \
+                     `forge build` and `forge test` are. Run without `--machine` \
+                     or use an adopted subcommand."
+                ),
+                serde_json::json!({ "subcommand": name }),
+            );
+        }
+    }
+
     // Run the subcommand.
     match args.cmd {
         ForgeSubcommand::Test(cmd) => {
@@ -157,6 +177,45 @@ pub fn run_command(args: Forge) -> Result<()> {
         ForgeSubcommand::Eip712(cmd) => cmd.run(),
         ForgeSubcommand::BindJson(cmd) => cmd.run(),
         ForgeSubcommand::Lint(cmd) => cmd.run(),
+    }
+}
+
+/// Human-readable subcommand name (e.g. `"snapshot"`) for diagnostics.
+fn subcommand_name(cmd: &ForgeSubcommand) -> &'static str {
+    match cmd {
+        ForgeSubcommand::Test(_) => "test",
+        ForgeSubcommand::Script(_) => "script",
+        ForgeSubcommand::Coverage(_) => "coverage",
+        ForgeSubcommand::Bind(_) => "bind",
+        ForgeSubcommand::Build(_) => "build",
+        ForgeSubcommand::VerifyContract(_) => "verify-contract",
+        ForgeSubcommand::VerifyCheck(_) => "verify-check",
+        ForgeSubcommand::VerifyBytecode(_) => "verify-bytecode",
+        ForgeSubcommand::Clone(_) => "clone",
+        ForgeSubcommand::Cache(_) => "cache",
+        ForgeSubcommand::Create(_) => "create",
+        ForgeSubcommand::Update(_) => "update",
+        ForgeSubcommand::Install(_) => "install",
+        ForgeSubcommand::Remove(_) => "remove",
+        ForgeSubcommand::Remappings(_) => "remappings",
+        ForgeSubcommand::Init(_) => "init",
+        ForgeSubcommand::Completions { .. } => "completions",
+        ForgeSubcommand::Clean { .. } => "clean",
+        ForgeSubcommand::Snapshot(_) => "snapshot",
+        ForgeSubcommand::Fmt(_) => "fmt",
+        ForgeSubcommand::Config(_) => "config",
+        ForgeSubcommand::Flatten(_) => "flatten",
+        ForgeSubcommand::Inspect(_) => "inspect",
+        ForgeSubcommand::Tree(_) => "tree",
+        ForgeSubcommand::Geiger(_) => "geiger",
+        ForgeSubcommand::Doc(_) => "doc",
+        ForgeSubcommand::Selectors { .. } => "selectors",
+        ForgeSubcommand::Generate(_) => "generate",
+        ForgeSubcommand::Compiler(_) => "compiler",
+        ForgeSubcommand::Soldeer(_) => "soldeer",
+        ForgeSubcommand::Eip712(_) => "eip712",
+        ForgeSubcommand::BindJson(_) => "bind-json",
+        ForgeSubcommand::Lint(_) => "lint",
     }
 }
 

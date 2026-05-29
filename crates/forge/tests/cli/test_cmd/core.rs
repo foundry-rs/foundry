@@ -328,6 +328,25 @@ forgetest_init!(machine_mode_rejects_watch, |_prj, cmd| {
     assert!(msg.contains("--watch"), "missing --watch mention: {envelope}");
 });
 
+// Unadopted forge subcommands (snapshot, coverage, ...) must reject `--machine`
+// at the top level — otherwise they'd inherit TestArgs's stream emission and
+// spoof `command_id: forge.test` without ever emitting a terminal envelope.
+forgetest_init!(machine_mode_rejects_unadopted_subcommand, |_prj, cmd| {
+    let assert = cmd.args(["--machine", "snapshot"]).assert_failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("expected single-envelope error stdout: {stdout}: {e}"));
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    assert_eq!(envelope["errors"][0]["details"]["subcommand"], "snapshot");
+    // No spurious stream events leaked before the rejection envelope.
+    assert!(
+        !stdout.contains("forge.test.event"),
+        "unadopted subcommand emitted stream events: {stdout}"
+    );
+});
+
 // Warning duality: same `code`/`message`/`suite` on stream + envelope surfaces.
 forgetest_init!(machine_mode_warning_appears_in_stream_and_envelope, |prj, cmd| {
     // Mis-cased `setup()` triggers a SuiteResult warning.
