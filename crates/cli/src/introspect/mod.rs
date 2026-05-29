@@ -15,7 +15,7 @@ pub use build::{
     render_introspect_document,
 };
 pub use document::*;
-pub use registry::{CommandMeta, CommandRegistry};
+pub use registry::{CommandMeta, CommandRegistry, RegistryEntry};
 
 /// Stable schema id for the introspect document.
 pub const INTROSPECT_SCHEMA_ID: &str = "foundry:introspect@v1";
