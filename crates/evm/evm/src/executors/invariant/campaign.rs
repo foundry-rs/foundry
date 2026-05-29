@@ -31,7 +31,7 @@ impl InvariantCampaignSpec {
             return Ok(vec![InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 0 }]);
         }
 
-        let worker_count = workers.min(self.total_runs.max(1) as usize) as u32;
+        let worker_count = workers.min(self.total_runs as usize) as u32;
         let base_runs = self.total_runs / worker_count;
         let extra_runs = self.total_runs % worker_count;
 
