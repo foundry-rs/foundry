@@ -52,6 +52,14 @@ async fn test_tempo_fork_detects_hardfork_from_fork_timestamp() {
 
     let node_info = api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.hard_fork, "T3");
+
+    let latest_block = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
 }
 
 sol! {

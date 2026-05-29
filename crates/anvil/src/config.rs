@@ -70,6 +70,7 @@ use foundry_evm::{
     utils::get_blob_params,
 };
 use foundry_evm_networks::NetworkConfigs;
+use tempo_precompiles::TIP_FEE_MANAGER_ADDRESS;
 
 /// Default port the rpc will open
 pub const NODE_PORT: u16 = 8545;
@@ -1162,6 +1163,16 @@ impl NodeConfig {
                 ..Default::default()
             },
         );
+
+        if self.networks.is_tempo() && !self.fork_urls.is_empty() && self.genesis.is_none() {
+            // Tempo mainnet maps the zero validator token to a DONOTUSE sentinel.
+            // Forked transactions with the default zero beneficiary can therefore
+            // fail fee collection before producing a receipt. Use the same neutral
+            // fee-recipient sentinel as Tempo's simulation path so validator token
+            // lookup falls back to the default PathUSD token unless the user
+            // explicitly supplied a genesis coinbase.
+            evm_env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
+        }
 
         let base_fee_params: BaseFeeParams =
             self.networks.base_fee_params(self.get_genesis_timestamp());
