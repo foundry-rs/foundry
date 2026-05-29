@@ -4,13 +4,13 @@
 use crate::utils::{self, EnvExternalities};
 use alloy_primitives::hex;
 use anvil::{NodeConfig, spawn};
-use axum::Router;
+use axum::{Router, extract::Query};
 use foundry_common::retry::Retry;
 use foundry_test_utils::{
     forgetest, forgetest_async, str,
     util::{OutputExt, TestCommand, TestProject},
 };
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 use tokio::net::TcpListener;
 
 /// Adds a `Unique` contract to the source directory of the project that can be imported as
@@ -426,11 +426,22 @@ contract Deploy is Script {
     );
 });
 
-/// Spawns a local HTTP server that always responds with the given JSON body, returning its URL.
+/// Spawns a local HTTP server that returns the given body for Etherscan-style ABI requests.
 async fn spawn_mock_verifier(body: &'static str) -> (String, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let app = Router::new().fallback(move || async move { body });
+    let app =
+        Router::new().fallback(move |Query(query): Query<HashMap<String, String>>| async move {
+            if query.get("module").is_some_and(|value| value == "contract")
+                && query.get("action").is_some_and(|value| value == "getabi")
+                && query.contains_key("address")
+                && query.contains_key("apikey")
+            {
+                body
+            } else {
+                r#"{"status":"0","message":"NOTOK","result":"Contract source code not verified"}"#
+            }
+        });
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });

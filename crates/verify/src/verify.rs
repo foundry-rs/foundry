@@ -131,8 +131,17 @@ impl VerifierArgs {
                 // Custom verifiers may return Etherscan-shaped responses (HTTP 200 with a JSON
                 // body) or standard HTTP auth errors (401/403). Check both.
                 if let Some(url) = &self.verifier_url {
+                    let mut query = vec![
+                        ("module", "contract".to_string()),
+                        ("action", "getabi".to_string()),
+                        ("address", Address::ZERO.to_string()),
+                    ];
+                    if let Some(api_key) = api_key {
+                        query.push(("apikey", api_key.to_string()));
+                    }
                     match reqwest::Client::new()
                         .get(url)
+                        .query(&query)
                         .timeout(Duration::from_secs(10))
                         .send()
                         .await
