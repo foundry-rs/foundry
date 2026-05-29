@@ -73,21 +73,13 @@ pub trait MutatorTester {
         });
 
         if let Some(expected) = test_case.expected_mutations {
-            assert_eq!(
-                mutations.len(),
-                expected.len(),
-                "Expected {} mutations, got {}: {:?}",
-                expected.len(),
-                mutations.len(),
-                mutations,
-            );
+            let mut actual = mutations;
+            actual.sort();
 
-            for mutation_str in &mutations {
-                assert!(
-                    expected.contains(&mutation_str.as_str()),
-                    "Unexpected mutation: {mutation_str}. Expected one of: {expected:?}",
-                );
-            }
+            let mut expected = expected.into_iter().map(str::to_string).collect::<Vec<_>>();
+            expected.sort();
+
+            assert_eq!(actual, expected, "Unexpected mutation set for input {:?}", test_case.input);
         } else {
             assert!(
                 mutations.is_empty(),
