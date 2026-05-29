@@ -5,6 +5,10 @@ use tempo_contracts::precompiles::{
     PATH_USD_ADDRESS,
 };
 
+// Shared Tempo policy flag grammar used by both `cast keychain` and
+// `cast wallet session`. Keeping it here avoids duplicating parsing behavior
+// or making wallet-session commands depend on the larger keychain command module.
+
 /// Parsed selector argument used by policy-editing commands.
 #[derive(Debug, Clone, Copy)]
 pub struct SelectorArg(pub(crate) [u8; 4]);
