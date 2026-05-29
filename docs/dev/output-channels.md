@@ -138,7 +138,7 @@ Each row's status is one of:
 | `forge snapshot`       | Snapshot file content / diff                         | JSON                                       | todo   |
 | `forge coverage`       | Coverage table or report                             | JSON / LCOV / etc. via `--report`          | todo   |
 | `forge cache`          | (empty) or paths                                     | JSON                                       | migrated |
-| `forge doc`            | (empty)                                              | n/a                                        | migrated |
+| `forge doc`            | (empty)                                              | n/a                                        | todo   |
 | `forge generate`       | (empty) or generated path                            | n/a                                        | migrated |
 | `forge soldeer`        | (empty)                                              | n/a                                        | todo   |
 | `forge remappings`     | One remapping per line                               | n/a                                        | migrated |
