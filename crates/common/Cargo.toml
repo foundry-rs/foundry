@@ -81,7 +81,6 @@ ciborium.workspace = true
 
 flate2.workspace = true
 tempo-alloy.workspace = true
-tempo-contracts.workspace = true
 tempo-primitives.workspace = true
 mpp.workspace = true
 foundry-wallets = { workspace = true, features = ["browser", "tempo"] }

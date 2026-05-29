@@ -438,7 +438,7 @@ fn authorization_limits(
 }
 
 /// Parses a stored session spending limit from decimal or 0x-prefixed hex.
-pub(crate) fn parse_session_limit(raw: &str) -> eyre::Result<U256> {
+fn parse_session_limit(raw: &str) -> eyre::Result<U256> {
     let raw = raw.trim();
     if let Some(hex) = raw.strip_prefix("0x") { U256::from_str_radix(hex, 16) } else { raw.parse() }
         .map_err(|err| eyre::eyre!("invalid session spending limit `{raw}`: {err}"))

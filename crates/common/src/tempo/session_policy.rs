@@ -2,172 +2,21 @@
 
 use super::{
     KeyType, SessionCallScope, SessionEntry, SessionKeyMaterial, SessionSelectorRule,
-    SessionStatus, SessionTokenLimit,
-    session::{parse_session_limit, validate_signed_session_authorization},
+    SessionStatus, SessionTokenLimit, session::validate_signed_session_authorization,
 };
-use alloy_primitives::{Address, B256, U256, hex, keccak256};
+use alloy_primitives::{Address, B256, U256, hex};
 use alloy_rlp::Encodable;
 use alloy_signer_local::PrivateKeySigner;
-use std::{borrow::Cow, fmt, num::NonZeroU64};
-use tempo_primitives::{
-    TempoAddressExt,
-    transaction::{
-        CallScope, KeyAuthorization, SelectorRule, SignatureType, SignedKeyAuthorization,
-        TokenLimit,
-    },
+use std::{fmt, num::NonZeroU64};
+use tempo_primitives::transaction::{
+    CallScope, KeyAuthorization, SelectorRule, SignatureType, SignedKeyAuthorization, TokenLimit,
 };
-
-/// Canonical PathUSD token address used by Tempo session policy aliases.
-pub use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
 /// Typed spending limit for a temporary session access key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionSpendLimit {
     pub token: Address,
     pub amount: U256,
-}
-
-/// Parses a relative session duration such as `30`, `30s`, `10m`, `2h`, `7d`, or `2w`.
-pub fn parse_tempo_duration(raw: &str) -> Result<u64, String> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return Err("duration cannot be empty".to_string());
-    }
-
-    let split = raw.find(|c: char| !c.is_ascii_digit()).unwrap_or(raw.len());
-    if split == 0 {
-        return Err(format!(
-            "invalid duration '{raw}': expected a number followed by s, m, h, d, or w"
-        ));
-    }
-
-    let value: u64 = raw[..split]
-        .parse()
-        .map_err(|e| format!("invalid duration value '{}': {e}", &raw[..split]))?;
-    let multiplier = match &raw[split..] {
-        "" | "s" | "S" => 1,
-        "m" | "M" => 60,
-        "h" | "H" => 60 * 60,
-        "d" | "D" => 24 * 60 * 60,
-        "w" | "W" => 7 * 24 * 60 * 60,
-        unit => {
-            let unit = unit.to_ascii_lowercase();
-            return Err(format!(
-                "invalid duration unit '{unit}' in '{raw}' (expected s, m, h, d, or w)"
-            ));
-        }
-    };
-
-    value.checked_mul(multiplier).ok_or_else(|| format!("duration '{raw}' is too large"))
-}
-
-/// Parses a selector string: 4-byte hex, full signature, or known TIP-20 shorthand.
-fn parse_tempo_selector(raw: &str) -> Result<[u8; 4], String> {
-    let raw = raw.trim();
-    validate_selector_parens(raw)?;
-    if let Some(hex_str) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
-        if hex_str.len() != 8 {
-            return Err(format!("hex selector must be 4 bytes (8 hex chars), got: {raw}"));
-        }
-        return hex::decode_to_array(hex_str)
-            .map_err(|e| format!("invalid hex selector '{raw}': {e}"));
-    }
-
-    let sig = if raw.contains('(') {
-        Cow::Borrowed(raw)
-    } else {
-        match raw {
-            "transfer" => Cow::Borrowed("transfer(address,uint256)"),
-            "approve" => Cow::Borrowed("approve(address,uint256)"),
-            "transferFrom" => Cow::Borrowed("transferFrom(address,address,uint256)"),
-            "transferWithMemo" => Cow::Borrowed("transferWithMemo(address,uint256,bytes32)"),
-            "transferFromWithMemo" => {
-                Cow::Borrowed("transferFromWithMemo(address,address,uint256,bytes32)")
-            }
-            _ => Cow::Owned(format!("{raw}()")),
-        }
-    };
-    let hash = keccak256(sig.as_bytes());
-    let mut arr = [0u8; 4];
-    arr.copy_from_slice(&hash[..4]);
-    Ok(arr)
-}
-
-fn validate_selector_parens(raw: &str) -> Result<(), String> {
-    let mut paren_depth = 0usize;
-    for ch in raw.chars() {
-        match ch {
-            '(' => paren_depth += 1,
-            ')' => {
-                paren_depth = paren_depth
-                    .checked_sub(1)
-                    .ok_or_else(|| format!("unmatched ')' in selector '{raw}'"))?;
-            }
-            _ => {}
-        }
-    }
-    if paren_depth != 0 {
-        return Err(format!("unmatched '(' in selector '{raw}'"));
-    }
-    Ok(())
-}
-
-/// Parses separate `--target` and repeated `--selector` values into a Tempo call scope.
-pub fn parse_tempo_scope_parts<S: AsRef<str>>(
-    target_raw: &str,
-    selectors: &[S],
-) -> Result<CallScope, String> {
-    let target = parse_tempo_target(target_raw)?;
-    let selector_rules = selectors
-        .iter()
-        .map(|selector| parse_tempo_selector_rule(selector.as_ref()))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(CallScope { target, selector_rules })
-}
-
-fn parse_tempo_target(raw: &str) -> Result<Address, String> {
-    raw.parse().map_err(|e| format!("invalid target address '{raw}': {e}"))
-}
-
-fn parse_tempo_selector_rule(raw: &str) -> Result<SelectorRule, String> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return Err("selector cannot be empty".to_string());
-    }
-    Ok(SelectorRule { selector: parse_tempo_selector(raw)?, recipients: vec![] })
-}
-
-fn parse_tempo_policy_token(raw: &str) -> Result<Address, String> {
-    let alias = raw.trim();
-    if ["pathusd", "path_usd", "path-usd", "usd"]
-        .iter()
-        .any(|known| alias.eq_ignore_ascii_case(known))
-    {
-        Ok(PATH_USD_ADDRESS)
-    } else {
-        parse_tempo_token_address(raw).map_err(|e| e.to_string())
-    }
-}
-
-/// Parses `TOKEN=AMOUNT` into a typed session spend limit.
-pub fn parse_tempo_spend_limit(raw: &str) -> Result<SessionSpendLimit, String> {
-    let (token_str, amount_str) = raw
-        .split_once('=')
-        .ok_or_else(|| format!("invalid spend limit format: {raw} (expected TOKEN=AMOUNT)"))?;
-    let token = parse_tempo_policy_token(token_str)?;
-    let amount = parse_session_limit(amount_str).map_err(|e| e.to_string())?;
-    Ok(SessionSpendLimit { token, amount })
-}
-
-fn parse_tempo_token_address(raw: &str) -> eyre::Result<Address> {
-    raw.parse::<Address>().or_else(|_| Ok(token_id_to_address(raw.parse()?)))
-}
-
-fn token_id_to_address(token_id: u64) -> Address {
-    let mut address_bytes = [0u8; 20];
-    address_bytes[..12].copy_from_slice(&Address::TIP20_PREFIX);
-    address_bytes[12..20].copy_from_slice(&token_id.to_be_bytes());
-    Address::from(address_bytes)
 }
 
 /// Typed inputs needed to authorize a temporary session access key.
@@ -590,76 +439,5 @@ mod tests {
         assert_eq!(session_key.private_key(), SESSION_PRIVATE_KEY);
         assert_ne!(session_key.address(), Address::ZERO);
         assert!(!format!("{session_key:?}").contains(SESSION_PRIVATE_KEY));
-    }
-
-    #[test]
-    fn parse_tempo_duration_units() {
-        assert_eq!(parse_tempo_duration("30").unwrap(), 30);
-        assert_eq!(parse_tempo_duration("30s").unwrap(), 30);
-        assert_eq!(parse_tempo_duration("10m").unwrap(), 600);
-        assert_eq!(parse_tempo_duration("2h").unwrap(), 7200);
-        assert_eq!(parse_tempo_duration("7d").unwrap(), 604800);
-        assert!(parse_tempo_duration("").is_err());
-        assert!(parse_tempo_duration("1mo").is_err());
-    }
-
-    #[test]
-    fn parse_tempo_selector_accepts_hex_signature_and_tip20_names() {
-        assert_eq!(parse_tempo_selector("0xaabbccdd").unwrap(), [0xaa, 0xbb, 0xcc, 0xdd]);
-        assert_eq!(
-            parse_tempo_selector("transfer").unwrap(),
-            keccak256(b"transfer(address,uint256)")[..4]
-        );
-        assert_eq!(parse_tempo_selector("increment()").unwrap(), keccak256(b"increment()")[..4]);
-        assert!(parse_tempo_selector("0xaabb").is_err());
-    }
-
-    #[test]
-    fn parse_tempo_scope_parts_matches_session_cli_shape() {
-        let selectors = ["register(address)", "transfer", "approve"];
-        let scope =
-            parse_tempo_scope_parts("0x20c0000000000000000000000000000000000001", &selectors)
-                .unwrap();
-
-        assert_eq!(
-            scope.target,
-            "0x20c0000000000000000000000000000000000001".parse::<Address>().unwrap()
-        );
-        assert_eq!(scope.selector_rules.len(), 3);
-        assert_eq!(scope.selector_rules[0].selector, keccak256(b"register(address)")[..4]);
-        assert_eq!(scope.selector_rules[1].selector, keccak256(b"transfer(address,uint256)")[..4]);
-        assert_eq!(scope.selector_rules[2].selector, keccak256(b"approve(address,uint256)")[..4]);
-    }
-
-    #[test]
-    fn parse_tempo_scope_parts_rejects_invalid_selectors() {
-        let error = parse_tempo_scope_parts(
-            "0x20c0000000000000000000000000000000000001",
-            &["transfer(address,uint256"],
-        )
-        .unwrap_err();
-
-        assert!(error.contains("unmatched '('"));
-    }
-
-    #[test]
-    fn parse_tempo_spend_limit_accepts_pathusd_alias_and_tip20_ids() {
-        assert_eq!(
-            parse_tempo_policy_token("PathUSD").unwrap(),
-            "0x20c0000000000000000000000000000000000000".parse::<Address>().unwrap()
-        );
-        assert_eq!(
-            parse_tempo_spend_limit("PathUSD=0").unwrap(),
-            SessionSpendLimit { token: PATH_USD_ADDRESS, amount: U256::ZERO }
-        );
-        assert_eq!(
-            parse_tempo_spend_limit("PathUSD=0x10").unwrap(),
-            SessionSpendLimit { token: PATH_USD_ADDRESS, amount: U256::from(16) }
-        );
-        assert_eq!(
-            parse_tempo_policy_token("1").unwrap(),
-            "0x20c0000000000000000000000000000000000001".parse::<Address>().unwrap()
-        );
-        assert!(parse_tempo_spend_limit("PathUSD").is_err());
     }
 }
