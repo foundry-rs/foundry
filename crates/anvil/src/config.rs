@@ -524,6 +524,20 @@ impl Default for NodeConfig {
 }
 
 impl NodeConfig {
+    /// Applies Tempo's safe default beneficiary for forked nodes when the user
+    /// has not supplied a genesis coinbase.
+    pub(crate) fn apply_tempo_fork_beneficiary_default<N>(&self, evm_env: &mut EvmEnv<N>) {
+        if self.networks.is_tempo() && !self.fork_urls.is_empty() && self.genesis.is_none() {
+            // Tempo mainnet maps the zero validator token to a DONOTUSE sentinel.
+            // Forked transactions with the default zero beneficiary can therefore
+            // fail fee collection before producing a receipt. Use the same neutral
+            // fee-recipient sentinel as Tempo's simulation path so validator token
+            // lookup falls back to the default PathUSD token unless the user
+            // explicitly supplied a genesis coinbase.
+            evm_env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
+        }
+    }
+
     /// Returns the memory limit of the node
     #[must_use]
     pub const fn with_memory_limit(mut self, mems_value: Option<u64>) -> Self {
@@ -1164,15 +1178,7 @@ impl NodeConfig {
             },
         );
 
-        if self.networks.is_tempo() && !self.fork_urls.is_empty() && self.genesis.is_none() {
-            // Tempo mainnet maps the zero validator token to a DONOTUSE sentinel.
-            // Forked transactions with the default zero beneficiary can therefore
-            // fail fee collection before producing a receipt. Use the same neutral
-            // fee-recipient sentinel as Tempo's simulation path so validator token
-            // lookup falls back to the default PathUSD token unless the user
-            // explicitly supplied a genesis coinbase.
-            evm_env.block_env.beneficiary = TIP_FEE_MANAGER_ADDRESS;
-        }
+        self.apply_tempo_fork_beneficiary_default(&mut evm_env);
 
         let base_fee_params: BaseFeeParams =
             self.networks.base_fee_params(self.get_genesis_timestamp());

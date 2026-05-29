@@ -13,7 +13,7 @@ use alloy_eips::eip2718::Encodable2718;
 use alloy_network::{ReceiptResponse, TransactionBuilder, TransactionResponse};
 use alloy_primitives::{Address, Bytes, TxKind, U256, address};
 use alloy_provider::{Provider, ext::TxPoolApi};
-use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest};
+use alloy_rpc_types::{BlockId, BlockNumberOrTag, TransactionRequest, anvil::Forking};
 use alloy_serde::WithOtherFields;
 use alloy_signer::Signer;
 use alloy_signer_local::PrivateKeySigner;
@@ -47,11 +47,32 @@ async fn test_tempo_fork_detects_hardfork_from_fork_timestamp() {
     )
     .await;
 
-    let (api, _handle) =
+    let (api, handle) =
         spawn(NodeConfig::test_tempo().with_eth_rpc_url(Some(source_handle.http_endpoint()))).await;
 
     let node_info = api.anvil_node_info().await.unwrap();
     assert_eq!(node_info.hard_fork, "T3");
+
+    let latest_block = handle
+        .http_provider()
+        .get_block_by_number(BlockNumberOrTag::Latest)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest_block.header.beneficiary, TIP_FEE_MANAGER_ADDRESS);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_tempo_reset_to_fork_uses_fee_manager_beneficiary() {
+    let (_source_api, source_handle) = spawn(NodeConfig::test()).await;
+
+    let (api, handle) = spawn(NodeConfig::test_tempo()).await;
+    api.anvil_reset(Some(Forking {
+        json_rpc_url: Some(source_handle.http_endpoint()),
+        block_number: None,
+    }))
+    .await
+    .unwrap();
 
     let latest_block = handle
         .http_provider()
