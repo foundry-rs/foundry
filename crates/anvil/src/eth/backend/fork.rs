@@ -26,6 +26,7 @@ use alloy_rpc_types::{
 };
 use alloy_transport::TransportError;
 use foundry_common::provider::{ProviderBuilder, RetryProvider};
+use foundry_evm::hardfork::FoundryHardfork;
 use foundry_primitives::{FoundryTxEnvelope, FoundryTxReceipt};
 use parking_lot::{
     RawRwLock, RwLock,
@@ -672,6 +673,8 @@ pub struct ClientForkConfig<N: Network = AnyNetwork> {
     pub provider: Arc<RetryProvider<N>>,
     pub chain_id: u64,
     pub override_chain_id: Option<u64>,
+    /// The hardfork resolved for the forked block, if known.
+    pub hardfork: Option<FoundryHardfork>,
     /// The timestamp for the forked block
     pub timestamp: u64,
     /// The basefee of the forked block

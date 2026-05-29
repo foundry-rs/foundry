@@ -1,5 +1,8 @@
 use super::InvariantContract;
-use crate::executors::RawCallResult;
+use crate::{
+    executors::RawCallResult,
+    inspectors::{EdgeCovHit, EdgeCoverage},
+};
 use alloy_json_abi::Function;
 use alloy_primitives::{Address, B256, Bytes, Selector, keccak256};
 use foundry_config::InvariantConfig;
@@ -104,7 +107,7 @@ impl<'a> InvariantRunCtx<'a> {
         assertion_failure: bool,
     ) -> String {
         let revert_reason = RevertDecoder::new()
-            .with_abis(self.targeted_contracts.targets.lock().values().map(|c| &c.abi))
+            .with_abis(self.targeted_contracts.targets().values().map(|c| &c.abi))
             .with_abi(self.contract.abi)
             .decode(call_result.result.as_ref(), call_result.exit_reason);
         // Non-reverting assertion failures surface through Foundry's failure flags, not
@@ -204,11 +207,35 @@ pub fn handler_site_already_minimal(
 pub fn snapshot_edge_fingerprint<FEN: FoundryEvmNetwork>(
     call_result: &RawCallResult<FEN>,
 ) -> Option<B256> {
-    let edges = call_result.edge_coverage.as_deref()?;
-    if edges.is_empty() || edges.iter().all(|b| *b == 0) {
+    let edges = call_result.edge_coverage.as_ref()?;
+    if edges.is_empty() {
         return None;
     }
-    Some(keccak256(edges))
+    match edges {
+        EdgeCoverage::Hash(edges) => Some(keccak256(edges)),
+        EdgeCoverage::CollisionFree(hits) => {
+            // `From<EdgeCovInspector>` does not sort on the per-call drain path,
+            // so sort here for a deterministic fingerprint across runs regardless
+            // of HashMap iteration order. Cold path — only invoked on handler
+            // assertion failure.
+            let mut sorted: Vec<&EdgeCovHit> = hits.iter().collect();
+            sorted.sort_unstable_by_key(|hit| hit.edge);
+
+            // address(20) + pc(8) + jump_dest(32) + depth_tag(1) + depth(8) + count(1)
+            let mut bytes = Vec::with_capacity(sorted.len() * (20 + 8 + 32 + 1 + 8 + 1));
+            for hit in sorted {
+                bytes.extend_from_slice(hit.edge.address.as_slice());
+                bytes.extend_from_slice(&hit.edge.pc.to_le_bytes());
+                bytes.extend_from_slice(&hit.edge.jump_dest.to_be_bytes::<32>());
+                // Tag byte disambiguates `None` from `Some(0)` so configs with
+                // `include_call_depth` toggled don't collide in the fingerprint.
+                bytes.push(u8::from(hit.edge.depth.is_some()));
+                bytes.extend_from_slice(&hit.edge.depth.unwrap_or(0).to_le_bytes());
+                bytes.push(hit.count);
+            }
+            Some(keccak256(bytes))
+        }
+    }
 }
 
 /// Identifies a single entry in the [`InvariantFailures`] map. Invariant predicate

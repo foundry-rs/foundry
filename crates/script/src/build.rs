@@ -1,9 +1,15 @@
 use crate::{
-    ScriptArgs, ScriptConfig, broadcast::BundledState, execute::LinkedState,
-    multi_sequence::MultiChainSequence, sequence::ScriptSequenceKind,
+    ScriptArgs, ScriptConfig,
+    broadcast::{
+        BundledState, RemainingScriptTransaction, SignerScope, remaining_unsigned_transactions,
+        script_session_expected_sender_if_configured,
+    },
+    execute::LinkedState,
+    multi_sequence::MultiChainSequence,
+    sequence::ScriptSequenceKind,
 };
 use alloy_network::AnyNetwork;
-use alloy_primitives::{B256, Bytes};
+use alloy_primitives::{Address, B256, Bytes, map::AddressHashSet};
 use alloy_provider::Provider;
 use eyre::{OptionExt, Result};
 use forge_script_sequence::ScriptSequence;
@@ -20,8 +26,37 @@ use foundry_compilers::{
 };
 use foundry_evm::{core::evm::FoundryEvmNetwork, traces::debug::ContractSources};
 use foundry_linking::Linker;
-use foundry_wallets::wallet_browser::signer::BrowserSigner;
+use foundry_wallets::{MultiWalletOpts, wallet_browser::signer::BrowserSigner};
 use std::{path::PathBuf, str::FromStr, sync::Arc};
+
+/// Returns whether every scoped signer needed for resume is already available.
+///
+/// `Wallets` only tracks signers collected from CLI options and script cheatcodes. A Tempo
+/// session signer lives in the session registry instead, so resume needs to treat the session
+/// root account as available only on the chain covered by the session.
+fn has_available_script_signers<FEN: FoundryEvmNetwork>(
+    script_config: &ScriptConfig<FEN>,
+    wallets: &MultiWalletOpts,
+    script_wallets: &Wallets,
+    expected_sender: Option<Address>,
+    remaining: &[RemainingScriptTransaction],
+) -> Result<bool> {
+    let signers = script_wallets
+        .signers()
+        .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
+    if remaining.is_empty() {
+        return Ok(true);
+    }
+
+    let session_scope = script_config
+        .tempo
+        .session_signer_for_multi_wallet_any_chain(wallets, expected_sender)?
+        .map(|session| {
+            SignerScope::new(session.session.chain_id, session.access_key.wallet_address)
+        });
+
+    Ok(remaining.iter().all(|tx| signers.contains(&tx.from) || Some(tx.scope()) == session_scope))
+}
 
 /// Container for the compiled contracts.
 #[derive(Debug)]
@@ -301,19 +336,23 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                     self.script_config,
                 )
             } else {
-                let mut froms = sequence.sequences().iter().flat_map(|s| {
-                    s.transactions
-                        .iter()
-                        .skip(s.receipts.len())
-                        .map(|t| t.transaction.from().expect("from is missing in script artifact"))
-                });
+                let remaining_transactions =
+                    remaining_unsigned_transactions(sequence.sequences()).collect::<Vec<_>>();
+                let remaining_froms =
+                    remaining_transactions.iter().map(|tx| tx.from).collect::<AddressHashSet>();
+                let expected_session_sender = script_session_expected_sender_if_configured(
+                    &self.script_config,
+                    &remaining_froms,
+                )?;
+                let has_available_signers = has_available_script_signers(
+                    &self.script_config,
+                    &self.args.wallets,
+                    &self.script_wallets,
+                    expected_session_sender,
+                    &remaining_transactions,
+                )?;
 
-                let available_signers = self
-                    .script_wallets
-                    .signers()
-                    .map_err(|e| eyre::eyre!("Failed to get available signers: {}", e))?;
-
-                if froms.all(|from| available_signers.contains(&from)) {
+                if has_available_signers {
                     (
                         self.args,
                         self.build_data,
@@ -324,7 +363,12 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
                 } else {
                     // IF we are missing required signers, execute script as we might need to
                     // collect private keys from the execution.
-                    let executed = self.link().await?.prepare_execution().await?.execute().await?;
+                    let mut state = self;
+                    state
+                        .script_config
+                        .update_tempo_session_sender(&state.args.wallets, state.args.evm.sender)
+                        .await?;
+                    let executed = state.link().await?.prepare_execution().await?.execute().await?;
                     (
                         executed.args,
                         executed.build_data.build_data,
@@ -377,5 +421,60 @@ impl<FEN: FoundryEvmNetwork> CompiledState<FEN> {
             )?;
             Ok(ScriptSequenceKind::Multi(sequence))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foundry_cli::opts::TEMPO_SESSION_ID_ENV;
+    use foundry_evm::core::evm::TempoEvmNetwork;
+    use std::sync::LazyLock;
+    use tokio::sync::{Mutex, MutexGuard};
+
+    static SESSION_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    struct SessionEnvGuard {
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    impl SessionEnvGuard {
+        async fn set(session_id: B256) -> Self {
+            let guard = SESSION_ENV_LOCK.lock().await;
+            // SAFETY: test-only environment override guarded by a process-wide mutex.
+            unsafe { std::env::set_var(TEMPO_SESSION_ID_ENV, format!("{session_id:?}")) };
+            Self { _guard: guard }
+        }
+    }
+
+    impl Drop for SessionEnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: restore process environment after the guarded test section.
+            unsafe { std::env::remove_var(TEMPO_SESSION_ID_ENV) };
+        }
+    }
+
+    #[tokio::test]
+    async fn has_available_script_signers_skips_session_resolution_when_remaining_empty() {
+        let _guard = SessionEnvGuard::set(B256::from([0x99; 32])).await;
+        let script_config = ScriptConfig::<TempoEvmNetwork>::new(
+            Default::default(),
+            Default::default(),
+            false,
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        let has_available = has_available_script_signers(
+            &script_config,
+            &MultiWalletOpts::default(),
+            &Wallets::new(Default::default(), None),
+            None,
+            &[],
+        )
+        .unwrap();
+
+        assert!(has_available);
     }
 }

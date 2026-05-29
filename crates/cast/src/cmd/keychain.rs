@@ -2810,6 +2810,7 @@ async fn send_keychain_tx(
 ) -> Result<()> {
     let (signer, tempo_access_key) = send_tx.eth.wallet.maybe_signer().await?;
     let print_sponsor_hash = tx_opts.tempo.print_sponsor_hash;
+    let expires_at = tx_opts.tempo.resolve_expires();
     let tempo_sponsor =
         if print_sponsor_hash { None } else { tx_opts.tempo.sponsor_config().await? };
 
@@ -2862,6 +2863,8 @@ async fn send_keychain_tx(
         }
         return Ok(());
     }
+
+    crate::tempo::print_expires(expires_at)?;
 
     if let Some(browser) = browser {
         let chain = builder.chain();
@@ -3331,7 +3334,7 @@ fn print_key_entry(entry: &tempo::KeyEntry) -> Result<()> {
 }
 
 fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
-    let is_direct = entry.key_address.is_none() || entry.key_address == Some(entry.wallet_address);
+    let is_direct = entry.key_address.is_none_or(|key_address| key_address == entry.wallet_address);
 
     let limits: Vec<_> = entry
         .limits

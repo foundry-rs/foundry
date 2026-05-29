@@ -100,6 +100,7 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
 
     fn run_execution(&mut self, frame: FrameInput) -> Result<FrameResult, EVMError<DatabaseError>> {
         let mut handler = OpEvmHandler::<I>::new();
+        let reservoir = frame.reservoir();
 
         let memory =
             SharedMemory::new_with_buffer(self.ctx_ref().local().shared_memory_buffer().clone());
@@ -108,7 +109,7 @@ impl<'db, I: FoundryInspectorExt<OpEvmContext<&'db mut dyn DatabaseExt<OpEvmFact
         let mut frame_result =
             handler.inspect_run_exec_loop(self, first_frame_input).map_err(map_op_error)?;
 
-        handler.last_frame_result(self, &mut frame_result).map_err(map_op_error)?;
+        handler.last_frame_result(self, reservoir, &mut frame_result).map_err(map_op_error)?;
 
         Ok(frame_result)
     }

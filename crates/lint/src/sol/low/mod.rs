@@ -12,13 +12,25 @@ use delegatecall_loop::DELEGATECALL_LOOP;
 mod missing_zero_check;
 use missing_zero_check::MISSING_ZERO_CHECK;
 
+mod missing_events_access_control;
+use missing_events_access_control::MISSING_EVENTS_ACCESS_CONTROL;
+
+mod missing_events_arithmetic;
+use missing_events_arithmetic::MISSING_EVENTS_ARITHMETIC;
+
 mod return_bomb;
 use return_bomb::RETURN_BOMB;
+
+mod reentrancy_events;
+use reentrancy_events::REENTRANCY_EVENTS;
 
 register_lints!(
     (BlockTimestamp, early, (BLOCK_TIMESTAMP)),
     (CallsLoop, late, (CALLS_LOOP)),
     (DelegatecallLoop, late, (DELEGATECALL_LOOP)),
+    (MissingEventsAccessControl, late, (MISSING_EVENTS_ACCESS_CONTROL)),
+    (MissingEventsArithmetic, late, (MISSING_EVENTS_ARITHMETIC)),
     (MissingZeroCheck, late, (MISSING_ZERO_CHECK)),
     (ReturnBomb, late, (RETURN_BOMB)),
+    (ReentrancyEvents, late, (REENTRANCY_EVENTS)),
 );
