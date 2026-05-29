@@ -189,7 +189,7 @@ impl FmtArgs {
                             Ok(()) => {}
                             Err(e) => return Some(Err(e.into())),
                         }
-                        let _ = sh_println!("Formatted {}", path.display());
+                        let _ = sh_status!("Formatted {}", path.display());
                         None
                     } else {
                         unreachable!()
