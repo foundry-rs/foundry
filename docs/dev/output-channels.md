@@ -101,7 +101,7 @@ Each row's status is one of:
 | `cast rpc`             | RPC result (JSON)                                    | JSON                                                           | todo   |
 | `cast storage`         | Single slot value                                    | JSON of layout                                                 | todo   |
 | `cast logs`            | One log per line                                     | JSON array                                                     | todo   |
-| `cast run`             | Trace / decoded output                               | JSON                                                           | todo   |
+| `cast run`             | Trace / decoded output                               | JSON                                                           | migrated |
 | `cast trace`           | Trace                                                | JSON trace                                                     | todo   |
 | `cast wallet new`      | Address                                              | JSON `{ "address": "…", "private_key": "…" (only with explicit flag) }` | todo |
 | `cast wallet sign`     | Signature                                            | JSON                                                           | todo   |
