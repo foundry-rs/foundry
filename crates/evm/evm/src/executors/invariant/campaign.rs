@@ -23,15 +23,14 @@ impl InvariantCampaignSpec {
     /// Partitions the logical campaign into contiguous worker run ranges.
     ///
     /// This only describes work assignment. It does not start worker execution and does not
-    /// attribute failures to worker/run origins. A zero-run campaign has no worker work and
-    /// therefore produces no worker plans.
+    /// attribute failures to worker/run origins.
     pub fn worker_plans(self, workers: usize) -> Result<Vec<InvariantWorkerPlan>> {
         if self.total_runs == 0 {
-            return Ok(Vec::new());
+            return Ok(vec![InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 0 }]);
         }
         ensure!(workers > 0, "invariant campaign requires at least one worker");
 
-        let worker_count = workers.min(self.total_runs as usize) as u32;
+        let worker_count = workers.min(self.total_runs.max(1) as usize) as u32;
         let base_runs = self.total_runs / worker_count;
         let extra_runs = self.total_runs % worker_count;
 
@@ -167,6 +166,16 @@ fn ensure_outputs_cover_campaign(
     outputs: &[InvariantWorkerOutput],
 ) -> Result<()> {
     ensure_worker_ids_are_valid(outputs)?;
+
+    if spec.total_runs == 0 {
+        ensure!(
+            outputs.len() == 1
+                && outputs[0].plan.first_global_run == 0
+                && outputs[0].plan.runs == 0,
+            "invariant worker outputs do not cover the logical campaign"
+        );
+        return Ok(());
+    }
 
     let mut next_global_run = 0;
     for output in outputs {
@@ -424,17 +433,10 @@ mod tests {
     }
 
     #[test]
-    fn worker_plans_return_no_work_for_zero_run_campaign() {
+    fn worker_plans_keep_zero_run_campaign_as_single_empty_plan() {
         let plans = InvariantCampaignSpec::new(0).worker_plans(4).unwrap();
 
-        assert!(plans.is_empty());
-    }
-
-    #[test]
-    fn worker_plans_allow_zero_workers_for_zero_run_campaign() {
-        let plans = InvariantCampaignSpec::new(0).worker_plans(0).unwrap();
-
-        assert!(plans.is_empty());
+        assert_eq!(plans, vec![InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 0 }]);
     }
 
     #[test]
@@ -458,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregator_rejects_worker_output_for_zero_run_campaign() {
+    fn aggregator_accepts_single_worker_output_for_zero_run_campaign() {
         let spec = InvariantCampaignSpec::new(0);
         let worker = InvariantWorkerOutput::new(
             InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 0 },
@@ -467,9 +469,9 @@ mod tests {
 
         let mut aggregator = InvariantCampaignAggregator::new(spec);
         aggregator.push(worker);
-        let err = aggregator.finish().unwrap_err();
+        let result = aggregator.finish().unwrap();
 
-        assert!(err.to_string().contains("do not cover the logical campaign"));
+        assert_eq!(result.reverts, 0);
     }
 
     #[test]

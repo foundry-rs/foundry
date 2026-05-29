@@ -950,10 +950,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
-        if planned_runs == 0 {
-            return Ok(worker_result);
-        }
-
         let campaign_spec = InvariantCampaignSpec::new(planned_runs);
         let worker_plan = campaign_spec.worker_plans(1)?.pop().expect("one worker plan requested");
         let worker_output = InvariantWorkerOutput::new(worker_plan, worker_result);
