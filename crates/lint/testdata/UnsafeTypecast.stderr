@@ -20,7 +20,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ interface IReturnsUint256 {
    │           ━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 note[multi-contract-file]: prefer having only one contract, interface or library per file
    ╭▸ ROOT/testdata/UnsafeTypecast.sol:LL:CC
@@ -28,7 +28,7 @@ note[multi-contract-file]: prefer having only one contract, interface or library
 LL │ contract MemberCallRepros {
    │          ━━━━━━━━━━━━━━━━
    │
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#multi-contract-file
+   ╰ help: https://getfoundry.sh/forge/linting/multi-contract-file
 
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    ╭▸ ROOT/testdata/UnsafeTypecast.sol:LL:CC
@@ -2324,7 +2324,7 @@ LL │         uint128 a = uint128(getUint256());
    │       // forge-lint: disable-next-line(unsafe-typecast)
    │       
    │       
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+   ╰ help: https://getfoundry.sh/forge/linting/unsafe-typecast
 
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    ╭▸ ROOT/testdata/UnsafeTypecast.sol:LL:CC
@@ -2338,7 +2338,7 @@ LL │         uint128 a = uint128(cond ? x : y);
    │       // forge-lint: disable-next-line(unsafe-typecast)
    │       
    │       
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+   ╰ help: https://getfoundry.sh/forge/linting/unsafe-typecast
 
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    ╭▸ ROOT/testdata/UnsafeTypecast.sol:LL:CC
@@ -2352,7 +2352,7 @@ LL │         uint128 a = uint128(cond ? safe : unsafe_);
    │       // forge-lint: disable-next-line(unsafe-typecast)
    │       
    │       
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+   ╰ help: https://getfoundry.sh/forge/linting/unsafe-typecast
 
 warning[unsafe-typecast]: typecasts that can truncate values should be checked
    ╭▸ ROOT/testdata/UnsafeTypecast.sol:LL:CC
@@ -2366,5 +2366,5 @@ LL │         uint128 a = uint128(foo.getUint256());
    │       // forge-lint: disable-next-line(unsafe-typecast)
    │       
    │       
-   ╰ help: https://book.getfoundry.sh/reference/forge/forge-lint#unsafe-typecast
+   ╰ help: https://getfoundry.sh/forge/linting/unsafe-typecast
 
