@@ -111,12 +111,14 @@ Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag:
     };
 
     let remove = |cmd: &mut TestCommand, target: &str| {
-        cmd.forge_fuse().args(["remove", "--force", target]).assert_success().stdout_eq(str![[
-            r#"
+        cmd.forge_fuse()
+            .args(["remove", "--force", target])
+            .assert_success()
+            .stdout_eq(str![""])
+            .stderr_eq(str![[r#"
 Removing 'forge-std' in [..], (url: https://github.com/foundry-rs/forge-std, tag: None)
 
-"#
-        ]]);
+"#]]);
 
         assert!(!forge_std.exists());
         assert!(!forge_std_mod.exists());
@@ -671,7 +673,8 @@ forgetest_init!(sync_on_forge_update, |prj, cmd| {
     cmd.forge_fuse()
         .args(["update", "foundry-rs/forge-std@master"])
         .assert_success()
-        .stdout_eq(expected_output);
+        .stdout_eq(str![""])
+        .stderr_eq(expected_output);
 
     let git = Git::new(&forge_std_path);
     assert_eq!(

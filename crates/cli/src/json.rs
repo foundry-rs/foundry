@@ -8,6 +8,7 @@ use foundry_common::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, to_string};
+use std::io::Write as _;
 
 /// The current version of Foundry's top-level JSON output envelope.
 pub const JSON_SCHEMA_VERSION: u32 = 1;
@@ -149,10 +150,12 @@ pub fn print_json_object<T: Serialize>(value: T) -> Result<()> {
 
 /// Prints a value as compact, single-line JSON to stdout.
 ///
-/// The trailing newline makes this suitable for NDJSON streams when each call
-/// emits one self-contained JSON record.
+/// Bypasses the shell verbosity layer so `--quiet` cannot suppress structured
+/// output the caller explicitly asked for.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
-    sh_println!("{}", to_string(value)?)?;
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "{}", to_string(value)?)?;
+    stdout.flush()?;
     Ok(())
 }
 
@@ -167,6 +170,20 @@ pub fn print_json_success_with_warnings<T: Serialize>(
     warnings: Vec<JsonMessage>,
 ) -> Result<()> {
     print_json(&JsonEnvelope::success_with_warnings(data, warnings))
+}
+
+/// Prints command output that may already be JSON: parsed and envelope-wrapped in `--json` mode,
+/// plain text otherwise. If the output is not valid JSON, it is wrapped as a scalar string.
+pub fn print_json_value_or_scalar(value: impl AsRef<str> + std::fmt::Display) -> Result<()> {
+    if shell::is_json() {
+        match serde_json::from_str::<Value>(value.as_ref()) {
+            Ok(value) => print_json_success(value),
+            Err(_) => print_json_success(value.as_ref()),
+        }
+    } else {
+        sh_println!("{value}")?;
+        Ok(())
+    }
 }
 
 /// Prints a scalar value: JSON envelope in `--json` mode, plain text otherwise.

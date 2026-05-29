@@ -193,6 +193,31 @@ casttest!(block_raw, |_prj, cmd| {
     );
 });
 
+casttest!(block_json_wraps_raw_and_scalar_field_outputs, |_prj, cmd| {
+    let eth_rpc_url = next_http_rpc_endpoint();
+
+    let raw_output = cmd
+        .args(["block", "22934900", "--rpc-url", eth_rpc_url.as_str(), "--raw", "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let raw_envelope: serde_json::Value = serde_json::from_str(raw_output.trim()).unwrap();
+    assert_eq!(raw_envelope["schema_version"], 1);
+    assert!(raw_envelope["success"].as_bool().unwrap());
+    assert!(raw_envelope["data"].as_str().unwrap().starts_with("0x"));
+
+    let field_output = cmd
+        .cast_fuse()
+        .args(["block", "0x123", "--field", "number", "--rpc-url", eth_rpc_url.as_str(), "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+    let field_envelope: serde_json::Value = serde_json::from_str(field_output.trim()).unwrap();
+    assert_eq!(field_envelope["schema_version"], 1);
+    assert!(field_envelope["success"].as_bool().unwrap());
+    assert_eq!(field_envelope["data"], 291);
+});
+
 casttest!(block_raw_tempo, |_prj, cmd| {
     // https://explore.tempo.xyz/block/8386710
     let output = cmd
@@ -3047,6 +3072,17 @@ casttest!(send_eip7702_multiple_auth, async |_prj, cmd| {
 
     // Verify we have 2 authorizations
     assert_eq!(auth_list.len(), 2, "Expected 2 authorizations in the transaction");
+
+    let field_output = cmd
+        .cast_fuse()
+        .args(["tx", tx_hash, "authorizationList", "--rpc-url", &endpoint, "--json"])
+        .assert_success()
+        .get_output()
+        .stdout_lossy();
+
+    let field_envelope: serde_json::Value = serde_json::from_str(field_output.trim()).unwrap();
+    let field_auth_list = field_envelope["data"].as_array().unwrap();
+    assert_eq!(field_auth_list.len(), 2, "Expected authorizationList field data to be an array");
 });
 
 // Test that multiple address-based authorizations are rejected
@@ -3486,7 +3522,7 @@ contract CounterInExternalLibScript is Script {
     .assert_success();
 
     let tx_hash = api
-        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(0))
+        .transaction_by_block_number_and_index(BlockNumberOrTag::Latest, Index::from(1))
         .await
         .unwrap()
         .unwrap()
@@ -3531,6 +3567,84 @@ forgetest_async!(cast_call_custom_chain_id, |_prj, cmd| {
             &chain_id.to_string(),
         ])
         .assert_success();
+});
+
+// `cast --machine call` emits a single envelope on stdout against an
+// empty account, returning the deterministic `0x` result.
+forgetest_async!(cast_call_machine_mode_emits_envelope, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let http_endpoint = handle.http_endpoint();
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &http_endpoint,
+        ])
+        .assert_success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("stdout is exactly one JSON envelope");
+
+    assert_eq!(envelope["schema_version"], 1);
+    assert_eq!(envelope["success"], true);
+    assert_eq!(envelope["data"]["raw"], "0x");
+    assert_eq!(envelope["errors"], serde_json::json!([]));
+    assert_eq!(envelope["warnings"], serde_json::json!([]));
+});
+
+// `--machine` rejects flags that would corrupt the envelope-only stdout
+// contract. Asserts the stable `code` + exit code, not just message text.
+forgetest_async!(cast_call_machine_mode_rejects_unsupported_flags, |_prj, cmd| {
+    let (_api, handle) = anvil::spawn(NodeConfig::test()).await;
+    let http_endpoint = handle.http_endpoint();
+
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "call",
+            "--trace",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            &http_endpoint,
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
+
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "cli.usage.invalid");
+    assert_eq!(assert.get_output().status.code(), Some(2));
+    let msg = envelope["errors"][0]["message"].as_str().unwrap_or("");
+    assert!(msg.contains("--trace"), "missing --trace mention: {envelope}");
+});
+
+// Transport/connectivity failures (here: unreachable RPC URL) emit a typed
+// `network.rpc.error` envelope and exit `Network (6)`.
+forgetest_async!(cast_call_machine_mode_rpc_failure_emits_network_envelope, |_prj, cmd| {
+    let assert = cmd
+        .cast_fuse()
+        .args([
+            "--machine",
+            "call",
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+            "--rpc-url",
+            // Unreachable: port 1 is reserved and nothing accepts here.
+            "http://127.0.0.1:1",
+        ])
+        .assert_failure();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let envelope: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("error envelope on stdout");
+
+    assert_eq!(envelope["success"], false);
+    assert_eq!(envelope["errors"][0]["code"], "network.rpc.error");
+    assert_eq!(assert.get_output().status.code(), Some(6));
 });
 
 // https://github.com/foundry-rs/foundry/issues/10848
@@ -3960,8 +4074,11 @@ contract WETH9 {
 
 // <https://github.com/foundry-rs/foundry/issues/10553>
 // <https://basescan.org/tx/0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de>
-casttest!(flaky_osaka_can_run_p256_precompile, |_prj, cmd| {
-    cmd.args([
+casttest!(
+    #[ignore = "public Base RPC endpoint used in CI does not reliably serve this transaction"]
+    flaky_osaka_can_run_p256_precompile,
+    |_prj, cmd| {
+        cmd.args([
         "run",
         "0x17b2de59ebd7dfd2452a3638a16737b6b65ae816c1c5571631dc0d80b63c41de",
         "--rpc-url",
@@ -4036,7 +4153,8 @@ Transaction successfully executed.
 [GAS]
 
 "#]]);
-});
+    }
+);
 
 // tests cast send gas estimate execution failure message contains decoded custom error
 // <https://github.com/foundry-rs/foundry/issues/9789>
@@ -4108,14 +4226,18 @@ Error: Failed to estimate gas: server returned an error response: error code 3: 
 });
 
 // <https://basescan.org/block/30558838>
-casttest!(flaky_estimate_base_da, |_prj, cmd| {
-    cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
-        .assert_success()
-        .stdout_eq(str![[r#"
+casttest!(
+    #[ignore = "public Base RPC endpoint used in CI does not reliably serve this block"]
+    flaky_estimate_base_da,
+    |_prj, cmd| {
+        cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
+            .assert_success()
+            .stdout_eq(str![[r#"
 Estimated data availability size for block 30558838 with 225 transactions: 52916546100
 
 "#]]);
-});
+    }
+);
 
 // <https://github.com/foundry-rs/foundry/issues/10705>
 casttest!(cast_call_return_array_of_tuples, |_prj, cmd| {
@@ -4815,10 +4937,10 @@ casttest!(correct_json_serialization, |_prj, cmd| {
         [true, "0x0000000000000000000000000000000000000000000000000000000000000012"],
         [true, "0x0000000000000000000000000000000000000000000000000000000000000012"]
     ]]);
-    let envelope: serde_json::Value =
+    let output: serde_json::Value =
         serde_json::from_slice(&cmd.args(args).assert_success().get_output().stdout)
             .expect("not valid json");
-    assert_eq!(envelope["data"], expected_output);
+    assert_eq!(output, expected_output);
 });
 
 // Test cast abi-encode-event with indexed parameters

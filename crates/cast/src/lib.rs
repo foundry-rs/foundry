@@ -60,6 +60,8 @@ pub use foundry_evm::*;
 
 pub mod args;
 pub mod cmd;
+pub mod diagnostic;
+pub mod introspect;
 pub mod opts;
 pub mod tempo;
 
@@ -198,7 +200,7 @@ impl<P: Provider<N> + Clone + Unpin, N: Network> Cast<P, N> {
                 .into_iter()
                 .map(|value| serialize_value_as_json(value, None))
                 .collect::<eyre::Result<Vec<_>>>()?;
-            serde_json::to_string(&tokens)?
+            serde_json::to_string_pretty(&tokens).unwrap()
         } else {
             // seth compatible user-friendly return type conversions
             decoded.iter().map(format_token).collect::<Vec<_>>().join("\n")
@@ -1132,8 +1134,19 @@ where
             let encoded = tx.as_ref().encoded_2718();
             format!("0x{}", hex::encode(encoded))
         } else if let Some(ref field) = field {
-            get_pretty_tx_attr::<N>(&tx, field.as_str())
-                .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.clone()))?
+            if let Some(value) = get_pretty_tx_attr::<N>(&tx, field.as_str()) {
+                value
+            } else {
+                let tx_json = serde_json::to_value(&tx)?;
+                let value = tx_json
+                    .get(field)
+                    .ok_or_else(|| eyre::eyre!("invalid tx field: {}", field.clone()))?;
+
+                match value {
+                    serde_json::Value::String(value) => value.clone(),
+                    value => value.to_string(),
+                }
+            }
         } else if shell::is_json() {
             // to_value first to sort json object keys
             serde_json::to_value(&tx)?.to_string()
