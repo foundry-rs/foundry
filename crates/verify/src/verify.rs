@@ -122,8 +122,8 @@ impl VerifierArgs {
                     )) => {
                         sh_warn!("verifier credential check inconclusive, proceeding anyway")?;
                     }
-                    Ok(Err(e)) => {
-                        sh_warn!("verifier credential check failed: {e}, proceeding anyway")?;
+                    Ok(Err(_)) => {
+                        sh_warn!("verifier credential check failed, proceeding anyway")?;
                     }
                 }
             }
@@ -146,8 +146,8 @@ impl VerifierArgs {
                         .send()
                         .await
                     {
-                        Err(e) => {
-                            sh_warn!("verifier credential check failed: {e}, proceeding anyway")?;
+                        Err(_) => {
+                            sh_warn!("verifier credential check failed, proceeding anyway")?;
                         }
                         Ok(resp) => {
                             let status = resp.status();

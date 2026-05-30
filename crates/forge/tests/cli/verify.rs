@@ -559,7 +559,7 @@ forgetest_async!(create_preflight_warns_on_rate_limit, |prj, cmd| {
             pk.as_str(),
             "--verify",
             "--verifier",
-            "custom",
+            "blockscout",
             "--verifier-url",
             verifier_url.as_str(),
             "--verifier-api-key",
@@ -572,5 +572,9 @@ forgetest_async!(create_preflight_warns_on_rate_limit, |prj, cmd| {
     assert!(
         !stderr.contains("Verification preflight check failed"),
         "preflight should not block on rate limit, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("verifier credential check inconclusive"),
+        "preflight should warn on rate limit, got: {stderr}"
     );
 });
