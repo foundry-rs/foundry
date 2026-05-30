@@ -490,11 +490,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             InvariantFuzzError,
         >,
     ) -> Result<InvariantFuzzTestResult> {
-        let campaign_spec = InvariantCampaignSpec::new(self.config.runs);
-        let worker_plan = campaign_spec.worker_plans(1)?.pop().expect("one worker plan requested");
-        debug_assert!(worker_plan.is_master());
         let worker_output = self.run_invariant_worker(
-            worker_plan,
+            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: self.config.runs },
             invariant_contract,
             fuzz_fixtures,
             fuzz_state,
@@ -502,13 +499,12 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             early_exit,
             initial_handler_failures,
         )?;
-        debug_assert_eq!(worker_output.plan.first_global_run, 0);
 
         // Timeout-driven campaigns can execute beyond the initial configured run count. Preserve
         // the existing single-worker `planned_runs` behavior by rebuilding the logical spec
         // from the worker's final plan.
-        let campaign_spec = InvariantCampaignSpec::new(worker_output.plan.runs);
-        let mut aggregator = InvariantCampaignAggregator::new(campaign_spec);
+        let mut aggregator =
+            InvariantCampaignAggregator::new(InvariantCampaignSpec::new(worker_output.plan.runs));
         aggregator.push(worker_output);
         aggregator.finish()
     }
@@ -554,11 +550,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let mut throughput = InvariantThroughputMetrics::default();
         let mut failure_metrics = InvariantFailureMetrics::default();
         let continue_campaign = |runs: u32| {
-            if early_exit.should_stop() {
-                return false;
-            }
-
-            if timer.is_enabled() { !timer.is_timed_out() } else { runs < plan.runs }
+            !early_exit.should_stop()
+                && if timer.is_enabled() { !timer.is_timed_out() } else { runs < plan.runs }
         };
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
@@ -982,23 +975,23 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         let reverts = result.failures.reverts;
         let (errors, handler_errors) = result.failures.partition();
-        let failed_corpus_replays =
-            if plan.is_master() { corpus_manager.failed_replays } else { 0 };
-        let worker_result = InvariantFuzzTestResult::new(
-            errors,
-            handler_errors,
-            result.fuzz_cases,
-            reverts,
-            result.last_run_inputs,
-            result.gas_report_traces,
-            result.line_coverage,
-            result.metrics,
-            failed_corpus_replays,
-            result.optimization_best_value,
-            result.optimization_best_sequence,
-        );
         plan.runs = planned_runs;
-        Ok(InvariantWorkerOutput::new(plan, worker_result))
+        Ok(InvariantWorkerOutput {
+            plan,
+            result: InvariantFuzzTestResult::new(
+                errors,
+                handler_errors,
+                result.fuzz_cases,
+                reverts,
+                result.last_run_inputs,
+                result.gas_report_traces,
+                result.line_coverage,
+                result.metrics,
+                if plan.worker_id == 0 { corpus_manager.failed_replays } else { 0 },
+                result.optimization_best_value,
+                result.optimization_best_sequence,
+            ),
+        })
     }
 
     /// Prepares certain structures to execute the invariant tests:
@@ -1107,18 +1100,15 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
         }
 
-        let is_master_worker = plan.is_master();
-        let master_executor = is_master_worker.then_some(&self.executor);
-        let replay_contracts = is_master_worker.then_some(&targeted_contracts);
-        let dynamic_target_ctx = is_master_worker.then_some(self.dynamic_target_ctx());
+        let is_master_worker = plan.worker_id == 0;
         let worker = WorkerCorpus::new(
-            plan.worker_index(),
+            plan.worker_id as usize,
             self.config.corpus.clone(),
             strategy.boxed(),
-            master_executor,
+            is_master_worker.then_some(&self.executor),
             None,
-            replay_contracts,
-            dynamic_target_ctx,
+            is_master_worker.then_some(&targeted_contracts),
+            is_master_worker.then_some(self.dynamic_target_ctx()),
         )?;
 
         let mut invariant_test =
