@@ -69,6 +69,7 @@ impl SessionSubcommands {
     }
 }
 
+/// Creates a signed session entry and stores it in the local registry.
 async fn run_create(
     root_account: Address,
     chain_id: u64,
@@ -113,6 +114,7 @@ async fn run_create(
     Ok(())
 }
 
+/// Removes a session entry from the local registry.
 fn run_revoke(session_id: B256) -> Result<()> {
     let removed = remove_session_entry(session_id)?;
 
@@ -133,6 +135,7 @@ fn run_revoke(session_id: B256) -> Result<()> {
     Ok(())
 }
 
+/// Builds an active session entry from CLI policy inputs and a root signature.
 async fn build_session_entry(
     root_account: Address,
     chain_id: u64,
@@ -194,6 +197,7 @@ async fn resolve_root_signer(wallet: WalletOpts, root_account: Address) -> Resul
     Ok(signer)
 }
 
+/// Adapts shared keychain scope parsing into the session authorization type.
 fn parse_scope(s: &str) -> Result<CallScope, String> {
     parse_policy_scope(s).map(|scope| CallScope {
         target: scope.target,
@@ -208,6 +212,7 @@ fn parse_scope(s: &str) -> Result<CallScope, String> {
     })
 }
 
+/// Parses a session spend limit into the session policy model.
 fn parse_spend_limit(s: &str) -> Result<SessionSpendLimit, String> {
     let (token_str, amount_str) = if let Some(pair) = s.split_once(':') {
         pair
