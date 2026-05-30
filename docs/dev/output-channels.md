@@ -130,11 +130,11 @@ Each row's status is one of:
 | `forge flatten`        | Flattened source                                     | n/a                                        | migrated |
 | `forge fmt`            | (empty) or formatted source with `--check`           | n/a                                        | migrated |
 | `forge tree`           | Dependency tree                                      | JSON                                       | migrated |
-| `forge config`         | Config TOML                                          | JSON config                                | todo   |
+| `forge config`         | Config TOML                                          | JSON config                                | migrated |
 | `forge selectors`      | Selectors output                                     | JSON                                       | todo   |
 | `forge eip712`         | (empty)                                              | JSON of types                              | migrated |
-| `forge geiger`         | Findings                                             | JSON                                       | todo   |
-| `forge lint`           | (empty; findings on stderr/exit code)                | JSON findings                              | todo   |
+| `forge geiger`         | Findings                                             | JSON                                       | migrated |
+| `forge lint`           | (empty; findings on stderr/exit code)                | JSON findings                              | migrated |
 | `forge snapshot`       | Snapshot file content / diff                         | JSON                                       | todo   |
 | `forge coverage`       | Coverage table or report                             | JSON / LCOV / etc. via `--report`          | todo   |
 | `forge cache`          | (empty) or paths                                     | JSON                                       | migrated |
