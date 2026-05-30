@@ -47,7 +47,7 @@ pub enum SessionSubcommands {
         spend_limits: Vec<SessionSpendLimit>,
 
         #[command(flatten)]
-        wallet: WalletOpts,
+        wallet: Box<WalletOpts>,
     },
 
     /// Revoke a local Tempo session entry.
@@ -62,7 +62,7 @@ impl SessionSubcommands {
     pub async fn run(self) -> Result<()> {
         match self {
             Self::Create { root_account, chain_id, expires, scope, spend_limits, wallet } => {
-                run_create(root_account, chain_id, expires, scope, spend_limits, wallet).await
+                run_create(root_account, chain_id, expires, scope, spend_limits, *wallet).await
             }
             Self::Revoke { session_id } => run_revoke(session_id),
         }
