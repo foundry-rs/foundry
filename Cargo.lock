@@ -10043,7 +10043,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e86e468df3cf5cf59fa7ef71a3e9ccabb76bb336401ea2c0674f563104cf3c5e"
 dependencies = [
  "bitvec",
- "paste",
  "phf 0.13.1",
  "revm-primitives 22.1.0",
  "serde",
@@ -10056,6 +10055,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8b378c2653331fe60969d9745e802cd773d82a20d8aaced914dfcf26ab8f0d9"
 dependencies = [
  "bitvec",
+ "paste",
  "phf 0.13.1",
  "revm-primitives 24.0.1",
  "serde",

@@ -217,11 +217,11 @@ pub struct TestArgs {
     #[arg(long)]
     pub rerun: bool,
 
-    /// Print the given opcodes inline in trace output, with their gas cost
+    /// Print the given opcodes in trace output, with their gas cost
     /// and (for SLOAD/SSTORE) the storage slot and value.
     ///
     /// Accepts a comma-separated list of opcode names, e.g.
-    /// `--opcodes SLOAD,MLOAD,SSTORE`. Names are case-insensitive.
+    /// `--opcodes SLOAD,MLOAD,SSTORE`. Names are in uppercase.
     /// Requires `-vvvvv` to render.
     #[arg(long, value_parser = parse_opcode, value_delimiter(','), num_args(1..))]
     pub opcodes: Vec<OpCode>,
@@ -720,6 +720,11 @@ impl TestArgs {
 
         let num_filtered = runner.matching_test_functions(filter).count();
 
+        if !self.opcodes.is_empty() && verbosity < 5 {
+            sh_eprintln!()?;
+            eyre::bail!("Not enough verbosity. Use -vvvvv to show opcodes.");
+        }
+
         if num_filtered == 0 {
             let total_tests = if filter.is_empty() {
                 num_filtered
@@ -929,11 +934,6 @@ impl TestArgs {
                 // Clear the addresses and labels from previous runs.
                 decoder.clear_addresses();
                 decoder.labels.extend(result.labels.iter().map(|(k, v)| (*k, v.clone())));
-
-                if !self.opcodes.is_empty() && verbosity < 5 {
-                        sh_eprintln!()?;
-                        eyre::bail!("Not enough verbosity. Use -vvvvv to show opcodes.");
-                }
 
                 // Identify addresses and decode traces.
                 let mut decoded_traces = Vec::with_capacity(result.traces.len());
