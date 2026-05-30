@@ -1,5 +1,4 @@
-use alloy_json_abi::{EventParam, InternalType, JsonAbi, Param};
-use alloy_primitives::{hex, keccak256};
+use alloy_json_abi::{Event, EventParam, InternalType, JsonAbi, Param};
 use clap::Parser;
 use comfy_table::{Cell, Table, modifiers::UTF8_ROUND_CORNERS, presets::ASCII_MARKDOWN};
 use eyre::{Result, eyre};
@@ -202,10 +201,15 @@ fn parse_events(abi: &JsonAbi) -> Map<String, Value> {
     let mut out = serde_json::Map::new();
     for ev in abi.events.values().flatten() {
         let types = parse_event_params(&ev.inputs);
-        let topic = hex::encode(keccak256(ev.signature()));
-        out.insert(format!("{}({})", ev.name, types), format!("0x{topic}").into());
+        let topic = event_topic(ev).map_or(Value::Null, Into::into);
+        out.insert(format!("{}({})", ev.name, types), topic);
     }
     out
+}
+
+/// Returns topic0 for non-anonymous events. Anonymous events have no signature topic.
+fn event_topic(ev: &Event) -> Option<String> {
+    (!ev.anonymous).then(|| ev.selector().to_string())
 }
 
 fn parse_event_params(ev_params: &[EventParam]) -> String {
@@ -233,8 +237,13 @@ fn print_abi(abi: &JsonAbi, should_wrap: bool) -> Result<()> {
             // Print events
             for ev in abi.events.values().flatten() {
                 let types = parse_event_params(&ev.inputs);
-                let selector = ev.selector().to_string();
-                table.add_row(["event", &format!("{}({})", ev.name, types), &selector]);
+                let signature = if ev.anonymous {
+                    format!("{}({}) anonymous", ev.name, types)
+                } else {
+                    format!("{}({})", ev.name, types)
+                };
+                let selector = event_topic(ev).unwrap_or_default();
+                table.add_row(["event", &signature, &selector]);
             }
 
             // Print errors
@@ -391,7 +400,7 @@ fn print_errors_events(map: &Map<String, Value>, is_err: bool, should_wrap: bool
         headers,
         |table| {
             for (method, selector) in map {
-                table.add_row([method, selector.as_str().unwrap()]);
+                table.add_row([method.as_str(), selector.as_str().unwrap_or("")]);
             }
         },
         should_wrap,
