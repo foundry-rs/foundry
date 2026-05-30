@@ -1,11 +1,11 @@
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_signer::Signer;
 use clap::Parser;
 use eyre::{Context, Result};
 use foundry_common::{
     sh_println, shell,
     tempo::{
-        GeneratedSessionKey, SessionAuthorizationRequest, remove_session_entry,
+        GeneratedSessionKey, SessionAuthorizationRequest, SessionSpendLimit, remove_session_entry,
         upsert_session_entry,
     },
 };
@@ -15,9 +15,11 @@ use std::{
     num::NonZeroU64,
     time::{SystemTime, UNIX_EPOCH},
 };
-use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule, TokenLimit};
+use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule};
 
-use crate::cmd::tempo_policy_args::{parse_limit, parse_period, parse_scope as parse_policy_scope};
+use crate::cmd::tempo_policy_args::{
+    parse_period, parse_policy_token, parse_scope as parse_policy_scope,
+};
 
 /// Tempo wallet session lifecycle commands.
 #[derive(Debug, Parser)]
@@ -36,21 +38,24 @@ pub enum SessionSubcommands {
         #[arg(long = "expires", value_name = "DURATION", value_parser = parse_period)]
         expires: u64,
 
-        /// Allowed call scope, in `TARGET[:SELECTORS[@RECIPIENTS]]` format.
+        /// Allowed call scope, in `TARGET[:SELECTORS[@RECIPIENT]]` format.
         #[arg(long = "scope", value_parser = parse_scope, required = true)]
         scope: Vec<CallScope>,
 
         /// Token spend limit, in `TOKEN:AMOUNT` or `TOKEN=AMOUNT` format.
         #[arg(long = "spend-limit", value_parser = parse_spend_limit)]
-        spend_limits: Vec<TokenLimit>,
+        spend_limits: Vec<SessionSpendLimit>,
 
         #[command(flatten)]
         wallet: WalletOpts,
     },
 
-    /// Remove a local Tempo session entry.
+    /// Revoke a Tempo session entry.
+    ///
+    /// Midpoint implementation: this currently clears the local session registry entry only.
+    /// Submitting AccountKeychain::revokeKey on-chain belongs to the full session runner.
     Revoke {
-        /// Session identifier to remove.
+        /// Session identifier to revoke.
         #[arg(value_name = "SESSION_ID")]
         session_id: B256,
     },
@@ -72,7 +77,7 @@ async fn run_create(
     chain_id: u64,
     expires: u64,
     scope: Vec<CallScope>,
-    spend_limits: Vec<TokenLimit>,
+    spend_limits: Vec<SessionSpendLimit>,
     wallet: WalletOpts,
 ) -> Result<()> {
     let entry =
@@ -112,6 +117,9 @@ async fn run_create(
 }
 
 fn run_revoke(session_id: B256) -> Result<()> {
+    // This PR is the session-authorization primitive, not the full command-runner lifecycle.
+    // Revoke currently means dropping the local session credentials; on-chain revokeKey is a
+    // follow-up once session execution and exit handling are wired.
     let removed = remove_session_entry(session_id)?;
 
     if shell::is_json() {
@@ -123,7 +131,7 @@ fn run_revoke(session_id: B256) -> Result<()> {
             }))?
         )?;
     } else if removed {
-        sh_println!("Removed Tempo session {}", session_id)?;
+        sh_println!("Revoked Tempo session {}", session_id)?;
     } else {
         sh_println!("Tempo session {} was not found.", session_id)?;
     }
@@ -136,7 +144,7 @@ async fn build_session_entry(
     chain_id: u64,
     expires: u64,
     scope: Vec<CallScope>,
-    spend_limits: Vec<TokenLimit>,
+    spend_limits: Vec<SessionSpendLimit>,
     wallet: WalletOpts,
 ) -> Result<foundry_common::tempo::SessionEntry> {
     if expires == 0 {
@@ -206,12 +214,19 @@ fn parse_scope(s: &str) -> Result<CallScope, String> {
     })
 }
 
-fn parse_spend_limit(s: &str) -> Result<TokenLimit, String> {
-    parse_limit(s).map(|limit| TokenLimit {
-        token: limit.token,
-        limit: limit.amount,
-        period: limit.period,
-    })
+fn parse_spend_limit(s: &str) -> Result<SessionSpendLimit, String> {
+    let (token_str, amount_str) = if let Some(pair) = s.split_once(':') {
+        pair
+    } else if let Some(pair) = s.split_once('=') {
+        pair
+    } else {
+        return Err(format!("invalid limit format: {s} (expected TOKEN:AMOUNT or TOKEN=AMOUNT)"));
+    };
+
+    let token = parse_policy_token(token_str.trim())?;
+    let amount: U256 =
+        amount_str.trim().parse().map_err(|e| format!("invalid amount '{amount_str}': {e}"))?;
+    Ok(SessionSpendLimit { token, amount })
 }
 
 fn now_unix_timestamp() -> Result<u64> {
@@ -227,6 +242,7 @@ mod tests {
     use alloy_primitives::address;
     use foundry_common::tempo::SessionStatus;
     use std::sync::Mutex;
+    use tempo_contracts::precompiles::PATH_USD_ADDRESS;
 
     const ROOT_PRIVATE_KEY: &str =
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -252,7 +268,14 @@ mod tests {
     }
 
     #[test]
-    fn create_and_remove_session_entry_round_trips() {
+    fn parse_spend_limit_accepts_path_usd_alias() {
+        let limit = parse_spend_limit("PathUSD=0").unwrap();
+        assert_eq!(limit.token, PATH_USD_ADDRESS);
+        assert_eq!(limit.amount, U256::ZERO);
+    }
+
+    #[test]
+    fn create_and_revoke_session_entry_round_trips() {
         with_tempo_home(|| {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             runtime.block_on(async {

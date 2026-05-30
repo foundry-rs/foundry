@@ -1,7 +1,7 @@
-use alloy_primitives::{Address, U256, hex, keccak256};
+use alloy_primitives::{Address, hex, keccak256};
 use foundry_cli::utils::parse_fee_token_address;
 use tempo_contracts::precompiles::{
-    IAccountKeychain::{CallScope, SelectorRule, TokenLimit},
+    IAccountKeychain::{CallScope, SelectorRule},
     PATH_USD_ADDRESS,
 };
 
@@ -25,6 +25,11 @@ impl SelectorArg {
 /// (`transfer(address,uint256)`), or a well-known TIP-20 shorthand.
 pub(crate) fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
     let s = s.trim();
+    if s.is_empty() {
+        return Err("selector cannot be empty".to_string());
+    }
+    validate_balanced_parentheses(s)?;
+
     if s.starts_with("0x") || s.starts_with("0X") {
         let hex_str = &s[2..];
         if hex_str.len() != 8 {
@@ -56,12 +61,34 @@ pub(crate) fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
     }
 }
 
+fn validate_balanced_parentheses(s: &str) -> Result<(), String> {
+    let mut depth = 0usize;
+
+    for ch in s.chars() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| format!("unbalanced ')' in selector '{s}'"))?;
+            }
+            _ => {}
+        }
+    }
+
+    if depth != 0 {
+        return Err(format!("unbalanced '(' in selector '{s}'"));
+    }
+
+    Ok(())
+}
+
 /// Parse a selector string into a named selector argument.
 pub(crate) fn parse_selector_arg(s: &str) -> Result<SelectorArg, String> {
     parse_selector_bytes(s).map(SelectorArg)
 }
 
-/// Parse a `TARGET[:SELECTORS[@RECIPIENTS]]` scope string.
+/// Parse a `TARGET[:SELECTORS[@RECIPIENT]]` scope string.
 pub(crate) fn parse_scope(s: &str) -> Result<CallScope, String> {
     let (target_str, selectors_str) = match s.split_once(':') {
         Some((t, sel)) => (t, Some(sel)),
@@ -73,6 +100,11 @@ pub(crate) fn parse_scope(s: &str) -> Result<CallScope, String> {
 
     let selector_rules = match selectors_str {
         None => vec![],
+        Some(sel_str) if sel_str.trim().is_empty() => {
+            return Err(
+                "selector list cannot be empty; omit ':' to allow all selectors".to_string()
+            );
+        }
         Some(sel_str) => parse_selector_rules(sel_str)?,
     };
 
@@ -82,10 +114,10 @@ pub(crate) fn parse_scope(s: &str) -> Result<CallScope, String> {
 fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
     let mut rules = Vec::new();
 
-    for part in s.split(',') {
+    for part in split_selector_rule_parts(s)? {
         let part = part.trim();
         if part.is_empty() {
-            continue;
+            return Err(format!("empty selector in scope '{s}'"));
         }
 
         let (selector_str, recipients_str) = match part.split_once('@') {
@@ -93,20 +125,25 @@ fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
             None => (part, None),
         };
 
+        let selector_str = selector_str.trim();
+        if selector_str.is_empty() {
+            return Err(format!("missing selector in scope '{part}'"));
+        }
+
         let selector = parse_selector_bytes(selector_str)?;
 
         let recipients = match recipients_str {
             None => vec![],
-            Some(r) => r
-                .split(',')
-                .filter(|s| !s.trim().is_empty())
-                .map(|addr_str| {
-                    let addr_str = addr_str.trim();
-                    addr_str
-                        .parse::<Address>()
-                        .map_err(|e| format!("invalid recipient address '{addr_str}': {e}"))
-                })
-                .collect::<Result<Vec<_>, _>>()?,
+            Some(r) => {
+                let r = r.trim();
+                if r.is_empty() {
+                    return Err(format!("missing recipient after '@' in selector '{part}'"));
+                }
+                vec![
+                    r.parse::<Address>()
+                        .map_err(|e| format!("invalid recipient address '{r}': {e}"))?,
+                ]
+            }
         };
 
         rules.push(SelectorRule { selector: selector.into(), recipients });
@@ -115,25 +152,39 @@ fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
     Ok(rules)
 }
 
-/// Parse a `TOKEN:AMOUNT` or `TOKEN=AMOUNT` spending limit spec.
-pub(crate) fn parse_limit(s: &str) -> Result<TokenLimit, String> {
-    let (token_str, amount_str) = if let Some(pair) = s.split_once(':') {
-        pair
-    } else if let Some(pair) = s.split_once('=') {
-        pair
-    } else {
-        return Err(format!("invalid limit format: {s} (expected TOKEN:AMOUNT or TOKEN=AMOUNT)"));
-    };
+fn split_selector_rule_parts(s: &str) -> Result<Vec<&str>, String> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
 
-    let token = parse_policy_token(token_str.trim())?;
-    let amount: U256 =
-        amount_str.trim().parse().map_err(|e| format!("invalid amount '{amount_str}': {e}"))?;
-    Ok(TokenLimit { token, amount, period: 0 })
+    for (idx, ch) in s.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| format!("unbalanced ')' in selector list '{s}'"))?;
+            }
+            ',' if depth == 0 => {
+                parts.push(&s[start..idx]);
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    if depth != 0 {
+        return Err(format!("unbalanced '(' in selector list '{s}'"));
+    }
+
+    parts.push(&s[start..]);
+    Ok(parts)
 }
 
 /// Parse a policy token label or address into an address.
 pub(crate) fn parse_policy_token(s: &str) -> Result<Address, String> {
-    match s.trim().to_ascii_lowercase().as_str() {
+    let s = s.trim();
+    match s.to_ascii_lowercase().as_str() {
         "pathusd" | "path_usd" | "path-usd" | "usd" => Ok(PATH_USD_ADDRESS),
         _ => parse_fee_token_address(s).map_err(|e| e.to_string()),
     }
@@ -169,4 +220,171 @@ pub(crate) fn parse_period(s: &str) -> Result<u64, String> {
     };
 
     value.checked_mul(multiplier).ok_or_else(|| format!("period '{s}' is too large"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn parse_selector_bytes_named() {
+        let sel = parse_selector_bytes("transfer").unwrap();
+        assert_eq!(sel, keccak256(b"transfer(address,uint256)")[..4]);
+
+        let sel = parse_selector_bytes("approve").unwrap();
+        assert_eq!(sel, keccak256(b"approve(address,uint256)")[..4]);
+
+        let sel = parse_selector_bytes("transferWithMemo").unwrap();
+        assert_eq!(sel, keccak256(b"transferWithMemo(address,uint256,bytes32)")[..4]);
+    }
+
+    #[test]
+    fn parse_selector_bytes_hex() {
+        let sel = parse_selector_bytes("0xaabbccdd").unwrap();
+        assert_eq!(sel, [0xaa, 0xbb, 0xcc, 0xdd]);
+
+        let sel = parse_selector_bytes("0xd09de08a").unwrap();
+        assert_eq!(sel, [0xd0, 0x9d, 0xe0, 0x8a]);
+    }
+
+    #[test]
+    fn parse_selector_bytes_hex_invalid() {
+        assert!(parse_selector_bytes("0xaabb").is_err());
+        assert!(parse_selector_bytes("0xaabbccddee").is_err());
+        assert!(parse_selector_bytes("0xzzzzzzzz").is_err());
+    }
+
+    #[test]
+    fn parse_selector_bytes_full_signature() {
+        let sel = parse_selector_bytes("increment()").unwrap();
+        assert_eq!(sel, keccak256(b"increment()")[..4]);
+    }
+
+    #[test]
+    fn parse_selector_bytes_rejects_unbalanced_signature() {
+        assert!(parse_selector_bytes("transfer(address,uint256").is_err());
+        assert!(parse_selector_bytes("transfer)").is_err());
+    }
+
+    #[test]
+    fn parse_selector_bytes_empty_invalid() {
+        assert!(parse_selector_bytes("").is_err());
+        assert!(parse_selector_bytes("   ").is_err());
+    }
+
+    #[test]
+    fn parse_scope_hex_selector_with_recipient() {
+        let scope = parse_scope(
+            "0x20c0000000000000000000000000000000000001:0xaabbccdd@0x1111111111111111111111111111111111111111",
+        )
+        .unwrap();
+        assert_eq!(scope.selectorRules.len(), 1);
+        assert_eq!(scope.selectorRules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
+        assert_eq!(scope.selectorRules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn parse_scope_target_only() {
+        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap();
+        assert_eq!(
+            scope.target,
+            Address::from_str("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap()
+        );
+        assert!(scope.selectorRules.is_empty());
+    }
+
+    #[test]
+    fn parse_scope_with_selectors() {
+        let scope =
+            parse_scope("0x20c0000000000000000000000000000000000001:transfer,approve").unwrap();
+        assert_eq!(scope.selectorRules.len(), 2);
+        assert!(scope.selectorRules[0].recipients.is_empty());
+        assert!(scope.selectorRules[1].recipients.is_empty());
+    }
+
+    #[test]
+    fn parse_scope_hex_selector() {
+        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xaabbccdd").unwrap();
+        assert_eq!(scope.selectorRules.len(), 1);
+        assert_eq!(scope.selectorRules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
+        assert!(scope.selectorRules[0].recipients.is_empty());
+    }
+
+    #[test]
+    fn parse_scope_selector_with_recipient() {
+        let scope = parse_scope(
+            "0x20c0000000000000000000000000000000000001:transfer@0x1111111111111111111111111111111111111111",
+        )
+        .unwrap();
+        assert_eq!(scope.selectorRules.len(), 1);
+        assert_eq!(scope.selectorRules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn parse_scope_full_signature_with_comma_argument_list() {
+        let scope =
+            parse_scope("0x20c0000000000000000000000000000000000001:transfer(address,uint256)")
+                .unwrap();
+        assert_eq!(scope.selectorRules.len(), 1);
+        assert_eq!(scope.selectorRules[0].selector.0, keccak256(b"transfer(address,uint256)")[..4]);
+    }
+
+    #[test]
+    fn parse_scope_rejects_empty_selector_list() {
+        assert!(parse_scope("0x20c0000000000000000000000000000000000001:").is_err());
+    }
+
+    #[test]
+    fn parse_scope_rejects_empty_selector() {
+        assert!(parse_scope("0x20c0000000000000000000000000000000000001:transfer,").is_err());
+        assert!(parse_scope("0x20c0000000000000000000000000000000000001:,transfer").is_err());
+        assert!(
+            parse_scope(
+                "0x20c0000000000000000000000000000000000001:@0x1111111111111111111111111111111111111111"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parse_scope_rejects_empty_recipient() {
+        assert!(parse_scope("0x20c0000000000000000000000000000000000001:transfer@").is_err());
+    }
+
+    #[test]
+    fn parse_scope_rejects_multiple_recipients_in_shorthand() {
+        assert!(
+            parse_scope(
+                "0x20c0000000000000000000000000000000000001:transfer@0x1111111111111111111111111111111111111111,0x2222222222222222222222222222222222222222"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parse_scope_rejects_unbalanced_signature() {
+        assert!(
+            parse_scope("0x20c0000000000000000000000000000000000001:transfer(address,uint256")
+                .is_err()
+        );
+        assert!(parse_scope("0x20c0000000000000000000000000000000000001:transfer)").is_err());
+    }
+
+    #[test]
+    fn parse_policy_token_path_usd() {
+        assert_eq!(parse_policy_token("PathUSD").unwrap(), PATH_USD_ADDRESS);
+        assert_eq!(parse_policy_token("path-usd").unwrap(), PATH_USD_ADDRESS);
+    }
+
+    #[test]
+    fn parse_period_units() {
+        assert_eq!(parse_period("0").unwrap(), 0);
+        assert_eq!(parse_period("30s").unwrap(), 30);
+        assert_eq!(parse_period("5m").unwrap(), 300);
+        assert_eq!(parse_period("2h").unwrap(), 7200);
+        assert_eq!(parse_period("7d").unwrap(), 604800);
+        assert_eq!(parse_period("2w").unwrap(), 1209600);
+        assert!(parse_period("1mo").is_err());
+    }
 }

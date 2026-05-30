@@ -43,7 +43,7 @@ use tempo_primitives::transaction::{
 use yansi::Paint;
 
 use crate::cmd::tempo_policy_args::{
-    SelectorArg, parse_limit, parse_period, parse_policy_token, parse_scope, parse_selector_arg,
+    SelectorArg, parse_period, parse_policy_token, parse_scope, parse_selector_arg,
     parse_selector_bytes,
 };
 use foundry_cli::utils::{maybe_print_resolved_lane, resolve_lane};
@@ -160,9 +160,9 @@ pub enum KeychainSubcommand {
         #[arg(long = "limit", value_parser = parse_limit)]
         limits: Vec<TokenLimit>,
 
-        /// Call scope restriction in `TARGET[:SELECTORS[@RECIPIENTS]]` format.
+        /// Call scope restriction in `TARGET[:SELECTORS[@RECIPIENT]]` format.
         /// TARGET alone allows all calls. `TARGET:transfer,approve` restricts to those selectors.
-        /// `TARGET:transfer@0x123` restricts selector to specific recipients.
+        /// `TARGET:transfer@0x123` restricts the selector to a specific recipient.
         #[arg(long = "scope", value_parser = parse_scope)]
         scope: Vec<CallScope>,
 
@@ -233,7 +233,7 @@ pub enum KeychainSubcommand {
         /// The key address.
         key_address: Address,
 
-        /// Call scope restriction in `TARGET[:SELECTORS[@RECIPIENTS]]` format.
+        /// Call scope restriction in `TARGET[:SELECTORS[@RECIPIENT]]` format.
         #[arg(long = "scope", required = true, value_parser = parse_scope)]
         scope: Vec<CallScope>,
 
@@ -390,6 +390,18 @@ const fn wallet_type_name(t: &WalletType) -> &'static str {
         WalletType::Local => "local",
         WalletType::Passkey => "passkey",
     }
+}
+
+/// Parse a `--limit TOKEN:AMOUNT` flag value.
+fn parse_limit(s: &str) -> Result<TokenLimit, String> {
+    let (token_str, amount_str) = s
+        .split_once(':')
+        .ok_or_else(|| format!("invalid limit format: {s} (expected TOKEN:AMOUNT)"))?;
+    let token: Address =
+        token_str.parse().map_err(|e| format!("invalid token address '{token_str}': {e}"))?;
+    let amount: U256 =
+        amount_str.parse().map_err(|e| format!("invalid amount '{amount_str}': {e}"))?;
+    Ok(TokenLimit { token, amount, period: 0 })
 }
 
 /// Represents a single scope entry in JSON format for `--scopes`.
@@ -3211,91 +3223,8 @@ fn key_entry_to_json(entry: &tempo::KeyEntry) -> serde_json::Value {
 mod tests {
     use super::*;
     use alloy_json_rpc::ErrorPayload;
-    use alloy_primitives::keccak256;
     use std::str::FromStr;
     use tempo_primitives::transaction::{KeyAuthorization, PrimitiveSignature};
-
-    #[test]
-    fn test_parse_selector_bytes_named() {
-        let sel = parse_selector_bytes("transfer").unwrap();
-        assert_eq!(sel, keccak256(b"transfer(address,uint256)")[..4]);
-
-        let sel = parse_selector_bytes("approve").unwrap();
-        assert_eq!(sel, keccak256(b"approve(address,uint256)")[..4]);
-
-        let sel = parse_selector_bytes("transferWithMemo").unwrap();
-        assert_eq!(sel, keccak256(b"transferWithMemo(address,uint256,bytes32)")[..4]);
-    }
-
-    #[test]
-    fn test_parse_selector_bytes_hex() {
-        let sel = parse_selector_bytes("0xaabbccdd").unwrap();
-        assert_eq!(sel, [0xaa, 0xbb, 0xcc, 0xdd]);
-
-        let sel = parse_selector_bytes("0xd09de08a").unwrap();
-        assert_eq!(sel, [0xd0, 0x9d, 0xe0, 0x8a]);
-    }
-
-    #[test]
-    fn test_parse_selector_bytes_hex_invalid() {
-        assert!(parse_selector_bytes("0xaabb").is_err());
-        assert!(parse_selector_bytes("0xaabbccddee").is_err());
-        assert!(parse_selector_bytes("0xzzzzzzzz").is_err());
-    }
-
-    #[test]
-    fn test_parse_selector_bytes_full_signature() {
-        let sel = parse_selector_bytes("increment()").unwrap();
-        assert_eq!(sel, keccak256(b"increment()")[..4]);
-    }
-
-    #[test]
-    fn test_parse_selector_rules_hex_with_recipient() {
-        let scope = parse_scope(
-            "0x20c0000000000000000000000000000000000001:0xaabbccdd@0x1111111111111111111111111111111111111111",
-        )
-        .unwrap();
-        assert_eq!(scope.selectorRules.len(), 1);
-        assert_eq!(scope.selectorRules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
-        assert_eq!(scope.selectorRules[0].recipients.len(), 1);
-    }
-
-    #[test]
-    fn test_parse_scope_target_only() {
-        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap();
-        assert_eq!(
-            scope.target,
-            Address::from_str("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D").unwrap()
-        );
-        assert!(scope.selectorRules.is_empty());
-    }
-
-    #[test]
-    fn test_parse_scope_with_selectors() {
-        let scope =
-            parse_scope("0x20c0000000000000000000000000000000000001:transfer,approve").unwrap();
-        assert_eq!(scope.selectorRules.len(), 2);
-        assert!(scope.selectorRules[0].recipients.is_empty());
-        assert!(scope.selectorRules[1].recipients.is_empty());
-    }
-
-    #[test]
-    fn test_parse_scope_hex_selector() {
-        let scope = parse_scope("0x86A2EE8FAf9A840F7a2c64CA3d51209F9A02081D:0xaabbccdd").unwrap();
-        assert_eq!(scope.selectorRules.len(), 1);
-        assert_eq!(scope.selectorRules[0].selector.0, [0xaa, 0xbb, 0xcc, 0xdd]);
-        assert!(scope.selectorRules[0].recipients.is_empty());
-    }
-
-    #[test]
-    fn test_parse_scope_selector_with_recipient() {
-        let scope = parse_scope(
-            "0x20c0000000000000000000000000000000000001:transfer@0x1111111111111111111111111111111111111111",
-        )
-        .unwrap();
-        assert_eq!(scope.selectorRules.len(), 1);
-        assert_eq!(scope.selectorRules[0].recipients.len(), 1);
-    }
 
     #[test]
     fn test_parse_scopes_json_plain() {
@@ -3319,23 +3248,6 @@ mod tests {
     fn test_parse_scopes_json_deny_unknown_fields() {
         let json = r#"[{"target":"0x20c0000000000000000000000000000000000001","selectors":[{"selector":"transfer","recipients":[],"bogus":true}]}]"#;
         assert!(parse_scopes_json(json).is_err());
-    }
-
-    #[test]
-    fn test_parse_policy_token_path_usd() {
-        assert_eq!(parse_policy_token("PathUSD").unwrap(), PATH_USD_ADDRESS);
-        assert_eq!(parse_policy_token("path-usd").unwrap(), PATH_USD_ADDRESS);
-    }
-
-    #[test]
-    fn test_parse_period_units() {
-        assert_eq!(parse_period("0").unwrap(), 0);
-        assert_eq!(parse_period("30s").unwrap(), 30);
-        assert_eq!(parse_period("5m").unwrap(), 300);
-        assert_eq!(parse_period("2h").unwrap(), 7200);
-        assert_eq!(parse_period("7d").unwrap(), 604800);
-        assert_eq!(parse_period("2w").unwrap(), 1209600);
-        assert!(parse_period("1mo").is_err());
     }
 
     #[test]
