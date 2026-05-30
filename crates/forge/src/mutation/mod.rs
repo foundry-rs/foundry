@@ -150,7 +150,7 @@ impl MutationsSummary {
     ///
     /// Output is sorted deterministically: files in lexicographic order
     /// (`BTreeMap` keys), and survived mutants within each file sorted by
-    /// `(span.lo, span.hi, mutation_text)`. Without this, parallel worker
+    /// `(line, column, original, mutant)`. Without this, parallel worker
     /// completion order leaks into the JSON and breaks downstream diffing,
     /// snapshot tests, and reproducibility.
     pub fn to_json_output(&self, duration_secs: f64) -> MutationJsonOutput {

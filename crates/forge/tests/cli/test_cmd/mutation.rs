@@ -113,6 +113,57 @@ Survived mutants
 "#]]);
 });
 
+forgetest_init!(mutation_testing_rejects_all_skipped_baseline, |prj, cmd| {
+    prj.add_source(
+        "Counter.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+contract Counter {
+    uint256 public number;
+
+    function increment() public {
+        number++;
+    }
+}
+"#,
+    );
+
+    prj.add_test(
+        "Counter.t.sol",
+        r#"
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.13;
+
+import "forge-std/Test.sol";
+import "../src/Counter.sol";
+
+contract CounterTest is Test {
+    Counter public counter;
+
+    function setUp() public {
+        vm.skip(true);
+        counter = new Counter();
+    }
+
+    function test_Increment() public {
+        counter.increment();
+        assertEq(counter.number(), 1);
+    }
+}
+"#,
+    );
+
+    let output = cmd.args(["test", "--mutate", "src/Counter.sol"]).assert_failure();
+    let stderr = output.get_output().stderr_lossy();
+
+    assert!(
+        stderr.contains("Mutation testing requires at least one passing baseline test"),
+        "unexpected stderr:\n{stderr}"
+    );
+});
+
 forgetest_init!(mutation_testing_with_parallel_workers, |prj, cmd| {
     prj.add_source(
         "Simple.sol",

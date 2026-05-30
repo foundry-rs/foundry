@@ -677,15 +677,15 @@ impl TestArgs {
                 eyre::bail!("Cannot run mutation testing with failed tests");
             }
 
-            // A green baseline that ran *zero* tests is not a useful baseline:
+            // A green baseline that ran zero non-skipped tests is not useful:
             // every compileable mutant would be reported as `Alive` (no test
             // failed, so nothing killed it), which produces a wildly
             // misleading mutation report. Hard-error so users get an actual
             // signal that their filter / path / setup matched nothing.
-            if outcome.tests().next().is_none() {
+            if outcome.successes().next().is_none() {
                 eyre::bail!(
-                    "Mutation testing requires at least one matching baseline test; the current \
-                     filter/path selection matched zero tests. Loosen `--match-test` / \
+                    "Mutation testing requires at least one passing baseline test; the current \
+                     filter/path selection matched zero non-skipped tests. Loosen `--match-test` / \
                      `--match-contract` / `--match-path` or check the project layout."
                 );
             }

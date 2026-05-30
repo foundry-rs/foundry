@@ -64,6 +64,7 @@ impl Mutator for BinaryOpMutator {
         Ok(operations
             .into_iter()
             .filter(|&kind| kind != op)
+            .filter(|&kind| !compound_assignment || is_valid_compound_assignment_op(kind))
             .map(|kind| {
                 let mutated_expr = if compound_assignment {
                     format!("{} {}= {}", lhs_text, kind.to_str(), rhs_text)
@@ -93,6 +94,22 @@ impl Mutator for BinaryOpMutator {
             ExprKind::Binary(_, _, _) | ExprKind::Assign(_, Some(_), _)
         )
     }
+}
+
+const fn is_valid_compound_assignment_op(kind: BinOpKind) -> bool {
+    matches!(
+        kind,
+        BinOpKind::BitOr
+            | BinOpKind::BitXor
+            | BinOpKind::BitAnd
+            | BinOpKind::Shl
+            | BinOpKind::Shr
+            | BinOpKind::Add
+            | BinOpKind::Sub
+            | BinOpKind::Mul
+            | BinOpKind::Div
+            | BinOpKind::Rem
+    )
 }
 
 /// Extract the binary operator, its span, and LHS/RHS expressions
