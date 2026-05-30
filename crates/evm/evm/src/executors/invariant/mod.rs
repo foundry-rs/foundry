@@ -54,7 +54,9 @@ pub use error::{
 use foundry_evm_coverage::HitMaps;
 
 mod campaign;
-use campaign::{InvariantCampaignAggregator, InvariantCampaignSpec, InvariantWorkerOutput};
+use campaign::{
+    InvariantCampaignAggregator, InvariantCampaignSpec, InvariantWorkerOutput, InvariantWorkerPlan,
+};
 
 mod replay;
 pub use replay::{replay_error, replay_run};
@@ -488,11 +490,54 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             InvariantFuzzError,
         >,
     ) -> Result<InvariantFuzzTestResult> {
+        let worker_plan = InvariantCampaignSpec::new(self.config.runs)
+            .worker_plans(1)?
+            .pop()
+            .expect("one worker plan requested");
+        let worker_output = self.run_invariant_worker(
+            worker_plan,
+            invariant_contract,
+            fuzz_fixtures,
+            fuzz_state,
+            progress,
+            early_exit,
+            initial_handler_failures,
+        )?;
+        debug_assert_eq!(worker_output.plan.first_global_run, 0);
+
+        // Timeout-driven campaigns can execute beyond the initial configured run count. Preserve
+        // the existing single-worker `planned_runs` behavior by rebuilding the logical spec
+        // from the worker's final plan.
+        let campaign_spec = InvariantCampaignSpec::new(worker_output.plan.runs);
+        let mut aggregator = InvariantCampaignAggregator::new(campaign_spec);
+        aggregator.push(worker_output);
+        aggregator.finish()
+    }
+
+    /// Runs one worker-local slice of an invariant campaign.
+    ///
+    /// This is intentionally still dispatched with a single worker by `invariant_fuzz`; the worker
+    /// boundary exists so future changes can fan out multiple independent plans without changing
+    /// the campaign aggregation contract.
+    #[allow(clippy::too_many_arguments)]
+    fn run_invariant_worker(
+        &mut self,
+        mut plan: InvariantWorkerPlan,
+        invariant_contract: InvariantContract<'_>,
+        fuzz_fixtures: &FuzzFixtures,
+        fuzz_state: EvmFuzzState,
+        progress: Option<&ProgressBar>,
+        early_exit: &EarlyExit,
+        initial_handler_failures: std::collections::HashMap<
+            (Address, Selector),
+            InvariantFuzzError,
+        >,
+    ) -> Result<InvariantWorkerOutput> {
         // Note: invariant function signatures (no inputs) are validated upstream in the
         // suite runner so parameterized `invariant_*` functions are rejected with a per-test
         // failure entry before any campaign runs.
 
-        let mut planned_runs = self.config.runs;
+        let mut planned_runs = plan.runs;
 
         let (mut invariant_test, mut corpus_manager) = self.prepare_test(
             &invariant_contract,
@@ -513,7 +558,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 return false;
             }
 
-            if timer.is_enabled() { !timer.is_timed_out() } else { runs < self.config.runs }
+            if timer.is_enabled() { !timer.is_timed_out() } else { runs < plan.runs }
         };
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
@@ -950,12 +995,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
-        let campaign_spec = InvariantCampaignSpec::new(planned_runs);
-        let worker_plan = campaign_spec.worker_plans(1)?.pop().expect("one worker plan requested");
-        let worker_output = InvariantWorkerOutput::new(worker_plan, worker_result);
-        let mut aggregator = InvariantCampaignAggregator::new(campaign_spec);
-        aggregator.push(worker_output);
-        aggregator.finish()
+        plan.runs = planned_runs;
+        Ok(InvariantWorkerOutput::new(plan, worker_result))
     }
 
     /// Prepares certain structures to execute the invariant tests:
