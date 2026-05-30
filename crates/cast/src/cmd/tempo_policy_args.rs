@@ -11,7 +11,13 @@ use tempo_contracts::precompiles::{
 
 /// Parsed selector argument used by policy-editing commands.
 #[derive(Debug, Clone, Copy)]
-pub struct SelectorArg(pub(crate) [u8; 4]);
+pub struct SelectorArg([u8; 4]);
+
+impl SelectorArg {
+    pub(crate) const fn into_bytes(self) -> [u8; 4] {
+        self.0
+    }
+}
 
 /// Parse a selector string into 4-byte selector bytes.
 ///
