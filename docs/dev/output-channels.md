@@ -128,7 +128,7 @@ Each row's status is one of:
 | `forge bind`           | (empty)                                              | (empty)                                    | migrated |
 | `forge bind-json`      | (empty) or generated path                            | JSON                                       | migrated |
 | `forge flatten`        | Flattened source                                     | n/a                                        | migrated |
-| `forge fmt`            | (empty) or formatted source with `--check`           | n/a                                        | todo   |
+| `forge fmt`            | (empty) or formatted source with `--check`           | n/a                                        | migrated |
 | `forge tree`           | Dependency tree                                      | JSON                                       | migrated |
 | `forge config`         | Config TOML                                          | JSON config                                | todo   |
 | `forge selectors`      | Selectors output                                     | JSON                                       | todo   |
