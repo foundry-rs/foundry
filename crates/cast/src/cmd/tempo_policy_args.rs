@@ -1,5 +1,6 @@
-use alloy_primitives::{Address, hex, keccak256};
+use alloy_primitives::{Address, hex};
 use foundry_cli::utils::parse_fee_token_address;
+use foundry_common::abi::get_func;
 use tempo_contracts::precompiles::{
     IAccountKeychain::{CallScope, SelectorRule},
     PATH_USD_ADDRESS,
@@ -35,7 +36,7 @@ pub(crate) fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
         arr.copy_from_slice(&bytes);
         Ok(arr)
     } else {
-        let sig = if s.contains('(') {
+        let sig = if s.contains('(') || s.contains(')') {
             s.to_string()
         } else {
             match s {
@@ -49,10 +50,9 @@ pub(crate) fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
                 _ => format!("{s}()"),
             }
         };
-        let hash = keccak256(sig.as_bytes());
-        let mut arr = [0u8; 4];
-        arr.copy_from_slice(&hash[..4]);
-        Ok(arr)
+        get_func(&sig)
+            .map(|func| func.selector().into())
+            .map_err(|e| format!("invalid function signature '{sig}': {e}"))
     }
 }
 
@@ -82,7 +82,7 @@ pub(crate) fn parse_scope(s: &str) -> Result<CallScope, String> {
 fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
     let mut rules = Vec::new();
 
-    for part in s.split(',') {
+    for part in split_selector_rule_parts(s) {
         let part = part.trim();
         if part.is_empty() {
             continue;
@@ -113,6 +113,27 @@ fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
     }
 
     Ok(rules)
+}
+
+fn split_selector_rule_parts(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+
+    for (idx, ch) in s.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&s[start..idx]);
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    parts.push(&s[start..]);
+    parts
 }
 
 /// Parse a policy token label or address into an address.
@@ -158,6 +179,7 @@ pub(crate) fn parse_period(s: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::keccak256;
     use std::str::FromStr;
 
     #[test]
@@ -192,6 +214,16 @@ mod tests {
     fn parse_selector_bytes_full_signature() {
         let sel = parse_selector_bytes("increment()").unwrap();
         assert_eq!(sel, keccak256(b"increment()")[..4]);
+
+        let sel = parse_selector_bytes("transfer(address,uint256)").unwrap();
+        assert_eq!(sel, keccak256(b"transfer(address,uint256)")[..4]);
+    }
+
+    #[test]
+    fn parse_selector_bytes_rejects_invalid_signature() {
+        assert!(parse_selector_bytes("").is_err());
+        assert!(parse_selector_bytes("transfer(address,uint256").is_err());
+        assert!(parse_selector_bytes("transfer)").is_err());
     }
 
     #[test]
@@ -240,6 +272,17 @@ mod tests {
         .unwrap();
         assert_eq!(scope.selectorRules.len(), 1);
         assert_eq!(scope.selectorRules[0].recipients.len(), 1);
+    }
+
+    #[test]
+    fn parse_scope_full_signatures_split_outside_parentheses() {
+        let scope = parse_scope(
+            "0x20c0000000000000000000000000000000000001:transfer(address,uint256),approve(address,uint256)",
+        )
+        .unwrap();
+        assert_eq!(scope.selectorRules.len(), 2);
+        assert_eq!(scope.selectorRules[0].selector.0, keccak256(b"transfer(address,uint256)")[..4]);
+        assert_eq!(scope.selectorRules[1].selector.0, keccak256(b"approve(address,uint256)")[..4]);
     }
 
     #[test]
