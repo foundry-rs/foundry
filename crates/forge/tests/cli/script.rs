@@ -1137,15 +1137,15 @@ forgetest_async!(can_execute_script_with_arguments, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -1265,15 +1265,15 @@ forgetest_async!(can_execute_script_with_arguments_nested_deploy, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -1435,15 +1435,15 @@ forgetest_async!(assert_tx_origin_is_not_overwritten, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -1521,15 +1521,15 @@ forgetest_async!(assert_can_create_multiple_contracts_with_correct_nonce, |prj, 
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
@@ -1750,15 +1750,15 @@ forgetest_async!(can_decode_custom_errors, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Initializing [..]...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-    Initialized forge project
 
 "#]])
         .stderr_eq(str![[r#"
 Warning: Target directory is not empty, but `--force` was specified
+Initializing [..]...
 ...
+    Initialized forge project
 
 "#]]);
 
