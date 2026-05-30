@@ -387,7 +387,7 @@ library JsonBindings {
         }
         fs::write(target_path, &result)?;
 
-        sh_println!("Bindings written to {}", target_path.display())?;
+        sh_status!("Bindings written to {}", target_path.display())?;
 
         Ok(())
     }

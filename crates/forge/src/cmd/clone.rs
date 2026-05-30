@@ -161,13 +161,13 @@ impl CloneArgs {
                         eyre::eyre!("No Etherscan API key configured for chain {chain}")
                     })?
                     .into_client_with_no_proxy(config.eth_rpc_no_proxy)?;
-                sh_println!("Downloading the source code of {address} from Etherscan...")?;
+                sh_status!("Downloading the source code of {address} from Etherscan...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
                 (meta, "Etherscan", None)
             }
             SourceExplorer::Sourcify => {
                 let client = SourcifyClient::with_url(chain, sourcify_url.as_deref());
-                sh_println!("Downloading the source code of {address} from Sourcify...")?;
+                sh_status!("Downloading the source code of {address} from Sourcify...")?;
                 let meta = Self::collect_metadata_from_client(address, &client).await?;
                 (meta, "Sourcify", Some(client))
             }
@@ -184,7 +184,7 @@ impl CloneArgs {
             .await?;
 
         // step 4. collect the compilation metadata
-        sh_println!("Collecting the creation information of {address} from {explorer_name}...")?;
+        sh_status!("Collecting the creation information of {address} from {explorer_name}...")?;
 
         match source {
             SourceExplorer::Etherscan => {
