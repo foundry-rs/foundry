@@ -490,10 +490,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             InvariantFuzzError,
         >,
     ) -> Result<InvariantFuzzTestResult> {
-        let worker_plan = InvariantCampaignSpec::new(self.config.runs)
-            .worker_plans(1)?
-            .pop()
-            .expect("one worker plan requested");
+        let campaign_spec = InvariantCampaignSpec::new(self.config.runs);
+        let worker_plan = campaign_spec.worker_plans(1)?.pop().expect("one worker plan requested");
+        debug_assert!(worker_plan.is_master());
         let worker_output = self.run_invariant_worker(
             worker_plan,
             invariant_contract,
@@ -540,6 +539,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let mut planned_runs = plan.runs;
 
         let (mut invariant_test, mut corpus_manager) = self.prepare_test(
+            plan,
             &invariant_contract,
             fuzz_fixtures,
             fuzz_state,
@@ -982,6 +982,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         let reverts = result.failures.reverts;
         let (errors, handler_errors) = result.failures.partition();
+        let failed_corpus_replays =
+            if plan.is_master() { corpus_manager.failed_replays } else { 0 };
         let worker_result = InvariantFuzzTestResult::new(
             errors,
             handler_errors,
@@ -991,7 +993,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.gas_report_traces,
             result.line_coverage,
             result.metrics,
-            corpus_manager.failed_replays,
+            failed_corpus_replays,
             result.optimization_best_value,
             result.optimization_best_sequence,
         );
@@ -1004,6 +1006,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
     /// * Invariant Corpus Manager.
     fn prepare_test(
         &mut self,
+        plan: InvariantWorkerPlan,
         invariant_contract: &InvariantContract<'_>,
         fuzz_fixtures: &FuzzFixtures,
         fuzz_state: EvmFuzzState,
@@ -1104,22 +1107,27 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             }
         }
 
+        let is_master_worker = plan.is_master();
+        let master_executor = is_master_worker.then_some(&self.executor);
+        let replay_contracts = is_master_worker.then_some(&targeted_contracts);
+        let dynamic_target_ctx = is_master_worker.then_some(self.dynamic_target_ctx());
         let worker = WorkerCorpus::new(
-            0,
+            plan.worker_index(),
             self.config.corpus.clone(),
             strategy.boxed(),
-            Some(&self.executor),
+            master_executor,
             None,
-            Some(&targeted_contracts),
-            Some(self.dynamic_target_ctx()),
+            replay_contracts,
+            dynamic_target_ctx,
         )?;
 
         let mut invariant_test =
             InvariantTest::new(fuzz_state, targeted_contracts, failures, self.runner.clone());
 
         // Seed invariant test with previously persisted optimization state,
-        // but only if the current invariant is in optimization mode.
-        if invariant_contract.is_optimization() {
+        // but only if the current invariant is in optimization mode. Persisted optimization state
+        // is a master-worker artifact loaded with the initial corpus.
+        if is_master_worker && invariant_contract.is_optimization() {
             let (opt_best_value, opt_best_sequence) = worker.optimization_initial_state();
             invariant_test.test_data.optimization_best_value = opt_best_value;
             invariant_test.test_data.optimization_best_sequence = opt_best_sequence;

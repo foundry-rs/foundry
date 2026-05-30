@@ -60,6 +60,18 @@ pub struct InvariantWorkerPlan {
     pub runs: u32,
 }
 
+impl InvariantWorkerPlan {
+    pub const MASTER_WORKER_ID: u32 = 0;
+
+    pub const fn is_master(self) -> bool {
+        self.worker_id == Self::MASTER_WORKER_ID
+    }
+
+    pub const fn worker_index(self) -> usize {
+        self.worker_id as usize
+    }
+}
+
 /// Output produced by one invariant worker.
 ///
 /// This is a data envelope for aggregation only. It does not imply that this module executed the
@@ -389,6 +401,8 @@ mod tests {
         assert_eq!(plan.worker_id, 0);
         assert_eq!(plan.first_global_run, 0);
         assert_eq!(plan.runs, 3);
+        assert!(plan.is_master());
+        assert_eq!(plan.worker_index(), 0);
     }
 
     #[test]
@@ -404,6 +418,9 @@ mod tests {
                 InvariantWorkerPlan { worker_id: 3, first_global_run: 75, runs: 25 },
             ]
         );
+        assert!(plans[0].is_master());
+        assert!(!plans[1].is_master());
+        assert_eq!(plans[3].worker_index(), 3);
     }
 
     #[test]
