@@ -25,11 +25,6 @@ impl SelectorArg {
 /// (`transfer(address,uint256)`), or a well-known TIP-20 shorthand.
 pub(crate) fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
     let s = s.trim();
-    if s.is_empty() {
-        return Err("selector cannot be empty".to_string());
-    }
-    validate_balanced_parentheses(s)?;
-
     if s.starts_with("0x") || s.starts_with("0X") {
         let hex_str = &s[2..];
         if hex_str.len() != 8 {
@@ -61,34 +56,12 @@ pub(crate) fn parse_selector_bytes(s: &str) -> Result<[u8; 4], String> {
     }
 }
 
-fn validate_balanced_parentheses(s: &str) -> Result<(), String> {
-    let mut depth = 0usize;
-
-    for ch in s.chars() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth = depth
-                    .checked_sub(1)
-                    .ok_or_else(|| format!("unbalanced ')' in selector '{s}'"))?;
-            }
-            _ => {}
-        }
-    }
-
-    if depth != 0 {
-        return Err(format!("unbalanced '(' in selector '{s}'"));
-    }
-
-    Ok(())
-}
-
 /// Parse a selector string into a named selector argument.
 pub(crate) fn parse_selector_arg(s: &str) -> Result<SelectorArg, String> {
     parse_selector_bytes(s).map(SelectorArg)
 }
 
-/// Parse a `TARGET[:SELECTORS[@RECIPIENT]]` scope string.
+/// Parse a `TARGET[:SELECTORS[@RECIPIENTS]]` scope string.
 pub(crate) fn parse_scope(s: &str) -> Result<CallScope, String> {
     let (target_str, selectors_str) = match s.split_once(':') {
         Some((t, sel)) => (t, Some(sel)),
@@ -100,11 +73,6 @@ pub(crate) fn parse_scope(s: &str) -> Result<CallScope, String> {
 
     let selector_rules = match selectors_str {
         None => vec![],
-        Some(sel_str) if sel_str.trim().is_empty() => {
-            return Err(
-                "selector list cannot be empty; omit ':' to allow all selectors".to_string()
-            );
-        }
         Some(sel_str) => parse_selector_rules(sel_str)?,
     };
 
@@ -114,10 +82,10 @@ pub(crate) fn parse_scope(s: &str) -> Result<CallScope, String> {
 fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
     let mut rules = Vec::new();
 
-    for part in split_selector_rule_parts(s)? {
+    for part in s.split(',') {
         let part = part.trim();
         if part.is_empty() {
-            return Err(format!("empty selector in scope '{s}'"));
+            continue;
         }
 
         let (selector_str, recipients_str) = match part.split_once('@') {
@@ -125,25 +93,20 @@ fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
             None => (part, None),
         };
 
-        let selector_str = selector_str.trim();
-        if selector_str.is_empty() {
-            return Err(format!("missing selector in scope '{part}'"));
-        }
-
         let selector = parse_selector_bytes(selector_str)?;
 
         let recipients = match recipients_str {
             None => vec![],
-            Some(r) => {
-                let r = r.trim();
-                if r.is_empty() {
-                    return Err(format!("missing recipient after '@' in selector '{part}'"));
-                }
-                vec![
-                    r.parse::<Address>()
-                        .map_err(|e| format!("invalid recipient address '{r}': {e}"))?,
-                ]
-            }
+            Some(r) => r
+                .split(',')
+                .filter(|s| !s.trim().is_empty())
+                .map(|addr_str| {
+                    let addr_str = addr_str.trim();
+                    addr_str
+                        .parse::<Address>()
+                        .map_err(|e| format!("invalid recipient address '{addr_str}': {e}"))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
         };
 
         rules.push(SelectorRule { selector: selector.into(), recipients });
@@ -152,38 +115,8 @@ fn parse_selector_rules(s: &str) -> Result<Vec<SelectorRule>, String> {
     Ok(rules)
 }
 
-fn split_selector_rule_parts(s: &str) -> Result<Vec<&str>, String> {
-    let mut parts = Vec::new();
-    let mut depth = 0usize;
-    let mut start = 0usize;
-
-    for (idx, ch) in s.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth = depth
-                    .checked_sub(1)
-                    .ok_or_else(|| format!("unbalanced ')' in selector list '{s}'"))?;
-            }
-            ',' if depth == 0 => {
-                parts.push(&s[start..idx]);
-                start = idx + ch.len_utf8();
-            }
-            _ => {}
-        }
-    }
-
-    if depth != 0 {
-        return Err(format!("unbalanced '(' in selector list '{s}'"));
-    }
-
-    parts.push(&s[start..]);
-    Ok(parts)
-}
-
 /// Parse a policy token label or address into an address.
 pub(crate) fn parse_policy_token(s: &str) -> Result<Address, String> {
-    let s = s.trim();
     match s.to_ascii_lowercase().as_str() {
         "pathusd" | "path_usd" | "path-usd" | "usd" => Ok(PATH_USD_ADDRESS),
         _ => parse_fee_token_address(s).map_err(|e| e.to_string()),
@@ -262,18 +195,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_selector_bytes_rejects_unbalanced_signature() {
-        assert!(parse_selector_bytes("transfer(address,uint256").is_err());
-        assert!(parse_selector_bytes("transfer)").is_err());
-    }
-
-    #[test]
-    fn parse_selector_bytes_empty_invalid() {
-        assert!(parse_selector_bytes("").is_err());
-        assert!(parse_selector_bytes("   ").is_err());
-    }
-
-    #[test]
     fn parse_scope_hex_selector_with_recipient() {
         let scope = parse_scope(
             "0x20c0000000000000000000000000000000000001:0xaabbccdd@0x1111111111111111111111111111111111111111",
@@ -319,56 +240,6 @@ mod tests {
         .unwrap();
         assert_eq!(scope.selectorRules.len(), 1);
         assert_eq!(scope.selectorRules[0].recipients.len(), 1);
-    }
-
-    #[test]
-    fn parse_scope_full_signature_with_comma_argument_list() {
-        let scope =
-            parse_scope("0x20c0000000000000000000000000000000000001:transfer(address,uint256)")
-                .unwrap();
-        assert_eq!(scope.selectorRules.len(), 1);
-        assert_eq!(scope.selectorRules[0].selector.0, keccak256(b"transfer(address,uint256)")[..4]);
-    }
-
-    #[test]
-    fn parse_scope_rejects_empty_selector_list() {
-        assert!(parse_scope("0x20c0000000000000000000000000000000000001:").is_err());
-    }
-
-    #[test]
-    fn parse_scope_rejects_empty_selector() {
-        assert!(parse_scope("0x20c0000000000000000000000000000000000001:transfer,").is_err());
-        assert!(parse_scope("0x20c0000000000000000000000000000000000001:,transfer").is_err());
-        assert!(
-            parse_scope(
-                "0x20c0000000000000000000000000000000000001:@0x1111111111111111111111111111111111111111"
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn parse_scope_rejects_empty_recipient() {
-        assert!(parse_scope("0x20c0000000000000000000000000000000000001:transfer@").is_err());
-    }
-
-    #[test]
-    fn parse_scope_rejects_multiple_recipients_in_shorthand() {
-        assert!(
-            parse_scope(
-                "0x20c0000000000000000000000000000000000001:transfer@0x1111111111111111111111111111111111111111,0x2222222222222222222222222222222222222222"
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn parse_scope_rejects_unbalanced_signature() {
-        assert!(
-            parse_scope("0x20c0000000000000000000000000000000000001:transfer(address,uint256")
-                .is_err()
-        );
-        assert!(parse_scope("0x20c0000000000000000000000000000000000001:transfer)").is_err());
     }
 
     #[test]

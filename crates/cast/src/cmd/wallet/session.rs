@@ -38,7 +38,7 @@ pub enum SessionSubcommands {
         #[arg(long = "expires", value_name = "DURATION", value_parser = parse_period)]
         expires: u64,
 
-        /// Allowed call scope, in `TARGET[:SELECTORS[@RECIPIENT]]` format.
+        /// Allowed call scope, in `TARGET[:SELECTORS[@RECIPIENTS]]` format.
         #[arg(long = "scope", value_parser = parse_scope, required = true)]
         scope: Vec<CallScope>,
 
@@ -50,10 +50,7 @@ pub enum SessionSubcommands {
         wallet: WalletOpts,
     },
 
-    /// Revoke a Tempo session entry.
-    ///
-    /// Midpoint implementation: this currently clears the local session registry entry only.
-    /// Submitting AccountKeychain::revokeKey on-chain belongs to the full session runner.
+    /// Revoke a local Tempo session entry.
     Revoke {
         /// Session identifier to revoke.
         #[arg(value_name = "SESSION_ID")]
@@ -117,9 +114,6 @@ async fn run_create(
 }
 
 fn run_revoke(session_id: B256) -> Result<()> {
-    // This PR is the session-authorization primitive, not the full command-runner lifecycle.
-    // Revoke currently means dropping the local session credentials; on-chain revokeKey is a
-    // follow-up once session execution and exit handling are wired.
     let removed = remove_session_entry(session_id)?;
 
     if shell::is_json() {
