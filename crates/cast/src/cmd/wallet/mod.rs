@@ -25,6 +25,9 @@ use vanity::VanityArgs;
 pub mod list;
 use list::ListArgs;
 
+pub mod session;
+use session::SessionSubcommands;
+
 /// CLI arguments for `cast wallet`.
 #[derive(Debug, Parser)]
 pub enum WalletSubcommands {
@@ -225,6 +228,12 @@ pub enum WalletSubcommands {
     /// List all the accounts in the keystore default directory
     #[command(visible_alias = "ls")]
     List(ListArgs),
+
+    /// Manage temporary Tempo wallet sessions.
+    Session {
+        #[command(subcommand)]
+        command: SessionSubcommands,
+    },
 
     /// Remove a wallet from the keystore.
     ///
@@ -569,12 +578,12 @@ impl WalletSubcommands {
                             if format_json {
                                 if insecure {
                                     accounts_json.as_array_mut().unwrap().push(json!({
-                                        "address": format!("{}", address),
+                                        "address": address.clone(),
                                         "private_key": format!("0x{}", private_key),
                                     }));
                                 } else {
                                     accounts_json.as_array_mut().unwrap().push(json!({
-                                        "address": format!("{}", address)
+                                        "address": address.clone()
                                     }));
                                 }
                             } else {
@@ -785,6 +794,9 @@ flag to set your key via:
             }
             Self::List(cmd) => {
                 cmd.run().await?;
+            }
+            Self::Session { command } => {
+                command.run().await?;
             }
             Self::Remove { name, dir, unsafe_password } => {
                 let dir = if let Some(path) = dir {
@@ -1110,6 +1122,75 @@ mod tests {
                 assert!(keystore_dir.is_none());
             }
             _ => panic!("expected WalletSubcommands::ChangePassword"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_session_create() {
+        let args = WalletSubcommands::parse_from([
+            "foundry-cli",
+            "session",
+            "create",
+            "--root",
+            "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+            "--chain-id",
+            "4217",
+            "--expires",
+            "10m",
+            "--scope",
+            "0x20c0000000000000000000000000000000000001:transfer",
+            "--spend-limit",
+            "PathUSD=0",
+            "--private-key",
+            "0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0",
+        ]);
+
+        match args {
+            WalletSubcommands::Session { command } => match command {
+                SessionSubcommands::Create {
+                    root_account,
+                    chain_id,
+                    expires,
+                    scope,
+                    spend_limits,
+                    wallet,
+                } => {
+                    assert_eq!(
+                        root_account,
+                        address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
+                    );
+                    assert_eq!(chain_id, 4217);
+                    assert_eq!(expires, 600);
+                    assert_eq!(scope.len(), 1);
+                    assert_eq!(spend_limits.len(), 1);
+                    assert_eq!(
+                        wallet.raw.private_key.as_deref(),
+                        Some("0x59c6995e998f97a5a004497e5da3b5d2b2b66a87f064d39c44da0b6d6e4f8ff0")
+                    );
+                }
+                _ => panic!("expected WalletSubcommands::Session::Create"),
+            },
+            _ => panic!("expected WalletSubcommands::Session"),
+        }
+    }
+
+    #[test]
+    fn can_parse_wallet_session_revoke() {
+        let args = WalletSubcommands::parse_from([
+            "foundry-cli",
+            "session",
+            "revoke",
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+        ]);
+
+        match args {
+            WalletSubcommands::Session { command } => match command {
+                SessionSubcommands::Revoke { session_id } => {
+                    assert_eq!(session_id, B256::from([0x11; 32]));
+                }
+                _ => panic!("expected WalletSubcommands::Session::Revoke"),
+            },
+            _ => panic!("expected WalletSubcommands::Session"),
         }
     }
 
