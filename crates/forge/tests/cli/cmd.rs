@@ -774,19 +774,19 @@ forgetest!(flaky_can_clone, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 "#]])
     .stderr_eq(str![[r#"
+Downloading the source code of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 Initializing [..]...
 ...
     Initialized forge project
+Collecting the creation information of 0x044b75f554b886A065b9567891e45c79542d7357 from Etherscan...
 
 "#]]);
 
@@ -835,19 +835,19 @@ forgetest!(flaky_can_clone_sourcify, |prj, cmd| {
         .arg(prj.root())
         .assert_success()
         .stdout_eq(str![[r#"
-Downloading the source code of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-Collecting the creation information of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 "#]])
         .stderr_eq(str![[r#"
+Downloading the source code of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 Initializing [..]...
 ...
     Initialized forge project
+Collecting the creation information of 0xDb53f47aC61FE54F456A4eb3E09832D08Dd7BEec from Sourcify...
 
 "#]]);
 
@@ -872,19 +872,19 @@ forgetest!(flaky_can_clone_no_remappings_txt, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 "#]])
     .stderr_eq(str![[r#"
+Downloading the source code of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 Initializing [..]...
 ...
     Initialized forge project
+Collecting the creation information of 0x33e690aEa97E4Ef25F0d140F1bf044d663091DAf from Etherscan...
 
 "#]]);
 
@@ -1114,19 +1114,19 @@ forgetest!(flaky_can_clone_with_node_modules, |prj, cmd| {
     .arg(prj.root())
     .assert_success()
     .stdout_eq(str![[r#"
-Downloading the source code of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 Installing forge-std in [..] (url: https://github.com/foundry-rs/forge-std, tag: None)
     Installed forge-std[..]
-Collecting the creation information of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 [COMPILING_FILES] with [SOLC_VERSION]
 [SOLC_VERSION] [ELAPSED]
 Compiler run successful!
 
 "#]])
     .stderr_eq(str![[r#"
+Downloading the source code of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 Initializing [..]...
 ...
     Initialized forge project
+Collecting the creation information of 0xA3E217869460bEf59A1CfD0637e2875F9331e823 from Etherscan...
 
 "#]]);
 });

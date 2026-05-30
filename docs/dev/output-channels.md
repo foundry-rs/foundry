@@ -95,20 +95,20 @@ Each row's status is one of:
 
 | Command                | Text mode stdout                                     | `--json` stdout                                                | Status |
 | ---------------------- | ---------------------------------------------------- | -------------------------------------------------------------- | ------ |
-| `cast call`            | Return value (hex / decoded)                         | JSON of return value                                           | todo   |
+| `cast call`            | Return value (hex / decoded)                         | JSON of return value                                           | migrated |
 | `cast send`            | Tx hash                                              | JSON of receipt or `{ "hash": "0x…" }`                         | todo   |
-| `cast estimate`        | Gas estimate (decimal)                               | JSON `{ "gas": "…" }`                                          | todo   |
-| `cast rpc`             | RPC result (JSON)                                    | JSON                                                           | todo   |
-| `cast storage`         | Single slot value                                    | JSON of layout                                                 | todo   |
+| `cast estimate`        | Gas estimate (decimal)                               | JSON `{ "gas": "…" }`                                          | migrated |
+| `cast rpc`             | RPC result (JSON)                                    | JSON                                                           | migrated |
+| `cast storage`         | Single slot value                                    | JSON of layout                                                 | migrated |
 | `cast logs`            | One log per line                                     | JSON array                                                     | todo   |
-| `cast run`             | Trace / decoded output                               | JSON                                                           | todo   |
-| `cast trace`           | Trace                                                | JSON trace                                                     | todo   |
+| `cast run`             | Trace / decoded output                               | JSON                                                           | migrated |
+| `cast trace`           | Trace                                                | JSON trace                                                     | migrated |
 | `cast wallet new`      | Address                                              | JSON `{ "address": "…", "private_key": "…" (only with explicit flag) }` | todo |
 | `cast wallet sign`     | Signature                                            | JSON                                                           | todo   |
 | `cast erc20 balance`   | Balance (decimal)                                    | JSON string                                                    | todo   |
-| `cast access-list`     | Access list                                          | JSON                                                           | todo   |
+| `cast access-list`     | Access list                                          | JSON                                                           | migrated |
 | `cast da-estimate`     | Gas estimate                                         | JSON                                                           | todo   |
-| `cast find-block`      | Block number                                         | JSON                                                           | todo   |
+| `cast find-block`      | Block number                                         | JSON                                                           | migrated |
 | `cast mktx`            | Signed RLP                                           | JSON                                                           | todo   |
 | `cast batch-send`      | One tx hash per line                                 | JSON array                                                     | todo   |
 
@@ -124,17 +124,17 @@ Each row's status is one of:
 | `forge init`           | (empty)                                              | (empty)                                    | migrated |
 | `forge update`         | (empty)                                              | (empty)                                    | migrated |
 | `forge remove`         | (empty)                                              | (empty)                                    | migrated |
-| `forge clone`          | (empty)                                              | (empty)                                    | todo   |
+| `forge clone`          | (empty)                                              | (empty)                                    | migrated |
 | `forge bind`           | (empty)                                              | (empty)                                    | migrated |
-| `forge bind-json`      | (empty) or generated path                            | JSON                                       | todo   |
+| `forge bind-json`      | (empty) or generated path                            | JSON                                       | migrated |
 | `forge flatten`        | Flattened source                                     | n/a                                        | migrated |
-| `forge fmt`            | (empty) or formatted source with `--check`           | n/a                                        | todo   |
+| `forge fmt`            | (empty) or formatted source with `--check`           | n/a                                        | migrated |
 | `forge tree`           | Dependency tree                                      | JSON                                       | migrated |
-| `forge config`         | Config TOML                                          | JSON config                                | todo   |
+| `forge config`         | Config TOML                                          | JSON config                                | migrated |
 | `forge selectors`      | Selectors output                                     | JSON                                       | todo   |
 | `forge eip712`         | (empty)                                              | JSON of types                              | migrated |
-| `forge geiger`         | Findings                                             | JSON                                       | todo   |
-| `forge lint`           | (empty; findings on stderr/exit code)                | JSON findings                              | todo   |
+| `forge geiger`         | Findings                                             | JSON                                       | migrated |
+| `forge lint`           | (empty; findings on stderr/exit code)                | JSON findings                              | migrated |
 | `forge snapshot`       | Snapshot file content / diff                         | JSON                                       | todo   |
 | `forge coverage`       | Coverage table or report                             | JSON / LCOV / etc. via `--report`          | todo   |
 | `forge cache`          | (empty) or paths                                     | JSON                                       | migrated |
