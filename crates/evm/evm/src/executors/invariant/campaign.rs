@@ -1,5 +1,5 @@
 use super::{InvariantFuzzError, InvariantFuzzTestResult, InvariantMetrics};
-use crate::executors::{EarlyExit, FuzzTestTimer, corpus::CorpusCampaignInput};
+use crate::executors::{EarlyExit, FuzzTestTimer, corpus::CampaignCorpusEntry};
 use alloy_primitives::{Address, I256, Selector};
 use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
@@ -101,13 +101,13 @@ impl InvariantCampaignState {
 pub struct InvariantWorkerOutput {
     pub plan: InvariantWorkerPlan,
     pub result: InvariantFuzzTestResult,
-    pub corpus_inputs: Vec<CorpusCampaignInput>,
+    pub corpus_entries: Vec<CampaignCorpusEntry>,
 }
 
 impl InvariantWorkerOutput {
     #[cfg(test)]
     pub fn new(plan: InvariantWorkerPlan, result: InvariantFuzzTestResult) -> Self {
-        Self { plan, result, corpus_inputs: Vec::new() }
+        Self { plan, result, corpus_entries: Vec::new() }
     }
 }
 
@@ -140,14 +140,14 @@ impl InvariantCampaignAggregator {
     /// Validates the collected worker ranges and folds them into one logical campaign result.
     #[cfg(test)]
     pub fn finish(self) -> Result<InvariantFuzzTestResult> {
-        Ok(self.finish_with_corpus()?.0)
+        Ok(self.finish_with_corpus_entries()?.0)
     }
 
     /// Validates the collected worker ranges and folds them into one logical campaign result with
-    /// campaign-level corpus artifacts selected in logical worker order.
-    pub fn finish_with_corpus(
+    /// corpus artifacts selected in logical worker order.
+    pub fn finish_with_corpus_entries(
         mut self,
-    ) -> Result<(InvariantFuzzTestResult, Vec<CorpusCampaignInput>)> {
+    ) -> Result<(InvariantFuzzTestResult, Vec<CampaignCorpusEntry>)> {
         ensure!(!self.outputs.is_empty(), "missing invariant worker output");
 
         self.outputs.sort_by_key(|output| output.plan.first_global_run);
@@ -161,7 +161,7 @@ impl InvariantCampaignAggregator {
         let mut gas_report_traces = Vec::new();
         let mut line_coverage = None;
         let mut metrics = HashMap::default();
-        let mut corpus_inputs = Vec::new();
+        let mut corpus_entries = Vec::new();
         let failed_corpus_replays = self
             .outputs
             .iter()
@@ -171,12 +171,12 @@ impl InvariantCampaignAggregator {
             .failed_corpus_replays;
         let mut optimization_best = None;
 
-        for InvariantWorkerOutput { result, corpus_inputs: worker_inputs, .. } in self.outputs {
+        for InvariantWorkerOutput { result, corpus_entries: worker_entries, .. } in self.outputs {
             for (invariant, error) in result.errors {
                 errors.entry(invariant).or_insert(error);
             }
             merge_handler_errors(&mut handler_errors, result.handler_errors);
-            corpus_inputs.extend(worker_inputs);
+            corpus_entries.extend(worker_entries);
             cases.extend(result.cases);
             reverts += result.reverts;
             last_run_inputs = result.last_run_inputs;
@@ -205,7 +205,7 @@ impl InvariantCampaignAggregator {
                 optimization_best_value,
                 optimization_best_sequence,
             ),
-            corpus_inputs,
+            corpus_entries,
         ))
     }
 }
@@ -779,7 +779,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregator_ignores_failed_corpus_replays_from_non_master_worker() {
+    fn aggregator_uses_master_failed_corpus_replays() {
         let spec = InvariantCampaignSpec::new(2);
         let plans = [
             InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: 1 },
@@ -795,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregator_takes_failed_corpus_replays_from_master_worker() {
+    fn aggregator_uses_master_failed_corpus_replays_independent_of_output_order() {
         let spec = InvariantCampaignSpec::new(2);
         let plans = [
             InvariantWorkerPlan { worker_id: 1, first_global_run: 0, runs: 1 },
