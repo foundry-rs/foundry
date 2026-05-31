@@ -523,7 +523,7 @@ impl Erc20Subcommand {
                 if shell::is_json() {
                     sh_println!("{}", serde_json::to_string(&balance.to_string())?)?
                 } else {
-                    sh_println!("{}", format_uint_exp(balance))?
+                    sh_println!("{balance}")?
                 }
             }
             Self::Name { token, block, .. } => {
