@@ -6865,6 +6865,36 @@ mod tests {
     }
 
     #[test]
+    fn no_unknown_key_warning_for_legacy_invariant_assert_all() {
+        // Regression test: `invariant.assert_all` was a public config key before invariant
+        // campaigns were grouped by contract. Existing configs should continue to load quietly.
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "foundry.toml",
+                r#"
+                [invariant]
+                assert_all = false
+
+                [profile.default.invariant]
+                assert_all = true
+                "#,
+            )?;
+
+            let cfg = Config::load().unwrap();
+            assert!(
+                !cfg.warnings.iter().any(|w| matches!(
+                    w,
+                    crate::Warning::UnknownSectionKey { key, section, .. }
+                        if key == "assert_all" && section == "invariant"
+                )),
+                "did not expect UnknownSectionKey warning for `invariant.assert_all`, got: {:?}",
+                cfg.warnings
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     fn fails_on_ambiguous_version_in_compilation_restrictions() {
         figment::Jail::expect_with(|jail| {
             jail.create_file(

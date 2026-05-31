@@ -53,6 +53,14 @@ const RESERVED_KEYS: &[&str] = &["extends"];
 /// still accepted on input but no longer serialized in the default config.
 const BACKWARD_COMPATIBLE_KEYS: &[&str] = &["solc_version", "tempo", "optimism"];
 
+/// Section-local keys kept for backward compatibility that should not trigger unknown key
+/// warnings.
+///
+/// `invariant.assert_all` was introduced as a public config key, but invariant campaigns are now
+/// grouped by contract and always report all broken invariants. Keep accepting the legacy key so
+/// existing `foundry.toml` files do not warn on every command.
+const BACKWARD_COMPATIBLE_SECTION_KEYS: &[(&str, &[&str])] = &[("invariant", &["assert_all"])];
+
 /// Generate warnings for unknown sections and deprecated keys
 pub struct WarningsProvider<P> {
     provider: P,
@@ -215,7 +223,9 @@ impl<P: Provider> WarningsProvider<P> {
                 let Some(default_section_dict) = default_section_value.as_dict() else {
                     continue;
                 };
-                default_section_dict.keys().cloned().collect()
+                let mut keys: BTreeSet<String> = default_section_dict.keys().cloned().collect();
+                add_backward_compatible_section_keys(section_name, &mut keys);
+                keys
             };
 
             for key in section_dict.keys() {
@@ -287,7 +297,9 @@ impl<P: Provider> WarningsProvider<P> {
                 let Some(default_nested_dict) = default_value.as_dict() else {
                     continue;
                 };
-                default_nested_dict.keys().cloned().collect()
+                let mut keys: BTreeSet<String> = default_nested_dict.keys().cloned().collect();
+                add_backward_compatible_section_keys(key, &mut keys);
+                keys
             };
 
             for nested_key in nested_dict.keys() {
@@ -314,6 +326,14 @@ impl<P: Provider> WarningsProvider<P> {
                 SETTINGS_OVERRIDES_KEYS.iter().map(|s| s.to_string()).collect()
             }
             _ => BTreeSet::new(),
+        }
+    }
+}
+
+fn add_backward_compatible_section_keys(section: &str, keys: &mut BTreeSet<String>) {
+    for (compatible_section, compatible_keys) in BACKWARD_COMPATIBLE_SECTION_KEYS {
+        if section == *compatible_section {
+            keys.extend(compatible_keys.iter().map(|key| (*key).to_string()));
         }
     }
 }
