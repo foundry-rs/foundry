@@ -4153,7 +4153,11 @@ casttest!(
         cmd.args(["da-estimate", "30558838", "-r", "https://mainnet.base.org/"])
             .assert_success()
             .stdout_eq(str![[r#"
-Estimated data availability size for block 30558838 with 225 transactions: 52916546100
+52916546100
+
+"#]])
+            .stderr_eq(str![[r#"
+Estimated data availability size for block 30558838 with 225 transactions:
 
 "#]]);
     }

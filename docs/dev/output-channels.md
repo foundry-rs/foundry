@@ -107,9 +107,9 @@ Each row's status is one of:
 | `cast wallet sign`     | Signature                                            | JSON                                                           | todo   |
 | `cast erc20 balance`   | Balance (decimal)                                    | JSON string                                                    | todo   |
 | `cast access-list`     | Access list                                          | JSON                                                           | migrated |
-| `cast da-estimate`     | Gas estimate                                         | JSON                                                           | todo   |
+| `cast da-estimate`     | Gas estimate                                         | JSON                                                           | migrated |
 | `cast find-block`      | Block number                                         | JSON                                                           | migrated |
-| `cast mktx`            | Signed RLP                                           | JSON                                                           | todo   |
+| `cast mktx`            | Signed RLP                                           | JSON                                                           | migrated |
 | `cast batch-send`      | One tx hash per line                                 | JSON array                                                     | todo   |
 
 ### `forge`
