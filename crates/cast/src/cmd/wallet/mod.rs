@@ -638,26 +638,21 @@ impl WalletSubcommands {
                     wallet.sign_message(&Self::hex_str_to_bytes(&message)?).await?
                 };
 
-                if shell::verbosity() > 0 {
-                    if shell::is_json() {
-                        sh_println!(
-                            "{}",
-                            serde_json::to_string_pretty(&json!({
-                                "message": message,
-                                "address": wallet.address(),
-                                "signature": hex::encode(sig.as_bytes()),
-                            }))?
-                        )?;
-                    } else {
-                        sh_println!(
-                            "Successfully signed!\n   Message: {}\n   Address: {}\n   Signature: 0x{}",
-                            message,
-                            wallet.address(),
-                            hex::encode(sig.as_bytes()),
-                        )?;
-                    }
+                if shell::is_json() {
+                    sh_println!(
+                        "{}",
+                        serde_json::to_string_pretty(&json!({
+                            "message": message,
+                            "address": wallet.address(),
+                            "signature": hex::encode(sig.as_bytes()),
+                        }))?
+                    )?;
                 } else {
-                    // Pipe friendly output
+                    if shell::verbosity() > 0 {
+                        sh_status!("Successfully signed!")?;
+                        sh_status!("   Message: {message}")?;
+                        sh_status!("   Address: {}", wallet.address())?;
+                    }
                     sh_println!("0x{}", hex::encode(sig.as_bytes()))?;
                 }
             }
@@ -685,28 +680,23 @@ impl WalletSubcommands {
                 let signature = wallet.sign_hash(&auth.signature_hash()).await?;
                 let auth = auth.into_signed(signature);
 
-                if shell::verbosity() > 0 {
-                    if shell::is_json() {
-                        sh_println!(
-                            "{}",
-                            serde_json::to_string_pretty(&json!({
-                                "nonce": nonce,
-                                "chain_id": chain_id,
-                                "address": wallet.address(),
-                                "signature": hex::encode_prefixed(alloy_rlp::encode(&auth)),
-                            }))?
-                        )?;
-                    } else {
-                        sh_println!(
-                            "Successfully signed!\n   Nonce: {}\n   Chain ID: {}\n   Address: {}\n   Signature: {}",
-                            nonce,
-                            chain_id,
-                            wallet.address(),
-                            hex::encode_prefixed(alloy_rlp::encode(&auth)),
-                        )?;
-                    }
+                if shell::is_json() {
+                    sh_println!(
+                        "{}",
+                        serde_json::to_string_pretty(&json!({
+                            "nonce": nonce,
+                            "chain_id": chain_id,
+                            "address": wallet.address(),
+                            "signature": hex::encode_prefixed(alloy_rlp::encode(&auth)),
+                        }))?
+                    )?;
                 } else {
-                    // Pipe friendly output
+                    if shell::verbosity() > 0 {
+                        sh_status!("Successfully signed!")?;
+                        sh_status!("   Nonce: {nonce}")?;
+                        sh_status!("   Chain ID: {chain_id}")?;
+                        sh_status!("   Address: {}", wallet.address())?;
+                    }
                     sh_println!("{}", hex::encode_prefixed(alloy_rlp::encode(&auth)))?;
                 }
             }

@@ -104,7 +104,8 @@ Each row's status is one of:
 | `cast run`             | Trace / decoded output                               | JSON                                                           | migrated |
 | `cast trace`           | Trace                                                | JSON trace                                                     | migrated |
 | `cast wallet new`      | Address                                              | JSON `{ "address": "…", "private_key": "…" (only with explicit flag) }` | todo |
-| `cast wallet sign`     | Signature                                            | JSON                                                           | todo   |
+| `cast wallet sign`     | Signature                                            | JSON                                                           | migrated |
+| `cast wallet sign-auth`| Signed authorization RLP                             | JSON                                                           | migrated |
 | `cast erc20 balance`   | Balance (decimal)                                    | JSON string                                                    | todo   |
 | `cast access-list`     | Access list                                          | JSON                                                           | migrated |
 | `cast da-estimate`     | Gas estimate                                         | JSON                                                           | todo   |
