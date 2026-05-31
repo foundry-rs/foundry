@@ -74,7 +74,7 @@ pub use shrink::{
 /// Minimum number of logical runs assigned to each invariant worker.
 ///
 /// Keeps short campaigns single-threaded and avoids producing many small rayon jobs.
-const MIN_RUNS_PER_INVARIANT_WORKER: u32 = 64;
+const MIN_RUNS_PER_INVARIANT_WORKER: u32 = 1000;
 
 sol! {
     interface IInvariantTest {
