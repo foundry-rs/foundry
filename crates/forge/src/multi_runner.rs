@@ -103,9 +103,12 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
         &'a self,
         filter: &'b dyn TestFilter,
     ) -> impl Iterator<Item = &'a Function> + 'b {
-        self.matching_contracts(filter)
-            .flat_map(|(_, c)| c.abi.functions())
-            .filter(|func| filter.matches_test_function(func))
+        self.matching_contracts(filter).flat_map(move |(id, c)| {
+            let contract_name = id.identifier();
+            c.abi
+                .functions()
+                .filter(move |func| filter.matches_test_function_in_contract(&contract_name, func))
+        })
     }
 
     /// Returns an iterator over all test functions in contracts that match the filter.
@@ -129,7 +132,7 @@ impl<FEN: FoundryEvmNetwork> MultiContractRunner<FEN> {
                 let tests = c
                     .abi
                     .functions()
-                    .filter(|func| filter.matches_test_function(func))
+                    .filter(|func| filter.matches_test_function_in_contract(&name, func))
                     .map(|func| func.name.clone())
                     .collect::<Vec<_>>();
                 (source, name, tests)
@@ -677,5 +680,7 @@ pub(crate) fn matches_contract(
     functions: impl IntoIterator<Item = impl std::borrow::Borrow<Function>>,
 ) -> bool {
     (filter.matches_path(path) && filter.matches_contract(contract_name))
-        && functions.into_iter().any(|func| filter.matches_test_function(func.borrow()))
+        && functions
+            .into_iter()
+            .any(|func| filter.matches_test_function_in_contract(contract_name, func.borrow()))
 }
