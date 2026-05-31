@@ -3087,6 +3087,32 @@ Ran 1 test suite [ELAPSED]: 1 tests passed, 0 failed, 0 skipped (1 total tests)
 "#]]);
 });
 
+// Tests that --opcodes properly errors (fails early) with wrong opcode names
+forgetest_init!(invalid_opcode_name, |prj, cmd| {
+    prj.initialize_default_contracts();
+    cmd.args(["test", "--mt", "test_Increment", "-vvvvv", "--opcodes", "BOGUS"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+...
+error: invalid value 'BOGUS' for '--opcodes <OPCODES>...': invalid opcode: BOGUS
+
+For more information, try '--help'.
+
+"#]]);
+});
+
+// Tests that --opcodes errors when not provided with -vvvvv
+forgetest_init!(opcodes_not_enough_verbosity, |prj, cmd| {
+    prj.initialize_default_contracts();
+    cmd.args(["test", "--mt", "test_Increment", "-vvv", "--opcodes", "ADD"])
+        .assert_failure()
+        .stderr_eq(str![[r#"
+...
+Error: Not enough verbosity. Use -vvvvv to show opcodes.
+
+"#]]);
+});
+
 // Tests that chained errors are properly displayed.
 // <https://github.com/foundry-rs/foundry/issues/9161>
 forgetest!(displays_chained_error, |prj, cmd| {
