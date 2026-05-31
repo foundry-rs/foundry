@@ -131,7 +131,7 @@ Each row's status is one of:
 | `forge fmt`            | (empty) or formatted source with `--check`           | n/a                                        | migrated |
 | `forge tree`           | Dependency tree                                      | JSON                                       | migrated |
 | `forge config`         | Config TOML                                          | JSON config                                | migrated |
-| `forge selectors`      | Selectors output                                     | JSON                                       | todo   |
+| `forge selectors`      | Selectors output                                     | JSON                                       | migrated |
 | `forge eip712`         | (empty)                                              | JSON of types                              | migrated |
 | `forge geiger`         | Findings                                             | JSON                                       | migrated |
 | `forge lint`           | (empty; findings on stderr/exit code)                | JSON findings                              | migrated |
