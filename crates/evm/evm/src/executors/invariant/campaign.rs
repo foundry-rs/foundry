@@ -113,11 +113,6 @@ impl InvariantCampaignAggregator {
         for InvariantWorkerOutput { plan, result } in self.outputs {
             if plan.worker_id == 0 {
                 failed_corpus_replays = result.failed_corpus_replays;
-            } else {
-                ensure!(
-                    result.failed_corpus_replays == 0,
-                    "non-master invariant worker reported failed corpus replays"
-                );
             }
             for (invariant, error) in result.errors {
                 errors.entry(invariant).or_insert(error);
@@ -623,14 +618,14 @@ mod tests {
     }
 
     #[test]
-    fn aggregator_rejects_failed_corpus_replays_from_non_master_worker() {
+    fn aggregator_ignores_failed_corpus_replays_from_non_master_worker() {
         let plans = [plan(0, 0, 1), plan(1, 1, 1)];
 
-        let err =
-            finish(2, [worker(plans[0], empty_result(0, 0)), worker(plans[1], empty_result(0, 1))])
-                .unwrap_err();
+        let result =
+            finish(2, [worker(plans[0], empty_result(0, 7)), worker(plans[1], empty_result(0, 1))])
+                .unwrap();
 
-        assert!(err.to_string().contains("non-master invariant worker reported"));
+        assert_eq!(result.failed_corpus_replays, 7);
     }
 
     #[test]
