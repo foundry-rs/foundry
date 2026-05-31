@@ -490,8 +490,10 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             InvariantFuzzError,
         >,
     ) -> Result<InvariantFuzzTestResult> {
+        let campaign_spec = InvariantCampaignSpec::new(self.config.runs);
+        let worker_plan = campaign_spec.worker_plans(1)?.pop().expect("one worker plan requested");
         let worker_output = self.run_invariant_worker(
-            InvariantWorkerPlan { worker_id: 0, first_global_run: 0, runs: self.config.runs },
+            worker_plan,
             invariant_contract,
             fuzz_fixtures,
             fuzz_state,
@@ -550,8 +552,11 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let mut throughput = InvariantThroughputMetrics::default();
         let mut failure_metrics = InvariantFailureMetrics::default();
         let continue_campaign = |runs: u32| {
-            !early_exit.should_stop()
-                && if timer.is_enabled() { !timer.is_timed_out() } else { runs < plan.runs }
+            if early_exit.should_stop() {
+                return false;
+            }
+
+            if timer.is_enabled() { !timer.is_timed_out() } else { runs < plan.runs }
         };
 
         // Invariant runs with edge coverage if corpus dir is set or showing edge coverage.
@@ -975,23 +980,21 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
 
         let reverts = result.failures.reverts;
         let (errors, handler_errors) = result.failures.partition();
+        let worker_result = InvariantFuzzTestResult::new(
+            errors,
+            handler_errors,
+            result.fuzz_cases,
+            reverts,
+            result.last_run_inputs,
+            result.gas_report_traces,
+            result.line_coverage,
+            result.metrics,
+            if plan.worker_id == 0 { corpus_manager.failed_replays } else { 0 },
+            result.optimization_best_value,
+            result.optimization_best_sequence,
+        );
         plan.runs = planned_runs;
-        Ok(InvariantWorkerOutput {
-            plan,
-            result: InvariantFuzzTestResult::new(
-                errors,
-                handler_errors,
-                result.fuzz_cases,
-                reverts,
-                result.last_run_inputs,
-                result.gas_report_traces,
-                result.line_coverage,
-                result.metrics,
-                if plan.worker_id == 0 { corpus_manager.failed_replays } else { 0 },
-                result.optimization_best_value,
-                result.optimization_best_sequence,
-            ),
-        })
+        Ok(InvariantWorkerOutput::new(plan, worker_result))
     }
 
     /// Prepares certain structures to execute the invariant tests:
