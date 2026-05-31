@@ -1,5 +1,5 @@
 use super::{InvariantFuzzError, InvariantFuzzTestResult, InvariantMetrics};
-use crate::executors::{EarlyExit, FuzzTestTimer, corpus::CorpusCampaignOutput};
+use crate::executors::{EarlyExit, FuzzTestTimer, corpus::CorpusCampaignInput};
 use alloy_primitives::{Address, I256, Selector};
 use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
@@ -101,21 +101,13 @@ impl InvariantCampaignState {
 pub struct InvariantWorkerOutput {
     pub plan: InvariantWorkerPlan,
     pub result: InvariantFuzzTestResult,
-    pub corpus: CorpusCampaignOutput,
+    pub corpus_inputs: Vec<CorpusCampaignInput>,
 }
 
 impl InvariantWorkerOutput {
     #[cfg(test)]
     pub fn new(plan: InvariantWorkerPlan, result: InvariantFuzzTestResult) -> Self {
-        Self { plan, result, corpus: CorpusCampaignOutput::default() }
-    }
-
-    pub const fn new_with_corpus(
-        plan: InvariantWorkerPlan,
-        result: InvariantFuzzTestResult,
-        corpus: CorpusCampaignOutput,
-    ) -> Self {
-        Self { plan, result, corpus }
+        Self { plan, result, corpus_inputs: Vec::new() }
     }
 }
 
@@ -148,12 +140,14 @@ impl InvariantCampaignAggregator {
     /// Validates the collected worker ranges and folds them into one logical campaign result.
     #[cfg(test)]
     pub fn finish(self) -> Result<InvariantFuzzTestResult> {
-        Ok(self.finish_with_corpus()?.result)
+        Ok(self.finish_with_corpus()?.0)
     }
 
     /// Validates the collected worker ranges and folds them into one logical campaign result with
     /// campaign-level corpus artifacts selected in logical worker order.
-    pub fn finish_with_corpus(mut self) -> Result<InvariantCampaignOutput> {
+    pub fn finish_with_corpus(
+        mut self,
+    ) -> Result<(InvariantFuzzTestResult, Vec<CorpusCampaignInput>)> {
         ensure!(!self.outputs.is_empty(), "missing invariant worker output");
 
         self.outputs.sort_by_key(|output| output.plan.first_global_run);
@@ -167,7 +161,7 @@ impl InvariantCampaignAggregator {
         let mut gas_report_traces = Vec::new();
         let mut line_coverage = None;
         let mut metrics = HashMap::default();
-        let mut corpus = CorpusCampaignOutput::default();
+        let mut corpus_inputs = Vec::new();
         let failed_corpus_replays = self
             .outputs
             .iter()
@@ -177,16 +171,12 @@ impl InvariantCampaignAggregator {
             .failed_corpus_replays;
         let mut optimization_best = None;
 
-        for InvariantWorkerOutput { result, corpus: worker_corpus, .. } in self.outputs {
+        for InvariantWorkerOutput { result, corpus_inputs: worker_inputs, .. } in self.outputs {
             for (invariant, error) in result.errors {
                 errors.entry(invariant).or_insert(error);
             }
             merge_handler_errors(&mut handler_errors, result.handler_errors);
-            corpus.inputs.extend(worker_corpus.inputs);
-            corpus.merge_optimization(
-                worker_corpus.optimization_best_value,
-                worker_corpus.optimization_best_sequence,
-            );
+            corpus_inputs.extend(worker_inputs);
             cases.extend(result.cases);
             reverts += result.reverts;
             last_run_inputs = result.last_run_inputs;
@@ -201,32 +191,23 @@ impl InvariantCampaignAggregator {
         }
         let (optimization_best_value, optimization_best_sequence) =
             optimization_best.map(|(value, sequence)| (Some(value), sequence)).unwrap_or_default();
-        let result = InvariantFuzzTestResult::new(
-            errors,
-            handler_errors,
-            cases,
-            reverts,
-            last_run_inputs,
-            gas_report_traces,
-            line_coverage,
-            metrics,
-            failed_corpus_replays,
-            optimization_best_value,
-            optimization_best_sequence,
-        );
-        corpus.merge_optimization(
-            result.optimization_best_value,
-            result.optimization_best_sequence.clone(),
-        );
-        Ok(InvariantCampaignOutput { result, corpus })
+        Ok((
+            InvariantFuzzTestResult::new(
+                errors,
+                handler_errors,
+                cases,
+                reverts,
+                last_run_inputs,
+                gas_report_traces,
+                line_coverage,
+                metrics,
+                failed_corpus_replays,
+                optimization_best_value,
+                optimization_best_sequence,
+            ),
+            corpus_inputs,
+        ))
     }
-}
-
-/// Logical campaign result plus artifacts that must be persisted only after worker merge.
-#[derive(Debug)]
-pub struct InvariantCampaignOutput {
-    pub result: InvariantFuzzTestResult,
-    pub corpus: CorpusCampaignOutput,
 }
 
 fn ensure_outputs_cover_campaign(

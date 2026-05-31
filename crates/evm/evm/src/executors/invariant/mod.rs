@@ -1,7 +1,7 @@
 use crate::{
     executors::{
         DURATION_BETWEEN_METRICS_REPORT, EarlyExit, EvmError, Executor, RawCallResult,
-        corpus::{CorpusCampaignOutput, DynamicTargetCtx, WorkerCorpus},
+        corpus::{DynamicTargetCtx, WorkerCorpus},
     },
     inspectors::Fuzzer,
 };
@@ -164,7 +164,7 @@ impl InvariantThroughputMetrics {
 }
 
 fn invariant_worker_count(runs: u32) -> usize {
-    let max_workers = if runs == 0 { 1 } else { Ord::max(1, runs / MIN_RUNS_PER_INVARIANT_WORKER) };
+    let max_workers = (runs / MIN_RUNS_PER_INVARIANT_WORKER).max(1);
     Ord::min(rayon::current_num_threads(), max_workers as usize)
 }
 
@@ -186,7 +186,7 @@ fn rate_per_sec(total: f64, elapsed: Duration) -> f64 {
 }
 
 /// Tracks invariant failure counts during a campaign.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 struct InvariantFailureMetrics {
     failures: u64,
     unique_failures: HashSet<String>,
@@ -391,12 +391,6 @@ impl InvariantTest {
             self.test_data.optimization_best_sequence = sequence.to_vec();
         }
     }
-
-    fn merge_initial_optimization(&mut self, value: Option<I256>, sequence: Vec<BasicTxDetails>) {
-        if let Some(value) = value {
-            self.update_optimization_value(value, &sequence);
-        }
-    }
 }
 
 /// Contains data for an invariant test run.
@@ -473,8 +467,6 @@ pub struct InvariantExecutor<'a, FEN: FoundryEvmNetwork> {
     project_contracts: &'a ContractsByArtifact,
     /// Filters contracts to be fuzzed through their artifact identifiers.
     artifact_filters: ArtifactFilters,
-    /// Number of invariant workers used for large campaigns.
-    num_workers: usize,
 }
 
 impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
@@ -489,7 +481,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         Self {
             executor,
             runner,
-            num_workers: invariant_worker_count(config.runs),
             config,
             setup_contracts,
             project_contracts,
@@ -529,20 +520,19 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         >,
     ) -> Result<InvariantFuzzTestResult> {
         let campaign_spec = InvariantCampaignSpec::new(self.config.runs);
-        let worker_plans = campaign_spec.worker_plans(self.num_workers)?;
+        let use_parallel = self.config.timeout.is_none() && !self.config.call_override;
+        let worker_count = if use_parallel { invariant_worker_count(self.config.runs) } else { 1 };
+        let worker_plans = campaign_spec.worker_plans(worker_count)?;
         let campaign_seed =
             self.prepare_campaign_seed(&invariant_contract, initial_handler_failures)?;
-        let use_parallel =
-            worker_plans.len() > 1 && self.config.timeout.is_none() && !self.config.call_override;
+        let use_parallel = worker_plans.len() > 1;
         let mut runner = self.runner.clone();
         let config = self.config.clone();
         let setup_contracts = self.setup_contracts;
         let project_contracts = self.project_contracts;
         let base_executor = self.executor.clone();
-        let campaign_state = std::sync::Arc::new(InvariantCampaignState::new(
-            self.config.timeout,
-            early_exit.clone(),
-        ));
+        let campaign_state =
+            Arc::new(InvariantCampaignState::new(self.config.timeout, early_exit.clone()));
 
         let worker_outputs = if use_parallel {
             let worker_jobs = worker_plans
@@ -577,22 +567,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 })
                 .collect::<Result<Vec<_>>>()?
         } else {
-            let plan = if worker_plans.len() == 1 {
-                worker_plans[0]
-            } else {
-                InvariantWorkerPlan {
-                    worker_id: 0,
-                    first_global_run: 0,
-                    runs: campaign_spec.total_runs,
-                }
-            };
             vec![Self::run_invariant_worker(
                 base_executor,
                 runner,
                 config,
                 setup_contracts,
                 project_contracts,
-                plan,
+                worker_plans[0],
                 invariant_contract.clone(),
                 fuzz_fixtures,
                 fuzz_state,
@@ -614,10 +595,16 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         for worker_output in worker_outputs {
             aggregator.push(worker_output);
         }
-        let mut campaign_output = aggregator.finish_with_corpus()?;
-        self.shrink_handler_failures(&mut campaign_output.result, progress, early_exit);
-        WorkerCorpus::persist_campaign_output(&self.config.corpus, &campaign_output.corpus);
-        Ok(campaign_output.result)
+        let (mut result, corpus_inputs) = aggregator.finish_with_corpus()?;
+        self.shrink_handler_failures(&mut result, progress, early_exit);
+        WorkerCorpus::persist_campaign_output(
+            &self.config.corpus,
+            &corpus_inputs,
+            result
+                .optimization_best_value
+                .map(|value| (value, result.optimization_best_sequence.as_slice())),
+        );
+        Ok(result)
     }
 
     /// Runs one worker-local slice of an invariant campaign.
@@ -652,9 +639,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             &config,
             setup_contracts,
             project_contracts,
-            campaign_seed.clone(),
+            &campaign_seed,
         )?;
-        let mut corpus_output = CorpusCampaignOutput::default();
+        let mut corpus_inputs = Vec::new();
 
         // Start timer for this invariant test.
         let mut runs = 0;
@@ -951,14 +938,13 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
                 let prefix = current_run.inputs[..current_run.optimization_prefix_len].to_vec();
                 (v, prefix)
             });
-            let record = corpus_manager.process_campaign_inputs(
+            if let Some(input) = corpus_manager.process_campaign_inputs(
                 &current_run.inputs,
                 &current_run.cmp_seq,
                 current_run.new_coverage,
                 optimization,
-            );
-            if let Some(input) = record.into_campaign_input() {
-                corpus_output.inputs.push(input);
+            ) {
+                corpus_inputs.push(input);
             }
 
             // Call `afterInvariant` only if declared and the current run produced no new
@@ -1061,10 +1047,6 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         let result = invariant_test.test_data;
         let reverts = result.failures.reverts;
         let (errors, handler_errors) = result.failures.partition();
-        corpus_output.merge_optimization(
-            result.optimization_best_value,
-            result.optimization_best_sequence.clone(),
-        );
         let worker_result = InvariantFuzzTestResult::new(
             errors,
             handler_errors,
@@ -1079,7 +1061,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
             result.optimization_best_sequence,
         );
         plan.runs = planned_runs;
-        Ok(InvariantWorkerOutput::new_with_corpus(plan, worker_result, corpus_output))
+        Ok(InvariantWorkerOutput { plan, result: worker_result, corpus_inputs })
     }
 
     fn shrink_handler_failures(
@@ -1158,7 +1140,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         config: &InvariantConfig,
         setup_contracts: &ContractsByAddress,
         project_contracts: &ContractsByArtifact,
-        campaign_seed: InvariantCampaignSeed,
+        campaign_seed: &InvariantCampaignSeed,
     ) -> Result<(InvariantTest, WorkerCorpus)> {
         let fuzz_state = fuzz_state.into_invariant();
         let targeted_contracts = FuzzRunIdentifiedContracts::new(
@@ -1169,7 +1151,7 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // Creates the invariant strategy.
         let strategy = invariant_strat(
             fuzz_state.clone(),
-            campaign_seed.sender_filters,
+            campaign_seed.sender_filters.clone(),
             targeted_contracts.clone(),
             config.clone(),
             fuzz_fixtures.clone(),
@@ -1201,8 +1183,8 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // This does not count as a fuzz run. It will just register the revert.
         let mut failures = InvariantFailures::new();
         // Seed disk-recovered handler bugs so live counters reflect them from tick 0.
-        for ((addr, sel), err) in campaign_seed.initial_handler_failures {
-            failures.seed_handler_failure(addr, sel, err);
+        for (&(addr, sel), err) in &campaign_seed.initial_handler_failures {
+            failures.seed_handler_failure(addr, sel, err.clone());
         }
         invariant_preflight_check(
             invariant_contract,
@@ -1276,7 +1258,9 @@ impl<'a, FEN: FoundryEvmNetwork> InvariantExecutor<'a, FEN> {
         // is a master-worker artifact loaded with the initial corpus.
         if is_master_worker && invariant_contract.is_optimization() {
             let (opt_best_value, opt_best_sequence) = worker.optimization_initial_state();
-            invariant_test.merge_initial_optimization(opt_best_value, opt_best_sequence);
+            if let Some(value) = opt_best_value {
+                invariant_test.update_optimization_value(value, &opt_best_sequence);
+            }
         }
 
         Ok((invariant_test, worker))
