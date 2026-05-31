@@ -183,6 +183,53 @@ impl CorpusEntry {
     }
 }
 
+/// Corpus entry discovered by a worker and returned to the logical campaign for persistence.
+#[derive(Clone, Debug)]
+pub struct CorpusCampaignInput {
+    tx_seq: Vec<BasicTxDetails>,
+    cmp_seq: Vec<Vec<CmpOperands>>,
+}
+
+impl CorpusCampaignInput {
+    const fn new(tx_seq: Vec<BasicTxDetails>, cmp_seq: Vec<Vec<CmpOperands>>) -> Self {
+        Self { tx_seq, cmp_seq }
+    }
+}
+
+/// Corpus and optimization artifacts discovered by a worker during a campaign slice.
+#[derive(Clone, Debug, Default)]
+pub struct CorpusCampaignOutput {
+    pub inputs: Vec<CorpusCampaignInput>,
+    pub optimization_best_value: Option<I256>,
+    pub optimization_best_sequence: Vec<BasicTxDetails>,
+}
+
+impl CorpusCampaignOutput {
+    /// Keeps the best optimization value, using caller iteration order to break ties.
+    pub fn merge_optimization(&mut self, value: Option<I256>, sequence: Vec<BasicTxDetails>) {
+        let Some(value) = value else {
+            return;
+        };
+
+        if self.optimization_best_value.is_none_or(|best| value > best) {
+            self.optimization_best_value = Some(value);
+            self.optimization_best_sequence = sequence;
+        }
+    }
+}
+
+/// Result of recording one run in a [`WorkerCorpus`].
+#[derive(Clone, Debug, Default)]
+pub struct CorpusRunRecord {
+    campaign_input: Option<CorpusCampaignInput>,
+}
+
+impl CorpusRunRecord {
+    pub fn into_campaign_input(self) -> Option<CorpusCampaignInput> {
+        self.campaign_input
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct GlobalCorpusMetrics {
     // Number of edges seen during the invariant run.
@@ -527,11 +574,31 @@ impl WorkerCorpus {
         new_coverage: bool,
         optimization: Option<(I256, Vec<BasicTxDetails>)>,
     ) {
-        let Some(worker_corpus) = &self.worker_dir else {
-            return;
-        };
-        let worker_corpus = worker_corpus.join(CORPUS_DIR);
+        let _ = self.process_inputs_inner(inputs, cmp_seq, new_coverage, optimization, true);
+    }
 
+    /// Updates in-memory corpus state for a worker and returns any campaign-level corpus
+    /// candidate without persisting it. The logical invariant campaign persists returned
+    /// candidates after worker outputs have merged.
+    #[instrument(skip_all)]
+    pub fn process_campaign_inputs(
+        &mut self,
+        inputs: &[BasicTxDetails],
+        cmp_seq: &[Vec<CmpOperands>],
+        new_coverage: bool,
+        optimization: Option<(I256, Vec<BasicTxDetails>)>,
+    ) -> CorpusRunRecord {
+        self.process_inputs_inner(inputs, cmp_seq, new_coverage, optimization, false)
+    }
+
+    fn process_inputs_inner(
+        &mut self,
+        inputs: &[BasicTxDetails],
+        cmp_seq: &[Vec<CmpOperands>],
+        new_coverage: bool,
+        optimization: Option<(I256, Vec<BasicTxDetails>)>,
+        persist_now: bool,
+    ) -> CorpusRunRecord {
         // Check if this run improved the optimization value.
         let improved_optimization = optimization.as_ref().is_some_and(|(value, _)| {
             self.optimization_best_value.is_none_or(|best| *value > best)
@@ -562,18 +629,23 @@ impl WorkerCorpus {
             self.current_mutated = None;
         }
 
-        // Persist optimization state to disk if improved.
         if let Some((value, best_seq)) = optimization
             && improved_optimization
         {
             self.optimization_best_value = Some(value);
             self.optimization_best_sequence = best_seq;
-            self.persist_optimization_state();
+            if persist_now {
+                self.persist_optimization_state();
+            }
+        }
+
+        if !self.config.is_coverage_guided() {
+            return CorpusRunRecord::default();
         }
 
         // Collect inputs if current run produced new coverage or improved optimization.
         if !new_coverage && !improved_optimization {
-            return;
+            return CorpusRunRecord::default();
         }
 
         // When the run is interesting only because of optimization (no new coverage),
@@ -585,20 +657,25 @@ impl WorkerCorpus {
         } else {
             inputs.to_vec()
         };
-        let corpus_cmp_seq = cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
+        let corpus_cmp_seq: Vec<Vec<CmpOperands>> =
+            cmp_seq.iter().take(corpus_inputs.len()).cloned().collect();
+        let campaign_input =
+            CorpusCampaignInput::new(corpus_inputs.clone(), corpus_cmp_seq.clone());
         let corpus = CorpusEntry::new_with_cmp(corpus_inputs, corpus_cmp_seq, Uuid::new_v4());
 
-        // Persist to disk.
-        let write_result = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip);
-        if let Err(err) = write_result {
-            debug!(target: "corpus", %err, "failed to record call sequence {:?}", corpus.tx_seq);
-        } else {
-            trace!(
-                target: "corpus",
-                "persisted {} inputs for new coverage for {} corpus",
-                corpus.tx_seq.len(),
-                corpus.uuid,
-            );
+        if persist_now && let Some(worker_corpus) = &self.worker_dir {
+            let worker_corpus = worker_corpus.join(CORPUS_DIR);
+            let write_result = corpus.write_to_disk_in(&worker_corpus, self.config.corpus_gzip);
+            if let Err(err) = write_result {
+                debug!(target: "corpus", %err, "failed to record call sequence {:?}", corpus.tx_seq);
+            } else {
+                trace!(
+                    target: "corpus",
+                    "persisted {} inputs for new coverage for {} corpus",
+                    corpus.tx_seq.len(),
+                    corpus.uuid,
+                );
+            }
         }
 
         // Track in-memory corpus changes to update MasterWorker on sync.
@@ -609,6 +686,8 @@ impl WorkerCorpus {
         // them. We want this as it is new coverage and may help reach the other branch.
         self.metrics.corpus_count += 1;
         self.in_memory_corpus.push(corpus);
+
+        CorpusRunRecord { campaign_input: Some(campaign_input) }
     }
 
     /// Returns the previously persisted optimization best value and sequence (if any).
@@ -618,17 +697,55 @@ impl WorkerCorpus {
 
     /// Persists the current optimization best value and sequence to disk.
     fn persist_optimization_state(&self) {
-        let Some(value) = self.optimization_best_value else {
+        let output = CorpusCampaignOutput {
+            inputs: Vec::new(),
+            optimization_best_value: self.optimization_best_value,
+            optimization_best_sequence: self.optimization_best_sequence.clone(),
+        };
+        Self::persist_campaign_output(&self.config, &output);
+    }
+
+    /// Persists campaign-level corpus and optimization outputs after worker results have merged.
+    pub fn persist_campaign_output(config: &FuzzCorpusConfig, output: &CorpusCampaignOutput) {
+        let Some(corpus_dir) = &config.corpus_dir else {
             return;
         };
-        let Some(corpus_dir) = &self.config.corpus_dir else {
+        let corpus_dir = corpus_dir.join(format!("{WORKER}0")).join(CORPUS_DIR);
+        if !output.inputs.is_empty()
+            && let Err(err) = foundry_common::fs::create_dir_all(&corpus_dir)
+        {
+            debug!(target: "corpus", %err, "failed to create campaign corpus dir");
+        }
+        for input in &output.inputs {
+            let corpus = CorpusEntry::new_with_cmp(
+                input.tx_seq.clone(),
+                input.cmp_seq.clone(),
+                Uuid::new_v4(),
+            );
+            let write_result = corpus.write_to_disk_in(&corpus_dir, config.corpus_gzip);
+            if let Err(err) = write_result {
+                debug!(target: "corpus", %err, "failed to record call sequence {:?}", corpus.tx_seq);
+            } else {
+                trace!(
+                    target: "corpus",
+                    "persisted {} inputs for new coverage for {} corpus",
+                    corpus.tx_seq.len(),
+                    corpus.uuid,
+                );
+            }
+        }
+
+        let Some(value) = output.optimization_best_value else {
             return;
         };
         let state = OptimizationState {
             best_value: value,
-            best_sequence: self.optimization_best_sequence.clone(),
+            best_sequence: output.optimization_best_sequence.clone(),
         };
-        let path = corpus_dir.join(OPTIMIZATION_BEST_FILE);
+        let Some(root) = &config.corpus_dir else {
+            return;
+        };
+        let path = root.join(OPTIMIZATION_BEST_FILE);
         if let Err(err) = foundry_common::fs::write_json_file(&path, &state) {
             debug!(target: "corpus", %err, "failed to persist optimization state");
         } else {
@@ -636,7 +753,7 @@ impl WorkerCorpus {
                 target: "corpus",
                 "persisted optimization best value {} with sequence len {}",
                 value,
-                self.optimization_best_sequence.len()
+                output.optimization_best_sequence.len()
             );
         }
     }
@@ -1428,6 +1545,16 @@ mod tests {
         dir
     }
 
+    fn corpus_config(corpus_dir: PathBuf) -> FuzzCorpusConfig {
+        FuzzCorpusConfig {
+            corpus_dir: Some(corpus_dir),
+            corpus_gzip: false,
+            corpus_min_mutations: 0,
+            corpus_min_size: 0,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn cmp_mutate_replaces_matching_calldata_operand() {
         let function = Function::parse("testCmp(uint256)").unwrap();
@@ -1465,13 +1592,7 @@ mod tests {
 
     fn new_manager_with_single_corpus() -> (WorkerCorpus, Uuid) {
         let tx_gen = Just(basic_tx()).boxed();
-        let config = FuzzCorpusConfig {
-            corpus_dir: Some(temp_corpus_dir()),
-            corpus_gzip: false,
-            corpus_min_mutations: 0,
-            corpus_min_size: 0,
-            ..Default::default()
-        };
+        let config = corpus_config(temp_corpus_dir());
 
         let tx_seq = vec![basic_tx()];
         let corpus = CorpusEntry::new(tx_seq);
@@ -1480,7 +1601,7 @@ mod tests {
         // Create corpus root dir and worker subdirectory.
         let corpus_root = config.corpus_dir.clone().unwrap();
         let worker_subdir = corpus_root.join("worker0");
-        let _ = fs::create_dir_all(&worker_subdir);
+        let _ = fs::create_dir_all(worker_subdir.join(CORPUS_DIR));
 
         let manager = WorkerCorpus {
             id: 0,
@@ -1496,13 +1617,104 @@ mod tests {
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
-            worker_dir: Some(corpus_root),
+            worker_dir: Some(worker_subdir),
             last_sync_metrics: CorpusMetrics::default(),
             optimization_best_value: None,
             optimization_best_sequence: vec![],
         };
 
         (manager, seed_uuid)
+    }
+
+    #[test]
+    fn campaign_inputs_update_worker_memory_without_persisting() {
+        let corpus_root = temp_corpus_dir();
+        let worker_subdir = corpus_root.join("worker1");
+        fs::create_dir_all(worker_subdir.join(CORPUS_DIR)).unwrap();
+        let mut manager = WorkerCorpus {
+            id: 1,
+            tx_generator: Just(basic_tx()).boxed(),
+            mutation_generator: Just(MutationType::Repeat).boxed(),
+            config: corpus_config(corpus_root.clone()).into(),
+            in_memory_corpus: vec![],
+            current_mutated: None,
+            failed_replays: 0,
+            history_map: Vec::new(),
+            edge_indices: EdgeIndexMap::default(),
+            sancov_history_map: Vec::new(),
+            metrics: CorpusMetrics::default(),
+            new_entry_indices: Default::default(),
+            last_sync_timestamp: 0,
+            worker_dir: Some(worker_subdir.clone()),
+            last_sync_metrics: CorpusMetrics::default(),
+            optimization_best_value: None,
+            optimization_best_sequence: vec![],
+        };
+
+        let record = manager.process_campaign_inputs(&[basic_tx()], &[], true, None);
+
+        assert!(record.into_campaign_input().is_some());
+        assert_eq!(manager.in_memory_corpus.len(), 1);
+        assert_eq!(manager.metrics.corpus_count, 1);
+        assert_eq!(read_corpus_dir(&worker_subdir.join(CORPUS_DIR)).count(), 0);
+    }
+
+    #[test]
+    fn campaign_output_persists_corpus_and_optimization_to_master_dir() {
+        let corpus_root = temp_corpus_dir();
+        let mut manager = WorkerCorpus {
+            id: 1,
+            tx_generator: Just(basic_tx()).boxed(),
+            mutation_generator: Just(MutationType::Repeat).boxed(),
+            config: corpus_config(corpus_root.clone()).into(),
+            in_memory_corpus: vec![],
+            current_mutated: None,
+            failed_replays: 0,
+            history_map: Vec::new(),
+            edge_indices: EdgeIndexMap::default(),
+            sancov_history_map: Vec::new(),
+            metrics: CorpusMetrics::default(),
+            new_entry_indices: Default::default(),
+            last_sync_timestamp: 0,
+            worker_dir: Some(corpus_root.join("worker1")),
+            last_sync_metrics: CorpusMetrics::default(),
+            optimization_best_value: None,
+            optimization_best_sequence: vec![],
+        };
+        let sequence = vec![basic_tx()];
+        let record = manager
+            .process_campaign_inputs(
+                &sequence,
+                &[],
+                false,
+                Some((I256::try_from(7).unwrap(), sequence.clone())),
+            )
+            .into_campaign_input()
+            .unwrap();
+        let output = CorpusCampaignOutput {
+            inputs: vec![record],
+            optimization_best_value: Some(I256::try_from(7).unwrap()),
+            optimization_best_sequence: sequence.clone(),
+        };
+
+        WorkerCorpus::persist_campaign_output(&corpus_config(corpus_root.clone()), &output);
+
+        let master_corpus_dir = corpus_root.join("worker0").join(CORPUS_DIR);
+        let entries = read_corpus_dir(&master_corpus_dir).collect::<Vec<_>>();
+        assert_eq!(entries.len(), 1);
+        let persisted_sequence = entries[0].read_tx_seq().unwrap();
+        assert_eq!(persisted_sequence.len(), sequence.len());
+        assert_eq!(persisted_sequence[0].sender, sequence[0].sender);
+        assert_eq!(persisted_sequence[0].call_details.target, sequence[0].call_details.target);
+        assert_eq!(persisted_sequence[0].call_details.calldata, sequence[0].call_details.calldata);
+
+        let state: OptimizationState =
+            foundry_common::fs::read_json_file(&corpus_root.join(OPTIMIZATION_BEST_FILE)).unwrap();
+        assert_eq!(state.best_value, I256::try_from(7).unwrap());
+        assert_eq!(state.best_sequence.len(), sequence.len());
+        assert_eq!(state.best_sequence[0].sender, sequence[0].sender);
+        assert_eq!(state.best_sequence[0].call_details.target, sequence[0].call_details.target);
+        assert_eq!(state.best_sequence[0].call_details.calldata, sequence[0].call_details.calldata);
     }
 
     #[test]
@@ -1597,12 +1809,7 @@ mod tests {
     fn eviction_skips_favored_and_evicts_non_favored() {
         // Manager with two corpora.
         let tx_gen = Just(basic_tx()).boxed();
-        let config = FuzzCorpusConfig {
-            corpus_dir: Some(temp_corpus_dir()),
-            corpus_min_mutations: 0,
-            corpus_min_size: 0,
-            ..Default::default()
-        };
+        let config = corpus_config(temp_corpus_dir());
 
         let mut favored = CorpusEntry::new(vec![basic_tx()]);
         favored.total_mutations = 2;
@@ -1615,7 +1822,7 @@ mod tests {
 
         let corpus_root = temp_corpus_dir();
         let worker_subdir = corpus_root.join("worker0");
-        fs::create_dir_all(&worker_subdir).unwrap();
+        fs::create_dir_all(worker_subdir.join(CORPUS_DIR)).unwrap();
 
         let mut manager = WorkerCorpus {
             id: 0,
@@ -1631,7 +1838,7 @@ mod tests {
             metrics: CorpusMetrics::default(),
             new_entry_indices: Default::default(),
             last_sync_timestamp: 0,
-            worker_dir: Some(corpus_root),
+            worker_dir: Some(worker_subdir),
             last_sync_metrics: CorpusMetrics::default(),
             optimization_best_value: None,
             optimization_best_sequence: vec![],

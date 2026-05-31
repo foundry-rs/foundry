@@ -1,9 +1,13 @@
 use super::{InvariantFuzzError, InvariantFuzzTestResult, InvariantMetrics};
+use crate::executors::{EarlyExit, FuzzTestTimer, corpus::CorpusCampaignOutput};
 use alloy_primitives::{Address, I256, Selector};
 use eyre::{Result, ensure};
 use foundry_evm_coverage::HitMaps;
 use foundry_evm_fuzz::BasicTxDetails;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 /// Immutable plan-level description for an invariant campaign.
 ///
@@ -60,6 +64,35 @@ pub struct InvariantWorkerPlan {
     pub runs: u32,
 }
 
+/// Shared state used only to coordinate invariant worker execution.
+pub struct InvariantCampaignState {
+    total_runs: AtomicU32,
+    global_early_exit: EarlyExit,
+    timer: FuzzTestTimer,
+}
+
+impl InvariantCampaignState {
+    pub fn new(timeout: Option<u32>, early_exit: EarlyExit) -> Self {
+        Self {
+            total_runs: AtomicU32::new(0),
+            global_early_exit: early_exit,
+            timer: FuzzTestTimer::new(timeout),
+        }
+    }
+
+    pub fn increment_runs(&self) -> u32 {
+        self.total_runs.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    pub fn should_continue(&self) -> bool {
+        !(self.global_early_exit.should_stop() || self.timer.is_timed_out())
+    }
+
+    pub const fn is_timed_campaign(&self) -> bool {
+        self.timer.is_enabled()
+    }
+}
+
 /// Output produced by one invariant worker.
 ///
 /// This is a data envelope for aggregation only. It does not imply that this module executed the
@@ -68,11 +101,21 @@ pub struct InvariantWorkerPlan {
 pub struct InvariantWorkerOutput {
     pub plan: InvariantWorkerPlan,
     pub result: InvariantFuzzTestResult,
+    pub corpus: CorpusCampaignOutput,
 }
 
 impl InvariantWorkerOutput {
-    pub const fn new(plan: InvariantWorkerPlan, result: InvariantFuzzTestResult) -> Self {
-        Self { plan, result }
+    #[cfg(test)]
+    pub fn new(plan: InvariantWorkerPlan, result: InvariantFuzzTestResult) -> Self {
+        Self { plan, result, corpus: CorpusCampaignOutput::default() }
+    }
+
+    pub const fn new_with_corpus(
+        plan: InvariantWorkerPlan,
+        result: InvariantFuzzTestResult,
+        corpus: CorpusCampaignOutput,
+    ) -> Self {
+        Self { plan, result, corpus }
     }
 }
 
@@ -103,7 +146,14 @@ impl InvariantCampaignAggregator {
     }
 
     /// Validates the collected worker ranges and folds them into one logical campaign result.
-    pub fn finish(mut self) -> Result<InvariantFuzzTestResult> {
+    #[cfg(test)]
+    pub fn finish(self) -> Result<InvariantFuzzTestResult> {
+        Ok(self.finish_with_corpus()?.result)
+    }
+
+    /// Validates the collected worker ranges and folds them into one logical campaign result with
+    /// campaign-level corpus artifacts selected in logical worker order.
+    pub fn finish_with_corpus(mut self) -> Result<InvariantCampaignOutput> {
         ensure!(!self.outputs.is_empty(), "missing invariant worker output");
 
         self.outputs.sort_by_key(|output| output.plan.first_global_run);
@@ -117,6 +167,7 @@ impl InvariantCampaignAggregator {
         let mut gas_report_traces = Vec::new();
         let mut line_coverage = None;
         let mut metrics = HashMap::default();
+        let mut corpus = CorpusCampaignOutput::default();
         let failed_corpus_replays = self
             .outputs
             .iter()
@@ -126,11 +177,16 @@ impl InvariantCampaignAggregator {
             .failed_corpus_replays;
         let mut optimization_best = None;
 
-        for InvariantWorkerOutput { result, .. } in self.outputs {
+        for InvariantWorkerOutput { result, corpus: worker_corpus, .. } in self.outputs {
             for (invariant, error) in result.errors {
                 errors.entry(invariant).or_insert(error);
             }
             merge_handler_errors(&mut handler_errors, result.handler_errors);
+            corpus.inputs.extend(worker_corpus.inputs);
+            corpus.merge_optimization(
+                worker_corpus.optimization_best_value,
+                worker_corpus.optimization_best_sequence,
+            );
             cases.extend(result.cases);
             reverts += result.reverts;
             last_run_inputs = result.last_run_inputs;
@@ -145,7 +201,7 @@ impl InvariantCampaignAggregator {
         }
         let (optimization_best_value, optimization_best_sequence) =
             optimization_best.map(|(value, sequence)| (Some(value), sequence)).unwrap_or_default();
-        Ok(InvariantFuzzTestResult::new(
+        let result = InvariantFuzzTestResult::new(
             errors,
             handler_errors,
             cases,
@@ -157,8 +213,20 @@ impl InvariantCampaignAggregator {
             failed_corpus_replays,
             optimization_best_value,
             optimization_best_sequence,
-        ))
+        );
+        corpus.merge_optimization(
+            result.optimization_best_value,
+            result.optimization_best_sequence.clone(),
+        );
+        Ok(InvariantCampaignOutput { result, corpus })
     }
+}
+
+/// Logical campaign result plus artifacts that must be persisted only after worker merge.
+#[derive(Debug)]
+pub struct InvariantCampaignOutput {
+    pub result: InvariantFuzzTestResult,
+    pub corpus: CorpusCampaignOutput,
 }
 
 fn ensure_outputs_cover_campaign(
@@ -436,6 +504,12 @@ mod tests {
 
         let err = InvariantCampaignSpec::new(0).worker_plans(0).unwrap_err();
         assert!(err.to_string().contains("requires at least one worker"));
+    }
+
+    #[test]
+    fn campaign_state_reports_timed_campaigns() {
+        assert!(!InvariantCampaignState::new(None, EarlyExit::new(false)).is_timed_campaign());
+        assert!(InvariantCampaignState::new(Some(1), EarlyExit::new(false)).is_timed_campaign());
     }
 
     #[test]

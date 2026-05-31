@@ -360,16 +360,6 @@ impl InvariantFailures {
     pub fn has_handler_failure(&self, target: Address, selector: Selector) -> bool {
         self.failures.contains_key(&FailureKey::Handler(target, selector))
     }
-
-    /// Mutable iterator over handler-side assertion bug entries (post-campaign shrink loop).
-    pub fn handler_failures_mut(
-        &mut self,
-    ) -> impl Iterator<Item = ((Address, Selector), &mut InvariantFuzzError)> {
-        self.failures.iter_mut().filter_map(|(key, err)| match key {
-            FailureKey::Handler(addr, sel) => Some(((*addr, *sel), err)),
-            FailureKey::Invariant(_) => None,
-        })
-    }
 }
 
 impl fmt::Display for InvariantFailures {
