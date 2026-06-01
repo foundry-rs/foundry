@@ -583,12 +583,12 @@ impl NodeConfig {
             return hardfork;
         }
         if self.networks.is_tempo()
-            && let Some(hardfork) = FoundryHardfork::from_chain_and_timestamp(
+            && let Some(hardfork) = TempoHardfork::from_chain_and_timestamp(
                 self.get_chain_id(),
                 self.get_genesis_timestamp(),
             )
         {
-            return hardfork;
+            return hardfork.into();
         }
         #[cfg(feature = "optimism")]
         if self.networks.is_optimism() {
@@ -1793,5 +1793,18 @@ mod tests {
         config.set_chain_id(Some(10u64));
 
         assert!(config.networks.is_optimism());
+    }
+
+    #[test]
+    fn get_hardfork_on_tempo_never_returns_non_tempo_variant() {
+        // Post-Shanghai timestamp on Ethereum mainnet.
+        let shanghai_ts = 1_681_338_455u64;
+
+        let config = NodeConfig::test_tempo()
+            .with_chain_id(Some(1u64))
+            .with_genesis_timestamp(Some(shanghai_ts));
+
+        assert!(config.networks.is_tempo());
+        assert!(matches!(config.get_hardfork(), FoundryHardfork::Tempo(_)));
     }
 }
