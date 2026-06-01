@@ -39,7 +39,7 @@ use crate::cmd::tempo_policy_args::{
     parse_selector_bytes,
 };
 
-use crate::{cmd::account_keychain::send_account_keychain_tx, tx::SendTxOpts};
+use crate::{cmd::account_keychain::send_keychain_tx, tx::SendTxOpts};
 
 /// Tempo keychain management commands.
 ///
@@ -2481,7 +2481,7 @@ async fn run_authorize(
         .abi_encode()
     };
 
-    send_account_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
 
 /// `cast keychain revoke` / `cast keychain rev` — revoke a key on-chain.
@@ -2491,7 +2491,7 @@ async fn run_revoke(
     send_tx: SendTxOpts,
 ) -> Result<()> {
     let calldata = IAccountKeychain::revokeKeyCall { keyId: key_address }.abi_encode();
-    send_account_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
 
 /// `cast keychain rl` — query remaining spending limit.
@@ -2538,7 +2538,7 @@ async fn run_update_limit(
         newLimit: new_limit,
     }
     .abi_encode();
-    send_account_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
 
 /// `cast keychain ss` — set allowed call scopes.
@@ -2550,7 +2550,7 @@ async fn run_set_scope(
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes }.abi_encode();
-    send_account_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
 
 /// `cast keychain rs` — remove call scope for a target.
@@ -2562,7 +2562,7 @@ async fn run_remove_scope(
 ) -> Result<()> {
     let calldata =
         IAccountKeychain::removeAllowedCallsCall { keyId: key_address, target }.abi_encode();
-    send_account_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
 
 /// `cast keychain policy add-call` — merge a selector rule into a target scope.
@@ -2624,7 +2624,7 @@ async fn run_policy_add_call(
     let calldata =
         IAccountKeychain::setAllowedCallsCall { keyId: key_address, scopes: vec![target_scope] }
             .abi_encode();
-    send_account_keychain_tx(calldata, tx_opts, &send_tx).await
+    send_keychain_tx(calldata, tx_opts, &send_tx).await
 }
 
 /// `cast keychain policy set-limit` — update a spending limit amount.

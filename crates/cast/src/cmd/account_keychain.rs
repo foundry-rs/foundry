@@ -23,25 +23,25 @@ use crate::{
 };
 
 /// Send calldata to the Tempo AccountKeychain precompile as a root-authorized transaction.
-pub(crate) async fn send_account_keychain_tx(
+pub(crate) async fn send_keychain_tx(
     calldata: Vec<u8>,
     tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
 ) -> eyre::Result<()> {
-    send_account_keychain_tx_inner(calldata, tx_opts, send_tx, None).await
+    send_keychain_tx_inner(calldata, tx_opts, send_tx, None).await
 }
 
 /// Send calldata to AccountKeychain, requiring the resolved root signer to match `expected`.
-pub(crate) async fn send_account_keychain_tx_from(
+pub(crate) async fn send_keychain_tx_from(
     calldata: Vec<u8>,
     tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,
     expected: Address,
 ) -> eyre::Result<()> {
-    send_account_keychain_tx_inner(calldata, tx_opts, send_tx, Some(expected)).await
+    send_keychain_tx_inner(calldata, tx_opts, send_tx, Some(expected)).await
 }
 
-async fn send_account_keychain_tx_inner(
+async fn send_keychain_tx_inner(
     calldata: Vec<u8>,
     mut tx_opts: TransactionOpts,
     send_tx: &SendTxOpts,

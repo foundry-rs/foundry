@@ -25,7 +25,7 @@ use tempo_primitives::transaction::{CallScope, PrimitiveSignature, SelectorRule}
 
 use crate::{
     cmd::{
-        account_keychain::send_account_keychain_tx_from,
+        account_keychain::send_keychain_tx_from,
         tempo_policy_args::{parse_period, parse_policy_token, parse_scope as parse_policy_scope},
     },
     tx::SendTxOpts,
@@ -196,7 +196,7 @@ async fn revoke_session_key_on_chain(
     }
 
     let calldata = IAccountKeychain::revokeKeyCall { keyId: entry.key_address }.abi_encode();
-    send_account_keychain_tx_from(calldata, tx, &send_tx, entry.root_account).await?;
+    send_keychain_tx_from(calldata, tx, &send_tx, entry.root_account).await?;
     Ok(SessionRevokeStatus::OnChain)
 }
 
